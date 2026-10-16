@@ -2,11 +2,11 @@
 /**
  * `forward` of a building run, ported from softfac's `runner/tests.rs` sections "forwarding: the
  * messages" (`messages.test.ts`), "forwarding: comments", "forwarding: a body edit", "forwarding:
- * guards and failures" and "forwarding: waiting for the run a message starts". The gate half of
- * the waiting section, which needs the gate's fakes, is in `gating.test.ts`; the tests over the
- * real `gh` client are in `tracker/github.test.ts`; the pass's lines are in `pass.test.ts`. Left
- * out, for the issue that owns them: the comment-dropped notices (`dropped` is read from the
- * tracker and not acted on) and the review feedback a waiting run forwards.
+ * guards and failures", "forwarding: waiting for the run a message starts" and "forwarding:
+ * dropped comments". The gate half of the waiting section, which needs the gate's fakes, is in
+ * `gating.test.ts`; the tests over the real `gh` client are in `tracker/github.test.ts`; the
+ * pass's lines are in `pass.test.ts`. Left out, for the issue that owns it: the review feedback a
+ * waiting run forwards.
  */
 import * as NodeFS from "node:fs";
 
@@ -35,6 +35,7 @@ import {
   type Activity,
   type BodyEdit,
   type Comment,
+  type Dropped,
   type GitHubError,
   type IssueDetail,
 } from "../tracker/github.ts";
@@ -193,6 +194,8 @@ interface World {
   closedBy: string | null;
   /** The text of each message T3 took, by command id. */
   delivered: Map<string, string>;
+  /** The next comments posted on the issue fail with this, and post nothing. */
+  postFailure: GitHubError | null;
 }
 
 const projectConfig = (instructors: ReadonlyArray<string>): ProjectConfig => {
@@ -235,6 +238,8 @@ interface Rig {
   readonly reads: Array<string>;
   /** The calls to T3, in order. */
   readonly t3: Array<string>;
+  /** The comments posted on the issue, as `<issue> <body>`. */
+  readonly posted: Array<string>;
   ctx: BuildingContext;
 }
 
@@ -253,10 +258,12 @@ const rigFor = (
     closed: false,
     closedBy: null,
     delivered: new Map(),
+    postFailure: null,
   };
   const activityCalls: Array<string> = [];
   const reads: Array<string> = [];
   const t3: Array<string> = [];
+  const posted: Array<string> = [];
   const notForward = () => Effect.die("not forward's");
   const tracker: BuildingContext["tracker"] = {
     activitySince: (issue, since, instructors) => {
@@ -283,7 +290,11 @@ const rigFor = (
     assign: notForward,
     setState: notForward,
     unassign: notForward,
-    postComment: notForward,
+    postComment: (n, body) => {
+      if (world.postFailure !== null) return Effect.fail(world.postFailure);
+      posted.push(`${n} ${body}`);
+      return Effect.void;
+    },
     upsertStatusComment: notForward,
     textCheck: notForward,
   };
@@ -330,7 +341,7 @@ const rigFor = (
     sessions,
     clock: () => T0,
   };
-  return { dataDir, run: run10, world, activityCalls, reads, t3, ctx };
+  return { dataDir, run: run10, world, activityCalls, reads, t3, posted, ctx };
 };
 
 const forwardIn = (rig: Rig) => forward(rig.ctx, rig.run);
@@ -364,6 +375,7 @@ const clearCalls = (rig: Rig) => {
   rig.activityCalls.length = 0;
   rig.reads.length = 0;
   rig.t3.length = 0;
+  rig.posted.length = 0;
 };
 
 const setRun = (rig: Rig, status: RunStatus, ordinal: number, message: string | null = null) => {
@@ -1223,3 +1235,185 @@ const draftPr = {
   baseRef: "main",
   headSha: HEAD,
 };
+
+// ---- forwarding: dropped comments ---------------------------------------------------------------------
+
+const dropOf = (id: number, reason: Dropped["reason"]): Dropped => ({ id: String(id), reason });
+
+/** What `activitySince` reports as dropped from now on. */
+const scriptDropped = (rig: Rig, dropped: ReadonlyArray<Dropped>) => {
+  rig.world.activity = { ...rig.world.activity, dropped };
+};
+
+const BY_OTHER = "someone who is not an instructor edited it";
+const CANNOT_CHECK = "the factory could not check who edited it";
+
+/** The factory's comment about a dropped comment, written out by hand, as posted on issue 10. */
+const droppedText = (id: number, why: string) =>
+  `10 The factory did not send an instructor's comment to the build session, because ${why}.\n\nComment: https://github.com/rawphp/softfac/issues/10#issuecomment-${id}\n\nPost the instruction as a new comment and the factory will send it.`;
+
+const droppedStep = (id: number) => step(`comment-dropped ${id}`);
+
+describe("forward: dropped comments", () => {
+  it.effect("a dropped comment is reported once with the factory's fixed words", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      rig.world.statusForbidden = true;
+      scriptDropped(rig, [dropOf(7, "edited-by-other")]);
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+      // The GitHub call first, and the ledger line after it. Nothing goes into the session, and
+      // its status is not read.
+      assert.deepStrictEqual(rig.activityCalls, [`10 ${SINCE_FIRST} rawphp`]);
+      assert.deepStrictEqual(rig.posted, [droppedText(7, BY_OTHER)]);
+      assert.deepStrictEqual(rig.t3, []);
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, droppedStep(7)]);
+      assert.deepStrictEqual(causesOf(rig).at(-1), "forward comment-dropped");
+
+      // The next pass reads the same drop and says nothing more.
+      clearCalls(rig);
+      const bytes = bytesOf(rig);
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+      assert.deepStrictEqual(rig.activityCalls, [`10 ${SINCE_FIRST} rawphp`]);
+      assert.deepStrictEqual(rig.posted, []);
+      assert.strictEqual(bytesOf(rig), bytes);
+    }),
+  );
+
+  it.effect("each reason has its own fixed words and each drop its own comment, in order", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      scriptDropped(rig, [dropOf(8, "unverifiable"), dropOf(7, "edited-by-other")]);
+      yield* forwardIn(rig);
+      // The read's order is the order of the comments.
+      assert.deepStrictEqual(rig.posted, [droppedText(8, CANNOT_CHECK), droppedText(7, BY_OTHER)]);
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, droppedStep(8), droppedStep(7)]);
+    }),
+  );
+
+  it.effect("a dropped comment comes after what is sent and changes nothing about it", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      script(rig, [comment(101, "rawphp", "Use serde here.")], edit(EDITED, "rawphp", "new"));
+      scriptDropped(rig, [dropOf(7, "edited-by-other")]);
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(1, true));
+      assert.deepStrictEqual(
+        rig.t3,
+        afterStatus(
+          commentSend(101, "rawphp", "Use serde here."),
+          bodySend(EDITED, "rawphp", "new"),
+        ),
+      );
+      assert.deepStrictEqual(rig.posted, [droppedText(7, BY_OTHER)]);
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        commentForwarded(101),
+        bodyForwarded(EDITED),
+        droppedStep(7),
+      ]);
+    }),
+  );
+
+  it.effect("a failed send leaves the drop for the next pass, and it is still said once", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      script(rig, [comment(101, "rawphp", "one")]);
+      scriptDropped(rig, [dropOf(7, "edited-by-other")]);
+      // Status, then the send fails.
+      rig.world.failAt = 1;
+      yield* Effect.flip(forwardIn(rig));
+      assert.deepStrictEqual(rig.posted, []);
+      rig.world.failAt = null;
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(1, false));
+      assert.deepStrictEqual(rig.posted, [droppedText(7, BY_OTHER)]);
+    }),
+  );
+
+  it.effect("a drop the ledger already records is not said again", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, droppedStep(7)]);
+      scriptDropped(rig, [dropOf(7, "edited-by-other"), dropOf(8, "edited-by-other")]);
+      yield* forwardIn(rig);
+      assert.deepStrictEqual(rig.posted, [droppedText(8, BY_OTHER)]);
+    }),
+  );
+
+  it.effect("a comment the issue was told about as dropped is never sent later", () =>
+    Effect.gen(function* () {
+      // The instructor was asked to post it again; a later read that lists it is not followed.
+      const rig = rigFor([...STARTED, droppedStep(7)]);
+      rig.world.statusForbidden = true;
+      script(rig, [comment(7, "rawphp", "one")]);
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+      assert.deepStrictEqual(rig.t3, []);
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, droppedStep(7)]);
+    }),
+  );
+
+  it.effect("a comment that was already forwarded and was edited since is not reported", () =>
+    Effect.gen(function* () {
+      // The session has the instructor's own words. A later edit by someone else changes nothing
+      // it holds.
+      const rig = rigFor([...STARTED, commentForwarded(7)]);
+      scriptDropped(rig, [dropOf(7, "edited-by-other")]);
+      yield* forwardIn(rig);
+      assert.deepStrictEqual(rig.activityCalls, [`10 ${SINCE_FIRST} rawphp`]);
+      assert.deepStrictEqual(rig.posted, []);
+    }),
+  );
+
+  it.effect("a comment that is both dropped and listed twice is said once", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      scriptDropped(rig, [dropOf(7, "edited-by-other"), dropOf(7, "edited-by-other")]);
+      yield* forwardIn(rig);
+      assert.strictEqual(rig.posted.length, 1);
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, droppedStep(7)]);
+    }),
+  );
+
+  it.effect("a run forward skips reports no drops", () =>
+    Effect.gen(function* () {
+      for (const [events, why] of [
+        [[...STARTED, FINISHED_EVENT], "finished"],
+        [[...STARTED, QUESTIONS_EVENT, moved("building", "needs-info")], "not-building"],
+        [[...BASE_EVENTS, step("gate-sending 1 1")], "gate-send-pending"],
+      ] as const) {
+        const rig = rigFor(events);
+        scriptDropped(rig, [dropOf(7, "edited-by-other")]);
+        const bytes = bytesOf(rig);
+        assert.deepStrictEqual(yield* forwardIn(rig), skipped(why), why);
+        assert.deepStrictEqual(rig.activityCalls, [], why);
+        assert.deepStrictEqual(rig.posted, [], why);
+        assert.strictEqual(bytesOf(rig), bytes, why);
+      }
+    }),
+  );
+
+  it.effect("a thread T3 no longer has skips the call and reports no drops", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      script(rig, [comment(101, "rawphp", "one")]);
+      scriptDropped(rig, [dropOf(7, "edited-by-other")]);
+      rig.world.status = new ThreadNotFoundError({ threadId: "thread-1" });
+      assert.deepStrictEqual(yield* forwardIn(rig), skipped("no-thread"));
+      assert.deepStrictEqual(rig.posted, []);
+    }),
+  );
+
+  it.effect(
+    "a failing comment call is an error with no ledger line, and the next pass says it",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor();
+        scriptDropped(rig, [dropOf(7, "unverifiable")]);
+        rig.world.postFailure = ghFailure();
+        const error = yield* Effect.flip(forwardIn(rig));
+        assert.strictEqual(error._tag, "GitHubFailed");
+        assert.deepStrictEqual(linesOf(rig), [...STARTED]);
+        rig.world.postFailure = null;
+        yield* forwardIn(rig);
+        assert.deepStrictEqual(rig.posted, [droppedText(7, CANNOT_CHECK)]);
+        assert.deepStrictEqual(linesOf(rig), [...STARTED, droppedStep(7)]);
+      }),
+  );
+});

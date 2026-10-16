@@ -1385,35 +1385,33 @@ export const makeGitHub = (options: GitHubOptions) => {
     });
 
   /**
-   * Whether a comment that was updated after it was written may be trusted: GitHub has no edit
-   * of it (the update was not to its body), or every edit in its history is an instructor's.
-   * Unlike a body edit there is no `since` cut-off: the comment is the instructor's own text from
-   * the start, so any other editor at any time disqualifies it. A deleted account among the
-   * editors counts as another editor. An edit by someone else that the answer shows is `other`
-   * even when the history is also too long to read whole. A history that may hide more is
-   * `unverifiable`. No node id, or a `null` entry for a comment that is gone, is `gone`.
+   * Whether a comment that was updated after it was written may be trusted, from its entry in
+   * {@link commentEditors}: GitHub has no edit of it (the update was not to its body), or every
+   * edit in its history is an instructor's. Unlike a body edit there is no `since` cut-off: the
+   * comment is the instructor's own text from the start, so any other editor at any time
+   * disqualifies it. A deleted account among the editors counts as another editor. An edit by
+   * someone else that the answer shows is `other` even when the history is also too long to read
+   * whole. A history that may hide more is `unverifiable`. No entry (no node id, or a comment
+   * that is gone) is `gone`.
    */
   const checkEdits = (
-    nodeId: string | null | undefined,
+    node: CommentEditors | undefined,
     instructors: ReadonlyArray<string>,
-  ): GitHubEffect<"instructors" | "other" | "unverifiable" | "gone"> =>
-    Effect.gen(function* () {
-      if (nodeId === null || nodeId === undefined) return "gone" as const;
-      const node = (yield* commentEditors([nodeId])).get(nodeId);
-      if (node === undefined) return "gone" as const;
-      const lastOther =
-        node.lastEditedAt !== null &&
-        node.lastEditedAt !== undefined &&
-        !isInstructor(node.editor, instructors);
-      // Every entry, the creation included (its editor is the author, an instructor).
-      const anyOther = node.userContentEdits.nodes.some(
-        (edit) => !isInstructor(edit.editor, instructors),
-      );
-      if (lastOther || anyOther) return "other" as const;
-      return editsWhole(node.userContentEdits, node.lastEditedAt, node.editor)
-        ? ("instructors" as const)
-        : ("unverifiable" as const);
-    });
+  ): "instructors" | "other" | "unverifiable" | "gone" => {
+    if (node === undefined) return "gone";
+    const lastOther =
+      node.lastEditedAt !== null &&
+      node.lastEditedAt !== undefined &&
+      !isInstructor(node.editor, instructors);
+    // Every entry, the creation included (its editor is the author, an instructor).
+    const anyOther = node.userContentEdits.nodes.some(
+      (edit) => !isInstructor(edit.editor, instructors),
+    );
+    if (lastOther || anyOther) return "other";
+    return editsWhole(node.userContentEdits, node.lastEditedAt, node.editor)
+      ? "instructors"
+      : "unverifiable";
+  };
 
   /**
    * Comments and a body edit on the issue made by `instructors` after `since`. The factory's own
@@ -1456,11 +1454,22 @@ export const makeGitHub = (options: GitHubOptions) => {
         .toSorted((a, b) =>
           a.created_at! < b.created_at! ? -1 : a.created_at! > b.created_at! ? 1 : 0,
         );
+      const edited = (c: (typeof written)[number]) =>
+        (c.updated_at ?? null) !== (c.created_at ?? null);
+      // Who edited the edited ones, in one call for each 100 of them.
+      const editors = yield* commentEditors(
+        written.flatMap((c) =>
+          edited(c) && c.node_id !== null && c.node_id !== undefined ? [c.node_id] : [],
+        ),
+      );
       const comments: Array<Comment> = [];
       const dropped: Array<Dropped> = [];
       for (const c of written) {
-        if ((c.updated_at ?? null) !== (c.created_at ?? null)) {
-          const verdict = yield* checkEdits(c.node_id, instructors);
+        if (edited(c)) {
+          const verdict = checkEdits(
+            c.node_id === null || c.node_id === undefined ? undefined : editors.get(c.node_id),
+            instructors,
+          );
           if (verdict === "other" || verdict === "unverifiable") {
             dropped.push({
               id: String(c.id),

@@ -3,8 +3,8 @@
  * reads how the session ended and moves the issue on, `watch` stops a run whose issue text was
  * changed by someone who is not an instructor, `forward` sends the session an instructor's
  * comments and edits of the issue body, `timeLimit` stops a run that took too long. The rest of
- * `building.rs` (interruptions and relaunches, review feedback, the notice for a dropped comment)
- * belongs to later issues; the gate itself is `gating.ts`. `advance` also ends a run whose pull request was merged
+ * `building.rs` (interruptions and relaunches, review feedback) belongs to later issues; the gate
+ * itself is `gating.ts`. `advance` also ends a run whose pull request was merged
  * or closed, whose issue a person closed, or that an operator stopped by hand (#20).
  *
  * Each step reads the ledger first and does only what it does not record, so calling it again
@@ -34,6 +34,7 @@ import {
   GitHubParse,
   type Activity,
   type BoundGitHub,
+  type Dropped,
   type IssueDetail,
   type PullRequest,
 } from "../tracker/github.ts";
@@ -56,10 +57,12 @@ import {
   WRONG_ACCOUNT_PREFIX,
   bodyEditMessage,
   commentMessage,
+  droppedCommentMessage,
   prepareSessionText,
 } from "./messages.ts";
 import {
   BODY_EDIT_FORWARDED,
+  COMMENT_DROPPED,
   FORWARD_WAIT,
   RESULT_LINE_REMINDED,
   RESULT_LINE_REMINDING,
@@ -804,8 +807,10 @@ const sinceRunStart = (firstMs: number): string => `${formatTs(firstMs).slice(0,
 /**
  * What `forward` still has to send from one read of the instructors' activity: the comments the
  * ledger has no `comment_forwarded` for, oldest first and each id once, and the body edit whose
- * time has no `body-edit-forwarded` step. A body edit time that is not GitHub's form is refused
- * before anything is sent or written: it ends up in the ledger and in a command id.
+ * time has no `body-edit-forwarded` step. A comment the issue was told about as dropped is never
+ * sent later, whatever a later read says: the instructor was asked to post it again. A body edit
+ * time that is not GitHub's form is refused before anything is sent or written: it ends up in the
+ * ledger and in a command id.
  */
 const unsent = (seen: Seen, activity: Activity) =>
   Effect.gen(function* () {
@@ -816,7 +821,7 @@ const unsent = (seen: Seen, activity: Activity) =>
         expected: `the body edit time as YYYY-MM-DDTHH:MM:SSZ, got "${Array.from(edit.editedAt).slice(0, 40).join("").replaceAll("\n", "\\n")}"`,
       });
     }
-    const told = new Set(seen.forwarded);
+    const told = new Set([...seen.forwarded, ...seen.dropped]);
     const comments = activity.comments.filter((comment) => {
       if (told.has(comment.id)) return false;
       told.add(comment.id);
@@ -827,6 +832,49 @@ const unsent = (seen: Seen, activity: Activity) =>
       bodyEdit: edit !== null && !seen.bodyEdits.has(edit.editedAt) ? edit : null,
     };
   });
+
+/**
+ * The dropped comments the issue was not told about yet, in the order read, each id once. A
+ * comment already forwarded is left out: the session has the instructor's own words, and a later
+ * edit by someone else changes nothing it holds.
+ */
+const unreported = (seen: Seen, activity: Activity): ReadonlyArray<Dropped> => {
+  const told = new Set(seen.dropped);
+  return activity.dropped.filter((dropped) => {
+    if (seen.forwarded.has(dropped.id) || told.has(dropped.id)) return false;
+    told.add(dropped.id);
+    return true;
+  });
+};
+
+/**
+ * Tells the issue, once per dropped comment, that it was not sent to the session: the comment
+ * first and the `comment-dropped <id>` step after it, so a crash between them posts it a second
+ * time (comments are at-least-once). A failure stops the call and the rest is said on the next one.
+ */
+const reportDrops = (
+  ctx: BuildingContext,
+  out: Out,
+  issue: number,
+  drops: ReadonlyArray<Dropped>,
+): Effect.Effect<void, BuildingError> =>
+  Effect.forEach(
+    drops,
+    (dropped) =>
+      Effect.gen(function* () {
+        yield* ctx.tracker.postComment(
+          issue,
+          droppedCommentMessage(ctx.repo, issue, dropped.id, dropped.reason),
+        );
+        yield* append(
+          out,
+          { event: "step_changed", data: { step: `${COMMENT_DROPPED} ${dropped.id}` } },
+          "forward",
+          "comment-dropped",
+        );
+      }),
+    { discard: true },
+  );
 
 /**
  * Sends the session the instructors' new comments and their edit of the issue body, once each.
@@ -845,6 +893,12 @@ const unsent = (seen: Seen, activity: Activity) =>
  * and the gate wait for it instead of judging the old run again. A session that is working has
  * the message steered into its run, which needs no marker. The status is read only when there is
  * something to send.
+ *
+ * The read also lists the instructors' comments it could not forward (`Activity.dropped`). After
+ * the sends, each one the ledger has no `comment-dropped <id>` step for, and that was not
+ * forwarded earlier, gets one comment on the issue in the factory's own fixed words (a link to
+ * the comment, nothing quoted), then the step. A call that skips the run, or finds the thread
+ * gone, reports nothing.
  *
  * `forward` changes no state, and it has no loop or timer: the caller decides how often to call
  * it, and should not gate in a pass where it sent something. A run that is finished, has no
@@ -903,7 +957,9 @@ export const forward = (
         ctx.project.instructors,
       );
       const { comments, bodyEdit } = yield* unsent(seen, activity);
+      const drops = unreported(seen, activity);
       if (comments.length === 0 && bodyEdit === null) {
+        yield* reportDrops(ctx, out, issue, drops);
         return { comments: 0, bodyEdit: false, skipped: null };
       }
 
@@ -965,6 +1021,8 @@ export const forward = (
           },
         );
       }
+      // Last: telling the issue about a dropped comment must not hold back what the session needs.
+      yield* reportDrops(ctx, out, issue, drops);
       return { comments: comments.length, bodyEdit: bodyEdit !== null, skipped: null };
     }),
   );

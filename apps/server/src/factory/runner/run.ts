@@ -90,9 +90,10 @@ export interface ForwardPayload {
  * What the gate's and the forwards' actions carry that the ledger does not: the results comment
  * `post-gate-results` posts, and the send `send-gate-failure` makes, under a command id so a
  * retry is the same command, with the attempt and session run ordinal it then records as sent
- * back. An action whose part is missing is an `InvalidTransition`.
+ * back; and the message a forward sends. An action whose part is missing is an
+ * `InvalidTransition`.
  */
-export interface GatePayload {
+export interface ActionPayload {
   /** What `forward-comment` and `forward-body-edit` send. */
   readonly forward?: ForwardPayload;
   readonly comment?: string;
@@ -151,11 +152,11 @@ export const finishBuilding = (
  * `state_changed` line is written last, after every action, so a ledger that still shows the old
  * state means the transition may be unfinished and is run again. `cause` is the cause of every
  * line written. The gate's actions: marking the pull request ready is repeated safely, its
- * results comment (`gate.comment`) is posted once (`at.gateResultsPosted`, the
- * `gate-results-posted` step), and a failure is sent under `gate.send.commandId` and then
+ * results comment (`payload.comment`) is posted once (`at.gateResultsPosted`, the
+ * `gate-results-posted` step), and a failure is sent under `payload.send.commandId` and then
  * recorded as sent back for that attempt and run. A forwarded comment or body edit is sent under
- * `gate.forward.commandId` and then recorded (`comment_forwarded`, or the step
- * `gate.forward.step`). Actions that belong to later steps, and gate or forward actions with no
+ * `payload.forward.commandId` and then recorded (`comment_forwarded`, or the step
+ * `payload.forward.step`). Actions that belong to later steps, and gate or forward actions with no
  * payload, are an `InvalidTransition`.
  */
 export const applyActions = (
@@ -165,7 +166,7 @@ export const applyActions = (
   at: Progress,
   actions: ReadonlyArray<Action>,
   cause: Cause,
-  gate: GatePayload = {},
+  payload: ActionPayload = {},
 ): Effect.Effect<void, RunError> =>
   Effect.gen(function* () {
     let movedTo: State | undefined;
@@ -237,7 +238,7 @@ export const applyActions = (
           break;
         case "post-gate-results": {
           if (at.gateResultsPosted) break;
-          const body = gate.comment;
+          const body = payload.comment;
           if (body === undefined) {
             return yield* new InvalidTransition({ state: at.state, event: action.kind });
           }
@@ -252,7 +253,7 @@ export const applyActions = (
           break;
         }
         case "send-gate-failure": {
-          const send = gate.send;
+          const send = payload.send;
           if (at.threadId === null || send === undefined) {
             return yield* new InvalidTransition({ state: at.state, event: action.kind });
           }
@@ -271,7 +272,7 @@ export const applyActions = (
           break;
         }
         case "forward-comment": {
-          const send = gate.forward;
+          const send = payload.forward;
           if (at.threadId === null || send === undefined) {
             return yield* new InvalidTransition({ state: at.state, event: action.kind });
           }
@@ -285,7 +286,7 @@ export const applyActions = (
           break;
         }
         case "forward-body-edit": {
-          const send = gate.forward;
+          const send = payload.forward;
           if (at.threadId === null || send?.step === undefined) {
             return yield* new InvalidTransition({ state: at.state, event: action.kind });
           }

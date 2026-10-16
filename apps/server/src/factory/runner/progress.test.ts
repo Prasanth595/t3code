@@ -256,6 +256,30 @@ describe("readProgress: forwarded comments and body edits", () => {
     ]);
     assert.deepStrictEqual([...seen.bodyEdits], []);
   });
+
+  it("keeps the id of every comment-dropped step", () => {
+    assert.deepStrictEqual([...readProgress([]).dropped], []);
+    const seen = readProgress([
+      step(1, "comment-dropped 8"),
+      step(2, "comment-dropped IC_kwDO1"),
+      step(3, "comment-dropped 8"),
+    ]);
+    assert.deepStrictEqual([...seen.dropped].sort(), ["8", "IC_kwDO1"]);
+  });
+
+  it("a comment-dropped id is one plain token", () => {
+    const seen = readProgress(
+      [
+        "comment-dropped ",
+        "comment-dropped a b",
+        "comment-dropped a\tb",
+        "comment-dropped a\u0007b",
+        "comment-dropped a\n",
+        "comment-dropped7",
+      ].map((text, index) => step(index + 1, text)),
+    );
+    assert.deepStrictEqual([...seen.dropped], []);
+  });
 });
 
 describe("readProgress: the last wait marker", () => {

@@ -7,6 +7,7 @@
 import type { State } from "../domain/lifecycle.ts";
 import type { CommandResult } from "../gate.ts";
 import { commandLine, sanitize } from "../text.ts";
+import type { DropReason } from "../tracker/github.ts";
 
 /** The public reason when a run has no record of what approved it. */
 export const CANNOT_CONFIRM = "the factory could not confirm the issue text was approved";
@@ -223,6 +224,23 @@ export const bodyEditMessage = (
   body: string,
 ): string =>
   `The body of ${repo}#${issue} was edited by ${loginText(editor)}. Go back to your Contract step and work from the new body:\n\n${instructionText(body, repo, issue)}`;
+
+/**
+ * The comment the factory posts when an instructor's comment was not sent to the session, in its
+ * own fixed words. It names the comment by link and quotes nothing from it.
+ */
+export const droppedCommentMessage = (
+  repo: string,
+  issue: number,
+  commentId: string,
+  reason: DropReason,
+): string => {
+  const why =
+    reason === "edited-by-other"
+      ? "someone who is not an instructor edited it"
+      : "the factory could not check who edited it";
+  return `The factory did not send an instructor's comment to the build session, because ${why}.\n\nComment: https://github.com/${repo}/issues/${issue}#issuecomment-${commentId}\n\nPost the instruction as a new comment and the factory will send it.`;
+};
 
 /** The line the gate puts in front of everything it sends back into the session, so the session's next run ends the way `advance` reads. */
 export const END_WITH_DONE =

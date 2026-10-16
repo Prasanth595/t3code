@@ -2291,6 +2291,36 @@ describe("following a building run", () => {
       }),
   );
 
+  it.effect(
+    "a finished session whose ledger cannot be read for a pending gate send is not gated this pass",
+    () =>
+      Effect.gen(function* () {
+        // As softfac's `advance_and_gate`: the read comes before the gate, and its failure ends the
+        // run's turn in the pass, so the next pass gates it.
+        const fake = building();
+        fake.pendingSendFails = true;
+        fake.advances[`${REPO}#40`] = [
+          { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
+        ];
+        const { report, lines } = yield* pass(fake, machine([REPO], 3));
+        assert.equal(report.errors, 1);
+        assert.deepEqual(callsOf(fake), [
+          `time_limit ${REPO}#40`,
+          `watch ${REPO}#40`,
+          `forward ${REPO}#40`,
+          `advance ${REPO}#40`,
+        ]);
+        assert.deepEqual(
+          fake.runErrors.map((e) => `${e.step} ${e.kind}`),
+          ["pass ledger"],
+        );
+        assert.ok(
+          lines.some((line) => line.includes("gate send check")),
+          lines.join("\n"),
+        );
+      }),
+  );
+
   it.effect("a run whose issue a person closed is over after the forward", () =>
     Effect.gen(function* () {
       const fake = building();

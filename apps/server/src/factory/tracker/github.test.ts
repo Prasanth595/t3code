@@ -4175,13 +4175,12 @@ const bodyEditCall = [
   "-F",
   "number=6",
 ];
-const editorCall = (nodeId: string) => [
+const editorCall = (...nodeIds: ReadonlyArray<string>) => [
   "api",
   "graphql",
   "-f",
   `query=${COMMENT_EDITOR_QUERY}`,
-  "-f",
-  `ids[]=${nodeId}`,
+  ...nodeIds.flatMap((id) => ["-f", `ids[]=${id}`]),
 ];
 
 /** A REST comment as `gh api repos/R/issues/N/comments` prints it. */
@@ -4241,6 +4240,15 @@ const editorReplyRaw = (
           userContentEdits: editsJson(nodes, total),
         },
       ],
+    },
+  });
+/** One lookup answer holding the nodes of several single-comment answers. */
+const editorsReply = (...answers: ReadonlyArray<string>) =>
+  JSON.stringify({
+    data: {
+      nodes: answers.flatMap(
+        (answer) => (JSON.parse(answer) as { data: { nodes: Array<unknown> } }).data.nodes,
+      ),
     },
   });
 /** The lookup of a comment written by `tom` and last edited as `last`. */
@@ -4698,7 +4706,7 @@ it.effect("a comment that cannot be looked up, or is gone, is dropped and not re
   }),
 );
 
-it.effect("only edited comments by instructors are looked up, each once, oldest first", () =>
+it.effect("only edited comments by instructors are looked up, in one call, oldest first", () =>
   Effect.gen(function* () {
     const t = setup(
       reply(
@@ -4709,17 +4717,38 @@ it.effect("only edited comments by instructors are looked up, each once, oldest 
           restNode(5, "stranger", "2026-10-04T10:04:00Z", "plain"),
         ]),
       ),
-      reply(editorReply([EDIT_AT, "tom"])),
-      reply(editorReply([EDIT_AT, "stranger"], "IC_9")),
+      // GitHub promises no order for the nodes.
+      reply(
+        editorsReply(editorReply([EDIT_AT, "stranger"], "IC_9"), editorReply([EDIT_AT, "tom"])),
+      ),
       reply(activityBodyReply("b", null)),
     );
     const activity = yield* activityOf(t, ["tom"]);
     assert.deepStrictEqual(idsOf(activity), ["7"]);
     assert.deepStrictEqual(activity.dropped, [dropOf("9", "edited-by-other")]);
+    assert.deepStrictEqual(t.calls(), [commentsCall, editorCall("IC_7", "IC_9"), bodyEditCall]);
+  }),
+);
+
+it.effect("edited comments are looked up 100 to a call", () =>
+  Effect.gen(function* () {
+    const ids = Array.from({ length: 101 }, (_, i) => 1000 + i);
+    const at = (i: number) =>
+      `2026-10-04T10:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}Z`;
+    const answer = (some: ReadonlyArray<number>) =>
+      editorsReply(...some.map((id) => editorReply([EDIT_AT, "tom"], `IC_${id}`)));
+    const t = setup(
+      reply(restReply(ids.map((id, i) => editedRestNode(id, "tom", at(i + 1), EDIT_AT, "x")))),
+      reply(answer(ids.slice(0, 100))),
+      reply(answer(ids.slice(100))),
+      reply(activityBodyReply("b", null)),
+    );
+    const activity = yield* activityOf(t, ["tom"]);
+    assert.strictEqual(activity.comments.length, 101);
     assert.deepStrictEqual(t.calls(), [
       commentsCall,
-      editorCall("IC_7"),
-      editorCall("IC_9"),
+      editorCall(...ids.slice(0, 100).map((id) => `IC_${id}`)),
+      editorCall(`IC_${ids[100]}`),
       bodyEditCall,
     ]);
   }),
@@ -4737,8 +4766,12 @@ it.effect(
             editedRestNode(7, "tom", "2026-10-04T10:01:00Z", EDIT_AT, "a"),
           ]),
         ),
-        reply(editorReply([EDIT_AT, "stranger"])),
-        reply(editorReplyRaw([EDIT_AT, "tom"], [], 0, "IC_9")),
+        reply(
+          editorsReply(
+            editorReply([EDIT_AT, "stranger"]),
+            editorReplyRaw([EDIT_AT, "tom"], [], 0, "IC_9"),
+          ),
+        ),
         reply(activityBodyReply("new body", [EDIT_AT, "tom"])),
       );
       const activity = yield* activityOf(t, ["tom"]);
