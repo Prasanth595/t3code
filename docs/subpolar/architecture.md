@@ -27,6 +27,8 @@ The terminal route does not yet make the Subpolar Pi harness itself container-ho
 
 The Docker backend now discovers image-based Dev Container configurations at the worktree root and `.devcontainer/`, including named configs. A single config is selected automatically; when multiple configs exist the operator must choose with `SUBPOLAR_DEFAULT_DEVCONTAINER_CONFIG`. It uses the configured image while retaining the manager's isolation policy, and rejects unsupported options rather than ignoring them. Dockerfile builds, Features, Compose, lifecycle hooks, custom mounts, environment overrides, and port forwarding remain unsupported; see [Dev Container support](dev-containers.md).
 
+The manager also exposes authenticated non-TTY process sessions with stdin forwarding, sequenced stdout/stderr events, reconnectable output, and process-group termination. This transport is groundwork for remote ACP; the ACP bridge does not yet use it, and the worker image does not yet include a Subpolar ACP harness.
+
 ## Source disposition
 
 Subpolar's existing frontend and `@subpolar/client` are not imported. Its application backend is not copied wholesale because it combines Bun APIs, PocketBase, profile/session routing, tools, Git, and old UI concerns. Persistence, automations, browser services, and external-agent adapters remain deferred until they can be adapted without duplicating T3-owned state.
