@@ -18,11 +18,6 @@ on:
         type: string
         default: ""
 
-# A newer release makes an APK for an older one pointless.
-concurrency:
-  group: fork-android
-  cancel-in-progress: true
-
 permissions:
   contents: read
 
@@ -34,6 +29,12 @@ jobs:
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.head_branch == 'main' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
+    # On the job, so only a run that passes `if` joins the group: a cancelled or
+    # failed Fork Release never cancels a running build. A newer main release
+    # makes an APK for an older one pointless. A branch run has its own group.
+    concurrency:
+      group: fork-android-${{ github.event_name == 'workflow_run' && 'main' || github.ref_name }}
+      cancel-in-progress: true
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -53,6 +54,10 @@ jobs:
             publish=false
           else
             build_sha="${RUN_SHA:-$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)}"
+            if [[ ! "$build_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error title=Bad commit::The commit must be 40 lowercase hexadecimal characters."
+              exit 1
+            fi
             # Fork Release names each release "... (<first 12 characters of the commit>)".
             tag="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 50 --json tagName,name \
               --jq "[.[] | select(.name | contains(\"(${build_sha:0:12})\"))][0].tagName // empty")"
@@ -117,9 +122,13 @@ jobs:
           echo "Version code ${T3CODE_ANDROID_VERSION_CODE}, version name ${T3CODE_MOBILE_VERSION}."
           scripts/fork-android-apk.sh build "$RUNNER_TEMP/unsigned.apk"
 
-      # The only step that sees the signing secrets.
+      # The only step that sees the signing secrets. Known limit: it runs in the
+      # job that ran the build, so code from a build dependency could still be
+      # on the runner. Revisit with a separate sign job (fresh checkout, fixed
+      # build-tools version) if a third-party build dependency becomes untrusted.
       - name: Sign APK
         env:
+          VERSION: ${{ steps.target.outputs.version }}
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -134,13 +143,14 @@ jobs:
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE"
           mkdir -p release-android
           scripts/fork-android-apk.sh sign "$RUNNER_TEMP/unsigned.apk" \
-            "release-android/t3code-${{ steps.target.outputs.version }}-android.apk"
+            "release-android/t3code-${VERSION}-android.apk"
 
       - name: Add the APK to the release
         if: steps.target.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "${{ steps.target.outputs.tag }}" release-android/* --repo "$GITHUB_REPOSITORY" --clobber
+          TAG: ${{ steps.target.outputs.tag }}
+        run: gh release upload "$TAG" release-android/* --repo "$GITHUB_REPOSITORY" --clobber
 
       - name: Upload the APK of a branch run
         if: steps.target.outputs.publish != 'true'
