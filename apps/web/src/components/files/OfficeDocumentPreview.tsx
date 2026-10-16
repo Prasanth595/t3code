@@ -77,12 +77,10 @@ function DocumentContents({ document }: { readonly document: OfficeDocument }) {
             )
           ) : slide ? (
             <div
-              className="relative w-full overflow-hidden border shadow-sm"
+              className="@container relative w-full overflow-hidden border text-black shadow-sm"
               style={{
                 aspectRatio: `${slide.width} / ${slide.height}`,
-                containerType: "inline-size",
                 backgroundColor: slide.background ?? "#ffffff",
-                color: "#000000",
               }}
             >
               {layers?.map(({ element, layer }) => {

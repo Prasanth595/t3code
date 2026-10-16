@@ -82,6 +82,79 @@ function visualPresentationParts(): Record<string, Uint8Array> {
 }
 
 describe("parseOfficeDocument spreadsheets", () => {
+  it.each(["xlsx", "xls"] as const)(
+    "previews visible sheets after twenty hidden sheets in %s",
+    (format) => {
+      const workbook = XLSX.utils.book_new();
+      for (let index = 0; index < 20; index++) {
+        const name = `Hidden ${index + 1}`;
+        XLSX.utils.book_append_sheet(
+          workbook,
+          XLSX.utils.aoa_to_sheet([[`Hidden value ${index + 1}`]]),
+          name,
+        );
+        XLSX.utils.book_set_sheet_visibility(workbook, name, index % 2 ? 2 : 1);
+      }
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.aoa_to_sheet([["Public revenue"]]),
+        "Visible Revenue",
+      );
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.aoa_to_sheet([["Public costs"]]),
+        "Visible Costs",
+      );
+      const document = parseOfficeDocument(
+        new Uint8Array(
+          XLSX.write(workbook, { type: "array", bookType: format === "xls" ? "biff8" : "xlsx" }),
+        ),
+        format,
+      );
+      if (document.kind !== "spreadsheet") throw new Error("Expected spreadsheet");
+      expect(document.sheets.map((sheet) => ({ name: sheet.name, rows: sheet.rows }))).toEqual([
+        { name: "Visible Revenue", rows: [["Public revenue"]] },
+        { name: "Visible Costs", rows: [["Public costs"]] },
+      ]);
+      expect(document.warnings.some((warning) => warning.includes("first 20"))).toBe(false);
+    },
+  );
+
+  it.each(["xlsx", "xls"] as const)(
+    "applies the twenty-sheet cap to visible sheets in %s",
+    (format) => {
+      const workbook = XLSX.utils.book_new();
+      for (let index = 0; index < 21; index++) {
+        const hiddenName = `Hidden ${index + 1}`;
+        XLSX.utils.book_append_sheet(
+          workbook,
+          XLSX.utils.aoa_to_sheet([["Hidden value"]]),
+          hiddenName,
+        );
+        XLSX.utils.book_set_sheet_visibility(workbook, hiddenName, 1);
+        XLSX.utils.book_append_sheet(
+          workbook,
+          XLSX.utils.aoa_to_sheet([[`Public value ${index + 1}`]]),
+          `Visible ${String(index + 1).padStart(2, "0")}`,
+        );
+      }
+      const document = parseOfficeDocument(
+        new Uint8Array(
+          XLSX.write(workbook, { type: "array", bookType: format === "xls" ? "biff8" : "xlsx" }),
+        ),
+        format,
+      );
+      if (document.kind !== "spreadsheet") throw new Error("Expected spreadsheet");
+      expect(document.sheets).toHaveLength(20);
+      expect(document.sheets[0]).toMatchObject({ name: "Visible 01", rows: [["Public value 1"]] });
+      expect(document.sheets[19]).toMatchObject({
+        name: "Visible 20",
+        rows: [["Public value 20"]],
+      });
+      expect(document.sheets.some((sheet) => sheet.name === "Visible 21")).toBe(false);
+      expect(document.warnings).toContain("Only the first 20 visible worksheets are shown.");
+    },
+  );
   it.each([
     { rows: 100, truncated: false },
     { rows: 101, truncated: true },

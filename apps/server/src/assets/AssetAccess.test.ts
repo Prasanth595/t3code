@@ -717,6 +717,40 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect("keeps Office files out of directory-scoped browser-document grants", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-office-browser-grant-" });
+      yield* fs.makeDirectory(path.join(root, "nested"));
+      yield* fs.writeFileString(path.join(root, "style.css"), "body { color: red; }");
+      for (const name of ["private.xlsx", "private.xls", "private.pptx", "nested/private.XLSX"]) {
+        yield* fs.writeFileString(path.join(root, name), "Office file bytes");
+      }
+      for (const name of ["report.html", "report.pdf"]) {
+        yield* fs.writeFileString(path.join(root, name), "browser document bytes");
+        for (const resource of [
+          { _tag: "workspace-file" as const, threadId: ThreadId.make("thread-1"), path: name },
+          { _tag: "draft-workspace-file" as const, cwd: root, path: name },
+        ]) {
+          const result = yield* issueAssetUrl({ resource, workspaceRoot: root });
+          const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+          const token = suffix.slice(0, suffix.indexOf("/"));
+          expect(yield* resolveAsset(token, name)).toMatchObject({ kind: "file" });
+          expect(yield* resolveAsset(token, "style.css")).toMatchObject({ kind: "file" });
+          for (const sibling of [
+            "private.xlsx",
+            "private.xls",
+            "private.pptx",
+            "nested/private.XLSX",
+          ]) {
+            expect(yield* resolveAsset(token, sibling)).toBeNull();
+          }
+        }
+      }
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("rejects workspace files outside the authorized root", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

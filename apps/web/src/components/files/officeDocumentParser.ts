@@ -583,11 +583,21 @@ function validateCompoundWorkbook(bytes: Uint8Array) {
   if (rootChain.length === 0 && miniCount !== 0) fail("Invalid workbook mini stream.");
 }
 
-function parseSpreadsheet(bytes: Uint8Array): OfficeDocument {
+function visibleSheetIndices(bytes: Uint8Array): number[] {
+  // Unlike bookSheets, an empty worksheet selection retains visibility metadata.
+  const metadata = XLSX.read(bytes, { type: "array", sheets: [], sheetRows: MAX_ROWS + 1 });
+  return metadata.SheetNames.flatMap((_, index) =>
+    metadata.Workbook?.Sheets?.[index]?.Hidden ? [] : [index],
+  );
+}
+
+function parseSpreadsheet(bytes: Uint8Array, format: "xlsx" | "xls"): OfficeDocument {
+  const selectedIndices = format === "xlsx" ? visibleSheetIndices(bytes) : null;
+  if (selectedIndices?.length === 0) fail("The workbook has no visible worksheets to preview.");
   const workbook = XLSX.read(bytes, {
     type: "array",
     sheetRows: MAX_ROWS + 1,
-    sheets: Array.from({ length: MAX_SHEETS }, (_, index) => index),
+    ...(selectedIndices ? { sheets: selectedIndices.slice(0, MAX_SHEETS) } : {}),
     cellFormula: true,
     cellText: true,
     cellHTML: false,
@@ -634,8 +644,8 @@ function parseSpreadsheet(bytes: Uint8Array): OfficeDocument {
   });
   if (sheets.length === 0) fail("The workbook has no visible worksheets to preview.");
   const warnings = ["Values only; styles, charts, and formula recalculation are not included."];
-  if (workbook.SheetNames.length > MAX_SHEETS)
-    warnings.push(`Only the first ${MAX_SHEETS} worksheets are considered.`);
+  if ((selectedIndices?.length ?? visibleNames.length) > MAX_SHEETS)
+    warnings.push(`Only the first ${MAX_SHEETS} visible worksheets are shown.`);
   if (sheets.some((sheet) => sheet.truncated))
     warnings.push("Tables are limited to the first 100 rows and 30 columns.");
   if (budget.truncated)
@@ -1078,7 +1088,7 @@ export function parseOfficeDocument(
   }
   if (format === "xls") {
     validateCompoundWorkbook(bytes);
-    return parseSpreadsheet(bytes);
+    return parseSpreadsheet(bytes, "xls");
   }
   const parts = expandArchive(bytes);
   for (const [name, content] of parts) {
@@ -1086,5 +1096,5 @@ export function parseOfficeDocument(
   }
   if (format === "pptx") return parsePresentation(parts);
   if (!parts.has("xl/workbook.xml")) fail("This file is not a supported Excel workbook.");
-  return parseSpreadsheet(bytes);
+  return parseSpreadsheet(bytes, "xlsx");
 }

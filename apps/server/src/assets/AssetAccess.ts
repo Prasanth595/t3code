@@ -93,9 +93,6 @@ const inlinePreviewMimeTypeForExtension = (extension: string) =>
 const PREVIEW_ASSET_EXTENSIONS = new Set([
   ...WORKSPACE_BROWSER_PREVIEW_EXTENSIONS,
   ...WORKSPACE_IMAGE_PREVIEW_EXTENSIONS,
-  ".xlsx",
-  ".xls",
-  ".pptx",
   ".css",
   ".js",
   ".mjs",
