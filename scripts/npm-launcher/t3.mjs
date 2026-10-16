@@ -98,10 +98,35 @@ async function install(dir, key) {
     if (extract.status !== 0) throw new Error(`could not extract ${archive}`);
     fs.rmSync(file);
     fs.writeFileSync(path.join(staging, ".install-complete"), `${version}\n`);
-    fs.rmSync(dir, { recursive: true, force: true });
-    fs.renameSync(staging, dir);
+    publish(staging, dir);
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });
+  }
+}
+
+const isComplete = (dir) => {
+  try {
+    return fs.readFileSync(path.join(dir, ".install-complete"), "utf8").trim() === version;
+  } catch {
+    return false;
+  }
+};
+
+/**
+ * Moves a finished staging folder to `dir`. Rename never replaces an existing
+ * folder, so a complete install another launcher (or `t3 update`) published
+ * first is kept, never deleted from under a running process. Only a folder
+ * without the completion marker, left by an interrupted older installer, is
+ * cleared before trying again.
+ */
+function publish(staging, dir) {
+  try {
+    fs.renameSync(staging, dir);
+  } catch (error) {
+    if (isComplete(dir)) return;
+    if (!fs.existsSync(dir)) throw error;
+    fs.rmSync(dir, { recursive: true, force: true });
+    fs.renameSync(staging, dir);
   }
 }
 
@@ -114,11 +139,7 @@ async function main() {
     );
   }
   const dir = path.join(t3Home(), "runtime", "versions", version);
-  let installed = false;
-  try {
-    installed = fs.readFileSync(path.join(dir, ".install-complete"), "utf8").trim() === version;
-  } catch {}
-  if (!installed) await install(dir, key);
+  if (!isComplete(dir)) await install(dir, key);
 
   // A service launcher talks to its server over IPC; pass that channel and
   // signals through. In a terminal, Ctrl-C already reaches the child directly,

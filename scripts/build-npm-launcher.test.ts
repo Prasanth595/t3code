@@ -187,6 +187,19 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           assert.deepStrictEqual(await exit, [23, null]);
         });
 
+        // Two first runs at once both start, and neither removes the other's install.
+        const raceHome = path.join(root, "race-home");
+        const launch = run(process.execPath, [launcher, "--version"], {
+          cwd: root,
+          env: { ...env, T3CODE_HOME: raceHome },
+        });
+        const [one, two] = yield* Effect.all([launch, launch], { concurrency: "unbounded" });
+        assert.equal(one.exitCode, 7, one.stderr);
+        assert.equal(two.exitCode, 7, two.stderr);
+        assert.deepStrictEqual(yield* fs.readDirectory(path.join(raceHome, "runtime/versions")), [
+          VERSION,
+        ]);
+
         // A download that does not match the release checksums is never installed.
         release.corruptChecksum();
         const corrupt = yield* run(process.execPath, [launcher, "--version"], {
