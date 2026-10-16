@@ -1,5 +1,6 @@
 import {
   CLIENT_GUARDED_RPC_SCOPES,
+  FORK_RPC_READ_SCOPES,
   type DeviceListInput,
   clientRpcRequiredScopes,
   authScopeRequiredResponse,
@@ -205,18 +206,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.subscribeServerLifecycle]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAuthAccess]: AuthAccessReadScope,
   [WS_METHODS.subscribeBackgroundPolicy]: AuthOrchestrationReadScope,
-  [WS_METHODS.forkChangelogListReleases]: AuthOrchestrationReadScope,
-  [WS_METHODS.forkChangelogReleaseChanges]: AuthOrchestrationReadScope,
-  [WS_METHODS.forkChangelogUpstreamPending]: AuthOrchestrationReadScope,
-  [WS_METHODS.forkChangelogSyncStatus]: AuthOrchestrationReadScope,
-  // Fork: machine map state for this server's clients. Only the desktop gets the token.
-  [WS_METHODS.machineMapSubscribe]: AuthOrchestrationReadScope,
-  // Fork: MM-1701. The same data that an agent with read access gets from `machines_read`.
-  [WS_METHODS.machineMapRead]: AuthOrchestrationReadScope,
-  // Fork: a subscription receives the thread titles of this server, which reading allows already.
-  [WS_METHODS.webPushPublicKey]: AuthOrchestrationReadScope,
-  [WS_METHODS.webPushSubscribe]: AuthOrchestrationReadScope,
-  [WS_METHODS.webPushTest]: AuthOrchestrationReadScope,
+  ...FORK_RPC_READ_SCOPES,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {
