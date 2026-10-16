@@ -12,7 +12,7 @@ This integration has not changed `apps/web`, `apps/desktop`, `apps/mobile`, or T
 
 ## Validation status
 
-Focused Bun tests pass for the imported Subpolar contracts/runtime/Pi/tools packages (81 tests) and the initial environment coordinator (5 tests). ACP bridge tests and the server readiness-route test are present but could not run because workspace dependencies and the Vite+ runner are not installed in this checkout; the pinned package-manager bootstrap also did not complete in the restricted environment. `git diff --check` passes.
+Focused Bun tests pass for the imported Subpolar contracts/runtime/Pi/tools packages, environment coordinator, and runtime host (89 tests total). ACP bridge tests, recursive typechecks, and the server readiness-route test are present but could not run because workspace dependencies and the Vite+ runner are not installed in this checkout; the pinned package-manager bootstrap also did not complete in the restricted environment. The pnpm lockfile parses as YAML and `git diff --check` passes.
 
 The Docker image, Docker manager, persistent environment lifecycle, shared Git/worktree mounts, T3 terminal routing, and end-to-end provider flow have not been implemented or validated. The imported ACP bridge is text-only and has tools disabled. This document does not claim these features are production-ready.
 

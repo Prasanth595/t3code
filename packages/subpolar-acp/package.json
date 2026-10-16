@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@subpolar/runtime": "workspace:*",
+    "@subpolar/runtime-host": "workspace:*",
     "@subpolar/runtime-pi": "workspace:*",
     "effect": "catalog:",
     "effect-acp": "workspace:*"

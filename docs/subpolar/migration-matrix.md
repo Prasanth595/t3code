@@ -8,6 +8,7 @@ Source: Subpolar commit `2ddbce8` (`automations`, 2026-10-11). This matrix recor
 | `subpolar-core` (`@subpolar/runtime`) | Import first | Runtime composition, policy and approval gateway; stateless with respect to T3 threads. |
 | `subpolar-core-pi` (`@subpolar/runtime-pi`) | Import first | Transient Pi adapter. Its dynamically loaded Pi SDK is declared as an optional peer; the host supplies installation and credentials. |
 | `subpolar-tools` (`@subpolar/tools`) | Import first | Persistence-neutral tool registry and CLI surface. |
+| `subpolar-runtime-host` (`@subpolar/runtime-host`) | Add initial host | Owns ephemeral Pi sessions and cancellation in one process; no persistence/resume, tools, or environment isolation. |
 | `subpolar-acp` (`@subpolar/acp`) | Import initial bridge | Uses T3's existing ACP provider path; current bridge is prompt/response text only with Pi tools disabled. |
 | `subpolar-environments` (`@subpolar/environments`) | Import initial contract | Backend-neutral stable identity, path containment, and lifecycle coordinator; no Docker driver or durable manager yet. |
 | `subpolar-operations` (`@subpolar/shared-operations`) | Defer | Source/tests import undeclared `@subpolar/contracts`; repair package identity and tests before migration. |
@@ -24,5 +25,5 @@ Source: Subpolar commit `2ddbce8` (`automations`, 2026-10-11). This matrix recor
 
 ## Package-management notes
 
-T3's `packages/*` pnpm workspace glob includes imported packages. Keep Subpolar's package names and valid `workspace:*` dependencies. Bun may remain a runtime for Subpolar-specific workers and tests, but pnpm remains the sole workspace package manager and lockfile. Several source packages use Bun test scripts/APIs; those tests need focused migration or an explicitly retained Bun test runtime before they are treated as supported under T3.
+T3's `packages/*` pnpm workspace glob includes imported packages. Keep Subpolar's package names and valid `workspace:*` dependencies. Bun remains a test/runtime requirement for imported Subpolar package tests; CI installs the pinned Bun runtime in the test job while pnpm remains the sole workspace package manager and lockfile. Imported source packages now expose focused `typecheck` scripts through T3's recursive TypeScript check.
 

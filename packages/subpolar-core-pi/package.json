@@ -17,7 +17,11 @@
       "optional": true
     }
   },
+  "devDependencies": {
+    "@types/node": "catalog:"
+  },
   "scripts": {
+    "typecheck": "tsc-rs --noEmit",
     "test": "bun test test"
   }
 }

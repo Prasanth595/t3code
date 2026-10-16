@@ -1831,6 +1831,9 @@ importers:
       '@subpolar/runtime':
         specifier: workspace:*
         version: link:../subpolar-core
+      '@subpolar/runtime-host':
+        specifier: workspace:*
+        version: link:../subpolar-runtime-host
       '@subpolar/runtime-pi':
         specifier: workspace:*
         version: link:../subpolar-core-pi
@@ -1867,10 +1870,38 @@ importers:
       '@subpolar/shared':
         specifier: workspace:*
         version: link:../subpolar-contracts
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.12.4
 
-  packages/subpolar-environments: {}
+  packages/subpolar-environments:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.12.4
 
-  packages/subpolar-tools: {}
+  packages/subpolar-runtime-host:
+    dependencies:
+      '@subpolar/runtime':
+        specifier: workspace:*
+        version: link:../subpolar-core
+      '@subpolar/runtime-pi':
+        specifier: workspace:*
+        version: link:../subpolar-core-pi
+      '@subpolar/shared':
+        specifier: workspace:*
+        version: link:../subpolar-contracts
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.12.4
+
+  packages/subpolar-tools:
+    devDependencies:
+      '@types/node':
+        specifier: 'catalog:'
+        version: 24.12.4
 
   packages/tailscale:
     dependencies:

@@ -7,12 +7,10 @@ import * as AcpError from "effect-acp/errors";
 import * as AcpSchema from "effect-acp/schema";
 import {
   createPolicyGateway,
-  createStatelessSubpolarRuntime,
   type RuntimeContext,
-  type StatelessSubpolarRuntime,
 } from "@subpolar/runtime";
+import { createSubpolarRuntimeHost } from "@subpolar/runtime-host";
 import {
-  createPiStatelessExecutor,
   createPiSdkExecutorFactory,
   loadPiSdk,
   type PiExecutorFactory,
@@ -61,11 +59,11 @@ function eventText(value: unknown): string | undefined {
   return typeof text === "string" ? text : undefined;
 }
 
-function createRuntime(
+function createRuntimeHost(
   options: SubpolarAcpOptions,
   sessions: Map<string, SessionContext>,
   emitProgress: (sessionId: string, runId: string, event: unknown) => Effect.Effect<void>,
-): StatelessSubpolarRuntime {
+) {
   const gateway = createPolicyGateway({
     tools: [],
     execute: async () => {
@@ -73,11 +71,11 @@ function createRuntime(
     },
   });
   const piFactory = options.executorFactory ?? createPiSdkExecutorFactory(options.loadPiSdk ?? loadPiSdk);
-  const executor = createPiStatelessExecutor(piFactory, options.piConfig);
 
-  return createStatelessSubpolarRuntime({
+  return createSubpolarRuntimeHost({
     gateway,
-    executor,
+    piFactory,
+    piConfig: options.piConfig,
     context: {
       load: async ({ requestId, runId, sessionId, principal }): Promise<RuntimeContext | undefined> => {
         const session = sessionId ? sessions.get(sessionId) : undefined;
@@ -91,6 +89,7 @@ function createRuntime(
         };
       },
     },
+    createId: () => `subpolar-${crypto.randomUUID()}`,
     eventSink: async (event) => {
       if (event.type === "run.progress" && event.sessionId) {
         await Effect.runPromise(emitProgress(event.sessionId, event.runId, event.data));
@@ -103,9 +102,11 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
   return Effect.gen(function* () {
     const agent = yield* AcpAgent.make(stdio);
     const sessions = new Map<string, SessionContext>();
-    const activeRuns = new Map<string, AbortController>();
+    const activeSessions = new Set<string>();
+    const activeRunIds = new Map<string, string>();
     const streamedText = new Set<string>();
-    const runtime = createRuntime(options, sessions, (sessionId, runId, event) => {
+    const runtime = createRuntimeHost(options, sessions, (sessionId, runId, event) => {
+      activeRunIds.set(sessionId, runId);
       const candidate = event as { type?: unknown; data?: unknown };
       if (candidate?.type !== "text") return Effect.void;
       const text = eventText(candidate.data);
@@ -131,21 +132,23 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
 
     yield* agent.handleCreateSession((request) =>
       Effect.sync(() => {
-        const sessionId = `subpolar-${crypto.randomUUID()}`;
-        sessions.set(sessionId, { cwd: request.cwd });
-        return { sessionId };
+        const session = runtime.createSession({ id: options.principalId ?? "local", kind: "local" });
+        sessions.set(session.sessionId, { cwd: request.cwd });
+        return { sessionId: session.sessionId };
       }),
     );
 
     yield* agent.handleCancel((notification) =>
-      Effect.sync(() => activeRuns.get(notification.sessionId)?.abort()),
+      Effect.sync(() => {
+        runtime.cancel(notification.sessionId);
+      }),
     );
 
     yield* agent.handlePrompt((request) =>
       Effect.gen(function* () {
         const session = sessions.get(request.sessionId);
         if (!session) return yield* Effect.fail(AcpError.AcpRequestError.resourceNotFound("Subpolar ACP session was not found"));
-        if (activeRuns.has(request.sessionId)) {
+        if (activeSessions.has(request.sessionId)) {
           return yield* Effect.fail(AcpError.AcpRequestError.invalidRequest("A prompt is already running for this session"));
         }
 
@@ -156,35 +159,30 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
           return yield* Effect.fail(AcpError.AcpRequestError.invalidParams(errorMessage(error)));
         }
 
-        const controller = new AbortController();
-        const requestId = crypto.randomUUID();
-        const runId = crypto.randomUUID();
-        activeRuns.set(request.sessionId, controller);
-        streamedText.delete(runId);
+        activeSessions.add(request.sessionId);
+        const previousRunId = activeRunIds.get(request.sessionId);
+        if (previousRunId) streamedText.delete(previousRunId);
+        activeRunIds.delete(request.sessionId);
         yield* agent.client.sessionUpdate({
           sessionId: request.sessionId,
           update: { sessionUpdate: "state_update", state: "running" },
         });
+        const failureMessageId = crypto.randomUUID();
 
         yield* Effect.forkScoped(
           Effect.tryPromise({
-            try: () => runtime.run({
-              runId,
-              requestId,
-              prompt,
-              sessionId: request.sessionId,
-              signal: controller.signal,
-            }),
+            try: () => runtime.prompt(request.sessionId, prompt),
             catch: (error) => error,
           }).pipe(
             Effect.flatMap((result) => {
+              const runId = result.runId;
               const finalText = result.state === "completed" ? eventText(result.output) : undefined;
               const sendFinalText = finalText && !streamedText.has(runId)
                 ? agent.client.sessionUpdate({
                     sessionId: request.sessionId,
                     update: {
                       sessionUpdate: "agent_message",
-                      messageId: runId,
+                    messageId: runId,
                       content: [{ type: "text", text: finalText }],
                     },
                   })
@@ -207,7 +205,7 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
                   update: {
                     sessionUpdate: "state_update",
                     state: "idle",
-                    ...(controller.signal.aborted || result.state === "interrupted"
+                    ...(result.state === "interrupted"
                       ? { stopReason: "cancelled" as const }
                       : result.state === "completed"
                         ? { stopReason: "end_turn" as const }
@@ -215,8 +213,9 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
                   },
                 })),
                 Effect.ensuring(Effect.sync(() => {
-                  if (activeRuns.get(request.sessionId) === controller) activeRuns.delete(request.sessionId);
+                  activeSessions.delete(request.sessionId);
                   streamedText.delete(runId);
+                  activeRunIds.delete(request.sessionId);
                 })),
                 Effect.as({}),
               );
@@ -226,7 +225,7 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
                 sessionId: request.sessionId,
                 update: {
                   sessionUpdate: "agent_message",
-                  messageId: runId,
+                  messageId: failureMessageId,
                   content: [{ type: "text", text: errorMessage(error) }],
                 },
               }).pipe(
@@ -235,8 +234,10 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
                   update: { sessionUpdate: "state_update", state: "idle", stopReason: "refusal" },
                 })),
                 Effect.ensuring(Effect.sync(() => {
-                  if (activeRuns.get(request.sessionId) === controller) activeRuns.delete(request.sessionId);
-                  streamedText.delete(runId);
+                  activeSessions.delete(request.sessionId);
+                  const runId = activeRunIds.get(request.sessionId);
+                  if (runId) streamedText.delete(runId);
+                  activeRunIds.delete(request.sessionId);
                 })),
               ),
             ),

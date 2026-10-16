@@ -10,6 +10,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
+    "typecheck": "tsc-rs --noEmit",
     "test": "bun test test"
   }
 }
