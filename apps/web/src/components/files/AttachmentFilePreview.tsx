@@ -2,7 +2,11 @@ import { filePreviewDelimiter } from "@t3tools/shared/delimitedPreview";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { readFilePreviewResponse } from "@t3tools/client-runtime/file-preview";
-import { filePreviewKind, FILE_TEXT_PREVIEW_MAX_BYTES } from "@t3tools/shared/filePreview";
+import {
+  filePreviewKind,
+  FILE_TEXT_PREVIEW_MAX_BYTES,
+  officePreviewFormat,
+} from "@t3tools/shared/filePreview";
 import { ChevronRightIcon, DownloadIcon, Trash2Icon, WrapTextIcon, XIcon } from "lucide-react";
 import { Check, Code2, Copy, Eye, Table2 } from "lucide";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
@@ -28,6 +32,7 @@ import {
 } from "./fileSurfaceChrome";
 
 const SourcePreview = lazy(() => import("./ReadOnlySourcePreview"));
+const OfficeDocumentPreview = lazy(() => import("./OfficeDocumentPreview"));
 
 /** Signed asset URLs live for an hour; treat anything older than this as worth re-minting. */
 const STALE_URL_MS = 5 * 60_000;
@@ -69,6 +74,7 @@ export function AttachmentFilePreview(props: {
   onClose?: () => void;
 }) {
   const kind = filePreviewKind(props);
+  const officeFormat = officePreviewFormat(props);
   const delimiter = filePreviewDelimiter(props);
   const renderedMode =
     kind === "markdown" ? "markdown" : kind === "html" ? "html" : delimiter ? "table" : null;
@@ -138,7 +144,9 @@ export function AttachmentFilePreview(props: {
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Retry must reauthorize the remote file.
   }, [props.file, refresh, revision]);
   const url = props.file ? localUrl : remoteUrl;
-  const needsText = kind === "text" || kind === "markdown" || (kind === "html" && !rendered);
+  const needsText =
+    officeFormat === null &&
+    (kind === "text" || kind === "markdown" || (kind === "html" && !rendered));
   useEffect(() => {
     if (!needsText || !url) return;
     const controller = new AbortController();
@@ -246,6 +254,17 @@ export function AttachmentFilePreview(props: {
     ) : (
       <ReadOnlySourcePreview name={props.name} text={content.text} />
     )
+  ) : officeFormat ? (
+    <Suspense fallback={<FileSurfaceLoading />}>
+      <OfficeDocumentPreview
+        key={`${props.name}:${url}:${revision}`}
+        name={props.name}
+        format={officeFormat}
+        src={url}
+        file={props.file}
+        onRetry={() => setRevision((value) => value + 1)}
+      />
+    </Suspense>
   ) : kind === "pdf" || kind === "html" ? (
     <BrowserDocumentFrame
       src={url}

@@ -11,7 +11,43 @@ import {
   isWorkspacePreviewEntryPath,
   isWorkspaceVideoPreviewPath,
   mediaKindFromPath,
+  officePreviewFormat,
+  officePreviewMimeTypeFromExtension,
 } from "./filePreview.ts";
+
+describe("bounded web Office previews", () => {
+  it.each(["xlsx", "xls", "pptx"] as const)(
+    "recognizes %s without changing native fallback",
+    (format) => {
+      const name = `report.${format.toUpperCase()}`;
+      expect(officePreviewFormat({ name })).toBe(format);
+      expect(filePreviewKind({ name })).toBe("unsupported");
+      expect(isWorkspacePreviewEntryPath(name)).toBe(true);
+      const mimeType = officePreviewMimeTypeFromExtension(`.${format}`)!;
+      expect(hostPreviewMimeTypeFromExtension(`.${format}`)).toBe(mimeType);
+      expect(officePreviewFormat({ name: "download", mimeType: `${mimeType}; version=1` })).toBe(
+        format,
+      );
+      expect(filePreviewKind({ name, mimeType })).toBe("unsupported");
+    },
+  );
+
+  it.each([
+    "legacy.ppt",
+    "report.xlsx.exe",
+    "report.xlsx?download=1",
+    "report%2Exlsx",
+    "report.pptm",
+  ])("keeps %s on the existing fallback", (name) => {
+    expect(officePreviewFormat({ name })).toBeNull();
+    expect(isWorkspacePreviewEntryPath(name)).toBe(false);
+  });
+
+  it("honors a specific conflicting content type", () => {
+    expect(officePreviewFormat({ name: "report.xlsx", mimeType: "image/png" })).toBeNull();
+    expect(officePreviewMimeTypeFromExtension(".ppt")).toBeNull();
+  });
+});
 
 describe("workspace file previews", () => {
   it.each(["report.html", "report.HTM", "document#draft.pdf", "reports?old/document.pdf"])(
