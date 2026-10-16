@@ -253,6 +253,15 @@ describe("readProgress: forwarded comments and body edits", () => {
     assert.deepStrictEqual([...seen.bodyEdits].sort(), ["2026-10-04T10:15:00Z", "x"]);
   });
 
+  it("keeps the time of every body-edit-dropped step with the forwarded ones", () => {
+    const seen = readProgress([
+      step(1, "body-edit-forwarded A"),
+      step(2, "body-edit-dropped B"),
+      step(3, "body-edit-droppedC"),
+    ]);
+    assert.deepStrictEqual([...seen.bodyEdits].sort(), ["A", "B"]);
+  });
+
   it("does not count a step that only looks like a forwarded edit", () => {
     const seen = readProgress([
       step(1, "body-edit-forwarded2026-10-04T10:15:00Z"),
@@ -334,6 +343,72 @@ describe("readProgress: the last wait marker", () => {
       assert.strictEqual(seen.lastWait, null, bad);
       assert.strictEqual(seen.waitingAfter, null, bad);
     }
+  });
+});
+
+describe("readProgress: a cancelled forward wait", () => {
+  const sentBack = (ms: number, ordinal: number) =>
+    line(ms, "gate_sent_back", { attempt: 1, run_ordinal: ordinal });
+
+  it("a forward-wait no send follows is idle", () => {
+    assert.strictEqual(readProgress([step(1, "forward-wait 2")]).idleForwardWait, 2);
+    assert.strictEqual(
+      readProgress([step(1, "forward-wait 2"), line(2, "comment_forwarded", { comment_id: "5" })])
+        .idleForwardWait,
+      null,
+    );
+    assert.strictEqual(
+      readProgress([step(1, "forward-wait 2"), step(2, "body-edit-forwarded x")]).idleForwardWait,
+      null,
+    );
+    assert.strictEqual(
+      readProgress([step(1, "forward-wait 2"), step(2, "comment-dropped 7")]).idleForwardWait,
+      2,
+    );
+  });
+
+  it("a cancel for the idle marker clears the wait and restores the last wait", () => {
+    const seen = readProgress([step(1, "forward-wait 2"), step(2, "forward-wait-cancelled 2")]);
+    assert.strictEqual(seen.waitingAfter, null);
+    assert.strictEqual(seen.lastWait, null);
+    assert.strictEqual(seen.idleForwardWait, null);
+
+    const after = readProgress([
+      sentBack(1, 1),
+      step(2, "forward-wait 2"),
+      step(3, "forward-wait-cancelled 2"),
+    ]);
+    assert.strictEqual(after.waitingAfter, null);
+    assert.strictEqual(after.lastWait, 1);
+  });
+
+  it("a cancel does not undo a marker a send used", () => {
+    const seen = readProgress([
+      step(1, "forward-wait 2"),
+      line(2, "comment_forwarded", { comment_id: "5" }),
+      step(3, "forward-wait-cancelled 2"),
+    ]);
+    assert.strictEqual(seen.waitingAfter, 2);
+    assert.strictEqual(seen.lastWait, 2);
+  });
+
+  it("a cancel for another ordinal, or one that only looks like one, changes nothing", () => {
+    const other = readProgress([step(1, "forward-wait 2"), step(2, "forward-wait-cancelled 3")]);
+    assert.strictEqual(other.waitingAfter, 2);
+    for (const bad of [
+      "forward-wait-cancelled 02",
+      "forward-wait-cancelled x",
+      "forward-wait-cancelled 2 ",
+    ]) {
+      const seen = readProgress([step(1, "forward-wait 2"), step(2, bad)]);
+      assert.strictEqual(seen.waitingAfter, 2, bad);
+      assert.strictEqual(seen.lastWait, 2, bad);
+    }
+  });
+
+  it("a new session forgets an idle marker", () => {
+    const seen = readProgress([step(1, "forward-wait 2"), launched(2)]);
+    assert.strictEqual(seen.idleForwardWait, null);
   });
 });
 
