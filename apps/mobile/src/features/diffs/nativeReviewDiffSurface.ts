@@ -125,7 +125,6 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   /** iOS caps unwrapped rows at this width. Android measures the widest row instead. */
   readonly contentWidth: number;
   readonly initialRowIndex?: number;
-  /** Disable the native vertical scroller when an excerpt grows inside a page. */
   readonly scrollEnabled?: boolean;
   readonly bounces?: boolean;
   readonly refreshing?: boolean;
