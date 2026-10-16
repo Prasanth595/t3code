@@ -81,6 +81,10 @@ export async function prebuildNofunArtifactsRuntime(input: {
   NodeFs.cpSync(NodePath.join(packageDir, "src"), NodePath.join(input.outDir, "src"), {
     recursive: true,
   });
+  // next/font output is absent in the desktop package; keep the compiler's vendored fallback.
+  NodeFs.cpSync(NodePath.join(packageDir, "fonts"), NodePath.join(input.outDir, "fonts"), {
+    recursive: true,
+  });
   const generatedDir = NodePath.join(packageDir, "generated");
   NodeFs.mkdirSync(NodePath.join(input.outDir, "generated"), { recursive: true });
   if (NodeFs.existsSync(generatedDir)) {
