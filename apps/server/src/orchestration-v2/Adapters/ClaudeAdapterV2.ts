@@ -445,6 +445,18 @@ export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.Tagg
   }
 }
 
+export class ClaudePermissionModeRefusedError extends Schema.TaggedError<ClaudePermissionModeRefusedError>()(
+  "ClaudePermissionModeRefusedError",
+  {
+    requested: Schema.String,
+    effective: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Claude Code refused this thread's access mode and opened in "${this.effective}" instead of "${this.requested}". Your Claude settings or organization policy may not allow it. Choose another access mode for this thread, then send the message again.`;
+  }
+}
+
 export interface ClaudeAgentSdkQueryRunnerShape {
   readonly allocateSessionId: Effect.Effect<string, ClaudeAgentSdkQueryRunnerError>;
   readonly open: (
@@ -8180,6 +8192,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ),
             ),
           };
+          // Delegated children run in whatever mode Claude allows, so a parent
+          // in a mode Claude refuses can still delegate to it. A thread the
+          // user started must not quietly run with other permissions.
+          const acceptsRefusedPermissionMode =
+            turnInput.appThread.lineage.relationshipToParent === "subagent";
           yield* Ref.set(queryContext, context);
           yield* querySession.messages.pipe(
             Stream.runForEach((message) =>
@@ -8191,6 +8208,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     (message.subtype === "init" || message.subtype === "status") &&
                     message.permissionMode !== undefined
                   ) {
+                    if (
+                      message.subtype === "init" &&
+                      !context.openedPermissionModeReported &&
+                      message.permissionMode !== context.openedPermissionMode &&
+                      !acceptsRefusedPermissionMode
+                    ) {
+                      const refused = new ClaudePermissionModeRefusedError({
+                        requested: context.openedPermissionMode,
+                        effective: message.permissionMode,
+                      });
+                      return querySession.close.pipe(
+                        Effect.ignore,
+                        Effect.andThen(Effect.fail(queryRunnerError(refused, "init"))),
+                      );
+                    }
                     context.permissionMode = message.permissionMode;
                     if (message.subtype === "init" && !context.openedPermissionModeReported) {
                       context.openedPermissionModeReported = true;

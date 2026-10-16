@@ -146,6 +146,7 @@ function makeClaudeTestAppThread(input: {
   readonly threadId: ThreadId;
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly now: DateTime.Utc;
+  readonly delegatedFrom?: ThreadId;
 }): OrchestrationV2AppThread {
   return {
     createdBy: "user",
@@ -160,11 +161,14 @@ function makeClaudeTestAppThread(input: {
     branch: null,
     worktreePath: null,
     activeProviderThreadId: input.providerThread.id,
-    lineage: {
-      parentThreadId: null,
-      relationshipToParent: null,
-      rootThreadId: input.threadId,
-    },
+    lineage:
+      input.delegatedFrom === undefined
+        ? { parentThreadId: null, relationshipToParent: null, rootThreadId: input.threadId }
+        : {
+            parentThreadId: input.delegatedFrom,
+            relationshipToParent: "subagent",
+            rootThreadId: input.delegatedFrom,
+          },
     forkedFrom: null,
     createdAt: input.now,
     updatedAt: input.now,
@@ -189,6 +193,7 @@ function makeClaudeTestTurnInput(input: {
   readonly messageCreationSource?: ProviderAdapter.ProviderAdapterV2TurnInput["message"]["creationSource"];
   readonly modelSelection?: ModelSelection;
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly delegatedFrom?: ThreadId;
 }): ProviderAdapter.ProviderAdapterV2TurnInput {
   return {
     appThread: makeClaudeTestAppThread(input),
@@ -3870,7 +3875,8 @@ describe("ClaudeAdapterV2 background wake turns", () => {
   // mode and rejects any later switch back to bypassPermissions.
   it.effect.each([
     {
-      title: "keeps the mode the CLI opened in when policy refuses the requested one",
+      title:
+        "keeps a delegated child in the mode the CLI opened in when policy refuses the requested one",
       turnOneModes: [["init", "default"]],
       expected: [],
     },
@@ -3904,6 +3910,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attemptId: RunAttemptId.make("attempt-claude-opened-mode-1"),
             text: "First prompt.",
             attachments: [],
+            delegatedFrom: ThreadId.make("thread-claude-parent"),
           }),
         );
         for (const [index, [subtype, permissionMode]] of turnOneModes.entries()) {
@@ -3937,9 +3944,55 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             providerTurnOrdinal: 2,
             text: "Second prompt.",
             attachments: [],
+            delegatedFrom: ThreadId.make("thread-claude-parent"),
           }),
         );
         assert.deepEqual(harness.permissionModeChanges, [...expected]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("fails a top-level thread's turn when policy refuses its access mode", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let closes = 0;
+        const harness = yield* makeWakeHarnessWithOptions({
+          close: () =>
+            Effect.sync(() => {
+              closes += 1;
+            }),
+        });
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-refused-mode"),
+            text: "First prompt.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "init",
+            permissionMode: "auto",
+            uuid: "00000000-0000-4000-8000-000000000610",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
+        assert.include(terminal.failure.message, `opened in "auto" instead of "bypassPermissions"`);
+        assert.equal(closes, 1);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
