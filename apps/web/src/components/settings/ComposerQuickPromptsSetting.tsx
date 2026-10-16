@@ -1,6 +1,6 @@
 import type { ComposerQuickPrompt } from "@t3tools/contracts";
 import { PlusIcon, XIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import {
   getClientSettings,
@@ -93,18 +93,30 @@ function QuickPromptTextarea(props: {
   readonly onCommit: (next: string) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
+  const draftRef = useRef<string | null>(null);
+  const setPendingDraft = (next: string | null) => {
+    draftRef.current = next;
+    setDraft(next);
+  };
+  const commit = (next: string | null) => {
+    if (next !== null && next !== props.value) props.onCommit(next);
+  };
+  // Some browsers (Firefox) don't fire blur when a focused field is removed, e.g. when
+  // history navigation leaves Settings mid-edit, so save the pending draft on unmount too.
+  const commitPendingDraft = useEffectEvent(() => commit(draftRef.current));
+  useEffect(() => () => commitPendingDraft(), []);
   return (
     <Textarea
       size="sm"
       placeholder="Prompt, $skill or /command"
       aria-label="Quick prompt text"
       value={draft ?? props.value}
-      onFocus={() => setDraft(props.value)}
-      onChange={(event) => setDraft(event.target.value)}
+      onFocus={() => setPendingDraft(props.value)}
+      onChange={(event) => setPendingDraft(event.target.value)}
       onBlur={() => {
-        const next = draft ?? props.value;
-        setDraft(null);
-        if (next !== props.value) props.onCommit(next);
+        const next = draft;
+        setPendingDraft(null);
+        commit(next);
       }}
     />
   );
