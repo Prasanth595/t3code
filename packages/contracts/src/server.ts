@@ -548,6 +548,16 @@ export const EnvironmentThemeLength = Schema.String.check(
 );
 export type EnvironmentThemeLength = typeof EnvironmentThemeLength.Type;
 
+/**
+ * Fork: a theme icon pack, from an icon slot (such as `group.star` or `status.working`) to an SVG
+ * document. Clients sanitize the SVG before they render it. Slot names stay open, so a pack can
+ * carry slots that a newer version adds.
+ */
+const EnvironmentThemeIcons = Schema.Record(
+  Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9-]{0,31}(?:\.[a-z0-9-]{1,31}){0,3}$/)),
+  Schema.String.check(Schema.isMaxLength(4096), Schema.isPattern(/^\s*<svg[\s>]/)),
+);
+
 export const EnvironmentThemeCanvasPattern = Schema.Literals(["none", "dots", "grid", "noise"]);
 export type EnvironmentThemeCanvasPattern = typeof EnvironmentThemeCanvasPattern.Type;
 
@@ -589,6 +599,8 @@ const environmentThemeFields = {
   fonts: Schema.optional(EnvironmentThemeFonts),
   canvasPattern: Schema.optional(EnvironmentThemeCanvasPattern),
   canvasPatternColor: Schema.optional(EnvironmentThemeCssValue),
+  /** Fork: icons that replace the stock icons of named slots. See `EnvironmentThemeIcons`. */
+  icons: Schema.optional(EnvironmentThemeIcons),
 };
 
 export const EnvironmentThemeFile = Schema.Struct(environmentThemeFields);

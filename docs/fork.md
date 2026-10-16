@@ -310,7 +310,10 @@ The client setting `sidebarGroupsEnabled` shows thread groups as tabs under the 
 - The first tab, "Threads", holds every thread that is in no group. A thread lives in one group, so the groups act like folders.
 - Drag a thread onto a tab to move it into that group. Drag it onto "Threads" to take it out of every group. During a drag, the + slot at the end of the bar turns into a drop target for a new group. A drop on the tab that already holds the thread changes nothing.
 - Tabs that do not fit the bar go to a "+N" menu. The open tab always shows. A drag over "+N" opens the menu, and its rows take a drop.
-- Click + to make an empty group. Right-click a tab, or click the sliders button of the open tab, to rename it, edit its rules, move it or delete it.
+- Drag a tab to move it. The first tab stays first. The mobile layout does not move tabs.
+- Click + to make an empty group. Right-click a tab, or click the sliders button of the open tab, to rename it, pick its icon, edit its rules, move it or delete it.
+- A tab shows a dot by default. Pick another icon, or "No icon". Turn off "Show the name on the tab" to show the icon only; the tooltip keeps the name. A tab with neither shows the dot.
+- The first tab has an editor too: its name, its icon, and whether it shows the threads in no group or all threads.
 - Rules put threads in a group automatically. A thread matches a group when it matches every rule. Rules compare the repository, the repository owner, the status, the provider, who created the thread, its background work and its title.
 - A repository rule compares the repository of the project, such as `github.com/yarden-zamir/t3code`. The same repository matches on every machine, also where its project has another id or path. A project without a remote has no repository.
 - A thread lives in the group that you dragged it into. Otherwise it lives in the first group, from left to right, whose rules match. Otherwise it lives in "Threads". New threads follow the same order.
@@ -326,6 +329,15 @@ The client setting `sidebarGroupsEnabled` shows thread groups as tabs under the 
 - The client setting `sidebarGroupsEnabled` decides per device whether the tabs show. The open tab is also per device.
 - A change replaces all groups at once. When two devices change groups at the same moment, the last change wins.
 - The hosted app at app.t3.codes has no primary server to keep the groups, so it shows no tabs. The mobile app does not show groups yet.
+
+## Theme icon packs
+
+A published theme can replace app icons with its own SVGs. The theme JSON field `icons` maps an icon slot to an SVG document. Without it, every icon stays stock.
+
+- The slots are the sidebar group icons (`group.<id>`), the thread statuses on group tabs and sidebar rows (`status.<status>`), the group tab bar buttons (`groups.more`, `groups.new`, `groups.edit`) and the sidebar header (`sidebar.search`, `sidebar.filter`, `sidebar.add-project`, `sidebar.new-thread`). `AppIcon` in `apps/web/src/components/AppIcon.tsx` lists them with their stock icons.
+- The app sanitizes each SVG with DOMPurify before it draws it: no script, style, links or remote content. An icon is at most 4096 characters.
+- Each icon carries `data-app-icon="<slot>"`, so theme CSS can colour the parts of an icon. The group tabs carry `data-sidebar-group-tab`, `data-selected`, `data-status`, `data-attention` and `data-drop-target` for theme CSS.
+- The tick3d themes in the dotfiles carry a neo-brutalism pack. The `t3-theme` skill in the dotfiles describes the fields, the hooks and the pack.
 
 ## Thread card layouts
 

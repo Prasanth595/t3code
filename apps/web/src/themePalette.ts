@@ -1471,6 +1471,22 @@ export function subscribeToActiveThemeFonts(listener: () => void): () => void {
   return () => activeThemeFontListeners.delete(listener);
 }
 
+// Fork: the icon pack of the active theme, read by `AppIcon`.
+type ThemeIcons = NonNullable<ThemeStyle["icons"]>;
+const NO_THEME_ICONS: ThemeIcons = {};
+let activeThemeIcons: ThemeIcons = NO_THEME_ICONS;
+const activeThemeIconListeners = new Set<() => void>();
+
+/** Icons of the active theme, by slot. Empty when the theme has none. */
+export function getActiveThemeIcons(): ThemeIcons {
+  return activeThemeIcons;
+}
+
+export function subscribeToActiveThemeIcons(listener: () => void): () => void {
+  activeThemeIconListeners.add(listener);
+  return () => activeThemeIconListeners.delete(listener);
+}
+
 /**
  * Root custom properties and attributes for each style field. The attribute
  * gates the matching rules in index.css, so a theme without the field gets
@@ -1509,6 +1525,12 @@ function applyThemeStyle(root: HTMLElement, style: ThemeStyle | undefined): void
   if (!Equal.equals(fonts, activeThemeFonts)) {
     activeThemeFonts = fonts;
     for (const listener of activeThemeFontListeners) listener();
+  }
+
+  const icons = style?.icons ?? NO_THEME_ICONS;
+  if (!Equal.equals(icons, activeThemeIcons)) {
+    activeThemeIcons = icons;
+    for (const listener of activeThemeIconListeners) listener();
   }
 
   // The style element goes last in <head>, so user CSS wins over the app

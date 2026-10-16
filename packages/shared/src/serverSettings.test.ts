@@ -57,14 +57,20 @@ describe("serverSettings helpers", () => {
       sidebarGroups: {
         groups: [{ id: "monitors", name: "Monitors", rules: [] }],
         assignments: { "environment:thread-1": "monitors", "environment:thread-2": "default" },
+        defaultTab: {},
       },
     });
     const next = applyServerSettingsPatch(saved, {
-      sidebarGroups: { groups: [], assignments: { "environment:thread-2": "default" } },
+      sidebarGroups: {
+        groups: [],
+        assignments: { "environment:thread-2": "default" },
+        defaultTab: {},
+      },
     });
     expect(next.sidebarGroups).toEqual({
       groups: [],
       assignments: { "environment:thread-2": "default" },
+      defaultTab: {},
     });
   });
 

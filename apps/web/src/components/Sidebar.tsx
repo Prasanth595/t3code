@@ -98,7 +98,6 @@ import {
   EyeIcon,
   FolderIcon,
   GitBranchIcon,
-  ListFilterIcon,
   PinIcon,
   PinOffIcon,
   PlusIcon,
@@ -306,6 +305,7 @@ import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarT
 import { SidebarOwnerFilterMenu, SidebarOwnerFilterNotice } from "./sidebar/SidebarOwnerFilter";
 import { useSidebarOwnerFilter } from "./sidebar/useSidebarOwnerFilter";
 import { SidebarGroupTabs } from "./sidebar/SidebarGroupTabs";
+import { AppIcon } from "./AppIcon";
 import { useSidebarGroups } from "./sidebar/useSidebarGroups";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
@@ -4766,7 +4766,7 @@ export default function Sidebar() {
                         <ProjectFavicon project={scopedProjectGroup} className="size-4" />
                       </span>
                     ) : (
-                      <ListFilterIcon className="size-4" />
+                      <AppIcon slot="sidebar.filter" />
                     )}
                   </ComboboxTrigger>
                   <ComboboxPopup

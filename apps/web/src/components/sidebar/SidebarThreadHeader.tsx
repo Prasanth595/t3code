@@ -1,4 +1,6 @@
-import { FolderPlusIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
+import { XIcon } from "lucide-react";
+
+import { AppIcon } from "../AppIcon";
 import {
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -69,7 +71,7 @@ export function SidebarThreadHeader({
         ref={searchFieldRef}
         className="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
       >
-        <SearchIcon className="size-4 shrink-0 text-(--sidebar-icon-color)" />
+        <AppIcon slot="sidebar.search" className="text-(--sidebar-icon-color)" />
         <SidebarInput
           ref={searchInputRef}
           nativeInput
@@ -112,7 +114,7 @@ export function SidebarThreadHeader({
             {ownerFilter}
             {projectScope}
             <SidebarHeaderIconButton label="Add project" onClick={onNewProject}>
-              <FolderPlusIcon />
+              <AppIcon slot="sidebar.add-project" />
             </SidebarHeaderIconButton>
           </>
         ) : null}
@@ -134,7 +136,7 @@ export function SidebarThreadHeader({
           disabled={newThreadDisabled}
           onClick={onNewThread}
         >
-          <SquarePenIcon />
+          <AppIcon slot="sidebar.new-thread" />
         </SidebarHeaderIconButton>
       </div>
     </div>

@@ -56,7 +56,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 
 **Threads**
 
-- **Sidebar groups:** thread groups as tabs above the sidebar list, filled by drag or by rules. The machine map syncs the groups to every machine (`sidebarGroupsEnabled`; `sidebarGroupSingleThreadOpens`; `sidebarGroups`).
+- **Sidebar groups:** thread groups as tabs above the sidebar list, filled by drag or by rules. Each tab has an icon and can hide its name. The first tab can be renamed and can show all threads. The machine map syncs the groups to every machine (`sidebarGroupsEnabled`; `sidebarGroupSingleThreadOpens`; `sidebarGroups`).
 - **Snooze quick options:** edit the choices of the snooze menus (`snoozeQuickOptions`).
 - **Worktree path template:** a template decides where new worktrees go, for example next to `main/` in a `.bare` container (`worktreePathTemplate`).
 - **Thread link chips:** thread links in chat look like an attached thread. A web address of a thread on a known machine opens the thread in T3 Code (`threadLinkChips`).
@@ -77,7 +77,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Installed web app:** each server web app installs as an app, with an offline page, worker notifications and an app badge (`installedAppEnabled`, on by default).
 - **Web Push:** a phone gets thread notifications while the app is closed, from each server that the page connects to (`webPushEnabled`, on by default).
 - **Thread card layouts:** build the thread card from its elements, for desktop and for mobile (`threadCardLayouts`).
-- **Theme style:** published themes can set shape, fonts, a canvas pattern and user CSS.
+- **Theme style:** published themes can set shape, fonts, a canvas pattern, user CSS and an icon pack that replaces app icons (`icons`).
 - **Lightning icon:** the fork app uses its own icon on every nightly icon file.
 
 **Command line and MCP**

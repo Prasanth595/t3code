@@ -293,6 +293,16 @@ describe("EnvironmentThemeFile style fields", () => {
     expect(exit._tag).toBe("Success");
   });
 
+  it("accepts an icon pack of SVGs and rejects a value that is not an SVG", () => {
+    const svg = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/></svg>';
+    expect(
+      decodeThemeFile({ ...base, icons: { "group.star": svg, "status.working": svg } })._tag,
+    ).toBe("Success");
+    expect(decodeThemeFile({ ...base, icons: { "group.star": "<img src=x>" } })._tag).toBe(
+      "Failure",
+    );
+  });
+
   it("leaves every style field absent when the file has none", () => {
     const exit = decodeThemeFile(base);
     expect(exit._tag).toBe("Success");

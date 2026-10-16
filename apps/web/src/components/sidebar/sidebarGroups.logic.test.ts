@@ -67,7 +67,7 @@ const all: SidebarGroup = {
 const settings = (
   groups: SidebarGroup[],
   assignments: SidebarGroups["assignments"] = {},
-): SidebarGroups => ({ groups, assignments });
+): SidebarGroups => ({ groups, assignments, defaultTab: {} });
 const groupOf = (subject: typeof conductor, value: SidebarGroups) =>
   resolveSidebarThreadGroupId(subject, compileSidebarGroups(value), projects);
 
