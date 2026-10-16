@@ -26,7 +26,7 @@ import type {
   LimitOutcome,
   WatchOutcome,
 } from "./runner/building.ts";
-import type { GateStepError } from "./runner/gating.ts";
+import { unchangedSince, type GateStepError, type LastPass } from "./runner/gating.ts";
 import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
 import { sanitize } from "./text.ts";
@@ -122,6 +122,16 @@ export interface PassWorld {
    * never waits for a gate. The ledger has the result, and the next pass carries on from there.
    */
   readonly gate: (repo: Repo, run: RunId) => Effect.Effect<GateStart>;
+  /**
+   * What a `pr-open` run's last recorded pass ran against, when the pass can compare it with
+   * GitHub before it starts the gate; null for a run the gate has more to do for:
+   * `runner/gating.ts` `lastPass`.
+   */
+  readonly lastPass: (run: RunId) => Effect.Effect<LastPass | null, LedgerError>;
+  /** The tip of the repo's base branch, in lower case. */
+  readonly baseTip: (repo: Repo) => Effect.Effect<string, PassError>;
+  /** The head of the open pull request, in lower case; null for one that is merged, closed or gone. */
+  readonly openHead: (repo: Repo, pr: number) => Effect.Effect<string | null, PassError>;
   /** Appends an `error` line to the run's own ledger. */
   readonly recordError: (
     run: RunId,
@@ -443,6 +453,7 @@ export const runPass = (
     if (infos !== null) {
       const known = new Known(infos);
       yield* workRuns(world, repos, known, pass);
+      yield* prOpenRuns(world, repos, known, pass);
       yield* untrackedClaims(world, repos, known, pass);
       yield* unassignedClaims(world, repos, known, pass);
       yield* claim(world, repos, known, machine, pass);
@@ -551,9 +562,8 @@ const runs = (world: PassWorld, pass: Pass): Effect.Effect<ReadonlyArray<RunInfo
  * request: `advance` puts a pull request someone took out of draft back to draft and judges the
  * session's latest run, and only when it says `ready-for-gate` is the gate started, in the
  * background (softfac's `softfac gate` child). A run left in `needs-info` or `stuck` (an end cut short) is finished by `advance`, so its
- * thread is archived and its slot freed. A run in `pr-open` is advanced too, so one whose pull
- * request was merged or closed is finished (`advance` reads nothing else for it). A run of a repo
- * that is not loaded is left alone. None of it is a new
+ * thread is archived and its slot freed. A run in `pr-open` is not worked here: `prOpenRuns`
+ * gates it again at the end. A run of a repo that is not loaded is left alone. None of it is a new
  * claim, so none is counted as one. An issue put back to `ready` is left to the claim step, which
  * finishes its run when it claims the issue.
  */
@@ -566,6 +576,8 @@ const workRuns = (
   Effect.gen(function* () {
     for (const info of [...known.infos]) {
       if (info.unreadable || !info.confirmed) continue;
+      // A pull request that waits for a person is gated again after the others (`prOpenRuns`).
+      if (info.state === "pr-open") continue;
       const loaded = repos.find(
         (l) => l.kind === "ready" && sameRepo(l.repo.watched.repo, info.id.repo),
       );
@@ -582,17 +594,79 @@ const workRuns = (
         if (inTriage(info)) yield* resumeRun(world, repo, info, notes, pass);
         else if (info.state === "building") yield* followBuilding(world, repo, info, notes, pass);
         // A run left in `needs-info` or `stuck` has its end done by `advance` (softfac's `finishing`).
-        else if (
-          info.state === "needs-info" ||
-          info.state === "stuck" ||
-          info.state === "pr-open"
-        ) {
+        else if (info.state === "needs-info" || info.state === "stuck") {
           yield* advanceRun(world, repo, info, notes, pass);
         }
       }
       yield* known.refresh(world, pass, name, issue);
       yield* pass.flush(notes, info.id);
     }
+  });
+
+/**
+ * The gate started for every run whose issue is `pr-open`, once each, unless nothing moved since
+ * its last pass (see `unchanged`): such a run costs no process and no gate slot, and the pass says
+ * nothing of it. The gate (`regate`) deals with a merged or closed pull request, a re-gate under
+ * way, a relaunch not yet recorded, a run whose worktree line is not written yet, a checkout an
+ * earlier gate left on disk, and a read that fails. A run of a repo that is not loaded is left
+ * alone.
+ */
+const prOpenRuns = (
+  world: PassWorld,
+  repos: ReadonlyArray<Loaded>,
+  known: Known,
+  pass: Pass,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const tips = new Map<string, string | null>();
+    for (const info of [...known.infos]) {
+      if (info.unreadable || info.state !== "pr-open") continue;
+      const loaded = repos.find(
+        (l) => l.kind === "ready" && sameRepo(l.repo.watched.repo, info.id.repo),
+      );
+      if (loaded === undefined || loaded.kind !== "ready") continue;
+      const repo = loaded.repo;
+      const notes = pass.notes(repo.watched.repo, Number(info.id.issue), info.state);
+      if (world.gateRunning(info.id)) {
+        notes.parts.push(GATE_RUNNING);
+      } else if (!(yield* unchanged(world, repo, info.id, tips))) {
+        yield* startGate(world, repo, info, notes);
+      }
+      yield* pass.flush(notes, info.id);
+    }
+  });
+
+/**
+ * Whether `regate` would find the run's pull request and its repo's base tip where its last pass
+ * left them, by the reads it makes before it answers `unchanged`. A run it would do more for, or
+ * a read that fails, is not unchanged: the gate deals with it, and says what failed. `tips` holds
+ * each repo's base tip as the pass first read it, by lowercase name, so it is read at most once a
+ * pass. It is read before the pull request, and `null` once a read of the repo failed: the repo's
+ * other runs then go to the gate without a read that could wait for its timeout again.
+ */
+const unchanged = (
+  world: PassWorld,
+  repo: Repo,
+  run: RunId,
+  tips: Map<string, string | null>,
+): Effect.Effect<boolean> =>
+  Effect.gen(function* () {
+    const last = yield* Effect.result(world.lastPass(run));
+    if (last._tag === "Failure" || last.success === null) return false;
+    const key = asciiLower(repo.watched.repo);
+    if (!tips.has(key)) {
+      const read = yield* Effect.result(world.baseTip(repo));
+      tips.set(key, read._tag === "Success" ? read.success : null);
+    }
+    const tip = tips.get(key) ?? null;
+    if (tip === null) return false;
+    const head = yield* Effect.result(world.openHead(repo, last.success.pr));
+    if (head._tag === "Failure") {
+      tips.set(key, null);
+      return false;
+    }
+    if (head.success === null) return false;
+    return unchangedSince(last.success.head, last.success.base, head.success, tip);
   });
 
 /**

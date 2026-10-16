@@ -55,7 +55,7 @@ import {
 } from "./pass.ts";
 import * as Process from "./process.ts";
 import { FactoryProcess } from "./process.ts";
-import { readProgress } from "./runner/progress.ts";
+import { readProgress, type Moved } from "./runner/progress.ts";
 import {
   advance,
   forward,
@@ -64,7 +64,14 @@ import {
   watch,
   type BuildingContext,
 } from "./runner/building.ts";
-import { gate as gateStep, type GateContext, type GateStep } from "./runner/gating.ts";
+import {
+  gate as gateStep,
+  lastPass,
+  regate,
+  type GateContext,
+  type GateStep,
+  type GateStepError,
+} from "./runner/gating.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { isOurs, newestSays, resume, start, utcSecond, type StartContext } from "./runner/start.ts";
 import { takeStopRequest } from "./runner/stop.ts";
@@ -198,6 +205,49 @@ const gateWords = (run: string, step: GateStep): string => {
   }
 };
 
+/** What a re-gate found moved since the last pass, in the run's line. */
+const MOVED_WORDS: Record<Moved, string> = {
+  base: "the base branch moved",
+  head: "the pull request's head moved",
+  both: "the pull request's head and the base branch moved",
+  unknown: "the base of the last pass was not recorded",
+};
+
+/**
+ * The run's line when the re-gate of its `pr-open` pull request, started in the background, has
+ * ended; null for a quiet one, which says nothing. A pass or a failure starts with what moved: the
+ * base branch, the pull request's head, both, that the pass on record has no base to compare with,
+ * or (when no pass was on record to compare with) that there was none.
+ */
+export const regateWords = (
+  run: string,
+  repo: string,
+  step: GateStep,
+  moved: Moved | null,
+): string | null => {
+  const said = moved === null ? "no pass was on record" : MOVED_WORDS[moved];
+  switch (step.kind) {
+    case "unchanged":
+      return null;
+    case "passed":
+      return `${said}, the gate passed again, PR https://github.com/${repo}/pull/${step.pr} stays ready for review`;
+    case "sent-back":
+      return `${said}, the gate failed on attempt ${step.attempt}, the PR is a draft again and the session was told`;
+    case "stuck":
+      return stuckLine(run);
+    case "ended":
+      return "the pull request was merged or closed, the run is finished";
+    case "abandoned":
+      return "the issue is closed, the run is closed";
+    case "not-ready":
+      return "the gate waits for the session";
+    case "running":
+      return "gate running";
+    case "queued":
+      return gateQueued(step);
+  }
+};
+
 /**
  * The attention item for a gate that ended, or null: a gate that ended `stuck` or `abandoned`
  * needs a person, the same item `pass.ts` raises when `advance` finds the run so.
@@ -318,10 +368,30 @@ export const liveWorld = (
       }
       gating.add(id);
       const label = plain(`${repo.watched.repo}#${run.issue}`);
-      yield* gateStep(gateContext(repo), run).pipe(
+      /** The run's gate: a re-gate for a `pr-open` run, the gate of a building run otherwise. */
+      const decide: Effect.Effect<
+        { readonly state: State; readonly step: GateStep; readonly moved: Moved | null },
+        GateStepError
+      > = Effect.gen(function* () {
+        const context = gateContext(repo);
+        const state = (yield* ledger(() => readProgress(readRun(dataDir, run).entries))).state;
+        if (state === "pr-open") {
+          const regated = yield* regate(context, run);
+          return { state, step: regated.step, moved: regated.moved };
+        }
+        return { state: state ?? "building", step: yield* gateStep(context, run), moved: null };
+      });
+      yield* decide.pipe(
         Effect.matchEffect({
-          onSuccess: (step) =>
-            Effect.logInfo(`${label} building: ${gateWords(id, step)}`).pipe(Effect.as(step)),
+          onSuccess: ({ state, step, moved }) => {
+            const words =
+              state === "pr-open"
+                ? regateWords(id, repo.watched.repo, step, moved)
+                : gateWords(id, step);
+            return (
+              words === null ? Effect.void : Effect.logInfo(`${label} ${state}: ${words}`)
+            ).pipe(Effect.as(step));
+          },
           onFailure: (error) =>
             Effect.logError(`error: ${label} gate: ${plain(error.message)}`).pipe(
               Effect.andThen(
@@ -422,6 +492,21 @@ export const liveWorld = (
       gating.has(runIdToString(run)) || NodeFS.existsSync(gateLockFile(dataDir, run)),
     hasPendingGateSend: (run) =>
       ledger(() => gateSendPending(readProgress(readRun(dataDir, run).entries))),
+    lastPass: (run) => lastPass(dataDir, run),
+    baseTip: (repo) =>
+      trackerFor(repo.watched)
+        .branchTip(repo.project.base)
+        .pipe(
+          Effect.map((tip) => tip.toLowerCase()),
+          Effect.mapError(asPassError("tracker")),
+        ),
+    openHead: (repo, pr) =>
+      trackerFor(repo.watched)
+        .pullRequest(pr)
+        .pipe(
+          Effect.map((pull) => (pull === null || !pull.open ? null : pull.headSha.toLowerCase())),
+          Effect.mapError(asPassError("tracker")),
+        ),
     gate: startGate,
     recordError,
     handPause: () => loadHandPause(dataDir),
