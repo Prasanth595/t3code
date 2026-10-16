@@ -14,6 +14,10 @@ if (
   })
 ) {
   const command = process.argv[2];
+  // Before either path loads, so no module can open a socket unguarded. The
+  // fast paths fetch the T3 MCP endpoint too.
+  const { ignoreMacosTypeOfServiceEinval } = await import("./outboundHttp.ts");
+  ignoreMacosTypeOfServiceEinval();
   if (command === "acp-mcp-bridge" || command === "acp-mcp-call") {
     const { runAcpMcpCliFastPath } = await import("./mcp/AcpMcpStdioBridge.ts");
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
@@ -22,9 +26,6 @@ if (
     // the CLI without one. Never for the fast paths, whose stdin is a pipe.
     const { attachConsoleStdin } = await import("./cli/consoleStdin.ts");
     attachConsoleStdin();
-    // Before the CLI graph loads, so no module can open a socket unguarded.
-    const { ignoreMacosTypeOfServiceEinval } = await import("./outboundHttp.ts");
-    ignoreMacosTypeOfServiceEinval();
     const { runCli } = await import("./binCli.ts");
     runCli();
   }
