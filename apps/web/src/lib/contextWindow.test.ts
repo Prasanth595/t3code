@@ -3,6 +3,9 @@ import * as DateTime from "effect/DateTime";
 import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "./contextWindow";
 
 describe("V2 context window presentation", () => {
+  it("keeps unreported usage unknown", () => {
+    expect(deriveLatestContextWindowSnapshot([])).toBeNull();
+  });
   it("uses retained compaction token data when available", () => {
     const snapshot = deriveLatestContextWindowSnapshot([
       {
@@ -30,6 +33,8 @@ describe("V2 context window presentation", () => {
     ]);
     expect(snapshot?.usedTokens).toBe(2_000);
     expect(snapshot?.totalProcessedTokens).toBe(10_000);
+    expect(snapshot?.sampledAt).toBeNull();
+    expect(snapshot?.compactsAutomatically).toBeNull();
   });
 
   it("prefers current provider usage and preserves ACP cost", () => {
@@ -48,11 +53,15 @@ describe("V2 context window presentation", () => {
       remainingTokens: 7_500,
       usedPercentage: 25,
       cost: { amount: 0.42, currency: "USD" },
+      sampledAt: null,
     });
   });
 
   it("formats compact token values", () => {
     expect(formatContextWindowTokens(1_500)).toBe("1.5k");
+    expect(formatContextWindowTokens(null)).toBe("—");
+    expect(formatContextWindowTokens(0)).toBe("0");
+    expect(formatContextWindowTokens(Number.NaN)).toBe("—");
   });
 });
 
@@ -70,6 +79,9 @@ describe("live provider-turn usage (#8144)", () => {
     expect(snapshot?.maxTokens).toBe(200_000);
     expect(snapshot?.remainingTokens).toBe(158_000);
     expect(snapshot?.usedPercentage).toBe(21);
+    expect(snapshot?.sampledAt).toBe("2026-08-27T00:00:00.000Z");
+    expect(snapshot?.autoCompactThreshold).toBeNull();
+    expect(snapshot?.compactsAutomatically).toBeNull();
   });
 
   it("handles a report without a known context window", () => {

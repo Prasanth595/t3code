@@ -246,6 +246,37 @@ describe("composerSubmissionIntentForKey", () => {
 });
 
 describe("detectComposerTrigger", () => {
+  it.each(["Use /", "Use /skill:browser", "Use\t/brow", "First line\nthen /brow"])(
+    "detects an inline slash query in %s",
+    (text) => {
+      expect(detectComposerTrigger(text, text.length)).toEqual({
+        kind: "slash-command",
+        query: text.slice(text.lastIndexOf("/") + 1),
+        rangeStart: text.lastIndexOf("/"),
+        rangeEnd: text.length,
+      });
+    },
+  );
+
+  it.each([
+    "https://example.com/review",
+    "src/components/review",
+    "Use /usr/local/bin",
+    "Use //server",
+    "Use /tmp/file",
+    "Use /skill ",
+  ])("does not treat URL, path or completed text as an inline skill: %s", (text) =>
+    expect(detectComposerTrigger(text, text.length)).toBeNull(),
+  );
+
+  it("replaces only the inline query while preserving surrounding draft text", () => {
+    const text = "Please /brow then check this";
+    const trigger = detectComposerTrigger(text, "Please /brow".length)!;
+    expect(replaceTextRange(text, trigger.rangeStart, trigger.rangeEnd, "$browser").text).toBe(
+      "Please $browser then check this",
+    );
+  });
+
   it("detects @path trigger at cursor", () => {
     const text = "Please check @src/com";
     const trigger = detectComposerTrigger(text, text.length);
