@@ -2045,12 +2045,83 @@ export const make = Effect.gen(function* () {
       if (!dirty) return true;
       return (yield* popStash()).exitCode === 0;
     });
+    const restoreStash = Effect.gen(function* () {
+      if (!dirty) return true;
+      return (yield* popStash()).exitCode === 0;
+    });
+
+    // `--no-overwrite-ignore` still checks out over an existing ignored file,
+    // and porcelain status never shows that file, so the stash does not hold it.
+    const addedPaths = (yield* runGit("added", [
+      "diff",
+      "--name-only",
+      "--diff-filter=A",
+      "-z",
+      "HEAD",
+      baseRef,
+    ])).stdout
+      .split("\0")
+      .filter((path) => path.length > 0);
+    if (addedPaths.length > 0) {
+      const ignored = yield* gitCore.execute({
+        operation: "GitManager.integrateLatestBase.checkIgnore",
+        cwd,
+        args: ["check-ignore", "--stdin", "-z"],
+        stdin: `${addedPaths.join("\0")}\0`,
+        allowNonZeroExit: true,
+      });
+      if (ignored.exitCode !== 0 && ignored.exitCode !== 1) {
+        const restored = yield* restoreStash;
+        return yield* new GitManagerError({
+          operation: "integrateLatestBase",
+          cwd,
+          detail: restored
+            ? `Could not compare ${branch} with latest ${baseBranch}. This checkout is still on ${branch}.`
+            : `Could not update ${branch} onto the latest ${baseBranch}. Uncommitted changes are still in the stash.`,
+        });
+      }
+      const ignoredPaths = ignored.stdout.split("\0").filter((path) => path.length > 0);
+      let replacesIgnoredFile = false;
+      for (let index = 0; index < ignoredPaths.length && !replacesIgnoredFile; index += 200) {
+        const existing = yield* runGit(
+          "ignoredExisting",
+          [
+            "ls-files",
+            "-o",
+            "-i",
+            "--exclude-standard",
+            "-z",
+            "--",
+            ...ignoredPaths.slice(index, index + 200),
+          ],
+          true,
+        );
+        replacesIgnoredFile = existing.stdout.split("\0").some((path) => path.length > 0);
+      }
+      if (replacesIgnoredFile) {
+        const restored = yield* restoreStash;
+        return yield* new GitManagerError({
+          operation: "integrateLatestBase",
+          cwd,
+          detail: restored
+            ? `Could not update ${branch} onto the latest ${baseBranch}. This checkout is still on ${branch}.`
+            : `Could not update ${branch} onto the latest ${baseBranch}. Uncommitted changes are still in the stash.`,
+        });
+      }
+    }
 
     const merged = yield* runGit(
       "merge",
       branch === baseBranch
-        ? ["merge", "--ff-only", baseRef]
-        : ["merge", "--no-edit", "-m", `Merge latest ${baseBranch} into ${branch}`, baseRef],
+        ? ["merge", "--ff-only", "--no-overwrite-ignore", baseRef]
+        : [
+            "merge",
+            "--no-edit",
+            "--no-overwrite-ignore",
+            "-m",
+            `Merge latest ${baseBranch} into ${branch}`,
+            baseRef,
+          ],
       true,
     );
     if (merged.exitCode !== 0) {
@@ -2078,6 +2149,18 @@ export const make = Effect.gen(function* () {
           ? `Could not update ${branch} onto the latest ${baseBranch} because the uncommitted changes conflict with it. This checkout is still on ${branch}.`
           : `Could not update ${branch} onto the latest ${baseBranch}. Uncommitted changes are still in the stash.`,
     });
+  });
+
+  const branchIsAheadOfUpstream = Effect.fn("branchIsAheadOfUpstream")(function* (cwd: string) {
+    const divergence = yield* gitCore.execute({
+      operation: "GitManager.branchIsAheadOfUpstream",
+      cwd,
+      args: ["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+      allowNonZeroExit: true,
+    });
+    if (divergence.exitCode !== 0) return false;
+    const ahead = Number.parseInt(divergence.stdout.trim().split(/\s+/)[0] ?? "0", 10);
+    return Number.isFinite(ahead) && ahead > 0;
   });
 
   const resolveCommitAndBranchSuggestion = Effect.fn("resolveCommitAndBranchSuggestion")(
@@ -3014,7 +3097,7 @@ export const make = Effect.gen(function* () {
       > {
         const initialStatus = yield* gitCore.statusDetails(input.cwd);
         const wantsCommit = isCommitAction(input.action);
-        const wantsPush =
+        let wantsPush =
           input.action === "push" ||
           input.action === "commit_push" ||
           input.action === "commit_push_pr" ||
@@ -3124,6 +3207,11 @@ export const make = Effect.gen(function* () {
               ),
             ),
           );
+          // A published branch can be even with its remote until this merge.
+          // The pull request has to include that commit.
+          if (!wantsPush && input.action === "create_pr") {
+            wantsPush = yield* branchIsAheadOfUpstream(input.cwd);
+          }
         }
         const commitAction = isCommitAction(input.action) ? input.action : null;
         const changeRequestTerms = wantsPr

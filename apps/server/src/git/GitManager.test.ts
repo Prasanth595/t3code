@@ -5083,6 +5083,125 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     20_000,
   );
 
+  it.effect(
+    "create_pr pushes the merge when a published branch was even with its remote",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/published"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
+        yield* runGit(repoDir, ["add", "feature.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/published"]);
+        yield* runGit(repoDir, ["config", "branch.feature/published.gh-merge-base", "main"]);
+
+        const peerDir = yield* makeTempDir("t3code-git-peer-");
+        yield* runGit(peerDir, ["clone", remoteDir, "."]);
+        yield* runGit(peerDir, ["config", "user.email", "peer@example.com"]);
+        yield* runGit(peerDir, ["config", "user.name", "Peer User"]);
+        NodeFS.writeFileSync(NodePath.join(peerDir, "main-only.txt"), "from main\n");
+        yield* runGit(peerDir, ["add", "main-only.txt"]);
+        yield* runGit(peerDir, ["commit", "-m", "Later main commit"]);
+        yield* runGit(peerDir, ["push", "origin", "main"]);
+
+        const { manager } = yield* makeManager({
+          ghScenario: {
+            prListSequence: [
+              "[]",
+              JSON.stringify([
+                {
+                  number: 88,
+                  title: "Published follow-up",
+                  url: "https://github.com/pingdotgg/codething-mvp/pull/88",
+                  baseRefName: "main",
+                  headRefName: "feature/published",
+                },
+              ]),
+            ],
+          },
+        });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "create_pr",
+        });
+
+        const head = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        const remoteHead = (yield* runGit(repoDir, [
+          "ls-remote",
+          "origin",
+          "refs/heads/feature/published",
+        ])).stdout
+          .trim()
+          .split(/\s+/)[0];
+        expect(result.commit.status).toBe("skipped_not_requested");
+        expect(result.push.status).toBe("pushed");
+        expect(result.pr.status).toBe("created");
+        expect(remoteHead).toBe(head);
+        expect(
+          (yield* runGit(repoDir, ["merge-base", "--is-ancestor", "origin/main", "HEAD"], true))
+            .exitCode,
+        ).toBe(0);
+        expect(NodeFS.readFileSync(NodePath.join(repoDir, "main-only.txt"), "utf8")).toBe(
+          "from main\n",
+        );
+      }),
+    20_000,
+  );
+
+  it.effect(
+    "create_pr keeps an ignored file when the latest base adds that path",
+    () =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "main"]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/ignored"]);
+        NodeFS.writeFileSync(NodePath.join(repoDir, "feature.txt"), "feature\n");
+        yield* runGit(repoDir, ["add", "feature.txt"]);
+        yield* runGit(repoDir, ["commit", "-m", "Feature commit"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/ignored"]);
+        yield* runGit(repoDir, ["config", "branch.feature/ignored.gh-merge-base", "main"]);
+        const headBefore = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
+        NodeFS.appendFileSync(NodePath.join(repoDir, ".git", "info", "exclude"), "secret.txt\n");
+        NodeFS.writeFileSync(NodePath.join(repoDir, "secret.txt"), "keep me\n");
+
+        const peerDir = yield* makeTempDir("t3code-git-peer-");
+        yield* runGit(peerDir, ["clone", remoteDir, "."]);
+        yield* runGit(peerDir, ["config", "user.email", "peer@example.com"]);
+        yield* runGit(peerDir, ["config", "user.name", "Peer User"]);
+        NodeFS.writeFileSync(NodePath.join(peerDir, "secret.txt"), "from main\n");
+        yield* runGit(peerDir, ["add", "secret.txt"]);
+        yield* runGit(peerDir, ["commit", "-m", "Track secret"]);
+        yield* runGit(peerDir, ["push", "origin", "main"]);
+
+        const { manager } = yield* makeManager();
+        const errorMessage = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "create_pr",
+        }).pipe(
+          Effect.flip,
+          Effect.map((error) => error.message),
+        );
+
+        expect(errorMessage).toContain(
+          "Could not update feature/ignored onto the latest main. This checkout is still on feature/ignored.",
+        );
+        expect((yield* runGit(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"])).stdout.trim()).toBe(
+          "feature/ignored",
+        );
+        expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(headBefore);
+        expect(NodeFS.readFileSync(NodePath.join(repoDir, "secret.txt"), "utf8")).toBe("keep me\n");
+      }),
+    20_000,
+  );
+
   it.effect("generates PR content from branch changes when the remote base advances", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
