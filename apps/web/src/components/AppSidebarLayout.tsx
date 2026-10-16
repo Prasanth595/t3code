@@ -33,6 +33,8 @@ import {
 } from "../panelAnimations";
 import LegacyThreadSidebar from "./LegacySidebar";
 import { useThreadVisitedMigration } from "../hooks/useThreadVisitedMigration";
+import { useIsPhoneViewport } from "../hooks/useMediaQuery";
+import { useVisualViewportSync } from "../hooks/useVisualViewportSync";
 import ThreadSidebar from "./Sidebar";
 import { SettingsSidebarNav } from "./settings/SettingsSidebarNav";
 import { SidebarBrandWidthProbe, SidebarChromeHeader } from "./sidebar/SidebarChrome";
@@ -236,6 +238,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   // sidebar is active.
   // Seeds server-side visited tracking from this browser's localStorage the
   useThreadVisitedMigration();
+  useVisualViewportSync(useIsPhoneViewport());
   const pathname = useLocation({ select: (location) => location.pathname });
   const panelAnimationsSuppressed = usePanelNavigationSuppression(pathname);
   const routePanelAnimationsActive = panelAnimationsActive && !panelAnimationsSuppressed;
@@ -314,7 +317,9 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   return (
     <PanelAnimationSuppressionProvider value={panelAnimationsSuppressed}>
       <SidebarProvider
-        className="h-dvh! min-h-0!"
+        // On phones the shell follows the visible area so the keyboard never pushes the header
+        // away or hides the composer. See useVisualViewportSync and its rules in index.css.
+        className="h-[var(--app-shell-height,100dvh)]! min-h-0!"
         data-panel-animations={routePanelAnimationsActive ? "true" : "false"}
         defaultOpen
         style={sidebarProviderStyle}

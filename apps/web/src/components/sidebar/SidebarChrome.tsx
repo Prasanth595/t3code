@@ -57,7 +57,7 @@ export const SidebarChromeHeader = memo(function SidebarChromeHeader({
     >
       {backdropVariant ? <SidebarStageBackdrop variant={backdropVariant} /> : null}
       {/* Match the fixed control's inset and border compensation inside the sheet's safe area. */}
-      <div className="relative top-[calc(var(--workspace-controls-top)-env(safe-area-inset-top))] z-10 ml-[calc(var(--workspace-controls-left)+1px-env(safe-area-inset-left))] flex shrink-0 items-center md:hidden">
+      <div className="relative top-[calc(var(--workspace-controls-top)-var(--workspace-controls-safe-top,env(safe-area-inset-top)))] z-10 ml-[calc(var(--workspace-controls-left)+1px-env(safe-area-inset-left))] flex shrink-0 items-center md:hidden">
         <SidebarTrigger
           // Over the stage artwork: the media viewer's control-on-imagery treatment.
           variant={backdropVariant ? "media-navigation" : "ghost"}

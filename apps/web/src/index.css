@@ -705,6 +705,14 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   body {
     @apply text-foreground relative;
   }
+  /* While the phone shell is pinned to the visual viewport (useVisualViewportSync), focusing the
+     composer must not scroll or rubber-band the document behind it. Pages outside the shell,
+     such as pairing, keep normal document scrolling. */
+  html[data-viewport-sync],
+  html[data-viewport-sync] body {
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
 }
 
 @layer components {
@@ -2366,4 +2374,45 @@ code {
       );
     }
   }
+}
+
+/* While useVisualViewportSync is active, the shell is pinned to the visible area below the top
+   safe area, so the keyboard never pans the header away or covers the composer. Route pages size
+   their inset with h-dvh/h-svh, which iOS Safari does not shrink for the keyboard. Unlayered so
+   these rules outrank those utilities without !important. */
+html[data-viewport-sync] {
+  --app-shell-height: calc(var(--app-viewport-height) - env(safe-area-inset-top));
+  /* The header toggles now sit below the safe area too, so the drawer's copy needs no offset. */
+  --workspace-controls-safe-top: 0px;
+}
+
+html[data-viewport-sync] [data-slot="sidebar-wrapper"] {
+  position: fixed;
+  inset-inline: 0;
+  top: calc(var(--app-viewport-offset-top) + env(safe-area-inset-top));
+  /* Makes the shell the containing block of the header's fixed sidebar and panel toggles. */
+  contain: layout;
+}
+
+html[data-viewport-sync] [data-slot="sidebar-inset"] {
+  height: var(--app-shell-height);
+}
+
+/* The thread drawer is portaled outside the shell's containing block. */
+html[data-viewport-sync]
+  [data-slot="sheet-viewport"]:has([data-sidebar="sidebar"][data-mobile="true"]) {
+  top: var(--app-viewport-offset-top);
+  bottom: auto;
+  height: var(--app-viewport-height);
+  contain: layout;
+}
+
+/* Long prompts scroll inside the editor instead of pushing the header off a short screen. */
+html[data-viewport-sync] .composer-tiptap {
+  max-height: min(13rem, calc(var(--app-shell-height) * 0.4));
+}
+
+/* The keyboard covers the home indicator, so the safe-area gap below the composer is not needed. */
+html[data-viewport-sync][data-keyboard-open] [data-composer-bottom-spacer] {
+  height: 0.5rem;
 }
