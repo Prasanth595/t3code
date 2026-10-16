@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Runs the copy of factory/scripts/rotate-log.sh that install.sh puts in ~/.local/share/t3fac. To change the limits, add "<max_mb>" and "<keep>" strings after the log path (defaults 20 and 5). -->
+<dict>
+	<key>Label</key>
+	<string>io.github.rawphp.t3fac.logrotate</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>@HOME@/.local/share/t3fac/rotate-log.sh</string>
+		<string>@HOME@/Library/Logs/t3fac/t3fac.log</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>600</integer>
+	<key>StandardOutPath</key>
+	<string>@HOME@/Library/Logs/t3fac/logrotate.log</string>
+	<key>StandardErrorPath</key>
+	<string>@HOME@/Library/Logs/t3fac/logrotate.log</string>
+</dict>
+</plist>
