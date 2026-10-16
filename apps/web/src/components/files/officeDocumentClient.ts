@@ -5,6 +5,7 @@ import type {
 } from "./officeDocumentParser";
 
 export const OFFICE_PREVIEW_MAX_BYTES = 5 * 1024 * 1024;
+export const OFFICE_PREVIEW_TRANSFER_TIMEOUT_MS = 120_000;
 export const OFFICE_PREVIEW_TIMEOUT_MS = 15_000;
 
 export interface OfficeDocumentSource {
@@ -106,12 +107,12 @@ export function createOfficeDocumentClient(source: OfficeDocumentSource, initial
       cleanup();
       publish(next);
     };
-    const timeout = setTimeout(() => {
+    let timeout = setTimeout(() => {
       finish({
         status: "error",
-        message: "Office preview timed out. Save this file to open it in another app.",
+        message: "Office document download timed out. Save this file to open it in another app.",
       });
-    }, OFFICE_PREVIEW_TIMEOUT_MS);
+    }, OFFICE_PREVIEW_TRANSFER_TIMEOUT_MS);
     stop = () => {
       finished = true;
       generation++;
@@ -122,6 +123,13 @@ export function createOfficeDocumentClient(source: OfficeDocumentSource, initial
     void readOfficeDocumentBytes(source, controller.signal)
       .then((buffer) => {
         if (finished || current !== generation) return;
+        clearTimeout(timeout);
+        timeout = setTimeout(() => {
+          finish({
+            status: "error",
+            message: "Office preview timed out. Save this file to open it in another app.",
+          });
+        }, OFFICE_PREVIEW_TIMEOUT_MS);
         worker = new Worker(new URL("./officeDocument.worker.ts", import.meta.url), {
           type: "module",
         });

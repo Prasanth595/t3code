@@ -700,13 +700,93 @@ describe("parseOfficeDocument presentation outlines", () => {
 });
 
 describe("Office archive boundaries", () => {
+  it("reads legacy version 3 workbook values despite uninitialized high stream sizes", () => {
+    const bytes = workbookBytes("biff8");
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    expect(view.getUint16(26, true)).toBe(3);
+    const directoryOffset = (view.getUint32(48, true) + 1) * 512;
+    for (let offset = directoryOffset; offset < directoryOffset + 512; offset += 128) {
+      if (bytes[offset + 66] === 2 || bytes[offset + 66] === 5)
+        view.setUint32(offset + 124, 0x12345678, true);
+    }
+    const document = parseOfficeDocument(bytes, "xls");
+    if (document.kind !== "spreadsheet") throw new Error("Expected spreadsheet");
+    expect(document.sheets[0]?.name).toBe("売上");
+    expect(document.sheets[0]?.rows).toEqual([
+      ["品名", "価格"],
+      ["りんご", "125"],
+    ]);
+  });
+
+  it("rejects full 64-bit version 4 stream sizes while reading the bounded baseline", () => {
+    const rows = [
+      ["品名", "価格"],
+      ["りんご", 125],
+      ...Array.from({ length: 30 }, (_, row) => [`商品${row}`, "日本語".repeat(30)]),
+    ];
+    const original = workbookBytes("biff8", XLSX.utils.aoa_to_sheet(rows));
+    const cfb = XLSX.CFB.read(original, { type: "array" }) as {
+      FileIndex: { name: string; content: Uint8Array }[];
+    };
+    const workbook = cfb.FileIndex.find((entry) => entry.name === "Workbook")!.content;
+    expect(workbook.length).toBeGreaterThanOrEqual(4096);
+    const streamSectors = Math.ceil(workbook.length / 4096);
+    const bytes = new Uint8Array((3 + streamSectors) * 4096);
+    bytes.set(original.subarray(0, 512));
+    const view = new DataView(bytes.buffer);
+    view.setUint16(26, 4, true);
+    view.setUint16(30, 12, true);
+    for (const [offset, value] of [
+      [40, 1],
+      [44, 1],
+      [48, 0],
+      [60, 0xfffffffe],
+      [64, 0],
+      [68, 0xfffffffe],
+      [72, 0],
+    ])
+      view.setUint32(offset!, value!, true);
+    for (let index = 0; index < 109; index++)
+      view.setUint32(76 + index * 4, index ? 0xffffffff : 1, true);
+    for (let index = 0; index < 32; index++) {
+      const offset = 4096 + index * 128;
+      for (const edge of [68, 72, 76]) view.setUint32(offset + edge, 0xffffffff, true);
+    }
+    for (const [index, name] of ["Root Entry", "Workbook"].entries()) {
+      const offset = 4096 + index * 128;
+      for (let char = 0; char < name.length; char++)
+        view.setUint16(offset + char * 2, name.charCodeAt(char), true);
+      view.setUint16(offset + 64, (name.length + 1) * 2, true);
+      bytes[offset + 66] = index ? 2 : 5;
+      bytes[offset + 67] = 1;
+      view.setUint32(offset + 116, index ? 2 : 0xfffffffe, true);
+      view.setUint32(offset + 120, index ? workbook.length : 0, true);
+    }
+    view.setUint32(4096 + 76, 1, true);
+    for (let index = 0; index < 1024; index++) view.setUint32(8192 + index * 4, 0xffffffff, true);
+    view.setUint32(8192, 0xfffffffe, true);
+    view.setUint32(8196, 0xfffffffd, true);
+    for (let index = 0; index < streamSectors; index++)
+      view.setUint32(8200 + index * 4, index + 1 === streamSectors ? 0xfffffffe : index + 3, true);
+    bytes.set(workbook, 3 * 4096);
+    const document = parseOfficeDocument(bytes, "xls");
+    if (document.kind !== "spreadsheet") throw new Error("Expected spreadsheet");
+    expect(document.sheets[0]?.name).toBe("売上");
+    expect(document.sheets[0]?.rows.slice(0, 2)).toEqual([
+      ["品名", "価格"],
+      ["りんご", "125"],
+    ]);
+    view.setUint32(4096 + 128 + 124, 1, true);
+    expect(() => parseOfficeDocument(bytes, "xls")).toThrow("streams exceed preview limits");
+  });
+
   it("rejects unbounded binary workbook stream sizes before invoking SheetJS", () => {
     const bytes = workbookBytes("biff8");
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     const directoryOffset = (view.getUint32(48, true) + 1) * 512;
     for (let offset = directoryOffset; offset < directoryOffset + 512; offset += 128) {
       if (bytes[offset + 66] === 2) {
-        view.setUint32(offset + 124, 1, true);
+        view.setUint32(offset + 120, bytes.length + 1, true);
         break;
       }
     }

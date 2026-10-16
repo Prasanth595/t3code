@@ -621,7 +621,8 @@ function validateCompoundWorkbook(bytes: Uint8Array) {
       if (
         kind !== 0 &&
         (directory.length >= MAX_ENTRIES ||
-          u32(offset + 124) !== 0 ||
+          // Legacy version 3 writers may leave the unused high size DWORD uninitialized.
+          (major === 4 && u32(offset + 124) !== 0) ||
           size > bytes.length ||
           (total += size) > ARCHIVE_MAX_BYTES)
       )
