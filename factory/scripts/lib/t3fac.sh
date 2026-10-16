@@ -49,13 +49,26 @@ restart_job() {
 # Copies rotate-log.sh to $root, which outlives any checkout or release archive the plist could
 # otherwise point at, writes the logrotate plist from its template and reloads that job the way
 # restart_job does the server's. Call it before restart_job so the server's restart stays the
-# last launchd action before wait_healthy.
+# last launchd action before wait_healthy. Rotation is best effort: callers run it as
+# `restart_logrotate_job || echo warning`, so a failure must never stop the server restart. set -e
+# is off for the whole body in that context, hence the && chain: any failing step makes the
+# function return non-zero. The script is replaced by rename, never overwritten in place, because
+# bash reads a script incrementally and a rotation running now would see a mix of old and new text.
 restart_logrotate_job() {
-  mkdir -p "$root" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/t3fac"
-  cp "$(dirname "${BASH_SOURCE[0]}")/../rotate-log.sh" "$root/rotate-log.sh"
-  chmod 755 "$root/rotate-log.sh"
-  sed "s|@HOME@|$HOME|g" "$logrotate_template" > "$logrotate_plist"
-  reload_job "$logrotate_label" "$logrotate_plist"
+  local tmp_script
+  mkdir -p "$root" "$HOME/Library/LaunchAgents" "$HOME/Library/Logs/t3fac" &&
+    tmp_script=$(mktemp "$root/.rotate-log.XXXXXX") &&
+    cp "$(dirname "${BASH_SOURCE[0]}")/../rotate-log.sh" "$tmp_script" &&
+    chmod 755 "$tmp_script" &&
+    mv -f "$tmp_script" "$root/rotate-log.sh" &&
+    sed "s|@HOME@|$HOME|g" "$logrotate_template" > "$logrotate_plist" &&
+    reload_job "$logrotate_label" "$logrotate_plist"
+}
+
+# The best-effort wrapper install.sh and rollback.sh call.
+restart_logrotate_job_or_warn() {
+  restart_logrotate_job ||
+    echo "warning: could not reload $logrotate_label; log rotation is not running" >&2
 }
 
 # Waits up to T3FAC_HEALTH_WAIT seconds (90) after restart_job for the server to accept

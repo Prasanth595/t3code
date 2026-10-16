@@ -50,7 +50,7 @@ if [[ -L $root/current ]]; then
 fi
 ln -sfn "versions/$version" "$root/current"
 
-restart_logrotate_job
+restart_logrotate_job_or_warn
 restart_job
 
 if ! wait_healthy "$version"; then

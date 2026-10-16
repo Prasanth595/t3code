@@ -16,7 +16,7 @@ target=$(readlink "$root/previous")
 from=$(readlink "$root/current" || true)
 ln -sfn "$target" "$root/current"
 
-restart_logrotate_job
+restart_logrotate_job_or_warn
 restart_job
 
 # Only now is the rollback done; a failed restart above leaves `previous` for a rerun.
