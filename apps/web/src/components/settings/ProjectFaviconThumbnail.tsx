@@ -6,7 +6,8 @@ import { useAssetUrlState } from "~/assets/assetUrls";
 // Each preview issues an asset URL over the socket, so wait until the row is on screen.
 function useInView<T extends Element>() {
   const ref = useRef<T>(null);
-  const [inView, setInView] = useState(false);
+  // Without IntersectionObserver, load eagerly rather than never.
+  const [inView, setInView] = useState(() => typeof IntersectionObserver === "undefined");
   useEffect(() => {
     const element = ref.current;
     if (inView || !element) return;
