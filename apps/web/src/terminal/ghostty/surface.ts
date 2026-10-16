@@ -398,8 +398,9 @@ export interface TerminalHeldOptionKeys {
  * so encoding it sends an Alt sequence and the character is lost. Option keys
  * set to act as Alt keep that encoding. An Option press that started before
  * the terminal had focus has no tracked side and types the character.
- * Dead keys (German Option+N for `~`) go to the textarea to compose. Option+Space
- * stays encoded, since a non-breaking space in a command line breaks it.
+ * Dead keys (German Option+N for `~`) go to the textarea to compose. An Option+Space
+ * that types a non-breaking space stays encoded, since one in a command line breaks
+ * it; a layout whose Option+Space types a regular space types that.
  * Option+arrow is not a single character, so word motion is unaffected.
  */
 export function isTerminalOptionComposedText(

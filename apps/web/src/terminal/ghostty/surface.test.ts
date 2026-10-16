@@ -986,7 +986,7 @@ describe("isTerminalOptionComposedText", () => {
     expect(isTerminalOptionComposedText(option("ArrowLeft"), "off", leftHeld, "MacIntel")).toBe(
       false,
     );
-    // Option+Space is a non-breaking space, which breaks shell commands.
+    // Option+Space is a non-breaking space on Apple layouts, which breaks shell commands.
     expect(isTerminalOptionComposedText(option("\u00a0"), "off", leftHeld, "MacIntel")).toBe(false);
     expect(
       isTerminalOptionComposedText({ ...option("b"), altKey: false }, "off", noneHeld, "MacIntel"),
@@ -999,6 +999,11 @@ describe("isTerminalOptionComposedText", () => {
     expect(isTerminalOptionComposedText(option("@"), "left", rightHeld, "MacIntel")).toBe(true);
     expect(isTerminalOptionComposedText(option("∫"), "right", rightHeld, "MacIntel")).toBe(false);
     expect(isTerminalOptionComposedText(option("@"), "right", leftHeld, "MacIntel")).toBe(true);
+  });
+
+  it("types a regular space from layouts whose Option+Space makes one", () => {
+    expect(isTerminalOptionComposedText(option(" "), "off", leftHeld, "MacIntel")).toBe(true);
+    expect(isTerminalOptionComposedText(option(" "), "both", leftHeld, "MacIntel")).toBe(false);
   });
 
   it("lets Option dead keys compose in the textarea", () => {
