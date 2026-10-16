@@ -1,17 +1,21 @@
 #!/usr/bin/env node
-"use strict";
 // The `t3` npm package. Downloads this version's CLI archive from the GitHub
 // Release into <T3 home>/runtime/versions/<version> (the folder the install
 // scripts and `t3 update` use), verifies it against the release's SHA256SUMS,
 // then runs it. `dist/bin.mjs` re-enters here for background services
 // installed before 0.0.41, which start the npm package with Node and talk to
 // it over an IPC channel.
-const { spawn, spawnSync } = require("node:child_process");
-const crypto = require("node:crypto");
-const fs = require("node:fs");
-const os = require("node:os");
-const path = require("node:path");
-const { version } = require("../package.json");
+import { spawn, spawnSync } from "node:child_process";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const launcherPath = fileURLToPath(import.meta.url);
+const { version } = JSON.parse(
+  fs.readFileSync(path.join(path.dirname(launcherPath), "../package.json"), "utf8"),
+);
 
 const SUPPORTED = ["darwin-arm64", "linux-arm64", "linux-x64", "win32-arm64", "win32-x64"];
 
@@ -124,7 +128,7 @@ async function main() {
     {
       stdio: ipc ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",
       // The executable lives in the T3 home, so this is how it knows npm launched it.
-      env: { ...process.env, T3CODE_NPM_LAUNCHER_PATH: __filename },
+      env: { ...process.env, T3CODE_NPM_LAUNCHER_PATH: launcherPath },
     },
   );
   if (ipc) {
@@ -146,4 +150,4 @@ function fail(error) {
   process.exit(1);
 }
 
-main().catch(fail);
+await main().catch(fail);

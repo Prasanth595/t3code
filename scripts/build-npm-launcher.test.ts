@@ -116,7 +116,7 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         );
         assert.equal(manifest.name, "t3");
         assert.equal(manifest.version, VERSION);
-        assert.deepStrictEqual(manifest.bin, { t3: "./bin/t3.js" });
+        assert.deepStrictEqual(manifest.bin, { t3: "./bin/t3.mjs" });
         // Nothing for npm to resolve, so nothing that can lag behind the launcher.
         assert.isUndefined(manifest.dependencies);
         assert.isUndefined(manifest.optionalDependencies);
@@ -138,7 +138,7 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
           T3CODE_HOME: home,
           T3CODE_RELEASE_BASE_URL: release.baseUrl,
         };
-        const launcher = path.join(packageDir, "bin/t3.js");
+        const launcher = path.join(packageDir, "bin/t3.mjs");
         const first = yield* run(process.execPath, [launcher, "serve", "a b"], {
           cwd: root,
           env,

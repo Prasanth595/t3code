@@ -2,7 +2,7 @@
 /**
  * Builds the `t3` npm package behind `npx t3` / `npm i -g t3`: a launcher
  * with no dependencies that downloads this exact version's CLI archive from
- * the GitHub Release on first run (scripts/npm-launcher/t3.js).
+ * the GitHub Release on first run (scripts/npm-launcher/t3.mjs).
  * The executables are not published to npm. npm's publish-time scanning held
  * 250 MB platform packages back for up to an hour after the launcher went
  * live, and every install in that window ran a launcher with nothing to
@@ -50,7 +50,7 @@ export function npmLauncherPackageManifest(version: string) {
       "T3 Code CLI. Downloads the self-contained executable for this platform from the GitHub Release.",
     license: serverPackageJson.license,
     repository: serverPackageJson.repository,
-    bin: { t3: "./bin/t3.js" },
+    bin: { t3: "./bin/t3.mjs" },
     files: ["bin", "dist"],
     engines: { node: ">=18" },
   };
@@ -77,8 +77,8 @@ export const buildNpmLauncher = Effect.fn("buildNpmLauncher")(function* (input: 
     path.join(stageDir, "package.json"),
     `${yield* encodePackageJson(npmLauncherPackageManifest(input.version))}\n`,
   );
-  yield* fs.copyFile(path.join(sourceDir, "t3.js"), path.join(stageDir, "bin/t3.js"));
-  yield* fs.chmod(path.join(stageDir, "bin/t3.js"), 0o755);
+  yield* fs.copyFile(path.join(sourceDir, "t3.mjs"), path.join(stageDir, "bin/t3.mjs"));
+  yield* fs.chmod(path.join(stageDir, "bin/t3.mjs"), 0o755);
   yield* fs.copyFile(path.join(sourceDir, "bin.mjs"), path.join(stageDir, "dist/bin.mjs"));
   const readme = yield* path.fromFileUrl(new URL("../apps/server/README.md", import.meta.url));
   if (yield* fs.exists(readme)) {
