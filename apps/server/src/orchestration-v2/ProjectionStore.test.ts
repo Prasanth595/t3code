@@ -3158,6 +3158,49 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("selects runtime recovery candidates without scanning historical runs", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      yield* addRolledBackRecoveryCandidate("indexed-candidates");
+      const { statements, tracer } = traceSqlStatements();
+      yield* store.getRecoveryThreadIds("runtime").pipe(Effect.withTracer(tracer));
+      const statement = statements.find((query) => query.includes("WITH pending_provider_threads"));
+      assert.isDefined(statement);
+      const plan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${statement}`,
+      );
+      const runScans = plan.filter((row) =>
+        /(?:SCAN|SEARCH) orchestration_v2_projection_runs /.test(row.detail),
+      );
+      assert.isNotEmpty(runScans);
+      for (const { detail } of runScans) assert.include(detail, "runs_recovery_idx");
+    }),
+  );
+
+  it.effect("recovers provider threads without walking finished turn items", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = yield* addRolledBackRecoveryCandidate("indexed-runtime");
+      const { statements, tracer } = traceSqlStatements();
+      yield* store.getRuntimeRecoveryProjection(threadId).pipe(Effect.withTracer(tracer));
+
+      const statement = statements.find((query) =>
+        query.includes("SELECT provider_thread.payload_json"),
+      );
+      assert.isDefined(statement);
+      const plan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${statement}`,
+      );
+      const itemLookups = plan.filter((row) => row.detail.startsWith("SEARCH item "));
+      assert.isNotEmpty(itemLookups);
+      for (const { detail } of itemLookups) {
+        assert.include(detail, "turn_items_live_idx (thread_id=?)");
+      }
+    }),
+  );
+
   it.effect("projects only the latest failed root turn's limit into SQL and memory shells", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
