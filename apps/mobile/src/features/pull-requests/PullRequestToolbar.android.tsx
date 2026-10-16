@@ -1,5 +1,5 @@
 import { useNavigation, useNavigationState } from "@react-navigation/native";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { BackHandler, Keyboard, View, type TextInputInstance } from "react-native";
 import {
   AndroidHeaderIconButton,
@@ -12,7 +12,10 @@ import { useHardwareKeyboardCommand } from "../keyboard/hardwareKeyboardCommands
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 
 /** PR search shares the thread list's native Android header placement. */
-export function PullRequestToolbar(props: { readonly onRequestVisibility?: () => void }) {
+export function PullRequestToolbar(props: {
+  readonly filters: ReactNode;
+  readonly onRequestVisibility?: () => void;
+}) {
   const navigation = useNavigation();
   const workspace = useWorkspaceTabs()!;
   const { dispatch, getScrollOffset, recordScrollOffset, isTabActive } = workspace;
@@ -103,16 +106,24 @@ export function PullRequestToolbar(props: { readonly onRequestVisibility?: () =>
                 icon: "magnifyingglass",
                 onPress: openSearch,
               },
-              {
-                accessibilityLabel: "Open settings",
-                icon: "gearshape",
-                onPress: () =>
-                  navigation.navigate("SettingsSheet", {
-                    screen: "SettingsContent",
-                    params: { screen: "Settings" },
-                  }),
-              },
             ]
+      }
+      trailing={
+        <>
+          {props.filters}
+          {!searching ? (
+            <AndroidHeaderIconButton
+              accessibilityLabel="Open settings"
+              icon="gearshape"
+              onPress={() =>
+                navigation.navigate("SettingsSheet", {
+                  screen: "SettingsContent",
+                  params: { screen: "Settings" },
+                })
+              }
+            />
+          ) : null}
+        </>
       }
     />
   );
