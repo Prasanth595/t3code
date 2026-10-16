@@ -81,6 +81,149 @@ function visualPresentationParts(): Record<string, Uint8Array> {
   return parts;
 }
 
+const xmlEncodings = [
+  { label: "UTF-16LE with BOM", littleEndian: true, bom: true, declaration: "UTF-16" },
+  { label: "UTF-16BE with BOM", littleEndian: false, bom: true, declaration: "UTF-16" },
+  { label: "UTF-16LE without BOM", littleEndian: true, bom: false, declaration: "UTF-16LE" },
+  { label: "UTF-16BE without BOM", littleEndian: false, bom: false, declaration: "UTF-16BE" },
+] as const;
+
+function transformXmlParts(
+  parts: Record<string, Uint8Array>,
+  transform: (xml: string) => Uint8Array,
+): Record<string, Uint8Array> {
+  return Object.fromEntries(
+    Object.entries(parts).map(([name, bytes]) => [
+      name,
+      /\.(?:xml|rels)$/.test(name) ? transform(strFromU8(bytes)) : bytes,
+    ]),
+  );
+}
+
+function utf16Parts(parts: Record<string, Uint8Array>, encoding: (typeof xmlEncodings)[number]) {
+  return transformXmlParts(parts, (xml) => {
+    const text = `<?xml version="1.0" encoding="${encoding.declaration}"?>${xml.replace(/^<\?xml[^?]*\?>/, "")}`;
+    const bytes = new Uint8Array(text.length * 2 + (encoding.bom ? 2 : 0));
+    const view = new DataView(bytes.buffer);
+    if (encoding.bom) view.setUint16(0, 0xfeff, encoding.littleEndian);
+    for (let index = 0; index < text.length; index++) {
+      view.setUint16(
+        index * 2 + (encoding.bom ? 2 : 0),
+        text.charCodeAt(index),
+        encoding.littleEndian,
+      );
+    }
+    return bytes;
+  });
+}
+
+function strictPresentationParts() {
+  return transformXmlParts(visualPresentationParts(), (xml) =>
+    strToU8(
+      xml
+        .replaceAll(P, "http://purl.oclc.org/ooxml/presentationml/main")
+        .replaceAll(A, "http://purl.oclc.org/ooxml/drawingml/main")
+        .replaceAll(R, "http://purl.oclc.org/ooxml/officeDocument/relationships"),
+    ),
+  );
+}
+
+describe("normal OOXML namespace and encoding compatibility", () => {
+  it("preserves Strict slide relationship order, inherited geometry, formatted text and embedded images", () => {
+    const document = parseOfficeDocument(zipSync(strictPresentationParts()), "pptx");
+    expect(document).toEqual(parseOfficeDocument(zipSync(visualPresentationParts()), "pptx"));
+    if (document.kind !== "presentation") throw new Error("Expected presentation");
+    expect(document.slides.map((slide) => slide.text)).toEqual([
+      ["日本語の見出し", "本文はマスターから継承"],
+      ["Second & final"],
+    ]);
+    expect(document.slides[0]?.elements).toMatchObject([
+      { kind: "text", text: "日本語の見出し", x: 500000, y: 300000, fontSize: 36, bold: true },
+      { kind: "text", text: "本文はマスターから継承", x: 600000, y: 2000000, color: "#123456" },
+      { kind: "shape", shape: "rect", rotation: 90 },
+      { kind: "image", alt: "テスト画像", x: 4000000, y: 3000000 },
+    ]);
+    const image = document.slides[0]?.elements[3];
+    expect(image?.kind === "image" && image.src.startsWith("data:image/png;base64,")).toBe(true);
+  });
+
+  it.each(xmlEncodings)(
+    "reads spreadsheet names and Unicode cell values from $label parts",
+    (encoding) => {
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(
+        workbook,
+        XLSX.utils.aoa_to_sheet([
+          ["品名", "価格"],
+          ["りんご 🐈", 125],
+        ]),
+        "売上",
+      );
+      const original = new Uint8Array(
+        XLSX.write(workbook, { type: "array", bookType: "xlsx", bookSST: true }),
+      );
+      const parts = unzipSync(original);
+      expect(parts["xl/sharedStrings.xml"]).toBeDefined();
+      const document = parseOfficeDocument(zipSync(utf16Parts(parts, encoding)), "xlsx");
+      expect(document).toEqual(parseOfficeDocument(original, "xlsx"));
+      if (document.kind !== "spreadsheet") throw new Error("Expected spreadsheet");
+      expect(document.sheets[0]).toMatchObject({
+        name: "売上",
+        rows: [
+          ["品名", "価格"],
+          ["りんご 🐈", "125"],
+        ],
+      });
+    },
+  );
+
+  it("preserves namespace URI strings written as ordinary Strict slide text", () => {
+    const parts = strictPresentationParts();
+    const literal =
+      "http://purl.oclc.org/ooxml/presentationml/main http://purl.oclc.org/ooxml/drawingml/main http://purl.oclc.org/ooxml/officeDocument/relationships";
+    parts["ppt/slides/slide1.xml"] = strToU8(
+      strFromU8(parts["ppt/slides/slide1.xml"]!).replace("Second &amp; final", literal),
+    );
+    const document = parseOfficeDocument(zipSync(parts), "pptx");
+    if (document.kind !== "presentation") throw new Error("Expected presentation");
+    expect(document.slides[1]?.text).toEqual([literal]);
+  });
+
+  it.each(xmlEncodings)(
+    "preserves presentation text, relationships and visuals from $label parts",
+    (encoding) => {
+      expect(
+        parseOfficeDocument(zipSync(utf16Parts(visualPresentationParts(), encoding)), "pptx"),
+      ).toEqual(parseOfficeDocument(zipSync(visualPresentationParts()), "pptx"));
+    },
+  );
+
+  it("reads Strict namespace aliases together with UTF-16BE relationships and slide parts", () => {
+    expect(
+      parseOfficeDocument(zipSync(utf16Parts(strictPresentationParts(), xmlEncodings[1])), "pptx"),
+    ).toEqual(parseOfficeDocument(zipSync(visualPresentationParts()), "pptx"));
+  });
+
+  it("retains UTF-8 BOM support for spreadsheet and presentation parts", () => {
+    const withBom = (xml: string) => strToU8(`\uFEFF${xml}`);
+    const workbook = workbookBytes("xlsx");
+    expect(
+      parseOfficeDocument(zipSync(transformXmlParts(unzipSync(workbook), withBom)), "xlsx"),
+    ).toEqual(parseOfficeDocument(workbook, "xlsx"));
+    expect(
+      parseOfficeDocument(zipSync(transformXmlParts(visualPresentationParts(), withBom)), "pptx"),
+    ).toEqual(parseOfficeDocument(zipSync(visualPresentationParts()), "pptx"));
+  });
+
+  it("rejects an encoding declaration that contradicts the actual XML bytes", () => {
+    const parts = presentationParts();
+    parts["ppt/slides/slide2.xml"] = strToU8(
+      `<?xml version="1.0" encoding="UTF-16"?>${strFromU8(parts["ppt/slides/slide2.xml"])}`,
+    );
+    expect(() => parseOfficeDocument(zipSync(parts), "pptx")).toThrow();
+  });
+});
+
 describe("parseOfficeDocument spreadsheets", () => {
   it.each(["xlsx", "xls"] as const)(
     "previews visible sheets after twenty hidden sheets in %s",

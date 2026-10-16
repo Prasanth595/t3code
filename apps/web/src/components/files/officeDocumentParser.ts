@@ -1,5 +1,5 @@
 import { readImageDimensions } from "@t3tools/shared/imageDimensions";
-import { Unzip, UnzipInflate } from "fflate";
+import { Unzip, UnzipInflate, Zip, ZipDeflate } from "fflate";
 import { SaxesParser, type SaxesTagNS } from "saxes";
 import * as XLSX from "xlsx";
 import * as codepages from "xlsx/dist/cpexcel.full.mjs";
@@ -85,6 +85,28 @@ const DRAWING_NS = "http://schemas.openxmlformats.org/drawingml/2006/main";
 const PRESENTATION_NS = "http://schemas.openxmlformats.org/presentationml/2006/main";
 const DOCUMENT_REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 const PACKAGE_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships";
+
+function normalizeOfficeUri(uri: string): string {
+  if (uri === "http://purl.oclc.org/ooxml/drawingml/main") return DRAWING_NS;
+  if (uri === "http://purl.oclc.org/ooxml/presentationml/main") return PRESENTATION_NS;
+  const strictRelationships = "http://purl.oclc.org/ooxml/officeDocument/relationships";
+  return uri === strictRelationships || uri.startsWith(`${strictRelationships}/`)
+    ? DOCUMENT_REL_NS + uri.slice(strictRelationships.length)
+    : uri;
+}
+
+function normalizeOfficeTag(tag: SaxesTagNS): SaxesTagNS {
+  return {
+    ...tag,
+    uri: normalizeOfficeUri(tag.uri),
+    attributes: Object.fromEntries(
+      Object.entries(tag.attributes).map(([name, value]) => [
+        name,
+        { ...value, uri: normalizeOfficeUri(value.uri) },
+      ]),
+    ),
+  };
+}
 const CRC_TABLE = Uint32Array.from({ length: 256 }, (_, value) => {
   let crc = value;
   for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
@@ -294,6 +316,24 @@ function expandArchive(bytes: Uint8Array): Map<string, Uint8Array> {
   return result;
 }
 
+type XmlEncoding = "utf-8" | "utf-16le" | "utf-16be";
+
+function xmlEncoding(bytes: Uint8Array): { encoding: XmlEncoding; bom: boolean } {
+  if (
+    (bytes[0] === 0xff && bytes[1] === 0xfe && bytes[2] === 0 && bytes[3] === 0) ||
+    (bytes[0] === 0 && bytes[1] === 0 && bytes[2] === 0xfe && bytes[3] === 0xff)
+  ) {
+    fail("UTF-32 XML is not supported for preview.");
+  }
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return { encoding: "utf-16le", bom: true };
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return { encoding: "utf-16be", bom: true };
+  if (bytes[0] === 0x3c && bytes[1] === 0 && bytes[2] === 0x3f && bytes[3] === 0)
+    return { encoding: "utf-16le", bom: false };
+  if (bytes[0] === 0 && bytes[1] === 0x3c && bytes[2] === 0 && bytes[3] === 0x3f)
+    return { encoding: "utf-16be", bom: false };
+  return { encoding: "utf-8", bom: bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf };
+}
+
 function parseXml(
   bytes: Uint8Array,
   handlers: {
@@ -303,9 +343,26 @@ function parseXml(
   } = {},
 ) {
   if (bytes.length > ENTRY_MAX_BYTES) fail("The document XML exceeds preview limits.");
+  const { encoding, bom } = xmlEncoding(bytes);
   const parser = new SaxesParser({ xmlns: true });
   let depth = 0;
   let elements = 0;
+  let declaredEncoding: string | undefined;
+  parser.on("xmldecl", (declaration) => {
+    declaredEncoding = declaration.encoding?.toLowerCase();
+    if (declaredEncoding === undefined) return;
+    if (declaredEncoding === "utf-16") {
+      if (encoding === "utf-8" || !bom) fail("UTF-16 XML requires a matching byte-order mark.");
+    } else if (
+      declaredEncoding === "utf-8" ||
+      declaredEncoding === "utf8" ||
+      declaredEncoding === "utf-16le" ||
+      declaredEncoding === "utf-16be"
+    ) {
+      if ((declaredEncoding === "utf8" ? "utf-8" : declaredEncoding) !== encoding)
+        fail("The XML encoding declaration disagrees with its bytes.");
+    } else fail("The XML encoding is not supported for preview.");
+  });
   parser.on("doctype", () => fail("XML document types are not supported for preview."));
   parser.on("error", (error) => {
     throw error;
@@ -313,19 +370,59 @@ function parseXml(
   parser.on("opentag", (tag) => {
     if (++depth > 128 || ++elements > MAX_XML_ELEMENTS)
       fail("The document XML is too complex to preview.");
-    handlers.open?.(tag);
+    handlers.open?.(normalizeOfficeTag(tag));
   });
   parser.on("closetag", (tag) => {
-    handlers.close?.(tag);
+    handlers.close?.(normalizeOfficeTag(tag));
     depth--;
   });
   parser.on("text", (text) => handlers.text?.(text));
   parser.on("cdata", (text) => handlers.text?.(text));
-  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const decoder = new TextDecoder(encoding, { fatal: true });
   for (let offset = 0; offset < bytes.length; offset += 4096) {
     parser.write(decoder.decode(bytes.subarray(offset, offset + 4096), { stream: true }));
   }
   parser.write(decoder.decode()).close();
+  if (encoding !== "utf-8" && !bom && !declaredEncoding)
+    fail("XML without a byte-order mark must declare its UTF-16 byte order.");
+  return encoding;
+}
+
+/** Normalize validated UTF-16 XML for SheetJS without retaining a second set of parts. */
+function normalizedWorkbookArchive(
+  parts: Map<string, Uint8Array>,
+  encodings: Map<string, XmlEncoding>,
+): Uint8Array {
+  const output = new Uint8Array(OFFICE_INPUT_MAX_BYTES);
+  let size = 0;
+  let expanded = 0;
+  const zip = new Zip((error, chunk) => {
+    if (error) throw error;
+    if (size + chunk.length > output.length)
+      fail("The normalized workbook exceeds the 5 MiB preview limit.");
+    output.set(chunk, size);
+    size += chunk.length;
+  });
+  for (const [name, original] of parts) {
+    const encoding = encodings.get(name);
+    const content = encoding
+      ? new TextEncoder().encode(
+          new TextDecoder(encoding, { fatal: true })
+            .decode(original)
+            .replace(/^(<\?xml\s[^?]*?\bencoding\s*=\s*)(["'])[^"']+\2/, '$1"UTF-8"'),
+        )
+      : original;
+    expanded += content.length;
+    if (content.length > ENTRY_MAX_BYTES || expanded > ARCHIVE_MAX_BYTES)
+      fail("The normalized workbook XML exceeds preview limits.");
+    const entry = new ZipDeflate(name, { level: 1 });
+    zip.add(entry);
+    if (content.length === 0) entry.push(content, true);
+    for (let offset = 0; offset < content.length; offset += 512)
+      entry.push(content.subarray(offset, offset + 512), offset + 512 >= content.length);
+  }
+  zip.end();
+  return output.subarray(0, size);
 }
 
 function attribute(tag: SaxesTagNS, local: string, uri = ""): string | undefined {
@@ -890,7 +987,7 @@ function parsePresentation(parts: Map<string, Uint8Array>): OfficeDocument {
       const type = nodeAttribute(node, "Type");
       if (id && target && type && nodeAttribute(node, "TargetMode") !== "External") {
         if (relationships.has(id)) fail("Duplicate presentation relationship.");
-        relationships.set(id, { type, path: resolvePart(path, target) });
+        relationships.set(id, { type: normalizeOfficeUri(type), path: resolvePart(path, target) });
       }
     }
     return relationships;
@@ -1091,10 +1188,17 @@ export function parseOfficeDocument(
     return parseSpreadsheet(bytes, "xls");
   }
   const parts = expandArchive(bytes);
+  const encodings = new Map<string, XmlEncoding>();
   for (const [name, content] of parts) {
-    if (/\.(?:xml|rels)$/i.test(name)) parseXml(content);
+    if (/\.(?:xml|rels)$/i.test(name)) {
+      const encoding = parseXml(content);
+      if (encoding !== "utf-8") encodings.set(name, encoding);
+    }
   }
   if (format === "pptx") return parsePresentation(parts);
   if (!parts.has("xl/workbook.xml")) fail("This file is not a supported Excel workbook.");
-  return parseSpreadsheet(bytes, "xlsx");
+  return parseSpreadsheet(
+    encodings.size ? normalizedWorkbookArchive(parts, encodings) : bytes,
+    "xlsx",
+  );
 }
