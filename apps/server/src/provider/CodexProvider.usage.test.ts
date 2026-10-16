@@ -31,7 +31,11 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
   } else if (method === "account/read") {
     write({ id, result: { account: { type: "chatgpt", email: "test@example.com", planType: "pro" }, requiresOpenaiAuth: true } });
   } else if (method === "config/read") {
-    write({ id, result: { config: JSON.parse(process.env.FAKE_CODEX_CONFIG), origins: {} } });
+    if (process.env.FAKE_CODEX_CONFIG === undefined) {
+      write({ id, error: { code: -32603, message: "config unreadable" } });
+    } else {
+      write({ id, result: { config: JSON.parse(process.env.FAKE_CODEX_CONFIG), origins: {} } });
+    }
   } else if (method === "account/rateLimits/read") {
     fs.writeFileSync(path.join(process.env.CODEX_HOME, "rate-limits-requested"), "");
     write({ id, result: { rateLimits: { primary: { usedPercent: 90, windowDurationMins: 10080, resetsAt: 1789436313 } } } });
@@ -47,7 +51,8 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
-const usageFor = Effect.fn("usageFor")(function* (config: Record<string, unknown>) {
+/** A `config` of `undefined` makes the fake CLI fail `config/read`. */
+const usageFor = Effect.fn("usageFor")(function* (config: Record<string, unknown> | undefined) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-usage-" });
@@ -58,7 +63,10 @@ const usageFor = Effect.fn("usageFor")(function* (config: Record<string, unknown
   const provider = yield* checkCodexProviderStatus(
     decodeCodexSettings({ binaryPath, homePath: dir }),
     undefined,
-    { ...process.env, FAKE_CODEX_CONFIG: JSON.stringify(config) },
+    {
+      ...process.env,
+      ...(config === undefined ? {} : { FAKE_CODEX_CONFIG: JSON.stringify(config) }),
+    },
   );
   return {
     usageLimits: provider.usageLimits,
@@ -110,6 +118,15 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("Codex native usage 
         assert.deepStrictEqual(usageLimits?.windows, []);
         assert.strictEqual(usageLimits?.unavailable?.reason, "unsupported");
       }
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("skips the ChatGPT quota when the routing config cannot be read", () =>
+    Effect.gen(function* () {
+      const { usageLimits, fetched } = yield* usageFor(undefined);
+      assert.strictEqual(fetched, false);
+      assert.deepStrictEqual(usageLimits?.windows, []);
+      assert.strictEqual(usageLimits?.unavailable?.reason, "unsupported");
     }).pipe(Effect.scoped),
   );
 });

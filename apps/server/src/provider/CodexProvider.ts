@@ -101,15 +101,16 @@ const isOpenAiEndpoint = (baseUrl: string): boolean => {
  * it is `false` for a custom provider even when a ChatGPT login is stored, and
  * a custom provider can set it `true` while routing to a non-OpenAI `base_url`.
  * Either way that login's quota is not what the provider's traffic spends. API
- * keys have no subscription windows.
+ * keys have no subscription windows. A `null` `baseUrl` means the route could
+ * not be read, so the quota cannot be attributed to it.
  */
 const reportsNativeUsage = (
   account: CodexSchema.V2GetAccountResponse,
-  baseUrl: string | undefined,
+  baseUrl: string | null | undefined,
 ): boolean =>
   account.requiresOpenaiAuth &&
   account.account?.type !== "apiKey" &&
-  (baseUrl === undefined || isOpenAiEndpoint(baseUrl));
+  (baseUrl === undefined || (baseUrl !== null && isOpenAiEndpoint(baseUrl)));
 
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 const CODEX_CATALOG_REFRESH_TIMEOUT = "3 seconds" as const;
@@ -124,7 +125,7 @@ const CODEX_PRESENTATION = {
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
-  readonly baseUrl?: string;
+  readonly baseUrl?: string | null;
   readonly rateLimits?: CodexRateLimitsProbe;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
@@ -521,10 +522,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  // An unreadable config leaves the account alone to decide.
   const baseUrl = yield* client.request("config/read", {}).pipe(
     Effect.map((response) => activeProviderBaseUrl(response.config)),
-    Effect.orElseSucceed(() => undefined),
+    Effect.orElseSucceed(() => null),
   );
 
   const [skillsResponse, models, rateLimits] = yield* Effect.all(
