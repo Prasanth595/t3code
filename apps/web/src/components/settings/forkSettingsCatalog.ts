@@ -26,7 +26,11 @@ type ForkSettingEntry =
 const FORK_SETTING_GROUPS = [
   {
     title: "Remote access",
-    entries: [{ ids: ["tunnel-pairing"] }, { ids: ["installed-app"] }],
+    entries: [{ ids: ["tunnel-pairing"] }],
+  },
+  {
+    title: "Machine map",
+    entries: [{ ids: ["machine-map"] }],
   },
   {
     title: "Updates and releases",
@@ -38,6 +42,7 @@ const FORK_SETTING_GROUPS = [
       },
       { ids: ["fork-auto-update"] },
       { ids: ["fork-changelog"] },
+      { ids: ["check-newer-before-update-install"] },
     ],
   },
   {
@@ -88,12 +93,12 @@ const FORK_SETTING_GROUPS = [
     ],
   },
   {
-    title: "Themes and look",
-    entries: [{ ids: ["thread-card-layout"] }],
-  },
-  {
-    title: "Command line and MCP",
-    entries: [{ ids: ["machine-map"] }],
+    title: "Web app and look",
+    entries: [
+      { ids: ["installed-app"] },
+      { ids: ["thread-card-layout"] },
+      { ids: ["thread-link-chips"] },
+    ],
   },
 ] as const satisfies ReadonlyArray<{
   readonly title: string;

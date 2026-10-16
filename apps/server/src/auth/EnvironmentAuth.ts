@@ -45,10 +45,9 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
-import { makeCloudflareAccessVerifier } from "./CloudflareAccess.ts";
 import * as MachineMapState from "../fork/machineMap/MachineMapState.ts";
 import { clientBrowserSessionTtl } from "../fork/machineMap/machineAccess.ts";
-import { type ClientPending, ownerBrowserAccess } from "../fork/machineMap/browserAccess.ts";
+import * as ForkAuth from "../fork/forkEnvironmentAuth.ts";
 import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 
@@ -76,16 +75,9 @@ export interface IssuedBearerSession {
 }
 
 /**
- * Sessions an MCP client (an agent T3 Code did not launch) obtains through
- * OAuth. They are accepted only by `/mcp`, where every action is capped by the
- * access the user approved; the HTTP API and WebSocket reject them so an agent
- * token cannot reach the full RPC surface around that cap.
- *
- * A read-only grant holds `orchestration:read` alone. Any other grant also
- * holds `orchestration:operate` and carries its runtime-mode ceiling. A
- * full-access client may also change environment preferences and clone
- * repositories, so it holds the scopes those need over RPC. Approving a grant
- * requires every scope it holds.
+ * They are accepted only by `/mcp`, where every action is capped by the access
+ * the user approved; the HTTP API and WebSocket reject them so an agent token
+ * cannot reach the full RPC surface around that cap.
  */
 const MCP_CLIENT_SUBJECT = "mcp-client";
 const MCP_CLIENT_SESSION_TTL = Duration.days(30);
@@ -408,20 +400,10 @@ export class ServerAuthInvalidCredentialError extends Schema.TaggedError<ServerA
   }
 }
 
-/** Fork: MM-718. A valid session that the machine map pause locks. */
-export class ServerAuthMachinePausedError extends Schema.TaggedError<ServerAuthMachinePausedError>()(
-  "ServerAuthMachinePausedError",
-  {},
-) {
-  override get message(): string {
-    return "The machine map pause locks this client.";
-  }
-}
-
 export const ServerAuthCredentialError = Schema.Union([
   ServerAuthMissingCredentialError,
   ServerAuthInvalidCredentialError,
-  ServerAuthMachinePausedError,
+  ForkAuth.ServerAuthMachinePausedError,
 ]);
 export type ServerAuthCredentialError = typeof ServerAuthCredentialError.Type;
 export const isServerAuthCredentialError = Schema.is(ServerAuthCredentialError);
@@ -540,16 +522,7 @@ export class EnvironmentAuth extends Context.Service<
     readonly issuePairingCredential: (
       input?: AuthCreatePairingCredentialInput,
     ) => Effect.Effect<AuthPairingCredentialResult, ServerAuthInternalError>;
-    // Fork: a one-use pairing credential for a request that carries a valid
-    // Cloudflare Access JWT, or undefined when the login is off or the JWT fails.
-    // It fails while the machine map pause locks every Access subject (MM-718).
-    // `ClientPending` (MM-918): `enforce` refuses this browser until the owner approves its key.
-    readonly issueCloudflareAccessPairingCredential: (
-      request: HttpServerRequest.HttpServerRequest,
-    ) => Effect.Effect<
-      AuthPairingCredentialResult | ClientPending | undefined,
-      ServerAuthInternalError | ServerAuthMachinePausedError
-    >;
+    readonly issueCloudflareAccessPairingCredential: ForkAuth.IssueCloudflareAccessPairingCredential;
     readonly issueStartupPairingCredential: () => Effect.Effect<
       AuthPairingCredentialResult,
       ServerAuthInternalError
@@ -596,7 +569,6 @@ export class EnvironmentAuth extends Context.Service<
     readonly issueStartupPairingUrl: (
       baseUrl: string,
     ) => Effect.Effect<string, ServerAuthInternalError>;
-    /** Only bearer `mcp-client` sessions; never cookies or proof-bound tokens. */
     readonly authenticateMcpClient: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<McpClientSession, ServerAuthCredentialError | ServerAuthInternalError>;
@@ -622,7 +594,6 @@ export class EnvironmentAuth extends Context.Service<
       code: string,
       access: AuthMcpClientAccess,
     ) => Effect.Effect<void, ServerAuthMcpApprovalCodeError | ServerAuthInternalError>;
-    /** A browser cookie session only; a bearer header never counts as one. */
     readonly authenticateBrowserSession: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
@@ -732,7 +703,6 @@ export function selectRequestCredential(
 
 type RequestCredentialSource = NonNullable<ReturnType<typeof selectRequestCredential>>["source"];
 
-/** Whether a credential came from a browser cookie rather than an Authorization header. */
 export const isBrowserCookieCredential = (source: RequestCredentialSource | "dev-cookie") =>
   source === "cookie" || source === "legacy-cookie" || source === "dev-cookie";
 
@@ -742,7 +712,6 @@ function firstHeaderValue(value: string | undefined): string | undefined {
 }
 
 /**
- * Whether a cookie-carrying request comes from a page allowed to use it.
  * Browsers send `Origin` on WebSocket upgrades, cross-origin requests, and
  * non-GET requests, so an absent header means a same-origin read or a
  * non-browser client. Otherwise the request must be same-origin by the
@@ -782,23 +751,16 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   // Fork: machine map (MM-718, MM-1305). Absent outside the server: no pause lock, no grants.
   const machineMap = yield* Effect.serviceOption(MachineMapState.MachineMapState);
-  const rejectWhilePaused = <S extends { readonly subject: string }>(session: S) =>
-    Option.isNone(machineMap)
-      ? Effect.succeed(session)
-      : machineMap.value
-          .lockedFor(session.subject)
-          .pipe(
-            Effect.flatMap((locked) =>
-              locked ? Effect.fail(new ServerAuthMachinePausedError({})) : Effect.succeed(session),
-            ),
-          );
+  const rejectWhilePaused = ForkAuth.rejectWhilePaused(machineMap);
   const devAuth = resolveReusableDevAuth(config);
 
   const authenticateToken = (
     token: string,
   ): Effect.Effect<
     AuthenticatedSession,
-    ServerAuthInvalidCredentialError | ServerAuthMachinePausedError | ServerAuthInternalError
+    | ServerAuthInvalidCredentialError
+    | ForkAuth.ServerAuthMachinePausedError
+    | ServerAuthInternalError
   > =>
     sessions.verify(token).pipe(
       Effect.tapError((cause) =>
@@ -850,12 +812,7 @@ export const make = Effect.gen(function* () {
     // Cloudflare Access cookie, so this server's own session cookie arrives with them.
     ...(config.trustedBrowserOrigins ?? []),
   ]);
-  // Fork: machine map (MM-1311). The pages of peer machines are trusted like the list above.
-  const trustedOrigins = {
-    has: (origin: string) =>
-      trustedBrowserOrigins.has(origin) ||
-      (Option.isSome(machineMap) && machineMap.value.trustsPeerOrigin(origin)),
-  };
+  const trustedOrigins = ForkAuth.withPeerOrigins(trustedBrowserOrigins, machineMap);
 
   const authenticateRequest = (
     request: HttpServerRequest.HttpServerRequest,
@@ -1082,8 +1039,6 @@ export const make = Effect.gen(function* () {
                     }
                   : {}),
                 ...(clientTtl === undefined ? {} : { ttl: clientTtl }),
-                // Desktop restarts forget the previous bearer token. Replace
-                // its session, including stale entries left by older versions.
                 replaceActiveForSubjectAndMethod: grant.method === "desktop-bootstrap",
                 client: {
                   ...requestMetadata,
@@ -1251,71 +1206,14 @@ export const make = Effect.gen(function* () {
       ...(input?.label ? { label: input.label } : {}),
     }).pipe(Effect.withSpan("EnvironmentAuth.issuePairingCredential"));
 
-  const verifyCloudflareAccess =
-    config.cloudflareAccess === undefined
-      ? undefined
-      : makeCloudflareAccessVerifier(config.cloudflareAccess);
-
-  // Fork (MM-917, MM-918): see `ownerBrowserAccess`.
-  const ownerBrowserAccessFor = (request: HttpServerRequest.HttpServerRequest, subject: string) =>
-    ownerBrowserAccess(machineMap, request, subject).pipe(
-      Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
-      Effect.provideService(Crypto.Crypto, crypto),
-    );
-
-  const issueCloudflareAccessPairingCredential: EnvironmentAuth["Service"]["issueCloudflareAccessPairingCredential"] =
-    (request) =>
-      verifyCloudflareAccess === undefined
-        ? Effect.succeed(undefined)
-        : verifyCloudflareAccess(request).pipe(
-            // Fork (MM-718): an Access subject is never the local desktop app, so the pause locks
-            // it. A session made now would only be refused on its first use.
-            Effect.tap((identity) =>
-              identity === undefined || Option.isNone(machineMap)
-                ? Effect.void
-                : machineMap.value
-                    .lockedFor("one-time-token")
-                    .pipe(
-                      Effect.flatMap((locked) =>
-                        locked ? Effect.fail(new ServerAuthMachinePausedError({})) : Effect.void,
-                      ),
-                    ),
-            ),
-            Effect.flatMap((identity) =>
-              identity === undefined
-                ? Effect.succeed(undefined)
-                : identity.kind === "owner"
-                  ? ownerBrowserAccessFor(request, identity.subject).pipe(
-                      Effect.flatMap((access) =>
-                        access._tag === "ClientPending"
-                          ? Effect.succeed<ClientPending | AuthPairingCredentialResult>(access)
-                          : issuePairingCredentialForSubject({
-                              ...(access._tag === "client"
-                                ? access.grant
-                                : {
-                                    scopes: AuthStandardClientScopes,
-                                    subject: "one-time-token",
-                                    label: `cloudflare-access ${identity.subject}`,
-                                  }),
-                              ttl: Duration.minutes(2),
-                            }),
-                      ),
-                    )
-                  : Option.isNone(machineMap)
-                    ? Effect.succeed(undefined)
-                    : machineMap.value.machineGrant(identity.commonName).pipe(
-                        Effect.flatMap((grant) =>
-                          grant === undefined
-                            ? Effect.succeed(undefined)
-                            : issuePairingCredentialForSubject({
-                                ...grant,
-                                ttl: Duration.minutes(2),
-                              }),
-                        ),
-                      ),
-            ),
-            Effect.withSpan("EnvironmentAuth.issueCloudflareAccessPairingCredential"),
-          );
+  const issueCloudflareAccessPairingCredential =
+    ForkAuth.makeIssueCloudflareAccessPairingCredential({
+      cloudflareAccess: config.cloudflareAccess,
+      machineMap,
+      secretStore,
+      crypto,
+      issuePairingCredentialForSubject,
+    });
 
   const issueStartupPairingCredential: EnvironmentAuth["Service"]["issueStartupPairingCredential"] =
     () => {
@@ -1492,7 +1390,6 @@ export const make = Effect.gen(function* () {
     code,
     access,
   ) =>
-    // No proof key: a code bound to a T3 Connect client's key fails without being spent.
     resolveBootstrapGrant(code.trim()).pipe(
       Effect.catchTags({
         ServerAuthInvalidCredentialError: () =>

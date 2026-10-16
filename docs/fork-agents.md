@@ -46,13 +46,10 @@ The portal is `https://t3.yarden-zamir.com`. Each machine is one T3 server, for 
 | See the scheduled tasks of a machine    | `machines_read`. `presence.<machineId>.status.tasks` lists them. A machine without `tasks` runs an older T3.                                                                                          |
 | Pause, resume or run one scheduled task | `machines_command` with `{"_tag":"setScheduledTaskEnabled","taskId":...,"enabled":false}` (`true` resumes), or `{"_tag":"runScheduledTask","taskId":...}`. An offline machine gets it from its queue. |
 | Stop everything                         | Ask the owner to press the emergency pause in the portal. It stops all agents and sets all access to none. Agents cannot press it.                                                                    |
-
-                                                                                |
-
-| Revert a map change | `machines_undo` with the revision number from `history`. Commands cannot be undone. |
-| Cancel a queued command | `machines_queue_cancel` with the command id. |
-| Join a new machine | Ask the owner for a join code from Add machine. Then call `machines_join`, or run `t3 machine-map join <code>` on that machine. |
-| Install the fork on a new machine | Run the step 0 command of the join dialog there: `install.sh --join <code>` or `install.ps1 -Join <code>` from `scripts/fork-install`. See fork.md "Install the fork". |
+| Revert a map change                     | `machines_undo` with the revision number from `history`. Commands cannot be undone.                                                                                                                   |
+| Cancel a queued command                 | `machines_queue_cancel` with the command id.                                                                                                                                                          |
+| Join a new machine                      | Ask the owner for a join code from Add machine. Then call `machines_join`, or run `t3 machine-map join <code>` on that machine.                                                                       |
+| Install the fork on a new machine       | Run the step 0 command of the join dialog there: `install.sh --join <code>` or `install.ps1 -Join <code>` from `scripts/fork-install`. See fork.md "Install the fork".                                |
 
 ## Updates and deploys
 
@@ -100,6 +97,7 @@ To restore, ask the owner first. Then:
 When Fork CI, Fork Sync or Fork Release fails, `scripts/fork-notify-agent.sh` posts the run to the webhook in the GitHub secret `T3_AGENT_WEBHOOK_URL`. The webhook is the scheduled task "Fork repair" on the VPS, in the project "t3code fork". It starts a repair agent there.
 
 - The repair agent watches the next run of the same workflow.
+- GitHub can start the daily Fork Sync hours after its 03:17 UTC schedule. Before you merge upstream by hand, check `gh run list --workflow fork-sync.yml` and the VPS for a running "Fork repair" thread. If the daily run did not start yet, run the workflow instead of a manual merge. If a repair agent already merges upstream, send it your notes instead of a second merge.
 - On a retry, run the workflow with `notify_agent=false`, so that a second failure does not start another agent.
 - A failure right after a failure of the same workflow does not post, when the notify job of the first failure succeeded.
 - To stop the repair agent, disable the "Fork repair" task on the VPS (`machines_command` with `{"_tag":"setScheduledTaskEnabled","taskId":...,"enabled":false}`). To stop all calls, delete the GitHub secret `T3_AGENT_WEBHOOK_URL`.

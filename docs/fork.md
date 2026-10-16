@@ -30,7 +30,7 @@ Fork main only moves forward. Nothing rebases or force-pushes it.
 - Fork CI compares a push with the commit of the last green push run, and a pull request with its base. When only `docs`, `*.md` or `apps/machine-map` changed, only the Lint job runs, and it checks only the changed files. A change in `apps/machine-map` also runs the Machine map job: its typecheck and tests. A manual run always runs every job.
 - To see all fork changes, run `git diff upstream/main...main`.
 - The top of `README.md` lists the fork features and fixes, up to the first `---` line. A pull request that adds, removes or changes a fork feature or fix updates its line in that list.
-- Settings > Fork shows every fork setting and each upstream setting that the fork changed, with the same rows as their usual pages. A pull request that adds a fork setting adds it to `FORK_SETTING_GROUPS` in `apps/web/src/components/settings/forkSettingsCatalog.ts` and its row component to `FORK_SETTING_ROWS` in `ForkSettings.tsx`. The catalog imports no components, because the settings search on every route reads it.
+- Settings > Fork shows every fork setting and each upstream setting that the fork changed, with the same rows as their usual pages. A pull request that adds a fork setting adds it to `FORK_SETTING_GROUPS` in `apps/web/src/components/settings/forkSettingsCatalog.ts` and its row component to `FORK_SETTING_ROWS` in `ForkSettings.tsx`. The catalog imports no components, because the settings search on every route reads it. Its schema field goes in `packages/contracts/src/forkSettings.ts`, not in the upstream `settings.ts`.
 - "Restore device defaults" in Settings resets every fork preference, the list in `apps/web/src/components/settings/forkSettingsRestore.ts`. Like upstream, it keeps user data and access: global scripts and pins, sidebar groups, thread card layouts, the machine map, client access and tunnel pairing. A pull request that adds a fork preference adds it to that list.
 - If a Fork Sync merge conflicts in `README.md`, keep the fork section on top and take the upstream text below the `---` line.
 - A merge without conflicts can still break a fork feature. Each fork feature that changes upstream behaviour needs a test of that behaviour, so that the fork tests catch the break.
@@ -251,6 +251,15 @@ The server setting `preferOriginRemote` makes a fork checkout count as its fork.
 - With the setting on, `origin` comes first. The pull request list, pull request details, watches and links use the fork. The sidebar groups the checkout under the fork in both cases.
 - Pull request creation and the pull request of the current branch come from the GitHub provider. It follows gh's default repository, then `upstream`. Run `gh repo set-default <owner>/<fork>` in each fork checkout, so that these use the fork too. The setting does not change them. Revisit if a fork checkout without a gh default creates a pull request on upstream.
 
+## Global scripts
+
+The server setting `globalScripts` holds scripts for every project. It is empty by default. Edit it in Settings > General > Global scripts.
+
+- Pin a script to get a button. Global pins (`pinnedGlobalScriptIds`) show in the title bar. Project pins (`pinnedProjectScriptIds`) show next to the thread details toggle. Right-click a button for the pin menu.
+- A global script's preview opens as a floating popup.
+- An action with "Open as an app overlay" (`previewOverlay`) opens its page in a large panel over the app instead. It runs its command only when the page is down. A remote client, such as an HTTPS page or a client of another machine, opens the preview instead, because it cannot frame that page.
+- Scripts can run in the background.
+
 ## App toggle shortcuts
 
 The client setting `appToggleShortcuts` lists global keys that show and hide the desktop app. It is empty by default. Set it in Settings > General > App toggle shortcuts, for example `F17, Alt+Space`.
@@ -299,7 +308,8 @@ The client setting `snoozeQuickOptions` holds the choices of the snooze menus. I
 The client setting `sidebarGroupsEnabled` shows thread groups as tabs under the sidebar search. It is off by default. Turn it on in Settings > General > Sidebar groups.
 
 - The first tab, "Threads", holds every thread that is in no group. A thread lives in one group, so the groups act like folders.
-- Drag a thread onto a tab to move it into that group. Drag it onto "Threads" to take it out of every group. Drag it onto the empty end of the tab bar to make a new group. A drop on the tab that already holds the thread changes nothing.
+- Drag a thread onto a tab to move it into that group. Drag it onto "Threads" to take it out of every group. During a drag, the + slot at the end of the bar turns into a drop target for a new group. A drop on the tab that already holds the thread changes nothing.
+- Tabs that do not fit the bar go to a "+N" menu. The open tab always shows. A drag over "+N" opens the menu, and its rows take a drop.
 - Click + to make an empty group. Right-click a tab, or click the sliders button of the open tab, to rename it, edit its rules, move it or delete it.
 - Rules put threads in a group automatically. A thread matches a group when it matches every rule. Rules compare the repository, the repository owner, the status, the provider, who created the thread, its background work and its title.
 - A repository rule compares the repository of the project, such as `github.com/yarden-zamir/t3code`. The same repository matches on every machine, also where its project has another id or path. A project without a remote has no repository.
@@ -329,6 +339,16 @@ The server setting `threadCardLayouts` holds a custom thread card layout for des
 - Every element of a custom layout carries `data-thread-card-element="<name>"`, so a theme CSS file can style one element, for example `[data-thread-card-element="terminal"] > *`.
 - The layout schema and its edit operations are generic (`packages/contracts/src/slotLayout.ts`, `packages/shared/src/slotLayout.ts`). Another surface can reuse them with its own element list.
 - Search results in the sidebar and the hosted app (app.t3.codes, which has no primary server) keep the built-in card.
+
+## Thread link chips
+
+The server setting `threadLinkChips` shows thread links in chat as the chip of an attached thread. It is off by default. Turn it on in Settings > Appearance > Thread links. The machine map syncs it like other settings.
+
+- A `t3-thread://v1/<threadId>` link becomes the chip. It opens the thread in the app and shows its current title.
+- A web address of a thread, `https://<host>/<environmentId>/<threadId>`, becomes the chip when this client knows the environment: the server of the page or a connected environment. It then opens the thread in the app, not in a browser. The host does not matter, because the environment id names the machine. An address with a query, such as a prompt link, stays a normal link. So does an address of an unknown environment.
+- Copy keeps the link as written, so a copied web address still works outside T3 Code.
+- Desktop and web read the setting of the server of the message. The mobile app reads it from the server of the thread, and has no switch of its own. With the setting off, links look and open as before.
+- Agents get one rule for links, with or without the setting: `t3-thread://` for a thread on the same machine, and the web address for a thread on another machine and for text that leaves T3 Code. The data of an attached thread has a ready `link` line. The rule is in `packages/provider-core/src/server/forkThreadLinkInstructions.ts`.
 
 ## Pull request watch remark filter
 
@@ -377,7 +397,10 @@ Each server web app, such as `https://t3-vps.yarden-zamir.com`, installs as an a
 The client setting `installedAppEnabled` adds a service worker. It is on by default. Turn it off in Settings > General > Installed app, in each browser and for each server.
 
 - An offline page shows when the device is offline, or when the tunnel answers but the server is down.
-- Android and iPhone show thread and review guide notifications. Turn on notifications in Settings > General first. The page must still run, so a closed app shows nothing.
+- Android and iPhone show thread and review guide notifications. Turn on notifications in Settings > General first.
+- Web Push (client setting `webPushEnabled`, on by default) brings thread notifications while the app is closed. It needs the installed app setting and system notifications. The browser registers `/sw.js` once for each connected server, with the scope `/push/<environmentId>/`, because one push subscription works with the key of one server only.
+- Each server keeps its VAPID key in its secret store and the subscriptions in `<stateDir>/web-push.json`. It pushes when a thread starts to wait for approval or input, or when a running thread completes or fails. Settings > General > Web Push has "Send a test".
+- A push has the same tag as the page notification of the thread, so one replaces the other. The worker skips a push when the window in front already shows that thread.
 - The app icon shows the same notification count as the browser tab icon.
 - The worker caches only the offline page. Pages and build files come from the server, so a new build shows at once and Cloudflare Access can ask for a new sign-in.
 
@@ -410,6 +433,11 @@ The server setting `machineMap` connects this server to the machine map portal. 
   - Pairing links keep working on every machine.
 - Only the desktop app of a machine changes its `clientAccess` and `machineMap` settings, and joins or leaves the map. A headless machine joins with `t3 machine-map join <code>` or the installer.
 - Settings sync (MM-406, MM-411): every setting that a machine reports shows in the portal Settings view, without a shared value. A setting syncs to every machine, also an offline or a new one, once it has a shared value. On a machine with the map role `edit`, a change in T3 Settings with "All environments" selected sets the shared value. A change for one environment of a synced setting becomes the own value of that machine. A synced row shows a sync marker. Paths, secrets, project-keyed maps and the map connection stay on each machine.
+- Portal views: Map, Table, Health, Settings, Queue, Tasks, History, Inbox and Clients (MM-1102). Each view and each selected item has its own link.
+- Emergency pause: the big red button stops all agents and sets every arrow and map role to `none` (MM-708 to MM-713). While paused, each machine locks T3 Code for every client except its own desktop app (MM-718). Only the owner resumes, in the portal.
+- Scheduled tasks: the Tasks view lists the tasks of every machine, with Pause, Resume and "Run now" (MM-1601 to MM-1605).
+- Health: each machine sends resource samples. The portal keeps 30 days of history and raises alerts: HOT, FULL, DISK, SWAP, DOWN and LOW (MM-1501 to MM-1511). The CPU alert means that the machine is starved, from CPU pressure where Linux reports it. A machine with a battery reports it on macOS and Linux. The LOW alert starts below 15% by default, while the machine runs on its battery.
+- Installed portal: the portal installs as an app with an offline page and an app badge. Turn on Web Push per device in Clients > "Notifications on this device". Pushes go out for health alerts, Inbox proposals, sign-ins that wait for approval and the pause (MM-1801 to MM-1809).
 - Deploy the portal: `.github/workflows/fork-machine-map-deploy.yml` tests and deploys it from main when `apps/machine-map` or its contracts change, with the GitHub secret `CLOUDFLARE_DEPLOY_TOKEN` (Workers Scripts and Workers Routes edit). Do not deploy by hand: a deploy from a branch rolls back main. The Worker needs the secrets `SECRET_KEY` and `CF_API_TOKEN`.
 
 ## Secrets and variables

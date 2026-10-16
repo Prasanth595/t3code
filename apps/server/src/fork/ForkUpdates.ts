@@ -76,6 +76,10 @@ const make = Effect.gen(function* () {
   // A background shell is still work: the restart kills it and recovery wakes
   // the thread. Limit: a shell that never ends, such as a dev server, blocks
   // auto-update until it stops. Revisit if updates stall on such shells.
+  // Other pending tasks do not block. A pull request watch (`monitor`) survives
+  // a restart and can last for days. Native subagents and monitors are awaited
+  // work that the upstream restart continuation resumes on purpose, and they
+  // can run for hours, so waiting for them would hold updates back as long.
   const idle = threads.getShellSnapshot().pipe(
     Effect.map((snapshot) =>
       snapshot.threads.every(

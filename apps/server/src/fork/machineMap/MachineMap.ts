@@ -242,7 +242,7 @@ const make = Effect.gen(function* () {
   /** The encoded server settings that the last report saw, by key (MM-404). */
   const settingsBaseline = yield* Ref.make<Readonly<Record<string, unknown>>>({});
 
-  // --- Portal messages -----------------------------------------------------------------------
+  // Portal messages
 
   /** MM-919: whether the portal received the saved `pendingClientAccess`. */
   const pendingClientAccessSeen = yield* Ref.make(false);
@@ -287,7 +287,7 @@ const make = Effect.gen(function* () {
       );
     });
 
-  // --- MM-402: apply the server settings of a desired state ----------------------------------
+  // MM-402: apply the server settings of a desired state
 
   const applyServerSettings = (values: SettingValues) =>
     Effect.gen(function* () {
@@ -332,7 +332,7 @@ const make = Effect.gen(function* () {
       });
     });
 
-  // --- MM-1306: end the sessions of peers whose level changed --------------------------------
+  // MM-1306: end the sessions of peers whose level changed
 
   const revokeSessions = (matches: (subject: string) => boolean) =>
     Effect.gen(function* () {
@@ -439,7 +439,7 @@ const make = Effect.gen(function* () {
       // Client settings reach the desktop app through the client stream (MM-403).
     });
 
-  // --- Commands ------------------------------------------------------------------------------
+  // Commands
 
   const expireDesktopCommands = Effect.gen(function* () {
     const nowMs = yield* Clock.currentTimeMillis;
@@ -508,7 +508,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  // --- MM-1501: resource samples ------------------------------------------------------------
+  // MM-1501: resource samples
 
   // A sample that does not go out is not queued: the next one comes within a minute.
   const sendResources = (send: SendToPortal) =>
@@ -777,7 +777,7 @@ const make = Effect.gen(function* () {
     Stream.runDrain,
   );
 
-  // --- MM-304, MM-912: an arrow that expires ends its sessions at its expiry -----------------
+  // MM-304, MM-912: an arrow that expires ends its sessions at its expiry
 
   /**
    * MM-916, MM-921: a change of the `clientAccess` mode in force ends the sessions that the old
@@ -868,7 +868,7 @@ const make = Effect.gen(function* () {
     Stream.runDrain,
   );
 
-  // --- MM-404: settings that change outside the map ------------------------------------------
+  // MM-404: settings that change outside the map
 
   // A change in the themes folder is a change of `sharedThemes` (MM-408).
   const watchLocalSettings = Stream.merge(
@@ -920,7 +920,7 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  // --- MM-1001, MM-1002: status --------------------------------------------------------------
+  // MM-1001, MM-1002: status
 
   const statusLoop = Effect.gen(function* () {
     while (true) {
@@ -955,7 +955,7 @@ const make = Effect.gen(function* () {
     { concurrency: "unbounded" },
   ).pipe(Stream.runForEach(() => markStatusDirty));
 
-  // --- Client stream -------------------------------------------------------------------------
+  // Client stream
 
   const clientState = (desktop: boolean) =>
     Effect.gen(function* () {
@@ -1069,7 +1069,7 @@ const make = Effect.gen(function* () {
       yield* markStatusDirty;
     });
 
-  // --- Join and leave ------------------------------------------------------------------------
+  // Join and leave
 
   const storageFailed = () =>
     new MachineMapRequestError({
@@ -1182,7 +1182,7 @@ const make = Effect.gen(function* () {
     return yield* clientState(false);
   });
 
-  // --- Map tools -----------------------------------------------------------------------------
+  // Map tools
 
   const callMapTool: MachineMap["Service"]["callMapTool"] = (input) =>
     Effect.gen(function* () {
@@ -1317,7 +1317,7 @@ const make = Effect.gen(function* () {
     ),
   );
 
-  // --- Start ---------------------------------------------------------------------------------
+  // Start
 
   // MM-607: the saved desired state applies before the server accepts requests. The layer
   // builds before the HTTP routes serve, so this runs first.

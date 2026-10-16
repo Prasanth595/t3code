@@ -139,7 +139,7 @@ function environmentIsThisMachine(environmentId: EnvironmentId): boolean {
  * A remote client cannot frame the page: an HTTPS page blocks an `http:` frame as mixed content,
  * and another machine's loopback page is not reachable from here.
  */
-export function appOverlayUrl(environmentId: EnvironmentId, script: ProjectScript): string | null {
+function appOverlayUrl(environmentId: EnvironmentId, script: ProjectScript): string | null {
   if (!script.previewOverlay || !script.previewUrl) return null;
   if (!environmentIsThisMachine(environmentId)) return null;
   const url = resolveDiscoveredServerUrl(environmentId, script.previewUrl);
@@ -151,11 +151,33 @@ export function appOverlayUrl(environmentId: EnvironmentId, script: ProjectScrip
 const startingOverlayUrls = new Set<string>();
 
 /**
+ * An overlay action shows its page in the app overlay and runs its command, in a background
+ * terminal, only when the page is down. Null when `script` is no overlay action here, so the
+ * caller runs it as usual without waiting. `runInTerminal` is undefined for a client that cannot
+ * run commands.
+ */
+export function runAppOverlayScript(
+  environmentId: EnvironmentId,
+  script: ProjectScript,
+  runInTerminal: ((script: ProjectScript) => Promise<void>) | undefined,
+): Promise<void> | null {
+  const overlayUrl = appOverlayUrl(environmentId, script);
+  if (overlayUrl === null) return null;
+  return runAppOverlayAction(
+    overlayUrl,
+    script.name,
+    runInTerminal
+      ? () => runInTerminal({ ...script, previewOverlay: false, runInBackground: true })
+      : undefined,
+  );
+}
+
+/**
  * Shows the overlay page, or runs `start` first when nothing answers there. `start` is undefined
  * for a client that cannot run commands. A click while the page's check or command runs does
  * nothing, so a double click does not start two servers.
  */
-export async function runAppOverlayAction(
+async function runAppOverlayAction(
   url: string,
   title: string,
   start: (() => Promise<void>) | undefined,

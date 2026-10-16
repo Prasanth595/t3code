@@ -12,6 +12,7 @@ import {
   type ResolvedSettingsScope,
   type SettingsScopeSearch,
 } from "./settingsScope";
+import * as ForkSearch from "./forkSettingsSearch";
 
 export type SettingsPath =
   | "/settings/projects"
@@ -26,15 +27,9 @@ export type SettingsPath =
   | "/settings/source-control"
   | "/settings/storage"
   | "/settings/connections"
-  | "/settings/machines"
-  | "/settings/fork"
+  | ForkSearch.ForkSettingsPath
   | "/settings/archived";
 
-/**
- * Where a setting can be edited. Device-local rows have no scope: they render
- * at every selection. `project-defaults` rows accept project overrides, so
- * they are reachable from any server-backed selection.
- */
 export type SettingsSearchScope =
   | "environment"
   | "environment-defaults"
@@ -48,20 +43,13 @@ export interface SettingsSearchItem {
   readonly title: string;
   readonly to: SettingsPath;
   readonly targetId?: string;
-  /** Descriptions, option labels, and aliases people may remember instead of the title. */
   readonly searchTerms?: ReadonlyArray<string>;
   readonly scope?: SettingsSearchScope;
-  // Its row only renders in the desktop app, so a browser result would land on
-  // an anchor that isn't there.
   readonly desktopOnly?: boolean;
   // Fork: its row renders only outside the desktop app.
   readonly webOnly?: boolean;
   readonly macOnly?: boolean;
-  // Its row only renders on Windows desktop, so other desktop platforms must
-  // not expose a result that points to a missing anchor.
   readonly windowsOnly?: boolean;
-  // Its row renders only where the release channel can change: the desktop
-  // app, or a hosted web build deployed with a channel.
   readonly releaseChannelOnly?: boolean;
   readonly cloudOnly?: boolean;
   readonly environmentOnly?: boolean;
@@ -70,12 +58,7 @@ export interface SettingsSearchItem {
   readonly localBackendManagementOnly?: boolean;
   readonly localEnvironmentOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
-  // Its row only renders while this environment's T3 Connect managed tunnel is on.
   readonly managedTunnelOnly?: boolean;
-  /**
-   * Sorts after every other match. Keybinding commands mirror rows on other
-   * surfaces, so "model" must still lead with Default model, not Model Picker.
-   */
   readonly secondary?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
@@ -92,10 +75,6 @@ export interface SettingsSearchAvailability {
   readonly managedTunnelActive?: boolean;
 }
 
-/**
- * Section labels in sidebar order. The sidebar nav and the search-result
- * subtitles both render from this record, so each label exists once.
- */
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/diagnostics": "Diagnostics",
   "/settings/projects": "Project",
@@ -109,22 +88,14 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
   "/settings/connections": "Connections",
-  "/settings/machines": "Machines",
-  "/settings/fork": "Fork",
+  ...ForkSearch.SECTION_LABELS,
   "/settings/archived": "Archive",
 };
 
-/** Anchor id of the first row bound to `command` on the Keybindings page. */
 export function keybindingSearchAnchorId<Command extends KeybindingCommand>(command: Command) {
   return `keybinding-${command}` as const;
 }
 
-/**
- * One result per built-in command, alphabetical by label. The anchor is
- * the command's first row; default keys are searchable so "mod+b" lands on
- * Sidebar: Toggle. A command with no default binding may have no row, so it
- * points at the section instead.
- */
 const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right) =>
   commandLabel(left).localeCompare(commandLabel(right)),
 ).map((command) => {
@@ -141,12 +112,10 @@ const KEYBINDING_SEARCH_ITEMS = STATIC_KEYBINDING_COMMANDS.toSorted((left, right
   };
 });
 
-/** Anchor id of a source control host's settings form on the Source Control page. */
 export function sourceControlHostSettingsSearchId(kind: string) {
   return `source-control-host-${kind}` as const;
 }
 
-/** One result per host whose definition declares settings, searchable by its field titles. */
 const SOURCE_CONTROL_HOST_SEARCH_ITEMS = sourceControlClients.definitions.flatMap((definition) =>
   definition.settings && definition.kind !== "github"
     ? [
@@ -164,11 +133,6 @@ const SOURCE_CONTROL_HOST_SEARCH_ITEMS = sourceControlClients.definitions.flatMa
     : [],
 );
 
-/**
- * Searchable settings and stable destinations, in result order. Rows with a
- * dedicated anchor render their id and title via `searchableSetting`; items
- * that may not be mounted point at their nearest stable section instead.
- */
 export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "storage-worktree-keep-when",
@@ -203,13 +167,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
     searchTerms: ["worktree location folder directory path drive external disk"],
   },
-  {
-    id: "storage-worktree-path-template",
-    title: "Worktree path template",
-    to: "/settings/storage",
-    scope: "environment-defaults",
-    searchTerms: ["worktree path template folder branch bare container repository sibling"],
-  },
+  ...ForkSearch.WORKTREE_PATH_TEMPLATE_ITEMS,
   {
     id: "storage-artifacts",
     title: "Artifacts and logs",
@@ -251,7 +209,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Color scheme",
     to: "/settings/appearance",
     searchTerms: ["appearance light dark system mode"],
-    // The scheme tiles sit at the top of the Appearance section.
     targetId: "appearance",
   },
   {
@@ -259,8 +216,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Themes",
     to: "/settings/appearance",
     searchTerms: ["appearance colors palette custom import"],
-    // Theme cards live directly under the scheme tiles; the section is the
-    // stable scroll destination for both.
     targetId: "appearance",
   },
   {
@@ -294,19 +249,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Panel animations",
     to: "/settings/appearance",
   },
-  {
-    id: "thread-card-layout",
-    title: "Custom card layout",
-    to: "/settings/appearance",
-    scope: "environment-defaults",
-    searchTerms: ["thread card sidebar compact density rows builder layout mobile branch"],
-  },
+  ...ForkSearch.APPEARANCE_ITEMS,
   {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",
     searchTerms: ["dev nightly artwork pill label hide none"],
-    // The setting is stage-dependent, so its parent section is the stable destination.
     targetId: "appearance-interface",
   },
   {
@@ -351,13 +299,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Composer context",
     to: "/settings/appearance",
   },
-  {
-    id: "global-scripts",
-    title: "Global scripts",
-    to: "/settings/general",
-    scope: "environment-defaults",
-    searchTerms: ["scripts commands every project pin pinned buttons background overlay preview"],
-  },
+  ...ForkSearch.GLOBAL_SCRIPTS_ITEMS,
   {
     id: "project-grouping",
     title: "Project grouping",
@@ -425,13 +367,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["notification toast popup completion input approval failure"],
   },
-  {
-    id: "installed-app",
-    title: "Installed app",
-    to: "/settings/general",
-    searchTerms: ["install pwa home screen offline service worker badge phone android iphone"],
-    webOnly: true,
-  },
+  ...ForkSearch.NOTIFICATION_ITEMS,
   {
     id: "time-format",
     title: "Time format",
@@ -506,15 +442,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["installed cli versions newer available codex claude cursor grok opencode"],
     scope: "environment-defaults",
   },
-  {
-    id: "recover-interrupted-turns",
-    title: "Recover interrupted agents",
-    to: "/settings/general",
-    scope: "environment-defaults",
-    searchTerms: [
-      "recover continue resume restart crash update quit interrupted agent subagent message background",
-    ],
-  },
+  ...ForkSearch.RECOVER_INTERRUPTED_TURNS_ITEMS,
   {
     id: "continue-threads-after-server-update",
     title: "Continue threads after restarts",
@@ -561,20 +489,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
     searchTerms: ["base directory folder browser path home"],
   },
-  {
-    id: "agent-session-import-window",
-    title: "Session import window",
-    to: "/settings/general",
-    scope: "environment-defaults",
-    searchTerms: ["import claude code codex history days recent sessions"],
-  },
-  {
-    id: "agent-session-import-max-messages",
-    title: "Imported messages per session",
-    to: "/settings/general",
-    scope: "environment-defaults",
-    searchTerms: ["import claude code codex history message limit transcript"],
-  },
+  ...ForkSearch.AGENT_SESSION_IMPORT_ITEMS,
   {
     id: "unpin-confirmation",
     title: "Unpin confirmation",
@@ -593,63 +508,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["ask before thread chat history"],
   },
-  {
-    id: "terminal-close-confirmation",
-    title: "Terminal close confirmation",
-    to: "/settings/general",
-    searchTerms: ["ask before terminal close stop process"],
-  },
-  {
-    id: "terminal-app-shortcuts-first",
-    title: "App shortcuts in terminal",
-    to: "/settings/general",
-    searchTerms: ["terminal keybindings keyboard shortcuts priority shell focus"],
-  },
-  {
-    id: "repository-owner-filters",
-    title: "Repository owner filters",
-    to: "/settings/general",
-    searchTerms: [
-      "github organization org owner account filter hide exclude pull requests sidebar work personal",
-    ],
-  },
-  {
-    id: "snooze-quick-options",
-    title: "Snooze quick options",
-    to: "/settings/general",
-    searchTerms: ["snooze menu presets choices later tonight tomorrow next week remind wake"],
-  },
-  {
-    id: "sidebar-groups",
-    title: "Sidebar groups",
-    to: "/settings/general",
-    searchTerms: ["tabs folders groups organize threads drag rules monitors views sidebar"],
-  },
-  {
-    id: "sidebar-group-single-thread",
-    title: "Single-thread tabs",
-    to: "/settings/general",
-    searchTerms: ["sidebar group tab one thread open directly"],
-  },
-  {
-    id: "pull-request-filter-chips",
-    title: "Pull request filter chips",
-    to: "/settings/general",
-    searchTerms: ["active filters chips exclude negative is not pull requests list empty"],
-  },
-  {
-    id: "app-toggle-shortcuts",
-    title: "App toggle shortcuts",
-    to: "/settings/general",
-    searchTerms: ["global hotkey keyboard shortcut show hide toggle window raycast f17"],
-    desktopOnly: true,
-  },
-  {
-    id: "background-work-details",
-    title: "Background work details",
-    to: "/settings/general",
-    searchTerms: ["monitor background command agent task output file popover markdown links"],
-  },
+  ...ForkSearch.BEHAVIOR_ITEMS,
   {
     id: "quit-confirmation",
     title: "Quit shortcut",
@@ -670,19 +529,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["about check for updates download install upgrade release"],
   },
-  {
-    id: "fork-changelog",
-    title: "Fork changelog",
-    to: "/settings/general",
-    searchTerms: ["changelog release notes versions upstream fork sync workflow"],
-  },
-  {
-    id: "fork-auto-update",
-    title: "Server auto-update",
-    to: "/settings/general",
-    scope: "environment-defaults",
-    searchTerms: ["fork release install update idle background service headless server automatic"],
-  },
+  ...ForkSearch.ABOUT_ITEMS,
   {
     id: "update-track",
     title: "Update track",
@@ -906,6 +753,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["links default browser in-app browser external open"],
   },
   {
+    id: "pull-request-links-open-in-app",
+    title: "Open pull requests in T3 Code",
+    to: "/settings/integrations",
+    searchTerms: ["pr links github browser external click default pull request view panel"],
+  },
+  {
     id: "browser-auto-show-floating-preview",
     title: "Auto-show floating preview",
     to: "/settings/integrations",
@@ -1003,36 +856,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["pull request pr guided review guide tour beta experimental"],
     environmentOnly: true,
   },
-  {
-    id: "prefer-origin-remote",
-    title: "Pull requests from origin",
-    to: "/settings/source-control",
-    searchTerms: ["fork origin upstream remote repository pull request pr list"],
-    environmentOnly: true,
-  },
-  {
-    id: "pull-request-watch-roles",
-    title: "Roles that wake agents",
-    to: "/settings/source-control",
-    searchTerms: [
-      "pull request pr watch remark comment review wake agent owner member collaborator author association role",
-    ],
-    environmentOnly: true,
-  },
-  {
-    id: "pull-request-watch-logins",
-    title: "Logins that wake agents",
-    to: "/settings/source-control",
-    searchTerms: ["pull request pr watch remark comment review wake agent github user author"],
-    environmentOnly: true,
-  },
-  {
-    id: "pull-request-watch-agent-marker",
-    title: "Agent remark marker",
-    to: "/settings/source-control",
-    searchTerms: ["pull request pr watch remark comment wake agent bot skip ignore html comment"],
-    environmentOnly: true,
-  },
+  ...ForkSearch.PULL_REQUEST_ITEMS,
   {
     id: "review-guide-model",
     title: "Review guide model",
@@ -1081,16 +905,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["expose backend remote pairing local machine interfaces host restart"],
     localBackendManagementOnly: true,
   },
-  {
-    id: "tunnel-pairing",
-    title: "Allow pairing through a tunnel",
-    to: "/settings/connections",
-    searchTerms: [
-      "tunnel cloudflared pairing loopback trusted browser origins cookies cloudflare access login team domain audience aud emails service token",
-    ],
-    desktopOnly: true,
-    localBackendManagementOnly: true,
-  },
+  ...ForkSearch.TUNNEL_PAIRING_ITEMS,
   {
     id: "tailscale-https",
     title: "Tailscale HTTPS",
@@ -1169,25 +984,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/connections",
     searchTerms: ["pull request trusted environments shared credentials permissions read actions"],
   },
-  // Fork: machine map (apps/machine-map/SPEC.md MM-203).
-  {
-    id: "machine-map",
-    title: "Machine map",
-    to: "/settings/machines",
-    searchTerms: ["portal join code leave connection status cloudflare access token tunnel"],
-  },
-  {
-    id: "machine-map-client-access",
-    title: "Client access",
-    to: "/settings/machines",
-    searchTerms: ["browser clients enforce observe approval cloudflare access lockout way back in"],
-  },
-  {
-    id: "machine-map-reachable",
-    title: "Machines this machine can use",
-    to: "/settings/machines",
-    searchTerms: ["reachable peers arrows levels read standard admin agent tools open"],
-  },
+  ...ForkSearch.MACHINE_MAP_ITEMS,
   {
     id: "archive",
     title: "Archived threads",
@@ -1206,22 +1003,17 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/general": null,
   "/settings/appearance": null,
   "/settings/snap-shot": null,
-  // Keybindings fan out to the selection; Providers shows the representative
-  // environment at any selection. Neither needs a particular scope to render.
   "/settings/keybindings": null,
   "/settings/providers": null,
   "/settings/integrations": null,
   "/settings/source-control": "environment-defaults",
   "/settings/storage": "project-defaults",
   "/settings/connections": "connections",
-  "/settings/machines": null,
-  // Fork: each row of the Fork page keeps the scope of its usual place.
-  "/settings/fork": null,
+  ...ForkSearch.CATEGORY_SCOPES,
   "/settings/scheduled-tasks": null,
   "/settings/archived": "project-defaults",
 };
 
-/** Search keeps the selected target. A missing row can explain its owning scope instead. */
 export function getSettingsSearchTargetScope(targetId: string) {
   const items: readonly SettingsSearchItem[] = SETTINGS_SEARCH_ITEMS;
   const item =
@@ -1246,7 +1038,6 @@ interface AutoSettlementSearchEnvironment {
   } | null;
 }
 
-/** Discovery needs one capable environment; the selected page needs every connected target to support it. */
 export function getThreadAutoSettlementSearchAvailability(
   environments: readonly AutoSettlementSearchEnvironment[],
   scope?: Pick<ResolvedSettingsScope, "kind" | "environmentIds">,
@@ -1311,11 +1102,6 @@ export function isSettingsOverviewVisible(search: SettingsScopeSearch): boolean 
   return kind === "project" || kind === "checkout";
 }
 
-/**
- * `id` and `title` props for the element a search item anchors to. Panels
- * spread (or pick from) this instead of restating the strings, so the catalog
- * and the rendered settings cannot drift apart.
- */
 export function searchableSetting(id: SettingsSearchItemId): {
   readonly id: string;
   readonly title: string;

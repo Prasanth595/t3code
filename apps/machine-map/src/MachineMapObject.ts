@@ -86,7 +86,7 @@ import type {
 import { PauseState } from "./api.ts";
 import { configured, ownerEmails } from "./access.ts";
 import { HEALTH_TABLES, HealthStore } from "./healthStore.ts";
-import { sendPush, vapidKey, type PushTarget, type VapidKey } from "./push.ts";
+import { sendPush, vapidKey, type PushTarget, type VapidKey } from "@t3tools/shared/webPush";
 import {
   approvalsAppProblem,
   CLIENT_POLICY_NAME,
@@ -381,7 +381,7 @@ export class MachineMapObject extends DurableObject<Env> {
     this.#thresholds = thresholds ? decodeThresholds(thresholds.value) : {};
   }
 
-  // ---------------------------------------------------------------- storage
+  // Storage
 
   #sql<T extends Record<string, SqlStorageValue>>(
     query: string,
@@ -613,7 +613,7 @@ export class MachineMapObject extends DurableObject<Env> {
     };
   }
 
-  // ---------------------------------------------------------------- clients
+  // Clients
 
   #pendingClients(): Array<PendingClient> {
     return this.#sql<{
@@ -759,7 +759,7 @@ export class MachineMapObject extends DurableObject<Env> {
     return null;
   }
 
-  // ---------------------------------------------------------------- sockets
+  // Sockets
 
   #broadcast(
     event:
@@ -908,7 +908,7 @@ export class MachineMapObject extends DurableObject<Env> {
     await this.webSocketClose(ws, 1011, "Socket error.");
   }
 
-  // ---------------------------------------------------------------- machines
+  // Machines
 
   async #onMachineMessage(machine: MachineRecord, message: MachineMessage): Promise<void> {
     const id = machine.id;
@@ -1116,7 +1116,7 @@ export class MachineMapObject extends DurableObject<Env> {
     return { _tag: "rotations", rotations: this.#pendingRotations() };
   }
 
-  // ---------------------------------------------------------------- resources and health
+  // Resources and health
 
   /**
    * MM-1503: the portal clock places the point, so a machine with a wrong clock cannot write into
@@ -1203,7 +1203,7 @@ export class MachineMapObject extends DurableObject<Env> {
     return { _tag: "health", health: this.#overview("page") };
   }
 
-  // ---------------------------------------------------------------- push
+  // Push
 
   #vapidKey(): Promise<VapidKey | null> {
     this.#vapid ??= vapidKey(this.env.VAPID_JWK);
@@ -1282,7 +1282,7 @@ export class MachineMapObject extends DurableObject<Env> {
     return row ? Number(row.value) : 0;
   }
 
-  // ---------------------------------------------------------------- writes
+  // Writes
 
   /**
    * MM-701: one revision. Pushes the new desired state to every touched online machine.
@@ -1594,7 +1594,7 @@ export class MachineMapObject extends DurableObject<Env> {
     }
   }
 
-  // ---------------------------------------------------------------- Cloudflare
+  // Cloudflare
 
   /** MM-1205: null when the Worker has no Cloudflare API token. */
   #cloudflare(): CloudflareApi | null {
@@ -1659,7 +1659,7 @@ export class MachineMapObject extends DurableObject<Env> {
     return { machineId, code, expiresAt, tunnel: tunnel.setup };
   }
 
-  // ---------------------------------------------------------------- MM-213: machine tunnels
+  // MM-213: machine tunnels
 
   #tunnelRow(machineId: MachineId): MachineTunnelRow | undefined {
     return this.#sql<MachineTunnelRow>(
@@ -1806,7 +1806,7 @@ export class MachineMapObject extends DurableObject<Env> {
     };
   }
 
-  // ---------------------------------------------------------------- alarms
+  // Alarms
 
   async #scheduleAlarm(): Promise<void> {
     const times = [
@@ -1949,7 +1949,7 @@ export class MachineMapObject extends DurableObject<Env> {
     await this.#scheduleAlarm();
   }
 
-  // ---------------------------------------------------------------- RPC
+  // RPC
 
   async #run<T>(owner: OwnerContext | null, work: () => T | Promise<T>): Promise<Outcome<T>> {
     if (owner) this.#recordSignIn(owner);

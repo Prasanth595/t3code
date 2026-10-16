@@ -9,6 +9,7 @@ import { environmentThreadShells } from "../../state/threads";
 import { resolveDesktopUpdateButtonAction } from "../desktopUpdate.logic";
 import { countRunningAgentTurns } from "../desktopUpdateIdleInstall.logic";
 import { installLocalUpdate } from "../sidebar/SidebarUpdatePill";
+import { DesktopUpdateNewerDialog } from "./DesktopUpdateNewerCheck";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -69,6 +70,7 @@ export function DesktopUpdateIdleInstall() {
   return (
     <>
       {armed ? <ArmedInstallWatcher /> : null}
+      <DesktopUpdateNewerDialog />
       <AlertDialog
         open={promptOpen}
         onOpenChange={(open) => {
@@ -102,7 +104,7 @@ function ArmedInstallWatcher() {
       );
       return;
     }
-    void installLocalUpdate(bridge);
+    void installLocalUpdate(bridge, undefined, { unattended: true });
   }, [count, state]);
 
   return null;

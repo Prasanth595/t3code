@@ -14,7 +14,7 @@ import {
   type ForkSyncStatus,
   type ForkUpstreamPending,
 } from "@t3tools/contracts";
-import * as GitHubApi from "@t3tools/source-control-github/server/GitHubApi";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
@@ -77,7 +77,7 @@ const successFor =
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const github = yield* GitHubApi.GitHubApi;
+  const github = yield* GitHubRest.GitHubRest;
 
   const readJson = <A>(
     operation: string,

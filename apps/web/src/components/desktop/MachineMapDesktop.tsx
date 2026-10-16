@@ -68,7 +68,7 @@ export function MachineMapDesktop() {
   );
 }
 
-// --- MM-306, MM-1401: saved environments ----------------------------------------------------
+// MM-306, MM-1401: saved environments
 
 const MANAGED_ORIGINS_KEY = "t3code:machine-map:managed-origins";
 const decodeManagedOrigins = Schema.decodeUnknownOption(
@@ -204,7 +204,7 @@ function MachineCatalogSync({
   return null;
 }
 
-// --- MM-403, MM-1402: settings, commands and reports ----------------------------------------
+// MM-403, MM-1402: settings, commands and reports
 
 type CommandOutcome = {
   readonly ok: boolean;
@@ -328,7 +328,7 @@ function MachineDesktopReports({
           ok: true,
           result: { version, whenIdle: false },
           error: null,
-          after: () => void installLocalUpdate(bridge),
+          after: () => void installLocalUpdate(bridge, undefined, { unattended: true }),
         };
       }
       default:

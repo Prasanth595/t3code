@@ -23,7 +23,13 @@ import {
   resolvePinnedScripts,
   togglePinnedScriptId,
 } from "@t3tools/shared/projectScripts";
-import { useCallback, useMemo, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode,
+} from "react";
 import { create } from "zustand";
 
 import { showContextMenuFallback } from "~/contextMenuFallback";
@@ -31,6 +37,7 @@ import { observeResize } from "~/lib/observeResize";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { useStableCallback } from "../hooks/useStableCallback";
 import { ScriptIcon } from "./projectScriptEditor";
 import { Button } from "./ui/button";
 
@@ -53,6 +60,69 @@ export interface PinnedScriptsTarget {
 export const usePinnedScriptsTargetStore = create<{
   target: PinnedScriptsTarget | null;
 }>(() => ({ target: null }));
+
+/**
+ * The pin and global script runners of the open thread view. Pins run like a pick from the
+ * scripts menu. The view registers `runGlobalScript` as the title bar's target.
+ */
+export function useThreadPinnedScripts(input: {
+  readonly environmentId: EnvironmentId;
+  readonly activeProject: { readonly id: ProjectId } | null | undefined;
+  readonly activeProjectScripts: readonly ProjectScript[];
+  readonly canOperateTerminal: boolean;
+  readonly runProjectScriptRef: {
+    readonly current: (
+      script: ProjectScript,
+      options?: {
+        readonly rememberAsLastInvoked?: boolean;
+        readonly previewPresentation?: "panel" | "floating";
+      },
+    ) => Promise<void>;
+  };
+}) {
+  const { environmentId, activeProject, activeProjectScripts, canOperateTerminal } = input;
+  const { runProjectScriptRef } = input;
+  // A global script does not become the project's preferred script, since it is not one of them.
+  const runPinnedProjectScript = (script: ProjectScript) => {
+    void runProjectScriptRef.current(script);
+  };
+  const runPinnedProjectScriptStable = useStableCallback(runPinnedProjectScript);
+  // A global script belongs to no project, so its preview floats over the thread as a popup
+  // instead of taking the project's right panel.
+  const runGlobalScript = (script: ProjectScript) => {
+    void runProjectScriptRef.current(script, {
+      rememberAsLastInvoked: false,
+      previewPresentation: "floating",
+    });
+  };
+  const runGlobalScriptStable = useStableCallback(runGlobalScript);
+  // The title bar sits outside this view, so it reaches the runner through the store.
+  useEffect(() => {
+    if (!activeProject) return;
+    const target: PinnedScriptsTarget = {
+      environmentId,
+      projectId: activeProject.id,
+      projectScripts: activeProjectScripts,
+      runScript: canOperateTerminal ? runGlobalScriptStable : undefined,
+    };
+    usePinnedScriptsTargetStore.setState({ target });
+    return () => {
+      if (usePinnedScriptsTargetStore.getState().target === target) {
+        usePinnedScriptsTargetStore.setState({ target: null });
+      }
+    };
+  }, [
+    activeProject,
+    activeProjectScripts,
+    canOperateTerminal,
+    environmentId,
+    runGlobalScriptStable,
+  ]);
+  return {
+    runPinnedProjectScript: canOperateTerminal ? runPinnedProjectScriptStable : undefined,
+    runGlobalScript: runGlobalScriptStable,
+  };
+}
 
 /** Pins, their scripts and the writes that change them, for one environment and project. */
 export function usePinnedScripts(input: {

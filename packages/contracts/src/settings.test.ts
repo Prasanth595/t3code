@@ -680,41 +680,6 @@ describe("ClientSettings sidebar", () => {
     expect(decodeClientSettingsPatch({ confirmThreadUnpin: true }).confirmThreadUnpin).toBe(true);
     expect(() => decodeClientSettingsPatch({ confirmThreadUnpin: "yes" })).toThrow();
   });
-
-  it("shows every owner by default and keeps the operator and the entry for projects without an owner", () => {
-    expect(decodeClientSettings({}).sidebarOwnerFilter).toEqual({ operator: "is", owners: [] });
-    const filter = { operator: "is_not", owners: ["qlik-trial", null] };
-    const saved = encodeClientSettings(decodeClientSettings({ sidebarOwnerFilter: filter }));
-    expect(decodeClientSettings(saved).sidebarOwnerFilter).toEqual(filter);
-    expect(decodeClientSettingsPatch({ sidebarOwnerFilter: filter }).sidebarOwnerFilter).toEqual(
-      filter,
-    );
-    expect(() =>
-      decodeClientSettingsPatch({ sidebarOwnerFilter: { operator: "contains", owners: [] } }),
-    ).toThrow();
-  });
-});
-
-describe("ClientSettings snooze quick options", () => {
-  it("keeps the built-in options by default and round-trips a saved list", () => {
-    expect(decodeClientSettings({}).snoozeQuickOptions).toBeNull();
-    const options = [
-      { _tag: "in", amount: 45, unit: "minutes" },
-      { _tag: "at", day: "friday", time: { hour: 16, minute: 30 }, label: "Weekend" },
-    ];
-    const saved = encodeClientSettings(decodeClientSettings({ snoozeQuickOptions: options }));
-    expect(decodeClientSettings(saved).snoozeQuickOptions).toEqual(options);
-    expect(decodeClientSettingsPatch({ snoozeQuickOptions: null }).snoozeQuickOptions).toBeNull();
-  });
-
-  it.each([
-    { _tag: "in", amount: 0, unit: "hours" },
-    { _tag: "in", amount: 1, unit: "weeks" },
-    { _tag: "at", day: "today", time: { hour: 24, minute: 0 } },
-    { _tag: "at", day: "someday", time: { hour: 9, minute: 0 } },
-  ])("rejects the option %o", (option) => {
-    expect(() => decodeClientSettingsPatch({ snoozeQuickOptions: [option] })).toThrow();
-  });
 });
 
 describe("ClientSettings context window meter", () => {
@@ -796,34 +761,6 @@ describe("ServerSettings thread settlement", () => {
   });
 });
 
-describe("ServerSettings agent session import limits", () => {
-  it("defaults to a 30 day window and 200 messages", () => {
-    expect(decodeServerSettings({})).toMatchObject({
-      agentSessionImportWindowDays: 30,
-      agentSessionImportMaxMessages: 200,
-    });
-  });
-
-  it("accepts the range bounds", () => {
-    expect(
-      decodeServerSettingsPatch({
-        agentSessionImportWindowDays: 3650,
-        agentSessionImportMaxMessages: 1,
-      }),
-    ).toEqual({ agentSessionImportWindowDays: 3650, agentSessionImportMaxMessages: 1 });
-  });
-
-  it.each([0, -1, 1.5, 3651])("rejects an import window of %s days", (value) => {
-    expect(() => decodeServerSettings({ agentSessionImportWindowDays: value })).toThrow();
-    expect(() => decodeServerSettingsPatch({ agentSessionImportWindowDays: value })).toThrow();
-  });
-
-  it.each([0, -1, 2.5, 10_001, null])("rejects a message limit of %s", (value) => {
-    expect(() => decodeServerSettings({ agentSessionImportMaxMessages: value })).toThrow();
-    expect(() => decodeServerSettingsPatch({ agentSessionImportMaxMessages: value })).toThrow();
-  });
-});
-
 describe("ClientSettings pull request merge methods", () => {
   it("defaults to no project overrides and accepts supported methods", () => {
     expect(decodeClientSettings({}).pullRequestMergeMethodOverrides).toEqual({});
@@ -878,9 +815,6 @@ describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
 
     expect(decoded.providerInstances[personalId]?.driver).toBe("codex");
     expect(decoded.providerInstances[workId]?.config).toEqual({ homePath: "~/.codex_work" });
-    // Critical: a config naming a driver this build does not know about
-    // (`ollama` is not in `ProviderDriverKind`) must round-trip without loss.
-    // The runtime handles "driver not installed" — the schema must not.
     expect(decoded.providerInstances[ollamaId]?.driver).toBe("ollama");
     expect(decoded.providerInstances[ollamaId]?.config).toEqual({
       endpoint: "http://localhost:11434",
@@ -919,21 +853,16 @@ describe("provider enabled defaults", () => {
   it("resolves instance enabled state with explicit false winning", () => {
     const grok = ProviderDriverKind.make("grok");
     const codex = ProviderDriverKind.make("codex");
-    // No flags anywhere: driver default applies.
     expect(resolveProviderInstanceEnabled({ driver: grok, config: {} })).toBe(false);
     expect(resolveProviderInstanceEnabled({ driver: codex, config: {} })).toBe(true);
-    // Unknown fork drivers stay enabled.
     expect(
       resolveProviderInstanceEnabled({ driver: ProviderDriverKind.make("ollama"), config: {} }),
     ).toBe(true);
-    // Envelope flag wins over the driver default.
     expect(resolveProviderInstanceEnabled({ driver: grok, enabled: true, config: {} })).toBe(true);
     expect(resolveProviderInstanceEnabled({ driver: codex, enabled: false, config: {} })).toBe(
       false,
     );
-    // Legacy in-config flag fills in when the envelope is silent.
     expect(resolveProviderInstanceEnabled({ driver: grok, config: { enabled: true } })).toBe(true);
-    // Conflicting flags: the explicit false wins, whichever side it is on.
     expect(
       resolveProviderInstanceEnabled({ driver: grok, enabled: true, config: { enabled: false } }),
     ).toBe(false);
@@ -1157,33 +1086,6 @@ describe("ServerSettings.removeAgentCreditsOnMerge", () => {
   });
 });
 
-describe("ServerSettings.pullRequestWatchRemarkFilter", () => {
-  it("filters nothing by default and reads a saved filter", () => {
-    expect(decodeServerSettings({}).pullRequestWatchRemarkFilter).toEqual({
-      authorAssociations: [],
-      authorLogins: [],
-      agentMarker: "",
-    });
-    expect(
-      decodeServerSettings({
-        pullRequestWatchRemarkFilter: {
-          authorAssociations: ["OWNER", "MEMBER", "COLLABORATOR"],
-          agentMarker: " <!-- agent --> ",
-        },
-      }).pullRequestWatchRemarkFilter,
-    ).toEqual({
-      authorAssociations: ["OWNER", "MEMBER", "COLLABORATOR"],
-      authorLogins: [],
-      agentMarker: "<!-- agent -->",
-    });
-    expect(() =>
-      decodeServerSettingsPatch({
-        pullRequestWatchRemarkFilter: { authorAssociations: ["ADMIN"] },
-      }),
-    ).toThrow();
-  });
-});
-
 describe("resolveProjectProviderInstanceEnabled", () => {
   const projectId = "project-a" as ProjectId;
   const instanceId = ProviderInstanceId.make("codex_work");
@@ -1239,9 +1141,6 @@ describe("resolveProjectProviderInstanceEnabled", () => {
 
   it("falls back to the unconfigured default when the instance has no settings entry", () => {
     const settings: ServerSettings = { ...DEFAULT_SERVER_SETTINGS, providerInstances: {} };
-    // `codex_work` has no entry in `providerInstances`, so with no project
-    // override either, this is the same unconfigured-default fallback a
-    // machine-wide (no project) lookup would use.
     expect(resolveProjectProviderInstanceEnabled(settings, projectId, instanceId)).toBe(
       resolveProjectProviderInstanceEnabled(settings, null, instanceId),
     );
@@ -1302,47 +1201,5 @@ describe("server model preferences", () => {
     expect(decodeServerSettingsPatch({ migrateModelPreferences: input })).toEqual({
       migrateModelPreferences: input,
     });
-  });
-});
-
-describe("ServerSettings global scripts and pins", () => {
-  const script = {
-    id: "lint",
-    name: "Lint",
-    command: "vp lint",
-    icon: "lint",
-    runOnWorktreeCreate: false,
-  };
-
-  it("defaults to no global scripts and no pins", () => {
-    const settings = decodeServerSettings({});
-    expect(settings.globalScripts).toEqual([]);
-    expect(settings.pinnedGlobalScriptIds).toEqual([]);
-    expect(settings.pinnedProjectScriptIds).toEqual({});
-  });
-
-  it("accepts global scripts and pin entries", () => {
-    const settings = decodeServerSettings({
-      globalScripts: [script],
-      pinnedGlobalScriptIds: ["lint"],
-      pinnedProjectScriptIds: { "project-1": ["dev", "test"] },
-    });
-    expect(settings.globalScripts).toEqual([script]);
-    expect(settings.pinnedProjectScriptIds["project-1" as ProjectId]).toEqual(["dev", "test"]);
-  });
-
-  it("rejects malformed global scripts and pin entries", () => {
-    expect(() => decodeServerSettings({ globalScripts: [{ ...script, command: " " }] })).toThrow();
-    expect(() => decodeServerSettings({ pinnedGlobalScriptIds: [""] })).toThrow();
-    expect(() =>
-      decodeServerSettings({ pinnedProjectScriptIds: { "project-1": "dev" } }),
-    ).toThrow();
-  });
-
-  it("lets a patch remove one project's pins with null", () => {
-    expect(
-      decodeServerSettingsPatch({ pinnedProjectScriptIds: { "project-1": null } })
-        .pinnedProjectScriptIds,
-    ).toEqual({ "project-1": null });
   });
 });

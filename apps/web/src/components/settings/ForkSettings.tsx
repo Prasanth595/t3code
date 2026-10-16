@@ -7,6 +7,7 @@ import { ForkChangelogSettingsRow } from "./ForkChangelogSettingsRow";
 import {
   AgentSessionImportSettingsRows,
   BackgroundWorkDetailsSettingsRow,
+  CheckNewerBeforeUpdateInstallSettingsRow,
   ForkAutoUpdateSettingsRow,
   TerminalAppShortcutsFirstSettingsRow,
   TerminalCloseConfirmationSettingsRow,
@@ -25,6 +26,7 @@ import { SidebarGroupsSettingsRow } from "./SidebarGroupsSettingsRow";
 import { SnoozeQuickOptionsSettingsRow } from "./SnoozeQuickOptionsSettingsRow";
 import { WorktreesDirectoryRow } from "./StorageSettings";
 import { ThreadCardLayoutSettingsRows } from "./ThreadCardLayoutSettings";
+import { ThreadLinkChipsSettingsRow } from "./ThreadLinkChipsSettings";
 import { TunnelPairingSettingsRow } from "./TunnelPairingSettingsRow";
 import { WorktreePathTemplateRow } from "./WorktreePathTemplateRow";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -49,6 +51,7 @@ const FORK_SETTING_ROWS: Readonly<Record<ForkSettingRowId, ComponentType>> = {
   "update-track": AboutVersionSection,
   "fork-auto-update": ForkAutoUpdateSettingsRow,
   "fork-changelog": ForkChangelogSettingsRow,
+  "check-newer-before-update-install": CheckNewerBeforeUpdateInstallSettingsRow,
   "recover-interrupted-turns": RecoverInterruptedTurnsSettings,
   "background-work-details": BackgroundWorkDetailsSettingsRow,
   "prefer-origin-remote": PreferOriginRemoteSettingsRow,
@@ -65,6 +68,7 @@ const FORK_SETTING_ROWS: Readonly<Record<ForkSettingRowId, ComponentType>> = {
   "terminal-app-shortcuts-first": TerminalAppShortcutsFirstSettingsRow,
   "terminal-close-confirmation": TerminalCloseConfirmationSettingsRow,
   "thread-card-layout": ThreadCardLayoutSettingsRows,
+  "thread-link-chips": ThreadLinkChipsSettingsRow,
   "machine-map": MachineMapSettingsRows,
 };
 

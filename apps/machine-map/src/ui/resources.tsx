@@ -67,7 +67,7 @@ function liveSample(health: ResourcesOverview, online: boolean, id: string): Res
   return online ? (health.latest[id] ?? null) : null;
 }
 
-// ---------------------------------------------------------------- bars and stickers
+// Bars and stickers
 
 function Meter({
   label,
@@ -163,7 +163,7 @@ export function AlertStickers({ machineId, href }: { machineId: MachineId; href?
   );
 }
 
-// ---------------------------------------------------------------- charts
+// Charts
 
 const CHART_WIDTH = 300;
 const CHART_HEIGHT = 60;
@@ -278,7 +278,7 @@ function useHistory(machineId: string, range: ResourceRange, sample: ResourceSam
   return { history: shown, error };
 }
 
-// ---------------------------------------------------------------- machine panel
+// Machine panel
 
 const PROCESS_LIMIT = 5;
 
@@ -693,7 +693,7 @@ export function ResourcesSection({ machine }: { machine: MachineRecord }) {
   );
 }
 
-// ---------------------------------------------------------------- Health view
+// Health view
 
 function Sparkline({ history, now }: { history: ResourceHistory; now: number }) {
   const frame: ChartFrame = {

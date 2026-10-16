@@ -13,13 +13,16 @@ import type { ScopedSettingsPatch } from "./scopedSettings";
  */
 const FORK_RESTORED_SETTINGS = [
   ["installedAppEnabled", "Installed app"],
+  ["webPushEnabled", "Web Push"],
   ["forkAutoUpdate", "Server auto-update"],
   ["forkChangelogEnabled", "Fork changelog"],
+  ["checkNewerBeforeUpdateInstall", "Check for a newer update before install"],
   ["recoverInterruptedTurns", "Recover interrupted agents"],
   ["recoverInterruptedTurnsMessage", "Recover interrupted agents message"],
   ["recoverInterruptedTurnsSubagentMessage", "Recover interrupted subagents message"],
   ["backgroundWorkDetails", "Background work details"],
   ["preferOriginRemote", "Prefer origin remote"],
+  ["threadLinkChips", "Thread link chips"],
   ["pullRequestWatchRemarkFilter", "Pull request watch remarks"],
   ["agentSessionImportWindowDays", "Session import window"],
   ["agentSessionImportMaxMessages", "Imported messages per session"],

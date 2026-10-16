@@ -46,6 +46,12 @@ export const layer: Layer.Layer<TurnItemPositionStoreV2, never, SqlClient.SqlCli
      * after a later run, such as a restart continuation. Its items then go in
      * the newest bucket, so they show below what already ran. Runs that share
      * a bucket stay in start order because each item takes the next position.
+     *
+     * Limit: the moved run shares the bucket of the run it follows. An item that
+     * the earlier run adds after the moved run starts, such as a late checkpoint,
+     * shows below the moved run's first items. A bucket of its own needs a stored
+     * bucket per run, because each free bucket number is the ordinal of a later
+     * run. Revisit if users see a late item of a turn under the next turn.
      */
     const runBucket = (input: {
       readonly threadId: ThreadId;
