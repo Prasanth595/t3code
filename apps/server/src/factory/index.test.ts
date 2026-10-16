@@ -15,6 +15,7 @@ import * as Stream from "effect/Stream";
 import { describe } from "vite-plus/test";
 
 import { timeLimitOnlyProjectConfig, type MachineConfig } from "./config.ts";
+import type { State } from "./domain/lifecycle.ts";
 import {
   factoryRuntime,
   FactoryLoop,
@@ -484,22 +485,26 @@ describe("liveWorld", () => {
     }),
   );
 
-  /** A label history in which `by` applied `factory:triage`, as the history read answers it. */
-  const labelledByReply = (by: string) =>
+  /** The approval history call, as `readHistory` sends it. */
+  const isHistory = (args: ReadonlyArray<string>) => args[0] === "api" && args[1] === "graphql";
+
+  /** A label added to the issue: its name, when, and by whom. */
+  type Labeled = { readonly label: string; readonly at: string; readonly by?: string };
+
+  /** A history whose only entries are these label events, oldest first, as the history read answers it. */
+  const historyOf = (labeled: ReadonlyArray<Labeled>) =>
     JSON.stringify({
       data: {
         repository: {
           issue: {
             timelineItems: {
-              totalCount: 1,
-              nodes: [
-                {
-                  __typename: "LabeledEvent",
-                  createdAt: "2026-10-04T10:00:00Z",
-                  actor: { __typename: "User", login: by },
-                  label: { name: "factory:triage" },
-                },
-              ],
+              totalCount: labeled.length,
+              nodes: labeled.map(({ label, at, by }) => ({
+                __typename: "LabeledEvent",
+                createdAt: at,
+                actor: { __typename: "User", login: by ?? "rawphp" },
+                label: { name: label },
+              })),
             },
             lastEditedAt: null,
             editor: null,
@@ -509,7 +514,9 @@ describe("liveWorld", () => {
       },
     });
 
-  const isHistory = (args: ReadonlyArray<string>) => args[0] === "api" && args[1] === "graphql";
+  /** A label history in which `by` applied `factory:triage`. */
+  const labelledByReply = (by: string) =>
+    historyOf([{ label: "factory:triage", at: "2026-10-04T10:00:00Z", by }]);
 
   it.effect("a judgement that an issue is not the factory's lasts across passes of one world", () =>
     Effect.gen(function* () {
@@ -551,19 +558,32 @@ describe("liveWorld", () => {
       }),
   );
 
-  /** gh for a release: the issue's comments (its newest factory comment is `newest`), and labels that move unless `labelFails`. */
-  const releaseGh = (newest: string | null, labelFails: boolean) =>
+  const OLD = "2026-07-01T01:00:00Z";
+  const LABEL_AT = "2026-10-08T00:30:00Z";
+  const COMMENT_AT = "2026-10-08T01:00:00Z";
+
+  /**
+   * gh for a release from `from`: the issue's comments (its newest factory comment is `newest`,
+   * created at `commentAt`), the label history (`labels`, or null when the history cannot be
+   * read), and the `from` label, which moves unless `labelFails`.
+   */
+  const releaseGh = (
+    newest: string | null,
+    labelFails: boolean,
+    commentAt: string = COMMENT_AT,
+    labels: ReadonlyArray<Labeled> | null = [{ label: "factory:triage", at: LABEL_AT }],
+    from: State = "triage",
+  ) =>
     ghWith((args) => {
       if (args[0] === "api" && args[1] === `repos/${REPO}/issues/9/comments`) {
         return JSON.stringify(
-          newest === null
-            ? []
-            : [{ id: 1, body: `${newest}\n\n${MARKER}`, created_at: "2026-10-08T01:00:00Z" }],
+          newest === null ? [] : [{ id: 1, body: `${newest}\n\n${MARKER}`, created_at: commentAt }],
         );
       }
+      if (isHistory(args)) return labels === null ? null : historyOf(labels);
       if (args[0] === "issue" && args[1] === "comment") return "https://github.com/x/1";
       if (args[0] === "issue" && args[1] === "view") {
-        return '{"labels":[{"name":"factory:triage"}]}';
+        return JSON.stringify({ labels: [{ name: `factory:${from}` }] });
       }
       if (args[0] === "issue" && args[1] === "edit") return labelFails ? null : "";
       return null;
@@ -571,7 +591,13 @@ describe("liveWorld", () => {
 
   const steps = (calls: ReadonlyArray<ReadonlyArray<string>>) =>
     calls.map((args) =>
-      args[0] === "api" ? "comments" : args[1] === "comment" ? "comment" : `${args[1]}`,
+      args[0] === "api"
+        ? args[1] === "graphql"
+          ? "history"
+          : "comments"
+        : args[1] === "comment"
+          ? "comment"
+          : `${args[1]}`,
     );
 
   it.effect("a cut-short claim is commented on, then moved to proposed", () =>
@@ -588,11 +614,83 @@ describe("liveWorld", () => {
       const error = yield* Effect.flip(worldOf(first.process).releaseClaim(repo, 9, "triage"));
       assert.strictEqual(error.kind, "tracker");
       assert.deepStrictEqual(steps(first.calls), ["comments", "comment", "view", "edit"]);
-      // The next pass finds the issue where it was, with the comment already its newest.
+      // The next pass finds the issue where it was: the comment is newer than the label event.
       const again = releaseGh(CUT_SHORT_COMMENT, false);
       yield* worldOf(again.process).releaseClaim(repo, 9, "triage");
-      assert.deepStrictEqual(steps(again.calls), ["comments", "view", "edit"]);
+      assert.deepStrictEqual(steps(again.calls), ["comments", "history", "view", "edit"]);
     }),
+  );
+
+  it.effect("an old cut-short comment from before the current label is said again", () =>
+    Effect.gen(function* () {
+      const { process, calls } = releaseGh(CUT_SHORT_COMMENT, false, OLD);
+      yield* worldOf(process).releaseClaim(repo, 9, "triage");
+      assert.deepStrictEqual(steps(calls), ["comments", "history", "comment", "view", "edit"]);
+    }),
+  );
+
+  it.effect(
+    "a newest comment that is not the cut-short text is followed by one, unread history",
+    () =>
+      Effect.gen(function* () {
+        const { process, calls } = releaseGh("Something else the factory said.", false);
+        yield* worldOf(process).releaseClaim(repo, 9, "triage");
+        assert.deepStrictEqual(steps(calls), ["comments", "comment", "view", "edit"]);
+      }),
+  );
+
+  it.effect("a history that cannot be read still gets the comment, then the move", () =>
+    Effect.gen(function* () {
+      const { process, calls } = releaseGh(CUT_SHORT_COMMENT, false, COMMENT_AT, null);
+      yield* worldOf(process).releaseClaim(repo, 9, "triage");
+      assert.deepStrictEqual(steps(calls), ["comments", "history", "comment", "view", "edit"]);
+    }),
+  );
+
+  it.effect("a history with no label event of the state gets the comment", () =>
+    Effect.gen(function* () {
+      const { process, calls } = releaseGh(CUT_SHORT_COMMENT, false, COMMENT_AT, []);
+      yield* worldOf(process).releaseClaim(repo, 9, "triage");
+      assert.deepStrictEqual(steps(calls), ["comments", "history", "comment", "view", "edit"]);
+    }),
+  );
+
+  it.effect("a cut-short comment made in the label's own second is said again", () =>
+    Effect.gen(function* () {
+      const { process, calls } = releaseGh(CUT_SHORT_COMMENT, false, LABEL_AT);
+      yield* worldOf(process).releaseClaim(repo, 9, "triage");
+      assert.deepStrictEqual(steps(calls), ["comments", "history", "comment", "view", "edit"]);
+    }),
+  );
+
+  /** A claim begun in triage that moved on to building at LABEL_AT. */
+  const triageThenBuilding: ReadonlyArray<Labeled> = [
+    { label: "factory:triage", at: OLD },
+    { label: "factory:building", at: LABEL_AT },
+  ];
+
+  it.effect("a release from building compares with the building label, not triage", () =>
+    Effect.gen(function* () {
+      // Newer than the triage label, older than the building one: it explained the triage claim.
+      const between = "2026-07-01T02:00:00Z";
+      const old = releaseGh(CUT_SHORT_COMMENT, false, between, triageThenBuilding, "building");
+      yield* worldOf(old.process).releaseClaim(repo, 9, "building");
+      assert.deepStrictEqual(steps(old.calls), ["comments", "history", "comment", "view", "edit"]);
+      const fresh = releaseGh(CUT_SHORT_COMMENT, false, COMMENT_AT, triageThenBuilding, "building");
+      yield* worldOf(fresh.process).releaseClaim(repo, 9, "building");
+      assert.deepStrictEqual(steps(fresh.calls), ["comments", "history", "view", "edit"]);
+    }),
+  );
+
+  it.effect(
+    "a comment time that is not GitHub's UTC-second form never counts, history unread",
+    () =>
+      Effect.gen(function* () {
+        // Text-sorts after LABEL_AT, so only the form check keeps it from counting.
+        const { process, calls } = releaseGh(CUT_SHORT_COMMENT, false, "2026-10-08T09:00:00+10:00");
+        yield* worldOf(process).releaseClaim(repo, 9, "triage");
+        assert.deepStrictEqual(steps(calls), ["comments", "comment", "view", "edit"]);
+      }),
   );
 
   /** gh answers for `.dw/config.yml` on a default branch `main` whose config names `base`. */

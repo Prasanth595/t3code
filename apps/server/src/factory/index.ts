@@ -23,6 +23,7 @@ import {
   type WatchedRepo,
 } from "./config.ts";
 import { clearGateLocks, gateLockFile } from "./gate.ts";
+import type { State } from "./domain/lifecycle.ts";
 import { ledgerCall as ledger, type LedgerError } from "./ledger/errors.ts";
 import { makeCause, type MachineEvent } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
@@ -36,7 +37,7 @@ import { FactoryProcess } from "./process.ts";
 import { readProgress } from "./runner/progress.ts";
 import { advance, timeLimit, watch, type BuildingContext } from "./runner/building.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
-import { isOurs, resume, start, utcSecond, type StartContext } from "./runner/start.ts";
+import { isOurs, newestSays, resume, start, utcSecond, type StartContext } from "./runner/start.ts";
 import * as Events from "./t3/events.ts";
 import * as Paths from "./t3/paths.ts";
 import * as T3Sessions from "./t3/sessions.ts";
@@ -189,14 +190,25 @@ export const liveWorld = (
         Effect.mapError(asPassError("tracker")),
       ),
     // The comment first, then the label, as a refusal does: a label call that fails leaves the
-    // issue where a later pass finds it again, and the comment is not posted twice while it is
-    // still the issue's newest factory comment.
-    releaseClaim: (repo: Repo, issue: number) => {
+    // issue where a later pass finds it again. The comment counts as already posted, as
+    // `alreadySaid` counts a refusal, only when it is the issue's newest factory comment and was
+    // created after the label event that began this claim; an older one explained an earlier
+    // claim. A label time that cannot be read posts the comment: at-least-once beats an
+    // unexplained move.
+    releaseClaim: (repo: Repo, issue: number, from: State) => {
       const gh = githubFor(repo.watched);
       return tracker(
         Effect.gen(function* () {
           const newest = yield* gh.newestFactoryComment(issue);
-          if (newest?.body !== CUT_SHORT_COMMENT) yield* gh.postComment(issue, CUT_SHORT_COMMENT);
+          let explained = false;
+          if (newestSays(newest, CUT_SHORT_COMMENT)) {
+            const labeled = yield* Effect.result(gh.labeledAt(issue, from));
+            explained =
+              Result.isSuccess(labeled) &&
+              labeled.success !== null &&
+              newest.createdAt > labeled.success;
+          }
+          if (!explained) yield* gh.postComment(issue, CUT_SHORT_COMMENT);
           yield* gh.setState(issue, "proposed");
         }),
       ).pipe(Effect.asVoid);

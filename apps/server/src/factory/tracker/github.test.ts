@@ -3993,6 +3993,39 @@ it.effect("unassignedClaims refuses a before that is not GitHub's form, with no 
   }),
 );
 
+it.effect("labeledAt is the newest label event of the state's label, one call each", () =>
+  Effect.gen(function* () {
+    const on = (at: string, label: string) => labelEvent("LabeledEvent", at, "rawphp", label);
+    const history = eventsReply(
+      [
+        on(CREATED, "factory:triage"),
+        on(LABELED, "factory:triage"),
+        labelEvent("UnlabeledEvent", AFTER, "rawphp", "factory:triage"),
+        on(AFTER, "factory:building"),
+        on(LATER, "bug"),
+      ],
+      null,
+      [],
+    );
+    const t = setup(reply(history), reply(history));
+    assert.strictEqual(yield* t.ok(t.github.labeledAt(6, "triage")), LABELED);
+    assert.strictEqual(yield* t.ok(t.github.labeledAt(6, "building")), AFTER);
+    assert.deepStrictEqual(t.calls(), [historyCallFor(6), historyCallFor(6)]);
+  }),
+);
+
+it.effect("labeledAt is null when the history has no label event of that label", () =>
+  Effect.gen(function* () {
+    const history = eventsReply(
+      [labelEvent("LabeledEvent", LABELED, "rawphp", "factory:building")],
+      null,
+      [],
+    );
+    const t = setup(reply(history));
+    assert.strictEqual(yield* t.ok(t.github.labeledAt(6, "triage")), null);
+  }),
+);
+
 it.effect("newestFactoryComment is the newest marked comment, without the marker", () =>
   Effect.gen(function* () {
     const t = setup(

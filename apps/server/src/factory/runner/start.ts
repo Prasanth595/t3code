@@ -350,6 +350,16 @@ const RECENT_MS = 60 * 60 * 1000;
 export const utcSecond = (ms: number): string => `${formatTs(ms).slice(0, 19)}Z`;
 
 /**
+ * Whether the issue's newest factory comment says `text` with a creation time in GitHub's
+ * `YYYY-MM-DDTHH:MM:SSZ` form, so the time compares as text with a label time. A comment whose
+ * time is not in that form never counts as already said.
+ */
+export const newestSays = <C extends { readonly body: string; readonly createdAt: string }>(
+  newest: C | null,
+  text: string,
+): newest is C => newest !== null && newest.body === text && isUtcSecond(newest.createdAt);
+
+/**
  * Whether the issue's newest factory comment already says this refusal for the label it was
  * judged on: it says the same text and is newer than the label event (a comment from before the
  * label was about an earlier refusal). A refusal without a label time is matched on text alone,
@@ -362,7 +372,7 @@ const alreadySaid = (
   text: string,
   newest: { readonly body: string; readonly createdAt: string } | null,
 ): boolean => {
-  if (newest === null || newest.body !== text || !isUtcSecond(newest.createdAt)) return false;
+  if (!newestSays(newest, text)) return false;
   if ("labeledAt" in refusal) return newest.createdAt > refusal.labeledAt;
   return newest.createdAt > utcSecond(ctx.clock() - RECENT_MS);
 };
