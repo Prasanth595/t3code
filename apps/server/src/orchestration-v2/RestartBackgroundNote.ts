@@ -27,11 +27,18 @@ function labelWithId(name: unknown, fallback: string, suffix: string): string {
   return `${compactLabel(name, budget) ?? compactLabel(fallback, budget)}${suffix}`;
 }
 
-export function cancelledTurnItemWork(item: OrchestrationV2TurnItem): Work | undefined {
+/**
+ * `resumeId` is what the agent resumes a native subagent by, when that is not its
+ * item's native id (a Codex subagent resumes by its own provider thread's id).
+ */
+export function cancelledTurnItemWork(
+  item: OrchestrationV2TurnItem,
+  resumeId?: string,
+): Work | undefined {
   switch (item.type) {
     case "subagent": {
-      // The native id is what the agent resumes the subagent by.
-      const nativeId = item.origin === "provider_native" ? item.nativeItemRef?.nativeId : undefined;
+      const nativeId =
+        item.origin === "provider_native" ? (resumeId ?? item.nativeItemRef?.nativeId) : undefined;
       return {
         kind: "subagent",
         label: labelWithId(

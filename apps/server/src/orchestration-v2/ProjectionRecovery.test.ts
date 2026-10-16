@@ -801,6 +801,138 @@ it.effect("wakes the run whose subagent lost its shell, past a wake cut before i
   }).pipe(Effect.provide(layerRecoveryTest)),
 );
 
+it.effect("wakes a settled run whose native subagent ran on its own provider thread", () =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const recovery = yield* ProviderRuntimeRecovery.ProviderRuntimeRecoveryService;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const threadId = yield* createThread("native-subagent");
+    const parentProviderThreadId = ProviderThreadId.make(`provider-thread:${threadId}`);
+    const childProviderThreadId = ProviderThreadId.make(`provider-thread:${threadId}:child`);
+    const providerSessionId = ProviderSessionId.make(`session:${threadId}`);
+    const subagentId = NodeId.make(`node:${threadId}:subagent`);
+    yield* projections.apply({
+      id: EventId.make(`event:${threadId}:session`),
+      type: "provider-session.attached",
+      threadId,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload: {
+        id: providerSessionId,
+        driver,
+        providerInstanceId,
+        status: "ready",
+        cwd: "/workspace",
+        model: modelSelection.model,
+        capabilities: CodexProviderCapabilitiesV2,
+        createdAt: now,
+        updatedAt: now,
+        lastError: null,
+      },
+    });
+    const settledRun = yield* createRun(threadId, "completed", {
+      providerThreadId: parentProviderThreadId,
+    });
+    for (const [id, nativeId] of [
+      [parentProviderThreadId, "native-thread"],
+      [childProviderThreadId, "agent-thread"],
+    ] as const) {
+      yield* projections.apply({
+        id: EventId.make(`event:${id}`),
+        type: "provider-thread.updated",
+        threadId,
+        driver,
+        providerInstanceId,
+        occurredAt: now,
+        payload: {
+          id,
+          appThreadId:
+            id === parentProviderThreadId ? threadId : ThreadId.make(`${threadId}:child`),
+          ownerNodeId: null,
+          driver,
+          providerInstanceId,
+          providerSessionId,
+          nativeThreadRef: { driver, nativeId, strength: "strong" },
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: id === parentProviderThreadId ? 1 : null,
+          lastRunOrdinal: id === parentProviderThreadId ? 1 : null,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+    }
+    const subagent = {
+      threadId,
+      runId: settledRun,
+      origin: "provider_native",
+      driver,
+      providerInstanceId,
+      childThreadId: null,
+      prompt: "audit src",
+      status: "running",
+      result: null,
+      startedAt: now,
+      completedAt: null,
+      updatedAt: now,
+    } as const;
+    yield* projections.apply({
+      id: EventId.make(`event:${threadId}:subagent`),
+      type: "subagent.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        ...subagent,
+        id: subagentId,
+        parentNodeId: NodeId.make(`node:${threadId}:root`),
+        createdBy: "agent",
+        providerThreadId: childProviderThreadId,
+        nativeTaskRef: { driver, nativeId: "call_1:agent-thread", strength: "strong" },
+        title: null,
+        model: null,
+      },
+    });
+    yield* projections.apply({
+      id: EventId.make(`event:${threadId}:subagent-item`),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        ...subagent,
+        id: TurnItemId.make(`item:${threadId}:subagent`),
+        nodeId: subagentId,
+        providerThreadId: childProviderThreadId,
+        providerTurnId: null,
+        nativeItemRef: { driver, nativeId: "call_1:agent-thread", strength: "strong" },
+        parentItemId: null,
+        ordinal: 1,
+        type: "subagent",
+        title: "audit",
+        subagentId,
+      },
+    });
+
+    yield* recovery.reconcile("startup");
+
+    const effects = yield* sql<{ readonly effect_id: string }>`
+      SELECT effect_id FROM orchestration_v2_effect_outbox WHERE thread_id = ${threadId}
+    `;
+    assert.deepEqual(effects, [{ effect_id: `effect:restart-continuation:${settledRun}` }]);
+    const projection = yield* projections.getThreadProjection(threadId);
+    assert.deepEqual(projection.runs[0]?.restartCancelledBackgroundWork, [
+      {
+        kind: "subagent",
+        label: "audit (id agent-thread)",
+        id: TurnItemId.make(`item:${threadId}:subagent`),
+      },
+    ]);
+  }).pipe(Effect.provide(layerRecoveryTest)),
+);
+
 it.effect("marks fork descendants unreadable when their source is missing or corrupt", () =>
   Effect.gen(function* () {
     const projections = yield* ProjectionStore.ProjectionStoreV2;

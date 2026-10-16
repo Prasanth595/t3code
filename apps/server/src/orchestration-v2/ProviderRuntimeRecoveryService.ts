@@ -258,9 +258,19 @@ export const make = Effect.gen(function* () {
         item: OrchestrationV2ThreadProjection["turnItems"][number],
       ) => {
         if (!isBackgroundCapableTurnItemType(item.type)) return;
-        const work = cancelledTurnItemWork(item);
+        const awaitingId = awaitingProviderThreadId(item, projection.runs);
+        const ownProviderThread =
+          item.providerThreadId === awaitingId
+            ? undefined
+            : (projection.providerThreads ?? []).find(
+                (candidate) => candidate.id === item.providerThreadId,
+              );
+        const work = cancelledTurnItemWork(
+          item,
+          ownProviderThread?.nativeThreadRef?.nativeId ?? undefined,
+        );
         if (work === undefined) return;
-        recordCancelledBackgroundWork(awaitingProviderThreadId(item, projection.runs), work);
+        recordCancelledBackgroundWork(awaitingId, work);
         if (item.nativeItemRef?.nativeId != null) {
           cancelledBackgroundNativeIds.add(item.nativeItemRef.nativeId);
         }
