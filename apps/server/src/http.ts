@@ -538,9 +538,10 @@ const openStaticFile = Effect.fn("openStaticFile")(function* (filePath: string) 
   const file = yield* fileSystem
     .open(filePath, { flag: "r" })
     .pipe(
-      Effect.catchTag("PlatformError", (error) =>
-        error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
-      ),
+      Effect.catchTags({
+        PlatformError: (error) =>
+          error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
+      }),
     );
   if (file === null) {
     return { info: pathInfo, body: Stream.fromEffect(fileSystem.readFile(filePath)) };
