@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
+<!-- The --port and log path below are repeated in factory/scripts/lib/t3fac.sh for the health check. -->
 <dict>
 	<key>Label</key>
 	<string>io.github.rawphp.t3fac</string>

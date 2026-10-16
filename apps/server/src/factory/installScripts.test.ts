@@ -1,10 +1,11 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vite-plus/test";
 
 const scripts = NodePath.resolve(import.meta.dirname, "../../../../factory/scripts");
 const label = "io.github.rawphp.t3fac";
@@ -12,6 +13,7 @@ const uid = process.getuid?.() ?? 0;
 
 const v1 = "0.0.1-test+fac.aaaaaaa";
 const v2 = "0.0.2-test+fac.bbbbbbb";
+const v3 = "0.0.3-test+fac.ccccccc";
 
 let tmp: string;
 let home: string;
@@ -21,22 +23,42 @@ let launchctlLoaded: string;
 let launchctlDrain: string;
 const archives: Record<string, string> = {};
 
+// One listener shared by every test: the scripts check this port instead of 3876.
+let listener: NodeNet.Server;
+let healthPort = 0;
+
+beforeAll(async () => {
+  listener = NodeNet.createServer((socket) => socket.destroy());
+  await new Promise<void>((resolve) => listener.listen(0, "127.0.0.1", resolve));
+  healthPort = (listener.address() as NodeNet.AddressInfo).port;
+});
+
+afterAll(async () => {
+  await new Promise<void>((resolve) => listener.close(() => resolve()));
+});
+
 const plistPath = () => NodePath.join(home, "Library/LaunchAgents", `${label}.plist`);
 const root = () => NodePath.join(home, ".local/share/t3fac");
+const logPath = () => NodePath.join(home, "Library/Logs/t3fac/t3fac.log");
 
 const run = (script: string, ...args: Array<string>) => runWith({}, script, ...args);
+
+const scriptEnv = (extraEnv: Record<string, string>) => ({
+  HOME: home,
+  PATH: `${bin}:/usr/bin:/bin`,
+  LAUNCHCTL_LOG: launchctlLog,
+  LAUNCHCTL_LOADED: launchctlLoaded,
+  LAUNCHCTL_DRAIN: launchctlDrain,
+  T3FAC_PORT: String(healthPort),
+  T3FAC_HEALTH_WAIT: "2",
+  LAUNCHCTL_HEALTHY: `versions/${v1} versions/${v2} versions/${v3}`,
+  ...extraEnv,
+});
 
 const runWith = (extraEnv: Record<string, string>, script: string, ...args: Array<string>) => {
   NodeFS.writeFileSync(launchctlLog, "");
   const result = NodeChildProcess.spawnSync("bash", [NodePath.join(scripts, script), ...args], {
-    env: {
-      HOME: home,
-      PATH: `${bin}:/usr/bin:/bin`,
-      LAUNCHCTL_LOG: launchctlLog,
-      LAUNCHCTL_LOADED: launchctlLoaded,
-      LAUNCHCTL_DRAIN: launchctlDrain,
-      ...extraEnv,
-    },
+    env: scriptEnv(extraEnv),
     encoding: "utf8",
   });
   const calls = NodeFS.readFileSync(launchctlLog, "utf8").split("\n").filter(Boolean);
@@ -71,7 +93,11 @@ const makeArchive = (version: string, options: { binary?: boolean; label?: strin
 
 // A little launchd-like: bootout leaves the job loaded for two more `print` polls (or
 // LAUNCHCTL_BOOTOUT_DRAIN), and bootstrap fails with EIO while it is still loaded (or when
-// LAUNCHCTL_BOOTSTRAP_FAIL is set).
+// LAUNCHCTL_BOOTSTRAP_FAIL is set). A bootstrap writes "factory started" to the log when
+// LAUNCHCTL_HEALTHY (space-separated `current` targets) lists the version `current` points at
+// (LAUNCHCTL_HEALTHY_LINE writes another line instead, LAUNCHCTL_HEALTHY_DELAY writes it that many
+// seconds later, as a server still starting would); LAUNCHCTL_TRUNCATE_LOG empties the log first,
+// as a rotation would.
 const setupSandbox = () => {
   tmp = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3fac-install-")));
   home = NodePath.join(tmp, "home");
@@ -101,7 +127,22 @@ const setupSandbox = () => {
       '      echo "Bootstrap failed: 5: Input/output error" >&2',
       "      exit 5",
       "    fi",
-      '    touch "$LAUNCHCTL_LOADED" ;;',
+      '    touch "$LAUNCHCTL_LOADED"',
+      '    if [ -n "${LAUNCHCTL_HEALTHY+x}" ]; then',
+      '      target=$(readlink "$HOME/.local/share/t3fac/current")',
+      "      for entry in $LAUNCHCTL_HEALTHY; do",
+      '        if [ "$entry" = "$target" ]; then',
+      '          mkdir -p "$HOME/Library/Logs/t3fac"',
+      '          if [ -n "$LAUNCHCTL_TRUNCATE_LOG" ]; then : > "$HOME/Library/Logs/t3fac/t3fac.log"; fi',
+      '          line="${LAUNCHCTL_HEALTHY_LINE:-factory started}"',
+      '          if [ -n "$LAUNCHCTL_HEALTHY_DELAY" ]; then',
+      '            (sleep "$LAUNCHCTL_HEALTHY_DELAY"; echo "$line" >> "$HOME/Library/Logs/t3fac/t3fac.log") > /dev/null 2>&1 &',
+      "          else",
+      '            echo "$line" >> "$HOME/Library/Logs/t3fac/t3fac.log"',
+      "          fi",
+      "        fi",
+      "      done",
+      "    fi ;;",
       '  bootout) echo "${LAUNCHCTL_BOOTOUT_DRAIN:-2}" > "$LAUNCHCTL_DRAIN" ;;',
       "esac",
       "exit 0",
@@ -295,6 +336,33 @@ describe("rollback.sh when the previous version is gone from disk", () => {
   });
 });
 
+describe("rollback.sh when current is missing", () => {
+  beforeAll(() => {
+    setupInstalledSandbox();
+  });
+
+  afterAll(() => {
+    NodeFS.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("still restores previous", () => {
+    NodeFS.rmSync(NodePath.join(root(), "current"));
+    const result = run("rollback.sh");
+    expect(result.status).toBe(0);
+    expect(result.output).toContain(`rolled back to ${v1}`);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v1}`);
+    expect(NodeFS.existsSync(NodePath.join(root(), "previous"))).toBe(false);
+  });
+
+  it("names only the restored version when its health check fails", () => {
+    setupInstalledSandbox();
+    NodeFS.rmSync(NodePath.join(root(), "current"));
+    const result = runWith({ LAUNCHCTL_HEALTHY: "" }, "rollback.sh");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`rollback to ${v1} failed its health check`);
+  });
+});
+
 describe("install.sh and rollback.sh when the job never unloads", () => {
   const stuck = { LAUNCHCTL_BOOTOUT_DRAIN: "1000", T3FAC_UNLOAD_WAIT: "1" };
 
@@ -317,6 +385,181 @@ describe("install.sh and rollback.sh when the job never unloads", () => {
     expect(result.calls[1]).toBe(`bootout gui/${uid}/${label}`);
     expect(result.calls.length).toBeGreaterThan(3);
     expect(result.calls.some((call) => call.startsWith("bootstrap"))).toBe(false);
+  });
+});
+
+describe("install.sh and rollback.sh health check", () => {
+  const installV1 = () => {
+    setupSandbox();
+    for (const version of [v1, v2, v3]) archives[version] = makeArchive(version);
+    expect(run("install.sh", archives[v1]!).status).toBe(0);
+  };
+
+  const installV1ThenV2 = () => {
+    installV1();
+    expect(run("install.sh", archives[v2]!).status).toBe(0);
+  };
+
+  const seedLog = (content: string) => {
+    NodeFS.mkdirSync(NodePath.dirname(logPath()), { recursive: true });
+    NodeFS.writeFileSync(logPath(), content);
+  };
+
+  const link = (name: string) => NodeFS.readlinkSync(NodePath.join(root(), name));
+  const bootstraps = (calls: Array<string>) => calls.filter((c) => c.startsWith("bootstrap"));
+
+  afterEach(() => {
+    NodeFS.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("keeps a healthy install", () => {
+    installV1();
+    const result = run("install.sh", archives[v2]!);
+    expect(result.status).toBe(0);
+    expect(result.output).toContain(`installed ${v2}`);
+    expect(link("current")).toBe(`versions/${v2}`);
+    expect(link("previous")).toBe(`versions/${v1}`);
+    expect(bootstraps(result.calls)).toHaveLength(1);
+  });
+
+  it("rolls back an install whose server never logs that it started", () => {
+    installV1();
+    const lines = Array.from({ length: 60 }, (_, i) => `boot line ${i + 1}`);
+    seedLog(lines.join("\n") + "\n");
+    const result = runWith({ LAUNCHCTL_HEALTHY: `versions/${v1}` }, "install.sh", archives[v2]!);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `install of ${v2} failed its health check; rolled back to ${v1}`,
+    );
+    // The last 50 lines: line 11 is the oldest shown, line 10 is cut.
+    expect(result.stderr).toContain("boot line 60");
+    expect(result.stderr).toContain("boot line 11\n");
+    expect(result.stderr).not.toContain("boot line 10\n");
+    expect(link("current")).toBe(`versions/${v1}`);
+    expect(NodeFS.existsSync(NodePath.join(root(), "previous"))).toBe(false);
+    expect(bootstraps(result.calls)).toHaveLength(2);
+  });
+
+  it("keeps an install whose server logs that it started only after the first check", () => {
+    installV1();
+    const result = runWith(
+      { LAUNCHCTL_HEALTHY_DELAY: "1", T3FAC_HEALTH_WAIT: "3" },
+      "install.sh",
+      archives[v2]!,
+    );
+    expect(result.status).toBe(0);
+    expect(link("current")).toBe(`versions/${v2}`);
+    expect(bootstraps(result.calls)).toHaveLength(1);
+  });
+
+  it("keeps an install whose port accepts connections only after the first check", async () => {
+    installV1();
+    const late = NodeNet.createServer((socket) => socket.destroy());
+    await new Promise<void>((resolve) => late.listen(0, "127.0.0.1", resolve));
+    const port = (late.address() as NodeNet.AddressInfo).port;
+    await new Promise<void>((resolve) => late.close(() => resolve()));
+    NodeFS.writeFileSync(launchctlLog, "");
+    const child = NodeChildProcess.spawn(
+      "bash",
+      [NodePath.join(scripts, "install.sh"), archives[v2]!],
+      {
+        env: scriptEnv({ T3FAC_PORT: String(port), T3FAC_HEALTH_WAIT: "5" }),
+        stdio: "ignore",
+      },
+    );
+    const exited = new Promise<number | null>((resolve) => child.on("exit", resolve));
+    // Open the port a poll after the bootstrap, so the first check finds it closed and only a
+    // later one can pass.
+    while (!NodeFS.readFileSync(launchctlLog, "utf8").includes("bootstrap")) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    await new Promise<void>((resolve) => late.listen(port, "127.0.0.1", resolve));
+    try {
+      expect(await exited).toBe(0);
+    } finally {
+      await new Promise<void>((resolve) => late.close(() => resolve()));
+    }
+    expect(link("current")).toBe(`versions/${v2}`);
+  });
+
+  it("keeps an install whose server logs that it has no factory config", () => {
+    installV1();
+    const result = runWith(
+      { LAUNCHCTL_HEALTHY_LINE: "no factory config" },
+      "install.sh",
+      archives[v2]!,
+    );
+    expect(result.status).toBe(0);
+    expect(link("current")).toBe(`versions/${v2}`);
+    expect(bootstraps(result.calls)).toHaveLength(1);
+  });
+
+  it("rolls back an install whose port does not accept connections", async () => {
+    installV1();
+    const closed = NodeNet.createServer();
+    await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
+    const port = (closed.address() as NodeNet.AddressInfo).port;
+    await new Promise<void>((resolve) => closed.close(() => resolve()));
+    // The port stays closed for the rollback's own check too, so that one fails as well.
+    const result = runWith({ T3FAC_PORT: String(port) }, "install.sh", archives[v2]!);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`port ${port} does not accept connections`);
+    expect(result.stderr).toContain(`install of ${v2} failed its health check; rollback`);
+    expect(link("current")).toBe(`versions/${v1}`);
+    expect(bootstraps(result.calls)).toHaveLength(2);
+  });
+
+  it("does not count a factory started line that was there before the restart", () => {
+    installV1();
+    seedLog("factory started\n");
+    const result = runWith({ LAUNCHCTL_HEALTHY: `versions/${v1}` }, "install.sh", archives[v2]!);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `install of ${v2} failed its health check; rolled back to ${v1}`,
+    );
+    expect(link("current")).toBe(`versions/${v1}`);
+  });
+
+  it("counts a line written after the log was truncated to a size below the noted one", () => {
+    installV1();
+    seedLog("older log content\n".repeat(10));
+    const result = runWith({ LAUNCHCTL_TRUNCATE_LOG: "1" }, "install.sh", archives[v2]!);
+    expect(result.status).toBe(0);
+    expect(link("current")).toBe(`versions/${v2}`);
+  });
+
+  it("exits 1 and says so when an unhealthy first install has nothing to roll back to", () => {
+    setupSandbox();
+    archives[v1] = makeArchive(v1);
+    const result = runWith({ LAUNCHCTL_HEALTHY: "" }, "install.sh", archives[v1]!);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(
+      `install of ${v1} failed its health check; no earlier version to roll back to`,
+    );
+    expect(link("current")).toBe(`versions/${v1}`);
+    expect(NodeFS.existsSync(NodePath.join(root(), "previous"))).toBe(false);
+    expect(bootstraps(result.calls)).toHaveLength(1);
+  });
+
+  it("rollback.sh exits 1 naming both versions when the restored version is unhealthy too", () => {
+    installV1ThenV2();
+    const result = runWith({ LAUNCHCTL_HEALTHY: "" }, "rollback.sh");
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`rollback to ${v1} from ${v2} failed its health check`);
+    expect(link("current")).toBe(`versions/${v1}`);
+    expect(NodeFS.existsSync(NodePath.join(root(), "previous"))).toBe(false);
+  });
+
+  it("install.sh reports when the rollback fails its health check as well", () => {
+    installV1();
+    const result = runWith({ LAUNCHCTL_HEALTHY: "" }, "install.sh", archives[v3]!);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`rollback to ${v1} from ${v3} failed its health check`);
+    expect(result.stderr).toContain(
+      `install of ${v3} failed its health check; rollback to ${v1} failed too`,
+    );
+    expect(link("current")).toBe(`versions/${v1}`);
   });
 });
 

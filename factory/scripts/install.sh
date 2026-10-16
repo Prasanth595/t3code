@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Installs a t3fac archive under ~/.local/share/t3fac/versions, points `current` at it,
-# writes the LaunchAgent plist and restarts the job. Usage: install.sh <archive>
+# writes the LaunchAgent plist and restarts the job, then waits for it to come up and runs
+# rollback.sh when it does not. Usage: install.sh <archive>
 set -euo pipefail
 
 source "$(dirname "$0")/lib/t3fac.sh"
@@ -49,6 +50,21 @@ fi
 ln -sfn "versions/$version" "$root/current"
 
 restart_job
+
+if ! wait_healthy "$version"; then
+  if [[ -L $root/previous && -e $root/previous ]]; then
+    prev=$(readlink "$root/previous")
+    prev=${prev#versions/}
+    if bash "$(dirname "$0")/rollback.sh"; then
+      echo "install of $version failed its health check; rolled back to $prev" >&2
+    else
+      echo "install of $version failed its health check; rollback to $prev failed too" >&2
+    fi
+  else
+    echo "install of $version failed its health check; no earlier version to roll back to" >&2
+  fi
+  exit 1
+fi
 
 echo "installed $version"
 echo "current -> versions/$version"
