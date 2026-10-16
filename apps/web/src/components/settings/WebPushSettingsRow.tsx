@@ -66,7 +66,7 @@ export function WebPushSettingsRow() {
       resetAction={
         enabled !== DEFAULT_CLIENT_SETTINGS.webPushEnabled ? (
           <SettingResetButton
-            label="push notifications"
+            label="Web Push"
             onClick={() =>
               void updateSettings({ webPushEnabled: DEFAULT_CLIENT_SETTINGS.webPushEnabled })
             }
@@ -83,7 +83,7 @@ export function WebPushSettingsRow() {
           <Switch
             checked={enabled}
             onCheckedChange={(checked) => void updateSettings({ webPushEnabled: checked })}
-            aria-label="Push notifications"
+            aria-label="Web Push"
           />
         </div>
       }

@@ -13,7 +13,7 @@ import type { ScopedSettingsPatch } from "./scopedSettings";
  */
 const FORK_RESTORED_SETTINGS = [
   ["installedAppEnabled", "Installed app"],
-  ["webPushEnabled", "Push notifications"],
+  ["webPushEnabled", "Web Push"],
   ["forkAutoUpdate", "Server auto-update"],
   ["forkChangelogEnabled", "Fork changelog"],
   ["recoverInterruptedTurns", "Recover interrupted agents"],

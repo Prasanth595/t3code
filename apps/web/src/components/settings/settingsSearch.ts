@@ -434,7 +434,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "web-push",
-    title: "Push notifications",
+    title: "Web Push",
     to: "/settings/general",
     searchTerms: ["web push notification phone android closed app background"],
   },
