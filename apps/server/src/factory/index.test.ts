@@ -20,6 +20,7 @@ import {
   factoryRuntime,
   FactoryLoop,
   FactoryRuntime,
+  gateDecided,
   liveWorld,
   ownedThreads,
   wakeOn,
@@ -750,4 +751,19 @@ describe("liveWorld", () => {
       assert.include(error.message, "`main`");
     }),
   );
+});
+
+describe("the gate in the background", () => {
+  it("wakes the loop only for a gate that decided something", () => {
+    assert.strictEqual(gateDecided({ kind: "passed", pr: 12 }), true);
+    assert.strictEqual(gateDecided({ kind: "sent-back", attempt: 1 }), true);
+    assert.strictEqual(gateDecided({ kind: "stuck", reason: "r" }), true);
+    assert.strictEqual(gateDecided({ kind: "ended" }), true);
+    // Nothing changed: the normal poll carries the next try, so a session still at work or a
+    // rate limit does not spin the loop.
+    assert.strictEqual(gateDecided({ kind: "not-ready" }), false);
+    assert.strictEqual(gateDecided({ kind: "running" }), false);
+    assert.strictEqual(gateDecided({ kind: "queued", running: 2, max: 2 }), false);
+    assert.strictEqual(gateDecided(null), false);
+  });
 });

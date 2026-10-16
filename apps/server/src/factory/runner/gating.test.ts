@@ -1533,6 +1533,7 @@ describe("gate: a failed attempt goes back into the session", () => {
   it.effect("a failed attempt is sent into the session and the next gate waits for a new run", () =>
     Effect.gen(function* () {
       const rig = yield* readyForGate();
+      assert.strictEqual(readProgress(readRun(rig.dataDir, rig.run).entries).prReported, true);
       failFirst(rig, 1);
       assert.deepStrictEqual(yield* gateIn(rig), { kind: "sent-back", attempt: 1 });
       // GitHub is only read: the label, the draft and the comments stay as they were.
@@ -1553,6 +1554,10 @@ describe("gate: a failed attempt goes back into the session", () => {
       assert.strictEqual(rig.gh.world.state, "building");
       assert.ok(!rig.gh.world.prReady);
       assert.deepStrictEqual(rig.gh.world.prComments, []);
+      // The session is at work again: the run is a building run with no pull request reported,
+      // so the pass time-limits it, watches it and reads it through `advance`, and starts the
+      // gate only when the session reports again.
+      assert.strictEqual(readProgress(readRun(rig.dataDir, rig.run).entries).prReported, false);
 
       // The session has not run again: the same finished run is not gated twice.
       clearCalls(rig);
