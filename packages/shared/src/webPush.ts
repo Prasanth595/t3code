@@ -1,9 +1,8 @@
 /**
- * MM-1807: Web Push with the Web Crypto API of Workers. It signs the VAPID JWT (RFC 8292) and
- * encrypts the message with `aes128gcm` (RFC 8291, RFC 8188). The key is the Worker secret
- * `VAPID_JWK`: a P-256 private key as JSON Web Key. See the README.
+ * Fork: Web Push with the Web Crypto API, for the machine map portal (MM-1807) and the T3 server.
+ * It signs the VAPID JWT (RFC 8292) and encrypts the message with `aes128gcm` (RFC 8291,
+ * RFC 8188). The key is a P-256 private key as JSON Web Key.
  */
-import type { PushMessage } from "./api.ts";
 
 export interface PushTarget {
   readonly endpoint: string;
@@ -13,8 +12,11 @@ export interface PushTarget {
   readonly auth: string;
 }
 
+/** `CryptoKey` is a type only with the DOM and Workers types. The server has the Node types. */
+type WebCryptoKey = Awaited<ReturnType<typeof crypto.subtle.importKey>>;
+
 export interface VapidKey {
-  readonly privateKey: CryptoKey;
+  readonly privateKey: WebCryptoKey;
   /** The public key as an uncompressed point, base64url. Browsers subscribe with it. */
   readonly publicKey: string;
 }
@@ -65,7 +67,16 @@ const hkdf = async (
   return new Uint8Array(bits);
 };
 
-/** Reads `VAPID_JWK`. Returns null without the secret, and fails on a key that is not P-256. */
+/** A new P-256 private key as JSON Web Key text, for `vapidKey`. */
+export async function generateVapidJwk(): Promise<string> {
+  const pair = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, [
+    "sign",
+    "verify",
+  ]);
+  return JSON.stringify(await crypto.subtle.exportKey("jwk", pair.privateKey));
+}
+
+/** Reads a JSON Web Key. Returns null without a key, and fails on a key that is not P-256. */
 export async function vapidKey(jwkText: string | undefined): Promise<VapidKey | null> {
   if (!jwkText) return null;
   const jwk: unknown = JSON.parse(jwkText);
@@ -78,7 +89,7 @@ export async function vapidKey(jwkText: string | undefined): Promise<VapidKey | 
     !("y" in jwk && typeof jwk.y === "string") ||
     !("d" in jwk && typeof jwk.d === "string")
   ) {
-    throw new Error("VAPID_JWK must be a P-256 private key as JSON Web Key.");
+    throw new Error("The VAPID key must be a P-256 private key as JSON Web Key.");
   }
   const privateKey = await crypto.subtle.importKey(
     "jwk",
@@ -96,6 +107,7 @@ async function vapidHeader(endpoint: string, key: VapidKey, subject: string): Pr
   const part = (value: object) => toBase64Url(encoder.encode(JSON.stringify(value)));
   const claims = {
     aud: new URL(endpoint).origin,
+    // @effect-diagnostics-next-line globalDate:off -- plain Promise code, shared with the portal Worker.
     exp: Math.floor(Date.now() / 1000) + JWT_SECONDS,
     sub: subject,
   };
@@ -120,18 +132,16 @@ async function encrypt(target: PushTarget, plain: Uint8Array): Promise<Uint8Arra
     false,
     [],
   );
-  const own = (await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, [
+  const own = await crypto.subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, [
     "deriveBits",
-  ])) as CryptoKeyPair;
+  ]);
+  // The Workers types also allow a single key here. ECDH always gives a pair.
+  if (!("privateKey" in own)) throw new Error("ECDH did not give a key pair.");
   const ownPublic = new Uint8Array(
     (await crypto.subtle.exportKey("raw", own.publicKey)) as ArrayBuffer,
   );
   const shared = new Uint8Array(
-    await crypto.subtle.deriveBits(
-      { name: "ECDH", public: browserPublic } as SubtleCryptoDeriveKeyAlgorithm,
-      own.privateKey,
-      256,
-    ),
+    await crypto.subtle.deriveBits({ name: "ECDH", public: browserPublic }, own.privateKey, 256),
   );
   const keyInfo = concat(encoder.encode("WebPush: info\0"), browserKey, ownPublic);
   const ikm = await hkdf(authSecret, shared, keyInfo, 32);
@@ -154,13 +164,14 @@ async function encrypt(target: PushTarget, plain: Uint8Array): Promise<Uint8Arra
 /** Sends one message to one subscription. Fails on every answer except success and `gone`. */
 export async function sendPush(
   target: PushTarget,
-  message: PushMessage,
+  message: object,
   key: VapidKey,
   subject: string,
 ): Promise<PushResult> {
   const plain = encoder.encode(JSON.stringify(message));
   // The record holds the message, its delimiter and the 16-byte tag.
   if (plain.length > RECORD_SIZE - 17) throw new Error("The push message is too long.");
+  // @effect-diagnostics-next-line globalFetch:off -- plain Promise code, shared with the portal Worker.
   const response = await fetch(target.endpoint, {
     method: "POST",
     headers: {

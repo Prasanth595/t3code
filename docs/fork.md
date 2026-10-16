@@ -386,7 +386,10 @@ Each server web app, such as `https://t3-vps.yarden-zamir.com`, installs as an a
 The client setting `installedAppEnabled` adds a service worker. It is on by default. Turn it off in Settings > General > Installed app, in each browser and for each server.
 
 - An offline page shows when the device is offline, or when the tunnel answers but the server is down.
-- Android and iPhone show thread and review guide notifications. Turn on notifications in Settings > General first. The page must still run, so a closed app shows nothing.
+- Android and iPhone show thread and review guide notifications. Turn on notifications in Settings > General first.
+- Web Push (client setting `webPushEnabled`, on by default) brings thread notifications while the app is closed. It needs the installed app setting and system notifications. The browser registers `/sw.js` once for each connected server, with the scope `/push/<environmentId>/`, because one push subscription works with the key of one server only.
+- Each server keeps its VAPID key in its secret store and the subscriptions in `<stateDir>/web-push.json`. It pushes when a thread starts to wait for approval or input, or when a running thread completes or fails. Settings > General > Push notifications has "Send a test".
+- A push has the same tag as the page notification of the thread, so one replaces the other. The worker skips a push when the window in front already shows that thread.
 - The app icon shows the same notification count as the browser tab icon.
 - The worker caches only the offline page. Pages and build files come from the server, so a new build shows at once and Cloudflare Access can ask for a new sign-in.
 

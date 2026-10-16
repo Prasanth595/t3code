@@ -221,6 +221,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.machineMapSubscribe]: AuthOrchestrationReadScope,
   // Fork: MM-1701. The same data that an agent with read access gets from `machines_read`.
   [WS_METHODS.machineMapRead]: AuthOrchestrationReadScope,
+  // Fork: a subscription receives the thread titles of this server, which reading allows already.
+  [WS_METHODS.webPushPublicKey]: AuthOrchestrationReadScope,
+  [WS_METHODS.webPushSubscribe]: AuthOrchestrationReadScope,
+  [WS_METHODS.webPushTest]: AuthOrchestrationReadScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {
