@@ -297,6 +297,24 @@ describe("resolveThreadPullRequestChains", () => {
     });
   });
 
+  it("points at the highest layer of a branched stack, not the last sibling listed", () => {
+    // #1 → #2 → #3, and #4 also builds on #1.
+    const branched = (state: ThreadPullRequestSnapshot["state"]) => [
+      link(1, { snapshot: snapshot({ state, headBranch: "a" }) }),
+      link(2, { snapshot: snapshot({ state, headBranch: "b", baseBranch: "a" }) }),
+      link(3, { snapshot: snapshot({ state, headBranch: "c", baseBranch: "b" }) }),
+      link(4, { snapshot: snapshot({ state, headBranch: "d", baseBranch: "a" }) }),
+    ];
+    const open = resolveThreadCurrentPullRequest(branched("open"));
+    expect(open?.kind === "stack" ? open.open.map((entry) => entry.number) : null).toEqual([
+      3, 4, 2, 1,
+    ]);
+    expect(resolveThreadCurrentPullRequest(branched("merged"))).toMatchObject({
+      kind: "single",
+      link: { number: 3 },
+    });
+  });
+
   it("uses the native stack order when the host provides one", () => {
     const stack = {
       kind: "native" as const,

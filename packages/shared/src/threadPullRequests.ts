@@ -107,6 +107,16 @@ export type ThreadCurrentPullRequest =
       readonly top: ThreadPullRequestLink;
     };
 
+/** A chain's layers from the highest down. Siblings keep the reverse of their listed order. */
+function layersFromTop(chain: ThreadPullRequestChain): Array<ThreadPullRequestLink> {
+  // `.sort()` on a fresh array, not `.toSorted()`: this runs on Hermes, which has no ES2023
+  // array methods, and a TypeError here is fatal on every mobile launch that renders a stack.
+  return chain.layers
+    .map((link, index) => ({ link, index, depth: chain.depths[index]! }))
+    .sort((left, right) => right.depth - left.depth || right.index - left.index)
+    .map((entry) => entry.link);
+}
+
 /**
  * Prefer open work and the highest open layer within a chain. A completed chain still
  * points at its top; unrelated terminal links use the most recently updated request.
@@ -120,10 +130,8 @@ export function resolveThreadCurrentPullRequest(
   if (open.length === 1) return { kind: "single", link: open[0]! };
   const chains = resolveThreadPullRequestChains(visible);
   if (open.length > 1) {
-    // `.reverse()` on a copy, not `.toReversed()`: this runs on Hermes, which has no ES2023
-    // array methods, and a TypeError here is fatal on every mobile launch that renders a stack.
     const openChains = chains
-      .map((chain) => [...chain.layers].reverse().filter(isOpen))
+      .map((chain) => layersFromTop(chain).filter(isOpen))
       .filter((layers) => layers.length > 0)
       .sort(
         (left, right) =>
@@ -134,7 +142,7 @@ export function resolveThreadCurrentPullRequest(
     return { kind: "stack", open: ordered, top: ordered[0]! };
   }
   if (chains.length === 1) {
-    return { kind: "single", link: chains[0]!.layers.at(-1)! };
+    return { kind: "single", link: layersFromTop(chains[0]!)[0]! };
   }
   const terminal = [...visible].sort(
     (left, right) => latestUpdatedAt(right) - latestUpdatedAt(left),
