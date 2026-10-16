@@ -370,6 +370,7 @@ export function layerWithRegistry<Error>(
         McpSessionRegistryTestkit.layer,
         layerProviderEventIngestorProvided,
         layerStores,
+        ThreadCommandExecutor.layer,
       ),
     ),
   );

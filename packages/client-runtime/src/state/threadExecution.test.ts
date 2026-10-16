@@ -7,6 +7,8 @@ import {
   ProviderSessionId,
   ProviderDriverKind,
   RunId,
+  RunAttemptId,
+  ProviderTurnId,
   ThreadId,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunStatus,
@@ -20,6 +22,7 @@ import {
   presentPendingBackgroundWork,
   presentProviderGoal,
   deriveReportedModelSelection,
+  deriveCodexRecoveryAction,
   deriveLatestThreadRun,
   deriveProviderSubagentStatus,
   formatModelSelectionEffort,
@@ -712,5 +715,127 @@ describe("presentProviderGoal", () => {
     expect(
       presentProviderGoal({ objective: "All tests pass", status: "active" }, false).title,
     ).toBe("Goal set");
+  });
+});
+
+describe("Codex recovery action", () => {
+  const driver = ProviderDriverKind.make("codex");
+  const providerThreadId = ProviderThreadId.make("recovery-native");
+  const failed = {
+    ...run("recovery", 1, "failed"),
+    activeAttemptId: RunAttemptId.make("recovery-attempt"),
+    rootNodeId: NodeId.make("recovery-root"),
+    providerThreadId,
+    completedAt: now,
+  };
+  const providerThread = {
+    id: providerThreadId,
+    appThreadId: v2Projection.thread.id,
+    driver,
+    providerInstanceId: failed.providerInstanceId,
+    providerSessionId: ProviderSessionId.make("recovery-session"),
+    ownerNodeId: null,
+    nativeThreadRef: { driver, nativeId: "saved-native", strength: "strong" as const },
+    nativeConversationHeadRef: null,
+    status: "idle" as const,
+    firstRunOrdinal: 1,
+    lastRunOrdinal: 1,
+    handoffIds: [],
+    forkedFrom: null,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const projection = {
+    ...v2Projection,
+    thread: { ...v2Projection.thread, activeProviderThreadId: providerThreadId },
+    runs: [failed],
+    providerThreads: [providerThread],
+  };
+
+  it.each([
+    { accepted: false, code: "event_stream_closed_unacknowledged", expected: false },
+    { accepted: false, code: "provider_rejected", expected: false },
+    { accepted: true, code: "event_stream_closed", expected: true },
+    { accepted: true, code: "provider_rejected", expected: null },
+    { accepted: true, code: "event_stream_closed_unacknowledged", expected: null },
+    { accepted: true, code: null, expected: true },
+    { accepted: false, code: null, expected: false },
+  ])(
+    "uses native acceptance for code $code (accepted: $accepted)",
+    ({ accepted, code, expected }) => {
+      const providerTurnId = ProviderTurnId.make("recovery-turn");
+      const action = deriveCodexRecoveryAction({
+        ...projection,
+        providerTurns: accepted
+          ? [
+              {
+                id: providerTurnId,
+                providerThreadId,
+                nodeId: failed.rootNodeId,
+                runAttemptId: failed.activeAttemptId,
+                nativeTurnRef: { driver, nativeId: "accepted-native-turn", strength: "strong" },
+                ordinal: 1,
+                status: "failed",
+                startedAt: now,
+                completedAt: now,
+              },
+            ]
+          : [],
+        turnItems: [
+          {
+            id: TurnItemId.make("recovery-error"),
+            threadId: v2Projection.thread.id,
+            runId: failed.id,
+            nodeId: failed.rootNodeId,
+            providerThreadId,
+            providerTurnId,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            type: "error",
+            status: "failed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            failure: {
+              class: "provider_error",
+              code,
+              message: "The provider event stream closed unexpectedly.",
+              retryable: true,
+            },
+          },
+        ],
+      });
+      expect(action).toEqual(
+        expected === null ? null : { runId: failed.id, continueWork: expected },
+      );
+    },
+  );
+
+  it("withholds recovery until a saved Codex thread is available and work is idle", () => {
+    expect(
+      deriveCodexRecoveryAction({ ...projection, runs: [{ ...failed, startedAt: null }] }),
+    ).toEqual({
+      runId: failed.id,
+      continueWork: false,
+    });
+    expect(deriveCodexRecoveryAction(null)).toBeNull();
+    expect(deriveCodexRecoveryAction({ ...projection, providerThreads: [] })).toBeNull();
+    expect(
+      deriveCodexRecoveryAction({ ...projection, runs: [failed, run("newer", 2, "running")] }),
+    ).toBeNull();
+    expect(
+      deriveCodexRecoveryAction({
+        ...projection,
+        providerThreads: [{ ...providerThread, nativeThreadRef: null }],
+      }),
+    ).toBeNull();
+    expect(
+      deriveCodexRecoveryAction({
+        ...projection,
+        thread: { ...projection.thread, archivedAt: now },
+      }),
+    ).toBeNull();
   });
 });

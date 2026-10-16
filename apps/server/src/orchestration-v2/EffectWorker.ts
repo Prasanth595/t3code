@@ -28,6 +28,7 @@ import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationServic
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { continueRestartedRun } from "./RestartContinuation.ts";
+import { continueProviderStream } from "./ProviderStreamContinuation.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -103,7 +104,16 @@ export const layerExecutor: Layer.Layer<
         switch (effect.request.type) {
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
-            return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(
+            const continuation =
+              effect.request.reason === "event_stream_closed"
+                ? continueProviderStream
+                : continueRestartedRun;
+            return continuation({ threadId: effect.threadId, sourceRunId }).pipe(
+              Effect.andThen(
+                effect.request.reason === "event_stream_closed"
+                  ? threads.recoverDelegatedTask(effect.threadId, sourceRunId)
+                  : Effect.void,
+              ),
               Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
               Effect.provideService(ServerSettings.ServerSettingsService, settings),
               Effect.tapError(() =>

@@ -2767,6 +2767,8 @@ export const OrchestrationV2Command = Schema.Union([
     restartContinuationOfRunId: Schema.optional(RunId),
     usageLimitContinuationOfRunId: Schema.optional(RunId),
     manualContinuationOfRunId: Schema.optional(RunId),
+    /** Retry only if this is still the latest executed failed run at admission. */
+    retryOfRunId: Schema.optional(RunId),
     usageLimitRecoveryRequestId: Schema.optional(CommandId),
     deliveryIntent: Schema.optional(Schema.Literals(["auto", "steer", "restart"])),
     delegatedCompletion: Schema.optional(
@@ -3053,6 +3055,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   getThreadProjection: "orchestration.getThreadProjection",
   getWorkflowScript: "orchestration.getWorkflowScript",
   stopWorkflow: "orchestration.stopWorkflow",
+  restartCodex: "orchestration.restartCodex",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
   subscribeArchivedShell: "orchestration.subscribeArchivedShell",
@@ -3337,6 +3340,34 @@ export class OrchestrationV2ThreadLaunchError extends Schema.TaggedError<Orchest
   },
 ) {}
 
+export const OrchestrationV2RestartCodexInput = Schema.Struct({
+  threadId: ThreadId,
+  retryRunId: Schema.optional(RunId),
+});
+export type OrchestrationV2RestartCodexInput = typeof OrchestrationV2RestartCodexInput.Type;
+
+export class OrchestrationV2RestartCodexError extends Schema.TaggedError<OrchestrationV2RestartCodexError>()(
+  "OrchestrationV2RestartCodexError",
+  {
+    threadId: ThreadId,
+    reason: Schema.Literals(["unsupported", "busy", "unavailable", "restart-failed"]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "unsupported":
+        return "This thread does not have a Codex session.";
+      case "busy":
+        return "Codex is still working in this or another thread. Stop that work before restarting.";
+      case "unavailable":
+        return "This thread is unavailable.";
+      case "restart-failed":
+        return "Could not recover the Codex session. Try again.";
+    }
+  }
+}
+
 export const OrchestrationV2StopWorkflowInput = Schema.Struct({
   threadId: ThreadId,
   subagentId: NodeId,
@@ -3372,6 +3403,7 @@ export const OrchestrationV2RpcError = Schema.Union([
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2ThreadLaunchError,
   OrchestrationV2StopWorkflowError,
+  OrchestrationV2RestartCodexError,
 ]);
 export type OrchestrationV2RpcError = typeof OrchestrationV2RpcError.Type;
 
@@ -3544,6 +3576,10 @@ export const OrchestrationV2RpcSchemas = {
   getThreadProjection: {
     input: OrchestrationV2GetThreadProjectionInput,
     output: OrchestrationV2ThreadProjection,
+  },
+  restartCodex: {
+    input: OrchestrationV2RestartCodexInput,
+    output: Schema.Void,
   },
   stopWorkflow: {
     input: OrchestrationV2StopWorkflowInput,

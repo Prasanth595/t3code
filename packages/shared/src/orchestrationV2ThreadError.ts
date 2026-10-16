@@ -1,9 +1,35 @@
 import type {
   OrchestrationV2ProviderFailure,
+  OrchestrationV2ProviderTurn,
   OrchestrationV2Run,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+
+/** App run.startedAt is recorded before the provider accepts the prompt. */
+export function hasAcceptedProviderTurn(
+  run: Pick<OrchestrationV2Run, "activeAttemptId">,
+  providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>,
+): boolean {
+  return (
+    run.activeAttemptId !== null &&
+    providerTurns.some(
+      (turn) =>
+        turn.runAttemptId === run.activeAttemptId && turn.nativeTurnRef?.strength === "strong",
+    )
+  );
+}
+
+/** Includes retained failures recorded before event-stream errors had a code. */
+export function isProviderEventStreamFailure(
+  failure: Pick<OrchestrationV2ProviderFailure, "code" | "message"> | null | undefined,
+): boolean {
+  return (
+    failure?.code === "event_stream_closed" ||
+    (failure?.code == null &&
+      failure?.message.startsWith("The provider event stream closed unexpectedly.") === true)
+  );
+}
 
 export function latestRootProviderFailure(
   run: OrchestrationV2Run | null,

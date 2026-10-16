@@ -32,6 +32,7 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("provider-runtime.continue"),
     sourceRunId: RunId,
+    reason: Schema.optional(Schema.Literal("event_stream_closed")),
   }),
   Schema.Struct({
     type: Schema.Literal("provider-session.detach"),

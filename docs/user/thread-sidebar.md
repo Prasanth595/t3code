@@ -215,6 +215,12 @@ the snooze. Enable **Snooze limited threads** in thread behavior settings to
 snooze limit stops by default. Providers without a reset time offer manual
 retry and the normal snooze choices.
 
+If Codex loses its connection after acknowledging a turn, T3 tries once to
+reconnect the saved conversation and send `Continue`. If that attempt fails,
+use **Continue** on the error. Without an acknowledgment, **Retry message**
+resends the original message and attachments when you choose it. Check the
+conversation first: a lost acknowledgment can hide work that already started.
+
 On web and desktop, use **Agents** to follow work delegated to subagents.
 Stop on a thread also stops the subagents it delegated to.
 

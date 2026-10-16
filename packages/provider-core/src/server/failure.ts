@@ -29,6 +29,8 @@ export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
+const STREAM_FAILURE_MESSAGE =
+  "The provider event stream closed unexpectedly. Continue the saved conversation; if it keeps failing, check the provider and server logs.";
 
 function causeMessage(cause: unknown): string | undefined {
   const seen = new Set<unknown>();
@@ -53,8 +55,7 @@ function causeMessage(cause: unknown): string | undefined {
             "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.";
           break;
         case "ProviderAdapterEventStreamError":
-          message =
-            "The provider event stream closed unexpectedly. Retry the turn; if it keeps failing, check the provider and server logs.";
+          message = STREAM_FAILURE_MESSAGE;
           break;
         case "ProviderAdapterOpenSessionError":
           message =
@@ -149,9 +150,13 @@ export function makeProviderFailure(input: {
   readonly retryable?: boolean | null;
   readonly resetAt?: string | null;
 }): OrchestrationV2ProviderFailure {
-  const rawMessage = input.message ?? causeMessage(input.cause) ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
+  const knownMessage = causeMessage(input.cause);
+  const rawMessage = input.message ?? knownMessage ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
-  const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
+  const rawCode =
+    input.code ??
+    stringField(input.cause, "code") ??
+    (knownMessage === STREAM_FAILURE_MESSAGE ? "event_stream_closed" : null);
   const code =
     rawCode === null ? null : boundedText(rawCode, MAX_PROVIDER_FAILURE_CODE_LENGTH) || null;
 

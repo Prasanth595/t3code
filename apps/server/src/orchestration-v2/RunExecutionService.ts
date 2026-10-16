@@ -700,7 +700,23 @@ export const layer: Layer.Layer<
                     },
                   },
                 ]
-              : [],
+              : input.terminal.status === "failed" &&
+                  input.terminal.driver === "codex" &&
+                  input.terminal.failure.code === "event_stream_closed" &&
+                  input.run.startedAt != null
+                ? [
+                    {
+                      id: `effect:restart-continuation:${input.run.id}`,
+                      commandId: CommandId.make(`command:provider-stream.continue:${input.run.id}`),
+                      threadId: input.run.threadId,
+                      request: {
+                        type: "provider-runtime.continue" as const,
+                        sourceRunId: input.run.id,
+                        reason: "event_stream_closed" as const,
+                      },
+                    },
+                  ]
+                : [],
           events: [
             ...cascadedSubagentEvents,
             ...(finalizedAttempt === null
@@ -824,6 +840,7 @@ export const layer: Layer.Layer<
               ),
             ),
           );
+          let providerAccepted = false;
           const makeFailedTerminalEvent = (
             failure: OrchestrationV2ProviderFailure,
             failureItemOrdinal: number,
@@ -840,7 +857,17 @@ export const layer: Layer.Layer<
             runOrdinal: input.run.ordinal,
             failureItemOrdinal,
             status: "failed",
-            failure,
+            failure:
+              input.providerThread.driver === "codex" &&
+              !providerAccepted &&
+              failure.code === "event_stream_closed"
+                ? {
+                    ...failure,
+                    code: "event_stream_closed_unacknowledged",
+                    message:
+                      "The provider connection closed before this turn was acknowledged. Retry the message if it did not start.",
+                  }
+                : failure,
             threadDisposition: "reusable",
           });
           const responseStreamingMode = yield* Effect.gen(function* () {
@@ -1201,6 +1228,13 @@ export const layer: Layer.Layer<
             ),
             Stream.tap((event) =>
               Effect.gen(function* () {
+                if (
+                  event.type === "provider_turn.updated" &&
+                  event.providerTurn.runAttemptId === input.attempt.id &&
+                  event.providerTurn.nativeTurnRef?.strength === "strong"
+                ) {
+                  providerAccepted = true;
+                }
                 let storedEventCount = 0;
                 const deliveredEvent = filterAssistantEvent(
                   event,

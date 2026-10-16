@@ -111,6 +111,8 @@ it("does not expose defect text nested inside a known error category", () => {
     },
   });
   assert.include(failure.message, "provider event stream closed unexpectedly");
+  assert.equal(failure.code, "event_stream_closed");
+  assert.include(failure.message, "Continue the saved conversation");
   assert.notInclude(failure.message, "Session rejected:");
   assert.notInclude(failure.message, "nested-secret");
   assert.notInclude(failure.message, "user:pass");

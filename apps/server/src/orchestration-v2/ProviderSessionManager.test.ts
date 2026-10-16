@@ -10,6 +10,7 @@ import {
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderSession,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2Run,
   type Project,
   ProjectId,
   ProviderDriverKind,
@@ -546,6 +547,7 @@ function layerTest(input: {
     layerTestStores,
     layerConfiguredEventSink,
     IdAllocator.layer,
+    ThreadCommandExecutor.layer,
     layerConfiguredMcpRegistry,
     McpProviderSessions.layer,
     ProviderSessionManager.layerWithOptions({
@@ -560,6 +562,7 @@ function layerTest(input: {
           ),
           layerConfiguredEventSink,
           IdAllocator.layer,
+          ThreadCommandExecutor.layer,
           layerProviderEventIngestorTest,
           layerConfiguredMcpRegistry,
           layerTestStores,
@@ -2966,6 +2969,54 @@ it.effect("ProviderSessionManagerV2 keeps a provider update that lands while rel
   }),
 );
 
+it.effect(
+  "ProviderSessionManagerV2 refuses manual reset during background work and reopens after reset",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const pendingWork = yield* Ref.make(true);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("manual-codex-reset");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const input = { threadId, providerSessionId, modelSelection, runtimePolicy };
+        const first = yield* manager.open(input);
+        const reset = manager.release({
+          providerSessionId,
+          reason: "manual_shutdown",
+          rejectIfBusy: true,
+        });
+        assert.equal((yield* reset.pipe(Effect.flip))._tag, "ProviderSessionBusyError");
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        assert.isTrue(yield* manager.isLive(providerSessionId));
+        yield* Ref.set(pendingWork, false);
+        yield* reset;
+        assert.isFalse(yield* manager.isLive(providerSessionId));
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        const replacement = yield* manager.open(input);
+        assert.notStrictEqual(replacement, first);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            hasPendingBackgroundWork: Ref.get(pendingWork),
+          }),
+        ),
+      );
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 defers idle release while background work is pending", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -3411,6 +3462,11 @@ it.effect(
           runtimePolicy,
         });
 
+        const resetFailure = yield* manager
+          .release({ providerSessionId, reason: "manual_shutdown", rejectIfBusy: true })
+          .pipe(Effect.flip);
+        assert.equal(resetFailure._tag, "ProviderSessionBusyError");
+
         yield* TestClock.adjust("2 seconds");
         yield* Effect.yieldNow;
         assert.equal((yield* Ref.get(state)).closeCount, 0);
@@ -3589,6 +3645,16 @@ it.effect("ProviderSessionManagerV2 marks pending runtime requests non-live on r
         modelSelection,
         runtimePolicy,
       });
+      const reset = yield* manager
+        .release({
+          providerSessionId,
+          reason: "manual_shutdown",
+          rejectIfBusy: true,
+        })
+        .pipe(Effect.result);
+      assert.equal(reset._tag, "Failure");
+      if (reset._tag === "Failure") assert.equal(reset.failure._tag, "ProviderSessionBusyError");
+      assert.isTrue(yield* manager.isLive(providerSessionId));
       yield* manager.release({
         providerSessionId,
         reason: "runtime_error",
@@ -4906,5 +4972,130 @@ it.effect(
         projectExists: false,
       });
       assert.isFalse(denied?.capabilities?.has("device"));
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 refuses reset during sibling admission and until its run settles",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const admitting = yield* Deferred.make<void>();
+      const commitAdmission = yield* Deferred.make<void>();
+      const backgroundCheck = yield* Ref.make(Effect.succeed(false));
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const commands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("manual-reset-owner");
+        const siblingId = ThreadId.make("manual-reset-sibling");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: siblingId, now }),
+          ],
+        });
+        const input = { providerSessionId, modelSelection, runtimePolicy };
+        yield* manager.open({ ...input, threadId });
+        yield* manager.open({ ...input, threadId: siblingId });
+        const run: OrchestrationV2Run = {
+          id: idAllocator.derive.run({ threadId: siblingId, ordinal: 1 }),
+          threadId: siblingId,
+          ordinal: 1,
+          providerInstanceId: modelSelection.instanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: yield* idAllocator.allocate.message({ threadId: siblingId, ordinal: 1 }),
+          rootNodeId: null,
+          activeAttemptId: null,
+          status: "starting",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        };
+        const persistRun = (payload: OrchestrationV2Run) =>
+          Effect.gen(function* () {
+            yield* eventSink.write({
+              events: [
+                {
+                  id: yield* idAllocator.allocate.event({ threadId: siblingId }),
+                  type: "run.updated",
+                  threadId: siblingId,
+                  runId: run.id,
+                  occurredAt: now,
+                  payload,
+                },
+              ],
+            });
+          });
+        const admission = yield* commands
+          .withLock(
+            siblingId,
+            Deferred.succeed(admitting, undefined).pipe(
+              Effect.andThen(Deferred.await(commitAdmission)),
+              Effect.andThen(persistRun(run)),
+            ),
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(admitting);
+        const reset = commands
+          .withLock(
+            threadId,
+            manager.release({
+              providerSessionId,
+              reason: "manual_shutdown",
+              rejectIfBusy: true,
+              alreadyLockedThreadId: threadId,
+            }),
+          )
+          .pipe(Effect.result);
+        const assertBusy = (result: Effect.Success<typeof reset>) => {
+          assert.equal(result._tag, "Failure");
+          if (result._tag === "Failure")
+            assert.equal(result.failure._tag, "ProviderSessionBusyError");
+        };
+        // The sibling owns its command lock but has not committed its run yet.
+        assertBusy(yield* reset);
+        yield* Deferred.succeed(commitAdmission, undefined);
+        yield* Fiber.join(admission);
+        // Admission committed; startTurn has not marked the runtime busy yet.
+        assertBusy(yield* reset);
+        assert.isTrue(yield* manager.isLive(providerSessionId));
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        yield* commands.withLock(
+          siblingId,
+          persistRun({ ...run, status: "completed", completedAt: now }),
+        );
+        // Exercise the original race: after reading idle projections, the
+        // guard must still exclude admission while probing background work.
+        yield* Ref.set(
+          backgroundCheck,
+          commands.withLockIfAvailable(siblingId, Effect.die("must not admit during reset")).pipe(
+            Effect.map((admitted) => {
+              assert.isTrue(Option.isNone(admitted));
+              return false;
+            }),
+          ),
+        );
+        assert.equal((yield* reset)._tag, "Success");
+        assert.isFalse(yield* manager.isLive(providerSessionId));
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            hasPendingBackgroundWork: Ref.get(backgroundCheck).pipe(Effect.flatten),
+          }),
+        ),
+      );
     }),
 );

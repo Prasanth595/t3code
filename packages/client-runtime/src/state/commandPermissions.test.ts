@@ -8,6 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   AuthOrchestrationOperateScope,
+  ORCHESTRATION_V2_WS_METHODS,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
   ThreadId,
@@ -59,6 +60,25 @@ const setup = Effect.gen(function* () {
 });
 
 describe("command permissions", () => {
+  it.effect("requires the destination orchestration grant to restart Codex", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const registry = yield* setup;
+        const restart = createCommandPermissions(runtime, ORCHESTRATION_V2_WS_METHODS.restartCodex);
+        registry.set(sessions(env), AsyncResult.success(grant(false)));
+        expect(registry.get(restart.permissionAtom(env))).toBe(false);
+        expect((yield* restart.authorize(registry, env).pipe(Effect.flip))._tag).toBe(
+          "EnvironmentAuthorizationError",
+        );
+        registry.set(sessions(env), AsyncResult.success(grant(true)));
+        expect(registry.get(restart.permissionAtom(env))).toBe(true);
+        yield* restart.authorize(registry, env);
+        registry.set(sessions(other), AsyncResult.success(grant(false)));
+        expect(registry.get(restart.permissionAtom(other))).toBe(false);
+      }),
+    ),
+  );
+
   it.effect("requires the destination settings grant to run storage cleanup", () =>
     Effect.scoped(
       Effect.gen(function* () {

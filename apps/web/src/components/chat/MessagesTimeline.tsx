@@ -1,3 +1,5 @@
+import type { CodexRecoveryAction } from "@t3tools/client-runtime/state/thread-execution";
+import { RestartCodexButton } from "./RestartCodexButton";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { MarkdownFindContext, useFindRevealRef } from "./markdownFindContext";
@@ -344,6 +346,7 @@ interface TimelineRowSharedState {
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   onToggleWorkEntry: (anchorKey: string, collapsed: boolean) => void;
   onCancelWorktreeSetup: (() => void) | null;
+  codexRecovery: CodexRecoveryAction | null;
   retryableWorkspacePreparationRunIds: ReadonlySet<RunId>;
   onRetryWorkspacePreparation: ((runId: RunId) => void) | null;
   onWorktreeSetupWorkLocally: (() => void) | null;
@@ -419,6 +422,7 @@ export interface MessagesTimelineHistoryControls {
 }
 
 interface MessagesTimelineProps {
+  codexRecovery?: CodexRecoveryAction | null;
   citationRequest?: AssistantCitationRequest | null;
   citationHistoryLoading?: boolean;
   onCiteAssistantText?: (
@@ -533,6 +537,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   worktreeSetup = null,
   footer = null,
   onCancelWorktreeSetup,
+  codexRecovery = null,
   retryableWorkspacePreparationRunIds = EMPTY_RUN_IDS,
   onRetryWorkspacePreparation,
   onWorktreeSetupWorkLocally,
@@ -1307,6 +1312,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onToggleWorkGroup,
       onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
       onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
+      codexRecovery,
       retryableWorkspacePreparationRunIds,
       onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,
       onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
@@ -1345,6 +1351,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onToggleWorkGroup,
       suspendEndScrollMaintenanceForDisclosure,
       onCancelWorktreeSetup,
+      codexRecovery,
       retryableWorkspacePreparationRunIds,
       onRetryWorkspacePreparation,
       onWorktreeSetupWorkLocally,
@@ -5354,6 +5361,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowP
 
 function WorkEntryLogRow(props: WorkEntryRowProps) {
   const { workEntry, workspaceRoot, displayLabel } = props;
+  const activity = use(TimelineRowActivityCtx);
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
   const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
@@ -5424,6 +5432,21 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           <p className="ms-7 whitespace-pre-wrap break-words py-1 text-sm leading-relaxed text-foreground/80">
             {failureItem.failure.message}
           </p>
+        ) : null}
+        {!warning &&
+        ctx.codexRecovery !== null &&
+        !activity.isWorking &&
+        failureItem.runId !== null &&
+        failureItem.runId === ctx.codexRecovery.runId &&
+        threadRef ? (
+          <div className="ms-7 pb-1">
+            <RestartCodexButton
+              environmentId={ctx.activeThreadEnvironmentId}
+              threadId={threadRef.threadId}
+              retryRunId={failureItem.runId}
+              continueWork={ctx.codexRecovery.continueWork}
+            />
+          </div>
         ) : null}
         {retryRunId !== null && onRetryWorkspacePreparation ? (
           <div className="ms-7 pb-1">

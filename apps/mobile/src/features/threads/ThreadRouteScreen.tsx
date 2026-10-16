@@ -1,3 +1,4 @@
+import { deriveCodexRecoveryAction } from "@t3tools/client-runtime/state/thread-execution";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
@@ -284,6 +285,10 @@ function ThreadRouteContent(
   );
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
+  const codexRecovery = useMemo(
+    () => deriveCodexRecoveryAction(selectedThreadDetail),
+    [selectedThreadDetail],
+  );
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const composer = useThreadComposerState();
   const gitState = useSelectedThreadGitState();
@@ -967,6 +972,7 @@ function ThreadRouteContent(
 
       <ThreadPane>
         <ThreadDetailScreen
+          codexRecovery={codexRecovery}
           canOperateThread={canOperateThread}
           selectedThread={selectedThreadWithDraftSettings ?? selectedThread}
           selectedThreadDetailRef={selectedThreadDetailRef}

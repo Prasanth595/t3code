@@ -3713,28 +3713,80 @@ it.effect("does not refresh pull requests for auxiliary or stale provider termin
   }),
 );
 
-it.effect("refreshes pull requests after a provider stream exits with an error", () =>
-  Effect.gen(function* () {
-    const { written, observed } = yield* captureRootRunTermination({
-      key: "pull-request-refresh:stream-error",
-      shouldFinalizeRun: () => Effect.succeed(true),
-      events: () =>
-        Stream.fail(
-          new ProviderAdapter.ProviderAdapterEventStreamError({
-            driver,
-            providerSessionId: ProviderSessionId.make("session:exited"),
-            cause: "provider process exited",
-          }),
-        ),
-    });
-    assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
-    assert.deepEqual(
-      written.map((item) => item.type),
-      ["error"],
-    );
-    const error = written.find((item) => item.type === "error");
-    assert.include(error?.failure.message ?? "", "provider event stream closed unexpectedly");
-  }),
+it.effect.each([false, true])(
+  "continues a failed stream only after the provider accepted the turn (accepted: %s)",
+  (accepted) =>
+    Effect.gen(function* () {
+      const { written, observed, committedEffects } = yield* captureRootRunTermination({
+        key: "pull-request-refresh:stream-error",
+        shouldFinalizeRun: () => Effect.succeed(true),
+        events: (ids) =>
+          Stream.fromIterable(
+            accepted
+              ? [
+                  {
+                    type: "provider_turn.updated" as const,
+                    driver,
+                    threadId: ids.threadId,
+                    providerTurn: {
+                      id: ids.rootProviderTurnId,
+                      providerThreadId: ids.providerThreadId,
+                      nodeId: ids.rootNodeId,
+                      runAttemptId: ids.attemptId,
+                      nativeTurnRef: {
+                        driver,
+                        nativeId: "accepted-native-turn",
+                        strength: "strong" as const,
+                      },
+                      ordinal: 1,
+                      status: "running" as const,
+                      startedAt: DateTime.makeUnsafe("2026-10-15T00:00:00Z"),
+                      completedAt: null,
+                    },
+                  },
+                ]
+              : [],
+          ).pipe(
+            Stream.concat(
+              Stream.fail(
+                new ProviderAdapter.ProviderAdapterEventStreamError({
+                  driver,
+                  providerSessionId: ProviderSessionId.make("session:exited"),
+                  cause: "provider process exited",
+                }),
+              ),
+            ),
+          ),
+      });
+      assert.deepEqual(observed, ["run:failed", "pull-requests-refreshed"]);
+      assert.deepEqual(
+        written.map((item) => item.type),
+        ["error"],
+      );
+      const error = written.find((item) => item.type === "error");
+      assert.include(
+        error?.failure.message ?? "",
+        accepted
+          ? "provider event stream closed unexpectedly"
+          : "before this turn was acknowledged",
+      );
+      assert.equal(
+        error?.failure.code,
+        accepted ? "event_stream_closed" : "event_stream_closed_unacknowledged",
+      );
+      assert.deepEqual(
+        committedEffects.map((effect) => effect.request),
+        accepted
+          ? [
+              {
+                type: "provider-runtime.continue",
+                sourceRunId: backgroundScenarioIds("pull-request-refresh:stream-error").runId,
+                reason: "event_stream_closed",
+              },
+            ]
+          : [],
+      );
+    }),
 );
 
 it.effect("fails the run when its event stream ends without a root terminal", () =>
@@ -3974,6 +4026,7 @@ function captureRootRunTermination(input: {
           threadId: ids.threadId,
           ordinal: 1,
           providerInstanceId,
+          startedAt: DateTime.makeUnsafe("2026-10-15T00:00:00Z"),
         } as OrchestrationV2Run,
         rootNode: {
           id: ids.rootNodeId,

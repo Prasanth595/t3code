@@ -3,6 +3,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -91,6 +92,33 @@ describe("KeyedLock", () => {
       );
 
       assert.deepStrictEqual(yield* lock.activeKeys, []);
+    }),
+  );
+
+  it.effect("refuses a held key without running or waiting and releases attempted locks", () =>
+    Effect.gen(function* () {
+      const lock = yield* KeyedLock.make<string>();
+      yield* lock.withLock(
+        "held",
+        Effect.gen(function* () {
+          const refused = yield* lock.withLockIfAvailable("held", Effect.die("must not run"));
+          assert.isTrue(Option.isNone(refused));
+          assert.deepStrictEqual(
+            yield* lock.withLockIfAvailable("other", Effect.succeed("ran")),
+            Option.some("ran"),
+          );
+          assert.deepStrictEqual(yield* lock.activeKeys, ["held"]);
+        }),
+      );
+      assert.strictEqual(
+        yield* lock.withLockIfAvailable("held", Effect.fail("boom")).pipe(Effect.flip),
+        "boom",
+      );
+      assert.deepStrictEqual(yield* lock.activeKeys, []);
+      assert.deepStrictEqual(
+        yield* lock.withLockIfAvailable("held", Effect.succeed("reused")),
+        Option.some("reused"),
+      );
     }),
   );
 

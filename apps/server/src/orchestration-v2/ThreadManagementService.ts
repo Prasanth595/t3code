@@ -12,6 +12,8 @@ import {
   CommandId,
   MessageId,
   OrchestrationV2StopWorkflowError,
+  OrchestrationV2RestartCodexError,
+  type OrchestrationV2RestartCodexInput,
   type OrchestrationV2StopWorkflowInput,
   type ModelSelection,
   type OrchestrationV2Actor,
@@ -36,6 +38,12 @@ import {
   type TurnItemId,
 } from "@t3tools/contracts";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
+import {
+  latestExecutedRun,
+  latestRootProviderFailure,
+  isProviderEventStreamFailure,
+  hasAcceptedProviderTurn,
+} from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -51,6 +59,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { projectedRowEncodedBytes } from "./threadHistoryPaging.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, exceededDispatchModeLimit } from "./DispatchModeLimit.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
@@ -417,6 +426,10 @@ export interface ThreadManagementServiceShape {
   readonly interruptThread: (
     input: ThreadManagementInterruptInput,
   ) => Effect.Effect<ThreadManagementInterruptResult, ThreadManagementFailure>;
+  /** Resumes saved native history and optionally recovers the latest failed run. */
+  readonly restartCodex: (
+    input: OrchestrationV2RestartCodexInput & { readonly automatic?: boolean },
+  ) => Effect.Effect<void, OrchestrationV2RestartCodexError>;
   readonly stopWorkflow: (
     input: OrchestrationV2StopWorkflowInput,
   ) => Effect.Effect<void, OrchestrationV2StopWorkflowError>;
@@ -510,6 +523,7 @@ const make = Effect.gen(function* () {
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const orchestrator = yield* Orchestrator.OrchestratorV2;
   const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+  const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
   const layerScope = yield* Effect.scope;
   const legacyImporter = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -1006,6 +1020,210 @@ const make = Effect.gen(function* () {
       return { type: "interrupt_requested", run: interruptibleRun, dispatch } as const;
     });
 
+  const restartCodex: ThreadManagementServiceShape["restartCodex"] = (input) =>
+    Effect.gen(function* () {
+      if (input.retryRunId !== undefined) {
+        const receipt = yield* receipts.getByCommandId(
+          CommandId.make(`command:codex-retry:${input.retryRunId}`),
+        );
+        if (Option.isSome(receipt)) {
+          if (receipt.value.threadId !== input.threadId || receipt.value.status !== "accepted") {
+            return yield* new OrchestrationV2RestartCodexError({ ...input, reason: "unavailable" });
+          }
+          return;
+        }
+      }
+      const records = yield* orchestrator
+        .getThreadRecords(
+          input.threadId,
+          [
+            "providerThreads",
+            "providerSessions",
+            "runs",
+            "turnItems",
+            "providerTurns",
+            "runtimeRequests",
+          ],
+          { turnItemTypes: ["error"] },
+        )
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new OrchestrationV2RestartCodexError({ ...input, reason: "unavailable", cause }),
+          ),
+        );
+      if (records.thread.deletedAt !== null || records.thread.archivedAt !== null) {
+        return yield* new OrchestrationV2RestartCodexError({ ...input, reason: "unavailable" });
+      }
+      const providerThread = records.providerThreads.find(
+        (candidate) => candidate.id === records.thread.activeProviderThreadId,
+      );
+      if (
+        providerThread?.driver !== "codex" ||
+        providerThread.providerSessionId === null ||
+        providerThread.nativeThreadRef?.nativeId == null ||
+        providerThread.providerInstanceId !== records.thread.modelSelection.instanceId
+      ) {
+        return yield* new OrchestrationV2RestartCodexError({ ...input, reason: "unsupported" });
+      }
+      if (
+        records.runs.some((run) =>
+          ["preparing", "starting", "running", "waiting"].includes(run.status),
+        )
+      ) {
+        return yield* new OrchestrationV2RestartCodexError({ ...input, reason: "busy" });
+      }
+      const retrySource =
+        input.retryRunId === undefined ? undefined : (latestExecutedRun(records.runs) ?? undefined);
+      if (
+        input.retryRunId !== undefined &&
+        (retrySource?.id !== input.retryRunId || retrySource.status !== "failed")
+      ) {
+        return yield* new OrchestrationV2RestartCodexError({ ...input, reason: "unavailable" });
+      }
+      const retryMessage =
+        retrySource === undefined
+          ? undefined
+          : (yield* orchestrator
+              .getThreadRecords(input.threadId, ["messages"], {
+                messageIds: [retrySource.userMessageId],
+              })
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2RestartCodexError({
+                      ...input,
+                      reason: "unavailable",
+                      cause,
+                    }),
+                ),
+              )).messages.find((message) => message.id === retrySource.userMessageId);
+      if (retrySource !== undefined && retryMessage?.role !== "user") {
+        return yield* new OrchestrationV2RestartCodexError({ ...input, reason: "unavailable" });
+      }
+      const accepted =
+        retrySource !== undefined && hasAcceptedProviderTurn(retrySource, records.providerTurns);
+      const continueWork =
+        accepted &&
+        isProviderEventStreamFailure(
+          latestRootProviderFailure(retrySource ?? null, records.turnItems),
+        );
+      // Never resend a prompt that the provider already accepted.
+      if (
+        ((accepted || input.automatic) && !continueWork) ||
+        records.runtimeRequests.some((request) => request.status === "pending")
+      ) {
+        return yield* new OrchestrationV2RestartCodexError({ ...input, reason: "unavailable" });
+      }
+      const modelSelection = records.thread.modelSelection;
+      // A live shared runtime can retry this thread without stopping its siblings.
+      const shouldReconnect =
+        input.retryRunId === undefined ||
+        !(yield* sessions.isLive(providerThread.providerSessionId));
+      if (shouldReconnect) {
+        const resolvedRuntimePolicy = yield* runtimePolicy.resolve({
+          thread: records.thread,
+          modelSelection,
+        });
+        const providerSessionId = providerThread.providerSessionId;
+        const nativeThreadId = providerThread.nativeThreadRef.nativeId;
+        const savedSession = records.providerSessions.find(
+          (session) => session.id === providerSessionId,
+        );
+        yield* sessions
+          .release({
+            providerSessionId: providerThread.providerSessionId,
+            reason: "manual_shutdown",
+            rejectIfBusy: true,
+            alreadyLockedThreadId: input.threadId,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new OrchestrationV2RestartCodexError({
+                  ...input,
+                  reason: cause._tag === "ProviderSessionBusyError" ? "busy" : "restart-failed",
+                  cause,
+                }),
+            ),
+          );
+        yield* Effect.gen(function* () {
+          const runtime = yield* sessions.open({
+            threadId: input.threadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy: resolvedRuntimePolicy,
+            ...(savedSession === undefined ? {} : { resumeFromSession: savedSession }),
+            initialNativeThreadId: nativeThreadId,
+            ...(providerThread.nativeMetadata?.itemIdentityVersion === undefined
+              ? {}
+              : {
+                  initialProviderItemIdentityVersion:
+                    providerThread.nativeMetadata.itemIdentityVersion,
+                }),
+          });
+          yield* runtime.resumeThread({
+            providerThread,
+            threadId: input.threadId,
+            modelSelection,
+            runtimePolicy: resolvedRuntimePolicy,
+          });
+        }).pipe(
+          Effect.timeout("30 seconds"),
+          Effect.onError(() =>
+            sessions
+              .release({
+                providerSessionId,
+                reason: "manual_shutdown",
+                rejectIfBusy: true,
+                alreadyLockedThreadId: input.threadId,
+              })
+              .pipe(Effect.ignoreCause({ log: true })),
+          ),
+        );
+      }
+      if (retrySource !== undefined && retryMessage !== undefined) {
+        return {
+          type: "message.dispatch",
+          commandId: CommandId.make(`command:codex-retry:${retrySource.id}`),
+          messageId: MessageId.make(`message:codex-retry:${retrySource.id}`),
+          threadId: input.threadId,
+          retryOfRunId: retrySource.id,
+          ...(continueWork ? { restartContinuationOfRunId: retrySource.id } : {}),
+          ...(continueWork && input.automatic
+            ? {
+                notification: {
+                  source: { kind: "system" as const },
+                  outcome: "updated" as const,
+                  summary: "Codex reconnected and continued this turn",
+                  detail: "Continue",
+                },
+              }
+            : {}),
+          text: continueWork ? "Continue" : retryMessage.text,
+          attachments: continueWork ? [] : retryMessage.attachments,
+          ...(continueWork || retryMessage.context === undefined
+            ? {}
+            : { context: retryMessage.context }),
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: input.automatic ? "agent" : "user",
+          creationSource: input.automatic ? "server" : retryMessage.creationSource,
+        } satisfies Extract<OrchestrationV2ServerCommand, { type: "message.dispatch" }>;
+      }
+    }).pipe(
+      (effect) => threadDispatch.withLock(input.threadId, effect),
+      // Standard admission acquires the thread (and any parent) locks itself.
+      // It revalidates retryOfRunId before committing a new message.
+      Effect.flatMap((command) => (command === undefined ? Effect.void : dispatch(command))),
+      Effect.asVoid,
+      Effect.mapError((cause) =>
+        cause._tag === "OrchestrationV2RestartCodexError"
+          ? cause
+          : new OrchestrationV2RestartCodexError({ ...input, reason: "restart-failed", cause }),
+      ),
+    );
+
   const stopWorkflow: ThreadManagementServiceShape["stopWorkflow"] = (input) =>
     Effect.gen(function* () {
       const records = yield* orchestrator
@@ -1175,6 +1393,7 @@ const make = Effect.gen(function* () {
     interruptThread,
     stopDelegatedTasks,
     stopWorkflow,
+    restartCodex,
     getThreadEventSequence: orchestrator.getThreadEventSequence,
     recoverDelegatedTask: orchestrator.recoverDelegatedTask,
     delegatedTaskResultPending: orchestrator.delegatedTaskResultPending,
@@ -1204,6 +1423,7 @@ export const layer: Layer.Layer<
 > = Layer.effect(ThreadManagementService, make).pipe(
   Layer.provide(layerLegacyV1ThreadImporterNoop),
   Layer.provide(ThreadCommandExecutor.layer),
+  Layer.provide(RuntimePolicy.layer),
 );
 
 export const layerWithLegacyImporter: Layer.Layer<
@@ -1214,4 +1434,5 @@ export const layerWithLegacyImporter: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
+  | RuntimePolicy.RuntimePolicyV2
 > = Layer.effect(ThreadManagementService, make).pipe(Layer.provide(ThreadCommandExecutor.layer));

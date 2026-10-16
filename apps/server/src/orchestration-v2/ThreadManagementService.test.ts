@@ -38,6 +38,7 @@ import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import { DispatchModeLimit, type DispatchModeRefusal } from "./DispatchModeLimit.ts";
 
@@ -547,6 +548,7 @@ it.effect("preserves failed legacy materialization when reading checkpoint conte
     cause: new Error("checkpoint import failed"),
   });
   const layerTest = ThreadManagementService.layerWithLegacyImporter.pipe(
+    Layer.provide(RuntimePolicy.layer),
     Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
     Layer.provide(
       Layer.mergeAll(
@@ -1076,4 +1078,195 @@ it.effect.each([
 
     expect(dispatched).toEqual(settles ? ["thread.settle"] : []);
   }),
+);
+
+it.effect.each([
+  "resuming",
+  "running",
+  "unsupported",
+  "stale-retry",
+  "request-pending",
+  "shared-busy",
+  "open-failed",
+  "resume-failed",
+] as const)(
+  "reconnects Codex in state %s without losing native history or replaying a turn",
+  (state) =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("manual-reset-thread");
+      const providerThreadId = ProviderThreadId.make("manual-reset-provider-thread");
+      const providerSessionId = ProviderSessionId.make("manual-reset-session");
+      const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+      const runtimePolicy = {
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        cwd: "/saved/worktree",
+      };
+      const providerThread = {
+        id: providerThreadId,
+        providerInstanceId: modelSelection.instanceId,
+        driver: state === "unsupported" ? "claudeAgent" : "codex",
+        providerSessionId,
+        nativeThreadRef: { driver: "codex", nativeId: "saved-native-thread", strength: "strong" },
+        nativeMetadata: { itemIdentityVersion: 2 },
+      };
+      const runId = RunId.make("failed-run");
+      const messageId = MessageId.make("failed-message");
+      const sourceMessage = {
+        id: messageId,
+        role: "user",
+        creationSource: "web",
+        text: "original request",
+        attachments: [],
+        context: { version: 1, records: [] },
+      };
+      const savedSession = { id: providerSessionId, status: "error" };
+      const calls: Array<string> = [];
+      const started = yield* Deferred.make<void>();
+      const allowResume = yield* Deferred.make<void>();
+      const layerTest = ThreadManagementService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(Orchestrator.OrchestratorV2)({
+              dispatch: () =>
+                Effect.die("Reconnection must not dispatch before native resume succeeds"),
+              getThreadRecords: () =>
+                Effect.succeed({
+                  thread: {
+                    id: threadId,
+                    projectId: ProjectId.make("retry-project"),
+                    deletedAt: null,
+                    archivedAt: null,
+                    activeProviderThreadId: providerThreadId,
+                    modelSelection,
+                    runtimeMode: runtimePolicy.runtimeMode,
+                    interactionMode: runtimePolicy.interactionMode,
+                    worktreePath: runtimePolicy.cwd,
+                  },
+                  providerThreads: [providerThread],
+                  providerSessions: [savedSession],
+                  providerTurns: [],
+                  runtimeRequests: state === "request-pending" ? [{ status: "pending" }] : [],
+                  turnItems: [],
+                  messages: [sourceMessage],
+                  runs: [
+                    {
+                      id: runId,
+                      userMessageId: messageId,
+                      ordinal: 1,
+                      status: state === "running" ? "running" : "failed",
+                    },
+                  ],
+                } as unknown as OrchestrationV2ThreadProjection),
+            }),
+            Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+              isLive: () => Effect.succeed(false),
+              release: (input) =>
+                state === "shared-busy"
+                  ? Effect.fail(
+                      new ProviderSessionManager.ProviderSessionBusyError({ providerSessionId }),
+                    )
+                  : Effect.sync(() => {
+                      expect(input).toEqual({
+                        providerSessionId,
+                        reason: "manual_shutdown",
+                        rejectIfBusy: true,
+                        alreadyLockedThreadId: threadId,
+                      });
+                      calls.push("release");
+                    }),
+              open: (input) =>
+                Effect.gen(function* () {
+                  calls.push("open");
+                  expect(input).toEqual({
+                    threadId,
+                    providerSessionId,
+                    modelSelection,
+                    runtimePolicy,
+                    resumeFromSession: savedSession,
+                    initialNativeThreadId: "saved-native-thread",
+                    initialProviderItemIdentityVersion: 2,
+                  });
+                  if (state === "open-failed")
+                    return yield* new ProviderSessionManager.ProviderSessionOpenError({
+                      instanceId: modelSelection.instanceId,
+                      providerSessionId,
+                    });
+                  return {
+                    resumeThread: (input: unknown) =>
+                      Effect.gen(function* () {
+                        calls.push("resume");
+                        expect(input).toEqual({
+                          providerThread,
+                          threadId,
+                          modelSelection,
+                          runtimePolicy,
+                        });
+                        yield* Deferred.succeed(started, undefined);
+                        if (state === "resume-failed")
+                          return yield* new ProviderAdapter.ProviderAdapterResumeThreadError({
+                            driver: ProviderDriverKind.make("codex"),
+                            providerSessionId,
+                            providerThreadId,
+                          });
+                        if (state === "resuming") yield* Deferred.await(allowResume);
+                        return providerThread;
+                      }),
+                  } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+                }),
+            }),
+          ),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provide(layerReceiptsTest),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadManagementService.ThreadManagementService;
+        const done = yield* Ref.make(false);
+        const pending = yield* service
+          .restartCodex({
+            threadId,
+            ...(state === "open-failed" || state === "resume-failed"
+              ? { retryRunId: runId }
+              : state === "stale-retry"
+                ? { retryRunId: RunId.make("older-run") }
+                : {}),
+          })
+          .pipe(
+            Effect.result,
+            Effect.tap(() => Ref.set(done, true)),
+            Effect.forkChild,
+          );
+        if (state === "resuming") {
+          yield* Deferred.await(started);
+          expect(yield* Ref.get(done)).toBe(false);
+          yield* Deferred.succeed(allowResume, undefined);
+        }
+        const result = yield* Fiber.join(pending);
+        if (state === "resuming") {
+          expect(result._tag).toBe("Success");
+          expect(calls).toEqual(["release", "open", "resume"]);
+        } else if (state === "open-failed" || state === "resume-failed") {
+          expect(result).toMatchObject({ _tag: "Failure", failure: { reason: "restart-failed" } });
+          expect(calls).toEqual(
+            state === "open-failed"
+              ? ["release", "open", "release"]
+              : ["release", "open", "resume", "release"],
+          );
+        } else {
+          expect(result).toMatchObject({
+            _tag: "Failure",
+            failure: {
+              reason:
+                state === "unsupported"
+                  ? "unsupported"
+                  : state === "stale-retry" || state === "request-pending"
+                    ? "unavailable"
+                    : "busy",
+            },
+          });
+          expect(calls).toEqual([]);
+        }
+      }).pipe(Effect.provide(layerTest));
+    }),
 );

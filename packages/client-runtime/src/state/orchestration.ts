@@ -91,6 +91,10 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       staleTimeMs: 300_000,
       idleTtlMs: 300_000,
     }),
+    restartCodex: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:orchestration:restart-codex",
+      tag: ORCHESTRATION_V2_WS_METHODS.restartCodex,
+    }),
     stopWorkflow: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:orchestration:stop-workflow",
       tag: ORCHESTRATION_V2_WS_METHODS.stopWorkflow,

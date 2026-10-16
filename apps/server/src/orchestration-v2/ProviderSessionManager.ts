@@ -52,6 +52,7 @@ import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
@@ -107,6 +108,11 @@ export class ProviderSessionCloseError extends Schema.TaggedError<ProviderSessio
   }
 }
 
+export class ProviderSessionBusyError extends Schema.TaggedError<ProviderSessionBusyError>()(
+  "ProviderSessionBusyError",
+  { providerSessionId: ProviderSessionId },
+) {}
+
 export class ProviderSessionReleaseError extends Schema.TaggedError<ProviderSessionReleaseError>()(
   "ProviderSessionReleaseError",
   {
@@ -138,6 +144,7 @@ export const ProviderSessionManagerV2Error = Schema.Union([
   ProviderSessionLookupError,
   ProviderSessionCloseError,
   ProviderSessionReleaseError,
+  ProviderSessionBusyError,
   ProviderSessionActivityError,
 ]);
 export type ProviderSessionManagerV2Error = typeof ProviderSessionManagerV2Error.Type;
@@ -172,6 +179,9 @@ export interface ProviderSessionManagerV2Shape {
   readonly release: (input: {
     readonly providerSessionId: ProviderSessionId;
     readonly reason: ProviderSessionReleaseReason;
+    readonly rejectIfBusy?: boolean;
+    /** A thread command lock the caller already holds; other attached threads are guarded here. */
+    readonly alreadyLockedThreadId?: ThreadId;
     readonly detail?: string;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   readonly detach: (input: {
@@ -307,6 +317,7 @@ export const layerWithOptions = (
   | ProjectionStore.ProjectionStoreV2
   | ProviderEventIngestor.ProviderEventIngestorV2
   | ProviderAdapterRegistry.ProviderAdapterRegistryV2
+  | ThreadCommandExecutor.ThreadCommandExecutor
 > =>
   Layer.effect(
     ProviderSessionManagerV2,
@@ -328,6 +339,7 @@ export const layerWithOptions = (
       const idAllocator = yield* IdAllocator.IdAllocatorV2;
       const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
       const agentScope = yield* AgentScope;
       const agentAccessSettings = Effect.fn("ProviderSessionManagerV2.agentAccessSettings")(
         function* (threadId: ThreadId) {
@@ -910,33 +922,96 @@ export const layerWithOptions = (
       const removeLiveEntry = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly onlyIfIdleGeneration?: number;
-      }): Effect.Effect<readonly [Option.Option<LiveSessionEntry>, DateTime.Utc]> =>
+        readonly rejectIfBusy?: boolean;
+        readonly alreadyLockedThreadId?: ThreadId;
+      }): Effect.Effect<
+        readonly [Option.Option<LiveSessionEntry>, DateTime.Utc],
+        ProviderSessionBusyError
+      > =>
         Effect.gen(function* () {
           const key = sessionKey(input.providerSessionId);
           const candidate = (yield* Ref.get(sessions)).get(key);
           if (candidate === undefined) {
             return [Option.none<LiveSessionEntry>(), yield* DateTime.now] as const;
           }
-          const removed = yield* Effect.zip(
-            Ref.modify(sessions, (current) => {
-              const existing = current.get(key);
-              if (existing !== candidate) {
-                return [existing === undefined ? "gone" : "changed", current] as const;
+          let remove = Effect.gen(function* () {
+            if (input.rejectIfBusy) {
+              // Setup and native compaction can run before startTurn marks the
+              // session busy. Check every attached thread before removing it.
+              const busy = yield* Effect.gen(function* () {
+                for (const threadId of candidate.attachedThreadIds) {
+                  const { runs, runtimeRequests } = yield* projectionStore.getThreadRecords(
+                    threadId,
+                    ["runs", "runtimeRequests"],
+                  );
+                  if (
+                    runtimeRequests.some((request) => request.status === "pending") ||
+                    runs.some((run) =>
+                      ["preparing", "starting", "running", "waiting"].includes(run.status),
+                    )
+                  ) {
+                    return true;
+                  }
+                }
+                return candidate.runtime.hasPendingBackgroundWork === undefined
+                  ? false
+                  : yield* candidate.runtime.hasPendingBackgroundWork;
+              }).pipe(
+                Effect.timeout("5 seconds"),
+                Effect.orElseSucceed(() => true),
+              );
+              if (busy) {
+                return yield* new ProviderSessionBusyError({
+                  providerSessionId: input.providerSessionId,
+                });
               }
-              if (
-                input.onlyIfIdleGeneration !== undefined &&
-                (existing.busyTurns.size > 0 ||
-                  existing.idleGeneration !== input.onlyIfIdleGeneration)
-              ) {
-                return ["kept", current] as const;
-              }
-              const updated = new Map(current);
-              updated.delete(key);
-              return ["removed", updated] as const;
-            }),
-            DateTime.now,
-          ).pipe(candidate.requestEventPermit.withPermits(1));
+            }
+            return yield* Effect.zip(
+              Ref.modify(sessions, (current) => {
+                const existing = current.get(key);
+                if (existing !== candidate) {
+                  return [existing === undefined ? "gone" : "changed", current] as const;
+                }
+                if (input.rejectIfBusy && existing.busyTurns.size > 0) {
+                  return ["busy", current] as const;
+                }
+                if (
+                  input.onlyIfIdleGeneration !== undefined &&
+                  (existing.busyTurns.size > 0 ||
+                    existing.idleGeneration !== input.onlyIfIdleGeneration)
+                ) {
+                  return ["kept", current] as const;
+                }
+                const updated = new Map(current);
+                updated.delete(key);
+                return ["removed", updated] as const;
+              }),
+              DateTime.now,
+            );
+          }).pipe(candidate.requestEventPermit.withPermits(1));
+          if (input.rejectIfBusy) {
+            // Admission persists a run before startTurn marks the runtime busy.
+            // Hold its locks through the check and removal. Never wait for a
+            // sibling: the caller may already hold another thread's lock.
+            for (const threadId of candidate.attachedThreadIds) {
+              if (threadId === input.alreadyLockedThreadId) continue;
+              remove = threadCommands.withLockIfAvailable(threadId, remove).pipe(
+                Effect.flatMap(
+                  Option.match({
+                    onSome: Effect.succeed,
+                    onNone: () =>
+                      new ProviderSessionBusyError({ providerSessionId: input.providerSessionId }),
+                  }),
+                ),
+              );
+            }
+          }
+          const removed = yield* remove;
           const [outcome, releasedAt] = removed;
+          if (outcome === "busy")
+            return yield* new ProviderSessionBusyError({
+              providerSessionId: input.providerSessionId,
+            });
           if (outcome === "changed") return yield* removeLiveEntry(input);
           return [
             outcome === "removed" ? Option.some(candidate) : Option.none<LiveSessionEntry>(),
@@ -984,6 +1059,8 @@ export const layerWithOptions = (
       const releaseEntry = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly reason: ProviderSessionReleaseReason;
+        readonly rejectIfBusy?: boolean;
+        readonly alreadyLockedThreadId?: ThreadId;
         readonly detail?: string;
         readonly detachedThreadId?: ThreadId;
         readonly cancelIdleFiber?: boolean;
@@ -1087,11 +1164,17 @@ export const layerWithOptions = (
         ).pipe(
           Effect.catchCause((cause) =>
             Effect.fail(
-              new ProviderSessionReleaseError({
-                providerSessionId: input.providerSessionId,
-                reason: input.reason,
-                cause,
-              }),
+              Cause.findErrorOption(cause).pipe(
+                Option.filter(Schema.is(ProviderSessionBusyError)),
+                Option.getOrElse(
+                  () =>
+                    new ProviderSessionReleaseError({
+                      providerSessionId: input.providerSessionId,
+                      reason: input.reason,
+                      cause,
+                    }),
+                ),
+              ),
             ),
           ),
         );

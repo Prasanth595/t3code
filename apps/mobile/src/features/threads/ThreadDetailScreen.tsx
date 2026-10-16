@@ -1,6 +1,8 @@
+import type { CodexRecoveryAction } from "@t3tools/client-runtime/state/thread-execution";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
+import { RestartCodexCard } from "./RestartCodexCard";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
 import { useNavigation } from "@react-navigation/native";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
@@ -154,6 +156,7 @@ import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 import { useGlobalVoiceInput } from "../voice-input/VoiceInputProvider";
 
 export interface ThreadDetailScreenProps {
+  readonly codexRecovery: CodexRecoveryAction | null;
   readonly worktreeSetup?: WorktreeSetupCardProps | null;
   readonly setupWorkingStartedAt?: string | null;
   readonly canOperateThread: boolean;
@@ -1200,6 +1203,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                         }}
                       />
                     </Animated.View>
+                  ) : null}
+                  {props.codexRecovery !== null ? (
+                    <RestartCodexCard
+                      key={`${props.environmentId}:${props.selectedThread.id}`}
+                      environmentId={props.environmentId}
+                      threadId={props.selectedThread.id}
+                      retryRunId={props.codexRecovery.runId}
+                      continueWork={props.codexRecovery.continueWork}
+                    />
                   ) : null}
                   <UsageLimitRecoveryCard
                     key={props.selectedThread.latestRun?.runId}

@@ -108,6 +108,7 @@ import {
   deriveThreadRuntime,
   presentPendingBackgroundWork,
   presentProviderGoal,
+  deriveCodexRecoveryAction,
 } from "@t3tools/client-runtime/state/thread-execution";
 import { threadSupportsProviderHandoff } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
@@ -1783,6 +1784,10 @@ export default function ChatView(props: ChatViewProps) {
   });
   const serverThreadProjection = useThreadProjection(routeThreadDetailRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
+  const codexRecovery = useMemo(
+    () => deriveCodexRecoveryAction(serverProjection),
+    [serverProjection],
+  );
   const reportedModelSelection = serverProjection
     ? deriveReportedModelSelection(serverProjection)
     : null;
@@ -10935,6 +10940,11 @@ export default function ChatView(props: ChatViewProps) {
             </div>
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               <MessagesTimeline
+                codexRecovery={
+                  !paintOnlyDisplayedTimeline && isServerThread && selectedProvider === "codex"
+                    ? codexRecovery
+                    : null
+                }
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                 citationHistoryLoading={threadDetailLoading}
                 {...(!paintOnlyDisplayedTimeline

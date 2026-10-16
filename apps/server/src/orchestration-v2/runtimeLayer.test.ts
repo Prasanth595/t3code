@@ -1,3 +1,5 @@
+import { continueProviderStream } from "./ProviderStreamContinuation.ts";
+import { makeProviderFailureTurnItem } from "@t3tools/provider-core/server/failure";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -11,6 +13,7 @@ import {
   CheckpointRef,
   CommandId,
   ContextTransferId,
+  ComposerContextId,
   EventId,
   MessageId,
   NodeId,
@@ -18,12 +21,14 @@ import {
   TurnItemId,
   type ModelSelection,
   type OrchestrationV2Run,
+  type OrchestrationV2ProviderThread,
   ProjectId,
   type PullRequestDetail,
   type PullRequestComment,
   PullRequestOperationError,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
   RunId,
@@ -5053,7 +5058,262 @@ it.layer(layerSharedApplicationDataPlaneTest)("shared application data plane", (
 });
 
 it.layer(layerTest)("usage-limit recovery", (it) => {
-  it.effect.each(["interrupted", "usage_limit"] as const)(
+  it.effect.each([false, true])(
+    "retries through real admission without reentering the thread lock (live process: %s)",
+    (live) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventSink.EventSinkV2;
+        const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        const threadId = ThreadId.make(`reconnect-admission:${live}`);
+        const projectId = ProjectId.make(`reconnect-admission-project:${live}`);
+        const now = yield* DateTime.now;
+        yield* seedProject({
+          projectId,
+          title: "Retry",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: DateTime.formatIso(now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`retry:create:${live}`),
+          threadId,
+          projectId,
+          title: "Retry",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const attachment = {
+          type: "file" as const,
+          id: "retry-file",
+          name: "notes.txt",
+          mimeType: "text/plain",
+          sizeBytes: 12,
+        };
+        const message = {
+          text: "Preserve [notes](t3-context://v1/file/retry-file)",
+          attachments: [attachment],
+          context: {
+            version: 1 as const,
+            records: [
+              {
+                version: 1 as const,
+                kind: "file" as const,
+                contextId: ComposerContextId.make("retry-file"),
+                label: attachment.name,
+                attachmentId: attachment.id,
+                name: attachment.name,
+                mimeType: attachment.mimeType,
+                sizeBytes: attachment.sizeBytes,
+              },
+            ],
+          },
+        };
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`retry:first:${live}`),
+          threadId,
+          messageId: MessageId.make(`retry:first:${live}`),
+          ...message,
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const source = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`retry:failed:${live}`),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...source,
+                status: "failed",
+                startedAt: now,
+                completedAt: now,
+              },
+            },
+          ],
+        });
+        const native: OrchestrationV2ProviderThread = {
+          id: ProviderThreadId.make(`retry:native:${live}`),
+          appThreadId: threadId,
+          driver,
+          providerInstanceId: modelSelection.instanceId,
+          providerSessionId: ProviderSessionId.make(`retry:session:${live}`),
+          nativeThreadRef: { driver, nativeId: "saved-native", strength: "strong" as const },
+          ownerNodeId: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: 1,
+          lastRunOrdinal: 1,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        const acceptTurn = (run: OrchestrationV2Run, ordinal: number) =>
+          events.write({
+            events: [
+              {
+                id: EventId.make(`retry:accepted:${ordinal}:${live}`),
+                type: "provider-turn.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  id: ProviderTurnId.make(`retry:accepted:${ordinal}:${live}`),
+                  providerThreadId: native.id,
+                  nodeId: run.rootNodeId!,
+                  runAttemptId: run.activeAttemptId,
+                  nativeTurnRef: { driver, nativeId: `native-turn:${ordinal}`, strength: "strong" },
+                  ordinal,
+                  status: "failed",
+                  startedAt: now,
+                  completedAt: now,
+                },
+              },
+            ],
+          });
+        const readRecords = orchestrator.getThreadRecords;
+        const readSpy = vi
+          .spyOn(orchestrator, "getThreadRecords")
+          .mockImplementation((id, fields, filter) =>
+            readRecords(id, fields, filter).pipe(
+              Effect.map((records) =>
+                id === threadId && fields.includes("providerThreads")
+                  ? {
+                      ...records,
+                      thread: { ...records.thread, activeProviderThreadId: native.id },
+                      providerThreads: [native],
+                      providerSessions: [],
+                    }
+                  : records,
+              ),
+            ),
+          );
+        const liveSpy = vi.spyOn(sessions, "isLive").mockReturnValue(Effect.succeed(live));
+        let opens = 0;
+        const releaseSpy = vi.spyOn(sessions, "release").mockImplementation(() => Effect.void);
+        const openSpy = vi.spyOn(sessions, "open").mockImplementation(() =>
+          Effect.sync(() => {
+            opens += 1;
+            return {
+              resumeThread: () => Effect.succeed(native),
+            } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime;
+          }),
+        );
+        try {
+          if (!live) {
+            yield* acceptTurn(source, 1);
+            yield* events.write({
+              events: [
+                {
+                  id: EventId.make(`retry:stream-error:${live}`),
+                  type: "turn-item.updated",
+                  threadId,
+                  occurredAt: now,
+                  payload: makeProviderFailureTurnItem({
+                    driver,
+                    threadId,
+                    runId: source.id,
+                    nodeId: source.rootNodeId,
+                    providerThreadId: native.id,
+                    providerTurnId: ProviderTurnId.make("stream-failure"),
+                    itemOrdinal: 1,
+                    occurredAt: now,
+                    failure: {
+                      class: "provider_error",
+                      code: "event_stream_closed",
+                      retryable: true,
+                      message: "The provider event stream closed unexpectedly.",
+                    },
+                  }),
+                },
+              ],
+            });
+            yield* continueProviderStream({ threadId, sourceRunId: source.id });
+            yield* continueProviderStream({ threadId, sourceRunId: source.id });
+          } else {
+            // App startedAt alone must not send Continue for an unaccepted prompt.
+            yield* continueProviderStream({ threadId, sourceRunId: source.id });
+            assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+            yield* threads.restartCodex({ threadId, retryRunId: source.id });
+            yield* threads.restartCodex({ threadId, retryRunId: source.id });
+          }
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(opens, live ? 0 : 1);
+          assert.equal(releaseSpy.mock.calls.length, live ? 0 : 1);
+          assert.lengthOf(after.runs, 2);
+          assert.equal(after.runs[1]?.status, "starting");
+          const retried = after.messages.at(-1);
+          assert.deepEqual(
+            { text: retried?.text, attachments: retried?.attachments, context: retried?.context },
+            live ? message : { text: "Continue", attachments: [], context: undefined },
+          );
+          if (!live) {
+            const continued = after.runs[1]!;
+            assert.equal(continued.restartContinuationOfRunId, source.id);
+            yield* acceptTurn(continued, 2);
+            yield* events.write({
+              events: [
+                {
+                  id: EventId.make("retry:continued-failed"),
+                  type: "run.updated",
+                  threadId,
+                  occurredAt: now,
+                  payload: { ...continued, status: "failed", startedAt: now, completedAt: now },
+                },
+                {
+                  id: EventId.make("retry:continued-error"),
+                  type: "turn-item.updated",
+                  threadId,
+                  occurredAt: now,
+                  payload: makeProviderFailureTurnItem({
+                    driver,
+                    threadId,
+                    runId: continued.id,
+                    nodeId: continued.rootNodeId,
+                    providerThreadId: native.id,
+                    providerTurnId: ProviderTurnId.make("continued-stream-failure"),
+                    itemOrdinal: 2,
+                    occurredAt: now,
+                    failure: {
+                      class: "provider_error",
+                      code: "event_stream_closed",
+                      retryable: true,
+                      message: "The provider event stream closed unexpectedly.",
+                    },
+                  }),
+                },
+              ],
+            });
+            yield* continueProviderStream({ threadId, sourceRunId: continued.id });
+            assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+            assert.equal(opens, 1, "a failed automatic continuation must not restart endlessly");
+            yield* threads.restartCodex({ threadId, retryRunId: continued.id });
+            const manual = (yield* orchestrator.getThreadProjection(threadId)).messages.at(-1);
+            assert.equal(manual?.text, "Continue");
+            assert.deepEqual(manual?.attachments, []);
+            assert.equal(opens, 2);
+          }
+        } finally {
+          liveSpy.mockRestore();
+          readSpy.mockRestore();
+          releaseSpy.mockRestore();
+          openSpy.mockRestore();
+        }
+      }),
+  );
+
+  it.effect.each(["interrupted", "usage_limit", "provider-error"] as const)(
     "manually resumes an %s run ahead of its queued message only once",
     (reason) =>
       Effect.gen(function* () {
@@ -5189,7 +5449,9 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
           commandId: CommandId.make(`manual-resume:${suffix}:${reason}`),
           threadId,
           messageId: MessageId.make(`manual-resume:${suffix}:${reason}`),
-          manualContinuationOfRunId: source.id,
+          ...(reason === "provider-error"
+            ? { retryOfRunId: source.id }
+            : { manualContinuationOfRunId: source.id }),
           text: "Continue where you left off.",
           attachments: [],
           dispatchMode: { type: "start_immediately" as const },

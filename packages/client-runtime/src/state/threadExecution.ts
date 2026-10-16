@@ -1,4 +1,7 @@
 import {
+  hasAcceptedProviderTurn,
+  isProviderEventStreamFailure,
+  latestExecutedRun,
   latestRootProviderFailure,
   latestUnheldRun,
   threadErrorSummary,
@@ -16,6 +19,7 @@ import {
   type OrchestrationV2ThreadProjection,
   orchestrationV2RunWorkStartedAt,
   type ThreadId,
+  type RunId,
 } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
@@ -34,6 +38,39 @@ import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
+
+export interface CodexRecoveryAction {
+  readonly runId: RunId;
+  readonly continueWork: boolean;
+}
+
+/** Match the saved-thread and acceptance checks used by restartCodex. */
+export function deriveCodexRecoveryAction(
+  projection: OrchestrationV2ThreadProjection | null,
+): CodexRecoveryAction | null {
+  if (projection === null) return null;
+  const { thread, runs, providerThreads, providerTurns, runtimeRequests, turnItems } = projection;
+  const run = latestExecutedRun(runs);
+  const native = providerThreads.find(
+    (candidate) => candidate.id === thread.activeProviderThreadId,
+  );
+  if (
+    run?.status !== "failed" ||
+    thread.archivedAt !== null ||
+    thread.deletedAt !== null ||
+    native?.driver !== "codex" ||
+    native.providerSessionId === null ||
+    native.nativeThreadRef?.nativeId == null ||
+    native.providerInstanceId !== thread.modelSelection.instanceId ||
+    runs.some((candidate) => ACTIVITY_RUN_STATUSES.has(candidate.status)) ||
+    runtimeRequests.some((request) => request.status === "pending")
+  )
+    return null;
+  const accepted = hasAcceptedProviderTurn(run, providerTurns);
+  if (accepted && !isProviderEventStreamFailure(latestRootProviderFailure(run, turnItems)))
+    return null;
+  return { runId: run.id, continueWork: accepted };
+}
 
 function latestMatchingRun(
   projection: OrchestrationV2ThreadProjection,

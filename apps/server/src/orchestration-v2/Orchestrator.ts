@@ -6,6 +6,8 @@ import type {
 import {
   latestExecutedRun,
   latestRootProviderFailure,
+  isProviderEventStreamFailure,
+  hasAcceptedProviderTurn,
   runRanAfter,
   usageLimitBlockedRun,
 } from "@t3tools/shared/orchestrationV2ThreadError";
@@ -4503,6 +4505,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      if (command.retryOfRunId !== undefined) {
+        const source = latestExecutedRun(projection.runs);
+        if (
+          source?.id !== command.retryOfRunId ||
+          source.status !== "failed" ||
+          (hasAcceptedProviderTurn(source, projection.providerTurns) &&
+            command.restartContinuationOfRunId !== source.id) ||
+          command.dispatchMode.type !== "start_immediately" ||
+          projection.thread.archivedAt !== null ||
+          projection.thread.deletedAt !== null ||
+          projection.runtimeRequests.some((request) => request.status === "pending")
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "The failed run can no longer be retried.",
+          });
+        }
+      }
       if (command.manualContinuationOfRunId !== undefined) {
         const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
         const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -4571,10 +4592,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const source = projection.runs.find((run) => run.id === command.restartContinuationOfRunId);
         if (
           !source ||
-          !isRestartContinuationSource(source, projection.providerTurns) ||
+          !(
+            isRestartContinuationSource(source, projection.providerTurns) ||
+            (command.retryOfRunId === source.id &&
+              source.status === "failed" &&
+              hasAcceptedProviderTurn(source, projection.providerTurns) &&
+              isProviderEventStreamFailure(latestRootProviderFailure(source, projection.turnItems)))
+          ) ||
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
           projection.thread.providerInstanceId !== source.providerInstanceId ||
+          (command.retryOfRunId !== undefined &&
+            command.creationSource === "server" &&
+            (projection.thread.settledOverride === "settled" ||
+              (projection.thread.snoozedUntil != null &&
+                DateTime.isGreaterThan(projection.thread.snoozedUntil, yield* DateTime.now)))) ||
           projection.runs.some(
             (run) => run.id !== source.id && run.status !== "queued" && runRanAfter(run, source),
           ) ||

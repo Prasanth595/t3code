@@ -6614,11 +6614,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 : null;
             if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
             return Effect.gen(function* () {
+              const streamRecovery =
+                turnInput.restartContinuationOfRunId !== undefined &&
+                turnInput.message.messageId.startsWith("message:codex-retry:");
               yield* startNativeTurn(
-                turnInput,
+                streamRecovery ? { ...turnInput, appContext: [] } : turnInput,
                 turnInput.restartContinuationOfRunId === undefined
                   ? yield* toCodexInput(turnInput)
-                  : [],
+                  : streamRecovery
+                    ? [{ type: "text", text: "Continue" }]
+                    : [],
               );
             }).pipe(
               Effect.mapError(
