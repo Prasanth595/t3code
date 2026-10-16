@@ -191,14 +191,14 @@ export function markdownWithTableBreaks(markdown: string): string {
   };
   visit(parser.parse(markdown));
   for (const lineStart of lineStarts.reverse()) {
-    // Keep container markers such as `>` so the blank line stays inside a blockquote.
-    const prefix = markdown
-      .slice(lineStart)
-      .match(/^[ \t>]*/)![0]
-      .trimEnd();
-    // Reuse the line ending before the table, so a CR-only document gets a real blank line.
-    const lineEnding = markdown.charAt(lineStart - 1);
-    markdown = `${markdown.slice(0, lineStart)}${prefix}${lineEnding}${markdown.slice(lineStart)}`;
+    // The header row may be a lazy line without its container markers (`>` or list indent),
+    // so copy the delimiter row's markers onto the blank line and the header row.
+    const [, header = "", cells = "", ending = "\n", markers = ""] =
+      /^([ \t>]*)([^\r\n]*)(\r\n|\r|\n)([ \t>]*)/.exec(markdown.slice(lineStart)) ?? [];
+    markdown =
+      markdown.slice(0, lineStart) +
+      `${markers.trimEnd()}${ending}${markers}${cells}` +
+      markdown.slice(lineStart + header.length + cells.length);
   }
   return markdown;
 }

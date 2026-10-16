@@ -13,7 +13,7 @@ describe("tables right under a line of text", () => {
   it("handles CRLF and CR line endings", () => {
     const crlf = table.replaceAll("\n", "\r\n");
     expect(markdownWithTableBreaks(`Companies on file\r\n${crlf}`)).toBe(
-      `Companies on file\r\n\n${crlf}`,
+      `Companies on file\r\n\r\n${crlf}`,
     );
     const cr = table.replaceAll("\n", "\r");
     expect(markdownWithTableBreaks(`Companies on file\r${cr}`)).toBe(`Companies on file\r\r${cr}`);
@@ -23,6 +23,15 @@ describe("tables right under a line of text", () => {
     const quoted = table.replace(/^/gm, "> ");
     expect(markdownWithTableBreaks(`> Companies on file\n${quoted}`)).toBe(
       `> Companies on file\n>\n${quoted}`,
+    );
+  });
+
+  it("keeps a table with a lazy header row inside its container", () => {
+    expect(markdownWithTableBreaks("> Intro\n| a | b |\n> | - | - |\n> | c | d |")).toBe(
+      "> Intro\n>\n> | a | b |\n> | - | - |\n> | c | d |",
+    );
+    expect(markdownWithTableBreaks("- Intro\n| a | b |\n  | - | - |\n  | c | d |")).toBe(
+      "- Intro\n\n  | a | b |\n  | - | - |\n  | c | d |",
     );
   });
 
