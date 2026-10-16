@@ -175,3 +175,58 @@ test("routes interactive sessions through the TTY runner and Docker resize API",
   ]);
   expect(output).toEqual([Buffer.from("prompt")]);
 });
+
+test("launches non-TTY process sessions with JSON-safe argv and bidirectional stdio", async () => {
+  let seen: { id: string; request: unknown } | undefined;
+  const writes: Uint8Array[] = [];
+  const requests: string[] = [];
+  const client = createDockerEngineClient({
+    socketPath: "/var/run/docker.sock",
+    transport: async (request) => {
+      requests.push(`${request.method} ${request.path}`);
+      return request.path.endsWith("/exec")
+        ? { statusCode: 201, body: Buffer.from('{"Id":"stdio-cleanup"}') }
+        : { statusCode: 200, body: new Uint8Array() };
+    },
+    managedSessionRunner: async (id, request, terminate) => {
+      seen = { id, request };
+      return {
+        async write(data) { writes.push(data); },
+        output: { async *[Symbol.asyncIterator]() {
+          yield { stream: "stdout" as const, data: Buffer.from("jsonrpc") };
+          yield { stream: "stderr" as const, data: Buffer.from("diagnostic") };
+        } },
+        result: Promise.resolve({ exitCode: 0, cancelled: false }),
+        async terminate() { await terminate(id, request.controlToken!); },
+      };
+    },
+  });
+  const request = {
+    command: ["node", "acp-server.js", "arg with spaces"],
+    worktreeDirectory: "/workspaces/repo",
+    workingDirectory: "/workspaces/repo/packages",
+    environment: { MODE: "stdio" },
+  };
+  const session = await client.startManagedSessionContainer!("container-stdio", request);
+  await session.write(Buffer.from('{"jsonrpc":"2.0"}\n'));
+  const output = [];
+  for await (const event of session.output) output.push(event);
+  await session.terminate();
+
+  expect(seen?.id).toBe("container-stdio");
+  const supervised = seen?.request as { command: string[]; workingDirectory: string; controlToken: string };
+  expect(supervised.command.slice(0, 3)).toEqual(["node", "/usr/local/lib/subpolar/terminal-supervisor.mjs", "--stdio"]);
+  expect(supervised.command[3]).toMatch(/^[a-f0-9-]{36}$/);
+  expect(supervised.controlToken).toBe(supervised.command[3]);
+  const payload = JSON.parse(Buffer.from(supervised.command[4]!, "base64url").toString("utf8"));
+  expect(payload).toEqual(request);
+  expect(writes).toEqual([Buffer.from('{"jsonrpc":"2.0"}\n')]);
+  expect(output).toEqual([
+    { stream: "stdout", data: Buffer.from("jsonrpc") },
+    { stream: "stderr", data: Buffer.from("diagnostic") },
+  ]);
+  expect(requests).toEqual([
+    "POST /v1.41/containers/container-stdio/exec",
+    "POST /v1.41/exec/stdio-cleanup/start",
+  ]);
+});

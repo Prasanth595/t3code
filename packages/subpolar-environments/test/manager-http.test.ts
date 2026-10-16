@@ -42,6 +42,17 @@ function managerFixture() {
       yield { type: "exit" as const, result: { exitCode: 0, cancelled: false } };
     },
     terminateInteractive: async (request: EnvironmentRequest, sessionId: string) => { calls.push({ method: "terminateInteractive", request, sessionId }); },
+    startManagedSession: async (request: EnvironmentRequest, command: readonly string[]) => {
+      calls.push({ method: "startManagedSession", request, command });
+      return { sessionId: "stdio-session-a", outputSequence: 0 };
+    },
+    writeManagedSession: async (request: EnvironmentRequest, sessionId: string, data: Uint8Array) => { calls.push({ method: "writeManagedSession", request, sessionId, data }); },
+    attachManagedSessionOutput: async function* (request: EnvironmentRequest, sessionId: string) {
+      calls.push({ method: "attachManagedSessionOutput", request, sessionId });
+      yield { type: "output" as const, stream: "stdout" as const, sequence: 1, data: new TextEncoder().encode("jsonrpc") };
+      yield { type: "exit" as const, result: { exitCode: 0, cancelled: false } };
+    },
+    terminateManagedSession: async (request: EnvironmentRequest, sessionId: string) => { calls.push({ method: "terminateManagedSession", request, sessionId }); },
     reconcile: async () => [],
   } satisfies EnvironmentManager;
   return { manager, calls };
@@ -168,4 +179,26 @@ test("manager API starts, attaches to, controls, and terminates an authenticated
     "startInteractive", "writeInteractive", "resizeInteractive", "attachInteractiveOutput", "terminateInteractive",
   ]);
   expect(calls[1]?.data).toEqual(Buffer.from("ls\n"));
+});
+
+test("manager API streams authenticated non-TTY stdio sessions with separate output channels", async () => {
+  const { manager, calls } = managerFixture();
+  const handle = createEnvironmentManagerHttpHandler(manager, TOKEN);
+  const start = await handle(makeRequest("/v1/environments/stdio/start", {
+    environment: requestInput, command: ["node", "acp-server.js"], process: { cwd: "packages", clientSessionId: "thread-1-acp" },
+  }));
+  await expect(start.json()).resolves.toEqual({ sessionId: "stdio-session-a", outputSequence: 0 });
+  const input = await handle(makeRequest("/v1/environments/stdio/input", {
+    environment: requestInput, sessionId: "stdio-session-a", data: Buffer.from('{"jsonrpc":"2.0"}').toString("base64"),
+  }));
+  expect(input.status).toBe(200);
+  const output = await handle(makeRequest("/v1/environments/stdio/output", { environment: requestInput, sessionId: "stdio-session-a" }));
+  expect((await output.text()).trim().split("\n").map((line) => JSON.parse(line))).toEqual([
+    { type: "output", sequence: 1, stream: "stdout", data: "anNvbnJwYw==" },
+    { type: "exit", result: { exitCode: 0, cancelled: false } },
+  ]);
+  const terminate = await handle(makeRequest("/v1/environments/stdio/terminate", { environment: requestInput, sessionId: "stdio-session-a" }));
+  expect(terminate.status).toBe(200);
+  expect(calls.map((call) => call.method)).toEqual(["startManagedSession", "writeManagedSession", "attachManagedSessionOutput", "terminateManagedSession"]);
+  expect(calls[1]?.data).toEqual(Buffer.from('{"jsonrpc":"2.0"}'));
 });

@@ -9,6 +9,8 @@ import type {
   EnvironmentProcessResult,
   EnvironmentInteractiveProcessRequest,
   EnvironmentInteractiveSession,
+  EnvironmentManagedProcessSession,
+  EnvironmentManagedSessionRequest,
   EnvironmentStatus,
   ManagedEnvironment,
 } from "./index.ts";
@@ -104,6 +106,13 @@ export interface DockerContainerInteractiveRequest extends EnvironmentInteractiv
   readonly controlToken?: string;
 }
 
+export interface DockerContainerManagedSessionRequest extends EnvironmentManagedSessionRequest {
+  readonly command: readonly string[];
+  readonly worktreeDirectory: string;
+  readonly workingDirectory: string;
+  readonly controlToken?: string;
+}
+
 export type DockerContainerState = "created" | "running" | "paused" | "restarting" | "exited" | "dead";
 
 /** Normalized, read-only information the adapter requires from a Docker client. */
@@ -143,6 +152,7 @@ export interface DockerClient {
   /** Must preserve argv boundaries, stream both output channels, and terminate the owned process on abort. */
   executeContainer?(id: string, request: DockerContainerProcessRequest): Promise<EnvironmentProcessResult>;
   startInteractiveContainer?(id: string, request: DockerContainerInteractiveRequest): Promise<EnvironmentInteractiveSession>;
+  startManagedSessionContainer?(id: string, request: DockerContainerManagedSessionRequest): Promise<EnvironmentManagedProcessSession>;
 }
 
 export const DOCKER_RESOURCE_DEFAULTS = Object.freeze({
@@ -673,6 +683,37 @@ export function createDockerEnvironmentBackend(
         throw new DockerEnvironmentError("DOCKER_IDENTITY_MISMATCH", "Docker environment is unavailable or changed identity before interactive process start");
       }
       return client.startInteractiveContainer(current.inspection.id, {
+        command: [...command], worktreeDirectory: worktreeTarget, workingDirectory,
+        ...(request.environment === undefined ? {} : { environment: { ...request.environment } }),
+      });
+    },
+    async startManagedSession(environment, command, request) {
+      if (!client.startManagedSessionContainer) {
+        throw new DockerEnvironmentError("PROCESS_EXECUTION_UNAVAILABLE", "Docker client does not support managed process sessions");
+      }
+      if (!command.length || command.some((part) => !part || part.includes("\0"))) {
+        throw new DockerEnvironmentError("PROCESS_REQUEST_INVALID", "Process command must be a non-empty argv array without NUL bytes");
+      }
+      const relativeCwd = request.cwd ?? ".";
+      if (path.posix.isAbsolute(relativeCwd) || relativeCwd.includes("\0")) throw new DockerEnvironmentError("PROCESS_REQUEST_INVALID", "Process cwd must be relative to the worktree");
+      const worktreeRelativePath = path.relative(environment.storageRoot, environment.worktreePath);
+      if (!worktreeRelativePath || worktreeRelativePath === ".." || worktreeRelativePath.startsWith(`..${path.sep}`) || path.isAbsolute(worktreeRelativePath)) {
+        throw new DockerEnvironmentError("PROCESS_REQUEST_INVALID", "Environment worktree cannot be mapped inside the container");
+      }
+      const worktreeTarget = containerPath(containerStorageRoot, worktreeRelativePath);
+      const workingDirectory = path.posix.resolve(worktreeTarget, relativeCwd);
+      if (workingDirectory !== worktreeTarget && !workingDirectory.startsWith(`${worktreeTarget}/`)) throw new DockerEnvironmentError("PROCESS_REQUEST_INVALID", "Process cwd escapes the mounted worktree");
+      const environmentVariables = request.environment ?? {};
+      for (const [key, value] of Object.entries(environmentVariables)) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(key) || value.includes("\0") || value.length > 16_384) {
+          throw new DockerEnvironmentError("PROCESS_REQUEST_INVALID", "Process environment contains an invalid key or value");
+        }
+      }
+      const current = await inspectVerified(environment);
+      if (!current || current.record.resourceId !== environment.resourceId || current.record.status !== "ready") {
+        throw new DockerEnvironmentError("DOCKER_IDENTITY_MISMATCH", "Docker environment is unavailable or changed identity before process session start");
+      }
+      return client.startManagedSessionContainer(current.inspection.id, {
         command: [...command], worktreeDirectory: worktreeTarget, workingDirectory,
         ...(request.environment === undefined ? {} : { environment: { ...request.environment } }),
       });

@@ -2,8 +2,8 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import { request as httpRequest, type IncomingMessage, type RequestOptions } from "node:http";
-import type { DockerClient, DockerContainerCreateOptions, DockerContainerInspection, DockerContainerProcessRequest, DockerContainerInteractiveRequest } from "./docker.ts";
-import type { EnvironmentInteractiveSession, EnvironmentProcessResult } from "./index.ts";
+import type { DockerClient, DockerContainerCreateOptions, DockerContainerInspection, DockerContainerProcessRequest, DockerContainerInteractiveRequest, DockerContainerManagedSessionRequest } from "./docker.ts";
+import type { EnvironmentInteractiveSession, EnvironmentManagedProcessSession, EnvironmentProcessOutput, EnvironmentProcessResult } from "./index.ts";
 
 export interface DockerEngineClientOptions {
   readonly socketPath: string;
@@ -15,6 +15,7 @@ export interface DockerEngineClientOptions {
   readonly terminalSupervisorCommand?: readonly string[];
   readonly processRunner?: DockerContainerProcessRunner;
   readonly interactiveRunner?: DockerContainerInteractiveRunner;
+  readonly managedSessionRunner?: DockerContainerManagedSessionRunner;
 }
 
 export type DockerContainerProcessRunner = (
@@ -28,6 +29,12 @@ export type DockerContainerInteractiveRunner = (
   resize: (execId: string, columns: number, rows: number) => Promise<void>,
   terminate: (containerId: string, controlToken: string) => Promise<void>,
 ) => Promise<EnvironmentInteractiveSession>;
+
+export type DockerContainerManagedSessionRunner = (
+  containerId: string,
+  request: DockerContainerManagedSessionRequest,
+  terminate: (containerId: string, controlToken: string) => Promise<void>,
+) => Promise<EnvironmentManagedProcessSession>;
 
 export interface DockerEngineTransportRequest {
   readonly method: string;
@@ -246,6 +253,111 @@ async function runDockerWorker(
   }
 }
 
+const MAX_MANAGED_SESSION_BUFFER_BYTES = 1_048_576;
+
+async function runDockerManagedSession(
+  dockerBinary: string,
+  containerId: string,
+  request: DockerContainerManagedSessionRequest,
+  terminateSupervisor: (containerId: string, controlToken: string) => Promise<void>,
+): Promise<EnvironmentManagedProcessSession> {
+  if (!request.controlToken) throw new DockerEngineClientError(undefined, "Managed process session has no cleanup token");
+  const docker = spawn(dockerBinary, ["exec", "-i", containerId, ...request.command], {
+    shell: false,
+    windowsHide: true,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let queue: EnvironmentProcessOutput[] = [];
+  let bufferedBytes = 0;
+  let ended = false;
+  let failure: Error | undefined;
+  let cancelled = false;
+  let wakeReader: (() => void) | undefined;
+  let wakeSpace: (() => void) | undefined;
+  const notifyReader = () => { wakeReader?.(); wakeReader = undefined; };
+  const notifySpace = () => { wakeSpace?.(); wakeSpace = undefined; };
+  const push = async (stream: "stdout" | "stderr", chunk: Buffer) => {
+    for (let offset = 0; offset < chunk.byteLength; offset += 65_536) {
+      const data = chunk.subarray(offset, Math.min(offset + 65_536, chunk.byteLength));
+      while (!ended && bufferedBytes + data.byteLength > MAX_MANAGED_SESSION_BUFFER_BYTES) {
+        await new Promise<void>((resolve) => { wakeSpace = resolve; });
+      }
+      if (ended) return;
+      queue.push({ stream, data });
+      bufferedBytes += data.byteLength;
+      notifyReader();
+    }
+  };
+  const subscribe = (stream: "stdout" | "stderr", source: NodeJS.ReadableStream) => {
+    source.on("data", (chunk: Buffer) => {
+      source.pause();
+      void push(stream, Buffer.from(chunk)).then(() => source.resume(), (error: unknown) => {
+        failure = error instanceof Error ? error : new Error("Managed process session output failed");
+        ended = true;
+        notifyReader();
+        notifySpace();
+      });
+    });
+    source.once("error", (error) => { failure = error; ended = true; notifyReader(); notifySpace(); });
+  };
+  subscribe("stdout", docker.stdout);
+  subscribe("stderr", docker.stderr);
+  let exitCode: number | null = null;
+  const result = new Promise<EnvironmentProcessResult>((resolve) => {
+    docker.once("error", (error) => {
+      failure = error;
+      ended = true;
+      notifyReader();
+      notifySpace();
+      resolve({ exitCode: null, cancelled });
+    });
+    docker.once("close", (code) => {
+      exitCode = typeof code === "number" && code >= 0 ? code : null;
+      ended = true;
+      notifyReader();
+      notifySpace();
+      resolve({ exitCode, cancelled });
+    });
+  });
+  let claimed = false;
+  const output: AsyncIterable<EnvironmentProcessOutput> = {
+    async *[Symbol.asyncIterator]() {
+      if (claimed) throw new Error("Managed session output already has an attached reader");
+      claimed = true;
+      while (true) {
+        const next = queue.shift();
+        if (next) {
+          bufferedBytes -= next.data.byteLength;
+          notifySpace();
+          yield next;
+        } else if (ended) {
+          if (failure) throw failure;
+          return;
+        } else {
+          await new Promise<void>((resolve) => { wakeReader = resolve; });
+        }
+      }
+    },
+  };
+  return {
+    output,
+    result,
+    async write(data) {
+      if (ended || docker.stdin.destroyed) throw new DockerEngineClientError(undefined, "Managed process session has ended");
+      if (!docker.stdin.write(data)) await new Promise<void>((resolve, reject) => {
+        docker.stdin.once("drain", resolve);
+        docker.stdin.once("error", reject);
+      });
+    },
+    async terminate() {
+      if (ended) { await result; return; }
+      cancelled = true;
+      await terminateSupervisor(containerId, request.controlToken!);
+      await result;
+    },
+  };
+}
+
 const MAX_TTY_BUFFER_BYTES = 1_048_576;
 
 async function runDockerTty(
@@ -442,6 +554,8 @@ export function createDockerEngineClient(options: DockerEngineClientOptions): Do
     if (options.transport) throw new DockerEngineClientError(undefined, "Interactive TTY requires the Docker Engine socket transport");
     return runDockerTty(options.socketPath, version, timeoutMs, containerId, request, resize, terminate);
   });
+  const managedSessionRunner: DockerContainerManagedSessionRunner = options.managedSessionRunner ?? ((containerId, request, terminate) =>
+    runDockerManagedSession(dockerBinary, containerId, request, terminate));
 
   const request = async (
     method: string,
@@ -542,6 +656,22 @@ export function createDockerEngineClient(options: DockerEngineClientOptions): Do
       };
       return interactiveRunner(id, supervisedRequest, async (execId, columns, rows) => {
         await request("POST", `/exec/${encodeURIComponent(execId)}/resize?h=${rows}&w=${columns}`, undefined, [200]);
+      }, terminateSupervisor);
+    },
+    async startManagedSessionContainer(id, managedRequest) {
+      const controlToken = randomUUID();
+      const encodedRequest = Buffer.from(JSON.stringify({
+        command: managedRequest.command,
+        worktreeDirectory: managedRequest.worktreeDirectory,
+        workingDirectory: managedRequest.workingDirectory,
+        environment: managedRequest.environment ?? {},
+      })).toString("base64url");
+      return managedSessionRunner(id, {
+        command: [...terminalSupervisorCommand, "--stdio", controlToken, encodedRequest],
+        worktreeDirectory: managedRequest.worktreeDirectory,
+        workingDirectory: managedRequest.worktreeDirectory,
+        environment: {},
+        controlToken,
       }, terminateSupervisor);
     },
   };

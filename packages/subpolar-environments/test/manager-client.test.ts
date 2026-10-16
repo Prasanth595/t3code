@@ -96,3 +96,39 @@ test("manager client resumes and controls a persistent interactive session", asy
   expect(calls[1]?.body.data).toBe("bHMK");
   expect(calls[3]?.body.afterSequence).toBe(7);
 });
+
+test("manager client controls a non-TTY process session and preserves stdout/stderr labels", async () => {
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const body = [
+    JSON.stringify({ type: "output", sequence: 1, stream: "stdout", data: "eyJqc29ucnBjIjo=" }),
+    JSON.stringify({ type: "output", sequence: 2, stream: "stderr", data: "ZGlhZ25vc3RpYw==" }),
+    JSON.stringify({ type: "exit", result: { exitCode: 0, cancelled: false } }),
+  ].join("\n") + "\n";
+  const manager = createEnvironmentManagerHttpClient({
+    baseUrl: "http://manager:8080", token: TOKEN,
+    fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      calls.push({ url, body: requestBody });
+      if (url.endsWith("/stdio/start")) return Response.json({ sessionId: "stdio-session", outputSequence: 0 });
+      if (url.endsWith("/stdio/output")) return new Response(body, { headers: { "content-type": "application/x-ndjson" } });
+      return Response.json({ ok: true });
+    }) as typeof fetch,
+  });
+  const request = { ownerId: identity.ownerId, workspaceId: identity.workspaceId, storageRoot: identity.storageRoot, worktreePath: identity.worktreePath };
+  const session = await manager.startManagedSession(request, ["node", "acp-server.js"], { clientSessionId: "thread-1-acp" });
+  await manager.writeManagedSession(request, session.sessionId, Buffer.from('{"jsonrpc":"2.0"}\n'));
+  const events = [];
+  for await (const event of manager.attachManagedSessionOutput(request, session.sessionId, session.outputSequence)) events.push(event);
+  await manager.terminateManagedSession(request, session.sessionId);
+
+  expect(session).toEqual({ sessionId: "stdio-session", outputSequence: 0 });
+  expect(events).toEqual([
+    { type: "output", sequence: 1, stream: "stdout", data: Buffer.from('{"jsonrpc":') },
+    { type: "output", sequence: 2, stream: "stderr", data: Buffer.from("diagnostic") },
+    { type: "exit", result: { exitCode: 0, cancelled: false } },
+  ]);
+  expect(calls.map(({ url }) => url.split("/").at(-1))).toEqual(["start", "input", "output", "terminate"]);
+  expect(calls[0]?.body.process).toEqual({ clientSessionId: "thread-1-acp" });
+  expect(calls[1]?.body.data).toBe(Buffer.from('{"jsonrpc":"2.0"}\n').toString("base64"));
+});

@@ -4,6 +4,9 @@ import {
   type EnvironmentInteractiveOutputEvent,
   type EnvironmentInteractiveProcessRequest,
   type EnvironmentInteractiveStartResult,
+  type EnvironmentManagedSessionOutputEvent,
+  type EnvironmentManagedSessionRequest,
+  type EnvironmentManagedSessionStartResult,
   type EnvironmentManager,
   type EnvironmentProcessRequest,
   type EnvironmentProcessResult,
@@ -228,6 +231,68 @@ export function createEnvironmentManagerHttpClient(options: EnvironmentManagerHt
     },
     async terminateInteractive(request, sessionId): Promise<void> {
       await post("pty/terminate", { ...environmentBody(request), sessionId });
+    },
+    async startManagedSession(request, command, process: EnvironmentManagedSessionRequest = {}): Promise<EnvironmentManagedSessionStartResult> {
+      const response = await post("stdio/start", {
+        ...environmentBody(request), command,
+        process: {
+          ...(process.cwd === undefined ? {} : { cwd: process.cwd }),
+          ...(process.environment === undefined ? {} : { environment: process.environment }),
+          ...(process.clientSessionId === undefined ? {} : { clientSessionId: process.clientSessionId }),
+        },
+      });
+      const value: unknown = await response.json();
+      if (!isRecord(value) || typeof value.sessionId !== "string" || !Number.isSafeInteger(value.outputSequence) || (value.outputSequence as number) < 0) {
+        throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned an invalid managed session");
+      }
+      return { sessionId: value.sessionId, outputSequence: value.outputSequence as number };
+    },
+    async writeManagedSession(request, sessionId, data): Promise<void> {
+      await post("stdio/input", { ...environmentBody(request), sessionId, data: Buffer.from(data).toString("base64") });
+    },
+    async *attachManagedSessionOutput(request, sessionId, afterSequence = 0): AsyncIterable<EnvironmentManagedSessionOutputEvent | { readonly type: "exit"; readonly result: EnvironmentProcessResult }> {
+      const response = await post("stdio/output", { ...environmentBody(request), sessionId, afterSequence });
+      if (!response.body) throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned no managed session output stream");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let pending = "";
+      const parseLine = (line: string) => {
+        if (!line) return undefined;
+        let event: unknown;
+        try { event = JSON.parse(line); } catch (cause) { throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned invalid managed session output", { cause }); }
+        if (!isRecord(event)) throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned invalid managed session output");
+        if (event.type === "output" && Number.isSafeInteger(event.sequence) && (event.stream === "stdout" || event.stream === "stderr") && typeof event.data === "string") {
+          return { type: "output", sequence: event.sequence as number, stream: event.stream, data: Buffer.from(event.data, "base64") } as const;
+        }
+        if (event.type === "exit" && isRecord(event.result) && (typeof event.result.exitCode === "number" || event.result.exitCode === null) && typeof event.result.cancelled === "boolean") {
+          return { type: "exit", result: { exitCode: event.result.exitCode, cancelled: event.result.cancelled } } as const;
+        }
+        if (event.type === "error") throw new EnvironmentManagerError("BACKEND_FAILURE", `Managed session failed (${typeof event.code === "string" ? event.code : "unknown"})`);
+        throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned an unknown managed session event");
+      };
+      try {
+        while (true) {
+          const part = await reader.read();
+          if (part.done) break;
+          pending += decoder.decode(part.value, { stream: true });
+          let newline = pending.indexOf("\n");
+          while (newline >= 0) {
+            const event = parseLine(pending.slice(0, newline));
+            pending = pending.slice(newline + 1);
+            if (event) yield event;
+            newline = pending.indexOf("\n");
+          }
+          if (pending.length > 1_048_576) throw new EnvironmentManagerError("BACKEND_FAILURE", "Managed session output event exceeded the allowed size");
+        }
+        pending += decoder.decode();
+        const event = parseLine(pending);
+        if (event) yield event;
+      } finally {
+        await reader.cancel().catch(() => undefined);
+      }
+    },
+    async terminateManagedSession(request, sessionId): Promise<void> {
+      await post("stdio/terminate", { ...environmentBody(request), sessionId });
     },
     async reconcile() {
       const response = await post("reconcile");

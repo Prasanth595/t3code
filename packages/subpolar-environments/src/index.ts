@@ -86,6 +86,34 @@ export interface EnvironmentInteractiveOutputEvent {
   readonly data: Uint8Array;
 }
 
+export interface EnvironmentManagedSessionRequest {
+  readonly cwd?: string;
+  readonly environment?: Readonly<Record<string, string>>;
+  readonly clientSessionId?: string;
+}
+
+export interface EnvironmentManagedProcessSession {
+  write(data: Uint8Array): Promise<void>;
+  readonly output: AsyncIterable<EnvironmentProcessOutput>;
+  readonly result: Promise<EnvironmentProcessResult>;
+  terminate(): Promise<void>;
+}
+
+export interface EnvironmentManagedProcessSessionBackend extends EnvironmentBackend {
+  startManagedSession(
+    environment: ManagedEnvironment,
+    command: readonly string[],
+    request: EnvironmentManagedSessionRequest,
+  ): Promise<EnvironmentManagedProcessSession>;
+}
+
+export interface EnvironmentManagedSessionOutputEvent extends EnvironmentProcessOutput {
+  readonly type: "output";
+  readonly sequence: number;
+}
+
+export type EnvironmentManagedSessionStartResult = EnvironmentInteractiveStartResult;
+
 export interface EnvironmentProcessRequest {
   /** Relative to the mounted worktree root; absolute paths are rejected. */
   readonly cwd?: string;
@@ -115,6 +143,11 @@ export interface EnvironmentManager {
   attachInteractiveOutput(request: EnvironmentRequest, sessionId: string, afterSequence?: number): AsyncIterable<EnvironmentInteractiveOutputEvent | { readonly type: "exit"; readonly result: EnvironmentProcessResult }>;
   terminateInteractive(request: EnvironmentRequest, sessionId: string): Promise<void>;
   closeInteractiveSessions?(): Promise<void>;
+  startManagedSession(request: EnvironmentRequest, command: readonly string[], process?: EnvironmentManagedSessionRequest): Promise<EnvironmentManagedSessionStartResult>;
+  writeManagedSession(request: EnvironmentRequest, sessionId: string, data: Uint8Array): Promise<void>;
+  attachManagedSessionOutput(request: EnvironmentRequest, sessionId: string, afterSequence?: number): AsyncIterable<EnvironmentManagedSessionOutputEvent | { readonly type: "exit"; readonly result: EnvironmentProcessResult }>;
+  terminateManagedSession(request: EnvironmentRequest, sessionId: string): Promise<void>;
+  closeManagedSessions?(): Promise<void>;
   reconcile(): Promise<readonly EnvironmentReconciliationResult[]>;
 }
 
@@ -201,6 +234,24 @@ export function createEnvironmentManager(
   };
   const interactiveSessions = new Map<string, InteractiveEntry>();
   const interactiveClientKeys = new Map<string, string>();
+  type ManagedSessionEntry = {
+    readonly identity: EnvironmentIdentity;
+    readonly session: EnvironmentManagedProcessSession;
+    readonly sessionId: string;
+    readonly clientKey?: string;
+    readonly command: readonly string[];
+    readonly processOptions: EnvironmentManagedSessionRequest;
+    events: EnvironmentManagedSessionOutputEvent[];
+    bufferedBytes: number;
+    sequence: number;
+    done: boolean;
+    attached: boolean;
+    wake?: () => void;
+    wakeSpace?: () => void;
+    result?: EnvironmentProcessResult;
+  };
+  const managedSessions = new Map<string, ManagedSessionEntry>();
+  const managedSessionClientKeys = new Map<string, string>();
   const MAX_INTERACTIVE_SESSIONS = 64;
   const MAX_INTERACTIVE_BUFFER_BYTES = 1_048_576;
   const MAX_INTERACTIVE_BUFFER_EVENTS = 4_096;
@@ -280,6 +331,15 @@ export function createEnvironmentManager(
       await backendCall("terminate interactive process", () => entry.session.terminate());
       interactiveSessions.delete(sessionId);
       if (entry.clientKey) interactiveClientKeys.delete(entry.clientKey);
+      entry.done = true;
+      entry.wake?.();
+      entry.wakeSpace?.();
+    }));
+    const managed = [...managedSessions.entries()].filter(([, entry]) => entry.identity.id === environmentId);
+    await Promise.all(managed.map(async ([sessionId, entry]) => {
+      await backendCall("terminate managed process session", () => entry.session.terminate());
+      managedSessions.delete(sessionId);
+      if (entry.clientKey) managedSessionClientKeys.delete(entry.clientKey);
       entry.done = true;
       entry.wake?.();
       entry.wakeSpace?.();
@@ -496,6 +556,146 @@ export function createEnvironmentManager(
     entry.wakeSpace?.();
   };
 
+  const resolveManagedSession = async (request: EnvironmentRequest, sessionId: string) => {
+    const expected = await identity(request);
+    const entry = managedSessions.get(sessionId);
+    if (!entry) throw new EnvironmentManagerError("ENVIRONMENT_NOT_FOUND", "Managed process session was not found");
+    if (entry.identity.id !== expected.id || entry.identity.ownerId !== expected.ownerId || entry.identity.workspaceId !== expected.workspaceId) {
+      throw new EnvironmentManagerError("OWNERSHIP_MISMATCH", "Managed process session belongs to another environment");
+    }
+    return entry;
+  };
+
+  const startManagedSession: EnvironmentManager["startManagedSession"] = async (request, command, process = {}) => {
+    if (!Array.isArray(command) || command.length === 0 || command.length > 256 || command.some((part) => typeof part !== "string" || !part || part.includes("\0"))) {
+      throw new EnvironmentManagerError("INVALID_REQUEST", "Managed session command must be a non-empty argv array without NUL bytes");
+    }
+    const processBackend = backend as EnvironmentBackend & Partial<EnvironmentManagedProcessSessionBackend>;
+    if (typeof processBackend.startManagedSession !== "function") throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment backend does not support managed process sessions");
+    const environment = await ensure(request);
+    if (environment.status !== "ready") throw new EnvironmentManagerError("BACKEND_FAILURE", "Managed environment is not ready for process sessions");
+    return withIdentityLock(environment.id, async () => {
+      const clientSessionId = process.clientSessionId?.trim();
+      if (clientSessionId !== undefined && (!clientSessionId || clientSessionId.length > 256 || clientSessionId.includes("\0"))) {
+        throw new EnvironmentManagerError("INVALID_REQUEST", "Managed client session ID is invalid");
+      }
+      const clientKey = clientSessionId === undefined ? undefined : `${environment.id}:${clientSessionId}`;
+      const previousId = clientKey === undefined ? undefined : managedSessionClientKeys.get(clientKey);
+      const previous = previousId === undefined ? undefined : managedSessions.get(previousId);
+      if (previous) {
+        const entries = (value: Readonly<Record<string, string>> | undefined) => Object.entries(value ?? {}).sort(([left], [right]) => left.localeCompare(right));
+        const sameOptions = JSON.stringify([previous.command, previous.processOptions.cwd ?? ".", entries(previous.processOptions.environment)]) ===
+          JSON.stringify([command, process.cwd ?? ".", entries(process.environment)]);
+        if (!sameOptions) throw new EnvironmentManagerError("OWNERSHIP_MISMATCH", "Client session key is already bound to a different process");
+        return { sessionId: previous.sessionId, outputSequence: previous.sequence };
+      }
+      if (managedSessions.size >= MAX_INTERACTIVE_SESSIONS) {
+        const completed = [...managedSessions.entries()].find(([, entry]) => entry.done);
+        if (!completed) throw new EnvironmentManagerError("BACKEND_FAILURE", "Managed process session capacity has been reached");
+        managedSessions.delete(completed[0]);
+        if (completed[1].clientKey) managedSessionClientKeys.delete(completed[1].clientKey);
+      }
+      const session = await backendCall("start managed process session", () => processBackend.startManagedSession!(environment, command, process));
+      const sessionId = randomUUID();
+      const entry: ManagedSessionEntry = {
+        identity: environment, session, sessionId,
+        ...(clientKey === undefined ? {} : { clientKey }),
+        command: [...command], processOptions: { ...process },
+        events: [], bufferedBytes: 0, sequence: 0, done: false, attached: false,
+      };
+      managedSessions.set(sessionId, entry);
+      if (clientKey) managedSessionClientKeys.set(clientKey, sessionId);
+      void (async () => {
+        try {
+          for await (const output of session.output) {
+            for (let offset = 0; offset < output.data.byteLength; offset += MAX_INTERACTIVE_BUFFER_BYTES) {
+              const data = output.data.slice(offset, offset + MAX_INTERACTIVE_BUFFER_BYTES);
+              while (!entry.done && (entry.bufferedBytes + data.byteLength > MAX_INTERACTIVE_BUFFER_BYTES || entry.events.length >= MAX_INTERACTIVE_BUFFER_EVENTS)) {
+                await new Promise<void>((resolve) => { entry.wakeSpace = resolve; });
+              }
+              if (entry.done) break;
+              entry.events.push({ type: "output", stream: output.stream, sequence: ++entry.sequence, data });
+              entry.bufferedBytes += data.byteLength;
+              entry.wake?.();
+              entry.wake = undefined;
+            }
+            if (entry.done) break;
+          }
+          if (!entry.done) entry.result = await session.result;
+        } catch {
+          try { await session.terminate(); } catch { /* Release process resources after output transport failure. */ }
+          entry.result = { exitCode: null, cancelled: true };
+        } finally {
+          entry.done = true;
+          entry.wake?.();
+          entry.wakeSpace?.();
+        }
+      })();
+      return { sessionId, outputSequence: 0 };
+    });
+  };
+
+  const writeManagedSession: EnvironmentManager["writeManagedSession"] = async (request, sessionId, data) => {
+    if (!(data instanceof Uint8Array) || data.byteLength > 65_536) throw new EnvironmentManagerError("INVALID_REQUEST", "Managed session input must be at most 64 KiB");
+    const { session } = await resolveManagedSession(request, sessionId);
+    await backendCall("write managed session input", () => session.write(data));
+  };
+
+  const attachManagedSessionOutput: EnvironmentManager["attachManagedSessionOutput"] = async function* (request, sessionId, afterSequence = 0) {
+    const entry = await resolveManagedSession(request, sessionId);
+    if (!Number.isSafeInteger(afterSequence) || afterSequence < 0 || afterSequence > entry.sequence) throw new EnvironmentManagerError("INVALID_REQUEST", "Managed session output cursor is invalid");
+    if (entry.attached) throw new EnvironmentManagerError("BACKEND_FAILURE", "Managed session output already has an attached reader");
+    entry.events = entry.events.filter((event) => event.sequence > afterSequence);
+    entry.bufferedBytes = entry.events.reduce((total, event) => total + event.data.byteLength, 0);
+    entry.wakeSpace?.();
+    entry.wakeSpace = undefined;
+    entry.attached = true;
+    let cursor = afterSequence;
+    try {
+      while (true) {
+        const next = entry.events.find((event) => event.sequence > cursor);
+        if (next) {
+          cursor = next.sequence;
+          yield next;
+          entry.events = entry.events.filter((event) => event.sequence > cursor);
+          entry.bufferedBytes = entry.events.reduce((total, event) => total + event.data.byteLength, 0);
+          entry.wakeSpace?.();
+          entry.wakeSpace = undefined;
+          continue;
+        }
+        if (entry.done) {
+          yield { type: "exit", result: entry.result ?? { exitCode: null, cancelled: true } };
+          return;
+        }
+        await new Promise<void>((resolve) => { entry.wake = resolve; });
+      }
+    } finally {
+      entry.attached = false;
+    }
+  };
+
+  const terminateManagedSession: EnvironmentManager["terminateManagedSession"] = async (request, sessionId) => {
+    const entry = await resolveManagedSession(request, sessionId);
+    await backendCall("terminate managed process session", () => entry.session.terminate());
+    managedSessions.delete(sessionId);
+    if (entry.clientKey) managedSessionClientKeys.delete(entry.clientKey);
+    entry.done = true;
+    entry.wake?.();
+    entry.wakeSpace?.();
+  };
+
+  const closeManagedSessions: EnvironmentManager["closeManagedSessions"] = async () => {
+    const entries = [...managedSessions.values()];
+    await Promise.all(entries.map(async (entry) => {
+      try { await entry.session.terminate(); } catch { /* Continue cleaning up other sessions. */ }
+      entry.done = true;
+      entry.wake?.();
+      entry.wakeSpace?.();
+    }));
+    managedSessions.clear();
+    managedSessionClientKeys.clear();
+  };
+
   const closeInteractiveSessions: EnvironmentManager["closeInteractiveSessions"] = async () => {
     const entries = [...interactiveSessions.values()];
     await Promise.all(entries.map(async (entry) => {
@@ -529,5 +729,5 @@ export function createEnvironmentManager(
     }));
   };
 
-  return { identity, ensure, start, stop, remove, execute, startInteractive, writeInteractive, resizeInteractive, attachInteractiveOutput, terminateInteractive, closeInteractiveSessions, reconcile };
+  return { identity, ensure, start, stop, remove, execute, startInteractive, writeInteractive, resizeInteractive, attachInteractiveOutput, terminateInteractive, closeInteractiveSessions, startManagedSession, writeManagedSession, attachManagedSessionOutput, terminateManagedSession, closeManagedSessions, reconcile };
 }

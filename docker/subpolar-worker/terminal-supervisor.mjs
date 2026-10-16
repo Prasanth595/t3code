@@ -29,7 +29,7 @@ async function terminate(token) {
   throw new Error("Terminal supervisor did not become available");
 }
 
-async function start(token, encodedRequest) {
+async function start(token, encodedRequest, pipeStdin) {
   const file = sessionFile(token);
   if (typeof encodedRequest !== "string" || encodedRequest.length > 1_500_000 || !/^[A-Za-z0-9_-]+$/.test(encodedRequest)) {
     throw new Error("Invalid terminal process request");
@@ -60,7 +60,7 @@ async function start(token, encodedRequest) {
     env: { ...process.env, ...environment },
     shell: false,
     detached: true,
-    stdio: "inherit",
+    stdio: pipeStdin ? ["pipe", "inherit", "inherit"] : "inherit",
     windowsHide: true,
   });
   let finished = false;
@@ -99,7 +99,10 @@ async function start(token, encodedRequest) {
   process.on("SIGTERM", () => stop("SIGTERM"));
   process.on("SIGHUP", () => stop("SIGTERM"));
   process.on("SIGQUIT", () => stop("SIGQUIT"));
-  process.stdin.once("end", () => stop("SIGTERM"));
+  if (pipeStdin) {
+    process.stdin.pipe(child.stdin);
+    process.stdin.once("end", () => stop("SIGTERM"));
+  }
   child.once("error", () => {
     exitCode = 1;
     void finish();
@@ -114,10 +117,11 @@ async function start(token, encodedRequest) {
   });
 }
 
-const [mode, token, encodedRequest] = process.argv.slice(2);
+const [mode, first, second, third] = process.argv.slice(2);
 try {
-  if (mode === "--terminate") await terminate(token ?? "");
-  else await start(mode ?? "", token ?? "");
+  if (mode === "--terminate") await terminate(first ?? "");
+  else if (mode === "--stdio") await start(first ?? "", second ?? "", true);
+  else await start(mode ?? "", first ?? "", false);
 } catch {
   process.exitCode = 1;
 }

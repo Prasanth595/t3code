@@ -12,7 +12,9 @@ import {
   type DockerContainerCreateOptions,
   type DockerContainerInspection,
   type DockerContainerProcessRequest,
+  type DockerContainerManagedSessionRequest,
 } from "../src/docker.ts";
+import type { EnvironmentManagedProcessSession } from "../src/index.ts";
 
 const tempRoots: string[] = [];
 
@@ -57,6 +59,7 @@ class FakeDockerClient implements DockerClient {
   readonly stopCalls: string[] = [];
   readonly removeCalls: string[] = [];
   readonly processCalls: Array<{ id: string; request: DockerContainerProcessRequest }> = [];
+  readonly managedSessionCalls: Array<{ id: string; request: DockerContainerManagedSessionRequest }> = [];
   wrongOwner = false;
 
   async inspectContainer(name: string) {
@@ -117,6 +120,16 @@ class FakeDockerClient implements DockerClient {
     return { processId: "exec-1", exitCode: 7, cancelled: request.signal?.aborted ?? false };
   }
 
+  async startManagedSessionContainer(id: string, request: DockerContainerManagedSessionRequest): Promise<EnvironmentManagedProcessSession> {
+    this.managedSessionCalls.push({ id, request });
+    return {
+      async write() {},
+      output: { async *[Symbol.asyncIterator]() {} },
+      result: Promise.resolve({ exitCode: null, cancelled: false }),
+      async terminate() {},
+    };
+  }
+
   private update(id: string, patch: Partial<DockerContainerInspection>) {
     for (const [name, container] of this.containers) {
       if (container.id === id) this.containers.set(name, { ...container, ...patch });
@@ -146,6 +159,25 @@ describe("Docker environment backend", () => {
       },
     });
     expect(output).toEqual(["stdout:hello"]);
+  });
+
+  test("starts non-TTY process sessions inside the verified mounted worktree", async () => {
+    const { backend, identity, client } = await fixture();
+    const ready = await backend.start(await backend.create(identity));
+    const session = await backend.startManagedSession(ready, ["node", "acp-server.js"], {
+      cwd: "packages", environment: { MODE: "stdio" }, clientSessionId: "thread-acp",
+    });
+    expect(client.managedSessionCalls[0]).toMatchObject({
+      id: ready.resourceId,
+      request: {
+        command: ["node", "acp-server.js"],
+        worktreeDirectory: "/workspaces/repo/worktree-a",
+        workingDirectory: "/workspaces/repo/worktree-a/packages",
+        environment: { MODE: "stdio" },
+      },
+    });
+    await expect(backend.startManagedSession({ ...ready, ownerId: "other-owner" }, ["node"], {})).rejects.toMatchObject({ code: "DOCKER_IDENTITY_MISMATCH" });
+    await session.terminate();
   });
 
   test("rejects process working directories that escape the worktree", async () => {

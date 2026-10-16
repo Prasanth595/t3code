@@ -8,6 +8,7 @@ import {
   type EnvironmentBackend,
   type EnvironmentIdentity,
   type EnvironmentInteractiveSession,
+  type EnvironmentManagedProcessSession,
   type ManagedEnvironment,
 } from "../src/index.ts";
 
@@ -218,6 +219,47 @@ describe("environment lifecycle coordinator", () => {
     expect(events.map((event) => event.type === "output" ? [event.sequence, event.data.byteLength] : [event.type])).toEqual([
       [1, 1_048_576], [2, 1], ["exit"],
     ]);
+  });
+
+  test("owns and resumes non-TTY sessions while preserving stdout and stderr", async () => {
+    const { request } = await fixture();
+    const backend = new FakeBackend();
+    let starts = 0;
+    let terminated = 0;
+    const sessionBackend = {
+      id: backend.id,
+      inspect: backend.inspect.bind(backend), create: backend.create.bind(backend),
+      start: backend.start.bind(backend), stop: backend.stop.bind(backend), remove: backend.remove.bind(backend),
+      startManagedSession: async (): Promise<EnvironmentManagedProcessSession> => {
+        starts += 1;
+        return {
+          async write() {},
+          output: { async *[Symbol.asyncIterator]() {
+            yield { stream: "stdout" as const, data: Buffer.from("jsonrpc") };
+            yield { stream: "stderr" as const, data: Buffer.from("diagnostic") };
+          } },
+          result: Promise.resolve({ exitCode: 0, cancelled: false }),
+          async terminate() { terminated += 1; },
+        };
+      },
+    };
+    const manager = createEnvironmentManager(sessionBackend);
+    const started = await manager.startManagedSession(request, ["node", "acp-server.js"], { clientSessionId: "thread-acp" });
+    const reconnected = await manager.startManagedSession(request, ["node", "acp-server.js"], { clientSessionId: "thread-acp" });
+    expect(reconnected.sessionId).toBe(started.sessionId);
+    expect(starts).toBe(1);
+
+    const events = [];
+    for await (const event of manager.attachManagedSessionOutput(request, started.sessionId)) events.push(event);
+    expect(events).toEqual([
+      { type: "output", sequence: 1, stream: "stdout", data: Buffer.from("jsonrpc") },
+      { type: "output", sequence: 2, stream: "stderr", data: Buffer.from("diagnostic") },
+      { type: "exit", result: { exitCode: 0, cancelled: false } },
+    ]);
+    await expect(manager.writeManagedSession({ ...request, ownerId: "other-owner" }, started.sessionId, Buffer.from("x")))
+      .rejects.toMatchObject({ code: "OWNERSHIP_MISMATCH" });
+    await manager.terminateManagedSession(request, started.sessionId);
+    expect(terminated).toBe(1);
   });
 
   test("rejects lexical and symlink escapes from the configured storage root", async () => {

@@ -29,14 +29,16 @@ async function waitForOutput(child: ChildProcess, marker: string): Promise<strin
   });
 }
 
-async function startSupervisor(directory: string, command: string[]) {
+async function startSupervisor(directory: string, command: string[], stdioMode = false) {
   const request = Buffer.from(JSON.stringify({
     command,
     worktreeDirectory: directory,
     workingDirectory: directory,
     environment: {},
   })).toString("base64url");
-  const child = spawn(process.execPath, [supervisorPath, randomUUID(), request], {
+  const token = randomUUID();
+  const args = stdioMode ? [supervisorPath, "--stdio", token, request] : [supervisorPath, token, request];
+  const child = spawn(process.execPath, args, {
     cwd: directory,
     shell: false,
     stdio: ["pipe", "pipe", "pipe"],
@@ -97,6 +99,40 @@ test("kills the complete process group when the terminal supervisor exits", asyn
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     expect((await Promise.all(pids.map(readProcessState))).every((state) => state === undefined || state === "Z")).toBe(true);
+  } finally {
+    if (child.exitCode === null) child.kill("SIGKILL");
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("treats non-TTY stdin EOF as cancellation and escalates an ignoring child", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "subpolar-terminal-eof-"));
+  const pidFile = path.join(directory, "pid");
+  const child = await startSupervisor(directory, [process.execPath, "-e", `
+    const fs = require("node:fs");
+    process.stdin.on("data", chunk => process.stdout.write("forwarded:" + chunk));
+    process.on("SIGTERM", () => {});
+    fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+    process.stdout.write("eof-ready\\n");
+    setInterval(() => {}, 1000);
+  `], true);
+  try {
+    await waitForOutput(child, "eof-ready");
+    const pid = Number(await readFile(pidFile, "utf8"));
+    child.stdin?.write("protocol-bytes\n");
+    await waitForOutput(child, "forwarded:protocol-bytes\n");
+    child.stdin?.end();
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Supervisor did not clean up after stdin EOF")), 5_000);
+      child.once("close", () => { clearTimeout(timeout); resolve(); });
+    });
+    const deadline = Date.now() + 2_000;
+    let state = await readProcessState(pid);
+    while (Date.now() < deadline && state !== undefined && state !== "Z") {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      state = await readProcessState(pid);
+    }
+    expect(state === undefined || state === "Z").toBe(true);
   } finally {
     if (child.exitCode === null) child.kill("SIGKILL");
     await rm(directory, { recursive: true, force: true });
