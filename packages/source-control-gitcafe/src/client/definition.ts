@@ -1,9 +1,11 @@
-/**
- * GitCafe's client definition. Browser- and React Native-safe.
- *
- * @module source-control-gitcafe/client/definition
- */
-import { SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  makeProviderSettingsSchema,
+  secretSetting,
+  SourceControlProviderKind,
+  TrimmedString,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import {
   defineSourceControlClient,
   isChangeRequestInProjectRepository,
@@ -16,6 +18,20 @@ const GITCAFE_HOSTS = new Set(["git.cafe", "staging.git.cafe"]);
 
 const KIND = SourceControlProviderKind.make("gitcafe");
 
+export const settings = makeProviderSettingsSchema({
+  token: TrimmedString.pipe(
+    secretSetting,
+    Schema.withDecodingDefault(Effect.succeed("")),
+    Schema.annotateKey({
+      title: "Token",
+      description:
+        "A git.cafe token, used before CAFE_TOKEN and the cafe login, so GitCafe works without the CLI signed in.",
+      providerSettingsForm: { control: "password" },
+    }),
+  ),
+});
+export type GitCafeSettings = typeof settings.Type;
+
 export const definition = defineSourceControlClient({
   kind: KIND,
   label: "GitCafe",
@@ -23,8 +39,6 @@ export const definition = defineSourceControlClient({
   icon: "gitcafe",
   changeRequest: { shortLabel: "PR", singular: "pull request" },
   repositoryPathHint: "owner/repo",
-  // Left unattributed so a reference with no repository identity behind it gets no checkout
-  // command guessed from its hostname alone.
   publicHost: null,
   publishDescription: "git.cafe",
   publishHost: () => "git.cafe",
@@ -45,7 +59,6 @@ export const definition = defineSourceControlClient({
   referenceAutolinkRepositoryUrl: () => null,
   reviewSummaryRequired: () => false,
   // `/pulls/` is Forgejo's shape too, so only GitCafe's own hosts claim it.
-  // `cafe pr checkout` and git.cafe URLs were never accepted in reference fields.
   checkoutCommandArgument: () => null,
   isChangeRequestReference: () => false,
   changeRequestUrlHost: (url) => url.hostname,
@@ -64,4 +77,5 @@ export const definition = defineSourceControlClient({
       return false;
     }
   },
+  settings,
 });

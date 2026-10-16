@@ -1,9 +1,14 @@
-/**
- * GitHub's client definition. Browser- and React Native-safe.
- *
- * @module source-control-github/client/definition
- */
-import { pullRequestHostOf, SourceControlProviderKind } from "@t3tools/contracts";
+import {
+  GitHubHost,
+  makeProviderSettingsSchema,
+  secretSetting,
+  pullRequestHostOf,
+  SourceControlProviderKind,
+  TrimmedNonEmptyString,
+  TrimmedString,
+} from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import {
   defineSourceControlClient,
   isChangeRequestInProjectRepository,
@@ -16,6 +21,25 @@ const CHANGE_REQUEST_REFERENCE =
   /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/(\d+)(?:[/?#].*)?$/i;
 
 const KIND = SourceControlProviderKind.make("github");
+
+export const GitHubHostChoice = Schema.Struct({
+  account: Schema.optionalKey(TrimmedNonEmptyString),
+  enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+});
+export type GitHubHostChoice = typeof GitHubHostChoice.Type;
+
+export const settings = makeProviderSettingsSchema({
+  hosts: Schema.Record(GitHubHost, GitHubHostChoice).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+  tokens: Schema.Record(GitHubHost, TrimmedString).pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+    secretSetting,
+    Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+  ),
+});
+export type GitHubSettings = typeof settings.Type;
 
 export const definition = defineSourceControlClient({
   kind: KIND,
@@ -37,6 +61,7 @@ export const definition = defineSourceControlClient({
     "draft",
     "close",
     "reopen",
+    "delete-branch",
     "update-branch",
     "enable-auto-merge",
     "disable-auto-merge",
@@ -53,11 +78,11 @@ export const definition = defineSourceControlClient({
   checkoutCommandArgument: (input) => CHECKOUT_COMMAND.exec(input)?.[1]?.trim() ?? null,
   isChangeRequestReference: (url) => CHANGE_REQUEST_REFERENCE.test(url),
   changeRequestUrlHost: (url) => url.hostname,
-  // A GitHub web host is the checkout's own host, Enterprise installs included.
   checkoutChangeRequestHost: (identity) => pullRequestHostOf(identity, KIND),
   isChangeRequestInRepository: (identity, link) =>
     isChangeRequestInProjectRepository(KIND, identity, link),
   canReadChangeRequestOnHost: (identity, link) =>
     isChangeRequestOnProjectHost(KIND, identity, link),
   isChangeRequestUrl: (url) => isChangeRequestPath(url, "/pull/"),
+  settings,
 });
