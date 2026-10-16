@@ -1113,7 +1113,7 @@ describe("the gate in the background", () => {
   } satisfies MachineConfig;
   const backgroundRepo: Repo = {
     watched: background.repos[0]!,
-    project: timeLimitOnlyProjectConfig(),
+    project: { ...timeLimitOnlyProjectConfig(), base: "main" },
     trackerUser: "rawphp",
   };
 
