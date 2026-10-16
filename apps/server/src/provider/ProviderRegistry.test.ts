@@ -589,6 +589,58 @@ it.layer(
     );
 
     it.effect(
+      "reads `--version` when the app-server exits so the compatibility advisory runs",
+      () => {
+        const spawner = recordingMockSpawnerLayer(() => ({
+          stdout: "codex-cli 0.128.0\n",
+          stderr: "",
+          code: 0,
+        }));
+        return Effect.gen(function* () {
+          const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+            Effect.fail(new CodexErrors.CodexAppServerProcessExitedError({ code: 1 })),
+          );
+
+          assert.deepStrictEqual(
+            spawner.commands.map((command) => command.args),
+            [["--version"]],
+          );
+          assert.strictEqual(status.status, "error");
+          assert.strictEqual(status.installed, true);
+          assert.strictEqual(status.version, "0.128.0");
+          assert.strictEqual(
+            status.message,
+            "Codex app-server provider probe failed: Codex App Server process exited with code 1.",
+          );
+          const withAdvisory = withBundledCompatibility({
+            ...status,
+            instanceId: ProviderInstanceId.make("codex"),
+            driver: ProviderDriverKind.make("codex"),
+          });
+          assert.strictEqual(withAdvisory.compatibilityAdvisory?.status, "broken");
+        }).pipe(Effect.provide(spawner.layer));
+      },
+    );
+
+    it.effect("keeps the probe failure when `--version` also fails", () =>
+      Effect.gen(function* () {
+        const status = yield* checkCodexProviderStatus(defaultCodexSettings, () =>
+          Effect.fail(new CodexErrors.CodexAppServerProcessExitedError({ code: 1 })),
+        );
+
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.installed, true);
+        assert.strictEqual(status.version, null);
+        assert.strictEqual(
+          status.message,
+          "Codex app-server provider probe failed: Codex App Server process exited with code 1.",
+        );
+      }).pipe(
+        Effect.provide(layerMockSpawner(() => ({ stdout: "", stderr: "unknown flag", code: 2 }))),
+      ),
+    );
+
+    it.effect(
       "does not time out a healthy probe slower than the shared 10s auth-probe timeout (#7513)",
       () =>
         Effect.gen(function* () {

@@ -38,7 +38,10 @@ import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts
 import {
   buildServerProvider,
   COMPACT_SLASH_COMMAND,
+  DEFAULT_TIMEOUT_MS,
+  parseGenericCliVersion,
   providerModelsFromSettings,
+  spawnAndCollect,
   type ServerProviderDraft,
 } from "@t3tools/provider-core/server/snapshotProbe";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -611,6 +614,30 @@ function accountProbeStatus({ account, rateLimits }: CodexAppServerProviderSnaps
   return { status: "ready", auth };
 }
 
+// A Codex CLI too old for this T3 Code release can fail the app-server handshake before
+// `initialize` reports its userAgent. `--version` still identifies it, so the compatibility
+// advisory can explain the failure instead of leaving only the raw probe error.
+const readCodexCliVersion = (binaryPath: string, environment: NodeJS.ProcessEnv) =>
+  Effect.gen(function* () {
+    const spawnCommand = yield* resolveSpawnCommand(binaryPath, ["--version"], {
+      env: environment,
+      extendEnv: true,
+    });
+    const result = yield* spawnAndCollect(
+      binaryPath,
+      ChildProcess.make(spawnCommand.command, spawnCommand.args, {
+        env: environment,
+        extendEnv: true,
+        shell: spawnCommand.shell,
+      }),
+    );
+    return result.code === 0 ? parseGenericCliVersion(result.stdout) : null;
+  }).pipe(
+    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.map(Option.getOrNull),
+    Effect.orElseSucceed(() => null),
+  );
+
 export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(function* (
   codexSettings: CodexSettings,
   probe: (input: {
@@ -671,6 +698,9 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   if (Result.isFailure(probeResult)) {
     const error = probeResult.failure;
     const installed = !isCodexAppServerSpawnError(error);
+    const version = installed
+      ? yield* readCodexCliVersion(codexSettings.binaryPath, resolvedEnvironment)
+      : null;
     return buildServerProvider({
       presentation: CODEX_PRESENTATION,
       enabled: codexSettings.enabled,
@@ -679,7 +709,7 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
       skills: [],
       probe: {
         installed,
-        version: null,
+        version,
         status: "error",
         auth: { status: "unknown" },
         message: installed
