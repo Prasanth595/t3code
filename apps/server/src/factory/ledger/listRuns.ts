@@ -5,8 +5,8 @@ import * as NodePath from "node:path";
 import type { State } from "../domain/lifecycle.ts";
 import { readProgress } from "../runner/progress.ts";
 import { errnoCode, LedgerIoError } from "./errors.ts";
-import { readRun } from "./read.ts";
-import { asciiLower, RUNS_DIR, runIdFromFileName, type RunId } from "./runId.ts";
+import { lastLineIsFinished, readRun } from "./read.ts";
+import { asciiLower, RUNS_DIR, runIdFromFileName, runPath, type RunId } from "./runId.ts";
 
 /** One unfinished run as the pass sees it: its id, its last state, and whether its file could be read. */
 export interface RunInfo {
@@ -25,19 +25,26 @@ export interface RunInfo {
    * sent. False for a file that cannot be read.
    */
   readonly session: boolean;
+  /**
+   * The session reported its pull request since the run last entered `building`: its work is
+   * done and waits for the gate. False for a file that cannot be read.
+   */
+  readonly prReported: boolean;
 }
 
 /**
  * Whether a run holds one of the machine's `max_concurrent_runs` slots: it is not finished, it is
- * not waiting on a pull request, and it is confirmed. A run in `pr-open` has no session to hold,
- * and an unconfirmed run never gets one, so both are left out. A run whose file cannot be read
- * counts. The caller has already left out finished runs.
+ * not waiting on a pull request, and it is confirmed. A run in `pr-open`, or one whose session
+ * reported its pull request and waits for the gate, has no session at work, and an unconfirmed
+ * run never gets one, so all three are left out. A run whose file cannot be read counts. The
+ * caller has already left out finished runs.
  */
 export const holdsSlot = (run: RunInfo): boolean =>
-  run.unreadable || (run.confirmed && run.state !== "pr-open");
+  run.unreadable || (run.confirmed && run.state !== "pr-open" && !run.prReported);
 
 /**
- * Every run under `<dir>/runs/` that is not finished, oldest first by the first line's time; with
+ * Every run under `<dir>/runs/` that is not finished (a file whose last line is `finished` is
+ * skipped by reading only its tail), oldest first by the first line's time; with
  * `only`, the runs of that one issue, and no other file is read. Files that are not named like a
  * run are ignored, and a missing runs directory is an empty list. A run file that cannot be read
  * is still listed, flagged `unreadable`, so one bad file does not hide the others. A run with no
@@ -68,15 +75,30 @@ export const listUnfinishedRuns = (
     let firstMs: number | null = null;
     let info: RunInfo;
     try {
+      if (lastLineIsFinished(runPath(dataDir, id))) continue;
       const record = readRun(dataDir, id);
       firstMs = record.entries[0]?.ms ?? null;
       const seen = readProgress(record.entries);
       if (seen.finished) continue;
       const confirmed = seen.approvedAt !== null || seen.threadId !== null;
       const session = seen.threadId !== null || seen.launchSent;
-      info = { id, state: seen.state, unreadable: false, confirmed, session };
+      info = {
+        id,
+        state: seen.state,
+        unreadable: false,
+        confirmed,
+        session,
+        prReported: seen.prReported,
+      };
     } catch {
-      info = { id, state: null, unreadable: true, confirmed: false, session: false };
+      info = {
+        id,
+        state: null,
+        unreadable: true,
+        confirmed: false,
+        session: false,
+        prReported: false,
+      };
     }
     const rank = info.unreadable ? 2 : firstMs === null ? 1 : 0;
     runs.push({ firstMs, info, rank });

@@ -53,7 +53,7 @@ import {
   sessionMayExistNote,
 } from "./messages.ts";
 import { APPROVAL_RECHECKED, LAUNCH_SENDING, readProgress, type Seen } from "./progress.ts";
-import { describe, finishBuilding, goStuck, type Progress } from "./run.ts";
+import { describe, finishBuilding, goStuck, progressFrom } from "./run.ts";
 
 /**
  * What the claim asks of the tracker: the subset of `makeGitHub` it calls, with the process
@@ -483,14 +483,7 @@ const begin = (
         out.append({ event: "state_changed", data: { from: "ready", to: claimed.next } }, claim),
       );
     }
-    const at: Progress = {
-      step: "start",
-      state: seen.state ?? claimed.next,
-      threadId: seen.threadId,
-      worktree: seen.worktree,
-      worktreeDone: seen.worktreeDone,
-      seen,
-    };
+    const at = progressFrom("start", seen, claimed.next);
     // A decision to give up that is already in the ledger stands.
     if (seen.stuck !== null) {
       yield* goStuck(ctx, issue, out, at, "stuck-resumed", { reason: seen.stuck });
@@ -545,7 +538,7 @@ const begin = (
         ),
       );
     }
-    if (at.state !== "building") yield* finishBuilding(ctx, issue, out, at, threadId);
+    if (at.state !== "building") yield* finishBuilding(ctx, issue, out, at);
     return { kind: "started", run, threadId };
   });
 

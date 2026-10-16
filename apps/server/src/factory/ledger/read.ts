@@ -152,3 +152,60 @@ export const readRun = (dataDir: string, id: RunId): RunRecord => {
   const bytes = readRunBytes(runPath(dataDir, id));
   return { id, ...parseLines(bytes) };
 };
+
+/** How much of a file's end `lastLineIsFinished` reads; a `finished` line is a few hundred bytes. */
+const TAIL_BYTES = 8192;
+
+/**
+ * Whether the last complete line of a run file is a valid `finished` event, read from at most
+ * `TAIL_BYTES` at the end of the file. `finish` writes that line last, so a run for which this is
+ * true is over without parsing the rest. Answers false for anything it cannot be sure of: a cut-off
+ * last line, a last line that is not a valid entry, or one longer than the tail. Never fails on
+ * content; IO errors map as `readRun` maps them.
+ */
+export const lastLineIsFinished = (path: string): boolean => {
+  requireRegularFile(path);
+  let tail: Buffer;
+  let fromStart: boolean;
+  try {
+    const fd = NodeFS.openSync(path, NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW);
+    try {
+      const size = NodeFS.fstatSync(fd).size;
+      const offset = Math.max(0, size - TAIL_BYTES);
+      tail = Buffer.alloc(size - offset);
+      let filled = 0;
+      while (filled < tail.length) {
+        const n = NodeFS.readSync(fd, tail, filled, tail.length - filled, offset + filled);
+        if (n === 0) break;
+        filled += n;
+      }
+      tail = tail.subarray(0, filled);
+      fromStart = offset === 0;
+    } finally {
+      NodeFS.closeSync(fd);
+    }
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") throw new LedgerNotFoundError({ path });
+    throw new LedgerIoError({ path, cause: error });
+  }
+
+  // Bytes after the last newline are a write that was cut off, as `parseLines` reads them.
+  let end = tail.lastIndexOf(NEWLINE) + 1;
+  if (end === 0 || !isBlankLine(tail.subarray(end))) return false;
+  // Step back over blank lines to the last line that holds something.
+  for (;;) {
+    const lineEnd = end - 1;
+    // A negative offset would count from the end of the buffer, so the first line has no earlier one.
+    const start = lineEnd === 0 ? 0 : tail.lastIndexOf(NEWLINE, lineEnd - 1) + 1;
+    const line = tail.subarray(start, lineEnd);
+    if (isBlankLine(line)) {
+      if (start === 0) return false;
+      end = start;
+      continue;
+    }
+    // A line that starts the chunk of a longer file may have begun before it.
+    if (start === 0 && !fromStart) return false;
+    const object = decodeLine(line);
+    return object !== null && lineHead(object)?.event === "finished";
+  }
+};

@@ -16,6 +16,7 @@ import { Ledger } from "./ledger/ledger.ts";
 import { readRun } from "./ledger/read.ts";
 import { runIdToString, validateRunId, type RunId } from "./ledger/runId.ts";
 import { FactoryProcess, type RunInput, type RunResult, type RunSpawnError } from "./process.ts";
+import { sanitize } from "./text.ts";
 
 /**
  * The gate: a fresh checkout of a pull request's head merged with the base branch tip, the
@@ -134,31 +135,6 @@ export class GateRecordError extends Schema.TaggedError<GateRecordError>()("Gate
 export type GateError = WorkspaceError | GateCommandSpawnError | GateRecordError | LedgerError;
 
 // ---- text -----------------------------------------------------------------------------------
-
-const isControl = (cp: number) => cp <= 0x1f || (cp >= 0x7f && cp <= 0x9f);
-
-/** Characters that could fake a line break or hide text, besides the control characters. */
-const isInvisibleOrSeparator = (cp: number) =>
-  cp === 0x2028 ||
-  cp === 0x2029 ||
-  (cp >= 0x200b && cp <= 0x200f) ||
-  (cp >= 0x202a && cp <= 0x202e) ||
-  (cp >= 0x2066 && cp <= 0x2069) ||
-  cp === 0xfeff;
-
-/**
- * Replace what could fake a line break, hide text or drive a terminal with a space. Newline and
- * tab are kept only when `keepLayout` is set.
- */
-export const sanitize = (text: string, keepLayout: boolean): string => {
-  let out = "";
-  for (const char of text) {
-    const cp = char.codePointAt(0)!;
-    const layout = char === "\n" || char === "\t";
-    out += (isControl(cp) && !(keepLayout && layout)) || isInvisibleOrSeparator(cp) ? " " : char;
-  }
-  return out;
-};
 
 /** The command as one short line: sanitised, newlines and tabs turned into spaces, cut at 300 characters. */
 const commandLine = (command: string): string => {
