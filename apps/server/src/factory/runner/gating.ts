@@ -1,8 +1,9 @@
 /**
  * The gate of a building run, ported from softfac's `runner/gating.rs` `gate`: a fresh checkout
  * of the pull request's head merged with the base tip, the project's commands in it, and the
- * decision that follows. Required checks (#26) and the re-gate of a `pr-open` pull request (#23)
- * belong to later issues. The checkout, the commands and the removal are `FactoryGate`'s
+ * decision that follows, and the wait for the project's required CI checks before the pull
+ * request is marked ready. The re-gate of a `pr-open` pull request (#23) belongs to a later
+ * issue. The checkout, the commands and the removal are `FactoryGate`'s
  * (`gate.ts`), which also writes the attempt's `gate_checkout` and `gate_command` lines; this
  * module decides what they mean.
  *
@@ -28,7 +29,7 @@ import { makeCause } from "../ledger/events.ts";
 import { readRun } from "../ledger/read.ts";
 import { asciiLower, runIdToString, type RunId } from "../ledger/runId.ts";
 import { isCommitId, sanitize } from "../text.ts";
-import type { BoundGitHub } from "../tracker/github.ts";
+import type { BoundGitHub, CheckStatus } from "../tracker/github.ts";
 import {
   WrongRepoError,
   append,
@@ -44,9 +45,11 @@ import {
 } from "./building.ts";
 import {
   BASE_KEPT_MOVING,
+  CHECKS_HEAD_MOVED,
   END_WITH_DONE,
   STOPPED_BY_HAND,
   THREAD_GONE,
+  checksFailureMessage,
   failureMessage,
   howItEnded,
   mergeConflictMessage,
@@ -79,7 +82,8 @@ export { mergeConflictMessage } from "./messages.ts";
 
 /** What the gate asks of the factory besides what a building run asks: the base tip, who marked a pull request ready, and the gate itself. */
 export interface GateContext extends BuildingContext {
-  readonly tracker: BuildingContext["tracker"] & Pick<BoundGitHub, "branchTip" | "readyBy">;
+  readonly tracker: BuildingContext["tracker"] &
+    Pick<BoundGitHub, "branchTip" | "readyBy" | "checks">;
   readonly gate: Pick<FactoryGate["Service"], "run">;
   readonly maxConcurrentGates: number;
   readonly gateOptions?: GateOptions;
@@ -122,6 +126,11 @@ export type GateStep =
   | { readonly kind: "abandoned" }
   /** This run has a gate running already: its lock is held. */
   | { readonly kind: "running" }
+  /**
+   * Every command passed and the project names required checks that have not all finished on the
+   * commit that was gated. Nothing is marked ready; the next call reads them again.
+   */
+  | { readonly kind: "checks-pending" }
   /** `max_concurrent_gates` gates run already; the next call tries again. */
   | { readonly kind: "queued"; readonly running: number; readonly max: number };
 
@@ -190,6 +199,160 @@ const finishPass = (
     return { kind: "passed", pr } as const;
   });
 
+/** Whether the checks the project names still have to be decided for the pass on `sha`. */
+const checksWanted = (ctx: GateContext, seen: Seen, sha: string): boolean =>
+  ctx.project.requiredChecks.length > 0 && seen.checksPassed !== sha;
+
+/**
+ * Sends a failed attempt (`ordinal` is that of the session run it was gated on) back into the
+ * session under the command id `softfac:<run>:gate:<attempt>:<ordinal>`, and records that it
+ * went. The `gate-sending` step comes first: with it a later call knows which run this attempt
+ * was gated on. `why` is the reason of the lines the send writes.
+ */
+const sendBack = (
+  ctx: GateContext,
+  out: Out,
+  run: RunId,
+  seen: Seen,
+  at: Progress,
+  attempt: number,
+  ordinal: number,
+  text: string,
+  why: string,
+): Effect.Effect<GateStep, GateStepError> =>
+  Effect.gen(function* () {
+    const issue = Number(run.issue);
+    if (
+      seen.sending === null ||
+      seen.sending.attempt !== attempt ||
+      seen.sending.runOrdinal !== ordinal
+    ) {
+      yield* append(
+        out,
+        { event: "step_changed", data: { step: `${GATE_SENDING} ${attempt} ${ordinal}` } },
+        "gate",
+        "gate-sending",
+        { attempt },
+      );
+    }
+    const failed = yield* Effect.fromResult(
+      transition("building", { kind: "gate-failed", output: `${END_WITH_DONE}\n\n${text}` }),
+    );
+    // The id holds the ordinal: a retry before the session ran again is the same command, and
+    // a send after a newer run is a new one even if T3 dedupes by id.
+    const commandId = `softfac:${runIdToString(run)}:gate:${attempt}:${ordinal}`;
+    yield* applyActions(ctx, issue, yield* out.open, at, failed.actions, makeCause("gate", why), {
+      send: { commandId, attempt, runOrdinal: ordinal },
+    });
+    return { kind: "sent-back", attempt } as const;
+  });
+
+/**
+ * What is left of a passing gate when the project names required checks: they must all have
+ * passed on the commit that was gated before the pull request is marked ready.
+ *
+ * A failure that was sent but never recorded (`gate-sending` with no `gate_sent_back`) is
+ * checked first: when the session has run again since, the send did reach it, and the missing
+ * line is written whatever the pull request looks like now. Then the pull request is read: one
+ * that is no longer open gets nothing marked ready, as for any recorded pass, and one whose head
+ * is not the gated commit goes `stuck`, because no check on another commit says anything about
+ * this pass. Then the checks are read for the gated commit. All passed: the read is recorded
+ * (`checks_read`, the decision) and the pass is finished. One failed, even while others are
+ * pending: the read is recorded and the failure goes back into the session like a gate failure,
+ * using the pass's attempt (the last one goes `stuck`); the pass is then void, and a new run is
+ * gated afresh. Pending or missing: `checks-pending` and nothing is written, until
+ * `limits.checks_minutes` after the pass, when the read is recorded and the issue goes `stuck`
+ * with a fixed reason (a check that never appeared has its own).
+ */
+const awaitChecks = (
+  ctx: GateContext,
+  out: Out,
+  run: RunId,
+  seen: Seen,
+  at: Progress,
+  pass: PassRecord,
+  gating: { readonly threadId: string; readonly pr: number },
+): Effect.Effect<GateStep, GateStepError> =>
+  Effect.gen(function* () {
+    const { threadId, pr } = gating;
+    const issue = Number(run.issue);
+    const attempt = pass.attempt;
+    const stuck = (code: string, stop: Stop) => stuckWith(ctx, out, issue, at, code, stop);
+    if (
+      seen.sending !== null &&
+      seen.sending.attempt === attempt &&
+      !seen.sentBackAttempts.has(attempt)
+    ) {
+      const status = yield* threadStatus(ctx, threadId);
+      if (status === null) return yield* stuck("thread-gone", { reason: THREAD_GONE });
+      if (status.runOrdinal !== null && status.runOrdinal > seen.sending.runOrdinal) {
+        yield* append(
+          out,
+          { event: "gate_sent_back", data: { attempt, run_ordinal: seen.sending.runOrdinal } },
+          "gate",
+          "gate-send-recovered",
+          { attempt },
+        );
+        return { kind: "sent-back", attempt } as const;
+      }
+    }
+    const pull = yield* ctx.tracker.pullRequest(pr);
+    if (pull === null || !pull.open) return yield* finishPass(ctx, out, issue, at, pass, pr, false);
+    if (pull.headSha.toLowerCase() !== pass.sha) {
+      return yield* stuck("checks-head-moved", { reason: CHECKS_HEAD_MOVED });
+    }
+    const checks = yield* ctx.tracker.checks(pass.sha, ctx.project.requiredChecks);
+    const read = {
+      event: "checks_read",
+      data: { sha: pass.sha, checks: checks.map((c) => ({ name: c.name, state: c.state })) },
+    } as const;
+    const failed: ReadonlyArray<CheckStatus> = checks.filter((c) => c.state === "failed");
+    if (failed.length > 0) {
+      const status = yield* threadStatus(ctx, threadId);
+      if (status === null) return yield* stuck("thread-gone", { reason: THREAD_GONE });
+      // Without an ordinal the run cannot be told from another one, and a failure is not sent
+      // into a run that is still going: nothing is decided, and the session is what is waited
+      // for, not the checks.
+      if (status.runOrdinal === null) return NOT_READY;
+      if (sessionBusy(seen, status)) return NOT_READY;
+      yield* append(out, read, "gate", "required-checks-failed", { attempt });
+      const message = checksFailureMessage(pass.sha, failed);
+      const since = attemptsSincePass(seen, attempt);
+      if (since > ctx.project.limits.gateRetries) {
+        const sessionText = prepareOutputTail(message);
+        return yield* stuck("checks-retries-used-up", {
+          reason: `the required checks failed after ${attempts(since)}`,
+          ...(sessionText !== "" && { sessionText }),
+        });
+      }
+      return yield* sendBack(
+        ctx,
+        out,
+        run,
+        seen,
+        at,
+        attempt,
+        status.runOrdinal,
+        message,
+        "required-checks-failed",
+      );
+    }
+    if (checks.every((c) => c.state === "passed")) {
+      yield* append(out, read, "gate", "required-checks-read", { attempt });
+      return yield* finishPass(ctx, out, issue, at, pass, pr, true);
+    }
+    const minutes = ctx.project.limits.checksMinutes;
+    const waited = ctx.clock() - pass.atMs;
+    if (waited >= minutes * 60_000) {
+      yield* append(out, read, "gate", "checks-timed-out", { attempt });
+      const reason = checks.some((c) => c.state === "missing")
+        ? `a required check was not reported within ${minutes} minutes`
+        : `the required checks did not finish within ${minutes} minutes`;
+      return yield* stuck("checks-timed-out", { reason });
+    }
+    return { kind: "checks-pending" } as const;
+  });
+
 /**
  * Runs the project's provision and gate commands in a fresh checkout of the pull request's head
  * and decides, from their exit codes and nobody's word, whether the build passed. Call it with a
@@ -219,6 +382,12 @@ const finishPass = (
  * finished, `state_changed` is the commit marker and is written last, a posted results comment
  * is skipped when the ledger records it, and marking the pull request ready is safe to repeat.
  * An attempt that died before the step is run again under the same number.
+ *
+ * When the project names `required_checks`, the pass is not finished at once: the pull request
+ * stays a draft until every named check has passed on the commit that was gated (`awaitChecks`).
+ * Until then the answer is `checks-pending` and each call reads the checks again, with no
+ * checkout and no command, up to `limits.checks_minutes` after the pass. A failed check goes
+ * back into the session as a failed attempt.
  *
  * A failure (a command, a provision command or a conflict) puts a pull request someone else took
  * out of draft back to draft, then goes into the session with `END_WITH_DONE` in front, under the
@@ -273,6 +442,9 @@ export const gate = (ctx: GateContext, run: RunId): Effect.Effect<GateStep, Gate
       // made, no command is run, and neither the session nor the pull request's binding is
       // looked at again; a pull request that is no longer open gets nothing posted on it.
       if (seen.pass !== null) {
+        if (checksWanted(ctx, seen, seen.pass.sha)) {
+          return yield* awaitChecks(ctx, out, run, seen, at, seen.pass, { threadId, pr: last.pr });
+        }
         const pull = yield* ctx.tracker.pullRequest(last.pr);
         const stillOpen = pull !== null && pull.open;
         return yield* finishPass(ctx, out, issue, at, seen.pass, last.pr, stillOpen);
@@ -471,6 +643,9 @@ const gateAttempts = (
           yield* endRun(ctx, yield* out.open, at, prUrl, pullNow, "gate");
           return { kind: "ended" } as const;
         }
+        if (checksWanted(ctx, seen, pass.sha)) {
+          return yield* awaitChecks(ctx, out, run, seen, at, pass, { threadId, pr });
+        }
         return yield* finishPass(ctx, out, issue, at, pass, pr, true);
       }
 
@@ -511,35 +686,6 @@ const gateAttempts = (
         };
         return yield* stuck("gate-retries-used-up", stop);
       }
-      // The step comes first: with it a later call knows which run this attempt was gated on.
-      if (
-        seen.sending === null ||
-        seen.sending.attempt !== attempt ||
-        seen.sending.runOrdinal !== ordinal
-      ) {
-        yield* append(
-          out,
-          { event: "step_changed", data: { step: `${GATE_SENDING} ${attempt} ${ordinal}` } },
-          "gate",
-          "gate-sending",
-          { attempt },
-        );
-      }
-      const failed = yield* Effect.fromResult(
-        transition("building", { kind: "gate-failed", output: `${END_WITH_DONE}\n\n${text}` }),
-      );
-      // The id holds the ordinal: a retry before the session ran again is the same command, and
-      // a send after a newer run is a new one even if T3 dedupes by id.
-      const commandId = `softfac:${runIdToString(run)}:gate:${attempt}:${ordinal}`;
-      yield* applyActions(
-        ctx,
-        issue,
-        yield* out.open,
-        at,
-        failed.actions,
-        makeCause("gate", "gate-failed"),
-        { send: { commandId, attempt, runOrdinal: ordinal } },
-      );
-      return { kind: "sent-back", attempt } as const;
+      return yield* sendBack(ctx, out, run, seen, at, attempt, ordinal, text, "gate-failed");
     }
   });

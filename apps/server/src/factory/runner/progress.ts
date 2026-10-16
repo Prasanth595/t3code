@@ -106,6 +106,11 @@ export interface Seen {
   readonly regates: number;
   /** A `pr_ready_outside` line: someone else marked the pull request ready while a gate ran, and it is noted. */
   readonly readyOutside: boolean;
+  /**
+   * The lower-case sha of the newest `checks_read` line whose checks are non-empty and all
+   * `passed`; null when the newest read decided otherwise or there is none.
+   */
+  readonly checksPassed: string | null;
 }
 
 /** The ledger step that says a launch call is about to be sent. */
@@ -211,6 +216,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   const cleanupFailed = new Set<string>();
   let regates = 0;
   let readyOutside = false;
+  let checksPassed: string | null = null;
   // A wait marker names run `k`: the awaited ordinal never goes down.
   const awaitRun = (k: number, forward: boolean) => {
     if (waitingAfter === null || k >= waitingAfter) {
@@ -389,6 +395,18 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
       case "gate_regate":
         regates += 1;
         break;
+      case "checks_read": {
+        const sha = field(entry.data, "sha");
+        const checks = field(entry.data, "checks");
+        checksPassed =
+          typeof sha === "string" &&
+          Array.isArray(checks) &&
+          checks.length > 0 &&
+          checks.every((check) => field(check, "state") === "passed")
+            ? sha.toLowerCase()
+            : null;
+        break;
+      }
       case "gate_cleanup_failed": {
         const dir = field(entry.data, "dir");
         if (typeof dir === "string") cleanupFailed.add(dir);
@@ -435,6 +453,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     cleanupFailed,
     regates,
     readyOutside,
+    checksPassed,
   };
 };
 

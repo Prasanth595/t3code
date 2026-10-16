@@ -288,10 +288,6 @@ const projectFrom = (c: Checker, root: Mapping): ProjectConfig | undefined => {
   if (factory !== undefined) {
     if (Object.hasOwn(factory, "required_checks")) {
       requiredChecks = c.stringList(factory["required_checks"], "factory.required_checks", true);
-      if (requiredChecks !== undefined && requiredChecks.length > 0) {
-        c.err("factory.required_checks", "required_checks is not supported yet");
-        requiredChecks = undefined;
-      }
     } else {
       requiredChecks = [];
     }

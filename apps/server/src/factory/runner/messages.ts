@@ -7,7 +7,7 @@
 import type { State } from "../domain/lifecycle.ts";
 import type { CommandResult } from "../gate.ts";
 import { commandLine, sanitize } from "../text.ts";
-import type { DropReason } from "../tracker/github.ts";
+import type { CheckStatus, DropReason } from "../tracker/github.ts";
 
 /** The public reason when a run has no record of what approved it. */
 export const CANNOT_CONFIRM = "the factory could not confirm the issue text was approved";
@@ -312,5 +312,30 @@ export const mergeConflictMessage = (base: string, paths: ReadonlyArray<string>)
     text += `\n  ${shown}`;
   }
   if (paths.length > MAX_LISTED_PATHS) text += `\n  and ${paths.length - MAX_LISTED_PATHS} more`;
+  return text;
+};
+
+/** The public reason when the pull request's head is not the commit the required checks are waited for. */
+export const CHECKS_HEAD_MOVED =
+  "the pull request's head changed while the factory waited for the required checks";
+
+/** The first seven hex digits of a commit id, as the words for the session name it. */
+const shortSha = (sha: string): string =>
+  Array.from(sha)
+    .filter((char) => /^[0-9a-fA-F]$/.test(char))
+    .slice(0, 7)
+    .join("");
+
+/**
+ * What to tell the session when required checks failed on the commit that was gated. The check
+ * names come from the project config and the rest from GitHub, so all of it is cleaned like
+ * other untrusted text.
+ */
+export const checksFailureMessage = (sha: string, failed: ReadonlyArray<CheckStatus>): string => {
+  let text = `The factory gate failed. A required check did not pass on commit ${shortSha(sha)}. Fix the cause, commit, push, and reply when done. Do not weaken or skip the check.`;
+  for (const check of failed) {
+    text += `\n\nCheck: ${sanitize(check.name, false)}\nResult: ${sanitize(check.conclusion, false)}`;
+    if (check.url !== null) text += `\nDetails: ${sanitize(check.url, false)}`;
+  }
   return text;
 };

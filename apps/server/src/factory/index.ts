@@ -191,6 +191,8 @@ const gateWords = (run: string, step: GateStep): string => {
       return "the issue is closed, the run is closed";
     case "running":
       return "gate running";
+    case "checks-pending":
+      return "gate passed, waiting for the required checks to finish";
     case "queued":
       return gateQueued(step);
   }
