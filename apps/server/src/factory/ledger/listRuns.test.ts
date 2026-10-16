@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import type { State } from "../domain/lifecycle.ts";
 import { makeCause } from "./events.ts";
 import { Ledger } from "./ledger.ts";
-import { holdsSlot, listUnfinishedRuns } from "./listRuns.ts";
+import { holdsSlot, listRuns, listUnfinishedRuns, readRuns } from "./listRuns.ts";
 import { RUNS_DIR, runIdFileName, type RunId } from "./runId.ts";
 import { T0, ticking, useTempDirs } from "./testSupport.ts";
 
@@ -429,5 +429,114 @@ describe("holdsSlot", () => {
   it("a run whose file cannot be read holds a slot", () => {
     expect(holdsSlot(run(null, false, true))).toBe(true);
     expect(holdsSlot(run("pr-open", false, true))).toBe(true);
+  });
+});
+
+describe("listRuns", () => {
+  it("an empty ledger lists no runs", () => {
+    expect(listRuns(tempDir())).toEqual([]);
+    expect(readRuns(tempDir())).toEqual([]);
+  });
+
+  it("lists one summary per run, oldest first, finished runs included", () => {
+    const dataDir = tempDir();
+    runAt(dataDir, rid(2, "rawphp/other", 1), T0 + 60_000, null);
+    runAt(dataDir, rid(8), T0, null, true);
+    expect(listRuns(dataDir)).toEqual([
+      {
+        id: rid(8),
+        startedTs: "2026-10-04T10:13:16.123Z",
+        lastEvent: "finished",
+        state: null,
+        prUrl: null,
+        finished: true,
+        totalMs: 0,
+        unreadable: false,
+      },
+      {
+        id: rid(2, "rawphp/other", 1),
+        startedTs: "2026-10-04T10:14:16.123Z",
+        lastEvent: "claimed",
+        state: null,
+        prUrl: null,
+        finished: false,
+        totalMs: null,
+        unreadable: false,
+      },
+    ]);
+  });
+
+  it("reads the state from the last state change", () => {
+    const dataDir = tempDir();
+    const ledger = Ledger.create(dataDir, rid(8), { clock: ticking(T0, 1000) });
+    handles.push(ledger);
+    ledger.append({ event: "state_changed", data: { from: "triage", to: "building" } }, cause);
+    ledger.append({ event: "state_changed", data: { from: "building", to: "pr-open" } }, cause);
+    expect(listRuns(dataDir).map((run) => [run.state, run.lastEvent])).toEqual([
+      ["pr-open", "state_changed"],
+    ]);
+  });
+
+  it("reads the pull request url from the last pr_opened, and from the finished line over it", () => {
+    const dataDir = tempDir();
+    const ledger = Ledger.create(dataDir, rid(8), { clock: ticking(T0, 1000) });
+    handles.push(ledger);
+    ledger.append(
+      { event: "pr_opened", data: { pr: 1, url: "https://example.test/pull/1" } },
+      cause,
+    );
+    ledger.append(
+      { event: "pr_opened", data: { pr: 2, url: "https://example.test/pull/2" } },
+      cause,
+    );
+    expect(listRuns(dataDir)[0]?.prUrl).toBe("https://example.test/pull/2");
+    ledger.finish("pr-open", null, "https://example.test/pull/3", cause, "merged");
+    expect(listRuns(dataDir)[0]?.prUrl).toBe("https://example.test/pull/3");
+  });
+
+  it("a pr-open run reads finished once its pull request ended", () => {
+    const dataDir = tempDir();
+    const ledger = Ledger.create(dataDir, rid(8), { clock: ticking(T0, 1000) });
+    handles.push(ledger);
+    ledger.append({ event: "state_changed", data: { from: "building", to: "pr-open" } }, cause);
+    expect(listRuns(dataDir)[0]?.finished).toBe(false);
+    ledger.finish("pr-open", null, "https://github.com/rawphp/softfac/pull/12", cause, "closed");
+    expect(listRuns(dataDir)).toEqual([
+      expect.objectContaining({
+        state: "pr-open",
+        finished: true,
+        prUrl: "https://github.com/rawphp/softfac/pull/12",
+      }),
+    ]);
+  });
+
+  it("an unreadable run file is listed with no record, and the others still are", () => {
+    const dataDir = tempDir();
+    runAt(dataDir, rid(8), T0, "building");
+    NodeFS.mkdirSync(NodePath.join(dataDir, RUNS_DIR, runIdFileName(rid(2, "rawphp/broken"))));
+    const reads = readRuns(dataDir);
+    expect(reads.map((read) => [read.summary.id.repo, read.summary.unreadable])).toEqual([
+      ["rawphp/softfac", false],
+      ["rawphp/broken", true],
+    ]);
+    expect(reads[0]?.record?.entries.length).toBeGreaterThan(0);
+    expect(reads[1]?.record).toBeNull();
+    expect(listRuns(dataDir)[1]).toEqual({
+      id: rid(2, "rawphp/broken"),
+      startedTs: null,
+      lastEvent: null,
+      state: null,
+      prUrl: null,
+      finished: false,
+      totalMs: null,
+      unreadable: true,
+    });
+  });
+
+  it("a run with no readable line sorts after the started ones", () => {
+    const dataDir = tempDir();
+    writeRun(dataDir, rid(1), "not json\n");
+    runAt(dataDir, rid(2), T0, "building");
+    expect(listRuns(dataDir).map((run) => run.id.issue)).toEqual(["2", "1"]);
   });
 });
