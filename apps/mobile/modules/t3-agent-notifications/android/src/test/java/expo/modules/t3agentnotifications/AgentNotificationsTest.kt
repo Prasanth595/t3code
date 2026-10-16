@@ -112,6 +112,28 @@ class AgentNotificationsTest {
   }
 
   @Test
+  fun alertSentBeforeADismissalStaysHiddenWhenItArrivesLate() {
+    val sentAt = System.currentTimeMillis()
+    val dismissal = mapOf(
+      "device_id" to "device",
+      "user_id" to "user",
+      "updated_at" to (sentAt + 1).toString(),
+      "dismiss_group" to "environment/thread",
+    )
+    AgentNotifications.receive(context, dismissal)
+    // A cold start reconfigures the same account and must keep the mark.
+    AgentNotifications.configure(context, "device", "user", "t3code-dev", true)
+    AgentNotifications.receive(context, update("late", false) + ("updated_at" to sentAt.toString()))
+    assertTrue(manager.activeNotifications.none { it.tag == "t3-agent-alert" })
+
+    AgentNotifications.receive(
+      context,
+      update("next-run", false) + ("updated_at" to (sentAt + 2).toString())
+    )
+    assertEquals(1, manager.activeNotifications.count { it.tag == "t3-agent-alert" })
+  }
+
+  @Test
   fun dismissClearsAlertsEvenAfterNotificationsAreDisabled() {
     AgentNotifications.receive(context, update("before-disable", false))
     shadowOf(manager).setNotificationsEnabled(false)

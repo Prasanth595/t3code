@@ -127,30 +127,51 @@ object AgentNotifications {
     val fresh = System.currentTimeMillis() - updatedAt in -MAX_MESSAGE_AGE_MS..MAX_MESSAGE_AGE_MS
     if (registered && fresh) {
       // Needs no permission, so it also clears alerts posted before notifications were disabled.
-      data["dismiss_group"]?.let { dismissAlerts(context, it) }
+      data["dismiss_group"]?.let { dismissAlerts(context, prefs, it, updatedAt) }
       if (NotificationManagerCompat.from(context).areNotificationsEnabled()) {
         channels(context)
         val scheme = prefs.getString("scheme", "t3code") ?: "t3code"
-        showAlert(context, prefs, scheme, data)
+        showAlert(context, prefs, scheme, data, updatedAt)
         updateActivity(context, prefs, scheme, data, updatedAt)
       }
     }
   }
 
   /** Removes a thread's alerts once it has been read on any client. */
-  private fun dismissAlerts(context: Context, group: String) {
+  private fun dismissAlerts(
+    context: Context,
+    prefs: SharedPreferences,
+    group: String,
+    updatedAt: Long
+  ) {
     val manager = manager(context)
     manager.activeNotifications.filter { it.tag == ALERT_TAG && it.notification.group == group }
       .forEach { manager.cancel(it.tag, it.id) }
     manager.cancel("$ALERT_TAG-summary:$group", 0)
+    // FCM does not keep order, so an alert sent before this dismissal can still arrive after it.
+    val marks = dismissals(prefs).filterKeys { it != group }.map { (g, at) -> "$at\t$g" }
+    prefs.edit().putString(
+      "dismissedGroups",
+      (marks.takeLast(63) + "$updatedAt\t$group").joinToString("\n")
+    ).apply()
   }
+
+  /** Relay send time of each thread's latest dismissal, oldest first. */
+  private fun dismissals(prefs: SharedPreferences): Map<String, Long> =
+    prefs.getString("dismissedGroups", null).orEmpty().lineSequence().mapNotNull { line ->
+      line.split('\t', limit = 2).takeIf { it.size == 2 }
+        ?.let { (at, group) -> at.toLongOrNull()?.let { group to it } }
+    }.toMap()
 
   private fun showAlert(
     context: Context,
     prefs: SharedPreferences,
     scheme: String,
-    data: Map<String, String>
+    data: Map<String, String>,
+    updatedAt: Long
   ) {
+    val dismissedAt = data["alert_group"]?.let { dismissals(prefs)[it] }
+    if (dismissedAt != null && updatedAt <= dismissedAt) return
     // Queue retries carry the same alert id. Keep a bounded history even when
     // notification A is retried after notification B has already arrived.
     val alertId = data["alert_id"]
