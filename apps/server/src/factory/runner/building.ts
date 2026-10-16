@@ -55,15 +55,18 @@ import {
   TIME_LIMIT,
   WRONG_ACCOUNT,
   WRONG_ACCOUNT_PREFIX,
+  REFUSED_BODY_EDIT,
   bodyEditMessage,
   commentMessage,
   droppedCommentMessage,
   prepareSessionText,
 } from "./messages.ts";
 import {
+  BODY_EDIT_DROPPED,
   BODY_EDIT_FORWARDED,
   COMMENT_DROPPED,
   FORWARD_WAIT,
+  FORWARD_WAIT_CANCELLED,
   RESULT_LINE_REMINDED,
   RESULT_LINE_REMINDING,
   readProgress,
@@ -205,7 +208,10 @@ export type SkipReason =
   /** T3 no longer has the session's thread. */
   | "no-thread";
 
-/** What `forward` did: how many comments and whether the edited body went into the session. */
+/**
+ * What `forward` did: how many comments and whether the edited body went into the session. What T3
+ * refused is left out of the counts.
+ */
 export interface ForwardOutcome {
   readonly comments: number;
   readonly bodyEdit: boolean;
@@ -860,31 +866,38 @@ const unreported = (seen: Seen, activity: Activity): ReadonlyArray<Dropped> => {
   });
 };
 
-/**
- * Tells the issue, once per dropped comment, that it was not sent to the session: the comment
- * first and the `comment-dropped <id>` step after it, so a crash between them posts it a second
- * time (comments are at-least-once). A failure stops the call and the rest is said on the next one.
- */
-const reportDrops = (
+/** A comment for the issue and the step that records it was posted: the comment first, the step after, so a crash between them posts it again (at-least-once). */
+interface Notice {
+  readonly body: string;
+  readonly step: string;
+  readonly reason: string;
+}
+
+const dropNotice = (ctx: BuildingContext, issue: number, dropped: Dropped): Notice => ({
+  body: droppedCommentMessage(ctx.repo, issue, dropped.id, dropped.reason),
+  step: `${COMMENT_DROPPED} ${dropped.id}`,
+  reason: "comment-dropped",
+});
+
+const refusedEditNotice = (editedAt: string): Notice => ({
+  body: REFUSED_BODY_EDIT,
+  step: `${BODY_EDIT_DROPPED} ${editedAt}`,
+  reason: "body-edit-dropped",
+});
+
+/** Posts each notice and records it. A failure stops the call and the rest is said on the next one. */
+const tellIssue = (
   ctx: BuildingContext,
   out: Out,
   issue: number,
-  drops: ReadonlyArray<Dropped>,
+  notices: ReadonlyArray<Notice>,
 ): Effect.Effect<void, BuildingError> =>
   Effect.forEach(
-    drops,
-    (dropped) =>
+    notices,
+    (n) =>
       Effect.gen(function* () {
-        yield* ctx.tracker.postComment(
-          issue,
-          droppedCommentMessage(ctx.repo, issue, dropped.id, dropped.reason),
-        );
-        yield* append(
-          out,
-          { event: "step_changed", data: { step: `${COMMENT_DROPPED} ${dropped.id}` } },
-          "forward",
-          "comment-dropped",
-        );
+        yield* ctx.tracker.postComment(issue, n.body);
+        yield* append(out, { event: "step_changed", data: { step: n.step } }, "forward", n.reason);
       }),
     { discard: true },
   );
@@ -897,8 +910,12 @@ const reportDrops = (
  * comments go in oldest first, then the edit, which may be the same text the comments came
  * after. A comment goes under the command id `softfac:<run>:comment:<id>` and then
  * `comment_forwarded` is written; an edit under `softfac:<run>:body:<edited_at>`, then its step.
- * A send that fails fails the call: what was sent stays recorded and the rest goes in on the next
- * call under the same ids.
+ * A send that fails (transport, timeout) fails the call, what was sent stays recorded, and the
+ * rest goes in on the next call under the same ids; a send T3 refuses is final (T3 keeps the
+ * refusal under the command id), so the item is dropped: the call goes on with the rest, the
+ * issue is told once in the factory's fixed words (`comment-dropped <id>` / `body-edit-dropped
+ * <edited_at>` after the comment), a refused item is not counted as sent, and a `forward-wait`
+ * that nothing sent under is cancelled with `forward-wait-cancelled <k>`.
  *
  * A session that is idle (its latest run ended, or it has none) starts a new run when it gets a
  * message, so `forward-wait <k>` (`k` the ordinal of the run that ended) is written before the
@@ -972,7 +989,12 @@ export const forward = (
       const { comments, bodyEdit } = yield* unsent(seen, activity);
       const drops = unreported(seen, activity);
       if (comments.length === 0 && bodyEdit === null) {
-        yield* reportDrops(ctx, out, issue, drops);
+        yield* tellIssue(
+          ctx,
+          out,
+          issue,
+          drops.map((d) => dropNotice(ctx, issue, d)),
+        );
         return { comments: 0, bodyEdit: false, skipped: null };
       }
 
@@ -980,25 +1002,30 @@ export const forward = (
       // new run, and the gate must wait for that run, not judge the old one again.
       const status = yield* threadStatus(ctx, threadId);
       if (status === null) return skip("no-thread");
+      let marker: number | null = null; // the ordinal this call's messages would start a run after
+      let wroteMarker = false;
       if (status.run === null || isTerminal(status.run)) {
-        const k = status.runOrdinal ?? 0;
-        if (seen.lastWait !== k) {
+        marker = status.runOrdinal ?? 0;
+        if (seen.lastWait !== marker) {
           yield* append(
             out,
-            { event: "step_changed", data: { step: `${FORWARD_WAIT} ${k}` } },
+            { event: "step_changed", data: { step: `${FORWARD_WAIT} ${marker}` } },
             "forward",
             "forward-waiting",
           );
+          wroteMarker = true;
         }
       }
       const opened = yield* out.open;
       const at = progressFrom("forward", seen, "building");
       const runName = runIdToString(run);
+      const refused: Array<Notice> = [];
+      let sent = 0;
       for (const comment of comments) {
         const { actions } = yield* Effect.fromResult(
           transition("building", { kind: "instructor-commented", commentId: comment.id }),
         );
-        yield* applyActions(
+        const result = yield* applyActions(
           ctx,
           issue,
           opened,
@@ -1011,14 +1038,20 @@ export const forward = (
               text: commentMessage(ctx.repo, issue, comment.author, comment.body),
             },
           },
+        ).pipe(
+          Effect.as("sent" as const),
+          Effect.catchIf(isMessageRejected, () => Effect.succeed("refused" as const)),
         );
+        if (result === "sent") sent += 1;
+        else refused.push(dropNotice(ctx, issue, { id: comment.id, reason: "refused" }));
       }
+      let editSent = false;
       // The edit goes after the comments of this call, which may have been written before it.
       if (bodyEdit !== null) {
         const { actions } = yield* Effect.fromResult(
           transition("building", { kind: "body-edited" }),
         );
-        yield* applyActions(
+        const result = yield* applyActions(
           ctx,
           issue,
           opened,
@@ -1032,11 +1065,35 @@ export const forward = (
               step: `${BODY_EDIT_FORWARDED} ${bodyEdit.editedAt}`,
             },
           },
+        ).pipe(
+          Effect.as("sent" as const),
+          Effect.catchIf(isMessageRejected, () => Effect.succeed("refused" as const)),
+        );
+        if (result === "sent") editSent = true;
+        else refused.push(refusedEditNotice(bodyEdit.editedAt));
+      }
+      // A marker whose every message T3 refused waits for a run nothing started. Cancelled before the
+      // issue is told, so a failed comment call leaves no wait behind. `seen.idleForwardWait` covers a
+      // marker written by a call that crashed between its refusal and this step.
+      if (
+        sent === 0 &&
+        !editSent &&
+        marker !== null &&
+        (wroteMarker || seen.idleForwardWait === marker)
+      ) {
+        yield* append(
+          out,
+          { event: "step_changed", data: { step: `${FORWARD_WAIT_CANCELLED} ${marker}` } },
+          "forward",
+          "forward-wait-cancelled",
         );
       }
-      // Last: telling the issue about a dropped comment must not hold back what the session needs.
-      yield* reportDrops(ctx, out, issue, drops);
-      return { comments: comments.length, bodyEdit: bodyEdit !== null, skipped: null };
+      // Last: telling the issue must not hold back what the session needs.
+      yield* tellIssue(ctx, out, issue, [
+        ...refused,
+        ...drops.map((d) => dropNotice(ctx, issue, d)),
+      ]);
+      return { comments: sent, bodyEdit: editSent, skipped: null };
     }),
   );
 

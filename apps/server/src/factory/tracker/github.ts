@@ -423,8 +423,11 @@ export interface BodyEdit {
   readonly body: string;
 }
 
-/** Why an instructor's comment was not forwarded. */
-export type DropReason = "edited-by-other" | "unverifiable";
+/**
+ * Why an instructor's comment was not forwarded. The tracker reports the first two; `"refused"` is
+ * the runner's own, for a send T3 refused.
+ */
+export type DropReason = "edited-by-other" | "unverifiable" | "refused";
 
 /** An instructor's comment that was not forwarded because its text may not be the instructor's. */
 export interface Dropped {

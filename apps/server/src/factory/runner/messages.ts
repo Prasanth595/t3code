@@ -257,7 +257,9 @@ export const droppedCommentMessage = (
   const why =
     reason === "edited-by-other"
       ? "someone who is not an instructor edited it"
-      : "the factory could not check who edited it";
+      : reason === "unverifiable"
+        ? "the factory could not check who edited it"
+        : "T3 refused it";
   return `The factory did not send an instructor's comment to the build session, because ${why}.\n\nComment: https://github.com/${repo}/issues/${issue}#issuecomment-${commentId}\n\nPost the instruction as a new comment and the factory will send it.`;
 };
 
@@ -333,3 +335,7 @@ export const mergeConflictMessage = (base: string, paths: ReadonlyArray<string>)
   if (paths.length > MAX_LISTED_PATHS) text += `\n  and ${paths.length - MAX_LISTED_PATHS} more`;
   return text;
 };
+
+/** The comment the factory posts when T3 refused to take an edit of the issue body. */
+export const REFUSED_BODY_EDIT =
+  "The factory did not send the edited issue body to the build session, because T3 refused it. Post the change as a new comment and the factory will send it.";
