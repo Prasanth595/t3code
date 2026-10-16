@@ -3,6 +3,7 @@ import type {
   PullRequestCheck,
   PullRequestDetail,
   PullRequestListEntry,
+  PullRequestMergeability,
 } from "@t3tools/contracts";
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
@@ -43,6 +44,16 @@ const STATES = {
 
 export function pullRequestStatus(pr: Pick<PullRequestListEntry, "state" | "isDraft">) {
   return STATES[pr.isDraft && pr.state === "open" ? "draft" : pr.state];
+}
+
+export function pullRequestConflict(pr: {
+  readonly state: PullRequestListEntry["state"];
+  readonly isDraft: boolean;
+  readonly mergeability?: PullRequestMergeability | undefined;
+  readonly baseBranch?: string | undefined;
+}) {
+  if (pr.state !== "open" || pr.isDraft || pr.mergeability !== "conflicting") return null;
+  return { label: pr.baseBranch ? `Conflicts with ${pr.baseBranch}` : "Has conflicts" };
 }
 
 export function checkStatus(check: PullRequestCheck) {
