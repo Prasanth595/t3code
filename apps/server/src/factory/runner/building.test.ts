@@ -46,6 +46,7 @@ import {
   type AdvanceOutcome,
   type BuildingContext,
 } from "./building.ts";
+import { interruptible } from "./testSupport.ts";
 
 const tempDir = useTempDirs();
 
@@ -461,7 +462,7 @@ const rigFor = (
   return { dataDir, run: run10, world, gh, reads, t3, order, clock, ctx };
 };
 
-const advanceIn = (rig: Rig) => advance(rig.ctx, rig.run);
+const advanceIn = (rig: Rig) => advance(interruptible(rig.ctx), rig.run);
 
 /** GitHub says the run's issue is closed, by `by` when it names someone. */
 const closeIssue = (rig: Rig, by: string | null | GitHubError = null) => {
@@ -1454,7 +1455,7 @@ describe("advance: refused before anything is read", () => {
   it.effect("on a run with no file", () =>
     Effect.gen(function* () {
       const rig = rigFor();
-      const error = yield* Effect.flip(advance(rig.ctx, { ...run10, attempt: 2 }));
+      const error = yield* Effect.flip(advance(interruptible(rig.ctx), { ...run10, attempt: 2 }));
       assert.strictEqual(error._tag, "LedgerNotFoundError");
     }),
   );
@@ -1463,7 +1464,7 @@ describe("advance: refused before anything is read", () => {
     Effect.gen(function* () {
       const rig = rigFor();
       const other: RunId = { repo: "someone/else", issue: "10", attempt: 1 };
-      const error = yield* Effect.flip(advance(rig.ctx, other));
+      const error = yield* Effect.flip(advance(interruptible(rig.ctx), other));
       assert.strictEqual(error._tag, "WrongRepoError");
       assert.strictEqual(error.message, "run someone__else__10__1 is not a run of rawphp/softfac");
       assert.deepStrictEqual(rig.gh, []);
@@ -1475,7 +1476,10 @@ describe("advance: refused before anything is read", () => {
     Effect.gen(function* () {
       const rig = rigFor();
       setStatus(rig, "running", null);
-      const outcome = yield* advance({ ...rig.ctx, repo: "RawPHP/SoftFac" }, rig.run);
+      const outcome = yield* advance(
+        interruptible({ ...rig.ctx, repo: "RawPHP/SoftFac" }),
+        rig.run,
+      );
       assert.deepStrictEqual(outcome, { kind: "running" });
     }),
   );

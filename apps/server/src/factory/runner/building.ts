@@ -94,6 +94,7 @@ import {
 } from "./run.ts";
 import {
   isPlainRefName,
+  previousRun,
   resume,
   type GateRunningError,
   type StartContext,
@@ -160,13 +161,13 @@ export class WrongRepoError extends Schema.TaggedError<WrongRepoError>()("WrongR
   }
 }
 
-/** A relaunch that cannot be carried out: the run has no recorded approval, or the context has no claim to go on with. */
+/** A relaunch that cannot be carried out: the run has no recorded approval. */
 export class RelaunchUnsupportedError extends Schema.TaggedError<RelaunchUnsupportedError>()(
   "RelaunchUnsupportedError",
   { run: RunRef },
 ) {
   override get message(): string {
-    return `run ${runIdToString(this.run)} cannot be relaunched: it has no recorded approval, or no claim to go on with`;
+    return `run ${runIdToString(this.run)} cannot be relaunched: it has no recorded approval`;
   }
 }
 
@@ -542,7 +543,7 @@ const stuckOutcome = (stop: Stop): AdvanceOutcome => ({
  * (`relaunched`).
  */
 export const advance = (
-  ctx: BuildingContext,
+  ctx: InterruptContext,
   run: RunId,
 ): Effect.Effect<AdvanceOutcome, BuildingError> =>
   withLedger(ctx, run, (out) =>
@@ -1318,18 +1319,14 @@ const stuckEnded = (
  * a person's retry, starts again from zero.
  */
 const resumesUsed = (
-  ctx: BuildingContext,
+  ctx: InterruptContext,
   run: RunId,
   seen: Seen,
 ): Effect.Effect<number, BuildingError> =>
   Effect.gen(function* () {
     if (seen.interruption !== null) return seen.interruption.resumes;
-    if (run.attempt < 2) return 0;
-    const previous: RunId = { ...run, attempt: run.attempt - 1 };
-    const record = yield* ledger(() => readRun(ctx.dataDir, previous)).pipe(
-      Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
-    );
-    const newest = record?.entries.findLast((entry) => entry.event === "session_interrupted");
+    const previous = yield* previousRun(ctx, run);
+    const newest = previous?.entries.findLast((entry) => entry.event === "session_interrupted");
     if (newest === undefined || field(newest.data, "relaunch") !== true) return 0;
     const resumes = field(newest.data, "resumes");
     return typeof resumes === "number" ? resumes : 0;
@@ -1514,10 +1511,6 @@ const relaunchBranchOf = (
     return null;
   });
 
-/** Whether a building context can also start a session: it carries the claim's own context. */
-const canStart = (ctx: BuildingContext): ctx is InterruptContext =>
-  "repoPath" in ctx && "ghConfigDir" in ctx && "model" in ctx;
-
 /**
  * Carries out a relaunch the ledger holds the decision for, in an order a crash can be picked up
  * from: the next attempt's ledger first, with the same `approved <labeled_at>` step as this run's
@@ -1528,12 +1521,12 @@ const canStart = (ctx: BuildingContext): ctx is InterruptContext =>
  * repeat, so `advance` calls it again for a run that has the decision and is not finished.
  */
 const carryOutRelaunch = (
-  ctx: BuildingContext,
+  ctx: InterruptContext,
   run: RunId,
   seen: Seen,
 ): Effect.Effect<StartOutcome, BuildingError> =>
   Effect.gen(function* () {
-    if (seen.approvedAt === null || !canStart(ctx)) {
+    if (seen.approvedAt === null) {
       return yield* new RelaunchUnsupportedError({ run });
     }
     const labeledAt = seen.approvedAt;

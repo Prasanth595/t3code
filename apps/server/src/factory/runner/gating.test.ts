@@ -51,6 +51,7 @@ import {
   type PullRequest,
 } from "../tracker/github.ts";
 import { advance, forward, type AdvanceOutcome } from "./building.ts";
+import { interruptible } from "./testSupport.ts";
 import {
   gate,
   mergeConflictMessage,
@@ -767,7 +768,7 @@ const rigFor = (events: ReadonlyArray<RunEvent> = STARTED): Rig => {
 };
 
 const gateIn = (rig: Rig) => gate(rig.ctx, rig.run);
-const advanceIn = (rig: Rig) => advance(rig.ctx, rig.run);
+const advanceIn = (rig: Rig) => advance(interruptible(rig.ctx), rig.run);
 
 /** The run's ledger lines, with the directory of each `gate_checkout` blanked. */
 const linesOf = (rig: Rig, id: RunId = rig.run): Array<Line> =>

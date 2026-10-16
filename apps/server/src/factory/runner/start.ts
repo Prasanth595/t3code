@@ -737,7 +737,7 @@ const launchSession = (
   });
 
 /** The run before `run` and its ledger lines; null for a first attempt or an earlier run with no ledger. */
-const previousRun = (
+export const previousRun = (
   ctx: StartContext,
   run: RunId,
 ): Effect.Effect<
