@@ -22,6 +22,9 @@ if (
     // the CLI without one. Never for the fast paths, whose stdin is a pipe.
     const { attachConsoleStdin } = await import("./cli/consoleStdin.ts");
     attachConsoleStdin();
+    // Before the CLI graph loads, so no module can open a socket unguarded.
+    const { ignoreMacosTypeOfServiceEinval } = await import("./outboundHttp.ts");
+    ignoreMacosTypeOfServiceEinval();
     const { runCli } = await import("./binCli.ts");
     runCli();
   }
