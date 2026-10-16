@@ -1270,6 +1270,7 @@ export interface CodexAppServerClientFactoryShape {
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly settings: CodexSettings;
     readonly environment: NodeJS.ProcessEnv;
+    readonly onTermination?: CodexClient.CodexAppServerClientOptions["onTermination"];
   }) => Effect.Effect<
     CodexClient.CodexAppServerClient["Service"],
     ProviderAdapter.ProviderAdapterOpenSessionError,
@@ -1412,7 +1413,12 @@ const layerCodexAppServerClientFactoryCommand = (
                   }),
               ),
             );
-            const context = yield* Layer.build(CodexClient.layerChildProcess(handle, options));
+            const context = yield* Layer.build(
+              CodexClient.layerChildProcess(handle, {
+                ...options,
+                ...(input.onTermination ? { onTermination: input.onTermination } : {}),
+              }),
+            );
             return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
               Effect.provide(context),
             );
@@ -1546,7 +1552,12 @@ export const layerAppServerClientFactory: Layer.Layer<
                   logOutgoing: true,
                   logger: protocolLogger,
                 };
-          const context = yield* Layer.build(CodexClient.layerChildProcess(handle, clientOptions));
+          const context = yield* Layer.build(
+            CodexClient.layerChildProcess(handle, {
+              ...clientOptions,
+              ...(input.onTermination ? { onTermination: input.onTermination } : {}),
+            }),
+          );
           return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
             Effect.provide(context),
           );
@@ -1704,6 +1715,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     }),
                 ),
               );
+        // Process loss must end the event pump so the session manager evicts this runtime.
+        const events = yield* Queue.unbounded<
+          ProviderAdapter.ProviderAdapterV2Event,
+          ProviderAdapter.ProviderAdapterEventStreamError
+        >();
         const client = yield* clientFactory.open({
           instanceId: adapterOptions.instanceId,
           threadId: input.threadId,
@@ -1711,6 +1727,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           runtimePolicy: input.runtimePolicy,
           settings: resolvedRuntime?.config ?? adapterOptions.settings,
           environment: resolvedRuntime?.environment ?? adapterOptions.environment,
+          onTermination: (cause) =>
+            Queue.fail(
+              events,
+              new ProviderAdapter.ProviderAdapterEventStreamError({
+                driver: CODEX_PROVIDER,
+                providerSessionId: input.providerSessionId,
+                cause,
+              }),
+            ).pipe(Effect.asVoid),
         });
         const additionalContextByThread = yield* Ref.make(
           new Map<
@@ -1791,7 +1816,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           model: input.modelSelection.model,
           now,
         });
-        const events = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),

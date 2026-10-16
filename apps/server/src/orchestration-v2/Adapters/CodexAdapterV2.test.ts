@@ -1763,13 +1763,17 @@ describe("CodexAdapterV2 session initialize", () => {
         beforeEmitInbound === undefined ? {} : { beforeEmitInbound },
       );
       let initializeRequests = 0;
+      let onTermination: CodexClient.CodexAppServerClientOptions["onTermination"];
       const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
         clientFactory: {
           open: (openInput) =>
-            Layer.build(CodexReplay.layerReplayWithDriver(driver)).pipe(
+            Effect.sync(() => {
+              onTermination = openInput.onTermination;
+            }).pipe(
+              Effect.andThen(Layer.build(CodexReplay.layerReplayWithDriver(driver))),
               Effect.flatMap((context) =>
                 Effect.service(CodexClient.CodexAppServerClient).pipe(Effect.provide(context)),
               ),
@@ -1805,6 +1809,11 @@ describe("CodexAdapterV2 session initialize", () => {
         runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
       });
       return {
+        runtime,
+        terminate: (cause: CodexError.CodexAppServerError) => {
+          assert.isDefined(onTermination);
+          return onTermination!(cause);
+        },
         ensureThread: (threadId: string) =>
           runtime.ensureThread({
             threadId: ThreadId.make(threadId),
@@ -1817,6 +1826,32 @@ describe("CodexAdapterV2 session initialize", () => {
 
   const replayPreamble = (nativeThreadId: string) =>
     codexReplayPreamble({ nativeThreadId, nativeTurnId: "unused", prompt: "unused" });
+
+  it.effect("fails its event stream when an idle app-server dies", () =>
+    Effect.gen(function* () {
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario: "idle-process-exit",
+          entries: [],
+        }),
+      );
+      const cause = new CodexError.CodexAppServerTransportError({
+        operation: "read-process-exit-status",
+        pid: 123,
+        cause: "SIGKILL",
+      });
+      yield* session.terminate(cause);
+      const failure = yield* Effect.flip(Stream.runDrain(session.runtime.events));
+      assert.equal(failure._tag, "ProviderAdapterEventStreamError");
+      if (failure._tag !== "ProviderAdapterEventStreamError") return yield* Effect.die(failure);
+      assert.strictEqual(failure.cause, cause);
+      assert.equal(failure.providerSessionId, session.runtime.providerSessionId);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
 
   it.effect("sends one initialize when two threads start on a fresh session at once", () =>
     Effect.gen(function* () {

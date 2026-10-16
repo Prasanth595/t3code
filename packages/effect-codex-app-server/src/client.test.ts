@@ -2,6 +2,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -10,6 +11,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 
 import * as CodexClient from "./client.ts";
+import type * as CodexError from "./errors.ts";
 
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/codex-app-server-mock-peer.ts"),
@@ -28,6 +30,33 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
       });
       return yield* spawner.spawn(command);
     });
+
+  it.effect("reports a killed idle process once so its owner can discard the client", () =>
+    Effect.gen(function* () {
+      const terminated = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const failures: Array<CodexError.CodexAppServerError> = [];
+      const handle = yield* makeHandle();
+      const context = yield* Layer.build(
+        CodexClient.layerChildProcess(handle, {
+          onTermination: (error) =>
+            Effect.sync(() => {
+              failures.push(error);
+            }).pipe(Effect.andThen(Deferred.succeed(terminated, error)), Effect.asVoid),
+        }),
+      );
+      const client = yield* CodexClient.CodexAppServerClient.pipe(Effect.provide(context));
+      yield* client.request("account/read", {});
+      yield* handle.kill({ signal: "SIGKILL" });
+      const error = yield* Deferred.await(terminated);
+      assert.equal(error._tag, "CodexAppServerTransportError");
+      if (error._tag === "CodexAppServerTransportError") {
+        assert.equal(error.operation, "read-process-exit-status");
+        assert.equal(error.pid, handle.pid);
+      }
+      assert.strictEqual(yield* Effect.flip(client.request("account/read", {})), error);
+      assert.deepEqual(failures, [error]);
+    }),
+  );
 
   it.effect("initializes, handles typed server requests, and reads account and skills data", () =>
     Effect.gen(function* () {
@@ -122,6 +151,27 @@ it.layer(NodeServices.layer)("effect-codex-app-server client", (it) => {
           turnId: "turn-1",
         },
       ]);
+    }),
+  );
+
+  it.effect("does not report normal client scope closure as process loss", () =>
+    Effect.gen(function* () {
+      const failures: Array<CodexError.CodexAppServerError> = [];
+      const handle = yield* makeHandle();
+      const scope = yield* Scope.make();
+      const context = yield* Layer.buildWithScope(
+        CodexClient.layerChildProcess(handle, {
+          onTermination: (error) =>
+            Effect.sync(() => {
+              failures.push(error);
+            }),
+        }),
+        scope,
+      );
+      const client = yield* CodexClient.CodexAppServerClient.pipe(Effect.provide(context));
+      yield* client.request("account/read", {});
+      yield* Scope.close(scope, Exit.void);
+      assert.deepEqual(failures, []);
     }),
   );
   it.effect("drains child stderr so large diagnostics cannot block protocol responses", () =>
