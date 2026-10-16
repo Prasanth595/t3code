@@ -266,11 +266,38 @@ export const layerExecutor: Layer.Layer<
                     const message = projection.messages.find((item) => item.id === messageId);
                     const run = projection.runs.find((item) => item.id === message?.runId);
                     if (message === undefined || run === undefined) return yield* error;
+                    // Only a parent's saved task prompt may cross the task-dispatch boundary.
+                    // Notifications, scheduled work, and peer messages retain their own semantics.
+                    const child = projection.thread;
+                    const parentId = child.lineage.parentThreadId;
+                    let parentOwnedTask = false;
+                    if (
+                      child.lineage.relationshipToParent === "subagent" &&
+                      child.creationSource === "mcp" &&
+                      parentId !== null &&
+                      message.senderThreadId === parentId &&
+                      message.role === "user" &&
+                      message.createdBy === "agent" &&
+                      message.creationSource === "mcp" &&
+                      message.notification === undefined &&
+                      message.delegatedCompletion === undefined &&
+                      message.scheduledTaskId === undefined &&
+                      run.restartContinuationOfRunId === undefined
+                    ) {
+                      const parent = yield* threads.getThreadRecords(parentId, ["subagents"]);
+                      parentOwnedTask = parent.subagents.some(
+                        (task) =>
+                          task.origin === "app_owned" &&
+                          task.childThreadId === child.id &&
+                          child.forkedFrom?.type === "node" &&
+                          task.id === child.forkedFrom.nodeId,
+                      );
+                    }
                     // Reuse the message identity and a stable command receipt so an outbox
                     // retry cannot append a duplicate message or start a second follow-up.
                     yield* threads
                       .dispatch({
-                        type: "message.dispatch",
+                        type: parentOwnedTask ? "task.message.dispatch" : "message.dispatch",
                         commandId: CommandId.make(`command:steer-follow-up:${effect.id}`),
                         threadId: effect.threadId,
                         messageId: message.id,

@@ -1,4 +1,5 @@
 import * as CoordinationIntake from "../coordination/CoordinationIntake.ts";
+import * as CoordinationActions from "../coordination/CoordinationActions.ts";
 import * as LegacyPeerQueue from "../coordination/RetireLegacyPeerQueue.ts";
 import * as Coordination from "../coordination/CoordinationService.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
@@ -262,6 +263,9 @@ const layerThreadManagementProvided = ThreadManagementService.layerWithLegacyImp
     ),
   ),
 );
+const layerCoordinationActionsProvided = CoordinationActions.layer.pipe(
+  Layer.provide(Layer.merge(layerCoordinationProvided, layerThreadManagementProvided)),
+);
 export const layerProjectSetupScriptRunner = ProjectSetupScriptRunner.layer.pipe(
   Layer.provide(layerProjectService),
 );
@@ -354,6 +358,7 @@ export const layer = Layer.mergeAll(
   layerOrchestratorProvided,
   layerMcpAppRequestsProvided,
   layerThreadManagementProvided,
+  layerCoordinationActionsProvided,
   layerEffectWorkerProvided,
   layerProviderSessionManagerProvided,
   layerProviderAuthServiceProvided,

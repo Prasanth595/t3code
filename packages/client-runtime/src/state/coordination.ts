@@ -14,15 +14,43 @@ import {
   createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 
-export function coordinationMentionQuery(text: string, caret: number) {
+function matchingMentionTitle(query: string, threads: ReadonlyArray<{ title: string }>) {
+  const lower = query.toLowerCase();
+  return threads
+    .map((thread) => thread.title)
+    .filter(
+      (title) =>
+        title.length > 0 &&
+        lower.startsWith(title.toLowerCase()) &&
+        /^(?:[\s.,!?;:]|$)/.test(query.slice(title.length)),
+    )
+    .sort((left, right) => right.length - left.length)[0];
+}
+
+export function coordinationMentionQuery(
+  text: string,
+  caret: number,
+  threads: ReadonlyArray<{ title: string }> = [],
+) {
   const before = text.slice(0, caret);
   const match = /(?:^|\s)@([^@\n]*)$/.exec(before);
   if (!match) return null;
-  return { query: match[1] ?? "", start: before.lastIndexOf("@"), end: caret };
+  const start = before.lastIndexOf("@");
+  const query = matchingMentionTitle(match[1] ?? "", threads) ?? match[1] ?? "";
+  return { query, start, end: start + 1 + query.length };
 }
 
-export function hasCoordinationMention(text: string) {
-  return /(?:^|\s)@/.test(text);
+export function hasCoordinationMention(text: string, threads: ReadonlyArray<{ title: string }>) {
+  return Array.from(text.matchAll(/(?:^|\s)@([^@\n]*)/g)).some((match) => {
+    const query = match[1] ?? "";
+    return (
+      matchingMentionTitle(query, threads) !== undefined ||
+      threads.some(
+        (thread) =>
+          thread.title.length > 0 && thread.title.toLowerCase().startsWith(query.toLowerCase()),
+      )
+    );
+  });
 }
 
 export function coordinationPostContent(input: {

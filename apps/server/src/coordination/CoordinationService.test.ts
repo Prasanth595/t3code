@@ -175,6 +175,15 @@ it.effect("correlates replies, bounds open requests and rejects changed retry pa
         visible.some((entry) => entry.id === response.id),
         broadcast,
       );
+      if (broadcast) {
+        yield* board.resolve({
+          projectId,
+          entryId: root.id,
+          status: "resolved",
+          actorThreadId: observer,
+        });
+        assert.equal((yield* board.get(projectId, response.id)).status, "resolved");
+      }
     }
   }).pipe(Effect.provide(layer)),
 );
@@ -281,6 +290,50 @@ it.effect(
           })
           .pipe(Effect.flip)).reason,
         "not_found",
+      );
+    }).pipe(Effect.provide(layer)),
+);
+
+it.effect(
+  "keeps lower-permission and historical agent posts on the board without automatic delivery",
+  () =>
+    Effect.gen(function* () {
+      yield* seed;
+      const sql = yield* SqlClient.SqlClient;
+      const board = yield* Coordination.CoordinationService;
+      yield* sql`UPDATE orchestration_v2_projection_threads SET runtime_mode='approval-required',interaction_mode='plan' WHERE thread_id=${sender}`;
+      const low = yield* board.post(post("low-authority", "Lower-permission context"));
+      assert.deepEqual(low.senderModes, {
+        runtimeMode: "approval-required",
+        interactionMode: "plan",
+      });
+      assert.equal((yield* board.read({ projectId, threadId: recipient })).entries[0]?.id, low.id);
+      assert.equal(yield* board.context(recipient), "");
+      assert.equal(yield* board.toolNotice(recipient), "");
+      yield* sql`UPDATE orchestration_v2_projection_threads SET runtime_mode='full-access',interaction_mode='default' WHERE thread_id=${sender}`;
+      assert.equal(
+        yield* board.context(recipient),
+        "",
+        "upgrading the sender cannot elevate an old post",
+      );
+      yield* board.post({ ...post("high-authority", "Trusted context"), topic: "Trusted" });
+      assert.include(yield* board.context(recipient), "Trusted context");
+      assert.notInclude(yield* board.context(recipient), low.text);
+      yield* sql`UPDATE orchestration_v2_projection_threads SET runtime_mode='approval-required',interaction_mode='default' WHERE thread_id=${recipient}`;
+      assert.notInclude(
+        yield* board.context(recipient),
+        low.text,
+        "plan-to-default delivery remains blocked",
+      );
+      yield* sql`UPDATE orchestration_v2_projection_threads SET interaction_mode='plan' WHERE thread_id=${recipient}`;
+      assert.include(yield* board.context(recipient), low.text);
+      yield* sql`UPDATE coordination_entries SET payload_json=json_remove(payload_json,'$.senderModes') WHERE entry_id=${low.id}`;
+      assert.notInclude(yield* board.context(recipient), low.text);
+      assert.include(
+        (yield* board.read({ projectId, threadId: recipient })).entries.find(
+          (entry) => entry.id === low.id,
+        )!.text,
+        low.text,
       );
     }).pipe(Effect.provide(layer)),
 );

@@ -35,7 +35,7 @@ import {
   type OrchestrationV2ContextSourcePoint,
   type OrchestrationV2ContextTransfer,
   type OrchestrationV2ContextTransferResolution,
-  type OrchestrationV2ConversationMessage,
+  OrchestrationV2ConversationMessage,
   type OrchestrationV2DelegatedCompletionCohort,
   type OrchestrationV2DelegatedCompletionDelivery,
   type OrchestrationV2DomainEvent,
@@ -415,6 +415,8 @@ function isGoalCommand(message: {
 }): boolean {
   return message.attachments.length === 0 && /^\/goal(?:\s|$)/u.test(message.text.trim());
 }
+
+const conversationMessagesEqual = Schema.toEquivalence(OrchestrationV2ConversationMessage);
 
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
 
@@ -10779,9 +10781,51 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           thread.lineage.relationshipToParent === "subagent"
         ) {
           const child = yield* projectionStore
-            .getThreadRecords(command.threadId, ["runs"])
+            .getThreadRecords(command.threadId, ["runs", "messages"], {
+              messageIds: [command.messageId],
+            })
             .pipe(mapDispatchError(command));
+          const savedMessage = child.messages.find((message) => message.id === command.messageId);
+          if (savedMessage !== undefined) {
+            const {
+              context: _context,
+              senderThreadId: _sender,
+              scheduledTaskId: _scheduled,
+              notification: _notification,
+              delegatedCompletion: _completion,
+              ...savedBase
+            } = savedMessage;
+            const replay = {
+              ...savedBase,
+              text: command.text,
+              attachments: command.attachments,
+              createdBy: command.createdBy,
+              creationSource: command.creationSource,
+              ...(command.context === undefined ? {} : { context: command.context }),
+              ...(command.senderThreadId === undefined
+                ? {}
+                : { senderThreadId: command.senderThreadId }),
+              ...(command.scheduledTaskId === undefined
+                ? {}
+                : { scheduledTaskId: command.scheduledTaskId }),
+              ...(command.notification === undefined ? {} : { notification: command.notification }),
+              ...(command.delegatedCompletion === undefined
+                ? {}
+                : { delegatedCompletion: command.delegatedCompletion }),
+            };
+            if (!conversationMessagesEqual(savedMessage, replay)) {
+              return yield* new OrchestratorDispatchError({
+                commandId: command.commandId,
+                commandType: command.type,
+                cause:
+                  "A saved task message cannot be replayed with different content or provenance.",
+              });
+            }
+          }
+          // A failed steer reuses already-admitted work. Let normal dispatch queue
+          // it while completion is still being projected, without poisoning its receipt.
           if (
+            savedMessage === undefined &&
             child.runs.some(
               (run) => isBlockingRun(run) || (run.status === "queued" && run.queueHeld !== true),
             )

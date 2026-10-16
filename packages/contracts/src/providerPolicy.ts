@@ -35,6 +35,23 @@ export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
 
+export function runtimeModeRank(mode: RuntimeMode): number {
+  switch (mode) {
+    case "approval-required":
+      return 0;
+    case "auto-accept-edits":
+      return 1;
+    case "auto":
+      return 2;
+    case "full-access":
+      return 3;
+  }
+}
+
+export function interactionModeRank(mode: ProviderInteractionMode): number {
+  return mode === "plan" ? 0 : 1;
+}
+
 export const ProviderRequestKind = Schema.Literals([
   "command",
   "file-read",

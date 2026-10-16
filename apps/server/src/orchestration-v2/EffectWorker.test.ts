@@ -1,6 +1,9 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  MessageId,
+  ProviderInstanceId,
+  ScheduledTaskId,
   NodeId,
   ProviderSessionId,
   ProviderThreadId,
@@ -22,6 +25,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
+import type { ProjectionRecordField, ProjectionRecords } from "./ProjectionStore.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
@@ -83,6 +87,7 @@ function layerExecutorFor(input: {
   readonly threads?: Partial<ThreadManagementService.ThreadManagementService["Service"]>;
   readonly continueAfterRestart?: boolean;
   readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
+  readonly steer?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["steer"];
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const layerDependencies = Layer.mergeAll(
@@ -90,7 +95,7 @@ function layerExecutorFor(input: {
       ProviderTurnControlService.ProviderTurnControlServiceV2,
       ProviderTurnControlService.ProviderTurnControlServiceV2.of({
         interrupt: input.interrupt ?? (() => Effect.void),
-        steer: () => Effect.void,
+        steer: input.steer ?? (() => Effect.void),
         interruptAndAwaitTerminal: (request) =>
           record(
             request.replacementProviderSessionId === undefined
@@ -903,4 +908,128 @@ it.effect.each(["confirmed", "unconfirmed", "failed"] as const)(
         outcome === "confirmed" ? ["stop-child", "settle-child"] : ["stop-child"],
       );
     }),
+);
+
+// Exercise the real executor with the same stable receipt on an outbox retry.
+it.effect.each([
+  "child",
+  "peer",
+  "native",
+  "unowned",
+  "scheduled",
+  "notification",
+  "completion",
+] as const)("preserves the completed-turn fallback dispatch boundary for %s messages", (kind) =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const parentId = ThreadId.make("thread:effect-worker-parent");
+    const taskId = NodeId.make("task:effect-worker-child");
+    const messageId = MessageId.make("message:effect-worker-steer");
+    const projection = {
+      thread: {
+        id: threadId,
+        creationSource: kind === "native" ? "provider" : "mcp",
+        lineage: { relationshipToParent: "subagent", parentThreadId: parentId },
+        forkedFrom: { type: "node", nodeId: taskId },
+      },
+      messages: [
+        {
+          id: messageId,
+          runId,
+          role: "user",
+          text: "Continue the assigned work",
+          attachments: [],
+          createdBy: "agent",
+          creationSource: "mcp",
+          senderThreadId: kind === "peer" ? ThreadId.make("thread:unrelated-peer") : parentId,
+          ...(kind === "scheduled"
+            ? { scheduledTaskId: ScheduledTaskId.make("scheduled:task") }
+            : {}),
+          ...(kind === "notification"
+            ? {
+                notification: {
+                  source: { kind: "system" },
+                  outcome: "updated",
+                  summary: "Update",
+                },
+              }
+            : {}),
+          ...(kind === "completion"
+            ? {
+                delegatedCompletion: {
+                  parentRunId: runId,
+                  generation: 1,
+                  taskIds: [taskId],
+                },
+              }
+            : {}),
+        },
+      ],
+      runs: [
+        {
+          id: runId,
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+        },
+      ],
+      subagents:
+        kind === "unowned"
+          ? []
+          : [
+              {
+                id: taskId,
+                origin: "app_owned",
+                childThreadId: threadId,
+              },
+            ],
+    } as unknown as ProjectionRecords<ProjectionRecordField>;
+    const dispatched: Array<{ type: string; commandId: CommandId; messageId: MessageId }> = [];
+    const layer = layerExecutorFor({
+      events,
+      steer: () =>
+        new ProviderTurnControlService.ProviderTurnControlError({
+          threadId,
+          operation: "steer",
+          providerTurnId,
+          turnCompleted: true,
+        }),
+      threads: {
+        getThreadRecords: () => Effect.succeed(projection),
+        dispatch: (command) => {
+          assert.isTrue(
+            command.type === "message.dispatch" || command.type === "task.message.dispatch",
+          );
+          if (command.type === "message.dispatch" || command.type === "task.message.dispatch") {
+            dispatched.push(command);
+            assert.equal(command.senderThreadId, projection.messages[0]!.senderThreadId);
+            assert.equal(command.text, projection.messages[0]!.text);
+          }
+          return Effect.succeed({ sequence: 1, storedEvents: [] });
+        },
+      },
+    });
+    const effect = {
+      ...restartEffect(now, { type: "detach" }),
+      request: {
+        type: "provider-turn.steer" as const,
+        providerSessionId: oldSessionId,
+        providerThreadId,
+        providerTurnId,
+        messageId,
+      },
+    };
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      yield* executor.execute(effect);
+      yield* executor.execute(effect);
+    }).pipe(Effect.provide(layer));
+    assert.equal(dispatched.length, 2);
+    assert.equal(
+      dispatched[0]!.type,
+      kind === "child" ? "task.message.dispatch" : "message.dispatch",
+    );
+    assert.equal(dispatched[0]!.messageId, messageId);
+    assert.equal(dispatched[0]!.commandId, CommandId.make(`command:steer-follow-up:${effect.id}`));
+    assert.deepEqual(dispatched[1], dispatched[0]);
+  }),
 );

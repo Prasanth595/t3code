@@ -120,8 +120,8 @@ function ActivityContent({ environmentId, projectId, threadId }: ActivityProps) 
     coordinationEnvironment.preferences.permissionAtom(environmentId),
   );
   const threads = snapshot?.threads ?? [];
-  const mention = coordinationMentionQuery(text, caret);
-  const mentionPending = hasCoordinationMention(text);
+  const mention = coordinationMentionQuery(text, caret, threads);
+  const mentionPending = hasCoordinationMention(text, threads);
   const targetMissing = target !== null && !threads.some((thread) => thread.threadId === target);
   const mentionCandidates = mention
     ? threads
@@ -633,7 +633,7 @@ function ActivityContent({ environmentId, projectId, threadId }: ActivityProps) 
             </AppText>
           ) : null}
           {mention && !mentionCandidates.length ? (
-            <AppText>No matching thread. Remove @ to share with the project.</AppText>
+            <AppText>No matching thread. The @ text will stay in your post.</AppText>
           ) : null}
           {error ? (
             <AppText accessibilityRole="alert" className="text-danger">

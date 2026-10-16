@@ -6,6 +6,12 @@ import {
   IsoDateTime,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
+import {
+  RuntimeMode,
+  ProviderInteractionMode,
+  runtimeModeRank,
+  interactionModeRank,
+} from "./providerPolicy.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 
 export const CoordinationKind = Schema.Literals(["update", "request", "blocker"]);
@@ -20,6 +26,9 @@ export const CoordinationEntry = Schema.Struct({
   status: CoordinationStatus,
   createdBy: Schema.Literals(["user", "agent"]),
   senderThreadId: Schema.NullOr(ThreadId),
+  senderModes: Schema.optional(
+    Schema.Struct({ runtimeMode: RuntimeMode, interactionMode: ProviderInteractionMode }),
+  ),
   targetThreadId: Schema.NullOr(ThreadId),
   replyToId: Schema.NullOr(TrimmedNonEmptyString),
   text: Schema.String,
@@ -29,6 +38,20 @@ export const CoordinationEntry = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 export type CoordinationEntry = typeof CoordinationEntry.Type;
+
+/** Unknown historical agent provenance remains readable but is never injected automatically. */
+export function canDeliverCoordinationAutomatically(
+  entry: Pick<CoordinationEntry, "createdBy" | "senderModes">,
+  recipient: { runtimeMode: RuntimeMode; interactionMode: ProviderInteractionMode },
+) {
+  return (
+    entry.createdBy === "user" ||
+    (entry.senderModes !== undefined &&
+      runtimeModeRank(recipient.runtimeMode) <= runtimeModeRank(entry.senderModes.runtimeMode) &&
+      interactionModeRank(recipient.interactionMode) <=
+        interactionModeRank(entry.senderModes.interactionMode))
+  );
+}
 
 /** Broadcast discussions are open to any thread; direct discussions keep their participants. */
 export function canReplyToCoordination(

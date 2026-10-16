@@ -80,9 +80,21 @@ describe("coordination activity", () => {
       end: 7,
     });
     expect(coordinationMentionQuery("Ask @review\nCheck this", 0)).toBeNull();
-    expect(hasCoordinationMention("Ask @review\nCheck this")).toBe(true);
-    expect(hasCoordinationMention("Email user@example.com")).toBe(false);
-    expect(hasCoordinationMention("Ask  Check this")).toBe(false);
+    expect(hasCoordinationMention("Ask @review\nCheck this", [{ title: "Review" }])).toBe(true);
+    expect(hasCoordinationMention("Email user@example.com", [{ title: "Review" }])).toBe(false);
+    expect(hasCoordinationMention("Ask  Check this", [{ title: "Review" }])).toBe(false);
+    expect(hasCoordinationMention("Install @t3tools/contracts", [{ title: "t3tools" }])).toBe(
+      false,
+    );
+    expect(hasCoordinationMention("A literal @annotation", [{ title: "Review" }])).toBe(false);
+    expect(hasCoordinationMention("Ask @Rev", [{ title: "Review" }])).toBe(true);
+    const pasted = "Ask @Review then finish";
+    const selected = coordinationMentionQuery(pasted, pasted.length, [{ title: "Review" }]);
+    expect(selected).toEqual({ query: "Review", start: 4, end: 11 });
+    expect(pasted.slice(0, selected!.start) + pasted.slice(selected!.end)).toBe("Ask  then finish");
+    expect(
+      coordinationPostContent({ text: "Install @t3tools/contracts", kind: "update" }).text,
+    ).toBe("Install @t3tools/contracts");
     expect(coordinationMentionQuery("Email user@example.com", 22)).toBeNull();
     expect(coordinationMentionQuery("@review\nDone", 12)).toBeNull();
   });

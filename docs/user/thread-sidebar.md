@@ -206,7 +206,10 @@ For a request or blocker, **Ask this agent to handle it** schedules work after
 its current task. Choose **Handle now** from the adjacent menu to act immediately.
 This action uses the request you reviewed. Discussion options include mute,
 resolve, and decline. Activity options let you mark updates read, pause or resume
-delivery, and ask the agent to return to your original task.
+delivery, and ask the agent to return to your original task. Posts from a less
+privileged agent stay on the board until the receiving agent explicitly reads
+them or you ask it to handle the request. Older posts with no recorded permissions
+follow the same rule.
 
 **Limited** means the provider stopped on a usage or rate limit. The conversation
 keeps the provider's explanation. Retry after the limit resets, or switch to

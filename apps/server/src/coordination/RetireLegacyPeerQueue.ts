@@ -44,6 +44,7 @@ const make = Effect.gen(function* () {
     SELECT r.payload_json AS run_json,m.payload_json AS message_json,t.payload_json AS thread_json,t.project_id
     FROM orchestration_v2_projection_runs r JOIN orchestration_v2_projection_messages m ON m.message_id=json_extract(r.payload_json,'$.userMessageId')
     JOIN orchestration_v2_projection_threads t ON t.thread_id=r.thread_id
+    JOIN projection_projects p ON p.project_id=t.project_id AND p.deleted_at IS NULL
     WHERE r.status='queued' AND m.message_id LIKE 'message:mcp:%:thread-send:%' AND t.deleted_at IS NULL
     ORDER BY r.thread_id,r.ordinal`.pipe(
       Effect.mapError(
@@ -57,51 +58,60 @@ const make = Effect.gen(function* () {
     );
     let retired = 0;
     for (const row of rows) {
-      const { run, message, thread } = yield* Effect.all({
-        run: decodeRun(row.run_json),
-        message: decodeMessage(row.message_json),
-        thread: decodeThread(row.thread_json),
-      }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new CoordinationError({
-              reason: "storage",
-              message: "Could not decode queued peer coordination.",
-              cause,
-            }),
-        ),
-      );
-      if (!isLegacyPeerMessage(message, run, thread)) continue;
-      yield* board.post({
-        commandId: CommandId.make(`coordination:migrate:${message.id}`),
-        projectId: row.project_id,
-        createdBy: "agent",
-        targetThreadId: thread.id,
-        topic: `Migrated coordination ${run.ordinal}: ${String(message.senderThreadId).slice(0, 100)}`,
-        kind: "update",
-        text: message.text
-          ? `From ${message.senderThreadId} (moved from the chat queue):\n\n${message.text}`
-          : "An earlier agent attachment was moved from the chat queue.",
-        attachments: message.attachments,
-      });
-      yield* orchestrator
-        .dispatch({
-          type: "queued-run.cancel",
-          commandId: CommandId.make(`command:coordination-retire:${run.id}`),
-          threadId: thread.id,
-          runId: run.id,
-        })
-        .pipe(
+      const migrated = yield* Effect.gen(function* () {
+        const { run, message, thread } = yield* Effect.all({
+          run: decodeRun(row.run_json),
+          message: decodeMessage(row.message_json),
+          thread: decodeThread(row.thread_json),
+        }).pipe(
           Effect.mapError(
             (cause) =>
               new CoordinationError({
                 reason: "storage",
-                message: "Could not cancel migrated peer coordination.",
+                message: "Could not decode queued peer coordination.",
                 cause,
               }),
           ),
         );
-      retired += 1;
+        if (!isLegacyPeerMessage(message, run, thread)) return false;
+        yield* board.post({
+          commandId: CommandId.make(`coordination:migrate:${message.id}`),
+          projectId: row.project_id,
+          createdBy: "agent",
+          targetThreadId: thread.id,
+          topic: `Migrated coordination ${run.ordinal}: ${String(message.senderThreadId).slice(0, 100)}`,
+          kind: "update",
+          text: message.text
+            ? `From ${message.senderThreadId} (moved from the chat queue):\n\n${message.text}`
+            : "An earlier agent attachment was moved from the chat queue.",
+          attachments: message.attachments,
+        });
+        yield* orchestrator
+          .dispatch({
+            type: "queued-run.cancel",
+            commandId: CommandId.make(`command:coordination-retire:${run.id}`),
+            threadId: thread.id,
+            runId: run.id,
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new CoordinationError({
+                  reason: "storage",
+                  message: "Could not cancel migrated peer coordination.",
+                  cause,
+                }),
+            ),
+          );
+        return true;
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Could not retire queued peer coordination.", error).pipe(
+            Effect.as(false),
+          ),
+        ),
+      );
+      if (migrated) retired += 1;
     }
     return { retired };
   });

@@ -1201,6 +1201,7 @@ const layerWsRpc = (
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const coordination = yield* Coordination.CoordinationService;
+      const coordinationActions = yield* CoordinationActions.CoordinationActions;
       const coordinationIntake = yield* CoordinationIntake.CoordinationIntake;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const pullRequests = yield* PullRequestService.PullRequestService;
@@ -2030,7 +2031,7 @@ const layerWsRpc = (
               Effect.as(commandOutputHub.subscribe(input)),
             ),
           ),
-        [WS_METHODS.coordinationHandle]: (input) => CoordinationActions.handle(input),
+        [WS_METHODS.coordinationHandle]: (input) => coordinationActions.handle(input),
         [WS_METHODS.coordinationRead]: (input) => coordination.read(input),
         [WS_METHODS.coordinationSubscribe]: (input) => coordination.subscribe(input),
         [WS_METHODS.coordinationPost]: (input) =>

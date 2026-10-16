@@ -1,5 +1,8 @@
 import {
   canReplyToCoordination,
+  canDeliverCoordinationAutomatically,
+  type RuntimeMode,
+  type ProviderInteractionMode,
   CoordinationEntry,
   type ChatAttachment,
   CoordinationError,
@@ -225,6 +228,15 @@ export const layer = Layer.effect(
                 const canonical = postFingerprint(input, requestedAttachments);
                 const previousReceipt = yield* receiptFor(input, requestedAttachments);
                 if (previousReceipt !== undefined) return previousReceipt;
+                const senderModes =
+                  input.createdBy === "agent" && input.senderThreadId !== undefined
+                    ? (yield* sql<{
+                        runtimeMode: RuntimeMode;
+                        interactionMode: ProviderInteractionMode;
+                      }>`
+                      SELECT runtime_mode AS runtimeMode, interaction_mode AS interactionMode
+                      FROM orchestration_v2_projection_threads WHERE thread_id=${input.senderThreadId}`)[0]
+                    : undefined;
                 const timestamp = yield* now;
                 let replyToId: string | null = null;
                 let topic = input.topic;
@@ -290,6 +302,7 @@ export const layer = Layer.effect(
                   status: "open",
                   createdBy: input.createdBy,
                   senderThreadId: sender,
+                  ...(senderModes === undefined ? {} : { senderModes }),
                   targetThreadId,
                   replyToId,
                   text: input.text,
@@ -319,10 +332,7 @@ export const layer = Layer.effect(
               return yield* fail("conflict", "Resolve the discussion, not an individual reply.");
             if (input.actorThreadId !== undefined) {
               yield* checkThread(input.projectId, input.actorThreadId);
-              if (
-                entry.senderThreadId !== input.actorThreadId &&
-                entry.targetThreadId !== input.actorThreadId
-              )
+              if (!canReplyToCoordination(entry, input.actorThreadId))
                 return yield* fail("forbidden", "Only participants can resolve this discussion.");
             }
             if (entry.status !== "open") return entry;
@@ -484,7 +494,10 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         const thread = yield* sql<{
           project_id: ProjectId;
-        }>`SELECT project_id FROM orchestration_v2_projection_threads WHERE thread_id=${threadId} AND deleted_at IS NULL AND archived_at IS NULL`;
+          runtimeMode: RuntimeMode;
+          interactionMode: ProviderInteractionMode;
+        }>`SELECT project_id, runtime_mode AS runtimeMode, interaction_mode AS interactionMode
+          FROM orchestration_v2_projection_threads WHERE thread_id=${threadId} AND deleted_at IS NULL AND archived_at IS NULL`;
         if (thread[0] === undefined) return "";
         yield* expire(thread[0].project_id);
         const prefs = yield* preferencesFor(threadId);
@@ -502,7 +515,9 @@ export const layer = Layer.effect(
           .map((row) => decodeEntry(row.payload_json))
           .filter(
             (entry) =>
-              !prefs.mutedTopics.includes(entry.topic) && entry.senderThreadId !== threadId,
+              !prefs.mutedTopics.includes(entry.topic) &&
+              entry.senderThreadId !== threadId &&
+              canDeliverCoordinationAutomatically(entry, thread[0]!),
           );
         if (entries.length === 0) return "";
         return (

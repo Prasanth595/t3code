@@ -153,19 +153,21 @@ it.effect("refuses to start handling a request addressed to other threads", () =
       text: "Can you release?",
       createdBy: "agent",
     });
-    const error = yield* Actions.handle({
-      projectId,
-      threadId: observer,
-      entryId: request.id,
-      action: "handle_now",
-    }).pipe(
-      Effect.provide(
-        Layer.mock(Threads.ThreadManagementService)({
-          getThreadShell: orchestrator.getThreadShell,
-        }),
-      ),
-      Effect.flip,
-    );
+    const mockedThreads = Layer.mock(Threads.ThreadManagementService)({
+      getThreadShell: orchestrator.getThreadShell,
+    });
+    const actionLayer = Actions.layer.pipe(Layer.provideMerge(mockedThreads));
+    const error = yield* Effect.gen(function* () {
+      const actions = yield* Actions.CoordinationActions;
+      return yield* actions
+        .handle({
+          projectId,
+          threadId: observer,
+          entryId: request.id,
+          action: "handle_now",
+        })
+        .pipe(Effect.flip);
+    }).pipe(Effect.provide(actionLayer));
     assert.equal(error.reason, "forbidden");
     const projection = yield* orchestrator.getThreadProjection(observer);
     assert.deepEqual(projection.messages, []);
@@ -286,6 +288,14 @@ it.effect("retires only known peer queues once through events, and resume cannot
     const peer = yield* seedQueued({ name: "peer" });
     const second = yield* seedQueued({ name: "peer-second", threadId: peer.threadId, ordinal: 2 });
     const retirement = yield* Retirement.Retirement;
+    const corrupt = yield* seedQueued({ name: "aaa-corrupt" });
+    const deleted = yield* seedQueued({ name: "bbb-deleted-project" });
+    const sql = yield* SqlClient.SqlClient;
+    const deletedProject = ProjectId.make("deleted-coordination-project");
+    yield* sql`INSERT INTO projection_projects(project_id,title,workspace_root,scripts_json,created_at,updated_at,deleted_at)
+      VALUES (${deletedProject},'Deleted','/tmp','[]','2026-01-01','2026-01-01','2026-01-02')`;
+    yield* sql`UPDATE orchestration_v2_projection_threads SET project_id=${deletedProject} WHERE thread_id=${deleted.threadId}`;
+    yield* sql`UPDATE orchestration_v2_projection_runs SET payload_json=json_set(payload_json,'$.ordinal','invalid') WHERE run_id=${corrupt.run.id}`;
     const preserved = yield* Effect.forEach(
       [
         { name: "human", user: true },
@@ -307,6 +317,20 @@ it.effect("retires only known peer queues once through events, and resume cannot
 
     assert.deepEqual(yield* retirement.retire, { retired: 2 });
     assert.deepEqual(yield* retirement.retire, { retired: 0 });
+    assert.equal(
+      (yield* sql<{
+        status: string;
+      }>`SELECT status FROM orchestration_v2_projection_runs WHERE run_id=${corrupt.run.id}`)[0]
+        ?.status,
+      "queued",
+    );
+    assert.equal(
+      (yield* sql<{
+        status: string;
+      }>`SELECT status FROM orchestration_v2_projection_runs WHERE run_id=${deleted.run.id}`)[0]
+        ?.status,
+      "queued",
+    );
     const migrated = yield* board.read({ projectId, threadId: peer.threadId });
     assert.equal(migrated.entries.length, 2);
     for (const original of [peer, second]) {
@@ -497,21 +521,20 @@ it.effect(
             delivery: "queued" as const,
           };
         });
+      const mockThreads = Layer.mock(Threads.ThreadManagementService)({
+        getThreadShell: orchestrator.getThreadShell,
+        sendToThread,
+      });
+      const actionLayer = Actions.layer.pipe(Layer.provideMerge(mockThreads));
+      const actions = yield* Actions.CoordinationActions.pipe(Effect.provide(actionLayer));
       const handle = (entryId: string, entryRevision = root.revision) =>
-        Actions.handle({
+        actions.handle({
           projectId,
           threadId: sender,
           entryId,
           entryRevision,
           action: "handle_after",
-        }).pipe(
-          Effect.provide(
-            Layer.mock(Threads.ThreadManagementService)({
-              getThreadShell: orchestrator.getThreadShell,
-              sendToThread,
-            }),
-          ),
-        );
+        });
       const stale = yield* board.post({
         commandId: CommandId.make("consent-old"),
         projectId,
@@ -544,4 +567,118 @@ it.effect(
       assert.equal((yield* handle(reply.id).pipe(Effect.flip)).reason, "conflict");
       assert.lengthOf((yield* orchestrator.getThreadProjection(sender)).runs, 1);
     }).pipe(Effect.provide(layer)),
+);
+
+it.effect("replays an admitted child task while its old run is still blocking", () =>
+  Effect.gen(function* () {
+    yield* seedProject;
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const sink = yield* EventSink.EventSinkV2;
+    const threadId = ThreadId.make("thread:steer-fallback-child");
+    yield* createThread(threadId);
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("steer-fallback-initial"),
+      threadId,
+      messageId: MessageId.make("message:steer-fallback-initial"),
+      text: "Initial work",
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+      dispatchMode: { type: "defer_start" },
+    });
+    const initial = yield* orchestrator.getThreadProjection(threadId);
+    const active = initial.runs[0]!;
+    assert.equal(active.status, "preparing");
+    const now = yield* DateTime.now;
+    const message: OrchestrationV2ConversationMessage = {
+      id: MessageId.make("message:steer-fallback-saved"),
+      threadId,
+      runId: active.id,
+      nodeId: active.rootNodeId,
+      role: "user",
+      text: "Finish the assigned work",
+      attachments: [],
+      streaming: false,
+      createdAt: now,
+      updatedAt: now,
+      createdBy: "agent",
+      creationSource: "mcp",
+      senderThreadId: sender,
+    };
+    yield* sink.write({
+      events: [
+        {
+          id: EventId.make("steer-fallback-lineage"),
+          type: "thread.metadata-updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            ...initial.thread,
+            creationSource: "mcp",
+            lineage: {
+              ...initial.thread.lineage,
+              parentThreadId: sender,
+              relationshipToParent: "subagent",
+            },
+          },
+        },
+        {
+          id: EventId.make("steer-fallback-saved-message"),
+          type: "message.updated",
+          threadId,
+          occurredAt: now,
+          payload: message,
+        },
+      ],
+    });
+    const command = {
+      type: "task.message.dispatch" as const,
+      commandId: CommandId.make("command:steer-follow-up:admitted-task"),
+      threadId,
+      messageId: message.id,
+      text: message.text,
+      attachments: message.attachments,
+      senderThreadId: sender,
+      createdBy: "agent" as const,
+      creationSource: "mcp" as const,
+      dispatchMode: { type: "start_immediately" as const },
+    };
+    yield* orchestrator
+      .dispatch({
+        ...command,
+        commandId: CommandId.make("steer-fallback-fresh-busy"),
+        messageId: MessageId.make("message:steer-fallback-fresh-busy"),
+      })
+      .pipe(Effect.flip);
+    for (const change of [{ text: "Replace admitted content" }, { senderThreadId: threadId }]) {
+      yield* orchestrator
+        .dispatch({
+          ...command,
+          ...change,
+          commandId: CommandId.make(`steer-fallback-mutated:${Object.keys(change)[0]}`),
+        })
+        .pipe(Effect.flip);
+    }
+    // Ordinary peer delivery cannot use the saved message to bypass its boundary.
+    yield* orchestrator
+      .dispatch({
+        ...command,
+        type: "message.dispatch",
+        commandId: CommandId.make("steer-fallback-peer"),
+      })
+      .pipe(Effect.flip);
+    const first = yield* orchestrator.dispatch(command);
+    const replay = yield* orchestrator.dispatch(command);
+    assert.equal(replay.sequence, first.sequence);
+    const after = yield* orchestrator.getThreadProjection(threadId);
+    assert.equal(after.runs.length, 2);
+    assert.equal(after.runs.find((run) => run.id === active.id)?.status, "preparing");
+    const queued = after.runs.find((run) => run.status === "queued");
+    assert.isDefined(queued);
+    assert.equal(queued!.userMessageId, message.id);
+    assert.equal(after.messages.length, 2);
+    assert.equal(after.messages.filter((row) => row.id === message.id).length, 1);
+    assert.equal(after.messages.find((row) => row.id === message.id)?.text, message.text);
+  }).pipe(Effect.provide(layer)),
 );

@@ -613,8 +613,8 @@ function ActivityComposer({
   const [suggestion, setSuggestion] = useState(0);
   const editor = useRef<HTMLTextAreaElement>(null);
   const listId = useId();
-  const mention = reply ? null : coordinationMentionQuery(text, caret);
-  const mentionPending = !reply && hasCoordinationMention(text);
+  const mention = reply ? null : coordinationMentionQuery(text, caret, threads);
+  const mentionPending = !reply && hasCoordinationMention(text, threads);
   const candidates = mention
     ? threads
         .filter((thread) => thread.title.toLowerCase().includes(mention.query.toLowerCase()))
@@ -737,7 +737,7 @@ function ActivityComposer({
             ))
           ) : (
             <p className="text-xs text-muted-foreground">
-              No matching thread. Remove @ to share with the project.
+              No matching thread. The @ text will stay in your post.
             </p>
           )}
         </div>
