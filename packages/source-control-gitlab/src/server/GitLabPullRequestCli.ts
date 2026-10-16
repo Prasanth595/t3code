@@ -48,7 +48,10 @@ import {
   type GitLabMergeRequestListItem,
   type GitLabProjectUsers,
 } from "./gitLabMergeRequestJson.ts";
-import type { ProviderListCursor } from "@t3tools/source-control-core/server/PullRequestProvider";
+import type {
+  ProviderListCursor,
+  ProviderRepositoryRef,
+} from "@t3tools/source-control-core/server/PullRequestProvider";
 
 export class GitLabMergeRequestReadError extends Schema.TaggedError<GitLabMergeRequestReadError>()(
   "GitLabMergeRequestReadError",
@@ -211,11 +214,7 @@ export class GitLabPullRequestCli extends Context.Service<
      * say where the prefix ends and the project path begins. Never fails: a host that does not
      * answer is asked about `repository` as given.
      */
-    readonly resolveProjectPath: (input: {
-      readonly cwd: string;
-      readonly host: string;
-      readonly repository: string;
-    }) => Effect.Effect<string>;
+    readonly resolveProjectPath: (input: ProviderRepositoryRef) => Effect.Effect<string>;
 
     readonly getViewerUsername: (input: {
       readonly cwd: string;
@@ -515,29 +514,17 @@ export const make = Effect.gen(function* () {
     });
 
   const projectPaths = yield* Cache.makeWith(
-    (key: string) => {
-      const [cwd = "", host = "", repository = ""] = key.split("\u0000");
-      return gitlab
+    ({ cwd, host, repository }: ProviderRepositoryRef) =>
+      gitlab
         .execute({
           cwd,
           args: ["repo", "view", `https://${host}/${repository}`, "--output", "json"],
         })
         .pipe(
-          Effect.flatMap((result): Effect.Effect<string, GitLabPullRequestCliError> => {
-            const decoded = decodeProjectPathJson(result.stdout.trim());
-            return Result.isSuccess(decoded)
-              ? Effect.succeed(decoded.success)
-              : Effect.fail(
-                  new GitLabMergeRequestReadError({
-                    command: "glab",
-                    cwd,
-                    operation: "resolveProjectPath",
-                    cause: decoded.failure,
-                  }),
-                );
-          }),
-        );
-    },
+          Effect.flatMap((result) =>
+            Effect.fromResult(decodeProjectPathJson(result.stdout.trim())),
+          ),
+        ),
     {
       capacity: PROJECT_PATH_CACHE_CAPACITY,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? PROJECT_PATH_CACHE_TTL : Duration.zero),
@@ -1093,9 +1080,10 @@ export const make = Effect.gen(function* () {
     );
 
   return GitLabPullRequestCli.of({
-    resolveProjectPath: (input) =>
-      Cache.get(projectPaths, [input.cwd, input.host, input.repository].join("\u0000")).pipe(
-        Effect.orElseSucceed(() => input.repository),
+    // Destructured so the key holds only what names a project: callers pass their whole input.
+    resolveProjectPath: ({ cwd, host, repository }) =>
+      Cache.get(projectPaths, { cwd, host, repository }).pipe(
+        Effect.orElseSucceed(() => repository),
       ),
 
     getViewerUsername: viewerUsername,

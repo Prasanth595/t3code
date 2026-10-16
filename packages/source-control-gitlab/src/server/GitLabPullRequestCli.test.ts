@@ -1500,55 +1500,40 @@ layer("GitLabPullRequestCli.layer", (it) => {
     const projectJson = (pathWithNamespace: string) =>
       output(JSON.stringify({ id: 12, path_with_namespace: pathWithNamespace }));
 
-    it.effect("asks GitLab for the project path behind an installation prefix", () =>
+    it.effect.each([
+      {
+        name: "asks GitLab for the project path behind an installation prefix",
+        host: "code.example.com",
+        repository: "gitlab/team/subgroup/project",
+        reported: "team/subgroup/project",
+      },
+      {
+        name: "keeps a group named like the prefix when no prefix is installed",
+        host: "plain.example.com",
+        repository: "gitlab/project",
+        reported: "gitlab/project",
+      },
+      {
+        name: "drops the prefix once when a group is named like it",
+        host: "nested.example.com",
+        repository: "gitlab/gitlab/project",
+        reported: "gitlab/project",
+      },
+    ] as const)("$name", ({ host, repository, reported }) =>
       Effect.gen(function* () {
-        mockedExecute.mockReturnValueOnce(Effect.succeed(projectJson("team/subgroup/project")));
+        mockedExecute.mockReturnValueOnce(Effect.succeed(projectJson(reported)));
         const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
-        const path = yield* cli.resolveProjectPath({
-          cwd: "/w",
-          host: "code.example.com",
-          repository: "gitlab/team/subgroup/project",
-        });
+        const path = yield* cli.resolveProjectPath({ cwd: "/w", host, repository });
 
-        assert.strictEqual(path, "team/subgroup/project");
+        assert.strictEqual(path, reported);
         expect(argsOfCall(0)).toEqual([
           "repo",
           "view",
-          "https://code.example.com/gitlab/team/subgroup/project",
+          `https://${host}/${repository}`,
           "--output",
           "json",
         ]);
-      }),
-    );
-
-    it.effect("keeps a group named like the prefix when no prefix is installed", () =>
-      Effect.gen(function* () {
-        mockedExecute.mockReturnValueOnce(Effect.succeed(projectJson("gitlab/project")));
-        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-        const path = yield* cli.resolveProjectPath({
-          cwd: "/w",
-          host: "plain.example.com",
-          repository: "gitlab/project",
-        });
-
-        assert.strictEqual(path, "gitlab/project");
-      }),
-    );
-
-    it.effect("drops the prefix once when a group is named like it", () =>
-      Effect.gen(function* () {
-        mockedExecute.mockReturnValueOnce(Effect.succeed(projectJson("gitlab/project")));
-        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
-
-        const path = yield* cli.resolveProjectPath({
-          cwd: "/w",
-          host: "nested.example.com",
-          repository: "gitlab/gitlab/project",
-        });
-
-        assert.strictEqual(path, "gitlab/project");
       }),
     );
 
