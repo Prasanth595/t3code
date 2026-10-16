@@ -101,7 +101,7 @@ const logsFor = (
         logs.push(messageText(message));
       });
 
-      yield* Effect.scoped(
+      const built = yield* Effect.scoped(
         Layer.build(
           FactoryRuntime.pipe(
             Layer.provide(
@@ -117,13 +117,16 @@ const logsFor = (
             Layer.provide(quietEvents),
           ),
         ),
-      ).pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false })));
+      ).pipe(
+        Effect.map((context) => Context.get(context, FactoryLoop).status),
+        Effect.provide(Logger.layer([capture], { mergeWithExisting: false })),
+      );
 
       const gates = yield* fs
         .readDirectory(join(factoryDir, "gates"))
         .pipe(Effect.orElseSucceed(() => []));
       const events = scanMachineLog(factoryDir).map((entry) => entry.event);
-      return { logs, machineConfigPath, gates, events };
+      return { logs, machineConfigPath, gates, events, status: built };
     }),
   ).pipe(Effect.provide(NodeServices.layer));
 
@@ -135,9 +138,18 @@ it.effect("logs that there is no config when the machine file does not exist", (
   }),
 );
 
+// The status goes to every client that can read, so its reason names no path and no error:
+// those stay in the server log.
+it.effect("reports itself idle, and why, when there is no config", () =>
+  Effect.gen(function* () {
+    const { status } = yield* logsFor(undefined);
+    assert.deepStrictEqual(status, { state: "idle", reason: "no factory config" });
+  }),
+);
+
 it.effect("logs factory started once for a valid machine file, then runs the first pass", () =>
   Effect.gen(function* () {
-    const { logs, events } = yield* logsFor(VALID);
+    const { logs, events, status } = yield* logsFor(VALID);
     assert.strictEqual(logs[0], "factory started");
     // The pass found no gh: the repo's config could not be read, and the pass said so and ended.
     assert.ok(
@@ -145,6 +157,7 @@ it.effect("logs factory started once for a valid machine file, then runs the fir
       logs.join("\n"),
     );
     assert.strictEqual(logs.at(-1), "pass done: 0 runs, 0 claimed, 1 errors, 0 need attention");
+    assert.deepStrictEqual(status, { state: "running" });
     assert.deepStrictEqual(events, ["pass_started", "repo_skipped", "pass_finished"]);
   }),
 );
@@ -158,6 +171,13 @@ it.effect("logs each config error and does not start for an invalid machine file
       Layer.succeed(FactoryProcess, recordingProcess().process),
     );
     assert.deepStrictEqual(logs, [`${machineConfigPath}: model: is missing`]);
+  }),
+);
+
+it.effect("reports itself idle, without the config errors, when the machine file is invalid", () =>
+  Effect.gen(function* () {
+    const { status } = yield* logsFor(VALID.replace("model: claude-sonnet-5-5\n", ""));
+    assert.deepStrictEqual(status, { state: "idle", reason: "factory config failed to load" });
   }),
 );
 

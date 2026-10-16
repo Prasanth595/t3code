@@ -53,11 +53,31 @@ import {
   type IssueSummary,
 } from "./tracker/github.ts";
 
-/** The running factory, for the code that wakes it (a thread's run changing, a person's request). */
-export class FactoryLoop extends Context.Service<FactoryLoop, Loop>()("t3/factory/FactoryLoop") {}
+/**
+ * What the factory is doing: running, or idle for a reason (no config, or one it cannot read).
+ * `running` means the pass loop started; it says nothing about whether passes succeed, which the
+ * server log records. The reason names no path and no error, as every reading client gets it;
+ * the log has the detail.
+ */
+export type FactoryStatus =
+  | { readonly state: "running" }
+  | { readonly state: "idle"; readonly reason: string };
+
+/**
+ * The running factory, for the code that wakes it (a thread's run changing, a person's request).
+ * Its `status` is what `GET /api/factory/status` reports.
+ */
+export class FactoryLoop extends Context.Service<
+  FactoryLoop,
+  Loop & { readonly status: FactoryStatus }
+>()("t3/factory/FactoryLoop") {}
 
 /** A loop that does nothing: the factory has no config, or one it cannot read. */
-const idle: Loop = { wake: Effect.void, awaitPass: Effect.never };
+const idle = (reason: string): FactoryLoop["Service"] => ({
+  wake: Effect.void,
+  awaitPass: Effect.never,
+  status: { state: "idle", reason },
+});
 
 /**
  * How long an issue must have sat in `factory:triage` or `factory:building` with no assignee
@@ -373,12 +393,12 @@ const startFactory = (options: RuntimeOptions) =>
         run: null,
         message: `machine config not loaded: ${loaded.failure.errors.map(formatConfigError).join("; ")}`,
       });
-      return idle;
+      return idle("factory config failed to load");
     }
     yield* attention.clear((item) => item.id === CONFIG_ITEM_ID);
     if (Option.isNone(loaded.success)) {
       yield* Effect.logInfo(`no factory config at ${machineConfigPath}`);
-      return idle;
+      return idle("no factory config");
     }
     const machine = loaded.success.value;
     yield* attention.setNotify(machine.notify);
@@ -410,7 +430,7 @@ const startFactory = (options: RuntimeOptions) =>
     }).pipe(Effect.ensuring(refreshOwned(factoryDir, owned)));
     const loop = yield* runLoop(onePass, machine.pollSeconds);
     yield* Effect.forkScoped(wakeOnOwnedThreads(owned, loop, options.restartDelay ?? "5 seconds"));
-    return loop;
+    return { ...loop, status: { state: "running" } } satisfies FactoryLoop["Service"];
   });
 
 /**
