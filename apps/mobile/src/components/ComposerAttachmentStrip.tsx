@@ -5,6 +5,8 @@ import { imageMimeType } from "@t3tools/shared/image";
 import { videoMimeType } from "@t3tools/shared/video";
 import { useEffect, useMemo, useState } from "react";
 import { Image, Pressable, ScrollView, View } from "react-native";
+import Animated, { useAnimatedStyle, useDerivedValue, withSpring } from "react-native-reanimated";
+import { COMPOSER_SPRING } from "./composerMotion";
 
 import { AppText as Text } from "./ui/AppText";
 import { PierreEntryIcon } from "./PierreEntryIcon";
@@ -342,6 +344,18 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
   const radius = props.imageBorderRadius ?? 16;
   const removeButtonPlacement = props.removeButtonPlacement ?? "overlay";
   const removeButtonGutter = removeButtonPlacement === "gutter" ? 10 : 0;
+  const [thumbnailSize] = useState(size);
+  const animatedSize = useDerivedValue(() => withSpring(size, COMPOSER_SPRING));
+  const tileStyle = useAnimatedStyle(() => ({
+    width: animatedSize.value + removeButtonGutter,
+    height: animatedSize.value + removeButtonGutter,
+  }));
+  const thumbnailStyle = useAnimatedStyle(() => ({
+    width: thumbnailSize,
+    height: thumbnailSize,
+    transformOrigin: "top left",
+    transform: [{ scale: animatedSize.value / thumbnailSize }],
+  }));
 
   if (props.attachments.length === 0) {
     return null;
@@ -357,23 +371,28 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
       >
         <View className="flex-row gap-2.5">
           {props.attachments.map((attachment) => (
-            <View
+            <Animated.View
               key={attachment.id}
               className="relative"
-              style={{
-                paddingTop: removeButtonGutter,
-                paddingRight: removeButtonGutter,
-              }}
+              style={[
+                tileStyle,
+                {
+                  paddingTop: removeButtonGutter,
+                  paddingRight: removeButtonGutter,
+                },
+              ]}
             >
-              <ComposerAttachmentThumbnail
-                environmentId={props.environmentId}
-                attachment={attachment}
-                size={size}
-                borderRadius={radius}
-                onPressPreview={props.onPressPreview}
-                onPressVideo={props.onPressVideo}
-                onPressDocument={props.onPressDocument}
-              />
+              <Animated.View style={thumbnailStyle}>
+                <ComposerAttachmentThumbnail
+                  environmentId={props.environmentId}
+                  attachment={attachment}
+                  size={thumbnailSize}
+                  borderRadius={radius}
+                  onPressPreview={props.onPressPreview}
+                  onPressVideo={props.onPressVideo}
+                  onPressDocument={props.onPressDocument}
+                />
+              </Animated.View>
               <Pressable
                 className="absolute h-[22px] w-[22px] items-center justify-center rounded-[11px] bg-black/55"
                 style={{
@@ -391,7 +410,7 @@ export function ComposerAttachmentStrip(props: ComposerAttachmentStripProps) {
                   weight="bold"
                 />
               </Pressable>
-            </View>
+            </Animated.View>
           ))}
         </View>
       </ScrollView>
