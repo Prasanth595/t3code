@@ -6,6 +6,7 @@
 
 import { isState, type State } from "../domain/lifecycle.ts";
 import type { Entry } from "../ledger/read.ts";
+import { runIdToString, type RunId } from "../ledger/runId.ts";
 import { isCommitId } from "../text.ts";
 
 /** A passing attempt as the ledger records it: the commands that ran, and the commit they were gated on. */
@@ -30,6 +31,54 @@ export interface CommandLine {
   readonly exitCode: number;
   readonly durationMs: number;
 }
+
+/** What a re-gate found moved since the last recorded pass, for the run's line. */
+export type Moved = "base" | "head" | "both" | "unknown";
+
+/**
+ * What differs between the pass (`passedHead` on `passedAgainst`) and now (`head` on `tip`):
+ * `unknown` when the pass has a head and no base and the head did not move; `null` only when no
+ * pass is on record to compare with, or nothing differs.
+ */
+export const movedSince = (
+  passedHead: string,
+  passedAgainst: string,
+  head: string,
+  tip: string,
+): Moved | null => {
+  const headMoved = passedHead !== "" && head.toLowerCase() !== passedHead.toLowerCase();
+  const baseMoved = passedAgainst !== "" && tip.toLowerCase() !== passedAgainst.toLowerCase();
+  if (headMoved && baseMoved) return "both";
+  if (headMoved) return "head";
+  if (baseMoved) return "base";
+  return passedHead !== "" && passedAgainst === "" ? "unknown" : null;
+};
+
+/**
+ * The decision of a `regate_relaunching` or `feedback_relaunching` line: what a new session needs
+ * to fix a failed re-gate of a ready pull request (or to act on instructor feedback), kept so that
+ * a call that finds it with no `session_launched` after it can send the launch again without
+ * running the gate.
+ */
+export interface Relaunch {
+  readonly fixes:
+    | { readonly kind: "regate"; readonly attempt: number }
+    | { readonly kind: "feedback"; readonly n: number };
+  /** The pull request's branch, which the session starts from and pushes to. */
+  readonly branch: string;
+  /** The failure text (or the feedback block) the session is sent after the launch's own words. */
+  readonly message: string;
+}
+
+/** The gate attempt a re-gate relaunch fixes; `null` for a feedback relaunch, which is no attempt. */
+export const regateAttempt = (relaunch: Relaunch): number | null =>
+  relaunch.fixes.kind === "regate" ? relaunch.fixes.attempt : null;
+
+/** The command id of the launch: the same on every call, so T3 answers a repeat with the thread it made. */
+export const relaunchCommandId = (relaunch: Relaunch, run: RunId): string =>
+  relaunch.fixes.kind === "regate"
+    ? `softfac:${runIdToString(run)}:regate:${relaunch.fixes.attempt}`
+    : `softfac:${runIdToString(run)}:feedback:${relaunch.fixes.n}`;
 
 export interface Seen {
   readonly claimed: boolean;
@@ -106,7 +155,23 @@ export interface Seen {
   readonly regates: number;
   /** A `pr_ready_outside` line: someone else marked the pull request ready while a gate ran, and it is noted. */
   readonly readyOutside: boolean;
+  /** A `gate_regate` line since the run last changed state or posted the results of a pass: a re-gate is under way. */
+  readonly regating: boolean;
+  /** What the newest `gate_regate` line says moved, compared with the pass on record when it was written. */
+  readonly regateMoved: Moved | null;
+  /** That re-gate recorded its pass (`gate-passed`), and the results are not posted yet. */
+  readonly regatePassed: boolean;
+  /** That re-gate's failure was recorded as sent back, and the state has not changed yet. */
+  readonly regateSentBack: boolean;
+  /** The newest `regate_relaunching` or `feedback_relaunching` line, until the state changes. */
+  readonly relaunch: Relaunch | null;
+  /** A `session_launched` line follows the newest `gate-sending` step or relaunch decision. */
+  readonly launchedSinceSending: boolean;
 }
+
+/** A relaunch that was decided and whose session the ledger does not name: the launch may have reached T3. */
+export const pendingRelaunch = (seen: Seen): Relaunch | null =>
+  seen.launchedSinceSending ? null : seen.relaunch;
 
 /** The ledger step that says a launch call is about to be sent. */
 export const LAUNCH_SENDING = "launch-sending";
@@ -211,6 +276,12 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   const cleanupFailed = new Set<string>();
   let regates = 0;
   let readyOutside = false;
+  let regating = false;
+  let regateMoved: Moved | null = null;
+  let regatePassed = false;
+  let regateSentBack = false;
+  let relaunch: Relaunch | null = null;
+  let launchedSinceSending = false;
   // A wait marker names run `k`: the awaited ordinal never goes down.
   const awaitRun = (k: number, forward: boolean) => {
     if (waitingAfter === null || k >= waitingAfter) {
@@ -233,7 +304,12 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         }
         if (step === APPROVAL_RECHECKED) rechecked = true;
         if (step === RESULT_LINE_REMINDED) reminded = true;
-        if (step === GATE_RESULTS_POSTED) resultsPosted = true;
+        if (step === GATE_RESULTS_POSTED) {
+          resultsPosted = true;
+          regating = false;
+          regatePassed = false;
+          regateSentBack = false;
+        }
         const remindingRun = stepNumber(step, RESULT_LINE_REMINDING);
         if (remindingRun !== null) {
           reminding = remindingRun;
@@ -250,12 +326,16 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           launchSent = true;
         }
         const gateSending = parseGateSending(step);
-        if (gateSending !== null) sending = gateSending;
+        if (gateSending !== null) {
+          sending = gateSending;
+          launchedSinceSending = false;
+        }
         const gatePassed = parseGatePassed(step);
         if (gatePassed !== null) {
           // The results of this pass are not posted yet, whatever an earlier one's were.
           resultsPosted = false;
           regates = 0;
+          regatePassed = regating;
           // The step's own cause names the attempt; a ledger from before it did is read by the
           // last command.
           const fromCause = entry.cause === null ? undefined : entry.cause.attempt;
@@ -286,6 +366,10 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (state === "pr-open" && to === "building") workedMs = 0;
         if (to === "triage" || to === "building") workingSince = entry.ms;
         state = isState(to) ? to : null;
+        relaunch = null;
+        regating = false;
+        regatePassed = false;
+        regateSentBack = false;
         if (to === "building") {
           questionsPosted = false;
           prReported = false;
@@ -301,6 +385,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         const path = field(entry.data, "worktree");
         worktree = typeof path === "string" ? path : null;
         worktreeDone = false;
+        launchedSinceSending = true;
         // A new session has run numbers of its own, one reminder, and no stop by hand yet.
         waitingAfter = null;
         waitIsForward = false;
@@ -378,6 +463,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           sentBackAttempts.add(attempt);
           passedAttempts.delete(attempt);
         }
+        regateSentBack = regating;
         if (ordinal !== null) awaitRun(ordinal, false);
         // A pass that was sent back is no pass: the session runs again and the head is gated afresh.
         pass = null;
@@ -386,9 +472,45 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         prReported = false;
         break;
       }
-      case "gate_regate":
+      case "gate_regate": {
+        const sha = field(entry.data, "sha");
+        const baseSha = field(entry.data, "base_sha");
+        const previous = field(entry.data, "previous_base_sha");
+        // The pass this re-gate replaces is still the one on record here.
+        regateMoved = movedSince(
+          pass?.sha ?? "",
+          typeof previous === "string" ? previous : "",
+          typeof sha === "string" ? sha : "",
+          typeof baseSha === "string" ? baseSha : "",
+        );
         regates += 1;
+        regating = true;
+        regatePassed = false;
+        regateSentBack = false;
         break;
+      }
+      case "regate_relaunching": {
+        const attempt = number(field(entry.data, "attempt"));
+        const branch = field(entry.data, "branch");
+        const message = field(entry.data, "message");
+        if (attempt === null || typeof branch !== "string" || typeof message !== "string") break;
+        // Its own `gate-sending <attempt> 0`: the new thread has no run yet.
+        sending = { attempt, runOrdinal: 0 };
+        launchedSinceSending = false;
+        relaunch = { fixes: { kind: "regate", attempt }, branch, message };
+        break;
+      }
+      // No `gate-sending`: it is no gate attempt, and no re-gate. Read only so that a feedback
+      // relaunch that is decided and not committed is never gated meanwhile.
+      case "feedback_relaunching": {
+        const n = number(field(entry.data, "n"));
+        const branch = field(entry.data, "branch");
+        const message = field(entry.data, "message");
+        if (n === null || typeof branch !== "string" || typeof message !== "string") break;
+        launchedSinceSending = false;
+        relaunch = { fixes: { kind: "feedback", n }, branch, message };
+        break;
+      }
       case "gate_cleanup_failed": {
         const dir = field(entry.data, "dir");
         if (typeof dir === "string") cleanupFailed.add(dir);
@@ -435,6 +557,12 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     cleanupFailed,
     regates,
     readyOutside,
+    regating,
+    regateMoved,
+    regatePassed,
+    regateSentBack,
+    relaunch,
+    launchedSinceSending,
   };
 };
 

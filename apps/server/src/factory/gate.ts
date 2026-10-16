@@ -190,6 +190,17 @@ export const gateResultsComment = (
   baseSha: string,
 ): string => resultsComment("passed", results, attempt, headSha, baseSha);
 
+/**
+ * The comment for a pull request that was ready already and passed the gate again on a head or a
+ * base branch that had moved: the same table, headed `passed again`.
+ */
+export const regateResultsComment = (
+  results: ReadonlyArray<CommandResult>,
+  attempt: number,
+  headSha: string,
+  baseSha: string,
+): string => resultsComment("passed again", results, attempt, headSha, baseSha);
+
 // ---- types ----------------------------------------------------------------------------------
 
 export interface GateOptions {
