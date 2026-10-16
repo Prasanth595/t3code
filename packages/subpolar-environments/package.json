@@ -7,7 +7,8 @@
     "@types/node": "catalog:"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./docker": "./src/docker.ts"
   },
   "scripts": {
     "typecheck": "tsc-rs --noEmit",
