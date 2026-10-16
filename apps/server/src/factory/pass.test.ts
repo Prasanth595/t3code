@@ -34,6 +34,7 @@ import {
   type LimitOutcome,
   type WatchOutcome,
 } from "./runner/building.ts";
+import type { FeedbackStep } from "./runner/feedback.ts";
 import type { LastPass } from "./runner/gating.ts";
 import { GateRunningError, type StartError, type StartOutcome } from "./runner/start.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
@@ -116,6 +117,10 @@ class Fake implements PassWorld {
   watches: Record<string, Array<WatchOutcome | BuildingError>> = {};
   forwards: Record<string, Array<ForwardOutcome | BuildingError>> = {};
   advances: Record<string, Array<AdvanceOutcome | BuildingError>> = {};
+  /** What `feedback` answers per run id, popped per call; `none` once exhausted. */
+  feedbackSteps: Record<string, Array<FeedbackStep | BuildingError>> = {};
+  /** The run ids `feedback` was called for, in order. */
+  feedbacks: Array<string> = [];
   /** What `takeStopRequest` answers per `"<repo>#<issue>"`; `none` otherwise. */
   stopRequests: Record<string, StopRequestOutcome | LedgerIoError> = {};
   pause: HandPause | null = null;
@@ -338,6 +343,14 @@ class Fake implements PassWorld {
       this.runs = this.runs.filter((r) => runIdToString(r.id) !== runIdToString(run));
     }
     return Effect.succeed(answer);
+  }
+
+  feedback(repo: Repo, run: RunId) {
+    const id = runIdToString(run);
+    this.feedbacks.push(id);
+    this.calls.push(`feedback ${repo.watched.repo}#${run.issue}`);
+    const answer = this.feedbackSteps[id]?.shift() ?? ({ kind: "none" } as const);
+    return "kind" in answer ? Effect.succeed(answer) : Effect.fail(answer);
   }
 
   /** An advance that ends the run (`needs-info`, `stuck`) takes it off the list, as the ledger does. */
@@ -3245,6 +3258,152 @@ describe("pr-open runs: gated again only when something moved", () => {
       yield* pass(fake, machine([REPO], 2));
       const order = fake.calls.filter((c) => /^(advance|start|gate) /.test(c));
       assert.deepEqual(order, [`advance ${REPO}#40`, `start ${REPO}#1`, `gate ${REPO}#41`]);
+    }),
+  );
+});
+
+// ---- instructor feedback on a pr-open run ----
+
+describe("pr-open runs: instructor feedback", () => {
+  const RUN12 = runIdToString(rid(12));
+  const LINE12 = `${REPO}#12 pr-open: `;
+  const lineOf = (lines: ReadonlyArray<string>) => lines.filter((l) => l.startsWith(`${REPO}#12 `));
+  const gated = (fake: Fake) => fake.calls.filter((c) => c.startsWith("gate "));
+
+  /** Run 12 waits in `pr-open` with pull request 7, nothing moved. */
+  const quiet = (fake: Fake) => {
+    fake.runIn(12, "pr-open", REPO, false);
+    fake.lastPasses[`${REPO}#12`] = { pr: 7, head: HEAD, base: BASE };
+  };
+  /** Run 12 as `quiet`, and the feedback step answers `step` for it. */
+  const reviewed = (step: FeedbackStep | BuildingError) => {
+    const fake = new Fake();
+    quiet(fake);
+    fake.feedbackSteps[RUN12] = [step];
+    return fake;
+  };
+  const relaunched = (items: number): FeedbackStep => ({ kind: "relaunched", pr: 7, items });
+
+  it.effect(
+    "a pr-open run with feedback is relaunched and no gate is started even when the head moved",
+    () =>
+      Effect.gen(function* () {
+        const fake = reviewed(relaunched(2));
+        // The head and the base moved too: the feedback wins, and the gate runs when the new
+        // session's first run ends.
+        fake.openHeads[`${REPO}#7`] = MOVED;
+        fake.baseTips[REPO] = MOVED;
+        const { report, lines } = yield* pass(fake, machine([REPO], 1));
+        assert.equal(report.errors, 0);
+        assert.deepEqual(gated(fake), []);
+        assert.deepEqual(lineOf(lines), [
+          `${LINE12}instructor feedback (2 items) on PR https://github.com/rawphp/softfac/pull/7: a new session was launched on its branch, the PR is a draft again`,
+        ]);
+        // The comparison with the last pass is not made: the run is no longer waiting.
+        assert.deepEqual(
+          fake.calls.filter((c) => /^(base_tip|open_head) /.test(c)),
+          [],
+        );
+        assert.deepEqual(fake.feedbacks, [RUN12]);
+      }),
+  );
+
+  it.effect("one item of feedback says item and not items", () =>
+    Effect.gen(function* () {
+      const { lines } = yield* pass(reviewed(relaunched(1)), machine([REPO], 1));
+      assert.ok(
+        runLine(lines, `${REPO}#12`).includes("instructor feedback (1 item) on PR"),
+        `${lines}`,
+      );
+    }),
+  );
+
+  it.effect(
+    "a pr-open run with no feedback is asked once and prints nothing when nothing moved",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        quiet(fake);
+        const { report, lines } = yield* pass(fake, machine([REPO], 1));
+        assert.equal(report.errors, 0);
+        assert.deepEqual(fake.feedbacks, [RUN12]);
+        assert.deepEqual(gated(fake), []);
+        assert.deepEqual(lineOf(lines), []);
+      }),
+  );
+
+  it.effect("a pr-open run with no feedback whose head moved gets its gate as before", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      quiet(fake);
+      fake.openHeads[`${REPO}#7`] = MOVED;
+      const { lines } = yield* pass(fake, machine([REPO], 1));
+      assert.deepEqual(gated(fake), [`gate ${REPO}#12`]);
+      assert.deepEqual(lineOf(lines), [`${LINE12}gate started in the background`]);
+    }),
+  );
+
+  it.effect("the feedback step is not called for a run whose gate is running", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      quiet(fake);
+      fake.gateLocks.push(RUN12);
+      const { lines } = yield* pass(fake, machine([REPO], 1));
+      assert.deepEqual(fake.feedbacks, []);
+      assert.deepEqual(lineOf(lines), [`${LINE12}gate running`]);
+    }),
+  );
+
+  it.effect(
+    "feedback that sent the run stuck ended or abandoned it is said and the gate waits",
+    () =>
+      Effect.gen(function* () {
+        const stuck: FeedbackStep = {
+          kind: "stuck",
+          reason: "the issue text was changed during the build by someone who is not an instructor",
+        };
+        for (const [step, says] of [
+          [stuck, `stuck, the reason is in the ledger of run ${RUN12}`],
+          [
+            { kind: "ended" } as FeedbackStep,
+            "its pull request was merged or closed, the run is finished",
+          ],
+          [{ kind: "abandoned" } as FeedbackStep, "the issue is closed, the run is closed"],
+        ] as const) {
+          const fake = reviewed(step);
+          fake.openHeads[`${REPO}#7`] = MOVED;
+          const { report, lines } = yield* pass(fake, machine([REPO], 1));
+          assert.equal(report.errors, 0, says);
+          assert.deepEqual(gated(fake), [], says);
+          assert.ok(runLine(lines, `${REPO}#12`).includes(says), `${says}: ${lines}`);
+        }
+      }),
+  );
+
+  it.effect("a feedback step that fails is an error of the run and the run is still gated", () =>
+    Effect.gen(function* () {
+      const fake = reviewed(githubFailure() as BuildingError);
+      fake.openHeads[`${REPO}#7`] = MOVED;
+      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      assert.equal(report.errors, 1);
+      // The head moved: the failure does not hold the gate back.
+      assert.deepEqual(gated(fake), [`gate ${REPO}#12`]);
+      assert.ok(
+        lines.some((l) => l.startsWith(`error: ${REPO}#12 feedback:`)),
+        `${lines}`,
+      );
+      assert.equal(fake.runErrors.length, 1);
+      assert.deepEqual([fake.runErrors[0]!.step, fake.runErrors[0]!.kind], ["forward", "github"]);
+    }),
+  );
+
+  it.effect("a feedback step that fails for a run that did not move starts no gate", () =>
+    Effect.gen(function* () {
+      const fake = reviewed(githubFailure() as BuildingError);
+      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      assert.equal(report.errors, 1);
+      assert.deepEqual(gated(fake), []);
+      assert.ok(lines[0]!.startsWith(`error: ${REPO}#12 feedback:`), `${lines}`);
     }),
   );
 });
