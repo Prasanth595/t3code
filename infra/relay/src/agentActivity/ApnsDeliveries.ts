@@ -576,6 +576,8 @@ export const make = Effect.gen(function* () {
     readonly threadId: string;
     readonly phase: RelayAgentActivityAggregateState["activities"][number]["phase"];
     readonly updatedAt: string;
+    /** Alerts go stale once the thread is read; dismissals do not. */
+    readonly rejectVisited: boolean;
   }) {
     return yield* activityRows
       .getForUserThread({
@@ -588,7 +590,8 @@ export const make = Effect.gen(function* () {
           (current) =>
             current !== null &&
             current.phase === input.phase &&
-            current.updatedAt === input.updatedAt,
+            current.updatedAt === input.updatedAt &&
+            !(input.rejectVisited && current.visited),
         ),
         Effect.catchCause((cause) =>
           Effect.logWarning("agent-activity state recheck failed; allowing queued delivery", {
@@ -643,6 +646,7 @@ export const make = Effect.gen(function* () {
       threadId: input.notification.threadId,
       phase: input.notification.phase,
       updatedAt: input.notification.updatedAt,
+      rejectVisited: !input.notification.dismiss,
     });
   });
 
