@@ -4,7 +4,8 @@ import type { ThreadPullRequestChain } from "@t3tools/shared/threadPullRequests"
 /** One line of a thread's pull-request list: a link plus how deep it sits in its stack. */
 export interface PullRequestListLine {
   readonly link: ThreadPullRequestLink;
-  /** 0 for a pull request on the base branch; each layer above steps in by one. */
+  /** 0 for a pull request on the base branch; each layer above steps in by one. Pull requests
+   * built on the same parent share a depth. */
   readonly depth: number;
   /** Which chain the line belongs to, so callers can tell one stack's lines from another's. */
   readonly chainKey: string;
@@ -36,12 +37,12 @@ export function pullRequestListLines(
   );
   return ordered.flatMap((chain) => {
     const chainKey = chainKeyOf(chain);
-    return chain.layers.map((link, depth) => ({
+    return chain.layers.map((link, index) => ({
       link,
-      depth,
+      depth: chain.depths[index]!,
       chainKey,
       stack:
-        depth === 0 && chain.layers.length > 1
+        index === 0 && chain.layers.length > 1
           ? { kind: chain.kind, size: chain.layers.length }
           : null,
     }));

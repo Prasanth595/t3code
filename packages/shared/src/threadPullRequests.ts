@@ -204,14 +204,17 @@ export function legacyLinkedPullRequestOf(
 
 export interface ThreadPullRequestChain {
   readonly kind: "native" | "derived";
-  /** Bottom to top. */
+  /** Bottom to top. Each link comes before the links built on it. */
   readonly layers: ReadonlyArray<ThreadPullRequestLink>;
+  /** One per layer: 0 for the base, parent's depth + 1 above it. Siblings share a depth. */
+  readonly depths: ReadonlyArray<number>;
 }
 
 /**
  * Groups a thread's links into stacks. Native stacks come from the host and win; the rest
  * are chained by matching one link's base branch to another's head branch within the same
- * repository. A link that chains to nothing is a one-layer chain.
+ * repository. Several links can build on one parent, so a derived stack is a tree, listed
+ * depth first. A link that chains to nothing is a one-layer chain.
  */
 export function resolveThreadPullRequestChains(
   links: ReadonlyArray<ThreadPullRequestLink>,
@@ -233,7 +236,7 @@ export function resolveThreadPullRequestChains(
     const order = new Map(members[0]!.stack!.layers.map((layer, index) => [layer.number, index]));
     members.sort((left, right) => (order.get(left.number) ?? 0) - (order.get(right.number) ?? 0));
     for (const member of members) placed.add(threadPullRequestKeyOf(member));
-    chains.push({ kind: "native", layers: members });
+    chains.push({ kind: "native", layers: members, depths: members.map((_, index) => index) });
   }
 
   const remaining = visible.filter((link) => !placed.has(threadPullRequestKeyOf(link)));
@@ -248,31 +251,45 @@ export function resolveThreadPullRequestChains(
     const key = branchKey(link, link.snapshot.headBranch);
     byHead.set(key, byHead.has(key) ? null : link);
   }
-  const hasChild = new Set<string>();
-  for (const link of remaining) {
-    if (link.snapshot === null) continue;
+  const parentOf = (link: ThreadPullRequestLink) => {
+    if (link.snapshot === null) return undefined;
     const parent = byHead.get(branchKey(link, link.snapshot.baseBranch));
-    if (parent != null && parent !== link) hasChild.add(threadPullRequestKeyOf(parent));
+    return parent == null || parent === link ? undefined : parent;
+  };
+  const children = new Map<string, Array<ThreadPullRequestLink>>();
+  for (const link of remaining) {
+    const parent = parentOf(link);
+    if (parent === undefined) continue;
+    const key = threadPullRequestKeyOf(parent);
+    const siblings = children.get(key) ?? [];
+    siblings.push(link);
+    children.set(key, siblings);
   }
-  // Walk from each top (a link nothing builds on) down its base chain.
-  for (const top of remaining) {
-    if (hasChild.has(threadPullRequestKeyOf(top))) continue;
+  // Walk each base (a link that builds on no other link) depth first, so every link a
+  // parent has sits under it instead of only the first one.
+  for (const base of remaining) {
+    if (parentOf(base) !== undefined) continue;
     const layers: Array<ThreadPullRequestLink> = [];
-    let cursor: ThreadPullRequestLink | undefined = top;
-    while (cursor !== undefined && !placed.has(threadPullRequestKeyOf(cursor))) {
-      placed.add(threadPullRequestKeyOf(cursor));
-      layers.unshift(cursor);
-      cursor =
-        cursor.snapshot === null
-          ? undefined
-          : (byHead.get(branchKey(cursor, cursor.snapshot.baseBranch)) ?? undefined);
+    const depths: Array<number> = [];
+    const pending: Array<{ readonly link: ThreadPullRequestLink; readonly depth: number }> = [
+      { link: base, depth: 0 },
+    ];
+    for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+      const key = threadPullRequestKeyOf(next.link);
+      placed.add(key);
+      layers.push(next.link);
+      depths.push(next.depth);
+      const below = children.get(key) ?? [];
+      for (let index = below.length - 1; index >= 0; index -= 1) {
+        pending.push({ link: below[index]!, depth: next.depth + 1 });
+      }
     }
-    if (layers.length > 0) chains.push({ kind: "derived", layers });
+    chains.push({ kind: "derived", layers, depths });
   }
-  // Cycles have no top. Keep those links visible without inventing a stack order.
+  // Cycles have no base. Keep those links visible without inventing a stack order.
   for (const link of remaining) {
     if (!placed.has(threadPullRequestKeyOf(link))) {
-      chains.push({ kind: "derived", layers: [link] });
+      chains.push({ kind: "derived", layers: [link], depths: [0] });
     }
   }
   return chains;

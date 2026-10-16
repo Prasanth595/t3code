@@ -270,6 +270,33 @@ describe("resolveThreadPullRequestChains", () => {
     ]);
   });
 
+  it("keeps every link built on the same parent under it", () => {
+    const links = [
+      link(3, { snapshot: snapshot({ headBranch: "c", baseBranch: "a" }) }),
+      link(5, { snapshot: snapshot({ headBranch: "p", baseBranch: "main" }) }),
+      link(6, { snapshot: snapshot({ headBranch: "q", baseBranch: "p" }) }),
+      link(1, { snapshot: snapshot({ headBranch: "a", baseBranch: "p" }) }),
+      link(2, { snapshot: snapshot({ headBranch: "b", baseBranch: "a" }) }),
+      link(9, { snapshot: snapshot({ headBranch: "solo", baseBranch: "main" }) }),
+    ];
+    const chains = resolveThreadPullRequestChains(links);
+    expect(
+      chains.map((chain) => [chain.layers.map((layer) => layer.number), chain.depths]),
+    ).toEqual([
+      // #6 and #1 both build on #5; #3 and #2 both build on #1.
+      [
+        [5, 6, 1, 3, 2],
+        [0, 1, 1, 2, 2],
+      ],
+      [[9], [0]],
+    ]);
+    expect(resolveThreadPullRequestBadge(links.slice(0, 5))).toEqual({
+      kind: "stack",
+      layers: 5,
+      state: "open",
+    });
+  });
+
   it("uses the native stack order when the host provides one", () => {
     const stack = {
       kind: "native" as const,
