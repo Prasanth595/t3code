@@ -122,9 +122,14 @@ function yieldQueue() {
 const send = (input: Queue.Queue<Uint8Array, Cause.Done<void>>, message: unknown) =>
   Queue.offer(input, encoder.encode(`${JSON.stringify(message)}\n`));
 
-const pendingMessages: Array<Record<string, unknown>> = [];
+const pendingMessagesByOutput = new WeakMap<object, Array<Record<string, unknown>>>();
 
 async function readMessage(output: Queue.Queue<string>, matches: (message: Record<string, unknown>) => boolean) {
+  let pendingMessages = pendingMessagesByOutput.get(output);
+  if (!pendingMessages) {
+    pendingMessages = [];
+    pendingMessagesByOutput.set(output, pendingMessages);
+  }
   while (true) {
     const pendingIndex = pendingMessages.findIndex(matches);
     if (pendingIndex >= 0) return pendingMessages.splice(pendingIndex, 1)[0]!;
