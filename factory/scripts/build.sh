@@ -111,8 +111,8 @@ done
 [[ -n $ok ]] || fail "/.well-known/t3/environment did not answer 200 within ${smoke_timeout}s"
 echo "smoke: /.well-known/t3/environment -> 200 after $((SECONDS - start))s"
 
-grep -q 'factory started' "$smoke/server.log" || fail 'server log does not hold "factory started"'
-echo 'smoke: log holds "factory started"'
+grep -q 'no factory config' "$smoke/server.log" || fail 'server log does not hold "no factory config"'
+echo 'smoke: log holds "no factory config"'
 
 mkdir -p release
 archive="release/t3fac-${version}-darwin-arm64.tar.gz"
