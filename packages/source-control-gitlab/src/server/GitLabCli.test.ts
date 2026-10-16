@@ -212,24 +212,26 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
-  it.effect("drops the install root that glab's configured host carries from a pasted URL", () =>
-    Effect.gen(function* () {
-      mockedRun
-        .mockReturnValueOnce(Effect.succeed(processOutput("https://example.com/gitlab\n")))
-        .mockReturnValueOnce(
-          Effect.succeed(processOutput(projectJson("example.com/gitlab", "group/project"))),
+  it.effect.each(["example.com/gitlab", "https://example.com/gitlab"])(
+    "drops the install root that glab's configured host %s carries from a pasted URL",
+    (glabHost) =>
+      Effect.gen(function* () {
+        mockedRun
+          .mockReturnValueOnce(Effect.succeed(processOutput(`${glabHost}\n`)))
+          .mockReturnValueOnce(
+            Effect.succeed(processOutput(projectJson("example.com/gitlab", "group/project"))),
+          );
+
+        const glab = yield* GitLabCli.GitLabCli;
+        yield* glab.getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "https://example.com/gitlab/group/project",
+        });
+
+        expect(mockedRun).toHaveBeenLastCalledWith(
+          expect.objectContaining({ args: ["api", "projects/group%2Fproject"] }),
         );
-
-      const glab = yield* GitLabCli.GitLabCli;
-      yield* glab.getRepositoryCloneUrls({
-        cwd: "/repo",
-        repository: "https://example.com/gitlab/group/project",
-      });
-
-      expect(mockedRun).toHaveBeenLastCalledWith(
-        expect.objectContaining({ args: ["api", "projects/group%2Fproject"] }),
-      );
-    }),
+      }),
   );
 
   it.effect("rejects a project that glab found on a different host than the pasted URL", () =>
