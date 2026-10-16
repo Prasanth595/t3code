@@ -549,6 +549,13 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
       label: Schema.NullOr(Schema.String),
       /** Model options a target may select (for example reasoning effort). */
       options: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
+      /** Live windows applicable to this model; provider usage stays aggregate. */
+      usage: Schema.optional(
+        Schema.Struct({
+          headroom: Schema.Literals(["ok", "low", "exhausted", "unknown"]),
+          summary: Schema.String,
+        }),
+      ),
     }),
   ),
   canRunChildTask: Schema.Boolean,

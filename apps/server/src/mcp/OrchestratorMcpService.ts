@@ -1846,6 +1846,7 @@ const make = Effect.gen(function* () {
               provider,
               orchestrationCapableInstanceIds.has(provider.instanceId),
             );
+            const usageLimits = provider.usageLimits ?? museLimits.get(String(provider.instanceId));
             return {
               providerInstanceId: provider.instanceId,
               driverKind: provider.driver,
@@ -1854,6 +1855,7 @@ const make = Effect.gen(function* () {
                 provider?.models.map((model) => ({
                   id: model.slug,
                   label: model.name ?? null,
+                  usage: usageHeadroom(usageLimits, nowMs, { model: model.slug }),
                   ...(model.capabilities?.optionDescriptors === undefined
                     ? {}
                     : { options: model.capabilities.optionDescriptors }),
@@ -1861,10 +1863,7 @@ const make = Effect.gen(function* () {
               canRunChildTask: constraints.length === 0,
               canRunCrossProviderChildTask: constraints.length === 0,
               constraints: [...constraints],
-              usage: usageHeadroom(
-                provider.usageLimits ?? museLimits.get(String(provider.instanceId)),
-                nowMs,
-              ),
+              usage: usageHeadroom(usageLimits, nowMs),
             };
           }),
           features: {
