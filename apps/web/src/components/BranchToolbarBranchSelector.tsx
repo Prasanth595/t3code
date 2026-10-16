@@ -152,9 +152,12 @@ export function BranchToolbarBranchSelector({
     activeThreadBranchOverride !== undefined
       ? activeThreadBranchOverride
       : (serverThread?.branch ?? draftThread?.branch ?? null);
+  // A null server path means the main checkout, even while a draft remains.
   const activeWorktreePath = forceNewWorktree
     ? null
-    : (serverThread?.worktreePath ?? draftThread?.worktreePath ?? null);
+    : serverThread
+      ? serverThread.worktreePath
+      : (draftThread?.worktreePath ?? null);
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const branchCwd = activeWorktreePath ?? activeProjectCwd;
   const hasServerThread = serverThread !== null;
