@@ -133,6 +133,16 @@ export type GateStart =
 export const stuckLine = (run: string): string =>
   `stuck, the reason is in the ledger of run ${run}`;
 
+/** The attention item of a run that ended in `stuck`, whether a pass or a background gate saw it end. */
+export const stuckItem = (repo: string, issue: number, run: string): NewItem => ({
+  id: `run:${run}:stuck`,
+  kind: "stuck",
+  repo,
+  issue,
+  run,
+  message: `${plain(repo)}${mention(issue)} ${stuckLine(run)}`,
+});
+
 /** The counts the pass prints in its last line. */
 export interface Report {
   runs: number;
@@ -358,14 +368,7 @@ class Pass {
   /** The run ended in `stuck`. */
   stuck(notes: Notes, run: string): void {
     notes.parts.push(stuckLine(run));
-    notes.raises.push({
-      id: `run:${run}:stuck`,
-      kind: "stuck",
-      repo: notes.repo,
-      issue: notes.issue,
-      run,
-      message: `${notes.label} ${stuckLine(run)}`,
-    });
+    notes.raises.push(stuckItem(notes.repo, notes.issue, run));
   }
 
   flush(notes: Notes, run: RunId | null): Effect.Effect<void> {

@@ -44,6 +44,7 @@ import {
   gateQueued,
   plain,
   runPass,
+  stuckItem,
   stuckLine,
   type GateStart,
   type PassError,
@@ -57,15 +58,7 @@ import { readProgress } from "./runner/progress.ts";
 import { advance, timeLimit, watch, type BuildingContext } from "./runner/building.ts";
 import { gate as gateStep, type GateContext, type GateStep } from "./runner/gating.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
-import {
-  isOurs,
-  mention,
-  newestSays,
-  resume,
-  start,
-  utcSecond,
-  type StartContext,
-} from "./runner/start.ts";
+import { isOurs, newestSays, resume, start, utcSecond, type StartContext } from "./runner/start.ts";
 import * as Events from "./t3/events.ts";
 import * as Paths from "./t3/paths.ts";
 import * as T3Sessions from "./t3/sessions.ts";
@@ -201,17 +194,7 @@ export const gateItem = (
   issue: number,
   run: string,
   step: GateStep | null,
-): NewItem | null =>
-  step?.kind === "stuck"
-    ? {
-        id: `run:${run}:stuck`,
-        kind: "stuck",
-        repo,
-        issue,
-        run,
-        message: `${plain(repo)}${mention(issue)} ${stuckLine(run)}`,
-      }
-    : null;
+): NewItem | null => (step?.kind === "stuck" ? stuckItem(repo, issue, run) : null);
 
 /**
  * Whether a gate that ended changed something the next pass should act on at once. A gate that
