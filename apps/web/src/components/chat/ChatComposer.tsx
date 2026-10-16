@@ -1641,6 +1641,213 @@ export interface ChatComposerProps {
   onFileOpen: (attachment: ChatFileAttachment) => void;
 }
 
+/**
+ * Keeps the selected provider's workspace snapshot fresh for the composer's
+ * cwd. Returns a check to run when the user types.
+ */
+function useProviderWorkspaceSnapshotRefresh(input: {
+  readonly environmentId: EnvironmentId;
+  readonly gitCwd: string | null;
+  readonly selectedProviderEntry: ProviderInstanceEntry | undefined;
+  readonly selectedProviderStatus: ServerProvider | null;
+}) {
+  const { environmentId, gitCwd, selectedProviderEntry, selectedProviderStatus } = input;
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  // The last scan this composer asked for. A request inside the TTL is not
+  // repeated, so a client clock ahead of the server's cannot loop rescans.
+  const workspaceRefreshKeyRef = useRef<{ key: string; requestedAt: number } | null>(null);
+  const [workspaceRefreshRetry, setWorkspaceRefreshRetry] = useState<{
+    key: string;
+    notBefore: number;
+  } | null>(null);
+  const workspaceRefreshScopeKey =
+    gitCwd && selectedProviderEntry
+      ? `${environmentId}:${selectedProviderEntry.instanceId}:${gitCwd}`
+      : null;
+  const workspaceSlashCommandsPending =
+    selectedProviderStatus?.workspaceSnapshots?.some(
+      (snapshot) => snapshot.cwd === gitCwd && snapshot.slashCommandsPending === true,
+    ) ?? false;
+  useEffect(() => {
+    if (
+      !workspaceSlashCommandsPending ||
+      !workspaceRefreshRetry ||
+      workspaceRefreshRetry.key !== workspaceRefreshScopeKey
+    )
+      return;
+    const timeout = setTimeout(
+      () => {
+        setWorkspaceRefreshRetry((current) => (current === workspaceRefreshRetry ? null : current));
+      },
+      Math.max(0, workspaceRefreshRetry.notBefore - Date.now()),
+    );
+    return () => clearTimeout(timeout);
+  }, [workspaceRefreshRetry, workspaceRefreshScopeKey, workspaceSlashCommandsPending]);
+  // Losing a snapshot (the server dropped it) lifts both the TTL and the retry
+  // cooldown so the next check rescans at once.
+  const hasWorkspaceSnapshot = hasCompleteProviderWorkspaceSnapshot(selectedProviderStatus, gitCwd);
+  const [hadWorkspaceSnapshot, setHadWorkspaceSnapshot] = useState(hasWorkspaceSnapshot);
+  const [workspaceSnapshotLossCount, setWorkspaceSnapshotLossCount] = useState(0);
+  if (hadWorkspaceSnapshot !== hasWorkspaceSnapshot) {
+    setHadWorkspaceSnapshot(hasWorkspaceSnapshot);
+    if (!hasWorkspaceSnapshot) {
+      setWorkspaceSnapshotLossCount((count) => count + 1);
+      setWorkspaceRefreshRetry(null);
+    }
+  }
+  const lastWorkspaceSnapshotLossRef = useRef(workspaceSnapshotLossCount);
+  const refreshWorkspaceSnapshotIfStale = (
+    now: number,
+    key: string | null,
+    retry: { key: string; notBefore: number } | null,
+    snapshotLossCount: number,
+  ) => {
+    if (lastWorkspaceSnapshotLossRef.current !== snapshotLossCount) {
+      lastWorkspaceSnapshotLossRef.current = snapshotLossCount;
+      workspaceRefreshKeyRef.current = null;
+    }
+    if (key === null || !gitCwd || !selectedProviderEntry) return;
+    const lastRequest = workspaceRefreshKeyRef.current;
+    if (
+      lastRequest?.key === key &&
+      now - lastRequest.requestedAt < PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS
+    )
+      return;
+    // A pending retry needs no clearing here: its cooldown lapses long before the TTL.
+    if (hasCurrentProviderWorkspaceSnapshot(selectedProviderStatus, gitCwd, now)) return;
+    if (retry?.key === key && now < retry.notBefore) return;
+    const request = { key, requestedAt: now };
+    workspaceRefreshKeyRef.current = request;
+    const retryLater = () => {
+      if (workspaceRefreshKeyRef.current !== request) return;
+      workspaceRefreshKeyRef.current = null;
+      setWorkspaceRefreshRetry({
+        key,
+        notBefore: Date.now() + WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS,
+      });
+    };
+    void refreshProviders({
+      environmentId,
+      input: { instanceId: selectedProviderEntry.instanceId, cwd: gitCwd },
+    }).then((result) => {
+      const refreshedSnapshot =
+        result._tag === "Success" &&
+        hasCompleteProviderWorkspaceSnapshot(
+          result.value.providers.find(
+            (provider) => provider.instanceId === selectedProviderEntry.instanceId,
+          ),
+          gitCwd,
+        );
+      if (!refreshedSnapshot) retryLater();
+    }, retryLater);
+  };
+  const refreshWorkspaceSnapshotOnChange = useEffectEvent(refreshWorkspaceSnapshotIfStale);
+  useEffect(() => {
+    refreshWorkspaceSnapshotOnChange(
+      Date.now(),
+      workspaceRefreshScopeKey,
+      workspaceRefreshRetry,
+      workspaceSnapshotLossCount,
+    );
+  }, [workspaceRefreshScopeKey, workspaceRefreshRetry, workspaceSnapshotLossCount]);
+  return useStableCallback(() =>
+    refreshWorkspaceSnapshotIfStale(
+      Date.now(),
+      workspaceRefreshScopeKey,
+      workspaceRefreshRetry,
+      workspaceSnapshotLossCount,
+    ),
+  );
+}
+
+/**
+ * The provider instances the composer offers and which one is selected.
+ * A hook so its results reach the composer frozen: they are passed to plain
+ * functions across later hook calls, which would otherwise keep the compiler
+ * from caching them.
+ */
+function useComposerProviderSelection(
+  input: Omit<Parameters<typeof resolveComposerProviderSelection>[0], "entries"> & {
+    readonly providerStatuses: ReadonlyArray<ServerProvider>;
+    readonly settings: UnifiedSettings;
+    readonly activeProjectId: ProjectId | null;
+  },
+) {
+  // Calls no hooks, so the compiler needs the directive to memoize it.
+  "use memo";
+  const { providerStatuses, settings, activeProjectId, ...selection } = input;
+  const providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry> = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(
+      deriveProviderInstanceEntries(providerStatuses),
+      settings,
+      activeProjectId,
+    ),
+  );
+  return {
+    providerInstanceEntries,
+    ...resolveComposerProviderSelection({ ...selection, entries: providerInstanceEntries }),
+  };
+}
+
+function useModelOptionsByInstance(
+  settings: UnifiedSettings,
+  entries: ReadonlyArray<ProviderInstanceEntry>,
+  selectedInstanceId: ProviderInstanceId,
+  selectedModel: string | null,
+): ReadonlyMap<ProviderInstanceId, ReadonlyArray<AppModelOption>> {
+  // Calls no hooks, so the compiler needs the directive to memoize it.
+  "use memo";
+  const out = new Map<ProviderInstanceId, ReadonlyArray<AppModelOption>>();
+  for (const entry of entries) {
+    out.set(
+      entry.instanceId,
+      getAppModelOptionsForInstance(
+        settings,
+        entry,
+        entry.instanceId === selectedInstanceId ? selectedModel : null,
+      ),
+    );
+  }
+  return out;
+}
+
+/** Splits the draft's images into pending SnapShots and standalone images. */
+function useComposerImageGroups(
+  pendingSnapShotAnimations: ReturnType<typeof getPendingSnapShotAnimations>,
+  composerDraftTarget: ScopedThreadRef | DraftId,
+  composerImages: ReadonlyArray<ComposerImageAttachment>,
+  composerPreviewAnnotations: ReadonlyArray<{ readonly id: string }>,
+) {
+  // Calls no hooks, so the compiler needs the directive to memoize it.
+  "use memo";
+  const pendingSnapShotIds = pendingSnapShotAnimationIdsForTarget(
+    pendingSnapShotAnimations,
+    composerDraftTarget,
+  );
+  const previewAnnotationIds = new Set(
+    composerPreviewAnnotations.map((annotation) => annotation.id),
+  );
+  return {
+    pendingSnapShotIds,
+    pendingSnapShotIdSet: new Set(pendingSnapShotIds),
+    uncommittedSnapShotIds: pendingSnapShotIds.filter(
+      (id) => !composerImages.some((image) => image.id === id),
+    ),
+    standaloneComposerImages: composerImages.filter((image) => !previewAnnotationIds.has(image.id)),
+  };
+}
+
+const NO_PROVIDER_SKILLS: ServerProvider["skills"] = [];
+const NO_PROVIDER_SLASH_COMMANDS: ServerProvider["slashCommands"] = [];
+
+function useComposerProviderState(input: Parameters<typeof getComposerProviderState>[0]) {
+  // Calls no hooks, so the compiler needs the directive to memoize it.
+  "use memo";
+  return getComposerProviderState(input);
+}
+
 export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps) {
   const {
     composerDraftTarget,
@@ -1827,20 +2034,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     getPendingSnapShotAnimations,
     getPendingSnapShotAnimations,
   );
-  const pendingSnapShotIds = pendingSnapShotAnimationIdsForTarget(
+  const {
+    pendingSnapShotIds,
+    pendingSnapShotIdSet,
+    uncommittedSnapShotIds,
+    standaloneComposerImages,
+  } = useComposerImageGroups(
     pendingSnapShotAnimations,
     composerDraftTarget,
+    composerImages,
+    composerPreviewAnnotations,
   );
-  const pendingSnapShotIdSet = new Set(pendingSnapShotIds);
-  const uncommittedSnapShotIds = pendingSnapShotIds.filter(
-    (id) => !composerImages.some((image) => image.id === id),
-  );
-  const standaloneComposerImages = (() => {
-    const previewAnnotationIds = new Set(
-      composerPreviewAnnotations.map((annotation) => annotation.id),
-    );
-    return composerImages.filter((image) => !previewAnnotationIds.has(image.id));
-  })();
   const nonPersistedComposerImageIds = attachmentDraft.nonPersistedImageIds;
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   const openPrLink = useOpenPrLink(routeThreadRef);
@@ -2031,23 +2235,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     uploadsByImageId,
   ]);
 
-  const providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry> = sortProviderInstanceEntries(
-    applyProviderInstanceSettings(
-      deriveProviderInstanceEntries(providerStatuses),
-      settings,
-      activeProjectId,
-    ),
-  );
-  const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
   const {
+    providerInstanceEntries,
     selectedProviderEntry,
     requestedDriverKind,
     lockedContinuationGroupKey,
     unavailableProviderInstanceId,
-  } = resolveComposerProviderSelection({
-    entries: providerInstanceEntries,
+  } = useComposerProviderSelection({
+    providerStatuses,
+    settings,
+    activeProjectId,
     candidateInstanceIds: [
-      selectedProviderByThreadId,
+      composerDraft.activeProvider ?? null,
       activeThread?.runtime?.providerInstanceId,
       activeThreadModelSelection?.instanceId,
       activeProjectDefaultModelSelection?.instanceId,
@@ -2108,115 +2307,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const compactCommandAvailable = providerSupportsManualCompaction(selectedProviderEntry);
   const selectedProviderSkills = selectedProviderStatus
     ? resolveProviderSkillsForCwd(selectedProviderStatus, gitCwd)
-    : [];
+    : NO_PROVIDER_SKILLS;
   const selectedProviderSlashCommands = selectedProviderStatus
     ? resolveProviderSlashCommandsForCwd(selectedProviderStatus, gitCwd)
-    : [];
-  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
-    reportFailure: false,
+    : NO_PROVIDER_SLASH_COMMANDS;
+  const refreshWorkspaceSnapshotOnTyping = useProviderWorkspaceSnapshotRefresh({
+    environmentId,
+    gitCwd,
+    selectedProviderEntry,
+    selectedProviderStatus,
   });
-  // The last scan this composer asked for. A request inside the TTL is not
-  // repeated, so a client clock ahead of the server's cannot loop rescans.
-  const workspaceRefreshKeyRef = useRef<{ key: string; requestedAt: number } | null>(null);
-  const [workspaceRefreshRetry, setWorkspaceRefreshRetry] = useState<{
-    key: string;
-    notBefore: number;
-  } | null>(null);
-  const workspaceRefreshScopeKey =
-    gitCwd && selectedProviderEntry
-      ? `${environmentId}:${selectedProviderEntry.instanceId}:${gitCwd}`
-      : null;
-  const workspaceSlashCommandsPending =
-    selectedProviderStatus?.workspaceSnapshots?.some(
-      (snapshot) => snapshot.cwd === gitCwd && snapshot.slashCommandsPending === true,
-    ) ?? false;
-  useEffect(() => {
-    if (
-      !workspaceSlashCommandsPending ||
-      !workspaceRefreshRetry ||
-      workspaceRefreshRetry.key !== workspaceRefreshScopeKey
-    )
-      return;
-    const timeout = setTimeout(
-      () => {
-        setWorkspaceRefreshRetry((current) => (current === workspaceRefreshRetry ? null : current));
-      },
-      Math.max(0, workspaceRefreshRetry.notBefore - Date.now()),
-    );
-    return () => clearTimeout(timeout);
-  }, [workspaceRefreshRetry, workspaceRefreshScopeKey, workspaceSlashCommandsPending]);
-  // Losing a snapshot (the server dropped it) lifts both the TTL and the retry
-  // cooldown so the next check rescans at once.
-  const hasWorkspaceSnapshot = hasCompleteProviderWorkspaceSnapshot(selectedProviderStatus, gitCwd);
-  const [hadWorkspaceSnapshot, setHadWorkspaceSnapshot] = useState(hasWorkspaceSnapshot);
-  const [workspaceSnapshotLossCount, setWorkspaceSnapshotLossCount] = useState(0);
-  if (hadWorkspaceSnapshot !== hasWorkspaceSnapshot) {
-    setHadWorkspaceSnapshot(hasWorkspaceSnapshot);
-    if (!hasWorkspaceSnapshot) {
-      setWorkspaceSnapshotLossCount((count) => count + 1);
-      setWorkspaceRefreshRetry(null);
-    }
-  }
-  const lastWorkspaceSnapshotLossRef = useRef(workspaceSnapshotLossCount);
-  const refreshWorkspaceSnapshotIfStale = (
-    now: number,
-    key: string | null,
-    retry: { key: string; notBefore: number } | null,
-    snapshotLossCount: number,
-  ) => {
-    if (lastWorkspaceSnapshotLossRef.current !== snapshotLossCount) {
-      lastWorkspaceSnapshotLossRef.current = snapshotLossCount;
-      workspaceRefreshKeyRef.current = null;
-    }
-    if (key === null || !gitCwd || !selectedProviderEntry) return;
-    const lastRequest = workspaceRefreshKeyRef.current;
-    if (
-      lastRequest?.key === key &&
-      now - lastRequest.requestedAt < PROVIDER_WORKSPACE_SNAPSHOT_TTL_MS
-    )
-      return;
-    // A pending retry needs no clearing here: its cooldown lapses long before the TTL.
-    if (hasCurrentProviderWorkspaceSnapshot(selectedProviderStatus, gitCwd, now)) return;
-    if (retry?.key === key && now < retry.notBefore) return;
-    const request = { key, requestedAt: now };
-    workspaceRefreshKeyRef.current = request;
-    const retryLater = () => {
-      if (workspaceRefreshKeyRef.current !== request) return;
-      workspaceRefreshKeyRef.current = null;
-      setWorkspaceRefreshRetry({
-        key,
-        notBefore: Date.now() + WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS,
-      });
-    };
-    void refreshProviders({
-      environmentId,
-      input: { instanceId: selectedProviderEntry.instanceId, cwd: gitCwd },
-    }).then((result) => {
-      const refreshedSnapshot =
-        result._tag === "Success" &&
-        hasCompleteProviderWorkspaceSnapshot(
-          result.value.providers.find(
-            (provider) => provider.instanceId === selectedProviderEntry.instanceId,
-          ),
-          gitCwd,
-        );
-      if (!refreshedSnapshot) retryLater();
-    }, retryLater);
-  };
-  const refreshWorkspaceSnapshotOnChange = useEffectEvent(refreshWorkspaceSnapshotIfStale);
-  useEffect(() => {
-    refreshWorkspaceSnapshotOnChange(
-      Date.now(),
-      workspaceRefreshScopeKey,
-      workspaceRefreshRetry,
-      workspaceSnapshotLossCount,
-    );
-  }, [workspaceRefreshScopeKey, workspaceRefreshRetry, workspaceSnapshotLossCount]);
   const selectedProviderModels: ReadonlyArray<ServerProvider["models"][number]> =
     selectedProviderEntry?.models ?? [];
 
   const composerPromptInjectionState = getComposerPromptInjectionState(prompt);
-  const composerProviderState = getComposerProviderState({
+  const composerProviderState = useComposerProviderState({
     provider: selectedProvider,
     model: selectedModel,
     models: selectedProviderModels,
@@ -2238,23 +2343,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selectedModelOptionsForDispatch,
   );
   const selectedModelForPicker = selectedModel;
-  const modelOptionsByInstance = ((): ReadonlyMap<
-    ProviderInstanceId,
-    ReadonlyArray<AppModelOption>
-  > => {
-    const out = new Map<ProviderInstanceId, ReadonlyArray<AppModelOption>>();
-    for (const entry of providerInstanceEntries) {
-      out.set(
-        entry.instanceId,
-        getAppModelOptionsForInstance(
-          settings,
-          entry,
-          entry.instanceId === selectedInstanceId ? selectedModelForPicker : null,
-        ),
-      );
-    }
-    return out;
-  })();
+  const modelOptionsByInstance = useModelOptionsByInstance(
+    settings,
+    providerInstanceEntries,
+    selectedInstanceId,
+    selectedModelForPicker,
+  );
   const selectedModelForPickerWithCustomFallback = (() => {
     const currentOptions = modelOptionsByInstance.get(selectedInstanceId) ?? [];
     return currentOptions.some((option) => option.slug === selectedModelForPicker)
@@ -3416,12 +3510,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     expandComposerForEditorChange();
     // Typing is when the menu is about to need skills, so it re-checks a
     // snapshot that has aged past its TTL.
-    refreshWorkspaceSnapshotIfStale(
-      Date.now(),
-      workspaceRefreshScopeKey,
-      workspaceRefreshRetry,
-      workspaceSnapshotLossCount,
-    );
+    refreshWorkspaceSnapshotOnTyping();
     if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
       if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
       setComposerCursor(nextCursor);
