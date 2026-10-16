@@ -13,7 +13,7 @@ import type { Ledger } from "../ledger/ledger.ts";
 import type { BoundGitHub, GitHubError } from "../tracker/github.ts";
 import { ThreadNotFoundError } from "../t3/sessions.ts";
 import type { FactorySessions, SessionsError } from "../t3/sessions.ts";
-import { statusBody, stuckComment } from "./messages.ts";
+import { statusBody, stuckComment, type WorkLeft } from "./messages.ts";
 import type { Seen } from "./progress.ts";
 
 /** What the stop and finish paths can fail with. */
@@ -23,6 +23,8 @@ export type RunError = GitHubError | LedgerError | InvalidTransition | SessionsE
 export interface RunContext {
   readonly trackerUser: string;
   readonly machine: string;
+  /** The base branch: the work a stop leaves is counted against it. */
+  readonly project: { readonly base: string };
   readonly tracker: Pick<
     BoundGitHub,
     "setState" | "unassign" | "postComment" | "upsertStatusComment"
@@ -41,6 +43,8 @@ export interface Progress {
   threadId: string | null;
   worktree: string | null;
   worktreeDone: boolean;
+  /** The run's newest pull request, for the status comment; none when absent. */
+  pr?: number | null;
   readonly seen: Seen;
 }
 
@@ -97,7 +101,11 @@ export const finishBuilding = (
  * start with nothing written, and the next pass archives again. A worktree that cannot be
  * removed is written down and does not stop the run.
  */
-const stopSession = (ctx: RunContext, out: Ledger, at: Progress): Effect.Effect<void, RunError> =>
+export const stopSession = (
+  ctx: RunContext,
+  out: Ledger,
+  at: Progress,
+): Effect.Effect<void, RunError> =>
   Effect.gen(function* () {
     if (at.threadId === null) return;
     yield* ctx.sessions.archive(at.threadId);
@@ -133,17 +141,31 @@ const stopSession = (ctx: RunContext, out: Ledger, at: Progress): Effect.Effect<
 
 const isThreadNotFound = Schema.is(ThreadNotFoundError);
 
-/** Why a run goes stuck: `reason` is the public one; `detail`, when there is one, stays in the ledger. */
+/**
+ * Why a run goes stuck. `reason` is the public one: one of the factory's own fixed lines, the only
+ * text that goes in the comment's `Reason:`. `detail`, when there is one, holds what the public
+ * must not read (a T3 error, a branch name) and stays in the ledger and the caller's reason.
+ * `sessionText` is what the session said and `branch` where its work is, both already through
+ * `prepareSessionText` and left out when empty.
+ */
 export interface Stop {
   readonly reason: string;
   readonly detail?: string;
+  readonly sessionText?: string;
+  readonly branch?: string;
+  readonly commitsAhead?: number | null;
 }
+
+/** The reason as the ledger stores it and the caller gets it: the factory's words, then the session's. */
+export const recordedReason = (stop: Stop): string =>
+  (stop.detail ?? stop.reason) + (stop.sessionText === undefined ? "" : `\n\n${stop.sessionText}`);
 
 /**
  * The stuck path. The session is stopped first (see `stopSession`), so a failure of that leaves
  * the issue as it was and the next pass tries again. Then the actions `lifecycle.transition`
  * asks for on a failure, in order, then the `state_changed` line and the summary line. The
- * comment says `stop.reason`; the ledger's `stuck` line says `stop.detail` when there is one. A
+ * comment says `stop.reason`, quotes `stop.sessionText` and names `stop.branch`; the ledger's
+ * `stuck` line says `stop.detail` when there is one, then the session text, and the branch. A
  * comment is skipped when the ledger already records it; the label, the release and the status
  * comment are repeated safely. `code` is the reason of every line it writes.
  */
@@ -162,7 +184,11 @@ export const goStuck = (
       return;
     }
     yield* stopSession(ctx, out, at);
-    const recorded = stop.detail ?? stop.reason;
+    const recorded = recordedReason(stop);
+    const work: WorkLeft | undefined =
+      stop.branch === undefined
+        ? undefined
+        : { branch: stop.branch, commitsAhead: stop.commitsAhead ?? null, base: ctx.project.base };
     const failed = yield* Effect.fromResult(
       transition(at.state, { kind: "failed", reason: recorded }),
     );
@@ -172,8 +198,23 @@ export const goStuck = (
       switch (action.kind) {
         case "post-stuck-comment":
           if (!stuckPosted) {
-            yield* ctx.tracker.postComment(issue, stuckComment(stop.reason));
-            yield* ledger(() => out.append({ event: "stuck", data: { reason: recorded } }, cause));
+            yield* ctx.tracker.postComment(
+              issue,
+              stuckComment(stop.reason, stop.sessionText, work),
+            );
+            yield* ledger(() =>
+              out.append(
+                {
+                  event: "stuck",
+                  data: {
+                    reason: recorded,
+                    ...(work !== undefined && { branch: work.branch }),
+                    ...(work?.commitsAhead != null && { commits_ahead: work.commitsAhead }),
+                  },
+                },
+                cause,
+              ),
+            );
             stuckPosted = true;
           }
           break;
@@ -188,7 +229,7 @@ export const goStuck = (
           yield* ctx.tracker.upsertStatusComment(
             issue,
             ctx.trackerUser,
-            statusBody(movedTo ?? at.state, ctx.machine, at.threadId, null),
+            statusBody(movedTo ?? at.state, ctx.machine, at.threadId, at.pr ?? null),
           );
           break;
         default:
