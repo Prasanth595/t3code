@@ -42,11 +42,6 @@ export function normalizeProviderAccentColor(value: string | undefined): string 
   return /^#[0-9a-fA-F]{6}$/u.test(trimmed) ? trimmed : undefined;
 }
 
-/**
- * Text color for initials drawn on an accent-color badge: black or white,
- * whichever has the higher WCAG contrast against the accent, so light accents
- * stay readable. An invalid accent keeps the white default.
- */
 export function providerAccentForegroundColor(accentColor: string): "#000000" | "#ffffff" {
   const hex = normalizeProviderAccentColor(accentColor);
   if (!hex) return "#ffffff";
@@ -56,7 +51,7 @@ export function providerAccentForegroundColor(accentColor: string): "#000000" | 
   };
   const luminance =
     0.2126 * linearChannel(1) + 0.7152 * linearChannel(3) + 0.0722 * linearChannel(5);
-  // Black wins when (L + 0.05) / 0.05 exceeds 1.05 / (L + 0.05).
+  // WCAG contrast: black wins when (L + 0.05) / 0.05 exceeds 1.05 / (L + 0.05).
   return (luminance + 0.05) ** 2 > 0.0525 ? "#000000" : "#ffffff";
 }
 
