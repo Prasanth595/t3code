@@ -400,18 +400,19 @@ describe("install.sh and rollback.sh health check", () => {
     expect(bootstraps(result.calls)).toHaveLength(2);
   });
 
-  it("rolls back an install whose port does not accept connections", () => {
+  it("rolls back an install whose port does not accept connections", async () => {
     installV1();
     const closed = NodeNet.createServer();
-    closed.listen(0, "127.0.0.1");
+    await new Promise<void>((resolve) => closed.listen(0, "127.0.0.1", resolve));
     const port = (closed.address() as NodeNet.AddressInfo).port;
-    closed.close();
+    await new Promise<void>((resolve) => closed.close(() => resolve()));
+    // The port stays closed for the rollback's own check too, so that one fails as well.
     const result = runWith({ T3FAC_PORT: String(port) }, "install.sh", archives[v2]!);
     expect(result.status).toBe(1);
-    expect(result.stderr).toContain(
-      `install of ${v2} failed its health check; rolled back to ${v1}`,
-    );
+    expect(result.stderr).toContain(`port ${port} does not accept connections`);
+    expect(result.stderr).toContain(`install of ${v2} failed its health check; rollback`);
     expect(link("current")).toBe(`versions/${v1}`);
+    expect(bootstraps(result.calls)).toHaveLength(2);
   });
 
   it("does not count a factory started line that was there before the restart", () => {
