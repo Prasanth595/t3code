@@ -151,8 +151,11 @@ it.effect("logs factory started once for a valid machine file, then runs the fir
 
 it.effect("logs each config error and does not start for an invalid machine file", () =>
   Effect.gen(function* () {
+    // The notification for the config item goes to a runner that accepts it, so it logs nothing.
     const { logs, machineConfigPath } = yield* logsFor(
       VALID.replace("model: claude-sonnet-5-5\n", ""),
+      () => Effect.void,
+      Layer.succeed(FactoryProcess, recordingProcess().process),
     );
     assert.deepStrictEqual(logs, [`${machineConfigPath}: model: is missing`]);
   }),
