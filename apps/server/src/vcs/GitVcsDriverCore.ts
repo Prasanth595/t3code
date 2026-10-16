@@ -1,4 +1,5 @@
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -52,7 +53,8 @@ const WORKTREE_REMOVE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(5));
 // Start-from-origin catch-up fetches a branch over the network. The 30s default
 // kills that transfer mid-pack, so the remote-tracking ref never moves and the
 // next attempt downloads the same pack again. Ten minutes covers a slow remote
-// and still ends a fetch that never returns.
+// and still ends a fetch that never returns. Every git fetch inside one
+// fetchRemote call shares that budget.
 export const FETCH_REMOTE_TIMEOUT_MS = Duration.toMillis(Duration.minutes(10));
 const DEFAULT_MAX_OUTPUT_BYTES = 1_000_000;
 const OUTPUT_TRUNCATED_MARKER = "\n\n[truncated]";
@@ -3666,25 +3668,41 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchRemote: GitVcsDriver.GitVcsDriver["Service"]["fetchRemote"] = Effect.fn("fetchRemote")(
     function* (input) {
+      const deadline = (yield* Clock.currentTimeMillis) + FETCH_REMOTE_TIMEOUT_MS;
       const args = ["fetch", "--quiet", input.remoteName];
       const options = {
         env: STATUS_UPSTREAM_REFRESH_ENV,
         fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
-        timeoutMs: FETCH_REMOTE_TIMEOUT_MS,
       };
       // Another fetch in the same repository, such as the background status
       // poll, can win the race for a remote-tracking ref. The loser fails, but
       // the ref is free again by the time a rerun needs it, so retry once.
+      // The retry and the full-fetch fallback share `deadline`; each attempt
+      // gets only the time still left.
       const runFetch = (fetchArgs: readonly string[]) => {
-        const run = executeGitWithStableDiagnostics(
-          "GitVcsDriver.fetchRemote",
-          input.cwd,
-          fetchArgs,
-          {
-            ...options,
-            allowNonZeroExit: true,
-          },
-        );
+        const run = Effect.gen(function* () {
+          const remainingMs = deadline - (yield* Clock.currentTimeMillis);
+          if (remainingMs <= 0) {
+            return yield* new GitCommandError({
+              ...gitCommandContext({
+                operation: "GitVcsDriver.fetchRemote",
+                cwd: input.cwd,
+                args: fetchArgs,
+              }),
+              detail: "Git command timed out.",
+            });
+          }
+          return yield* executeGitWithStableDiagnostics(
+            "GitVcsDriver.fetchRemote",
+            input.cwd,
+            fetchArgs,
+            {
+              ...options,
+              allowNonZeroExit: true,
+              timeoutMs: remainingMs,
+            },
+          );
+        });
         return run.pipe(
           Effect.flatMap((result) =>
             result.exitCode !== 0 && isRefLockFailure(result.stderr) ? run : Effect.succeed(result),

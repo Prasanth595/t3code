@@ -3835,6 +3835,79 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect.each(["ref-lock", "missing-ref"] as const)(
+      "limits a %s follow-up to the time left in the original fetch deadline",
+      (followUp) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const firstStarted = yield* Deferred.make<void>();
+          const followUpStarted = yield* Deferred.make<void>();
+          const attempts: Array<ReadonlyArray<string>> = [];
+          const spawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              if (!ChildProcess.isStandardCommand(command))
+                return yield* Effect.die("unexpected command");
+              if (command.args[0] !== "fetch") return yield* delegate.spawn(command);
+              attempts.push(command.args);
+              if (attempts.length === 1) {
+                yield* Deferred.succeed(firstStarted, undefined);
+                yield* Effect.sleep(Duration.minutes(6));
+                return ChildProcessSpawner.makeHandle({
+                  ...makeNonRepositoryHandle(),
+                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+                  stderr: Stream.encodeText(
+                    Stream.make(
+                      followUp === "ref-lock"
+                        ? "error: cannot lock ref 'refs/remotes/origin/main':"
+                        : "fatal: couldn't find remote ref refs/heads/main",
+                    ),
+                  ),
+                });
+              }
+              yield* Deferred.succeed(followUpStarted, undefined);
+              return ChildProcessSpawner.makeHandle({
+                ...makeNonRepositoryHandle(),
+                exitCode: Effect.never,
+                stderr: Stream.empty,
+              });
+            }),
+          );
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provide(layerServerConfig),
+          );
+          const fetching = yield* driver
+            .fetchRemote({ cwd, remoteName: "origin", refName: "main" })
+            .pipe(Effect.result, Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(firstStarted);
+          const used = Duration.minutes(6);
+          yield* TestClock.adjust(used);
+          yield* Deferred.await(followUpStarted);
+          // A minute into the follow-up is still inside the original budget, so
+          // the attempt must still be running. It ends when that budget ends.
+          yield* TestClock.adjust("1 minute");
+          assert.equal(fetching.pollUnsafe(), undefined);
+          yield* TestClock.adjust(
+            Duration.millis(
+              FETCH_REMOTE_TIMEOUT_MS -
+                Duration.toMillis(used) -
+                Duration.toMillis(Duration.minutes(1)),
+            ),
+          );
+          const result = yield* Fiber.join(fetching);
+          assert.equal(attempts.length, 2);
+          assert.deepEqual(
+            attempts[1],
+            followUp === "ref-lock" ? attempts[0] : ["fetch", "--quiet", "origin"],
+          );
+          assert.isTrue(Result.isFailure(result));
+          if (Result.isFailure(result)) {
+            assert.equal(result.failure.detail, "Git command timed out.");
+          }
+        }),
+    );
+
     it.effect("finishes a scoped fetch that outlasts the default git timeout", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
