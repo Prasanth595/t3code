@@ -1,0 +1,201 @@
+import { assert, it } from "@effect/vitest";
+import { describe } from "vite-plus/test";
+
+import type { Entry } from "../ledger/read.ts";
+import { readProgress } from "./progress.ts";
+
+const MINUTE = 60_000;
+
+const line = (ms: number, event: string, data: unknown): Entry => ({
+  ts: "2026-10-04T10:00:00Z",
+  ms,
+  event,
+  data,
+  cause: null,
+});
+
+const step = (ms: number, text: string) => line(ms, "step_changed", { step: text });
+const moved = (ms: number, from: string, to: string) => line(ms, "state_changed", { from, to });
+const launched = (ms: number) =>
+  line(ms, "session_launched", {
+    thread_id: "thread-1",
+    worktree: "/t3/wt",
+    branch: "t3code/abc",
+    model_instance: null,
+    model: null,
+    resumed_from: null,
+  });
+
+describe("readProgress: the pull request", () => {
+  it("keeps every pull request the run reported and the newest one with its url", () => {
+    const seen = readProgress([
+      line(1, "pr_opened", { pr: 12, url: "https://github.com/rawphp/softfac/pull/12" }),
+      line(2, "pr_opened", { pr: 14, url: "https://github.com/rawphp/softfac/pull/14" }),
+    ]);
+    assert.deepStrictEqual(seen.opened, [12, 14]);
+    assert.deepStrictEqual(seen.lastPr, {
+      pr: 14,
+      url: "https://github.com/rawphp/softfac/pull/14",
+    });
+  });
+
+  it("has none before the first", () => {
+    const seen = readProgress([]);
+    assert.deepStrictEqual(seen.opened, []);
+    assert.strictEqual(seen.lastPr, null);
+  });
+});
+
+describe("readProgress: the questions", () => {
+  it("are posted from questions_posted until the run is building again", () => {
+    assert.strictEqual(
+      readProgress([line(1, "questions_posted", { questions: "q" })]).questionsPosted,
+      true,
+    );
+    assert.strictEqual(
+      readProgress([
+        line(1, "questions_posted", { questions: "q" }),
+        moved(2, "needs-info", "building"),
+      ]).questionsPosted,
+      false,
+    );
+    assert.strictEqual(
+      readProgress([
+        line(1, "questions_posted", { questions: "q" }),
+        moved(2, "building", "needs-info"),
+      ]).questionsPosted,
+      true,
+    );
+  });
+});
+
+describe("readProgress: the reminder and the wait for a newer run", () => {
+  it("reads the ordinal of a reminder that was started, and that it was sent", () => {
+    const started = readProgress([step(1, "result-line-reminding 3")]);
+    assert.strictEqual(started.reminding, 3);
+    assert.strictEqual(started.reminded, false);
+    const sent = readProgress([
+      step(1, "result-line-reminding 3"),
+      step(2, "result-line-reminded"),
+    ]);
+    assert.strictEqual(sent.reminding, 3);
+    assert.strictEqual(sent.reminded, true);
+  });
+
+  it("waits for a run newer than the reminder's, or a forward's", () => {
+    assert.strictEqual(readProgress([step(1, "result-line-reminding 3")]).waitingAfter, 3);
+    assert.strictEqual(readProgress([step(1, "forward-wait 2")]).waitingAfter, 2);
+    assert.strictEqual(readProgress([]).waitingAfter, null);
+  });
+
+  it("never waits for an older run than before", () => {
+    assert.strictEqual(
+      readProgress([step(1, "forward-wait 4"), step(2, "result-line-reminding 2")]).waitingAfter,
+      4,
+    );
+    assert.strictEqual(
+      readProgress([step(1, "forward-wait 2"), step(2, "result-line-reminding 2")]).waitingAfter,
+      2,
+    );
+  });
+
+  it("does not read a forward's wait as a reminder", () => {
+    const seen = readProgress([step(1, "forward-wait 1")]);
+    assert.strictEqual(seen.reminding, null);
+    assert.strictEqual(seen.reminded, false);
+  });
+
+  it("ignores steps whose number is not one", () => {
+    const seen = readProgress([
+      step(1, "result-line-reminding"),
+      step(2, "result-line-reminding x"),
+      step(3, "result-line-reminding 01"),
+      step(4, "result-line-reminding 1 2"),
+    ]);
+    assert.strictEqual(seen.reminding, null);
+    assert.strictEqual(seen.waitingAfter, null);
+  });
+
+  it("starts again for a new session: each thread has one reminder and its own run numbers", () => {
+    const seen = readProgress([
+      step(1, "result-line-reminding 3"),
+      step(2, "result-line-reminded"),
+      line(3, "session_paused", { run_ordinal: 3 }),
+      launched(4),
+    ]);
+    assert.strictEqual(seen.reminding, null);
+    assert.strictEqual(seen.reminded, false);
+    assert.strictEqual(seen.waitingAfter, null);
+    assert.strictEqual(seen.paused, null);
+  });
+});
+
+describe("readProgress: a stop by hand", () => {
+  it("keeps the newest pause with the run it stopped", () => {
+    assert.strictEqual(readProgress([]).paused, null);
+    assert.deepStrictEqual(readProgress([line(1, "session_paused", { run_ordinal: 2 })]).paused, {
+      runOrdinal: 2,
+    });
+    assert.deepStrictEqual(
+      readProgress([
+        line(1, "session_paused", { run_ordinal: 2 }),
+        line(2, "session_paused", { run_ordinal: null }),
+      ]).paused,
+      { runOrdinal: null },
+    );
+  });
+});
+
+describe("readProgress: the time worked", () => {
+  it("counts from the first line while the run is in triage or building", () => {
+    const seen = readProgress([line(1000, "claimed", {}), moved(1000, "ready", "triage")]);
+    assert.strictEqual(seen.workedMs, 0);
+    assert.strictEqual(seen.workingSince, 1000);
+  });
+
+  it("is zero and not counting for a ledger with no lines", () => {
+    const seen = readProgress([]);
+    assert.strictEqual(seen.workedMs, 0);
+    assert.strictEqual(seen.workingSince, null);
+  });
+
+  it("adds each stint when the state changes, and starts the next in triage or building", () => {
+    const seen = readProgress([
+      line(0, "claimed", {}),
+      moved(0, "ready", "triage"),
+      moved(MINUTE, "triage", "building"),
+      moved(10 * MINUTE, "building", "needs-info"),
+    ]);
+    assert.strictEqual(seen.workedMs, 10 * MINUTE);
+    assert.strictEqual(seen.workingSince, null);
+  });
+
+  it("stops counting when the run is finished", () => {
+    const seen = readProgress([
+      line(0, "claimed", {}),
+      moved(0, "ready", "triage"),
+      line(5 * MINUTE, "finished", {}),
+    ]);
+    assert.strictEqual(seen.workingSince, null);
+  });
+
+  it("does not charge the build again when a pull request that was open comes back to building", () => {
+    const seen = readProgress([
+      line(0, "claimed", {}),
+      moved(0, "ready", "triage"),
+      moved(MINUTE, "triage", "building"),
+      moved(30 * MINUTE, "building", "pr-open"),
+      moved(500 * MINUTE, "pr-open", "building"),
+    ]);
+    assert.strictEqual(seen.workedMs, 0);
+    assert.strictEqual(seen.workingSince, 500 * MINUTE);
+  });
+
+  it("never counts a backwards clock", () => {
+    const seen = readProgress([
+      line(10 * MINUTE, "claimed", {}),
+      moved(5 * MINUTE, "ready", "triage"),
+    ]);
+    assert.strictEqual(seen.workedMs, 0);
+  });
+});
