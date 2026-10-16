@@ -26,6 +26,15 @@ export const HomeDirectory = Context.Reference<string>(
   },
 );
 
+// Account metadata ignores HOME, unlike homedir(), for native POSIX tools'
+// fallback when the child omits HOME or sets it to an empty string.
+export const AccountHomeDirectory = Context.Reference<string>(
+  "@t3tools/shared/HostProcess/AccountHomeDirectory",
+  {
+    defaultValue: () => NodeOS.userInfo().homedir,
+  },
+);
+
 export const Environment = Context.Reference<NodeJS.ProcessEnv>(
   "@t3tools/shared/HostProcess/Environment",
   {

@@ -2303,21 +2303,27 @@ it.layer(
       ),
   );
 
-  for (const platform of ["linux", "win32"] as const) {
+  for (const { platform, variable } of [
+    { platform: "linux", variable: "CODEX_HOME" },
+    { platform: "win32", variable: "CODEX_HOME" },
+    { platform: "linux", variable: "HOME" },
+  ] as const) {
     for (const source of ["inherited", "request", "provider"] as const) {
       for (const entry of ["database", "dangling sidecar"] as const) {
         it.effect.skipIf(!symlinksSupported)(
-          `blocks the actual terminal home from ${source} (${platform}, ${entry})`,
+          `blocks the actual terminal home from ${source} (${platform}, ${entry}, ${variable})`,
           () =>
             Effect.gen(function* () {
               const fs = yield* FileSystem.FileSystem;
               const path = yield* Path.Path;
               const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-terminal-home-" });
               const sharedHome = path.join(root, "shared");
-              const actualHome = path.join(root, "legacy");
+              const home = path.join(root, "legacy");
+              const actualHome = variable === "HOME" ? path.join(home, ".codex") : home;
+              const value = variable === "HOME" ? home : actualHome;
               const cwd = path.join(root, "worktree");
               for (const directory of [sharedHome, actualHome, cwd]) {
-                yield* fs.makeDirectory(directory);
+                yield* fs.makeDirectory(directory, { recursive: true });
               }
               const providerInstanceId = ProviderInstanceId.make("codex_actual_home");
               const generatedHome = path.join(
@@ -2343,7 +2349,7 @@ it.layer(
                   sidecar,
                 );
               }
-              const key = platform === "win32" ? "codex_home" : "CODEX_HOME";
+              const key = platform === "win32" ? "codex_home" : variable;
               const serverSettings = yield* ServerSettings.ServerSettingsService.pipe(
                 Effect.provide(
                   ServerSettings.layerTest({
@@ -2352,16 +2358,14 @@ it.layer(
                         driver: ProviderDriverKind.make("codex"),
                         config: { setupMode: "managed", homePath: "", shadowHomePath: "" },
                         environment:
-                          source === "provider"
-                            ? [{ name: key, value: actualHome, sensitive: false }]
-                            : [],
+                          source === "provider" ? [{ name: key, value, sensitive: false }] : [],
                       },
                     },
                   }),
                 ),
               );
               const { manager, ptyAdapter } = yield* createManager(5, {
-                env: source === "inherited" ? { [key]: actualHome } : {},
+                env: source === "inherited" ? { [key]: value } : {},
                 resolveProviderInstanceEnvironment: (
                   rawProviderInstanceId,
                   env,
@@ -2381,15 +2385,22 @@ it.layer(
               const input = openInput({
                 providerInstanceId,
                 cwd,
-                env: source === "request" ? { [key]: actualHome } : undefined,
+                env: source === "request" ? { [key]: value } : undefined,
               });
               for (let attempt = 0; attempt < 2; attempt += 1) {
-                const result = yield* Effect.result(
+                const operation =
                   source === "request"
                     ? manager.restart({ ...input, cols: 100, rows: 24 }).pipe(Effect.asVoid)
                     : source === "inherited"
                       ? manager.attachStream(input, () => Effect.void).pipe(Effect.asVoid)
-                      : manager.open(input).pipe(Effect.asVoid),
+                      : manager.open(input).pipe(Effect.asVoid);
+                const result = yield* operation.pipe(
+                  Effect.provideService(HostProcess.HomeDirectory, path.join(root, "server-home")),
+                  Effect.provideService(
+                    HostProcess.AccountHomeDirectory,
+                    path.join(root, "account"),
+                  ),
+                  Effect.result,
                 );
                 expect(result._tag).toBe("Failure");
                 if (result._tag !== "Failure") return;
@@ -2427,12 +2438,29 @@ it.layer(
     "alias-no-id",
     "alias-zero-id",
     "unsafe-generated",
+    "native-home",
+    "native-empty-home",
+    "native-unset-home",
+    "native-directory-alias",
+    "native-explicit-winner",
+    "native-relative-home",
+    "native-unsafe-generated",
+    "windows-home-override",
   ] as const) {
     const isAlias =
-      mode === "directory-alias" || mode === "alias-no-id" || mode === "alias-zero-id";
+      mode === "directory-alias" ||
+      mode === "alias-no-id" ||
+      mode === "alias-zero-id" ||
+      mode === "native-directory-alias";
+    const unsafeGenerated = mode === "unsafe-generated" || mode === "native-unsafe-generated";
+    const nativeDefault = mode.startsWith("native-") && mode !== "native-explicit-winner";
+    const hasExtraHome =
+      mode === "native-explicit-winner" ||
+      mode === "native-relative-home" ||
+      mode === "windows-home-override";
     it.effect.skipIf(
       !symlinksSupported || (isAlias && HostProcess.Platform.defaultValue() === "win32"),
-    )(`allows the known direct shared home without bypassing generated recovery (${mode})`, () =>
+    )(`preserves native terminal selection without bypassing generated recovery (${mode})`, () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -2450,7 +2478,7 @@ it.layer(
         );
         const generated = path.join(root, "providers", "codex", providerInstanceId, "shadow");
         const generatedLink = path.join(generated, "state_5.sqlite");
-        if (mode === "unsafe-generated") {
+        if (unsafeGenerated) {
           yield* fs.makeDirectory(generated, { recursive: true });
           yield* fs.symlink(database, generatedLink);
           yield* fs.writeFileString(path.join(generated, "state_5.sqlite-wal"), "private WAL");
@@ -2458,7 +2486,14 @@ it.layer(
         let terminalHome = mode === "relative" ? "." : shared;
         if (isAlias) {
           terminalHome = path.join(root, "shared-alias");
-          yield* fs.symlink(shared, terminalHome);
+          yield* fs.symlink(mode === "native-directory-alias" ? home : shared, terminalHome);
+        }
+        const extraHome = path.join(root, "extra-home");
+        const extraLink = path.join(extraHome, ".codex", "state_5.sqlite");
+        if (hasExtraHome) {
+          yield* fs.makeDirectory(path.dirname(extraLink), { recursive: true });
+          yield* fs.symlink(database, extraLink);
+          yield* fs.writeFileString(`${extraLink}-wal`, "private WAL");
         }
         const cwd = mode === "relative" ? shared : root;
         const serverSettings = yield* ServerSettings.ServerSettingsService.pipe(
@@ -2485,7 +2520,7 @@ it.layer(
                   fs.stat(candidate).pipe(
                     Effect.map((info) => ({
                       ...info,
-                      ino: mode === "alias-no-id" ? Option.none() : Option.some(0),
+                      ino: mode === "alias-no-id" ? Option.none() : Option.some(0n),
                     })),
                   ),
               }
@@ -2508,28 +2543,60 @@ it.layer(
               inheritedEnvironment,
             }).pipe(Effect.provideService(FileSystem.FileSystem, resolverFs)),
         });
-        const input = openInput({ providerInstanceId, cwd, env: { CODEX_HOME: terminalHome } });
+        const environment: Record<string, string> =
+          mode === "native-unset-home"
+            ? {}
+            : mode === "native-empty-home"
+              ? { HOME: "" }
+              : mode === "native-directory-alias"
+                ? { HOME: terminalHome }
+                : mode === "windows-home-override"
+                  ? { HOME: extraHome, USERPROFILE: extraHome }
+                  : mode === "native-relative-home"
+                    ? { HOME: "extra-home" }
+                    : nativeDefault
+                      ? { HOME: home }
+                      : mode === "native-explicit-winner"
+                        ? { CODEX_HOME: terminalHome, HOME: extraHome }
+                        : { CODEX_HOME: terminalHome };
+        const input = openInput({ providerInstanceId, cwd, env: environment });
         const blocked =
-          mode === "unsafe-generated" || mode === "alias-no-id" || mode === "alias-zero-id";
+          unsafeGenerated ||
+          mode === "alias-no-id" ||
+          mode === "alias-zero-id" ||
+          mode === "native-relative-home";
         for (let attempt = 0; attempt < 2; attempt += 1) {
           const result = yield* manager
             .open(input)
-            .pipe(Effect.provideService(HostProcess.HomeDirectory, home), Effect.result);
+            .pipe(
+              Effect.provideService(HostProcess.HomeDirectory, home),
+              Effect.provideService(HostProcess.AccountHomeDirectory, home),
+              Effect.provideService(
+                HostProcess.Platform,
+                mode.startsWith("native-")
+                  ? "linux"
+                  : mode === "windows-home-override"
+                    ? "win32"
+                    : HostProcess.Platform.defaultValue(),
+              ),
+              Effect.result,
+            );
           expect(result._tag).toBe(blocked ? "Failure" : "Success");
           if (blocked && result._tag === "Failure") {
             expect(result.failure).toMatchObject({
               _tag: "TerminalProviderEnvironmentError",
               cause: {
                 _tag: "CodexShadowHomeSqliteRecoveryRequiredError",
-                linkPath:
-                  mode === "unsafe-generated"
-                    ? generatedLink
+                linkPath: unsafeGenerated
+                  ? generatedLink
+                  : mode === "native-relative-home"
+                    ? extraLink
                     : path.join(terminalHome, "state_5.sqlite"),
               },
             });
             expect(result.failure.message).not.toContain(root);
             expect(ptyAdapter.spawnInputs).toHaveLength(0);
-            if (mode === "unsafe-generated") {
+            if (unsafeGenerated) {
               expect(yield* fs.readLink(generatedLink)).toBe(database);
               expect(yield* fs.readFileString(path.join(generated, "state_5.sqlite-wal"))).toBe(
                 "private WAL",
@@ -2540,7 +2607,9 @@ it.layer(
           } else if (!blocked) {
             expect(ptyAdapter.spawnInputs).toHaveLength(1);
             expect(ptyAdapter.spawnInputs[0]?.cwd).toBe(cwd);
-            expect(ptyAdapter.spawnInputs[0]?.env.CODEX_HOME).toBe(terminalHome);
+            expect(ptyAdapter.spawnInputs[0]?.env.CODEX_HOME).toBe(environment.CODEX_HOME);
+            expect(ptyAdapter.spawnInputs[0]?.env.HOME).toBe(environment.HOME);
+            expect(ptyAdapter.spawnInputs[0]?.env.USERPROFILE).toBe(environment.USERPROFILE);
             expect(ptyAdapter.spawnInputs[0]?.env.CODEX_SQLITE_HOME).toBeUndefined();
             expect(yield* fs.exists(path.join(root, "providers"))).toBe(false);
           }
@@ -2549,6 +2618,10 @@ it.layer(
           expect(yield* fs.readFileString(path.join(shared, "state_5.sqlite-wal"))).toBe(
             "shared WAL",
           );
+          if (hasExtraHome) {
+            expect(yield* fs.readLink(extraLink)).toBe(database);
+            expect(yield* fs.readFileString(`${extraLink}-wal`)).toBe("private WAL");
+          }
         }
       }),
     );
@@ -2559,6 +2632,8 @@ it.layer(
     "home-symlink",
     "absolute-home-symlink",
     "shared-decoy",
+    "native-home-symlink",
+    "native-relative-home-symlink",
   ] as const) {
     for (const physicalUnsafe of [true, false]) {
       it.effect.skipIf(!symlinksSupported || HostProcess.Platform.defaultValue() === "win32")(
@@ -2574,11 +2649,19 @@ it.layer(
             yield* fs.makeDirectory(child, { recursive: true });
             let cwd = work;
             let home = "hop/../legacy";
-            let lexicalHome = path.join(work, "legacy");
-            const entry = mode === "shared-decoy" ? ".codex" : "legacy";
+            const nativeMode =
+              mode === "native-home-symlink" || mode === "native-relative-home-symlink";
+            let lexicalHome = path.join(work, nativeMode ? ".codex" : "legacy");
+            const entry = mode === "shared-decoy" || nativeMode ? ".codex" : "legacy";
             const fixtureHome = mode === "shared-decoy" ? root : path.join(root, "home");
-            const physicalHome = path.join(root, "physical", entry);
-            if (mode === "cwd-symlink" || mode === "shared-decoy") {
+            let physicalHome = path.join(root, "physical", entry);
+            if (mode === "native-relative-home-symlink") {
+              cwd = path.join(root, "alias");
+              yield* fs.symlink(child, cwd);
+              home = "missing/../../native";
+              lexicalHome = path.join(root, "native", ".codex");
+              physicalHome = path.join(root, "physical", "native", ".codex");
+            } else if (mode === "cwd-symlink" || mode === "shared-decoy") {
               cwd = path.join(root, "alias");
               yield* fs.symlink(child, cwd);
               home = `../${entry}`;
@@ -2586,12 +2669,15 @@ it.layer(
             } else {
               yield* fs.symlink(child, path.join(work, "hop"));
               if (mode === "absolute-home-symlink") home = `${work}/hop/../legacy`;
+              if (mode === "native-home-symlink") home = `${work}/hop/../`;
             }
-            yield* fs.makeDirectory(lexicalHome);
-            yield* fs.makeDirectory(physicalHome);
+            yield* fs.makeDirectory(lexicalHome, { recursive: true });
+            yield* fs.makeDirectory(physicalHome, { recursive: true });
             const database = path.join(root, "shared.sqlite");
             yield* fs.writeFileString(database, "preserved database");
-            const unsafeHome = physicalUnsafe ? physicalHome : lexicalHome;
+            const selectedHome = mode === "native-home-symlink" ? lexicalHome : physicalHome;
+            const decoyHome = mode === "native-home-symlink" ? physicalHome : lexicalHome;
+            const unsafeHome = physicalUnsafe ? selectedHome : decoyHome;
             const linkPath = path.join(unsafeHome, "state_5.sqlite");
             yield* fs.symlink(database, linkPath);
             for (const sidecar of ["wal", "shm", "journal"]) {
@@ -2631,8 +2717,12 @@ it.layer(
                   inheritedEnvironment,
                 }),
             });
-            const input = openInput({ providerInstanceId, cwd, env: { CODEX_HOME: home } });
-            const lookupHome = path.isAbsolute(home) ? home : `${cwd}/${home}`;
+            const variable = nativeMode ? "HOME" : "CODEX_HOME";
+            const input = openInput({ providerInstanceId, cwd, env: { [variable]: home } });
+            const selectedLookup = nativeMode ? path.normalize(`${home}/.codex`) : home;
+            const lookupHome = path.isAbsolute(selectedLookup)
+              ? selectedLookup
+              : `${cwd}/${selectedLookup}`;
             for (let attempt = 0; attempt < 2; attempt += 1) {
               const result = yield* manager
                 .open(input)
@@ -2652,7 +2742,9 @@ it.layer(
               } else if (!physicalUnsafe) {
                 expect(ptyAdapter.spawnInputs).toHaveLength(1);
                 expect(ptyAdapter.spawnInputs[0]?.cwd).toBe(cwd);
-                expect(ptyAdapter.spawnInputs[0]?.env.CODEX_HOME).toBe(home);
+                expect(ptyAdapter.spawnInputs[0]?.env[variable]).toBe(home);
+                if (variable === "HOME")
+                  expect(ptyAdapter.spawnInputs[0]?.env.CODEX_HOME).toBeUndefined();
               }
               expect(yield* fs.readLink(linkPath)).toBe(database);
               expect(yield* fs.readFileString(database)).toBe("preserved database");
@@ -2666,6 +2758,105 @@ it.layer(
           }),
       );
     }
+  }
+
+  for (const source of ["inherited", "request", "provider", "empty", "unset"] as const) {
+    it.effect.skipIf(!symlinksSupported)(
+      `refuses restart before killing an existing terminal selected through ${source} HOME`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-terminal-native-home-" });
+          const home = path.join(root, "terminal-home");
+          const codexHome = path.join(home, ".codex");
+          const accountFallback = source === "empty" || source === "unset";
+          yield* fs.makeDirectory(codexHome, { recursive: true });
+          const providerInstanceId = ProviderInstanceId.make("codex_native_home");
+          const serverSettings = yield* ServerSettings.ServerSettingsService.pipe(
+            Effect.provide(
+              ServerSettings.layerTest({
+                providerInstances: {
+                  [providerInstanceId]: {
+                    driver: ProviderDriverKind.make("codex"),
+                    config: { setupMode: "managed", homePath: "", shadowHomePath: "" },
+                    environment:
+                      source === "provider"
+                        ? [{ name: "HOME", value: home, sensitive: false }]
+                        : [],
+                  },
+                },
+              }),
+            ),
+          );
+          const { manager, ptyAdapter } = yield* createManager(5, {
+            env:
+              source === "unset"
+                ? {}
+                : { HOME: source === "inherited" ? home : path.join(root, "server-home") },
+            resolveProviderInstanceEnvironment: (
+              rawProviderInstanceId,
+              env,
+              inheritedEnvironment,
+              cwd,
+            ) =>
+              TerminalManager.resolveProviderInstanceTerminalEnvironment({
+                serverSettings,
+                path,
+                rawProviderInstanceId,
+                stateDir: root,
+                cwd,
+                env,
+                inheritedEnvironment,
+              }).pipe(
+                Effect.provideService(HostProcess.HomeDirectory, path.join(root, "server-home")),
+                Effect.provideService(
+                  HostProcess.AccountHomeDirectory,
+                  accountFallback ? home : path.join(root, "account"),
+                ),
+              ),
+          });
+          const input = openInput({
+            providerInstanceId,
+            cwd: root,
+            env:
+              source === "empty" ? { HOME: "" } : source === "request" ? { HOME: home } : undefined,
+          });
+          yield* manager.open(input);
+          expect(ptyAdapter.spawnInputs).toHaveLength(1);
+          expect(ptyAdapter.spawnInputs[0]?.env.HOME).toBe(
+            source === "empty" ? "" : source === "unset" ? undefined : home,
+          );
+          expect(ptyAdapter.spawnInputs[0]?.env.CODEX_HOME).toBeUndefined();
+          expect(ptyAdapter.spawnInputs[0]?.env.CODEX_SQLITE_HOME).toBeUndefined();
+          const target = path.join(root, "missing-shm");
+          const link = path.join(codexHome, "STATE_5.SQLITE-SHM");
+          yield* fs.symlink(target, link);
+          yield* fs.writeFileString(path.join(codexHome, "state_5.sqlite-wal"), "private WAL");
+          const unsubscribe = yield* manager.attachStream(input, () => Effect.void);
+          yield* Effect.sync(unsubscribe);
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            const result = yield* manager
+              .restart({ ...input, cols: 100, rows: 24 })
+              .pipe(Effect.result);
+            expect(result._tag).toBe("Failure");
+            if (result._tag !== "Failure") return;
+            expect(result.failure).toMatchObject({
+              _tag: "TerminalProviderEnvironmentError",
+              cause: { _tag: "CodexShadowHomeSqliteRecoveryRequiredError", linkPath: link },
+            });
+            expect(result.failure.message).not.toContain(root);
+            expect(ptyAdapter.spawnInputs).toHaveLength(1);
+            expect(ptyAdapter.processes[0]?.killed).toBe(false);
+            expect(yield* fs.readLink(link)).toBe(target);
+            expect(yield* fs.readFileString(path.join(codexHome, "state_5.sqlite-wal"))).toBe(
+              "private WAL",
+            );
+            expect(yield* fs.exists(target)).toBe(false);
+            expect(yield* fs.exists(path.join(root, "providers"))).toBe(false);
+          }
+        }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+    );
   }
 
   for (const source of ["inherited", "request", "provider"] as const) {

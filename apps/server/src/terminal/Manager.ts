@@ -1411,21 +1411,32 @@ export const resolveProviderInstanceTerminalEnvironment = Effect.fn(
         platform,
         yield* HostProcess.HomeDirectory,
       );
-      const terminalHome = Object.entries(terminalEnvironment).find(
-        ([key]) => codexHomeKey(key) === "CODEX_HOME",
-      )?.[1];
-      // POSIX resolves symlinks before subsequent '..' components. Keep the
-      // lookup spelling intact; even fs.realpath's JS implementation normalizes
-      // lexically. Windows resolves drive-relative paths using Win32 semantics.
-      const terminalHomePath = terminalHome
-        ? platform === "win32"
-          ? input.path.resolve(input.cwd, terminalHome)
-          : input.path.isAbsolute(terminalHome)
-            ? terminalHome
-            : `${input.cwd}${input.cwd.endsWith(input.path.sep) ? "" : input.path.sep}${terminalHome}`
-        : undefined;
       yield* Effect.gen(function* () {
         yield* inspectCodexShadowSqlite(recoveryLayout);
+        const explicitHome = Object.entries(terminalEnvironment).find(
+          ([key]) => codexHomeKey(key) === "CODEX_HOME",
+        )?.[1];
+        // POSIX Codex falls back to nonempty HOME, then the account database.
+        // Windows uses the Known Folder API, not HOME/USERPROFILE overrides.
+        const nativeHome =
+          !explicitHome && platform !== "win32"
+            ? terminalEnvironment.HOME || (yield* HostProcess.AccountHomeDirectory)
+            : undefined;
+        // Native HOME goes through Codex's lexical AbsolutePathBuf normalization;
+        // explicit CODEX_HOME is canonicalized first and must keep filesystem semantics.
+        const terminalHome =
+          explicitHome ||
+          (nativeHome ? input.path.normalize(`${nativeHome}${input.path.sep}.codex`) : undefined);
+        // Keep the cwd and explicit CODEX_HOME spelling: POSIX traverses symlinks
+        // before '..'. Even fs.realpath's JS implementation normalizes lexically.
+        // Windows resolves drive-relative paths using Win32 semantics.
+        const terminalHomePath = terminalHome
+          ? platform === "win32"
+            ? input.path.resolve(input.cwd, terminalHome)
+            : input.path.isAbsolute(terminalHome)
+              ? terminalHome
+              : `${input.cwd}${input.cwd.endsWith(input.path.sep) ? "" : input.path.sep}${terminalHome}`
+          : undefined;
         if (
           terminalHomePath === undefined ||
           (recoveryLayout.mode === "authOverlay" &&
