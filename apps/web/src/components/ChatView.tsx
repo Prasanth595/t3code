@@ -8239,20 +8239,31 @@ export default function ChatView(props: ChatViewProps) {
   };
   const onImplementPlanInNewThreadStable = useStableCallback(onImplementPlanInNewThread);
 
+  // Keyed on the fields it reads: the thread and runtime objects change with
+  // every streamed event, and a new function re-renders the whole model picker.
+  const hasStartedSession = activeRuntime !== null;
+  const runtimeProviderInstanceId = activeRuntime?.providerInstanceId ?? null;
+  const currentModelSelection = activeThread?.modelSelection ?? null;
   const getModelDisabledReason = useMemo(
     () =>
       makeModelDisabledReason(
-        activeThread
+        currentModelSelection
           ? {
               providers: providerStatuses,
-              hasStartedSession: activeRuntime !== null,
+              hasStartedSession,
               supportsProviderSwitchingViaHandoff,
-              currentModelSelection: activeThread.modelSelection,
-              currentProviderInstanceId: activeRuntime?.providerInstanceId ?? null,
+              currentModelSelection,
+              currentProviderInstanceId: runtimeProviderInstanceId,
             }
           : null,
       ),
-    [activeRuntime, activeThread, providerStatuses, supportsProviderSwitchingViaHandoff],
+    [
+      currentModelSelection,
+      hasStartedSession,
+      providerStatuses,
+      runtimeProviderInstanceId,
+      supportsProviderSwitchingViaHandoff,
+    ],
   );
 
   const onProviderModelSelect = (
