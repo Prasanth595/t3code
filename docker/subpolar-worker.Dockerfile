@@ -42,13 +42,21 @@ RUN apt-get update \
 COPY --from=bun-runtime /usr/local/bin/bun /usr/local/bin/bun
 COPY --from=subpolar-runtime /workspace/node_modules /opt/subpolar/node_modules
 COPY --from=subpolar-runtime /workspace/packages/effect-acp /opt/subpolar/packages/effect-acp
+COPY --from=subpolar-runtime /workspace/packages/effect-acp/node_modules /opt/subpolar/packages/effect-acp/node_modules
 COPY --from=subpolar-runtime /workspace/packages/subpolar-acp /opt/subpolar/packages/subpolar-acp
+COPY --from=subpolar-runtime /workspace/packages/subpolar-acp/node_modules /opt/subpolar/packages/subpolar-acp/node_modules
 COPY --from=subpolar-runtime /workspace/packages/subpolar-contracts /opt/subpolar/packages/subpolar-contracts
+COPY --from=subpolar-runtime /workspace/packages/subpolar-contracts/node_modules /opt/subpolar/packages/subpolar-contracts/node_modules
 COPY --from=subpolar-runtime /workspace/packages/subpolar-core /opt/subpolar/packages/subpolar-core
+COPY --from=subpolar-runtime /workspace/packages/subpolar-core/node_modules /opt/subpolar/packages/subpolar-core/node_modules
 COPY --from=subpolar-runtime /workspace/packages/subpolar-core-pi /opt/subpolar/packages/subpolar-core-pi
+COPY --from=subpolar-runtime /workspace/packages/subpolar-core-pi/node_modules /opt/subpolar/packages/subpolar-core-pi/node_modules
 COPY --from=subpolar-runtime /workspace/packages/subpolar-environments /opt/subpolar/packages/subpolar-environments
+COPY --from=subpolar-runtime /workspace/packages/subpolar-environments/node_modules /opt/subpolar/packages/subpolar-environments/node_modules
 COPY --from=subpolar-runtime /workspace/packages/subpolar-runtime-host /opt/subpolar/packages/subpolar-runtime-host
+COPY --from=subpolar-runtime /workspace/packages/subpolar-runtime-host/node_modules /opt/subpolar/packages/subpolar-runtime-host/node_modules
 COPY --from=subpolar-runtime /workspace/packages/subpolar-tools /opt/subpolar/packages/subpolar-tools
+COPY --from=subpolar-runtime /workspace/packages/subpolar-tools/node_modules /opt/subpolar/packages/subpolar-tools/node_modules
 
 COPY docker/subpolar-worker/worker.mjs /usr/local/lib/subpolar/worker.mjs
 COPY docker/subpolar-worker/terminal-supervisor.mjs /usr/local/lib/subpolar/terminal-supervisor.mjs
