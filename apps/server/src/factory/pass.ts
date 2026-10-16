@@ -453,10 +453,12 @@ export const runPass = (
     if (infos !== null) {
       const known = new Known(infos);
       yield* workRuns(world, repos, known, pass);
-      yield* prOpenRuns(world, repos, known, pass);
       yield* untrackedClaims(world, repos, known, pass);
       yield* unassignedClaims(world, repos, known, pass);
       yield* claim(world, repos, known, machine, pass);
+      // Last: a claim of an issue put back to `ready` ends its older pr-open run, and a re-gate
+      // takes a gate slot.
+      yield* prOpenRuns(world, repos, known, pass);
       // A run-bound attention item whose run is no longer unfinished (stopped, abandoned, timed
       // out, claimed on) is over. `stuck` and `needs-info` items are about finished runs and stay.
       if (!known.lost) {
@@ -604,9 +606,9 @@ const workRuns = (
   });
 
 /**
- * The gate started for every run whose issue is `pr-open`, once each, unless nothing moved since
- * its last pass (see `unchanged`): such a run costs no process and no gate slot, and the pass says
- * nothing of it. The gate (`regate`) deals with a merged or closed pull request, a re-gate under
+ * The gate started for every run whose issue is `pr-open`, once each, after the claims (softfac's
+ * `pr_open_runs`), unless nothing moved since its last pass (see `unchanged`): such a run costs
+ * no process and no gate slot, and the pass says nothing of it. The gate (`regate`) deals with a merged or closed pull request, a re-gate under
  * way, a relaunch not yet recorded, a run whose worktree line is not written yet, a checkout an
  * earlier gate left on disk, and a read that fails. A run of a repo that is not loaded is left
  * alone.
