@@ -1729,6 +1729,95 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 
+  it.effect(
+    "rechecks a native child's branch after a rename scan misses its pending creation",
+    () =>
+      Effect.gen(function* () {
+        const now = yield* DateTime.now;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const ids = yield* IdAllocator.IdAllocatorV2;
+        const rootEvent = yield* threadCreatedEvent(now);
+        if (rootEvent.type !== "thread.created") throw new Error("Expected thread fixture");
+        const parent = {
+          ...rootEvent.payload,
+          branch: "t3/abcd1234",
+          worktreePath: "/repo/shared",
+        };
+        yield* eventSink.write({ events: [{ ...rootEvent, payload: parent }] });
+        const childId = ids.derive.threadFromProviderThread({
+          driver: CODEX_DRIVER,
+          nativeThreadId: "child-created-during-rename",
+        });
+        const beforeCommit = yield* Deferred.make<void>();
+        const allowCommit = yield* Deferred.make<void>();
+        const gatedSink = EventSink.EventSinkV2.of({
+          ...eventSink,
+          write: (input) =>
+            input.events.some(
+              (event) => event.type === "thread.created" && event.threadId === childId,
+            )
+              ? Deferred.succeed(beforeCommit, undefined).pipe(
+                  Effect.andThen(Deferred.await(allowCommit)),
+                  Effect.andThen(eventSink.write(input)),
+                )
+              : eventSink.write(input),
+        });
+        const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2.pipe(
+          Effect.provide(Layer.fresh(ProviderEventIngestor.layer)),
+          Effect.provideService(EventSink.EventSinkV2, gatedSink),
+        );
+        const providerSessionId = yield* ids.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: parent.id,
+        });
+        const creation = yield* ingestor
+          .ingestNormalized({
+            providerSessionId,
+            providerInstanceId: modelSelection.instanceId,
+            threadId: parent.id,
+            event: {
+              type: "app_thread.created",
+              driver: CODEX_DRIVER,
+              appThread: {
+                ...parent,
+                id: childId,
+                lineage: {
+                  parentThreadId: parent.id,
+                  rootThreadId: parent.id,
+                  relationshipToParent: "subagent",
+                },
+              },
+            },
+          })
+          .pipe(Effect.forkScoped);
+        yield* Deferred.await(beforeCommit);
+        yield* eventSink.write({
+          events: [
+            {
+              ...rootEvent,
+              id: yield* ids.allocate.event({ threadId: parent.id }),
+              type: "thread.metadata-updated",
+              payload: { ...parent, branch: "generated-branch" },
+            },
+          ],
+        });
+        // The rename's final scan finishes while the child is still uncommitted.
+        const snapshot = yield* projections.getShellSnapshot();
+        assert.isFalse(
+          [...snapshot.threads, ...snapshot.archivedThreads].some(
+            (thread) =>
+              thread.worktreePath === parent.worktreePath && thread.branch === parent.branch,
+          ),
+        );
+        yield* Deferred.succeed(allowCommit, undefined);
+        yield* Fiber.join(creation);
+        const child = yield* projections.getThread(childId);
+        assert.equal(child.branch, "generated-branch");
+        assert.equal(child.worktreePath, parent.worktreePath);
+      }),
+  );
+
   it.effect.each(
     ["codex", "claude"].flatMap((driver) =>
       ["/repo/shared", "/repo/isolated", null].map((worktreePath) => ({ driver, worktreePath })),

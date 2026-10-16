@@ -796,6 +796,47 @@ export const layer: Layer.Layer<
           return result.storedEvents;
         }).pipe(
           Effect.flatMap((storedEvents) =>
+            Effect.gen(function* () {
+              if (input.event.type !== "app_thread.created") return storedEvents;
+              const created = storedEvents.find((stored) => stored.event.type === "thread.created");
+              if (created?.event.type !== "thread.created") return storedEvents;
+              const child = created.event.payload;
+              if (child.lineage.parentThreadId === null || child.worktreePath === null)
+                return storedEvents;
+              // A rename's final scan can miss this child before its commit. The child's
+              // lock still covers this recheck and write, so its workspace cannot move.
+              const parent = yield* projections.getThread(child.lineage.parentThreadId).pipe(
+                Effect.catchTags({
+                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                }),
+              );
+              if (
+                parent === null ||
+                parent.worktreePath !== child.worktreePath ||
+                parent.branch === child.branch
+              )
+                return storedEvents;
+              const now = yield* DateTime.now;
+              const event = yield* makeDomainEvent(input, {
+                type: "thread.metadata-updated",
+                threadId: child.id,
+                payload: { ...child, branch: parent.branch, updatedAt: now },
+                occurredAt: now,
+              });
+              const synced = yield* eventSink.write({ events: [event] });
+              return [...storedEvents, ...synced];
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderEventPublishError({
+                    providerSessionId: input.providerSessionId,
+                    eventCount: 1,
+                    cause,
+                  }),
+              ),
+            ),
+          ),
+          Effect.flatMap((storedEvents) =>
             storedEvents.length === 0 || input.event.type !== "subagent.updated"
               ? Effect.succeed(storedEvents)
               : syncSubagentThreadModel(input, input.event.subagent).pipe(

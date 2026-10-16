@@ -33,6 +33,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -1147,9 +1148,13 @@ it.effect("names the worktree itself when the client provides no branch", () =>
   }),
 );
 
-it.effect.each([false, true])("renames shared temporary branches with archived=%s", (archived) =>
+it.effect.each(
+  [false, true].flatMap((archived) =>
+    [false, true].map((parentMoved) => ({ archived, parentMoved })),
+  ),
+)("renames shared temporary branches with %j", ({ archived, parentMoved }) =>
   Effect.gen(function* () {
-    const branchNameStarted = yield* Deferred.make<void>();
+    const branchNameStarted = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
     const allowBranchName = yield* Deferred.make<void>();
     const harness = makeHarness({
       createWorktree: (input) =>
@@ -1157,7 +1162,8 @@ it.effect.each([false, true])("renames shared temporary branches with archived=%
           worktree: { path: "/repo-worktrees/temp", refName: input.newRefName, headSha: "abc" },
         } as never),
       generateBranchName: () =>
-        Deferred.succeed(branchNameStarted, undefined).pipe(
+        Effect.fiber.pipe(
+          Effect.flatMap((fiber) => Deferred.succeed(branchNameStarted, fiber)),
           Effect.andThen(Deferred.await(allowBranchName)),
           Effect.as({ branch: "generated-branch" }),
         ),
@@ -1173,7 +1179,7 @@ it.effect.each([false, true])("renames shared temporary branches with archived=%
           workspace: { type: "worktree", baseRef: "main", branch: "t3/abcd1234" },
         }),
       );
-      yield* Deferred.await(branchNameStarted);
+      const renameFiber = yield* Deferred.await(branchNameStarted);
       assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.newRefName, "t3/abcd1234");
       yield* waitUntil(() =>
         threads
@@ -1239,18 +1245,24 @@ it.effect.each([false, true])("renames shared temporary branches with archived=%
       }
       const unrelatedBeforeRename = yield* threads.getThreadProjection(otherThreadId);
       const otherPathBeforeRename = yield* threads.getThreadProjection(otherPathThreadId);
+      if (parentMoved) {
+        yield* threads.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make("command:launch:parent-moved"),
+          threadId: launched.threadId,
+          branch: "user/checkout",
+          worktreePath: "/repo-worktrees/moved",
+        });
+      }
       yield* Deferred.succeed(allowBranchName, undefined);
-      yield* threads.streamStoredEventsFrom({ threadId: childThreadId }).pipe(
-        Stream.filter(
-          (stored) =>
-            stored.event.type === "thread.metadata-updated" &&
-            stored.event.payload.branch === "generated-branch",
-        ),
-        Stream.runHead,
-      );
+      yield* Fiber.await(renameFiber);
       assert.equal(
         (yield* threads.getThreadProjection(launched.threadId)).thread.branch,
-        "generated-branch",
+        parentMoved ? "user/checkout" : "generated-branch",
+      );
+      assert.equal(
+        (yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath,
+        parentMoved ? "/repo-worktrees/moved" : "/repo-worktrees/temp",
       );
       assert.equal(
         (yield* threads.getThreadProjection(childThreadId)).thread.branch,

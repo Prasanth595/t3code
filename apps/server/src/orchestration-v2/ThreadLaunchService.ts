@@ -519,15 +519,24 @@ const make = Effect.gen(function* () {
           ),
           Effect.flatMap((renamed) =>
             Effect.gen(function* () {
-              yield* threads.dispatch({
-                type: "thread.metadata.update",
-                commandId: CommandId.make(`${input.commandId}:branch-rename`),
-                threadId,
-                branch: renamed.branch,
-                worktreePath: worktreeCwd,
-                expectedBranch: oldBranch,
-                expectedWorktreePath: worktreeCwd,
-              });
+              yield* threads
+                .dispatch({
+                  type: "thread.metadata.update",
+                  commandId: CommandId.make(`${input.commandId}:branch-rename`),
+                  threadId,
+                  branch: renamed.branch,
+                  worktreePath: worktreeCwd,
+                  expectedBranch: oldBranch,
+                  expectedWorktreePath: worktreeCwd,
+                })
+                .pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("Parent thread worktree branch update failed", {
+                      threadId,
+                      cause,
+                    }),
+                  ),
+                );
               // Updating the parent first makes later subagents inherit the new name.
               // Re-read after each pass for children of subagents updated in that pass.
               const visited = new Set([threadId]);
