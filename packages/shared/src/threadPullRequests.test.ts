@@ -403,6 +403,33 @@ describe("chain selection and badge state", () => {
     });
   });
 
+  it("ranks stacks by their tips, not by an ancestor linked or updated later", () => {
+    const bottom = link(1, {
+      linkedAt: "2026-01-01T00:00:50.000Z",
+      snapshot: snapshot({ headBranch: "base", updatedAt: "2026-03-01T00:00:00.000Z" }),
+    });
+    const top = link(2, {
+      linkedAt: "2026-01-01T00:00:10.000Z",
+      snapshot: snapshot({ headBranch: "top", baseBranch: "base" }),
+    });
+    const solo = link(9, {
+      linkedAt: "2026-01-01T00:00:40.000Z",
+      snapshot: snapshot({ headBranch: "solo", updatedAt: "2026-02-01T00:00:00.000Z" }),
+    });
+    expect(resolveThreadCurrentPullRequest([bottom, top, solo])).toMatchObject({
+      kind: "stack",
+      top: { number: 9 },
+    });
+    const closed = [bottom, top, solo].map((entry) => ({
+      ...entry,
+      snapshot: { ...entry.snapshot!, state: "closed" as const },
+    }));
+    expect(resolveThreadCurrentPullRequest(closed)).toMatchObject({
+      kind: "single",
+      link: { number: 9 },
+    });
+  });
+
   it("keeps the top native layer after completion and treats an unsynced layer as open", () => {
     const stack = {
       kind: "native" as const,

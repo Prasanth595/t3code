@@ -46,11 +46,11 @@ Terms whose meaning matters across T3 Code. Architecture and lifecycle constrain
 
 ## Pull requests
 
-| Term                 | Meaning                                                                                                                                                                                |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pull request link    | A persisted thread association identified by host, repository, and number. Links can cross projects within an environment and carry a server-maintained snapshot.                      |
-| Pull request sync    | The worker that refreshes each distinct linked review once per cadence and discovers native stack layers. Explicit refreshes and failed stack reads trigger another read.              |
-| Current pull request | Used by single-review controls and older clients. Open work wins, at its stack's newest-linked open tip; a finished stack uses its latest-updated tip, as do unrelated terminal links. |
+| Term                 | Meaning                                                                                                                                                                                 |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pull request link    | A persisted thread association identified by host, repository, and number. Links can cross projects within an environment and carry a server-maintained snapshot.                       |
+| Pull request sync    | The worker that refreshes each distinct linked review once per cadence and discovers native stack layers. Explicit refreshes and failed stack reads trigger another read.               |
+| Current pull request | Used by single-review controls and older clients: the most recently linked open tip of any stack, or once nothing is open, the most recently updated tip. A lone link is its own stack. |
 
 ## Composer context
 

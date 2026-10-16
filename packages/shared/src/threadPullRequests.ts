@@ -140,27 +140,22 @@ export function resolveThreadCurrentPullRequest(
     const openChains = chains
       .map((chain) => {
         const tip = chainTip(chain, isOpen, linkedAtMs);
-        // The tip leads so it is the `top` when this chain sorts first.
+        // The tip leads: chains rank by it, so an ancestor linked later cannot outrank a newer tip.
         return tip === undefined
           ? []
           : [tip, ...[...chain.layers].reverse().filter((link) => link !== tip && isOpen(link))];
       })
       .filter((layers) => layers.length > 0)
-      .sort(
-        (left, right) =>
-          Math.max(...right.map((link) => Date.parse(link.linkedAt))) -
-          Math.max(...left.map((link) => Date.parse(link.linkedAt))),
-      );
+      .sort((left, right) => linkedAtMs(right[0]!) - linkedAtMs(left[0]!));
     const ordered = openChains.flat();
     return { kind: "stack", open: ordered, top: ordered[0]! };
   }
-  if (chains.length === 1) {
-    return { kind: "single", link: chainTip(chains[0]!, () => true, latestUpdatedAt)! };
-  }
-  const terminal = [...visible].sort(
-    (left, right) => latestUpdatedAt(right) - latestUpdatedAt(left),
-  );
-  return { kind: "single", link: terminal[0]! };
+  return {
+    kind: "single",
+    link: chains
+      .map((chain) => chainTip(chain, () => true, latestUpdatedAt)!)
+      .reduce((latest, tip) => (latestUpdatedAt(tip) > latestUpdatedAt(latest) ? tip : latest)),
+  };
 }
 
 export function resolveThreadCurrentPullRequestLink(
