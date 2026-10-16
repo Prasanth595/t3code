@@ -20,6 +20,11 @@ export interface RunInfo {
    * launch one: `start` sends it to `stuck` when it is called for the issue again.
    */
   readonly confirmed: boolean;
+  /**
+   * A session may be running for it: the run records a launched session, or a launch that was
+   * sent. False for a file that cannot be read.
+   */
+  readonly session: boolean;
 }
 
 /**
@@ -68,9 +73,10 @@ export const listUnfinishedRuns = (
       const seen = readProgress(record.entries);
       if (seen.finished) continue;
       const confirmed = seen.approvedAt !== null || seen.threadId !== null;
-      info = { id, state: seen.state, unreadable: false, confirmed };
+      const session = seen.threadId !== null || seen.launchSent;
+      info = { id, state: seen.state, unreadable: false, confirmed, session };
     } catch {
-      info = { id, state: null, unreadable: true, confirmed: false };
+      info = { id, state: null, unreadable: true, confirmed: false, session: false };
     }
     const rank = info.unreadable ? 2 : firstMs === null ? 1 : 0;
     runs.push({ firstMs, info, rank });

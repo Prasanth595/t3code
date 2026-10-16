@@ -60,9 +60,9 @@ describe("listUnfinishedRuns", () => {
     runAt(dataDir, rid(2), T0 + 10_000, "pr-open", true);
     runAt(dataDir, rid(4), T0 + 30_000, null);
     expect(listUnfinishedRuns(dataDir)).toEqual([
-      { id: rid(1), state: "triage", unreadable: false, confirmed: true },
-      { id: rid(3), state: "building", unreadable: false, confirmed: true },
-      { id: rid(4), state: null, unreadable: false, confirmed: true },
+      { id: rid(1), state: "triage", unreadable: false, confirmed: true, session: false },
+      { id: rid(3), state: "building", unreadable: false, confirmed: true, session: false },
+      { id: rid(4), state: null, unreadable: false, confirmed: true, session: false },
     ]);
   });
 
@@ -78,8 +78,8 @@ describe("listUnfinishedRuns", () => {
     // A directory named like a run file is a run whose file cannot be read.
     NodeFS.mkdirSync(NodePath.join(dataDir, RUNS_DIR, runIdFileName(rid(6))));
     expect(listUnfinishedRuns(dataDir)).toEqual([
-      { id: rid(7), state: "building", unreadable: false, confirmed: true },
-      { id: rid(6), state: null, unreadable: true, confirmed: false },
+      { id: rid(7), state: "building", unreadable: false, confirmed: true, session: false },
+      { id: rid(6), state: null, unreadable: true, confirmed: false, session: false },
     ]);
   });
 
@@ -99,7 +99,7 @@ describe("listUnfinishedRuns", () => {
       `{"ts":"2026-10-04T10:13:16.123Z","ms":${T0},"event":"state_changed","data":{"from":"ready","to":"later"}}\n`,
     );
     expect(listUnfinishedRuns(dataDir)).toEqual([
-      { id: rid(9), state: null, unreadable: false, confirmed: false },
+      { id: rid(9), state: null, unreadable: false, confirmed: false, session: false },
     ]);
   });
 
@@ -107,7 +107,7 @@ describe("listUnfinishedRuns", () => {
     const dataDir = tempDir();
     runAt(dataDir, rid(8), T0, "triage", false, false);
     expect(listUnfinishedRuns(dataDir)).toEqual([
-      { id: rid(8), state: "triage", unreadable: false, confirmed: false },
+      { id: rid(8), state: "triage", unreadable: false, confirmed: false, session: false },
     ]);
   });
 
@@ -120,8 +120,45 @@ describe("listUnfinishedRuns", () => {
     // A file of another issue that cannot be read is not opened, so it is not listed.
     NodeFS.mkdirSync(NodePath.join(dataDir, RUNS_DIR, runIdFileName(rid(3))));
     expect(listUnfinishedRuns(dataDir, { repo: "RawPhp/Softfac", issue: 1 })).toEqual([
-      { id: rid(1), state: "triage", unreadable: false, confirmed: true },
-      { id: rid(1, "rawphp/softfac", 2), state: "building", unreadable: false, confirmed: true },
+      { id: rid(1), state: "triage", unreadable: false, confirmed: true, session: false },
+      {
+        id: rid(1, "rawphp/softfac", 2),
+        state: "building",
+        unreadable: false,
+        confirmed: true,
+        session: false,
+      },
+    ]);
+  });
+});
+
+describe("listUnfinishedRuns: whether a session may be running", () => {
+  it("is set by a launched session or a launch that was sent, and not by the claim alone", () => {
+    const dataDir = tempDir();
+    runAt(dataDir, rid(1), T0, "triage");
+    runAt(dataDir, rid(2), T0 + 10_000, "triage");
+    runAt(dataDir, rid(3), T0 + 20_000, "triage");
+    const step = (id: RunId, line: Parameters<Ledger["append"]>[0]) => {
+      const ledger = Ledger.open(dataDir, id, { clock: ticking(T0 + 30_000, 1000) });
+      handles.push(ledger);
+      ledger.append(line, cause);
+    };
+    step(rid(2), { event: "step_changed", data: { step: "launch-sending" } });
+    step(rid(3), {
+      event: "session_launched",
+      data: {
+        thread_id: "t-3",
+        worktree: "/wt",
+        branch: "b",
+        model_instance: "m",
+        model: "x",
+        resumed_from: null,
+      },
+    });
+    expect(listUnfinishedRuns(dataDir).map((r) => [r.id.issue, r.session])).toEqual([
+      ["1", false],
+      ["2", true],
+      ["3", true],
     ]);
   });
 });
@@ -132,6 +169,7 @@ describe("holdsSlot", () => {
     state,
     unreadable,
     confirmed,
+    session: false,
   });
 
   it("every confirmed unfinished run holds a slot but one waiting in pr-open", () => {

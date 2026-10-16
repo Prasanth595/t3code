@@ -98,8 +98,8 @@ class Fake implements PassWorld {
   calls: Array<string> = [];
   events: Array<MachineEvent> = [];
 
-  runIn(issue: number, state: State | null, repo = REPO) {
-    this.runs.push({ id: rid(issue, repo), state, unreadable: false, confirmed: true });
+  runIn(issue: number, state: State | null, repo = REPO, session = false) {
+    this.runs.push({ id: rid(issue, repo), state, unreadable: false, confirmed: true, session });
   }
 
   pushStart(key: string, answer: StartOutcome | StartError) {
@@ -201,6 +201,7 @@ class Fake implements PassWorld {
         state: "triage",
         unreadable: false,
         confirmed: true,
+        session: false,
       });
     }
     if ("kind" in answer && answer.kind === "started") {
@@ -208,7 +209,14 @@ class Fake implements PassWorld {
       // A run the pass already knew moves on to building; a new claim leaves a triage run.
       if (existing !== undefined)
         this.runs[this.runs.indexOf(existing)] = { ...existing, state: "building" };
-      else this.runs.push({ id: answer.run, state: "triage", unreadable: false, confirmed: true });
+      else
+        this.runs.push({
+          id: answer.run,
+          state: "triage",
+          unreadable: false,
+          confirmed: true,
+          session: false,
+        });
       return Effect.succeed(answer);
     }
     if ("kind" in answer) return Effect.succeed(answer);
@@ -500,7 +508,13 @@ describe("claiming new issues", () => {
   it.effect("a run whose file cannot be read is an error line and counts as active", () =>
     Effect.gen(function* () {
       const fake = new Fake();
-      fake.runs.push({ id: rid(40), state: null, unreadable: true, confirmed: false });
+      fake.runs.push({
+        id: rid(40),
+        state: null,
+        unreadable: true,
+        confirmed: false,
+        session: false,
+      });
       fake.ready[REPO] = [1];
       fake.pushStart(`${REPO}#1`, started(1));
       const { report, lines } = yield* pass(fake, machine([REPO], 1));
@@ -665,7 +679,13 @@ describe("runs that are confirmed and still in triage", () => {
   it.effect("a confirmed run with no state yet is resumed too", () =>
     Effect.gen(function* () {
       const fake = new Fake();
-      fake.runs.push({ id: rid(13), state: null, unreadable: false, confirmed: true });
+      fake.runs.push({
+        id: rid(13),
+        state: null,
+        unreadable: false,
+        confirmed: true,
+        session: false,
+      });
       fake.pushStart(`${REPO}#13`, started(13));
       yield* pass(fake, machine([REPO], 3));
       assert.deepEqual(starts(fake), [`resume ${REPO}#13`]);
@@ -710,17 +730,31 @@ describe("runs that are confirmed and still in triage", () => {
     }),
   );
 
-  it.effect("a ready-again issue whose own run holds the only slot is an attention line", () =>
+  it.effect(
+    "a ready-again issue whose own run has no session is claimed past that run's slot",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.runIn(12, "triage");
+        fake.ready[REPO] = [12];
+        fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "ready again", moved: "ready" });
+        const { report, lines } = yield* pass(fake, machine([REPO], 1));
+        // The claim finishes the old run, which left nothing running, before it claims.
+        assert.deepEqual(starts(fake), [`resume ${REPO}#12`, `start ${REPO}#12`]);
+        assert.ok(runLine(lines, "rawphp/softfac#12 triage:").includes("left to the claim step"));
+        assert.equal(report.attention, 0);
+      }),
+  );
+
+  it.effect("a ready-again issue whose own run's session holds the only slot is attention", () =>
     Effect.gen(function* () {
       const fake = new Fake();
-      fake.runIn(12, "triage");
+      fake.runIn(12, "triage", REPO, true);
       fake.ready[REPO] = [12];
       fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "ready again", moved: "ready" });
       const { report, lines } = yield* pass(fake, machine([REPO], 1));
-      // `resume` never claims, and the run holds the only slot.
+      // A second session would run past the limit, so the claim waits.
       assert.deepEqual(starts(fake), [`resume ${REPO}#12`]);
-      const note = runLine(lines, "rawphp/softfac#12 triage:");
-      assert.ok(note.includes("ready again: the claim step takes it when a slot is free"), note);
       assert.equal(report.attention, 1);
       const line = runLine(lines, "ATTENTION: rawphp/softfac#12 ");
       assert.ok(line.includes("the new claim waits for a slot this run holds"), line);
@@ -733,6 +767,19 @@ describe("runs that are confirmed and still in triage", () => {
           },
         ],
       );
+    }),
+  );
+
+  it.effect("a ready-again issue that waits on another run's slot too raises no attention", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING);
+      fake.runIn(12, "triage", REPO, true);
+      fake.ready[REPO] = [12];
+      fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "ready again", moved: "ready" });
+      const { report } = yield* pass(fake, machine([REPO], 2));
+      assert.deepEqual(starts(fake), [`resume ${REPO}#12`]);
+      assert.equal(report.attention, 0);
     }),
   );
 
@@ -868,7 +915,13 @@ describe("claims that have no run in the ledger", () => {
     Effect.gen(function* () {
       // A stuck path that failed half way leaves a run with no approval behind; start finishes it.
       const fake = new Fake();
-      fake.runs.push({ id: rid(12), state: "triage", unreadable: false, confirmed: false });
+      fake.runs.push({
+        id: rid(12),
+        state: "triage",
+        unreadable: false,
+        confirmed: false,
+        session: false,
+      });
       fake.triage[REPO] = [12];
       fake.pushStart(`${REPO}#12`, { kind: "stuck", run: rid(12), reason: "could not confirm" });
       const { lines } = yield* pass(fake, machine([REPO], 3));
@@ -880,7 +933,13 @@ describe("claims that have no run in the ledger", () => {
   it.effect("a run that is not confirmed takes no slot", () =>
     Effect.gen(function* () {
       const fake = new Fake();
-      fake.runs.push({ id: rid(12), state: "triage", unreadable: false, confirmed: false });
+      fake.runs.push({
+        id: rid(12),
+        state: "triage",
+        unreadable: false,
+        confirmed: false,
+        session: false,
+      });
       fake.ready[REPO] = [3];
       fake.pushStart(`${REPO}#3`, started(3));
       yield* pass(fake, machine([REPO], 1));
@@ -1414,7 +1473,13 @@ describe("what the pass records", () => {
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(12, BUILDING);
-      fake.runs.push({ id: rid(13), state: null, unreadable: true, confirmed: false });
+      fake.runs.push({
+        id: rid(13),
+        state: null,
+        unreadable: true,
+        confirmed: false,
+        session: false,
+      });
       const { report, lines } = yield* pass(fake, machine([REPO], 1));
       assert.deepEqual(fake.events[0], { event: "pass_started", data: {} });
       assert.deepEqual(fake.events.at(-1), {

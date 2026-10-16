@@ -448,8 +448,8 @@ const workRuns = (
   });
 
 /**
- * A ready issue the limit holds back while its own unfinished run holds a slot: the claim would
- * finish that run (`finishOlderRuns`), so with no other slot freeing, nothing moves.
+ * A ready issue the limit holds back only because of its own triage run whose session may be
+ * running: only the claim would finish that run (`finishOlderRuns`), so the slot never frees.
  */
 const waitsOnItself = (pass: Pass, notes: Notes, run: string): Effect.Effect<void> =>
   pass.attention(
@@ -458,8 +458,11 @@ const waitsOnItself = (pass: Pass, notes: Notes, run: string): Effect.Effect<voi
     "not-progressing",
   );
 
-const READY_AGAIN =
-  "its issue is ready again: the claim step takes it when a slot is free, and this run holds one until then";
+const READY_AGAIN = "its issue is ready again, so it is left to the claim step";
+
+/** A confirmed run still in `triage` (or before any state): what `finishOlderRuns` would end. */
+const inTriage = (run: RunInfo): boolean =>
+  !run.unreadable && run.confirmed && (run.state === null || run.state === "triage");
 
 /**
  * A confirmed run in `triage` that `resume` would not take, for `why`: a person moved or closed
@@ -768,16 +771,24 @@ const claim = (
       // the machine's, said once after the loop.
       if (paused !== null) continue;
       // Before the blockers: with no slot free nothing is claimed, so they are not read. Every
-      // issue left is counted as left over, blocked or not.
-      if (active >= machine.maxConcurrentRuns) {
+      // issue left is counted as left over, blocked or not. The issue's own triage runs end with
+      // this claim (`finishOlderRuns`). One with no session leaves nothing running, so its slot is
+      // the claim's; one whose session may be running keeps its slot, so no second session
+      // starts past the limit.
+      const own = known.of(name, issue).filter(inTriage);
+      const freed = own.filter((run) => !run.session).length;
+      if (active - freed >= machine.maxConcurrentRuns) {
         left += 1;
         yield* pass.record({
           event: "claim_skipped",
           data: { repo: name, issue: String(issue), reason: "limit" },
         });
-        // Only this claim would finish the issue's own run, so a slot it holds never frees.
-        const own = known.of(name, issue).find(holdsSlot);
-        if (own !== undefined) yield* waitsOnItself(pass, notes, runIdToString(own.id));
+        // Its own running sessions fill the limit alone: when every other run frees its slot,
+        // the claim still waits, and only the claim would end them.
+        const running = own.filter((run) => run.session);
+        if (running.length > 0 && running.length >= machine.maxConcurrentRuns) {
+          yield* waitsOnItself(pass, notes, runIdToString(running[0]!.id));
+        }
         continue;
       }
       // A blocked issue takes no slot. Nothing is written for it, and a read that fails holds it
