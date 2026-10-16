@@ -170,6 +170,8 @@ const errorKind = (error: StartError | BuildingError): ErrorKind => {
 const sameRepo = (a: string, b: string) => asciiLower(a) === asciiLower(b);
 
 const GATE_RUNNING = "gate running";
+/** The line of a building run whose session reported its pull request. */
+const READY_FOR_GATE = "session finished, ready for the gate";
 
 const FROM_TEXT = " (from Depends on, add the GitHub link)";
 
@@ -413,11 +415,13 @@ const runs = (world: PassWorld, pass: Pass): Effect.Effect<ReadonlyArray<RunInfo
  * Works each confirmed run: the time limit first, for every state (the runner decides which
  * runs it applies to). A run in `triage` (or with no state yet) is gone on with by `resume`, from
  * its ledger, so a run cut short after the launch was sent is finished and its session never runs
- * on untracked. A building run has its text watched and its session's result read by `advance`.
- * A run left in `needs-info` or `stuck` (an end cut short) is finished by `advance`, so its
- * thread is archived and its slot freed. The gate and the states after it are later steps. A run of a repo that is not loaded is left
- * alone. None of it is a new claim, so none is counted as one. An issue put back to `ready` is
- * left to the claim step, which finishes its run when it claims the issue.
+ * on untracked. A building run has its text watched and its session's result read by `advance`,
+ * until its session reports its pull request: the build is then done, and the run waits for the
+ * gate (#19) with no tracker or T3 call. A run left in `needs-info` or `stuck` (an end cut short)
+ * is finished by `advance`, so its thread is archived and its slot freed. The gate and the states
+ * after it are later steps. A run of a repo that is not loaded is left alone. None of it is a new
+ * claim, so none is counted as one. An issue put back to `ready` is left to the claim step, which
+ * finishes its run when it claims the issue.
  */
 const workRuns = (
   world: PassWorld,
@@ -441,6 +445,8 @@ const workRuns = (
         notes.parts.push(GATE_RUNNING);
       } else if (yield* withinLimit(world, repo, info, notes, pass)) {
         if (inTriage(info)) yield* resumeRun(world, repo, info, notes, pass);
+        // The session's pull request waits for the gate: nothing is left to read or decide.
+        else if (info.state === "building" && info.prReported) notes.parts.push(READY_FOR_GATE);
         else if (info.state === "building") yield* followBuilding(world, repo, info, notes, pass);
         // A run left in `needs-info` or `stuck` has its end done by `advance` (softfac's `finishing`).
         else if (info.state === "needs-info" || info.state === "stuck") {
@@ -552,7 +558,7 @@ const advanceRun = (
         );
         break;
       case "ready-for-gate":
-        notes.parts.push("session finished, ready for the gate");
+        notes.parts.push(READY_FOR_GATE);
         break;
       case "needs-info":
         notes.parts.push(

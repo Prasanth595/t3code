@@ -1907,6 +1907,26 @@ describe("following a building run", () => {
     }),
   );
 
+  it.effect("a building run whose pull request waits for the gate gets no watch or advance", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runs.push({
+        id: rid(40),
+        state: BUILDING,
+        unreadable: false,
+        confirmed: true,
+        session: true,
+        prReported: true,
+      });
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#40`]);
+      assert.equal(
+        runLine(lines, `${REPO}#40 `),
+        `${REPO}#40 building: session finished, ready for the gate`,
+      );
+    }),
+  );
+
   it.effect("a building run stopped by the time limit gets no watch or advance", () =>
     Effect.gen(function* () {
       const fake = new Fake();
