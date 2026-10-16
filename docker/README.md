@@ -55,8 +55,8 @@ service with direct Docker socket access, while the existing read-only
 manager API over the private `docker-control` network, and worker containers
 receive neither the socket nor Docker CLI.
 
-On a Linux Docker host, prepare the worker image and discover the actual backing
-directory for the existing named workspace volume:
+From the repository root on a Linux Docker host, prepare the worker image and
+discover the actual backing directory for the existing named workspace volume:
 
 ```sh
 docker build -f docker/subpolar-worker.Dockerfile -t codewise-subpolar-worker:local .
@@ -80,13 +80,14 @@ into each worker. Linked Git worktrees also need matching gateway and host Git
 metadata roots configured. If the host path cannot be made visible at the same
 absolute path inside the manager, leave managed execution disabled.
 
-Start the optional manager with
-`docker compose --env-file .env --profile subpolar up -d --build`. Configure the
-Subpolar provider through T3's existing local ACP command setting, using the
-installed `subpolar-acp` executable or Bun with
-`packages/subpolar-acp/src/cli.ts`. The manager token is inherited only by the
-ACP bridge; keep it out of client configuration and logs. This deployment path
-has unit coverage but has not been verified against a live Docker daemon.
+Start the optional manager from the repository root with
+`docker compose --env-file docker/.env -f docker/compose.yaml --profile subpolar up -d --build`.
+Configure the Subpolar provider through T3's existing local ACP command setting,
+using the installed `subpolar-acp` executable or Bun with
+`packages/subpolar-acp/src/cli.ts` as its argument. The manager token is passed
+to the server process so the ACP bridge can authenticate; keep it out of client
+configuration and logs. This deployment path has unit coverage but has not
+been verified against a live Docker daemon.
 
 ## Backup and restore
 
