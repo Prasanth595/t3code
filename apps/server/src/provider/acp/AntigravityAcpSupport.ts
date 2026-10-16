@@ -31,6 +31,7 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   | "authenticateEagerly"
   | "cancelBehavior"
   | "clientCapabilities"
+  | "clientInfo"
   | "onStderr"
   | "resumeMethod"
   | "transformSessionUpdate"
@@ -43,6 +44,12 @@ export interface AntigravityAcpRuntimeInput extends Omit<
   readonly authMethod?: AntigravityAuthMethod;
 }
 
+// Google account and Gemini Enterprise sign-ins only list non-Gemini models
+// (Claude, GPT-OSS) when `clientInfo.name` is `zed`, `xcode`, or starts with
+// `JetBrains.`; the agent has no other opt-in. Beyond that check, the name only
+// labels its User-Agent. Zed is the ACP reference client.
+const ANTIGRAVITY_CLIENT_INFO = { name: "zed", version: "0.0.0" };
+
 export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(function* (
   input: AntigravityAcpRuntimeInput,
 ): Effect.fn.Return<
@@ -53,6 +60,7 @@ export const makeAntigravityAcpRuntime = Effect.fn("makeAntigravityAcpRuntime")(
   const context = yield* Layer.build(
     AcpSessionRuntime.layer({
       ...input,
+      clientInfo: ANTIGRAVITY_CLIENT_INFO,
       authMethodId: input.authMethod ?? "oauth-personal",
       authenticateEagerly: true,
       resumeMethod: "resume",
@@ -92,26 +100,42 @@ export function antigravityPermissionMode(runtimeMode: RuntimeMode): string {
   }
 }
 
-function antigravityModelOptions(
-  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
-) {
-  const model = configOptions.find((option) => option.id === "model");
-  if (model?.type !== "select") return [];
-  return model.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
-}
+type AntigravitySessionModels = Pick<
+  AcpSessionRuntime.AcpSessionRuntimeStartResult["sessionSetupResult"],
+  "configOptions" | "models"
+>;
 
-function resolveAntigravityModel(input: {
-  readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
-  readonly model: string | null | undefined;
-  readonly defaultModel?: string | undefined;
-}): string | undefined {
-  const modelConfig = input.configOptions.find((option) => option.id === "model");
-  const current = modelConfig?.type === "select" ? modelConfig.currentValue : undefined;
-  if (input.model && input.model !== ANTIGRAVITY_DEFAULT_MODEL) return input.model;
-  const options = antigravityModelOptions(input.configOptions);
-  return input.defaultModel && options.some((option) => option.value === input.defaultModel)
-    ? input.defaultModel
-    : current;
+/**
+ * Antigravity model IDs carry their thinking level (`gemini-3.8-flash-high`).
+ * Since 1.4.0 the `model` config option lists Gemini families behind a separate
+ * `thought_level` option, so only the per-model `models` state names every ID.
+ * Returns undefined when that grouped picker is the only source.
+ */
+export function antigravityModelChoices(session: AntigravitySessionModels):
+  | {
+      readonly currentModelId: string | undefined;
+      readonly options: ReadonlyArray<{ readonly value: string; readonly name: string }>;
+    }
+  | undefined {
+  if (session.models) {
+    return {
+      currentModelId: session.models.currentModelId,
+      options: session.models.availableModels.map((model) => ({
+        value: model.modelId,
+        name: model.name,
+      })),
+    };
+  }
+  const configOptions = session.configOptions ?? [];
+  if (configOptions.some((option) => option.category === "thought_level")) return undefined;
+  const config = configOptions.find(
+    (option) => option.id === "model" || option.category === "model",
+  );
+  if (config?.type !== "select") return { currentModelId: undefined, options: [] };
+  return {
+    currentModelId: config.currentValue,
+    options: config.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options)),
+  };
 }
 
 /** Never replace a saved selection with the default returned by a cold resume. */
@@ -119,23 +143,23 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
   function* <E>(input: {
     readonly runtime: Pick<
       AcpSessionRuntime.AcpSessionRuntime["Service"],
-      "getConfigOptions" | "setModel"
+      "setModel" | "setSessionModel"
     >;
+    readonly session: AntigravitySessionModels;
     readonly model: string | null | undefined;
     readonly defaultModel?: string | undefined;
     readonly mapError: (cause: EffectAcpErrors.AcpError) => E;
   }): Effect.fn.Return<string | undefined, E> {
-    const configOptions = yield* input.runtime.getConfigOptions;
-    const modelConfig = configOptions.find((option) => option.id === "model");
-    const current = modelConfig?.type === "select" ? modelConfig.currentValue : undefined;
-    const resolved = resolveAntigravityModel({
-      configOptions,
-      model: input.model,
-      defaultModel: input.defaultModel,
-    });
+    const choices = antigravityModelChoices(input.session);
+    const current = choices?.currentModelId;
+    const options = choices?.options ?? [];
     const explicit = Boolean(input.model) && input.model !== ANTIGRAVITY_DEFAULT_MODEL;
-    if (resolved === undefined || (!explicit && resolved === current)) return current;
-    const options = antigravityModelOptions(configOptions);
+    const resolved = explicit
+      ? input.model
+      : input.defaultModel && options.some((option) => option.value === input.defaultModel)
+        ? input.defaultModel
+        : current;
+    if (!resolved || (!explicit && resolved === current)) return current;
     if (!options.some((option) => option.value === resolved)) {
       return yield* Effect.fail(
         input.mapError(
@@ -145,7 +169,12 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
         ),
       );
     }
-    yield* input.runtime.setModel(resolved).pipe(Effect.mapError(input.mapError));
+    // `setModel` only accepts values the `model` config option advertises, and a
+    // grouped option omits most concrete IDs.
+    const select = input.session.models
+      ? input.runtime.setSessionModel(resolved)
+      : input.runtime.setModel(resolved);
+    yield* select.pipe(Effect.mapError(input.mapError));
     return resolved;
   },
 );

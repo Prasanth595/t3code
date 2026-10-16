@@ -69,8 +69,10 @@ Leave the field blank to use the managed runtime, or a compatible executable on
 ## Models and threads
 
 The model list comes from your Antigravity account and can differ from other
-Antigravity apps. A resumed thread keeps its selected model. If access to that
-model ends, select another available model before continuing.
+Antigravity apps. Google account and Gemini Enterprise sign-ins also list Claude
+and GPT-OSS models when the account offers them. Each thinking level is a separate
+model, such as Gemini 3.8 Flash (High). A resumed thread keeps its selected model.
+If access to that model ends, select another available model before continuing.
 
 Use Antigravity's native `/plan` command for planning. T3 Code's separate Plan mode
 is unavailable. Tool approvals follow [Permission modes](./permission-modes.md).

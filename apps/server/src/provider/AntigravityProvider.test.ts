@@ -72,6 +72,22 @@ const modelConfig = {
   options: modelOptions,
 } satisfies EffectAcpSchema.SessionConfigOption;
 
+const groupedConfigOptions = [
+  {
+    ...modelConfig,
+    currentValue: "gemini-3.8-flash",
+    options: [{ value: "gemini-3.8-flash", name: "Gemini 3.8 Flash" }],
+  },
+  {
+    id: "thinking_level",
+    name: "Thinking",
+    category: "thought_level",
+    type: "select",
+    currentValue: "high",
+    options: [{ value: "high", name: "High" }],
+  },
+] satisfies ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+
 const sessionSetupResult = {
   sessionId: "session-1",
   models: {
@@ -180,7 +196,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
 
 describe("Antigravity model catalog", () => {
   it("keeps the captured personal catalog's IDs, labels, order, and selected default", () => {
-    const models = buildAntigravityModelsFromSession(sessionSetupResult);
+    const models = buildAntigravityModelsFromSession(sessionSetupResult)!;
     expect(models.map((model) => [model.slug, model.name])).toEqual(
       modelOptions.map((option) => [option.value, option.name]),
     );
@@ -196,17 +212,28 @@ describe("Antigravity model catalog", () => {
     expect(models.every((model) => !model.isCustom)).toBe(true);
   });
 
-  it("uses legacy session models only when model config is absent", () => {
-    const fromLegacy = buildAntigravityModelsFromSession({
-      models: sessionSetupResult.models,
-    });
-    expect(fromLegacy).toEqual(buildAntigravityModelsFromSession(sessionSetupResult));
+  it("reads session models before the model config option", () => {
     expect(
       buildAntigravityModelsFromSession({
         ...sessionSetupResult,
         configOptions: [{ ...modelConfig, options: [] }],
       }),
+    ).toEqual(buildAntigravityModelsFromSession({ models: sessionSetupResult.models }));
+    expect(
+      buildAntigravityModelsFromSession({ configOptions: [{ ...modelConfig, options: [] }] }),
     ).toEqual([]);
+  });
+
+  it("does not read a model option that groups thinking levels as the catalog", () => {
+    expect(buildAntigravityModelsFromSession({ configOptions: groupedConfigOptions })).toBe(
+      undefined,
+    );
+    expect(
+      buildAntigravityModelsFromSession({
+        ...sessionSetupResult,
+        configOptions: groupedConfigOptions,
+      }),
+    ).toEqual(buildAntigravityModelsFromSession(sessionSetupResult));
   });
 
   it("flattens native option groups without combining distinct model IDs", () => {
@@ -221,7 +248,7 @@ describe("Antigravity model catalog", () => {
           ],
         },
       ],
-    });
+    })!;
     expect(models.map((model) => model.slug)).toEqual([
       "gemini-3.7-flash-high",
       "gemini-3.7-flash-medium",
@@ -426,6 +453,20 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         });
         yield* harness.provider.onConfigOptionsUpdated([]);
         expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual([]);
+      }),
+    ),
+  );
+
+  it.effect("keeps concrete model choices when a config update groups thinking levels", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        yield* harness.initialize;
+        yield* harness.provider.onSessionStarted(started, "/workspace");
+        yield* harness.provider.onConfigOptionsUpdated(groupedConfigOptions);
+        expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual(
+          buildAntigravityModelsFromSession(sessionSetupResult),
+        );
       }),
     ),
   );
