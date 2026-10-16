@@ -35,6 +35,7 @@ import {
   SettingsSection,
   useRelativeTimeTick,
 } from "./settingsLayout";
+import { DatabaseStorageNotice } from "./DatabaseStorageNotice";
 import { SettingsScopeNotice } from "./SettingsScopeNotice";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { SettingsGroup } from "./SettingsGroup";
@@ -198,7 +199,9 @@ function CleanupResults({
       {report.entries.map((entry, index) => {
         const name =
           entry.kind === "worktree"
-            ? (entry.path?.split(/[\\/]/).findLast(Boolean) ?? "Worktrees")
+            ? ((entry.threadId === null
+                ? entry.path
+                : entry.path?.split(/[\\/]/).findLast(Boolean)) ?? "Worktrees")
             : entry.kind === "logs"
               ? "Rotated logs"
               : "Browser artifacts";
@@ -215,7 +218,8 @@ function CleanupResults({
               </span>
             }
             control={
-              entry.outcome === "removed" && (
+              (entry.outcome === "removed" ||
+                (entry.outcome === "kept" && entry.bytes !== null)) && (
                 <span className="text-xs text-muted-foreground">
                   {[
                     entry.kind !== "worktree" && entry.files !== null
@@ -480,6 +484,19 @@ export function StorageSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      {!isProjectScope &&
+        connectedEnvironments
+          .filter(
+            (environment) =>
+              environment.serverConfig?.environment.capabilities.databaseStorage === true,
+          )
+          .map((environment) => (
+            <DatabaseStorageNotice
+              key={environment.environmentId}
+              environmentId={environment.environmentId}
+              label={environment.label}
+            />
+          ))}
       <SettingsSection id="storage-worktrees" title="Worktrees">
         {!isProjectScope && <WorktreesDirectoryRow />}
         {isProjectScope && (
