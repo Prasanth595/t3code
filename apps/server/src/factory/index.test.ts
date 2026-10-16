@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
@@ -14,7 +15,14 @@ import * as Stream from "effect/Stream";
 import { describe } from "vite-plus/test";
 
 import { timeLimitOnlyProjectConfig, type MachineConfig } from "./config.ts";
-import { factoryRuntime, FactoryLoop, FactoryRuntime, liveWorld, ownsThread } from "./index.ts";
+import {
+  factoryRuntime,
+  FactoryLoop,
+  FactoryRuntime,
+  liveWorld,
+  ownsThread,
+  wakeOn,
+} from "./index.ts";
 import { makeCause } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
 import { scanMachineLog } from "./ledger/machineLog.ts";
@@ -244,6 +252,21 @@ describe("waking the pass when a factory thread's run changes status", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("a thread the factory does not own never wakes the pass", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { factoryDir } = yield* seeded;
+        const wakes = yield* Ref.make(0);
+        yield* wakeOn(
+          factoryDir,
+          Stream.fromIterable(["thread-other", "thread-1", "thread-other"]),
+          Ref.update(wakes, (n) => n + 1),
+        );
+        assert.strictEqual(yield* Ref.get(wakes), 1);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("an owned thread starts the next pass, and a stream that failed is run again", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -282,8 +305,13 @@ describe("waking the pass when a factory thread's run changes status", () => {
           scanMachineLog(factoryDir).filter((entry) => entry.event === "pass_started").length;
         yield* Queue.offer(queue, "thread-other");
         yield* Queue.offer(queue, "thread-1");
-        // The first pass, then the one the owned thread woke; the poll is a minute away.
-        while (started() < 2) yield* loop.awaitPass;
+        // The first pass, then the one the owned thread woke; the poll is a minute away. The wait is
+        // bounded so a wake that never comes fails here. The count stays `>=`: the offer can land
+        // while the first pass still runs, and a wake then is coalesced into that pass's latch.
+        const waited = yield* Effect.gen(function* () {
+          while (started() < 2) yield* loop.awaitPass;
+        }).pipe(Effect.timeoutOption("30 seconds"));
+        assert.isTrue(Option.isSome(waited), "the owned thread never woke the pass");
         assert.isAtLeast(started(), 2);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
