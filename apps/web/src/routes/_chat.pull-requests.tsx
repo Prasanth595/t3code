@@ -8,7 +8,6 @@ import { resolveSidebarSweepKeys } from "~/components/Sidebar.logic";
 import { sortProjectsByGroupOrder } from "@t3tools/client-runtime/state/project-grouping";
 import { pullRequestHostOf, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import type {
-  ClientSettings,
   EnvironmentId,
   ProjectId,
   PullRequestAction,
@@ -95,18 +94,13 @@ import {
   largestPullRequestReadCount,
 } from "../components/pullRequest/pullRequestList.logic";
 import {
-  MAX_PULL_REQUEST_LIST_OWNERS,
   pullRequestListPreferences,
   type PullRequestListPreferencePatch,
   type PullRequestListPreferences,
   type PullRequestListSort,
   writePullRequestListPreferences,
 } from "../components/pullRequest/pullRequestListPreferences";
-import {
-  projectsOfOwners,
-  pullRequestMenuOwnerFilter,
-  pullRequestOwnerRowFilter,
-} from "../components/pullRequest/pullRequestOwnerFilter.logic";
+import * as ForkOwners from "../components/pullRequest/usePullRequestOwnerFilter";
 import { assignProjectsToEnvironments } from "../components/pullRequest/pullRequestProjectAssignment.logic";
 import { pullRequestFilterProjects } from "../components/pullRequest/pullRequestProjectFilter.logic";
 import { environmentMachineIcon } from "../components/EnvironmentMachineIcon";
@@ -126,7 +120,6 @@ import { PullRequestFilterChips } from "../components/pullRequest/PullRequestFil
 import {
   clearPullRequestFilterChips,
   pullRequestFilterChips,
-  type PullRequestFilterChip,
 } from "../components/pullRequest/pullRequestFilterChips.logic";
 import { filterSentence, type FilterOperator } from "../components/filters/FilterChip";
 import { PullRequestListEmptyState } from "../components/pullRequest/PullRequestListEmptyState";
@@ -297,19 +290,6 @@ function pullRequestSearchLabels(raw: unknown): Partial<Pick<PullRequestsSearch,
   return labels.length === 0 ? {} : { labels };
 }
 
-/** Fork: owners are read like labels, then lowercased to match `repositoryOwnerOf`. */
-function pullRequestSearchOwners(raw: unknown): Partial<Pick<PullRequestsSearch, "owners">> {
-  const owners = pullRequestSearchLabels(raw)
-    .labels?.map((owner) => owner.toLowerCase())
-    .slice(0, MAX_PULL_REQUEST_LIST_OWNERS);
-  return owners === undefined ? {} : { owners };
-}
-
-const selectRepositoryOwnerFilters = (settings: ClientSettings) => settings.repositoryOwnerFilters;
-const NO_OWNERS: ReadonlyArray<string> = [];
-const selectPullRequestFilterChips = (settings: ClientSettings) => settings.pullRequestFilterChips;
-const NO_FILTER_CHIPS: ReadonlyArray<PullRequestFilterChip> = [];
-
 export const Route = createFileRoute("/_chat/pull-requests")({
   validateSearch: (raw: Record<string, unknown>): PullRequestsSearch => ({
     involvement:
@@ -356,7 +336,7 @@ export const Route = createFileRoute("/_chat/pull-requests")({
       ? { author: raw.author.trim().slice(0, 200) }
       : {}),
     ...pullRequestSearchLabels(raw.labels),
-    ...pullRequestSearchOwners(raw.owners),
+    ...ForkOwners.pullRequestSearchOwners(pullRequestSearchLabels(raw.owners)),
     ...(raw.ownerOperator === "is_not" ? { ownerOperator: "is_not" as const } : {}),
   }),
   component: PullRequestsRouteView,
@@ -418,8 +398,8 @@ function PullRequestsRouteView() {
   const typedQuery = (search.q ?? "").trim();
   const sentQuery = useDebouncedValue(typedQuery, SEARCH_DEBOUNCE_MS);
   const querySettled = typedQuery === sentQuery;
-  const ownerFiltersEnabled = useClientSettings(selectRepositoryOwnerFilters);
-  const filterChipsEnabled = useClientSettings(selectPullRequestFilterChips);
+  const ownerFiltersEnabled = useClientSettings(ForkOwners.selectRepositoryOwnerFilters);
+  const filterChipsEnabled = useClientSettings(ForkOwners.selectPullRequestFilterChips);
   const typedParsed = useMemo(
     () => parsePullRequestQuery(typedQuery, { ownerQualifiers: ownerFiltersEnabled }),
     [ownerFiltersEnabled, typedQuery],
@@ -428,35 +408,15 @@ function PullRequestsRouteView() {
     () => parsePullRequestQuery(sentQuery, { ownerQualifiers: ownerFiltersEnabled }),
     [ownerFiltersEnabled, sentQuery],
   );
-  // Fork: the repository owners that narrow the list. A typed `org:` or `-org:` wins over the
-  // menu, the same way the other typed qualifiers win. The request reads the sent text, and the
-  // rows on screen read the typed text at once.
-  const menuOwners = ownerFiltersEnabled ? (search.owners ?? NO_OWNERS) : NO_OWNERS;
-  const menuOwnerOperator = search.ownerOperator ?? "is";
-  const menuOwnerFilter = useMemo(
-    () => pullRequestMenuOwnerFilter(menuOwners, menuOwnerOperator),
-    [menuOwnerOperator, menuOwners],
-  );
-  const requestOwners = sentParsed.owners ?? menuOwnerFilter;
-  const localOwners = typedParsed.owners ?? menuOwnerFilter;
-  // Fork: the projects that the list asks about. The project scope, the project menu and the
-  // per-server split below read these. The selection reads every project, because a link can
-  // open a pull request from any owner.
-  const listProjects = useMemo(
-    () => projectsOfOwners(projects, requestOwners),
-    [projects, requestOwners],
-  );
-  const keepRequestOwnerRow = useMemo(
-    () => pullRequestOwnerRowFilter(projects, requestOwners),
-    [projects, requestOwners],
-  );
-  const keepLocalOwnerRow = useMemo(
-    () =>
-      localOwners === requestOwners
-        ? keepRequestOwnerRow
-        : pullRequestOwnerRowFilter(projects, localOwners),
-    [keepRequestOwnerRow, localOwners, projects, requestOwners],
-  );
+  const ownerFilter = ForkOwners.usePullRequestOwnerFilter({
+    enabled: ownerFiltersEnabled,
+    search,
+    projects,
+    typedOwners: typedParsed.owners,
+    sentOwners: sentParsed.owners,
+  });
+  const { menuOwners, menuOwnerOperator, listProjects, keepRequestOwnerRow, keepLocalOwnerRow } =
+    ownerFilter;
   const environmentLabels = useMemo(
     () =>
       new Map(
@@ -1765,7 +1725,7 @@ function PullRequestsRouteView() {
           checks: CHECKS_OPTIONS.find((option) => option.value === search.checks)?.label ?? null,
         },
       })
-    : NO_FILTER_CHIPS;
+    : ForkOwners.NO_FILTER_CHIPS;
   const listBody = (
     <>
       {!capabilityKnown ? (
@@ -1919,31 +1879,8 @@ function PullRequestsRouteView() {
       onChange={(next) => updateListScope({ sort: next })}
     />
   );
-  // Fork: an owner change that leaves the scoped project out drops the project scope too, the
-  // same way picking another server does. The owner menu and the owner chip both pass here.
-  const withOwnerScope = (
-    patch: PullRequestListPreferencePatch,
-  ): PullRequestListPreferencePatch => {
-    if (!("owners" in patch) && !("ownerOperator" in patch)) return patch;
-    const owners = "owners" in patch ? (patch.owners ?? NO_OWNERS) : menuOwners;
-    const operator = "ownerOperator" in patch ? (patch.ownerOperator ?? "is") : menuOwnerOperator;
-    const kept = projectsOfOwners(projects, pullRequestMenuOwnerFilter(owners, operator));
-    const keepsScope =
-      search.projectId === undefined ||
-      kept.some(
-        (project) =>
-          project.id === search.projectId &&
-          (search.environmentId === undefined || project.environmentId === search.environmentId),
-      );
-    return keepsScope ? patch : { ...patch, projectId: undefined };
-  };
   const updateMenuOwnerFilter = (owners: ReadonlyArray<string>, operator: FilterOperator) =>
-    updateListScope(
-      withOwnerScope({
-        owners: owners.length === 0 ? undefined : owners,
-        ownerOperator: operator === "is_not" ? operator : undefined,
-      }),
-    );
+    updateListScope(ownerFilter.withOwnerScope(ForkOwners.ownerMenuPatch(owners, operator)));
   const filtersMenu = (
     <PullRequestFiltersMenuInSidebarOrder
       onOpenChange={setFiltersOpen}
@@ -2008,7 +1945,7 @@ function PullRequestsRouteView() {
     filterChips: (
       <PullRequestFilterChips
         chips={filterChips}
-        onChange={(patch) => updateListScope(withOwnerScope(patch))}
+        onChange={(patch) => updateListScope(ownerFilter.withOwnerScope(patch))}
       />
     ),
     rightPanelControl: !pullRequestsSupported ? null : (

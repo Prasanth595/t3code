@@ -26,7 +26,7 @@ describe("machineQueue (MM-602)", () => {
     { _tag: "setArrow" as const, arrow: { ...findArrow(map, MAC, VPS), level: "read" as const } },
   ];
   const snapshot = (presence: MachinePresence): PortalSnapshot => ({
-    placeUnits: "fractions",
+    placeUnits: "pixels",
     map,
     presence: { [MAC]: presence },
     reportedSettings: {},
@@ -118,7 +118,7 @@ describe("arrowEnds (MM-602, MM-604)", () => {
   ): PortalSnapshot => {
     const { map, history } = commit(start, steps);
     return {
-      placeUnits: "fractions",
+      placeUnits: "pixels",
       map,
       presence,
       reportedSettings: {},
@@ -170,7 +170,7 @@ describe("pauseReach (MM-708 to MM-710)", () => {
     { _tag: "putMachine", machine: { ...findMachine(start, WIN)!, mapRole: "edit" } },
   ];
   const snapshot = (map: MachineMapDocument): PortalSnapshot => ({
-    placeUnits: "fractions",
+    placeUnits: "pixels",
     map,
     // Windows never connected.
     presence: { [MAC]: online, [VPS]: { ...online, online: false } },

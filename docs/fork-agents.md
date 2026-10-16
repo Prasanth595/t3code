@@ -64,6 +64,34 @@ The portal is `https://t3.yarden-zamir.com`. Each machine is one T3 server, for 
 | Take upstream changes        | Run the workflow "Fork Sync", or wait for its daily run. A conflict comments on the issue "Fork sync: upstream merge failed".                                                                                                         |
 | Build and install on the Mac | Run `PATH="$PWD/node_modules/.bin:$PATH" ./scripts/fork-desktop-mac.sh --install` from `~/Github/t3code/main`. Use it only when the owner asks, because it replaces the running app.                                                  |
 
+## Portal data recovery
+
+The portal keeps all its state in one SQLite Durable Object. A change that rewrites stored data cannot be undone by a revert alone. The absolute map places (MM-1114) are such a change: on its first start, the portal moves every place from fractions to map pixels once, and it writes the time in the meta key `absolute_places`.
+
+- Fix forward first. Merge a fix to main; the workflow "Machine map deploy" deploys it.
+- Do not revert past the change "accept any finite map place" (#144). Older code decodes places with a 0..1 bound in the Durable Object constructor, so the portal does not start. A revert to a build with #144 and without the migration keeps the portal up, but it shows pixel places as fractions.
+- Point-in-time recovery restores the Durable Object to a time in the last 30 days. It does not work in local development. Data written after that time is lost: revisions, commands, alerts and resource points.
+
+To restore, ask the owner first. Then:
+
+1. Find the time. Use the start time of the "Machine map deploy" run that deployed the change, or the `absolute_places` value. Take one minute before it.
+2. Merge one change to main that reverts the migration and adds a temporary owner-only route, for example `POST /api/admin/restore` with `{ "at": <milliseconds> }`, that calls this Durable Object method:
+
+   ```ts
+   /** Temporary: restores the whole storage to `atMs`. Returns the bookmark that undoes it. */
+   async restoreTo(atMs: number): Promise<string> {
+     const bookmark = await this.ctx.storage.getBookmarkForTime(atMs);
+     const undo = await this.ctx.storage.onNextSessionRestoreBookmark(bookmark);
+     this.ctx.abort();
+     return undo;
+   }
+   ```
+
+   Revert the migration in the same change. Otherwise the next start migrates the restored data again.
+
+3. After the deploy, call the route once as the owner. Keep the returned bookmark: a second restore to it undoes the first.
+4. Check the map in the portal. Then remove the route in a follow-up change.
+
 ## Repair agent
 
 When Fork CI, Fork Sync or Fork Release fails, `scripts/fork-notify-agent.sh` posts the run to the webhook in the GitHub secret `T3_AGENT_WEBHOOK_URL`. The webhook is the scheduled task "Fork repair" on the VPS, in the project "t3code fork". It starts a repair agent there.

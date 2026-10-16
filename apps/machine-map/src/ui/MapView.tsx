@@ -20,7 +20,7 @@ import type {
 } from "@t3tools/contracts/machineMap";
 
 import { usesText } from "../rules/access.ts";
-import { findArrow, findClientArrow, findNote, pairOffset } from "../rules/map.ts";
+import { findArrow, findClientArrow, findNote, MAP_FRAME, pairOffset } from "../rules/map.ts";
 import { NO_SELECTION, type Route } from "./route.ts";
 import { usePortalContext } from "./context.ts";
 import { buildStandings } from "./build.ts";
@@ -66,8 +66,6 @@ import { MachineStickers } from "./MachineStickers.tsx";
 import { CardMeters } from "./resources.tsx";
 import { RouteLink } from "./StickerLink.tsx";
 
-/** The area machines live in: the map height, and at most 1500 pixels wide, centered. */
-const MAX_WIDTH = 1500;
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
 /** Pointer moves under this many pixels are a tap, not a drag. */
 const TAP_PIXELS = 5;
@@ -122,12 +120,6 @@ const keepsSpace = (target: EventTarget | null) =>
   document.querySelector("dialog[open]") !== null ||
   (target instanceof Element &&
     target.closest("button, a[href], [role='button'], summary, dialog") !== null);
-
-/**
- * Cards cover at most this share of the map layer, so they fit apart. A narrow map with many cards
- * gets a layer taller than the map, and zoom and pan reach the rest (MM-1114).
- */
-const CARD_SHARE = 0.3;
 
 interface Size {
   readonly w: number;
@@ -321,18 +313,15 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     }
   }
 
-  // The map layer: the width of the screen up to MAX_WIDTH, and taller than the screen when its
-  // cards need the room (MM-1114). Zoom and pan show the rest (MM-1116).
-  const width = Math.min(size.width, MAX_WIDTH);
+  // MM-1114: the map has no edges. Places are map pixels, so a card that grows or a new machine
+  // never moves the other cards. Zoom and pan show any part of it (MM-1116, MM-1117).
+  /** The size of the cards together. It changes when a card grows, never on a drop. */
   const cardArea = [
     ...machines.map((m) => sizes[`node:${m.id}`] ?? estimate.node),
     ...map.clients.map((c) => sizes[`client:${c.id}`] ?? estimate.node),
     ...pairs.map((pair) => sizes[`pair:${pairKey(...pair)}`] ?? estimate.pair),
     ...map.notes.map((note) => sizes[`note:${note.id}`] ?? estimate.note),
   ].reduce((sum, { w, h }) => sum + w * h, 0);
-  const height = Math.max(size.height, width > 0 ? Math.ceil(cardArea / CARD_SHARE / width) : 0);
-  /** MM-1108: pair offsets beside the line scale with the shorter side of the map. */
-  const scale = Math.min(width, height);
 
   const heldPlaces = settleHeld(
     heldPlaceState,
@@ -361,26 +350,17 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   const position = (m: MachineRecord): MapPosition => heldPlace(`machine:${m.id}`) ?? m.position;
   const offsetOf = (a: MachineRecord, b: MachineRecord): PairOffset | null =>
     heldOffsets.find((h) => h.key === pairKey(a, b))?.value ?? pairOffset(map, a.id, b.id);
-  const toPixels = (p: MapPosition): Point => ({ x: p.x * width, y: p.y * height });
-  const toPosition = (p: Point): MapPosition => ({
-    x: clamp(p.x / width, 0.02, 0.98),
-    y: clamp(p.y / height, 0.02, 0.98),
-  });
+  const toPixels = (p: MapPosition): Point => p;
+  /** A map point as a place to save, in whole map pixels. */
+  const toPosition = (p: Point): MapPosition => ({ x: Math.round(p.x), y: Math.round(p.y) });
   const nodeBox = (m: MachineRecord, p: Point): Box => ({
     ...p,
     ...(sizes[`node:${m.id}`] ?? estimate.node),
   });
 
   const noteSize = (note: MapNote): Size => sizes[`note:${note.id}`] ?? estimate.note;
-  /** A note stays inside the map, also on a narrower screen than the one that placed it. */
-  const savedNoteAt = (note: MapNote): Point => {
-    const p = toPixels(heldPlace(`note:${note.id}`) ?? note.position);
-    const { w, h } = noteSize(note);
-    return {
-      x: clamp(p.x, w / 2, Math.max(w / 2, width - w / 2)),
-      y: clamp(p.y, h / 2, Math.max(h / 2, height - h / 2)),
-    };
-  };
+  const savedNoteAt = (note: MapNote): Point =>
+    toPixels(heldPlace(`note:${note.id}`) ?? note.position);
 
   const clients = map.clients;
   const clientPlace = (c: ClientRecord): MapPosition => heldPlace(`client:${c.id}`) ?? c.position;
@@ -393,15 +373,11 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
    * Machines, clients and notes where the page shows them: saved places, pushed apart (see
    * `layout.ts`), so no card covers another on a narrow map (MM-1114).
    */
-  const spread = separate(
-    [
-      ...machines.map((m) => nodeBox(m, toPixels(position(m)))),
-      ...clients.map((c) => clientBox(c, toPixels(clientPlace(c)))),
-      ...map.notes.map((note) => ({ ...savedNoteAt(note), ...noteSize(note) })),
-    ],
-    width,
-    height,
-  );
+  const spread = separate([
+    ...machines.map((m) => nodeBox(m, toPixels(position(m)))),
+    ...clients.map((c) => clientBox(c, toPixels(clientPlace(c)))),
+    ...map.notes.map((note) => ({ ...savedNoteAt(note), ...noteSize(note) })),
+  ]);
   const nodes = spread.slice(0, machines.length);
   const clientBoxes = spread.slice(machines.length, machines.length + clients.length);
   const noteBoxes = spread.slice(machines.length + clients.length);
@@ -444,12 +420,10 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
           a: pa,
           b: pb,
           ...(sizes[`pair:${pairKey(a, b)}`] ?? estimate.pair),
-          fixed: offset ? offsetPoint(pa, pb, offset, scale) : null,
+          fixed: offset ? offsetPoint(pa, pb, offset) : null,
         };
       }),
       [...boxes, ...clientBoxes],
-      width,
-      height,
       noteBoxes,
     );
     return { at, spots };
@@ -544,12 +518,12 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   /** Moves the drag to the last pointer. Runs at most once per frame. */
   const step = () => {
     const current = drag.current;
-    if (!current || width === 0 || !current.moved) return;
+    if (!current || !current.moved) return;
     const { clientX, clientY } = current;
     const p = mapAt(clientX, clientY);
     current.at = {
-      x: clamp(p.x - current.grab.x, 0, width),
-      y: clamp(p.y - current.grab.y, 0, height),
+      x: p.x - current.grab.x,
+      y: p.y - current.grab.y,
     };
     if (current.subject._tag === "connect") {
       const id = current.subject.machine.id;
@@ -649,8 +623,8 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   /** MM-1116 "Fit": every card in view. An empty map shows its middle at 100%. */
   const fitted = (): MapViewport =>
     fitView(cardBoxes(), size.width, size.height) ?? {
-      x: (size.width - width) / 2,
-      y: (size.height - height) / 2,
+      x: (size.width - MAP_FRAME.width) / 2,
+      y: (size.height - MAP_FRAME.height) / 2,
       k: 1,
     };
   const fit = () => setView(fitted());
@@ -659,15 +633,16 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
 
   // The first view: the one this device kept, or "Fit" on a first visit and when the kept view
   // shows no card. It waits for the measured card sizes, which come before the first paint.
-  // Until the user zooms or pans, "Fit" runs again when a card, the layer or the map changes size,
-  // for example when a machine comes online and its card grows. A drop of a card keeps the view. React never writes the transform, so each render puts it back.
+  // Until the user zooms or pans, "Fit" runs again when a card or the map element changes size,
+  // for example when a machine comes online and its card grows. A drop of a card keeps the view.
+  // React never writes the transform, so each render puts it back.
   const measured =
     machines.length + clients.length + map.notes.length === 0 || Object.keys(sizes).length > 0;
   useLayoutEffect(() => {
     if (size.width > 0 && measured) {
       const boxes = cardBoxes();
       // Card area changes when a card grows, never on a drop.
-      const layout = [size.width, size.height, width, height, boxes.length, cardArea / 100]
+      const layout = [size.width, size.height, boxes.length, cardArea / 100]
         .map(Math.round)
         .join(",");
       if (!viewReady.current) {
@@ -857,7 +832,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   const settle = (index: number, dropped: Box): MapPosition => {
     const boxes = spread.map((box, i) => (i === index ? dropped : box));
     const fixed = new Set([...boxes.keys()].filter((i) => i !== index));
-    return toPosition(separate(boxes, width, height, fixed)[index] ?? dropped);
+    return toPosition(separate(boxes, fixed)[index] ?? dropped);
   };
 
   /**
@@ -938,7 +913,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
       }
       case "pair": {
         const { a, b } = subject;
-        const offset = pointOffset(centerOf(a), centerOf(b), finished.at, scale);
+        const offset = pointOffset(centerOf(a), centerOf(b), finished.at);
         const current = offsetOf(a, b);
         if (current && sameOffset(current, offset)) return;
         save(setHeldOffsets, pairKey(a, b), offset, `Moved the card of ${a.name} and ${b.name}`, {
@@ -1251,7 +1226,7 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerCancel}
       >
-        <div className="map-world" ref={worldRef} style={{ width, height }}>
+        <div className="map-world" ref={worldRef}>
           <svg aria-hidden>
             {pairs.map(([a, b], i) => {
               const pa = centerOf(a);

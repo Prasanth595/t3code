@@ -9,6 +9,8 @@ import {
 } from "@t3tools/contracts/machineMap";
 
 import {
+  absoluteChangesJson,
+  absoluteMapJson,
   applyChanges,
   checkEditableChanges,
   desiredState,
@@ -293,6 +295,35 @@ describe("desiredState", () => {
   });
 });
 
+describe("places in map pixels (MM-1114)", () => {
+  it("moves stored fraction places into the frame, so old maps and revisions keep their shape", () => {
+    const old = {
+      ...threeMachines(),
+      machines: [{ ...machine(MAC), position: { x: 0.25, y: 0.5 } }],
+      clients: [{ ...client(), position: { x: 0.75, y: 0.25 } }],
+      notes: [{ id: "n", text: "hi", color: "yellow", position: { x: 1, y: 0 } }],
+      pairPlacements: [{ a: MAC, b: VPS, along: 0.5, aside: -0.2 }],
+    };
+    const map = decodeMap(absoluteMapJson(old));
+    expect(map.machines[0]?.position).toEqual({ x: 350, y: 350 });
+    expect(map.clients[0]?.position).toEqual({ x: 1050, y: 175 });
+    expect(map.notes[0]?.position).toEqual({ x: 1400, y: 0 });
+    expect(map.pairPlacements[0]?.aside).toBe(-140);
+    const note = { id: "n", text: "hi", color: "yellow" };
+    expect(
+      absoluteChangesJson([
+        { _tag: "placePair", a: MAC, b: VPS, offset: null },
+        { _tag: "putNote", note: { ...note, position: { x: 0.5, y: 0.5 } } },
+        { _tag: "putClient", client: { ...client(), position: { x: 0.75, y: 0.25 } } },
+      ]),
+    ).toEqual([
+      { _tag: "placePair", a: MAC, b: VPS, offset: null },
+      { _tag: "putNote", note: { ...note, position: { x: 700, y: 350 } } },
+      { _tag: "putClient", client: { ...client(), position: { x: 1050, y: 175 } } },
+    ]);
+  });
+});
+
 describe("setting values (MM-405)", () => {
   it("are equal whatever the order of object keys, so a reordered value is no override", () => {
     expect(
@@ -306,11 +337,11 @@ describe("freePosition (MM-206)", () => {
   it("puts the first machine in the middle and spreads the next ones apart", () => {
     const taken: Array<MapPosition> = [];
     for (let i = 0; i < 8; i++) taken.push(freePosition(taken));
-    expect(taken[0]).toEqual({ x: 0.5, y: 0.5 });
+    expect(taken[0]).toEqual({ x: 700, y: 350 });
     expect(new Set(taken.map((p) => `${p.x},${p.y}`)).size).toBe(taken.length);
     for (const [i, a] of taken.entries())
       for (const b of taken.slice(i + 1))
-        expect(Math.hypot((a.x - b.x) * 1.6, a.y - b.y)).toBeGreaterThan(0.3);
+        expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThan(250);
   });
 });
 

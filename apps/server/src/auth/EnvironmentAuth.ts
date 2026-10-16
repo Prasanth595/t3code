@@ -45,10 +45,9 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
-import { makeCloudflareAccessVerifier } from "./CloudflareAccess.ts";
 import * as MachineMapState from "../fork/machineMap/MachineMapState.ts";
 import { clientBrowserSessionTtl } from "../fork/machineMap/machineAccess.ts";
-import { type ClientPending, ownerBrowserAccess } from "../fork/machineMap/browserAccess.ts";
+import * as ForkAuth from "../fork/forkEnvironmentAuth.ts";
 import { DESKTOP_RENDERER_ORIGINS } from "../httpCors.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 
@@ -401,20 +400,10 @@ export class ServerAuthInvalidCredentialError extends Schema.TaggedError<ServerA
   }
 }
 
-/** Fork: MM-718. A valid session that the machine map pause locks. */
-export class ServerAuthMachinePausedError extends Schema.TaggedError<ServerAuthMachinePausedError>()(
-  "ServerAuthMachinePausedError",
-  {},
-) {
-  override get message(): string {
-    return "The machine map pause locks this client.";
-  }
-}
-
 export const ServerAuthCredentialError = Schema.Union([
   ServerAuthMissingCredentialError,
   ServerAuthInvalidCredentialError,
-  ServerAuthMachinePausedError,
+  ForkAuth.ServerAuthMachinePausedError,
 ]);
 export type ServerAuthCredentialError = typeof ServerAuthCredentialError.Type;
 export const isServerAuthCredentialError = Schema.is(ServerAuthCredentialError);
@@ -533,16 +522,7 @@ export class EnvironmentAuth extends Context.Service<
     readonly issuePairingCredential: (
       input?: AuthCreatePairingCredentialInput,
     ) => Effect.Effect<AuthPairingCredentialResult, ServerAuthInternalError>;
-    // Fork: a one-use pairing credential for a request that carries a valid
-    // Cloudflare Access JWT, or undefined when the login is off or the JWT fails.
-    // It fails while the machine map pause locks every Access subject (MM-718).
-    // `ClientPending` (MM-918): `enforce` refuses this browser until the owner approves its key.
-    readonly issueCloudflareAccessPairingCredential: (
-      request: HttpServerRequest.HttpServerRequest,
-    ) => Effect.Effect<
-      AuthPairingCredentialResult | ClientPending | undefined,
-      ServerAuthInternalError | ServerAuthMachinePausedError
-    >;
+    readonly issueCloudflareAccessPairingCredential: ForkAuth.IssueCloudflareAccessPairingCredential;
     readonly issueStartupPairingCredential: () => Effect.Effect<
       AuthPairingCredentialResult,
       ServerAuthInternalError
@@ -771,23 +751,16 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   // Fork: machine map (MM-718, MM-1305). Absent outside the server: no pause lock, no grants.
   const machineMap = yield* Effect.serviceOption(MachineMapState.MachineMapState);
-  const rejectWhilePaused = <S extends { readonly subject: string }>(session: S) =>
-    Option.isNone(machineMap)
-      ? Effect.succeed(session)
-      : machineMap.value
-          .lockedFor(session.subject)
-          .pipe(
-            Effect.flatMap((locked) =>
-              locked ? Effect.fail(new ServerAuthMachinePausedError({})) : Effect.succeed(session),
-            ),
-          );
+  const rejectWhilePaused = ForkAuth.rejectWhilePaused(machineMap);
   const devAuth = resolveReusableDevAuth(config);
 
   const authenticateToken = (
     token: string,
   ): Effect.Effect<
     AuthenticatedSession,
-    ServerAuthInvalidCredentialError | ServerAuthMachinePausedError | ServerAuthInternalError
+    | ServerAuthInvalidCredentialError
+    | ForkAuth.ServerAuthMachinePausedError
+    | ServerAuthInternalError
   > =>
     sessions.verify(token).pipe(
       Effect.tapError((cause) =>
@@ -839,12 +812,7 @@ export const make = Effect.gen(function* () {
     // Cloudflare Access cookie, so this server's own session cookie arrives with them.
     ...(config.trustedBrowserOrigins ?? []),
   ]);
-  // Fork: machine map (MM-1311). The pages of peer machines are trusted like the list above.
-  const trustedOrigins = {
-    has: (origin: string) =>
-      trustedBrowserOrigins.has(origin) ||
-      (Option.isSome(machineMap) && machineMap.value.trustsPeerOrigin(origin)),
-  };
+  const trustedOrigins = ForkAuth.withPeerOrigins(trustedBrowserOrigins, machineMap);
 
   const authenticateRequest = (
     request: HttpServerRequest.HttpServerRequest,
@@ -1238,71 +1206,14 @@ export const make = Effect.gen(function* () {
       ...(input?.label ? { label: input.label } : {}),
     }).pipe(Effect.withSpan("EnvironmentAuth.issuePairingCredential"));
 
-  const verifyCloudflareAccess =
-    config.cloudflareAccess === undefined
-      ? undefined
-      : makeCloudflareAccessVerifier(config.cloudflareAccess);
-
-  // Fork (MM-917, MM-918): see `ownerBrowserAccess`.
-  const ownerBrowserAccessFor = (request: HttpServerRequest.HttpServerRequest, subject: string) =>
-    ownerBrowserAccess(machineMap, request, subject).pipe(
-      Effect.provideService(ServerSecretStore.ServerSecretStore, secretStore),
-      Effect.provideService(Crypto.Crypto, crypto),
-    );
-
-  const issueCloudflareAccessPairingCredential: EnvironmentAuth["Service"]["issueCloudflareAccessPairingCredential"] =
-    (request) =>
-      verifyCloudflareAccess === undefined
-        ? Effect.succeed(undefined)
-        : verifyCloudflareAccess(request).pipe(
-            // Fork (MM-718): an Access subject is never the local desktop app, so the pause locks
-            // it. A session made now would only be refused on its first use.
-            Effect.tap((identity) =>
-              identity === undefined || Option.isNone(machineMap)
-                ? Effect.void
-                : machineMap.value
-                    .lockedFor("one-time-token")
-                    .pipe(
-                      Effect.flatMap((locked) =>
-                        locked ? Effect.fail(new ServerAuthMachinePausedError({})) : Effect.void,
-                      ),
-                    ),
-            ),
-            Effect.flatMap((identity) =>
-              identity === undefined
-                ? Effect.succeed(undefined)
-                : identity.kind === "owner"
-                  ? ownerBrowserAccessFor(request, identity.subject).pipe(
-                      Effect.flatMap((access) =>
-                        access._tag === "ClientPending"
-                          ? Effect.succeed<ClientPending | AuthPairingCredentialResult>(access)
-                          : issuePairingCredentialForSubject({
-                              ...(access._tag === "client"
-                                ? access.grant
-                                : {
-                                    scopes: AuthStandardClientScopes,
-                                    subject: "one-time-token",
-                                    label: `cloudflare-access ${identity.subject}`,
-                                  }),
-                              ttl: Duration.minutes(2),
-                            }),
-                      ),
-                    )
-                  : Option.isNone(machineMap)
-                    ? Effect.succeed(undefined)
-                    : machineMap.value.machineGrant(identity.commonName).pipe(
-                        Effect.flatMap((grant) =>
-                          grant === undefined
-                            ? Effect.succeed(undefined)
-                            : issuePairingCredentialForSubject({
-                                ...grant,
-                                ttl: Duration.minutes(2),
-                              }),
-                        ),
-                      ),
-            ),
-            Effect.withSpan("EnvironmentAuth.issueCloudflareAccessPairingCredential"),
-          );
+  const issueCloudflareAccessPairingCredential =
+    ForkAuth.makeIssueCloudflareAccessPairingCredential({
+      cloudflareAccess: config.cloudflareAccess,
+      machineMap,
+      secretStore,
+      crypto,
+      issuePairingCredentialForSubject,
+    });
 
   const issueStartupPairingCredential: EnvironmentAuth["Service"]["issueStartupPairingCredential"] =
     () => {

@@ -1,10 +1,9 @@
-import type { ClientSettings, DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
+import type { DesktopBridge, DesktopUpdateState } from "@t3tools/contracts";
 import { TriangleAlertIcon } from "lucide-react";
 import { type ComponentProps, useCallback, useEffect, useId, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
-import { useClientSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
@@ -14,19 +13,14 @@ import {
   getArm64IntelBuildWarningDescription,
   getDesktopUpdateActionError,
   getDesktopUpdateButtonTooltip,
-  getDesktopUpdateInstallConfirmationMessage,
   getDesktopUpdateDownloadedVersion,
+  getDesktopUpdateInstallConfirmationMessage,
   isDesktopUpdateButtonDisabled,
   resolveDesktopUpdateButtonAction,
   shouldShowArm64IntelBuildWarning,
   shouldToastDesktopUpdateActionResult,
 } from "../desktopUpdate.logic";
 import { showDesktopUpdateDownloadedToast } from "../desktopUpdate.toast";
-import {
-  openIdleInstallPromptIfAgentsRun,
-  useIdleInstallArmed,
-} from "../desktop/DesktopUpdateIdleInstall";
-import { prepareNewestUpdateInstall } from "../desktop/DesktopUpdateNewerCheck";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { SidebarMenuItem } from "../ui/sidebar";
@@ -39,9 +33,7 @@ import {
 } from "./DesktopUpdateStatusIcon";
 import { SidebarUpdateReleaseNotes } from "./SidebarUpdateReleaseNotes";
 import { SidebarUpdateCapsule } from "./SidebarUpdateCapsule";
-import { ForkChangelogDialog } from "../forkChangelog/ForkChangelogDialog";
-import { ForkUpdateChanges } from "../forkChangelog/ForkUpdateChanges";
-import { Button } from "../ui/button";
+import * as ForkUpdate from "./ForkSidebarUpdate";
 import { UpdateEverythingDialog } from "./UpdateEverythingDialog";
 import type { UpdateEverythingRun, UpdateRunLocalState } from "./updateEverything.logic";
 import {
@@ -55,8 +47,6 @@ type SidebarUpdatePopoverChangeDetails = Parameters<
   NonNullable<ComponentProps<typeof Popover>["onOpenChange"]>
 >[1];
 type SidebarUpdatePopoverHandle = ReturnType<typeof PopoverCreateHandle>;
-
-const selectForkChangelogEnabled = (settings: ClientSettings) => settings.forkChangelogEnabled;
 
 export function shouldUseSidebarUpdateReleaseNotesPopover(
   showUpdateDetails: boolean,
@@ -175,7 +165,8 @@ export async function installLocalUpdate(
   { unattended = false }: { readonly unattended?: boolean } = {},
 ): Promise<boolean> {
   // Fork: a newer release can replace the download first.
-  if (!(await prepareNewestUpdateInstall(bridge, { unattended, reportError }))) return false;
+  if (!(await ForkUpdate.prepareNewestUpdateInstall(bridge, { unattended, reportError })))
+    return false;
   try {
     const result = await bridge.installUpdate();
     if (!result.accepted) {
@@ -212,9 +203,7 @@ function SidebarUpdateControl() {
   const releaseNotesPopupRef = useRef<HTMLDivElement>(null);
   const releaseNotesTriggerId = useId();
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
-  // Fork: with the changelog on, the popover opens even when no update is available.
-  const forkChangelogEnabled = useClientSettings(selectForkChangelogEnabled);
-  const [isForkChangelogOpen, setIsForkChangelogOpen] = useState(false);
+  const forkChangelog = ForkUpdate.useForkChangelog();
 
   useEffect(() => {
     if (prefersReducedMotion) {
@@ -226,7 +215,7 @@ function SidebarUpdateControl() {
 
   const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
   const isDownloading = state?.status === "downloading";
-  const idleInstallArmed = useIdleInstallArmed() && action === "install";
+  const idleInstallArmed = ForkUpdate.useIdleInstallArmed() && action === "install";
   const localUpdateVersion =
     state && action !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
   const everything = useUpdateEverything(localUpdateVersion);
@@ -267,7 +256,7 @@ function SidebarUpdateControl() {
   const showReleaseNotesPopover =
     !isRunningEverything &&
     (shouldUseSidebarUpdateReleaseNotesPopover(showUpdateDetails, state) ||
-      (forkChangelogEnabled && state !== null));
+      (forkChangelog.enabled && state !== null));
 
   useEffect(() => {
     if (!showReleaseNotesPopover) {
@@ -301,7 +290,7 @@ function SidebarUpdateControl() {
     }
 
     if (action === "install") {
-      if (openIdleInstallPromptIfAgentsRun()) {
+      if (ForkUpdate.openIdleInstallPromptIfAgentsRun()) {
         setIsActionPending(false);
         return;
       }
@@ -375,7 +364,7 @@ function SidebarUpdateControl() {
               // Fork: while agents run, this app's restart offers "Install when idle".
               // The relaunch is not under way then, so the pass shows its result now.
               installLocal: (reportError) =>
-                openIdleInstallPromptIfAgentsRun()
+                ForkUpdate.openIdleInstallPromptIfAgentsRun()
                   ? Promise.resolve(false)
                   : installLocalUpdate(bridge, reportError),
             }
@@ -443,7 +432,7 @@ function SidebarUpdateControl() {
             ? {
                 onRestart: async () => {
                   // Fork: while agents run, the restart offers "Install when idle".
-                  if (openIdleInstallPromptIfAgentsRun()) return;
+                  if (ForkUpdate.openIdleInstallPromptIfAgentsRun()) return;
                   saveUpdateEverythingResult({
                     localVersion: localUpdateVersion,
                     updatedServers: 0,
@@ -566,8 +555,13 @@ function SidebarUpdateControl() {
             side="top"
             tooltipStyle
           >
-            {forkChangelogEnabled ? (
-              <ForkUpdateChanges state={state} tooltip={tooltip} />
+            {forkChangelog.enabled ? (
+              <ForkUpdate.ForkUpdatePopoverChanges
+                changelog={forkChangelog}
+                popover={releaseNotesPopoverHandle}
+                state={state}
+                tooltip={tooltip}
+              />
             ) : (
               <SidebarUpdateReleaseNotes
                 shell={window.desktopBridge}
@@ -575,26 +569,10 @@ function SidebarUpdateControl() {
                 tooltip={tooltip}
               />
             )}
-            {forkChangelogEnabled ? (
-              <div className="mt-2 px-1">
-                <Button
-                  size="xs"
-                  variant="outline"
-                  onClick={() => {
-                    releaseNotesPopoverHandle.close();
-                    setIsForkChangelogOpen(true);
-                  }}
-                >
-                  Open changelog
-                </Button>
-              </div>
-            ) : null}
           </PopoverPopup>
         ) : null}
       </Popover>
-      {forkChangelogEnabled ? (
-        <ForkChangelogDialog open={isForkChangelogOpen} onOpenChange={setIsForkChangelogOpen} />
-      ) : null}
+      <ForkUpdate.ForkChangelogDialogHost changelog={forkChangelog} />
       {confirmDialog}
     </SidebarMenuItem>
   );

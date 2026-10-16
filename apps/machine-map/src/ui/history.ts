@@ -483,8 +483,8 @@ function arrowText(arrow: ArrowRecord): string {
   return parts.join(", ");
 }
 
-const placeText = (p: MapPosition) =>
-  `${Math.round(p.x * 100)}% across, ${Math.round(p.y * 100)}% down`;
+/** MM-1114: a place in map pixels. It reads the same on every screen. */
+const placeText = (p: MapPosition) => `${Math.round(p.x)}, ${Math.round(p.y)}`;
 
 /** MM-715: the before and after of each change of a revision. */
 export function revisionDiff(revision: RevisionChanges, map: MachineMapDocument): Array<DiffRow> {
