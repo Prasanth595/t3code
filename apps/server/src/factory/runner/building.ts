@@ -35,12 +35,17 @@ import {
   type ThreadStatus,
 } from "../t3/sessions.ts";
 import {
+  CANNOT_CONFIRM,
+  CANNOT_VERIFY_DURING_BUILD,
+  CHANGED_DURING_BUILD,
   RESULT_LINE_REMINDER,
   THREAD_GONE,
+  TIME_LIMIT,
   WRONG_ACCOUNT,
   WRONG_ACCOUNT_PREFIX,
   prepareSessionText,
   questionsComment,
+  sessionMayExistNote,
   statusBody,
 } from "./messages.ts";
 import {
@@ -137,6 +142,23 @@ export type AdvanceOutcome =
   | { readonly kind: "needs-info" }
   /** The issue went to `stuck`. `reason` is the one the ledger records. */
   | { readonly kind: "stuck"; readonly reason: string };
+
+/** What `watch` did. */
+export type WatchOutcome =
+  /** The text is as the approval left it. Nothing was written. */
+  | { readonly kind: "unchanged" }
+  /** The run went to `stuck`. `reason` is the one the ledger records. */
+  | { readonly kind: "stopped"; readonly reason: string }
+  | { readonly kind: "skipped"; readonly why: "finished" | "no-session" | "not-building" };
+
+/** What `timeLimit` did. */
+export type LimitOutcome =
+  | { readonly kind: "within" }
+  /** The run went to `stuck`. `reason` is the one the ledger records. */
+  | { readonly kind: "stopped"; readonly reason: string }
+  | { readonly kind: "skipped"; readonly why: "finished" | "not-running" };
+
+const MINUTE_MS = 60_000;
 
 const issueOf = (run: RunId) => Number(run.issue);
 
@@ -605,4 +627,134 @@ const sendReminder = (
     if (sent === "gone") return sent;
     yield* append(out, remindedStep, "advance", "result-line-reminded");
     return sent;
+  });
+
+/**
+ * Why the issue text no longer stands for a building run, or `null` when it does. A run with no
+ * `approved` step has no moment to read since, so it fails closed without a read; otherwise the
+ * histories of every rename and body edit since the recorded approval must be an instructor's.
+ * A history that cannot be judged counts as changed. A read that fails is an error, never an
+ * answer.
+ */
+const textStop = (
+  ctx: BuildingContext,
+  issue: number,
+  seen: Seen,
+): Effect.Effect<{ readonly code: string; readonly reason: string } | null, BuildingError> =>
+  Effect.gen(function* () {
+    if (seen.approvedAt === null) return { code: "approval-unconfirmed", reason: CANNOT_CONFIRM };
+    const check = yield* ctx.tracker.textCheck(issue, seen.approvedAt, ctx.project.instructors);
+    switch (check) {
+      case "unchanged":
+        return null;
+      case "changed":
+        return { code: "text-changed-during-build", reason: CHANGED_DURING_BUILD };
+      case "unjudged":
+        return { code: "edits-unverifiable", reason: CANNOT_VERIFY_DURING_BUILD };
+    }
+  });
+
+/**
+ * Stops a building run whose issue text was changed by someone who is not an instructor, or whose
+ * history of edits cannot be judged. The session's thread is archived first, then the run goes
+ * `stuck` through the stuck path (the draft pull request, if any, is not touched).
+ *
+ * A read that fails is an error, never a stop and never a pass. Nothing is written when the text
+ * is unchanged, and no step records that a check passed: the text is read again on every call,
+ * since an edit can come at any time. An archive that fails is an error with nothing written, so
+ * the next call decides and archives again.
+ *
+ * A run that is finished, has no session, is not `building`, or has a stuck or questions
+ * decision not yet committed makes no call (`skipped`: `advance` finishes those). A run of
+ * another repo is an error. There is no loop or timer: the caller decides how often to call it,
+ * and it should call `watch` before `advance` on a `building` run.
+ */
+export const watch = (
+  ctx: BuildingContext,
+  run: RunId,
+): Effect.Effect<WatchOutcome, BuildingError> =>
+  Effect.gen(function* () {
+    yield* checkRepo(ctx, run);
+    const seen = yield* readSeen(ctx, run);
+    if (seen.finished) return { kind: "skipped", why: "finished" } as const;
+    if (seen.threadId === null) return { kind: "skipped", why: "no-session" } as const;
+    if (seen.state !== "building" || seen.stuck !== null || seen.questionsPosted) {
+      return { kind: "skipped", why: "not-building" } as const;
+    }
+    const issue = issueOf(run);
+    const why = yield* textStop(ctx, issue, seen);
+    if (why === null) return { kind: "unchanged" } as const;
+    const at = progressFrom("watch", seen, "building");
+    const stop: Stop = { reason: why.reason };
+    yield* withLedger(ctx, run, (out) =>
+      Effect.flatMap(out.open, (opened) => goStuck(ctx, issue, opened, at, why.code, stop)),
+    );
+    return { kind: "stopped", reason: recordedReason(stop) } as const;
+  });
+
+/** The branch the thread works on, or `undefined` when it has none or T3 cannot say: a read that fails is not a stop. */
+const branchOf = (ctx: BuildingContext, threadId: string): Effect.Effect<string | undefined> =>
+  ctx.sessions.thread(threadId).pipe(
+    Effect.map((thread) => thread.branch ?? undefined),
+    Effect.orElseSucceed(() => undefined),
+  );
+
+/**
+ * Stops a run that has worked for longer than `limits.minutes`.
+ *
+ * The time counted is what the run spent in `triage` and `building`, from the ledger: the time a
+ * ready pull request waited in `pr-open` is left out (such a run is not limited at all). A run
+ * past the limit has its session's thread read for its branch and then archived (archiving a
+ * thread whose run is active stops that run), then goes `stuck` through the stuck path with the
+ * fixed reason `the run passed its time limit`, released and finished. When the thread has a
+ * branch, the stuck line and the comment name it, so the next attempt can continue from there; a
+ * thread that cannot be read, or has no branch, changes nothing. A run still in `triage` with no
+ * thread has nothing to archive; when its ledger shows a launch call was sent the recorded
+ * reason says a session may exist, as for any other stop from there. An archive that fails is an
+ * error before anything is written, so the next call decides and archives again.
+ *
+ * A run that is finished, past `building`, in `needs-info`, or has a stuck or questions decision
+ * not yet committed is skipped. A run of another repo is an error. There is no loop or timer: the
+ * caller decides how often to call it, and it should call it first for a run in `triage` or
+ * `building`, and skip the run's other steps when it stops.
+ */
+export const timeLimit = (
+  ctx: BuildingContext,
+  run: RunId,
+): Effect.Effect<LimitOutcome, BuildingError> =>
+  Effect.gen(function* () {
+    yield* checkRepo(ctx, run);
+    const seen = yield* readSeen(ctx, run);
+    if (seen.finished) return { kind: "skipped", why: "finished" } as const;
+    const working =
+      seen.state === null ||
+      seen.state === "ready" ||
+      seen.state === "triage" ||
+      seen.state === "building";
+    if (!working || seen.stuck !== null || seen.questionsPosted) {
+      return { kind: "skipped", why: "not-running" } as const;
+    }
+    const worked =
+      seen.workedMs +
+      (seen.workingSince === null ? 0 : Math.max(0, ctx.clock() - seen.workingSince));
+    if (worked <= ctx.project.limits.minutes * MINUTE_MS) return { kind: "within" } as const;
+    // Read before the archive: the next attempt is told where the work is.
+    const branch = seen.threadId === null ? undefined : yield* branchOf(ctx, seen.threadId);
+    const prepared = branch === undefined ? "" : prepareSessionText(branch);
+    const stop: Stop = {
+      reason: TIME_LIMIT,
+      ...(seen.threadId === null &&
+        seen.launchSent && {
+          detail: sessionMayExistNote(TIME_LIMIT, `softfac:${runIdToString(run)}:launch`),
+        }),
+      ...(prepared !== "" && { branch: prepared, commitsAhead: null }),
+    };
+    // Called by the pass before any step, so the pass is what decided.
+    const at = progressFrom("pass", seen, "triage");
+    yield* withLedger(ctx, run, (out) =>
+      Effect.flatMap(out.open, (opened) =>
+        goStuck(ctx, issueOf(run), opened, at, "time-limit", stop),
+      ),
+    );
+    return { kind: "stopped", reason: recordedReason(stop) } as const;
   });

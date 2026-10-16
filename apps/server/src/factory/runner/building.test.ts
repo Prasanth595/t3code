@@ -1742,7 +1742,9 @@ describe("watch", () => {
     Effect.gen(function* () {
       const questions: RunEvent = { event: "questions_posted", data: { questions: "1. Which?" } };
       const stuck: RunEvent = { event: "stuck", data: { reason: "gave up" } };
-      const cases: ReadonlyArray<[string, ReadonlyArray<RunEvent>, string]> = [
+      const cases: ReadonlyArray<
+        [string, ReadonlyArray<RunEvent>, "finished" | "no-session" | "not-building"]
+      > = [
         ["finished", [...STARTED, FINISHED_EVENT], "finished"],
         [
           "no session",
@@ -1998,14 +2000,15 @@ describe("timeLimit", () => {
       Effect.gen(function* () {
         const questions: RunEvent = { event: "questions_posted", data: { questions: "1. Which?" } };
         const stuck: RunEvent = { event: "stuck", data: { reason: "gave up" } };
-        const cases: ReadonlyArray<[string, ReadonlyArray<RunEvent>, string]> = [
-          ["finished", [...STARTED, FINISHED_EVENT], "finished"],
-          ["needs-info", [...STARTED, questions, moved("building", "needs-info")], "not-running"],
-          ["stuck", [...STARTED, stuck, moved("building", "stuck")], "not-running"],
-          ["pr-open", [...STARTED, moved("building", "pr-open")], "not-running"],
-          ["half stuck", [...STARTED, stuck], "not-running"],
-          ["half needs-info", [...STARTED, questions], "not-running"],
-        ];
+        const cases: ReadonlyArray<[string, ReadonlyArray<RunEvent>, "finished" | "not-running"]> =
+          [
+            ["finished", [...STARTED, FINISHED_EVENT], "finished"],
+            ["needs-info", [...STARTED, questions, moved("building", "needs-info")], "not-running"],
+            ["stuck", [...STARTED, stuck, moved("building", "stuck")], "not-running"],
+            ["pr-open", [...STARTED, moved("building", "pr-open")], "not-running"],
+            ["half stuck", [...STARTED, stuck], "not-running"],
+            ["half needs-info", [...STARTED, questions], "not-running"],
+          ];
         for (const [name, events, why] of cases) {
           const rig = rigFor(events);
           rig.clock.now = T0 + 10 * LIMIT_MS;
