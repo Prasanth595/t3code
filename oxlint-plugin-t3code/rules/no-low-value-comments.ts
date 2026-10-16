@@ -8,7 +8,7 @@ const TEST_STEP_PATTERN = /^(?:arrange|act|assert|given|when|then)\s*[:.]?$/iu;
 const TASK_MARKER_PATTERN = /\b(?:TODO|FIXME|XXX|HACK)\b/u;
 const TASK_LINK_PATTERN = /#\d+|https?:\/\//u;
 const JSDOC_TYPE_PATTERN = /^@(?:param|returns?|type|typedef)\s+\{/u;
-const EMPTY_JSDOC_TAG_PATTERN = /^@(?:param|returns?)(?:\s+\[?[\w$.]+\]?)?$/u;
+const EMPTY_JSDOC_TAG_PATTERN = /^@(?:param(?:\s+\[?[\w$.]+\]?)?|returns?)$/u;
 const COMMENTED_CODE_PATTERN =
   /^(?:(?:(?:const|let|var)\s+[\w${}[\], ]+=.*|import\s.+\sfrom\s+["'].+["']|(?:await\s+|return\s+)?[\w$.]+\(.*\)|[\w$.[\]]+\s*=\s*.+);|(?:if|for|while|switch)\s*\(.*\)\s*\{|\}(?:\s*else\s*\{)?)$/u;
 const DECLARATION_PATTERN =
