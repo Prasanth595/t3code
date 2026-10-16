@@ -55,6 +55,7 @@ import {
   type Seen,
 } from "./progress.ts";
 import {
+  describe,
   goStuck,
   recordedReason,
   stopSession,
@@ -408,6 +409,8 @@ export const advance = (
         } else {
           const sent = yield* sendReminder(ctx, out, run, threadId, seen.reminding);
           if (sent === "gone") return yield* stuck("thread-gone", stopOf(THREAD_GONE, null));
+          if (sent !== "sent")
+            return yield* stuck("session-stuck", refusedStop(result, message, sent));
           return { kind: "reminded" } as const;
         }
       }
@@ -457,6 +460,8 @@ export const advance = (
         );
         const sent = yield* sendReminder(ctx, out, run, threadId, status.runOrdinal);
         if (sent === "gone") return yield* stuck("thread-gone", stopOf(THREAD_GONE, null));
+        if (sent !== "sent")
+          return yield* stuck("session-stuck", refusedStop(result, message, sent));
         return { kind: "reminded" } as const;
       }
 
@@ -608,7 +613,8 @@ const endNeedsInfo = (ctx: BuildingContext, out: Out, at: Progress) =>
  * that meets a newer run with no result line is a new one for that run, so the worst case is a
  * second reminder and never a hang. The caller has written `result-line-reminding <k>`, which is
  * also the wait marker; `result-line-reminded` is written last. T3 not having the thread is
- * `"gone"`; a refusal is an error.
+ * `"gone"`. A refusal is final, since T3 keeps it under the command id and a resend would fail
+ * the same way: it is returned for the caller to end the run with.
  */
 const sendReminder = (
   ctx: BuildingContext,
@@ -616,18 +622,37 @@ const sendReminder = (
   run: RunId,
   threadId: string,
   k: number,
-): Effect.Effect<"sent" | "gone", BuildingError> =>
+): Effect.Effect<"sent" | "gone" | MessageRejectedError, BuildingError> =>
   Effect.gen(function* () {
     const sent = yield* ctx.sessions
       .send(threadId, `softfac:${runIdToString(run)}:remind:${k}`, RESULT_LINE_REMINDER)
       .pipe(
         Effect.as("sent" as const),
         Effect.catchIf(isThreadNotFound, () => Effect.succeed("gone" as const)),
+        Effect.catchIf(isMessageRejected, (refused) => Effect.succeed(refused)),
       );
-    if (sent === "gone") return sent;
+    if (sent !== "sent") return sent;
     yield* append(out, remindedStep, "advance", "result-line-reminded");
     return sent;
   });
+
+const isMessageRejected = Schema.is(MessageRejectedError);
+
+/**
+ * The stop for a reminder T3 refused: the public reason is the run's own (it ended with no result
+ * line, or no message), the ledger's detail says the reminder could not reach it.
+ */
+const refusedStop = (
+  result: SessionResult,
+  message: string | null,
+  refused: MessageRejectedError,
+): Stop => {
+  const reason =
+    result.kind === "stuck" && lacksResultLine(result) ? result.reason : NO_RESULT_LINE;
+  return stopOf(reason, message, {
+    detail: `${reason}; T3 refused the reminder: ${describe(refused)}`,
+  });
+};
 
 /**
  * Why the issue text no longer stands for a building run, or `null` when it does. A run with no
