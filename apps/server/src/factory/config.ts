@@ -83,6 +83,12 @@ export interface WatchedRepo {
 export interface MachineConfig {
   readonly ghConfigDir: string;
   readonly pollSeconds: number;
+  /**
+   * Runs that may hold a slot at once, counted over every repo: a run holds one from its claim
+   * until its pull request is ready for review or it ends. A session launched again for a
+   * `pr-open` run (a failed re-gate) is not held back by it: the run holds a slot again from that
+   * launch and the next claim counts it, so such relaunches can take the machine past the limit.
+   */
   readonly maxConcurrentRuns: number;
   readonly maxConcurrentGates: number;
   readonly modelInstance: string;

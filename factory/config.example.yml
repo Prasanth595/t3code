@@ -16,7 +16,10 @@ gh_config_dir: /Users/tomkaczocha/.config/t3fac/gh
 # gate start the next pass at once, so this is only the longest wait for news from GitHub.
 poll_seconds: 60
 
-# Runs that may hold an issue at once, and gates that may run at once.
+# Runs that may hold an issue at once, and gates that may run at once. A run holds a slot from
+# its claim until its pull request is ready for review. A session launched again for a pr-open
+# run (a failed re-gate) takes a slot again without waiting for a free one, so relaunches can
+# take the machine past max_concurrent_runs until the next claim counts them.
 max_concurrent_runs: 1
 max_concurrent_gates: 1
 

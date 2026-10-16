@@ -4246,6 +4246,23 @@ describe("last_pass: what the pass reads before it starts the gate", () => {
 });
 
 describe("regate: the head or the base of a ready pull request moved", () => {
+  it.effect("a re-gate of a ready pull request does not wait for the required checks", () =>
+    Effect.gen(function* () {
+      // softfac's rule (`docs/lifecycle.md`, "Required checks"): the checks gate the first pass
+      // only. A re-gate that passes posts its results and the pull request stays ready, whatever
+      // the checks on the new head say.
+      const rig = yield* prOpenRun();
+      rig.project = { ...rig.project, requiredChecks: ["gate"] };
+      scriptChecks(rig, [["failed"]]);
+      headMoved(rig);
+      assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 });
+      assert.ok(!rig.gh.calls.some((c) => c.startsWith("checks ")), rig.gh.calls.join("; "));
+      assert.deepStrictEqual(eventsOf(rig, "checks_read"), []);
+      assert.isTrue(rig.gh.world.prReady);
+      assert.strictEqual(rig.gh.world.prComments.at(-1), againComment(2, BASE, PUSHED_SHORT));
+    }),
+  );
+
   it.effect("a head that moved after the pr was ready is gated again with the base unchanged", () =>
     Effect.gen(function* () {
       const rig = yield* prOpenRun();
@@ -5452,6 +5469,41 @@ describe("regate: a failed regate cut short and then passing", () => {
         assert.isFalse(rig.gh.world.prReady);
       }),
   );
+
+  it.effect(
+    "a re-gate cut short after its stuck decision drafted the pr, then passing, marks it ready again",
+    () =>
+      Effect.gen(function* () {
+        // `gate_retries: 0` makes the first failure the stuck decision, whose comment is the call
+        // after the draft.
+        const exhaustedAtOnce = () =>
+          Effect.map(prOpenRun(), (rig) => {
+            withLimits(rig, { gateRetries: 0 });
+            baseMoved(rig, 0);
+            passThenFailFromTheMove(rig);
+            return rig;
+          });
+        const probe = yield* exhaustedAtOnce();
+        assert.strictEqual((yield* regateStep(probe)).kind, "stuck");
+        const commentAt = probe.gh.calls.indexOf("markPrDraft 12") + 1;
+        assert.ok(probe.gh.calls[commentAt]?.startsWith("comment 10 "), probe.gh.calls.join("; "));
+
+        // The comment is lost: the pull request is a draft and no `stuck` line was written.
+        const rig = yield* exhaustedAtOnce();
+        rig.gh.failAt = commentAt;
+        assert.strictEqual((yield* Effect.result(regateStep(rig)))._tag, "Failure");
+        assert.isFalse(rig.gh.world.prReady);
+        assert.deepStrictEqual(eventsOf(rig, "stuck"), []);
+        rig.gh.failAt = null;
+        // The commands pass now, so the resumed re-gate is a pass: the pull request is ready
+        // again, not left a draft with "passed again" posted on it.
+        rig.ws.script = (_, commands) => passing(commands);
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "passed", pr: 12 });
+        assertReadyAndPrOpen(rig, "resumed after the draft");
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "unchanged" });
+      }),
+  );
 });
 
 // ---- regate: the port's own cases ---------------------------------------------------------------
@@ -5492,6 +5544,23 @@ describe("regate: a person closed the issue", () => {
         assert.deepStrictEqual(yield* regateStep(rig), { kind: "abandoned" });
         assert.strictEqual(eventsOf(rig, "gate_regate").length, 1);
         assertAbandoned(rig, comments);
+      }),
+  );
+
+  it.effect(
+    "while a re-gate is under way, a merge that closed the issue ends the run as merged",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* prOpenRun();
+        baseMoved(rig, 0);
+        appendLines(rig, [regateLine(BASE, MOVED)] as ReadonlyArray<RunEvent>);
+        rig.gh.closed = true;
+        rig.gh.pr = mergedPull();
+        assert.deepStrictEqual(yield* regateStep(rig), { kind: "ended" });
+        // Nothing is gated or launched, and the run is finished as merged, not abandoned.
+        assert.deepStrictEqual(rig.ws.calls, []);
+        assert.deepStrictEqual(rig.t3.launches, []);
+        assert.deepStrictEqual(linesOf(rig).at(-1), finishedPrEnded(1, "merged"));
       }),
   );
 });
