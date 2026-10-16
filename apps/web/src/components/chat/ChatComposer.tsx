@@ -6348,6 +6348,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }}
       className="mx-auto w-full min-w-0 max-w-(--chat-content-max-width)"
       data-chat-composer-form="true"
+      // The command and stash menus open in a portal; this lets content above the
+      // composer react to them with CSS.
+      data-composer-menu-open={composerSuggestionsVisible || isStashMenuOpen || undefined}
       {...threadContextDropTargetProps()}
     >
       {composerControlsCollapsed && restingControlsHost

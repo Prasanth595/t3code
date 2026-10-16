@@ -293,6 +293,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "composer-quick-prompts",
+    title: "Quick prompts",
+    to: "/settings/appearance",
+    searchTerms: ["composer pills saved snippets shortcuts templates skills"],
+  },
+  {
     id: "project-grouping",
     title: "Project grouping",
     to: "/settings/general",

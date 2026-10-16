@@ -167,6 +167,15 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
+## Quick prompts
+
+On web and desktop, add prompts you reuse in **Settings → Appearance → Quick prompts**.
+Each one appears as a pill above the composer. Clicking a pill adds its text to the end of
+your message without sending it. A prompt can be plain text, a `$skill`, or a `/command`;
+provider commands only run when they start the message.
+
+Quick prompts are saved on this device and are not synced to other devices or the mobile app.
+
 ## Voice input on iPhone
 
 On supported iPhones with iOS 26 or later, use the composer's microphone to record,

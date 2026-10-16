@@ -453,6 +453,7 @@ import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
+import { ComposerQuickPrompts } from "./chat/ComposerQuickPrompts";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
 import {
@@ -4531,6 +4532,14 @@ export default function ChatView(props: ChatViewProps) {
     scheduleComposerFocus();
   };
   const useArtifactTemplateStable = useStableCallback(useArtifactTemplate);
+  const insertQuickPromptStable = useStableCallback((prompt: string) => {
+    // A trailing space closes the $skill or /command menu the insert would otherwise open,
+    // so Enter sends instead of picking a menu item.
+    const text = /\s$/u.test(prompt) ? prompt : `${prompt} `;
+    if (composerRef.current?.insertTextAtEnd(text, { ensureLeadingBoundary: true })) {
+      scheduleComposerFocus();
+    }
+  });
   const sendAppMessage = async (text: string) => {
     if (!isServerThread || activeThreadId === null) {
       throw new Error("Messages from apps need a started thread.");
@@ -11130,6 +11139,12 @@ export default function ChatView(props: ChatViewProps) {
                         : undefined
                     }
                   >
+                    {/* The composer refuses inserts while an approval or question replaces the draft. */}
+                    {composerMounted &&
+                    activePendingApproval === null &&
+                    pendingUserInputs.length === 0 ? (
+                      <ComposerQuickPrompts onInsert={insertQuickPromptStable} />
+                    ) : null}
                     <ComposerSurface.Shell
                       contextStrip={showComposerContextStrip || showComposerModelStrip}
                     >

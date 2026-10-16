@@ -291,6 +291,15 @@ export type ModelPreferences = {
   readonly providerModelPreferences: typeof ProviderModelPreferences.Type;
 };
 
+// Label and prompt may be blank while the user is still typing them; the
+// composer only shows prompts that have both.
+export const ComposerQuickPrompt = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: Schema.String,
+  prompt: Schema.String,
+});
+export type ComposerQuickPrompt = typeof ComposerQuickPrompt.Type;
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -389,6 +398,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   persistComposerContextStrip: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  composerQuickPrompts: Schema.Array(ComposerQuickPrompt).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
   ),
 
   favorites: ModelFavorites.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
@@ -1554,6 +1566,7 @@ export const ClientSettingsPatch = Schema.Struct({
   fontFamilyTerminal: Schema.optionalKey(FontFamilyPreference),
   fontSmoothing: Schema.optionalKey(Schema.Boolean),
   persistComposerContextStrip: Schema.optionalKey(Schema.Boolean),
+  composerQuickPrompts: Schema.optionalKey(Schema.Array(ComposerQuickPrompt)),
   favorites: Schema.optionalKey(ModelFavorites),
   providerModelPreferences: Schema.optionalKey(ProviderModelPreferences),
   pullRequestMergeMethodOverrides: Schema.optionalKey(

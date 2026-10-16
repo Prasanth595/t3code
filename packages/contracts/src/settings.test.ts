@@ -407,6 +407,22 @@ describe("ClientSettings composer context strip", () => {
   });
 });
 
+describe("ClientSettings composer quick prompts", () => {
+  it("defaults to none and keeps blank entries that are still being edited", () => {
+    expect(decodeClientSettings({}).composerQuickPrompts).toEqual([]);
+    const quickPrompts = [
+      { id: "quick-prompt-1", label: "bro", prompt: "$bro" },
+      { id: "quick-prompt-2", label: "", prompt: "" },
+    ];
+    expect(
+      decodeClientSettings({ composerQuickPrompts: quickPrompts }).composerQuickPrompts,
+    ).toEqual(quickPrompts);
+    expect(
+      decodeClientSettingsPatch({ composerQuickPrompts: quickPrompts }).composerQuickPrompts,
+    ).toEqual(quickPrompts);
+  });
+});
+
 describe("ClientSettings word wrap", () => {
   it("defaults word wrap on", () => {
     expect(decodeClientSettings({}).wordWrap).toBe(true);
