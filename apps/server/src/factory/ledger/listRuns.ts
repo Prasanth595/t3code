@@ -5,8 +5,8 @@ import * as NodePath from "node:path";
 import type { State } from "../domain/lifecycle.ts";
 import { readProgress } from "../runner/progress.ts";
 import { errnoCode, LedgerIoError } from "./errors.ts";
-import { readRun } from "./read.ts";
-import { asciiLower, RUNS_DIR, runIdFromFileName, type RunId } from "./runId.ts";
+import { lastLineIsFinished, readRun } from "./read.ts";
+import { asciiLower, RUNS_DIR, runIdFromFileName, runPath, type RunId } from "./runId.ts";
 
 /** One unfinished run as the pass sees it: its id, its last state, and whether its file could be read. */
 export interface RunInfo {
@@ -37,7 +37,8 @@ export const holdsSlot = (run: RunInfo): boolean =>
   run.unreadable || (run.confirmed && run.state !== "pr-open");
 
 /**
- * Every run under `<dir>/runs/` that is not finished, oldest first by the first line's time; with
+ * Every run under `<dir>/runs/` that is not finished (a file whose last line is `finished` is
+ * skipped by reading only its tail), oldest first by the first line's time; with
  * `only`, the runs of that one issue, and no other file is read. Files that are not named like a
  * run are ignored, and a missing runs directory is an empty list. A run file that cannot be read
  * is still listed, flagged `unreadable`, so one bad file does not hide the others. A run with no
@@ -68,6 +69,7 @@ export const listUnfinishedRuns = (
     let firstMs: number | null = null;
     let info: RunInfo;
     try {
+      if (lastLineIsFinished(runPath(dataDir, id))) continue;
       const record = readRun(dataDir, id);
       firstMs = record.entries[0]?.ms ?? null;
       const seen = readProgress(record.entries);
