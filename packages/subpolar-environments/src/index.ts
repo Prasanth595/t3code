@@ -818,7 +818,14 @@ export function createEnvironmentManager(
         if (currentIdentity.id !== environment.id) {
           throw new EnvironmentManagerError("OWNERSHIP_MISMATCH", "Registered environment path no longer resolves to its original identity");
         }
-        return { environmentId: environment.id, environment: await ensure(environment) };
+        // Startup reconciliation observes Docker state; it must not create or
+        // start containers. In particular, a missing container is reported
+        // while its registration remains available for explicit recovery.
+        const current = await inspect(currentIdentity);
+        if (!current) {
+          throw new EnvironmentManagerError("ENVIRONMENT_NOT_FOUND", "Registered environment container is missing");
+        }
+        return { environmentId: environment.id, environment: await persist(current) };
       } catch (error) {
         return {
           environmentId: environment.id,
