@@ -54,6 +54,7 @@ import {
   connectionStatusText,
   environmentMcpUrl,
   isSshNetworkAddress,
+  redactSshAddresses,
   sshTargetLabel,
 } from "@t3tools/client-runtime/connection";
 import {
@@ -93,7 +94,8 @@ import {
   formatDesktopSshTarget,
 } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
-import { redactedPlaceholder } from "./RedactedSensitiveText";
+import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { SshSensitiveText } from "./SshSensitiveText";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 import { Input } from "../ui/input";
@@ -274,17 +276,6 @@ function AccessScopeSummary({
   );
 }
 
-function HiddenSshAddress({ address }: { readonly address: string }) {
-  return (
-    <>
-      <span className="select-none blur-xs" aria-hidden>
-        {redactedPlaceholder(address)}
-      </span>
-      <span className="sr-only">Hidden address</span>
-    </>
-  );
-}
-
 function parsePairingUrlFields(
   input: string,
 ): { readonly host: string; readonly pairingCode: string } | null {
@@ -336,7 +327,15 @@ function parseRemotePairingFields(input: { readonly host: string; readonly pairi
 
 function formatDesktopSshConnectionError(error: unknown): string {
   const fallback = "Failed to connect SSH host.";
-  const rawMessage = error instanceof Error ? error.message : fallback;
+  const rawMessage =
+    error &&
+    typeof error === "object" &&
+    "rawDetail" in error &&
+    typeof error.rawDetail === "string"
+      ? error.rawDetail
+      : error instanceof Error
+        ? error.message
+        : fallback;
   const withoutIpcPrefix = rawMessage.replace(
     /^Error invoking remote method 'desktop:ensure-ssh-environment':\s*/u,
     "",
@@ -1550,29 +1549,41 @@ function SavedBackendListRow({
       dimmed={!enabled}
       subtitle={
         <span className="flex min-w-0 items-center gap-1">
-          <Tooltip>
-            {/* The status can change while the tooltip is open, and base-ui only
+          {environment.connection.rawError ? (
+            <RedactedSensitiveText
+              key={environment.connection.rawError}
+              value={environment.connection.rawError}
+              redactedValue={subtitleText}
+              ariaLabel="Toggle SSH connection error visibility"
+              revealTooltip="Click to reveal full error"
+              hideTooltip="Click to hide full error"
+              className="whitespace-pre-wrap break-words text-left font-sans text-xs"
+            />
+          ) : (
+            <Tooltip>
+              {/* The status can change while the tooltip is open, and base-ui only
                 re-measures the popup when the trigger's payload changes. */}
-            <TooltipTrigger
-              payload={statusTooltip}
-              render={
-                <span
-                  className={cn(
-                    "min-w-0 truncate",
-                    enabled &&
-                      status.tone === "error" &&
-                      !resumingServerUpdate &&
-                      "text-destructive",
-                  )}
-                />
-              }
-            >
-              {subtitleText}
-            </TooltipTrigger>
-            <TooltipPopup side="top" className="whitespace-pre-wrap">
-              {statusTooltip}
-            </TooltipPopup>
-          </Tooltip>
+              <TooltipTrigger
+                payload={statusTooltip}
+                render={
+                  <span
+                    className={cn(
+                      "min-w-0 truncate",
+                      enabled &&
+                        status.tone === "error" &&
+                        !resumingServerUpdate &&
+                        "text-destructive",
+                    )}
+                  />
+                }
+              >
+                {subtitleText}
+              </TooltipTrigger>
+              <TooltipPopup side="top" className="whitespace-pre-wrap">
+                {statusTooltip}
+              </TooltipPopup>
+            </Tooltip>
+          )}
           <span aria-hidden className="shrink-0">
             ·
           </span>
@@ -2099,6 +2110,8 @@ export function ConnectionsSettings() {
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
+  const [savedBackendSshErrorTarget, setSavedBackendSshErrorTarget] =
+    useState<DesktopSshEnvironmentTarget>();
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
   const [sshHostSuggestionsOpen, setSshHostSuggestionsOpen] = useState(false);
@@ -2453,6 +2466,7 @@ export function ConnectionsSettings() {
 
   const connectSavedBackendSshTarget = useCallback(
     async (target: DesktopSshEnvironmentTarget) => {
+      setSavedBackendSshErrorTarget(target);
       setIsAddingSavedBackend(true);
       setSavedBackendError(null);
       const result = await connectSshEnvironment({
@@ -2597,6 +2611,7 @@ export function ConnectionsSettings() {
       setIsAddingSavedBackend(true);
       setSavedBackendError(null);
       setSavedBackendSshHost(target.alias);
+      setSavedBackendSshErrorTarget(target);
       let resolved: DesktopSshEnvironmentTarget;
       try {
         resolved = await desktopBridge.resolveSshHost(target.alias);
@@ -2969,15 +2984,16 @@ export function ConnectionsSettings() {
                           className="h-8 min-h-8 whitespace-nowrap"
                         >
                           <span className="min-w-0 truncate text-sm font-medium">
-                            {isSshNetworkAddress(target.alias) ? (
-                              <HiddenSshAddress address={target.alias} />
-                            ) : (
-                              target.alias
-                            )}
+                            {isSshNetworkAddress(target.alias)
+                              ? redactSshAddresses(target.alias, {
+                                  ...target,
+                                  alias: target.hostname,
+                                })
+                              : target.alias}
                           </span>
                           {address !== target.alias ? (
                             <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
-                              <HiddenSshAddress address={address} />
+                              {redactSshAddresses(address, { ...target, alias: target.hostname })}
                             </span>
                           ) : (
                             <span className="flex-1" />
@@ -3025,7 +3041,13 @@ export function ConnectionsSettings() {
         </div>
         {savedBackendError || discoveredSshHostsError ? (
           <Alert variant="error">
-            <AlertDescription>{savedBackendError ?? discoveredSshHostsError}</AlertDescription>
+            <AlertDescription>
+              <SshSensitiveText
+                value={savedBackendError ?? discoveredSshHostsError ?? ""}
+                destination={savedBackendSshHost}
+                target={savedBackendSshErrorTarget}
+              />
+            </AlertDescription>
           </Alert>
         ) : null}
         <Button

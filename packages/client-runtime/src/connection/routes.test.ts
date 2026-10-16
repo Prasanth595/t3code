@@ -386,7 +386,7 @@ describe("SSH addresses", () => {
 
   it("hides the target's address in error text", () => {
     expect(redactSshAddresses("deploy@203.0.113.42: Permission denied (publickey).", devbox)).toBe(
-      "devbox: Permission denied (publickey).",
+      "•••@devbox: Permission denied (publickey).",
     );
     expect(
       redactSshAddresses("ssh: connect to host 203.0.113.42 port 2222: timed out", devbox),
@@ -403,6 +403,23 @@ describe("SSH addresses", () => {
     ).toBe("Could not resolve hostname •••: Name not known");
   });
 
+  it.each(["buildbox", "build.example.com", "box.tail1234.ts.net"])(
+    "redacts only sensitive parts of the configured hostname %s",
+    (hostname) => {
+      const target = { ...devbox, hostname };
+      const visibleHost = hostname === "buildbox" ? hostname : "devbox";
+      expect(redactSshAddresses(`connect to host ${hostname}`, target)).toBe(
+        `connect to host ${visibleHost}`,
+      );
+      expect(redactSshAddresses(`deploy@${hostname}: Permission denied`, target)).toBe(
+        `•••@${visibleHost}: Permission denied`,
+      );
+      expect(redactSshAddresses("deploy@devbox: Permission denied", target)).toBe(
+        "•••@devbox: Permission denied",
+      );
+    },
+  );
+
   it("masks IP literals the target does not name", () => {
     // ssh resolves an alias to an address the client never saw.
     expect(
@@ -413,22 +430,35 @@ describe("SSH addresses", () => {
     ).toBe("connect to host ••• port 22 via •••: refused");
   });
 
-  it.each(["2001:db8::", "[2001:db8::]", "2001::", "::1", "2001:db8::5", "fdab::cafe", "a::b"])(
-    "masks the resolved IPv6 address %s",
-    (address) => {
-      expect(
-        redactSshAddresses(`connect to host ${address} port 22: refused`, {
-          ...devbox,
-          hostname: "devbox",
-        }),
-      ).toBe("connect to host ••• port 22: refused");
-    },
-  );
+  it.each([
+    "2001:db8::",
+    "[2001:db8::]",
+    "2001::",
+    "::1",
+    "[2001:db8::1]",
+    "2001:db8::5",
+    "fdab::cafe",
+    "a::b",
+    "2001:db8:0:1:2:3:4:5",
+    "[2001:db8:0:1:2:3:4:5]",
+  ])("masks the resolved IPv6 address %s", (address) => {
+    expect(
+      redactSshAddresses(`connect to host ${address} port 22: refused`, {
+        ...devbox,
+        hostname: "devbox",
+      }),
+    ).toBe("connect to host ••• port 22: refused");
+  });
 
-  it.each(["::", "std::", "std::vector", "std::bad_alloc", "crate::dead::beef"])(
-    "preserves unrelated error text containing %s",
-    (text) => {
-      expect(redactSshAddresses(`SSH failed: ${text}`, devbox)).toBe(`SSH failed: ${text}`);
-    },
-  );
+  it.each([
+    "12:34:56",
+    "dead:beef:cafe",
+    "::",
+    "std::",
+    "std::vector",
+    "std::bad_alloc",
+    "crate::dead::beef",
+  ])("preserves unrelated error text containing %s", (text) => {
+    expect(redactSshAddresses(`SSH failed: ${text}`, devbox)).toBe(`SSH failed: ${text}`);
+  });
 });

@@ -231,7 +231,7 @@ export function DeviceHostEditor({
                         <details className="mt-1.5 text-muted-foreground">
                           <summary className="cursor-pointer">Show error</summary>
                           <p className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words">
-                            {result.error}
+                            {result.rawError}
                           </p>
                         </details>
                       ) : null}

@@ -1,4 +1,3 @@
-import { isSshNetworkAddress, redactSshAddresses } from "@t3tools/client-runtime/connection";
 import type { DesktopSshPasswordPromptRequest } from "@t3tools/contracts";
 import { useEffect, useId, useRef, useState } from "react";
 
@@ -13,7 +12,7 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
-import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
+import { SshSensitiveText } from "../settings/SshSensitiveText";
 
 function describeSshTarget(request: DesktopSshPasswordPromptRequest): string {
   return request.username ? `${request.username}@${request.destination}` : request.destination;
@@ -161,19 +160,9 @@ function ActiveSshPasswordPrompt({
           <DialogTitle>SSH Password Required</DialogTitle>
           <DialogDescription>
             T3 needs your SSH password to connect to{" "}
-            {isSshNetworkAddress(request.destination) ? (
-              <RedactedSensitiveText
-                value={describeSshTarget(request)}
-                ariaLabel="Toggle SSH address visibility"
-                revealTooltip="Click to reveal address"
-                hideTooltip="Click to hide address"
-                className="text-sm"
-              />
-            ) : (
-              <code>{request.destination}</code>
-            )}
-            . The password is passed to the local SSH process for this connection attempt and is not
-            saved by T3 Code.
+            <SshSensitiveText value={describeSshTarget(request)} className="text-sm" />. The
+            password is passed to the local SSH process for this connection attempt and is not saved
+            by T3 Code.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel scrollFade={false}>
@@ -188,12 +177,11 @@ function ActiveSshPasswordPrompt({
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm font-medium text-foreground">
-                  {redactSshAddresses(request.prompt, {
-                    alias: request.destination,
-                    hostname: request.destination,
-                    username: request.username,
-                    port: null,
-                  })}
+                  <SshSensitiveText
+                    value={request.prompt}
+                    destination={describeSshTarget(request)}
+                    className="font-sans text-sm text-left"
+                  />
                 </p>
                 {remainingLabel ? (
                   <span

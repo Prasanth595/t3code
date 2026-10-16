@@ -38,7 +38,8 @@ import {
 } from "./deviceHostsSettings.logic";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { DeviceHostEditor } from "./DeviceHostEditor";
-import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { SshSensitiveText } from "./SshSensitiveText";
+import { redactSshText } from "./sshTarget";
 import { useHostConnectionChecks } from "./useHostConnectionChecks";
 import { deviceHostConnectionKey } from "./deviceHostConnectionChecks";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
@@ -119,7 +120,7 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
       const results = await testConnection(host);
       if (!results) return;
       const failed = targets.filter((target) => results[target.environmentId]?.status === "failed");
-      const label = isSshNetworkAddress(host.label) ? "Device host" : host.label;
+      const label = redactSshText(host.label);
       toastManager.add({
         type: failed.length ? "error" : "success",
         title: failed.length
@@ -186,11 +187,8 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
                       </>
                     }
                     summary={
-                      summarizeLabels(
-                        environment.hosts.map((host) =>
-                          isSshNetworkAddress(host.label) ? "Device host" : host.label,
-                        ),
-                      ) || "No device hosts"
+                      summarizeLabels(environment.hosts.map((host) => redactSshText(host.label))) ||
+                      "No device hosts"
                     }
                   >
                     <div className="px-3 sm:px-4 [&>div:first-child]:border-t-0">
@@ -318,6 +316,7 @@ function DeviceHostList({
             check,
             summary,
             error,
+            rawError: check?.status === "failed" ? check.rawError : error,
             versions: (
               <DeviceToolVersions
                 owner={label}
@@ -389,7 +388,10 @@ function DeviceHostList({
                   <div className="space-y-1">
                     {failed.map((result) => (
                       <p key={result.environmentId}>
-                        {result.name}: {result.error || "Connection failed"}
+                        {result.name}:{" "}
+                        {result.error
+                          ? redactSshText(result.rawError ?? result.error, result.host.target)
+                          : "Connection failed"}
                       </p>
                     ))}
                   </div>
@@ -420,17 +422,10 @@ function DeviceHostList({
           <div key={host.id} className="flex items-center gap-2 border-t border-border/50 py-2.5">
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 items-center gap-2">
-                {isSshNetworkAddress(host.label) ? (
-                  <RedactedSensitiveText
-                    value={host.label}
-                    ariaLabel="Toggle device host visibility"
-                    revealTooltip="Click to reveal host"
-                    hideTooltip="Click to hide host"
-                    className="truncate font-sans text-sm font-medium text-foreground"
-                  />
-                ) : (
-                  <p className="truncate text-sm font-medium">{host.label}</p>
-                )}
+                <SshSensitiveText
+                  value={host.label}
+                  className="truncate font-sans text-sm font-medium text-foreground"
+                />
                 {indicators.map((indicator) => (
                   <Tooltip key={indicator.key}>
                     <TooltipTrigger
@@ -455,17 +450,10 @@ function DeviceHostList({
                   </Tooltip>
                 ))}
               </div>
-              {isSshNetworkAddress(host.target) ? (
-                <RedactedSensitiveText
-                  value={host.target}
-                  ariaLabel="Toggle SSH target visibility"
-                  revealTooltip="Click to reveal target"
-                  hideTooltip="Click to hide target"
-                  className="block max-w-full truncate text-left font-sans text-xs"
-                />
-              ) : (
-                <p className="truncate text-xs text-muted-foreground">{host.target}</p>
-              )}
+              <SshSensitiveText
+                value={host.target}
+                className="block max-w-full truncate text-left font-sans text-xs"
+              />
               {compact ? (
                 <Collapsible>
                   <div className="min-w-0 text-xs [--inline-button-white-space:normal]">
@@ -491,7 +479,11 @@ function DeviceHostList({
                           ) : null}
                           {result.error ? (
                             <p role="status" className="text-xs text-destructive">
-                              {result.error}
+                              <SshSensitiveText
+                                value={result.rawError ?? result.error}
+                                destination={result.host.target}
+                                className="whitespace-pre-wrap text-left font-sans text-xs"
+                              />
                             </p>
                           ) : null}
                           {result.versions}
@@ -523,7 +515,9 @@ function DeviceHostList({
                 <div className="mt-1" role="status">
                   <details className="text-xs text-destructive">
                     <summary>Connection failed</summary>
-                    <p className="mt-1 whitespace-pre-wrap break-words">{error}</p>
+                    <p className="mt-1 whitespace-pre-wrap break-words">
+                      {first.rawError ?? error}
+                    </p>
                   </details>
                 </div>
               ) : null}

@@ -37,7 +37,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { formatDesktopSshTarget } from "./EnvironmentRow";
-import { RedactedSensitiveText } from "./RedactedSensitiveText";
+import { SshSensitiveText } from "./SshSensitiveText";
 
 export function EnvironmentRoutesList({
   environment,
@@ -183,13 +183,7 @@ function SortableRouteRow({
           </p>
         ) : null}
         {sshAddress !== null ? (
-          <RedactedSensitiveText
-            value={sshAddress}
-            ariaLabel="Toggle SSH address visibility"
-            revealTooltip="Click to reveal address"
-            hideTooltip="Click to hide address"
-            className="block max-w-full truncate text-left"
-          />
+          <SshSensitiveText value={sshAddress} className="block max-w-full truncate text-left" />
         ) : null}
       </div>
       <button

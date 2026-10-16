@@ -131,7 +131,8 @@ describe("desktop SSH pairing", () => {
       ).pipe(Effect.flip);
 
       expect(error).toMatchObject({
-        detail: "Could not prepare the SSH environment: devbox: Permission denied (publickey).",
+        detail: "Could not prepare the SSH environment: •••@devbox: Permission denied (publickey).",
+        rawDetail: "developer@devbox.example.test: Permission denied (publickey).",
       });
     }),
   );

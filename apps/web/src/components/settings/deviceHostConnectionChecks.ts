@@ -21,7 +21,7 @@ export type DeviceHostCheck =
       platforms: ReadonlyArray<DevicePlatformAvailability>;
       tools?: DeviceHostSummary["tools"];
     }
-  | { status: "failed"; error: string };
+  | { status: "failed"; error: string; rawError: string };
 
 const decodeDeviceHostDraft = Schema.decodeUnknownOption(SshDeviceHostConfig);
 
@@ -76,6 +76,7 @@ export async function checkDeviceHostConnections(
       } catch (error) {
         report(target.environmentId, {
           status: "failed",
+          rawError: error instanceof Error ? error.message : String(error),
           error: redactSshAddresses(
             error instanceof Error ? error.message : String(error),
             sshTarget,

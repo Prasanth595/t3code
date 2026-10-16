@@ -1,3 +1,4 @@
+import { redactSshAddresses } from "@t3tools/client-runtime/connection";
 import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
 
 export function parseManualDesktopSshTarget(input: {
@@ -56,4 +57,14 @@ export function parseManualDesktopSshTarget(input: {
     username,
     port,
   };
+}
+
+export function redactSshText(value: string, destination = value): string {
+  let target: DesktopSshEnvironmentTarget;
+  try {
+    target = parseManualDesktopSshTarget({ host: destination, username: "", port: "" });
+  } catch {
+    target = { alias: destination, hostname: destination, username: null, port: null };
+  }
+  return redactSshAddresses(value, target);
 }

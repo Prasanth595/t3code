@@ -173,11 +173,13 @@ function sshPreparationError(target: DesktopSshEnvironmentTarget) {
       return new ConnectionBlockedError({
         reason: "authentication",
         detail: message,
+        rawDetail: original,
       });
     }
     return new ConnectionTransientError({
       reason: "remote-unavailable",
       detail: `Could not prepare the SSH environment: ${message}`,
+      rawDetail: original,
     });
   };
 }

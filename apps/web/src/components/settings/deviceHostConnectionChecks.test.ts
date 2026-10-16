@@ -49,7 +49,7 @@ describe("device host connection checks", () => {
     [
       "deploy@build.example.com",
       "deploy@build.example.com: Permission denied",
-      "•••: Permission denied",
+      "•••@•••: Permission denied",
     ],
     ["devbox", "Could not resolve hostname devbox", "Could not resolve hostname devbox"],
     [
@@ -57,6 +57,7 @@ describe("device host connection checks", () => {
       "connect to host 2001:db8:: port 22: refused",
       "connect to host ••• port 22: refused",
     ],
+    ["deploy@devbox", "deploy@devbox: Permission denied", "•••@devbox: Permission denied"],
   ])("redacts failed probes for %s before reporting them", async (target, message, expected) => {
     const results = new Map<string, DeviceHostCheck>();
     await checkDeviceHostConnections(
@@ -67,7 +68,7 @@ describe("device host connection checks", () => {
       },
       (environmentId, result) => results.set(environmentId, result),
     );
-    expect(results.get(ids[0]!)).toEqual({ status: "failed", error: expected });
+    expect(results.get(ids[0]!)).toEqual({ status: "failed", error: expected, rawError: message });
   });
 
   it("starts all connected environments and retains success, local, failure, and offline results", async () => {
@@ -95,8 +96,8 @@ describe("device host connection checks", () => {
     expect([...results.values()]).toEqual([
       { status: "connected", platforms: summary.platforms },
       { status: "local" },
-      { status: "failed", error: "SSH key rejected" },
-      { status: "failed", error: "Environment disconnected" },
+      { status: "failed", error: "SSH key rejected", rawError: "SSH key rejected" },
+      { status: "failed", error: "Environment disconnected", rawError: "Environment disconnected" },
     ]);
   });
 

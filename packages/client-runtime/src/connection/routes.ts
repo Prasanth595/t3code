@@ -374,17 +374,26 @@ export function sshTargetLabel(target: DesktopSshEnvironmentTarget): string {
 
 const IPV4_LITERAL = /\b(?:\d{1,3}\.){3}\d{1,3}\b/gu;
 const IPV6_LITERAL =
-  /(?<![\w:])\[?(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6}::|(?:[0-9a-f]{1,4})?(?::[0-9a-f]{0,4}){1,6}:[0-9a-f]{1,4})\]?(?!\w|:[0-9a-f:])/giu;
+  /(?<![\w:])\[?(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6}::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,5})?|::[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6}|(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4})\]?(?!\w|:[0-9a-f:])/giu;
 
 export function redactSshAddresses(text: string, target: DesktopSshEnvironmentTarget): string {
   const replacement = isSshNetworkAddress(target.alias) ? "•••" : target.alias;
   const secrets = [
-    target.username ? `${target.username}@${target.hostname}` : null,
     isSshNetworkAddress(target.hostname) ? target.hostname : null,
     isSshNetworkAddress(target.alias) ? target.alias : null,
   ].filter((secret): secret is string => secret !== null);
+  const withoutUsername = target.username ? text.split(`${target.username}@`).join("•••@") : text;
   return secrets
-    .reduce((redacted, secret) => redacted.split(secret).join(replacement), text)
+    .reduce((redacted, secret) => redacted.split(secret).join(replacement), withoutUsername)
+    .replace(
+      /(?:[\w.-]+|•••)@(\[[^\]\s]+\]|[\w.-]+)/gu,
+      (_authority, hostname: string) =>
+        `•••@${isSshNetworkAddress(hostname) ? replacement : hostname}`,
+    )
+    .replace(
+      /\b(host(?:name)?|connect(?:ion)? to|host key for|permanently added|(?:closed|reset) by)(\s+["']?\[?)([\w-]+(?:\.[\w-]+)*\.[a-z][\w-]*)/giu,
+      (_match, context: string, separator: string) => `${context}${separator}${replacement}`,
+    )
     .replace(IPV4_LITERAL, "•••")
     .replace(IPV6_LITERAL, "•••");
 }
