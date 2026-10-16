@@ -13,7 +13,7 @@ export type { SegmentedControlProps } from "./SegmentedControl.types";
 export function SegmentedControl<Value extends string | number>(
   props: SegmentedControlProps<Value>,
 ) {
-  const { colorScheme } = useControlTheme();
+  const { colorScheme, colors } = useControlTheme();
   const [layout, setLayout] = useState({ width: 0, height: 0 });
   const { width, height } = layout;
   const reduceMotion = useReducedMotion();
@@ -37,7 +37,14 @@ export function SegmentedControl<Value extends string | number>(
           boxShadow: dark ? "0px 1px 2px #00000062" : "0px 1px 2px #00000014",
         }}
       >
-        <CapsuleSurface width={width} height={height} dark={dark} />
+        <CapsuleSurface
+          width={width}
+          height={height}
+          dark={dark}
+          fillTop={colors["--color-screen"]}
+          fillBottom={colors["--color-card"]}
+          edgeColor={colors["--color-foreground"]}
+        />
         {selectedIndex >= 0 && width > 0 ? (
           <Animated.View
             pointerEvents="none"
@@ -49,7 +56,15 @@ export function SegmentedControl<Value extends string | number>(
               selectionStyle,
             ]}
           >
-            <CapsuleSurface width={segmentWidth} height={height - 6} dark={dark} selected />
+            <CapsuleSurface
+              width={segmentWidth}
+              height={height - 6}
+              dark={dark}
+              fillTop={colors["--color-secondary"]}
+              fillBottom={colors["--color-secondary"]}
+              edgeColor={colors["--color-secondary-foreground"]}
+              selected
+            />
           </Animated.View>
         ) : null}
         {props.options.map((option) => {
@@ -68,7 +83,8 @@ export function SegmentedControl<Value extends string | number>(
                 textRole="footnote"
                 className={selected ? "font-t3-bold" : "font-t3-medium"}
                 style={{
-                  color: selected ? (dark ? "#f5f5f5" : "#171717") : dark ? "#a3a3a3" : "#666666",
+                  color:
+                    colors[selected ? "--color-secondary-foreground" : "--color-foreground-muted"],
                 }}
               >
                 {option.label}
@@ -86,26 +102,27 @@ function CapsuleSurface({
   width,
   height,
   dark,
+  fillTop,
+  fillBottom,
+  edgeColor,
   selected = false,
 }: {
   width: number;
   height: number;
   dark: boolean;
+  fillTop: string;
+  fillBottom: string;
+  edgeColor: string;
   selected?: boolean;
 }) {
   if (width <= 0 || height <= 0) return null;
-  const fill = selected
-    ? [dark ? "#1e1e1e" : "#fffffe", dark ? "#1e1e1e" : "#fffffe"]
-    : dark
-      ? ["#131313", "#161616"]
-      : ["#f2f2f2", "#f6f6f6"];
-  const edge: [string, string] = selected
+  const edgeOpacity = selected
     ? dark
-      ? ["#ffffff38", "#ffffff05"]
-      : ["#00000022", "#00000003"]
+      ? [0.22, 0.02]
+      : [0.13, 0.01]
     : dark
-      ? ["#00000099", "#ffffff29"]
-      : ["#00000045", "#00000019"];
+      ? [0.02, 0.16]
+      : [0.27, 0.1];
   return (
     <Svg
       pointerEvents="none"
@@ -115,20 +132,12 @@ function CapsuleSurface({
     >
       <Defs>
         <LinearGradient id="fill" x1="0" y1="0" x2="0%" y2="100%">
-          <Stop offset="0" stopColor={fill[0]} />
-          <Stop offset="1" stopColor={fill[1]} />
+          <Stop offset="0" stopColor={fillTop} />
+          <Stop offset="1" stopColor={fillBottom} />
         </LinearGradient>
         <LinearGradient id="edge" x1="0" y1="0" x2="0%" y2="100%">
-          <Stop
-            offset="0"
-            stopColor={edge[0].slice(0, 7)}
-            stopOpacity={parseInt(edge[0].slice(7), 16) / 255}
-          />
-          <Stop
-            offset="1"
-            stopColor={edge[1].slice(0, 7)}
-            stopOpacity={parseInt(edge[1].slice(7), 16) / 255}
-          />
+          <Stop offset="0" stopColor={edgeColor} stopOpacity={edgeOpacity[0]} />
+          <Stop offset="1" stopColor={edgeColor} stopOpacity={edgeOpacity[1]} />
         </LinearGradient>
       </Defs>
       <Rect
