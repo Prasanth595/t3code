@@ -1214,6 +1214,20 @@ export const makeGitHub = (options: GitHubOptions) => {
     });
 
   /**
+   * When the label for `state` was last added to the issue, or null when its history has no such
+   * event. The newest `LabeledEvent` of that label, as `unassignedClaims` picks it: the label
+   * that began the claim the issue is in. `readHistory` already checks every timestamp is
+   * `YYYY-MM-DDTHH:MM:SSZ`. One GraphQL call; a history that cannot be read is an error.
+   */
+  const labeledAt = (number: number, state: State): GitHubEffect<string | null> =>
+    Effect.map(readHistory(number), (history) => {
+      const event = history.timelineItems.nodes
+        .toReversed()
+        .find((e) => e.__typename === "LabeledEvent" && e.label.name === stateLabel(state));
+      return event?.createdAt ?? null;
+    });
+
+  /**
    * The newest comment the factory posted on the issue, or null when it has posted none. A
    * comment counts when it ends with the factory marker (the status comment has its own marker
    * and does not count). The text is returned without the marker, with CRLF as LF and without
@@ -1242,6 +1256,7 @@ export const makeGitHub = (options: GitHubOptions) => {
     login,
     claim,
     unassignedClaims,
+    labeledAt,
     newestFactoryComment,
     setState,
     assign,
