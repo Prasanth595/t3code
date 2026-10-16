@@ -90,6 +90,7 @@ services:
       SUBPOLAR_REGISTRATION_FILE: /var/lib/subpolar/environments.json
       SUBPOLAR_GATEWAY_GIT_ROOT: ${SUBPOLAR_GATEWAY_GIT_ROOT:-}
       SUBPOLAR_DOCKER_HOST_GIT_ROOT: ${SUBPOLAR_DOCKER_HOST_GIT_ROOT:-}
+      SUBPOLAR_DEFAULT_DEVCONTAINER_CONFIG: ${SUBPOLAR_DEFAULT_DEVCONTAINER_CONFIG:-}
     volumes:
       - codewise-workspaces:/workspaces
       - ${SUBPOLAR_DOCKER_HOST_STORAGE_ROOT:-/var/lib/docker/volumes/codewise_codewise-workspaces/_data}:${SUBPOLAR_DOCKER_HOST_STORAGE_ROOT:-/var/lib/docker/volumes/codewise_codewise-workspaces/_data}:ro
