@@ -450,7 +450,7 @@ describe("listRuns", () => {
         state: null,
         prUrl: null,
         finished: true,
-        totalMs: 0,
+        totalMs: 2000,
         unreadable: false,
       },
       {
