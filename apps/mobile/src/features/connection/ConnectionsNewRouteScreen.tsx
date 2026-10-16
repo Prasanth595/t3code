@@ -23,21 +23,14 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { AppText as Text, AppTextInput, type AppTextInputProps } from "../../components/ui/AppText";
 import { FrostedCutout } from "../../components/ui/FrostedCutout";
 import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
+import { useAddEnvironmentCloudflareAccess } from "./CloudflareAccessFields";
 import {
   setPendingConnectionError,
   useRemoteConnections,
 } from "../../state/use-remote-environment-registry";
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
-import { isCloudflareAccessChallenged } from "../../connection/requestHeaders";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
-import {
-  AddEnvironmentCloudflareAccess,
-  type CloudflareAccessForm,
-  EMPTY_CLOUDFLARE_ACCESS_FORM,
-  pairingTargetOrigin,
-  useStageCloudflareAccessToken,
-} from "./CloudflareAccessFields";
 import { splitEnvironmentSections } from "./environmentSections";
 
 type ConnectionsNewRouteParams = {
@@ -76,14 +69,11 @@ export function ConnectionsNewRouteScreen({
   // A good scan parks the camera so it can't re-read the code over later edits.
   const [scanComplete, setScanComplete] = useState(false);
   const attemptedAutoConnectRef = useRef<string | null>(null);
-  const [accessForm, setAccessForm] = useState<CloudflareAccessForm>(EMPTY_CLOUDFLARE_ACCESS_FORM);
-  const stageAccessToken = useStageCloudflareAccessToken();
-  // A Cloudflare Access login page during pairing explains the failure and opens the token fields.
-  const accessOrigin = pairingTargetOrigin(buildPairingUrl(hostInput, codeInput));
-  const accessChallenged =
-    pairingConnectionError !== null &&
-    accessOrigin !== null &&
-    isCloudflareAccessChallenged(accessOrigin);
+  const access = useAddEnvironmentCloudflareAccess({
+    pairingUrl: buildPairingUrl(hostInput, codeInput),
+    failure: pairingConnectionError,
+    disabled: isSubmitting,
+  });
 
   const headerIconColor = useUniwindTheme()["--color-icon"];
 
@@ -171,7 +161,6 @@ export function ConnectionsNewRouteScreen({
   );
 
   const connectAndClose = useCallback(
-    /** Pairs and closes the sheet. Returns whether pairing succeeded. */
     async (pairingUrl: string, replaceWithHome: boolean): Promise<boolean> => {
       setIsSubmitting(true);
       onChangeConnectionPairingUrl(pairingUrl);
@@ -200,15 +189,13 @@ export function ConnectionsNewRouteScreen({
   const handleSubmit = useCallback(async () => {
     const pairingUrl = buildPairingUrl(hostInput, codeInput);
     setIsSubmitting(true);
-    const staged = await stageAccessToken(pairingUrl, accessForm);
+    const staged = await access.stage();
     if ("error" in staged) {
       setIsSubmitting(false);
-      setPendingConnectionError(staged.error);
-      return;
+      return setPendingConnectionError(staged.error);
     }
-    // A token saved for a pairing that fails would stay unreachable, so put the headers back.
     if (!(await connectAndClose(pairingUrl, false))) await staged.undo();
-  }, [accessForm, codeInput, connectAndClose, hostInput, stageAccessToken]);
+  }, [access, codeInput, connectAndClose, hostInput]);
 
   useEffect(() => {
     if (!shouldAutoConnect || attemptedAutoConnectRef.current === routePairingUrl) {
@@ -292,22 +279,13 @@ export function ConnectionsNewRouteScreen({
                 pairingConnectionError ? "text-danger-foreground" : "text-foreground-muted",
               )}
             >
-              {accessChallenged
-                ? "This server is behind Cloudflare Access. Enter its service token below."
-                : (pairingConnectionError ??
-                  "For machines on your local network or tailnet. The machine keeps its own provider credentials.")}
+              {access.message ??
+                pairingConnectionError ??
+                "For machines on your local network or tailnet. The machine keeps its own provider credentials."}
             </Text>
           </View>
 
-          <AddEnvironmentCloudflareAccess
-            form={accessForm}
-            onChange={(form) => {
-              setAccessForm(form);
-              setPendingConnectionError(null);
-            }}
-            challenged={accessChallenged}
-            disabled={isSubmitting}
-          />
+          {access.section}
 
           {hasCloudPublicConfig() ? <T3ConnectSection /> : null}
         </View>

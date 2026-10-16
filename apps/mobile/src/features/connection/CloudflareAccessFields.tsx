@@ -12,24 +12,30 @@ import {
   withCloudflareAccessServiceToken,
 } from "@t3tools/client-runtime/connection";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type ReactElement, useCallback, useEffect, useMemo, useState } from "react";
 import { Pressable, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
-import { readRequestHeaders, saveRequestHeaders } from "../../connection/onboarding";
+import {
+  moveRequestHeaders,
+  readRequestHeaders,
+  saveRequestHeaders,
+} from "../../connection/requestHeaderCommands";
+import { isCloudflareAccessChallenged } from "../../connection/requestHeaders";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 import { SettingsActionRow } from "../settings/components/SettingsActionRow";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { ConnectionFormField } from "./ConnectionFormField";
 import { buildPairingUrl, parsePairingUrl } from "./pairing";
 
-export interface CloudflareAccessForm {
+interface CloudflareAccessForm {
   readonly clientId: string;
   readonly clientSecret: string;
 }
 
-export const EMPTY_CLOUDFLARE_ACCESS_FORM: CloudflareAccessForm = {
+const EMPTY_CLOUDFLARE_ACCESS_FORM: CloudflareAccessForm = {
   clientId: "",
   clientSecret: "",
 };
@@ -39,7 +45,7 @@ export const EMPTY_CLOUDFLARE_ACCESS_FORM: CloudflareAccessForm = {
  * link (app.t3.codes) names the server in its query, so the token never lands
  * on the hosting site.
  */
-export function pairingTargetOrigin(pairingUrl: string): string | null {
+function pairingTargetOrigin(pairingUrl: string): string | null {
   const { host } = parsePairingUrl(pairingUrl);
   if (host === "") return null;
   // buildPairingUrl adds the scheme that pairing uses for a bare host; the code is a placeholder.
@@ -98,7 +104,7 @@ function cloudflareAccessTokenFromForm(
  * Add environment: saves the form's token for the pairing target before pairing.
  * `undo` puts back the headers of that origin as they were, for a pairing that fails.
  */
-export function useStageCloudflareAccessToken() {
+function useStageCloudflareAccessToken() {
   const store = useCloudflareAccessStore();
   return useCallback(
     async (
@@ -158,7 +164,7 @@ function CloudflareAccessFields(props: {
 }
 
 /** Add environment: the collapsible token section. A Cloudflare Access login keeps it open. */
-export function AddEnvironmentCloudflareAccess(props: {
+function AddEnvironmentCloudflareAccess(props: {
   readonly form: CloudflareAccessForm;
   readonly onChange: (form: CloudflareAccessForm) => void;
   readonly challenged: boolean;
@@ -225,7 +231,7 @@ function useSavedCloudflareAccess(
  * own origin keeps whatever headers it already has. Revisit if routes on
  * several Access-protected origins become common.
  */
-export function CloudflareAccessSection(props: {
+function CloudflareAccessOriginSection(props: {
   readonly origin: string;
   readonly onSaved: () => void;
 }) {
@@ -303,5 +309,82 @@ export function CloudflareAccessSection(props: {
         />
       ) : null}
     </SettingsSection>
+  );
+}
+
+/** Environment settings: the token section, or nothing for a relay environment. */
+export function CloudflareAccessSection(props: {
+  readonly environment: { readonly isRelayManaged: boolean; readonly displayUrl: string };
+  readonly onSaved: () => void;
+}) {
+  const origin = props.environment.isRelayManaged
+    ? null
+    : requestHeaderOrigin(props.environment.displayUrl);
+  return origin === null ? null : (
+    <CloudflareAccessOriginSection key={origin} origin={origin} onSaved={props.onSaved} />
+  );
+}
+
+/**
+ * Add environment: the token fields for the pairing target. `stage` saves the
+ * token before pairing; its `undo` restores the headers after a failed
+ * pairing. `message` explains a Cloudflare Access login seen while pairing.
+ */
+export function useAddEnvironmentCloudflareAccess(input: {
+  readonly pairingUrl: string;
+  readonly failure: string | null;
+  readonly disabled: boolean;
+}): {
+  readonly message: string | null;
+  readonly section: ReactElement;
+  readonly stage: () => Promise<
+    { readonly undo: () => Promise<void> } | { readonly error: string }
+  >;
+} {
+  const [form, setForm] = useState<CloudflareAccessForm>(EMPTY_CLOUDFLARE_ACCESS_FORM);
+  const stageToken = useStageCloudflareAccessToken();
+  const origin = pairingTargetOrigin(input.pairingUrl);
+  const challenged =
+    input.failure !== null && origin !== null && isCloudflareAccessChallenged(origin);
+  return {
+    message: challenged
+      ? "This server is behind Cloudflare Access. Enter its service token below."
+      : null,
+    section: (
+      <AddEnvironmentCloudflareAccess
+        form={form}
+        onChange={(next) => {
+          setForm(next);
+          setPendingConnectionError(null);
+        }}
+        challenged={challenged}
+        disabled={input.disabled}
+      />
+    ),
+    stage: () => stageToken(input.pairingUrl, form),
+  };
+}
+
+/**
+ * Edit environment: request headers are stored per origin, so after an address
+ * change they move to the new origin. Call it after the change succeeded.
+ */
+export function useRequestHeadersFollowAddress(
+  environments: ReadonlyArray<{ readonly environmentId: string; readonly displayUrl: string }>,
+) {
+  const moveHeaders = useAtomCommand(moveRequestHeaders, "request headers move");
+  return useCallback(
+    async (environmentId: string, displayUrl: string) => {
+      const previous = environments.find((entry) => entry.environmentId === environmentId);
+      const from = previous ? requestHeaderOrigin(previous.displayUrl) : null;
+      const to = requestHeaderOrigin(displayUrl);
+      if (from === null || to === null || from === to) return;
+      const keepFrom = environments.some(
+        (entry) =>
+          entry.environmentId !== environmentId && requestHeaderOrigin(entry.displayUrl) === from,
+      );
+      await moveHeaders({ from, to, keepFrom });
+    },
+    [environments, moveHeaders],
   );
 }

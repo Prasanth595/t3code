@@ -3,7 +3,6 @@ import {
   registerConnectionInCatalog,
   removeConnectionFromCatalog,
   setConnectionEnabledInCatalog,
-  setRequestHeadersInCatalog,
   setRoutesInCatalog,
   removeCatalogValue,
   replaceCatalogValue,
@@ -24,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as CatalogStore from "./catalog-store";
+import { makeRequestHeaderStore } from "./requestHeaders";
 
 function targetPersistenceError(
   operation:
@@ -157,20 +157,7 @@ export const layer = Layer.effectContext(
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
       Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),
-      Context.add(
-        RequestHeaderStore,
-        RequestHeaderStore.of({
-          get: (origin) =>
-            catalog.read.pipe(
-              Effect.map(
-                (document) =>
-                  document.requestHeaders.find((value) => value.origin === origin)?.headers ?? [],
-              ),
-            ),
-          set: (origin, headers) =>
-            catalog.update((document) => setRequestHeadersInCatalog(document, origin, headers)),
-        }),
-      ),
+      Context.add(RequestHeaderStore, makeRequestHeaderStore(catalog)),
     );
   }),
 );

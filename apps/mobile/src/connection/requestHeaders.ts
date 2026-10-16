@@ -11,11 +11,18 @@
  * third party.
  */
 import {
+  type ConnectionTransientError,
   isCloudflareAccessChallenge,
   type OriginRequestHeaders,
+  RequestHeaderStore,
   requestHeaderOrigin,
   requestHeadersForUrl,
 } from "@t3tools/client-runtime/connection";
+import {
+  type ConnectionCatalogDocument,
+  setRequestHeadersInCatalog,
+} from "@t3tools/client-runtime/platform";
+import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Socket from "effect/socket/Socket";
 
@@ -23,6 +30,26 @@ let rules: ReadonlyArray<OriginRequestHeaders> = [];
 
 export function setRequestHeaderRules(next: ReadonlyArray<OriginRequestHeaders>): void {
   rules = next;
+}
+
+/** The store of the headers, kept in the connection catalog of `storage.ts`. */
+export function makeRequestHeaderStore(catalog: {
+  readonly read: Effect.Effect<ConnectionCatalogDocument, ConnectionTransientError>;
+  readonly update: (
+    transform: (document: ConnectionCatalogDocument) => ConnectionCatalogDocument,
+  ) => Effect.Effect<void, ConnectionTransientError>;
+}) {
+  return RequestHeaderStore.of({
+    get: (origin) =>
+      catalog.read.pipe(
+        Effect.map(
+          (document) =>
+            document.requestHeaders.find((value) => value.origin === origin)?.headers ?? [],
+        ),
+      ),
+    set: (origin, headers) =>
+      catalog.update((document) => setRequestHeadersInCatalog(document, origin, headers)),
+  });
 }
 
 function requestUrl(input: RequestInfo | URL): string {
@@ -39,7 +66,10 @@ function isCloudflareAccessResponse(response: Response): boolean {
   } catch {
     // An empty or unparsable final URL is not a Cloudflare login.
   }
-  return isCloudflareAccessChallenge(response.status, Object.fromEntries(response.headers));
+  const { status } = response;
+  // Only a redirect, 401 or 403 can be a challenge; skip copying the headers otherwise.
+  if (!(status >= 300 && status < 400) && status !== 401 && status !== 403) return false;
+  return isCloudflareAccessChallenge(status, Object.fromEntries(response.headers));
 }
 
 /** The headers for the origin of `url` as a record, or undefined when it has none. */
