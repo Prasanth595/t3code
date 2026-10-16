@@ -1507,13 +1507,28 @@ describe("forward: a send T3 refuses", () => {
     }),
   );
 
-  it.effect("a refused comment followed by a sendable edit still sends the edit", () =>
+  // The edit went in under this call's marker, so the marker is not cancelled: only a marker nothing was sent under is.
+  it.effect("a refused comment followed by a sendable edit sends the edit and keeps the wait", () =>
     Effect.gen(function* () {
-      const rig = rigFor();
+      const rig = rigAt("completed", 1);
       instructorActivity(rig);
       rig.world.refuse.add(commentCmd(101));
       assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, true));
-      assert.deepStrictEqual(linesOf(rig), [...STARTED, bodyForwarded(EDITED), droppedStep(101)]);
+      assert.deepStrictEqual(
+        rig.t3,
+        afterStatus(commentSend(101, "rawphp", "one"), bodySend(EDITED, "rawphp", "new")),
+      );
+      assert.deepStrictEqual(rig.posted, [droppedText(101, REFUSED)]);
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        waitStep(1),
+        bodyForwarded(EDITED),
+        droppedStep(101),
+      ]);
+      const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
+      assert.strictEqual(seen.waitingAfter, 1);
+      assert.strictEqual(seen.idleForwardWait, null);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
     }),
   );
 
