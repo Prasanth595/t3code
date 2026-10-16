@@ -4353,7 +4353,7 @@ it("the activity query asks only for the body edit", () => {
   for (const field of [
     "body",
     "lastEditedAt",
-    "editor { __typename login }",
+    "body lastEditedAt editor { __typename login }",
     "userContentEdits(first: 100) { totalCount nodes { editedAt editor { __typename login } } }",
     "$owner",
     "$name",
@@ -4908,6 +4908,22 @@ it.effect("a body edit by an App with an instructor's login is not forwarded", (
     ).replaceAll('"__typename":"User",', "");
     const c = setup(reply("[]"), reply(bare));
     assert.strictEqual((yield* activityOf(c, ["tom"])).bodyEdit, null);
+    // The guard on the last editor alone: an App last editor, a history that looks like the person's.
+    const e = setup(
+      reply("[]"),
+      reply(
+        bodyReplyRaw(
+          "b",
+          [at, bot],
+          newestFirst([
+            [CREATED, "tom"],
+            [at, "tom"],
+          ]),
+          2,
+        ),
+      ),
+    );
+    assert.strictEqual((yield* activityOf(e, ["tom"])).bodyEdit, null);
     // The person alone is still forwarded.
     const d = setup(reply("[]"), reply(activityBodyReply("b", [at, "tom"])));
     assert.strictEqual((yield* activityOf(d, ["tom"])).bodyEdit?.editedAt, at);
@@ -4924,6 +4940,14 @@ it.effect("a comment edited by an App with an instructor's login is dropped once
     const last: Edit = ["2026-10-04T10:25:00Z", "tom"];
     const history: Array<Edit> = [[CREATED, "tom"], [EDIT_AT, bot], last];
     assert.deepStrictEqual(yield* droppedAfter(editorReplyHistory(last, history)), [
+      dropOf("7", "edited-by-other"),
+    ]);
+    // The App edited last and the history is cut off: the last editor decides, not the cut-off.
+    const cut: Array<Edit> = [
+      [EDIT_AT, "tom"],
+      [CREATED, "tom"],
+    ];
+    assert.deepStrictEqual(yield* droppedAfter(editorReplyRaw([EDIT_AT, bot], cut, 5)), [
       dropOf("7", "edited-by-other"),
     ]);
   }),
