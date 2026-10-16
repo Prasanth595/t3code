@@ -141,6 +141,9 @@ a shortcut.
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Keybindings**.
 
+`thread.rename` opens the focused thread's title editor. It has no default shortcut;
+assign one in **Settings → Keybindings**. Press Enter to save or Escape to cancel.
+
 `thread.undo` (`mod+z` by default) reverses the actions shown in the notice at the
 bottom of the sidebar, such as unpin, settle, snooze, archive, or discarding a
 draft. Consecutive

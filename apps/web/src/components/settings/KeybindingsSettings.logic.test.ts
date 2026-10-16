@@ -326,11 +326,12 @@ describe("KeybindingsSettings.logic", () => {
         "rightPanel.toggleMaximized",
         "composer.cycleHost",
         "thread.stop",
+        "thread.rename",
         "usage.open",
         "script.setup-db.run",
       ]),
     );
-    for (const command of ["thread.stop", "composer.cycleHost"]) {
+    for (const command of ["thread.stop", "thread.rename", "composer.cycleHost"]) {
       expect(DEFAULT_RESOLVED_KEYBINDINGS.some((binding) => binding.command === command)).toBe(
         false,
       );

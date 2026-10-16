@@ -932,6 +932,39 @@ describe("cross-command precedence", () => {
 });
 
 describe("resolveChatShortcutCommand", () => {
+  it.each(["MacIntel", "Linux"])(
+    "resolves a custom rename shortcut outside the terminal on %s",
+    (platform) => {
+      const keybindings = compile([
+        {
+          shortcut: modShortcut("r", { shiftKey: true }),
+          command: "thread.rename",
+          whenAst: whenNot(whenIdentifier("terminalFocus")),
+        },
+      ]);
+      const input = event({
+        key: "R",
+        shiftKey: true,
+        metaKey: platform === "MacIntel",
+        ctrlKey: platform !== "MacIntel",
+      });
+
+      assert.strictEqual(
+        resolveChatShortcutCommand(input, keybindings, [], {
+          platform,
+          context: { terminalFocus: false },
+        }),
+        "thread.rename",
+      );
+      assert.isNull(
+        resolveChatShortcutCommand(input, keybindings, [], {
+          platform,
+          context: { terminalFocus: true },
+        }),
+      );
+    },
+  );
+
   it("runs the active environment's script shortcut instead of the primary environment's", () => {
     const primary = compile([{ shortcut: modShortcut("r"), command: "script.setup.run" }]);
     const active = compile([{ shortcut: modShortcut("t"), command: "script.setup.run" }]);

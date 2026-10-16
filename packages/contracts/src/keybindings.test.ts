@@ -132,6 +132,13 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedThreadSettle.command, "thread.settle");
 
+    const parsedThreadRename = yield* decode(KeybindingRule, {
+      key: "mod+shift+r",
+      command: "thread.rename",
+      when: "!terminalFocus",
+    });
+    assert.strictEqual(parsedThreadRename.command, "thread.rename");
+
     const parsedThreadCopyReference = yield* decode(KeybindingRule, {
       key: "mod+shift+c",
       command: "thread.copyReference",

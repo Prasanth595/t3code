@@ -14,11 +14,13 @@ import {
   memo,
   useCallback,
   useEffect,
+  useImperativeHandle,
   useMemo,
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
+  type Ref,
 } from "react";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -40,7 +42,12 @@ import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "../../hooks/useSettings";
 
+export interface ChatHeaderControls {
+  startRename: () => void;
+}
+
 interface ChatHeaderProps {
+  controlsRef: Ref<ChatHeaderControls>;
   activeThreadEnvironmentId: EnvironmentId;
   activeThreadId: ThreadId;
   activeThreadTitle: string;
@@ -69,6 +76,7 @@ export function resolveRenameCommit(input: {
 // double-click interval.
 const TITLE_MENU_OPEN_DELAY_MS = 500;
 export const ChatHeader = memo(function ChatHeader({
+  controlsRef,
   activeThreadEnvironmentId,
   activeThreadId,
   activeThreadTitle,
@@ -237,6 +245,17 @@ export const ChatHeader = memo(function ChatHeader({
       closeMenu();
       startRename();
     },
+    [cancelPendingTitleMenu, closeMenu, startRename],
+  );
+  useImperativeHandle(
+    controlsRef,
+    () => ({
+      startRename: () => {
+        cancelPendingTitleMenu();
+        closeMenu();
+        startRename();
+      },
+    }),
     [cancelPendingTitleMenu, closeMenu, startRename],
   );
   const handleHeaderContextMenu = useCallback(

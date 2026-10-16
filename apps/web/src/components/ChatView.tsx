@@ -460,7 +460,7 @@ import {
   resolveComposerTimelineInset,
   resolveScrollToEndClearance,
 } from "./composerFooterLayout";
-import { ChatHeader } from "./chat/ChatHeader";
+import { ChatHeader, type ChatHeaderControls } from "./chat/ChatHeader";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -7619,6 +7619,7 @@ export default function ChatView(props: ChatViewProps) {
   const timelineSkills = activeProviderStatus
     ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
     : EMPTY_PROVIDER_SKILLS;
+  const chatHeaderControlsRef = useRef<ChatHeaderControls | null>(null);
   const threadFindControlsRef = useRef<ThreadFindControls | null>(null);
   const [isThreadFindActive, setIsThreadFindActive] = useState(false);
   const openThreadFind = () => threadFindControlsRef.current?.open();
@@ -7667,6 +7668,19 @@ export default function ChatView(props: ChatViewProps) {
         event.preventDefault();
         event.stopPropagation();
         if (!event.repeat) copyActiveThreadReferenceStable();
+        return;
+      }
+
+      if (command === "thread.rename") {
+        if (
+          !isServerThread ||
+          !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+        ) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) chatHeaderControlsRef.current?.startRename();
         return;
       }
 
@@ -10863,6 +10877,7 @@ export default function ChatView(props: ChatViewProps) {
           {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
           {inlineRightPanelOwnsTitleBar ? threadPanelHeaderControl : null}
           <ChatHeader
+            controlsRef={chatHeaderControlsRef}
             activeThreadEnvironmentId={activeThread.environmentId}
             activeThreadId={activeThread.id}
             isServerThread={isServerThread}
