@@ -2267,10 +2267,11 @@ describe("following a building run", () => {
 
   it.effect("a run that ended or needs a person never starts the gate for a pending send", () =>
     Effect.gen(function* () {
-      for (const kind of ["stuck", "needs-info"] as const) {
+      for (const outcome of [{ kind: "stuck", reason: "x" }, { kind: "needs-info" }] as const) {
+        const kind = outcome.kind;
         const fake = building();
         fake.pendingSends = [runIdToString(fake.runs[0]!.id)];
-        fake.advances[`${REPO}#40`] = [{ kind }];
+        fake.advances[`${REPO}#40`] = [outcome];
         yield* pass(fake, machine([REPO], 3));
         assert.ok(!callsOf(fake).includes(`gate ${REPO}#40`), kind);
       }

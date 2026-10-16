@@ -791,7 +791,7 @@ export const watch = (
  * A gate attempt was being sent into the session (a `gate-sending` step with no matching
  * `gate_sent_back`), so a message sent now could be mistaken for the proof that it arrived.
  */
-const gateSendPending = (seen: Seen): boolean =>
+export const gateSendPending = (seen: Seen): boolean =>
   seen.sending !== null && !seen.sentBackAttempts.has(seen.sending.attempt);
 
 /**

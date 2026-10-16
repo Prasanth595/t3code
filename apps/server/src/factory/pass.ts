@@ -113,6 +113,11 @@ export interface PassWorld {
   /** Whether the run's gate is running now. */
   readonly gateRunning: (run: RunId) => boolean;
   /**
+   * Whether a gate send is pending in the run's ledger (`gateSendPending`): only the gate records
+   * that the send arrived, so a pass that finds one calls the gate whatever the session is doing.
+   */
+  readonly hasPendingGateSend: (run: RunId) => Effect.Effect<boolean, LedgerError>;
+  /**
    * Starts the run's gate (`runner/gating.ts`) in the background and returns at once: a pass
    * never waits for a gate. The ledger has the result, and the next pass carries on from there.
    */
@@ -758,6 +763,9 @@ const advanceRun = (
     // A `NotBuildingError` is a run that finished meanwhile: softfac prints it as an error too.
     if (advanced._tag === "Failure")
       return pass.failed(notes, "advance", "advance", advanced.failure);
+    // softfac's `advance_and_gate`: the gate starts for a session that finished, and for a run with
+    // a gate send pending while the session still lives, which only the gate can settle.
+    let wantsGate = false;
     switch (advanced.success.kind) {
       case "running":
         notes.parts.push("session still running");
@@ -772,8 +780,7 @@ const advanceRun = (
         break;
       case "ready-for-gate":
         notes.parts.push("session finished");
-        if (sent) notes.parts.push(GATE_WAITS);
-        else yield* startGate(world, repo, info, notes);
+        wantsGate = true;
         break;
       case "passed":
         notes.parts.push(GATE_PASSED_LINE);
@@ -801,6 +808,19 @@ const advanceRun = (
         yield* abandoned(pass, notes, run, []);
         break;
     }
+    const kind = advanced.success.kind;
+    const mayGatePending =
+      kind === "running" || kind === "reminded" || kind === "paused" || kind === "ready-for-gate";
+    let pending = false;
+    if (mayGatePending) {
+      const read = yield* Effect.result(world.hasPendingGateSend(info.id));
+      if (read._tag === "Failure") {
+        return pass.trouble(notes, "ledger", "gate send check", read.failure.message);
+      }
+      pending = read.success;
+    }
+    if (wantsGate && sent && !pending) notes.parts.push(GATE_WAITS);
+    else if (wantsGate || pending) yield* startGate(world, repo, info, notes);
   });
 
 /**
