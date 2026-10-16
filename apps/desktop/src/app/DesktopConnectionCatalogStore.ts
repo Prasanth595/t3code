@@ -397,7 +397,16 @@ export const make = Effect.gen(function* () {
   const decryptCatalog = Effect.fn("desktop.connectionCatalogStore.decryptCatalog")(function* (
     encrypted: Uint8Array,
   ) {
-    return yield* safeStorage.decryptString(encrypted).pipe(
+    // Windows safeStorage can abort the process on a truncated v10 payload.
+    const nativeDecryption =
+      recoverWindowsKey !== undefined && encrypted.length < 31
+        ? Effect.fail(
+            new ElectronSafeStorage.ElectronSafeStorageDecryptError({
+              cause: new Error("Truncated Windows catalog ciphertext."),
+            }),
+          )
+        : safeStorage.decryptString(encrypted);
+    return yield* nativeDecryption.pipe(
       Effect.map((catalog) => ({ catalog, encrypt: safeStorage.encryptString })),
       Effect.catch((error) =>
         Effect.gen(function* () {

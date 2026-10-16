@@ -528,10 +528,13 @@ it.effect.each([
         isEncryptionAvailable: Effect.succeed(true),
         encryptString: (value: string) => Effect.succeed(seal(value, v2)),
         decryptString: (value: Uint8Array) =>
-          Effect.try({
-            try: () => open(value, v2),
-            catch: (cause) => new ElectronSafeStorage.ElectronSafeStorageDecryptError({ cause }),
-          }),
+          value.length < 31
+            ? Effect.die(new Error("Windows safeStorage aborts on truncated ciphertext"))
+            : Effect.try({
+                try: () => open(value, v2),
+                catch: (cause) =>
+                  new ElectronSafeStorage.ElectronSafeStorageDecryptError({ cause }),
+              }),
         selectedStorageBackend: Effect.succeedNone,
       };
       yield* Effect.gen(function* () {
