@@ -51,7 +51,7 @@ export function npmLauncherPackageManifest(version: string) {
     license: serverPackageJson.license,
     repository: serverPackageJson.repository,
     bin: { t3: "./bin/t3.js" },
-    files: ["bin"],
+    files: ["bin", "dist"],
     engines: { node: ">=18" },
   };
 }
@@ -72,12 +72,14 @@ export const buildNpmLauncher = Effect.fn("buildNpmLauncher")(function* (input: 
   });
   const stageDir = path.join(scratch, "package");
   yield* fs.makeDirectory(path.join(stageDir, "bin"), { recursive: true });
+  yield* fs.makeDirectory(path.join(stageDir, "dist"));
   yield* fs.writeFileString(
     path.join(stageDir, "package.json"),
     `${yield* encodePackageJson(npmLauncherPackageManifest(input.version))}\n`,
   );
   yield* fs.copyFile(path.join(sourceDir, "t3.js"), path.join(stageDir, "bin/t3.js"));
   yield* fs.chmod(path.join(stageDir, "bin/t3.js"), 0o755);
+  yield* fs.copyFile(path.join(sourceDir, "bin.mjs"), path.join(stageDir, "dist/bin.mjs"));
   const readme = yield* path.fromFileUrl(new URL("../apps/server/README.md", import.meta.url));
   if (yield* fs.exists(readme)) {
     yield* fs.copyFile(readme, path.join(stageDir, "README.md"));

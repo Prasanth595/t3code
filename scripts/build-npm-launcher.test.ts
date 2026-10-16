@@ -8,6 +8,9 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeCrypto from "node:crypto";
+import * as NodeEvents from "node:events";
 import * as NodeHttp from "node:http";
 
 import { buildNpmLauncher } from "./build-npm-launcher.ts";
@@ -63,10 +66,13 @@ const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (root: str
   });
   assert.equal(tar.exitCode, 0, tar.stderr);
   const archive = yield* fs.readFile(path.join(root, "release", archiveName));
+  let checksum = NodeCrypto.createHash("sha256").update(archive).digest("hex");
   const requests: Array<string> = [];
   const server = NodeHttp.createServer((request, response) => {
     requests.push(request.url ?? "");
-    if (request.url === `/v${VERSION}/${archiveName}`) {
+    if (request.url === `/v${VERSION}/SHA256SUMS`) {
+      response.end(`${checksum}  ${archiveName}\n`);
+    } else if (request.url === `/v${VERSION}/${archiveName}`) {
       response.writeHead(200, { "Content-Length": archive.length }).end(archive);
     } else {
       response.writeHead(404).end();
@@ -83,12 +89,18 @@ const serveFakeRelease = Effect.fn("test.serveFakeRelease")(function* (root: str
   );
   const address = server.address();
   if (address === null || typeof address === "string") return yield* Effect.die("no TCP address");
-  return { baseUrl: `http://127.0.0.1:${address.port}`, requests };
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    requests,
+    corruptChecksum: () => {
+      checksum = "0".repeat(64);
+    },
+  };
 });
 
 it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "publishes a launcher that downloads, caches, and runs the release executable",
+    "publishes a launcher that downloads, verifies, caches, and runs the release executable",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -150,6 +162,43 @@ it.layer(NodeServices.layer)("build-npm-launcher", (it) => {
         const second = yield* run(process.execPath, [launcher, "--version"], { cwd: root, env });
         assert.equal(second.exitCode, 7);
         assert.equal(release.requests.length, requestsAfterFirst);
+
+        // Services installed before 0.0.41 fork dist/bin.mjs and talk to the
+        // server over IPC; the channel and SIGTERM must reach the executable.
+        const ipcServer = path.join(home, "runtime/versions", VERSION, "t3");
+        yield* fs.writeFileString(
+          ipcServer,
+          `#!${process.execPath}\nprocess.on("SIGTERM", () => process.exit(23));\nprocess.on("message", (m) => process.send({ reply: m }));\nprocess.send({ args: process.argv.slice(2) });\n`,
+        );
+        const legacy = NodeChildProcess.fork(
+          path.join(packageDir, "dist/bin.mjs"),
+          ["__service-preflight", "a b"],
+          { env, silent: true },
+        );
+        yield* Effect.promise(async () => {
+          assert.deepStrictEqual((await NodeEvents.EventEmitter.once(legacy, "message"))[0], {
+            args: ["__service-preflight", "a b"],
+          });
+          const reply = NodeEvents.EventEmitter.once(legacy, "message");
+          legacy.send({ type: "trial-accepted" });
+          assert.deepStrictEqual((await reply)[0], { reply: { type: "trial-accepted" } });
+          const exit = NodeEvents.EventEmitter.once(legacy, "exit");
+          legacy.kill("SIGTERM");
+          assert.deepStrictEqual(await exit, [23, null]);
+        });
+
+        // A download that does not match the release checksums is never installed.
+        release.corruptChecksum();
+        const corrupt = yield* run(process.execPath, [launcher, "--version"], {
+          cwd: root,
+          env: { ...env, T3CODE_HOME: path.join(root, "other-home") },
+        });
+        assert.equal(corrupt.exitCode, 1);
+        assert.include(corrupt.stderr, "checksum mismatch");
+        assert.deepStrictEqual(
+          yield* fs.readDirectory(path.join(root, "other-home/runtime/versions")),
+          [],
+        );
       }),
   );
 });
