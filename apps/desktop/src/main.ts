@@ -11,6 +11,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Version output must flush before Electron exits, without acquiring the runtime.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -45,6 +46,7 @@ import * as DesktopBackendPool from "./backend/DesktopBackendPool.ts";
 import * as DesktopLocalEnvironmentAuth from "./backend/DesktopLocalEnvironmentAuth.ts";
 import * as DesktopNetworkInterfaces from "./backend/DesktopNetworkInterfaces.ts";
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
+import { applyDesktopHomeOverride } from "./app/DesktopHomeOverride.ts";
 import * as DesktopLifecycle from "./app/DesktopLifecycle.ts";
 import * as DesktopLinuxUrlHandler from "./app/DesktopLinuxUrlHandler.ts";
 import * as DesktopShutdown from "./app/DesktopShutdown.ts";
@@ -82,6 +84,20 @@ if (process.argv.includes("--version")) {
   }
   Electron.app.exit(0);
 }
+
+// Finder/Dock launches inherit no shell overrides. Resolve the machine-local
+// home before the config provider snapshots env or any pre-ready layer runs.
+try {
+  applyDesktopHomeOverride();
+} catch (error) {
+  Electron.dialog.showErrorBox(
+    "Cannot open No Fun T3 data home",
+    error instanceof Error ? error.message : "Cannot read desktop home selector.",
+  );
+  Electron.app.exit(1);
+  process.exit(1);
+}
+const layerDesktopConfig = ConfigProvider.layer(ConfigProvider.fromEnv());
 
 const layerDesktopEnvironment = Layer.unwrap(
   Effect.gen(function* () {
@@ -247,4 +263,8 @@ const layerDesktopRuntime = layerDesktopClerk.pipe(
   Layer.provideMerge(DesktopPreReadyPlatform.layer),
 );
 
-DesktopApp.program.pipe(Effect.provide(layerDesktopRuntime), NodeRuntime.runMain);
+DesktopApp.program.pipe(
+  Effect.provide(layerDesktopRuntime),
+  Effect.provide(layerDesktopConfig),
+  NodeRuntime.runMain,
+);

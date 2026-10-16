@@ -634,6 +634,15 @@ export class MissingDesktopBuildInputError extends Schema.TaggedError<MissingDes
   }
 }
 
+export class UnverifiedPrebuiltVersionError extends Schema.TaggedError<UnverifiedPrebuiltVersionError>()(
+  "UnverifiedPrebuiltVersionError",
+  { version: Schema.String },
+) {
+  override get message(): string {
+    return `Cannot use --skip-build with custom build version ${this.version}: existing desktop/server/web dist has no verified version receipt. Remove --skip-build to compile this version into all three surfaces before packaging.`;
+  }
+}
+
 export class MacProvisioningProfileNotFoundError extends Schema.TaggedError<MacProvisioningProfileNotFoundError>()(
   "MacProvisioningProfileNotFoundError",
   {
@@ -3387,6 +3396,9 @@ export const validateWindowsPackagedPayload = Effect.fn(
 const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   options: ResolvedBuildOptions,
 ) {
+  if (options.skipBuild && options.version !== undefined) {
+    return yield* new UnverifiedPrebuiltVersionError({ version: options.version });
+  }
   const repoRoot = yield* RepoRoot;
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
@@ -3483,6 +3495,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     yield* runCommand(
       ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         cwd: repoRoot,
+        env: { ...process.env, APP_VERSION: appVersion },
         shell: spawnCommand.shell,
       }),
       { label: "vp run build:desktop", verbose: options.verbose },
@@ -3960,7 +3973,9 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.optional,
   ),
   buildVersion: Flag.String("build-version").pipe(
-    Flag.withDescription("Artifact version metadata (env: T3CODE_DESKTOP_VERSION)."),
+    Flag.withDescription(
+      "Compile and package this release version (env: T3CODE_DESKTOP_VERSION; requires a build).",
+    ),
     Flag.optional,
   ),
   outputDir: Flag.String("output-dir").pipe(
@@ -3969,7 +3984,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
   ),
   skipBuild: Flag.Boolean("skip-build").pipe(
     Flag.withDescription(
-      "Skip `vp run build:desktop` and use existing dist artifacts (env: T3CODE_DESKTOP_SKIP_BUILD).",
+      "Skip `vp run build:desktop` and use existing dist artifacts; incompatible with a custom build version (env: T3CODE_DESKTOP_SKIP_BUILD).",
     ),
     Flag.optional,
   ),

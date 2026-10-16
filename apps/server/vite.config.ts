@@ -1,4 +1,5 @@
 import "vite-plus/test/config";
+import { fileURLToPath } from "node:url";
 import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
@@ -22,7 +23,12 @@ import {
 export { shouldBundleCliDependency };
 
 const repoEnv = loadRepoEnv();
-const cliBuildChannel = /^[^-+]+-(?:nightly|preview)\./.test(packageJson.version)
+const buildVersion = process.env.APP_VERSION?.trim() || packageJson.version;
+const serverManifestPath = fileURLToPath(new URL("./package.json", import.meta.url)).replaceAll(
+  "\\",
+  "/",
+);
+const cliBuildChannel = /^[^-+]+-(?:nightly|preview)\./.test(buildVersion)
   ? "nightly"
   : "latest";
 
@@ -76,6 +82,20 @@ export default mergeConfig(
       },
     },
     pack: {
+      // All CLI/server version consumers import this manifest. Override only its
+      // build input, leaving tracked manifests and runtime environment untouched.
+      plugins: [
+        {
+          name: "server-build-version",
+          load(id) {
+            if (id.replaceAll("\\", "/") !== serverManifestPath) return;
+            return {
+              code: JSON.stringify({ ...packageJson, version: buildVersion }),
+              moduleType: "json",
+            };
+          },
+        },
+      ],
       // The executable embeds one entry; the history worker becomes a hidden
       // subcommand there instead of a sibling script.
       entry: packExecutable ? ["src/bin.ts"] : ["src/bin.ts", "src/claude-history-worker.ts"],
