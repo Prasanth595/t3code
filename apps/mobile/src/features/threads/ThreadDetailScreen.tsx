@@ -363,15 +363,18 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // Android can swallow the IME hide callbacks when the app is backgrounded mid keyboard-hide
   // (the reported repro: send — which blurs and starts the hide — then Home within a second). The
   // keyboard library's height AND visibility then stay frozen open, so gating the sticky
-  // translation on visibility alone still strands the composer after resume.
+  // translation on visibility alone still strands the composer after resume. An input that kept
+  // focus through the switch is exempt: Android restores its keyboard unchanged, so no keyboard
+  // or focus event would ever lift the quarantine. The stranded case always starts with a blur.
   const [keyboardStateSuspect, setKeyboardStateSuspect] = useState(false);
+  const ownedInputFocusedRef = useRef(false);
   useEffect(() => {
     if (Platform.OS !== "android") {
       return;
     }
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active") {
-        setKeyboardStateSuspect(true);
+        setKeyboardStateSuspect(!ownedInputFocusedRef.current);
       }
     });
     return () => {
@@ -382,6 +385,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     setKeyboardStateSuspect(false);
   }, [isKeyboardVisible, liveKeyboardHeight]);
   const handleOwnedInputFocusChange = useCallback((focused: boolean) => {
+    ownedInputFocusedRef.current = focused;
     if (focused) {
       setKeyboardStateSuspect(false);
     }
