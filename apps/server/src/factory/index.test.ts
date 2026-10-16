@@ -255,13 +255,10 @@ describe("waking the pass when a factory thread's run changes status", () => {
           FactoryEvents,
           FactoryEvents.of({
             runStatusChanges: Stream.unwrap(
-              Ref.modify(failures, (left) =>
+              Ref.modify(failures, (left): readonly [Stream.Stream<string, EventsError>, number] =>
                 left > 0
-                  ? ([
-                      Stream.fail(new EventsError({ cause: new Error("gone") })),
-                      left - 1,
-                    ] as const)
-                  : ([Stream.fromQueue(queue), 0] as const),
+                  ? [Stream.fail(new EventsError({ cause: new Error("gone") })), left - 1]
+                  : [Stream.fromQueue(queue), 0],
               ),
             ),
           }),

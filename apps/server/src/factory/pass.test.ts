@@ -595,7 +595,10 @@ describe("a ready issue whose older run is gating", () => {
       fake.blockers[`${REPO}#14`] = blockerList([[REPO, 13]]);
       const { report, lines } = yield* pass(fake, machine([REPO], 1));
       assert.deepEqual(starts(fake), []);
-      assert.equal(runLine(lines, "rawphp/softfac#14 "), "rawphp/softfac#14 ready: gate running");
+      assert.equal(
+        runLine(lines, "rawphp/softfac#14 ready"),
+        "rawphp/softfac#14 ready: gate running",
+      );
       assert.ok(!fake.calls.includes("blockers rawphp/softfac#14"), fake.calls.join("\n"));
       assert.deepEqual(
         fake.events.filter((e) => e.event === "claim_skipped"),
@@ -1997,6 +2000,17 @@ describe("following a building run", () => {
         [],
       );
       assert.ok(!lines.some((l) => l.startsWith(`${REPO}#4`)), lines.join("\n"));
+    }),
+  );
+
+  it.effect("a building run whose gate is running is not worked", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.gateLocks = [runIdToString(rid(40))];
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(callsOf(fake), []);
+      assert.equal(runLine(lines, `${REPO}#40 `), `${REPO}#40 building: gate running`);
     }),
   );
 
