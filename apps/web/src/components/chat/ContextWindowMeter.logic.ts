@@ -84,6 +84,33 @@ export function shouldOfferResumeCompaction(input: {
   );
 }
 
+/** Whether each thread's Compact chip is turned off, keyed by thread. Threads
+    without an entry follow the user's default. */
+export type CompactionChipChoices = ReadonlyMap<string, boolean>;
+
+/** True when the thread's next send keeps its full history instead of compacting. */
+export function resolveKeepFullHistory(
+  choices: CompactionChipChoices,
+  threadKey: string,
+  compactByDefault: boolean,
+): boolean {
+  return choices.get(threadKey) ?? !compactByDefault;
+}
+
+/** Records a thread's chip choice. `null` drops it so the thread follows the
+    default again. Returns the same map when nothing changes. */
+export function setCompactionChipChoice(
+  choices: CompactionChipChoices,
+  threadKey: string,
+  keepFullHistory: boolean | null,
+): CompactionChipChoices {
+  if (choices.get(threadKey) === (keepFullHistory ?? undefined)) return choices;
+  const next = new Map(choices);
+  if (keepFullHistory === null) next.delete(threadKey);
+  else next.set(threadKey, keepFullHistory);
+  return next;
+}
+
 export function resolveContextWindowModelDisplayName(
   selection: ModelSelection | null | undefined,
   modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>,

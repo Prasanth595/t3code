@@ -503,8 +503,11 @@ import { formatRelativeTimeLabel, formatRelativeTimeUntilLabel } from "../timest
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { resolveThreadSyncPhase } from "../threadSync";
 import {
+  type CompactionChipChoices,
   hasAvailableCompactionProvider,
   hasDismissedResumeCompaction,
+  resolveKeepFullHistory,
+  setCompactionChipChoice,
   shouldOfferResumeCompaction,
 } from "./chat/ContextWindowMeter.logic";
 import {
@@ -7381,20 +7384,17 @@ export default function ChatView(props: ChatViewProps) {
     })
       ? activeContextWindow.usedTokens
       : null;
-  const [fullHistoryByThreadKey, setFullHistoryByThreadKey] = useState<
-    ReadonlyMap<string, boolean>
-  >(() => new Map());
-  const keepFullHistory =
-    fullHistoryByThreadKey.get(routeThreadKey) ?? !settings.compactStaleThreadsByDefault;
+  const [compactionChipChoices, setCompactionChipChoices] = useState<CompactionChipChoices>(
+    () => new Map(),
+  );
+  const keepFullHistory = resolveKeepFullHistory(
+    compactionChipChoices,
+    routeThreadKey,
+    settings.compactStaleThreadsByDefault,
+  );
   // `null` drops the thread's entry so its chip follows the setting again.
   const setKeepFullHistory = (threadKey: string, keep: boolean | null) => {
-    setFullHistoryByThreadKey((current) => {
-      if (current.get(threadKey) === (keep ?? undefined)) return current;
-      const next = new Map(current);
-      if (keep === null) next.delete(threadKey);
-      else next.set(threadKey, keep);
-      return next;
-    });
+    setCompactionChipChoices((current) => setCompactionChipChoice(current, threadKey, keep));
   };
   const toggleKeepFullHistory = () => setKeepFullHistory(routeThreadKey, !keepFullHistory);
   const toggleKeepFullHistoryStable = useStableCallback(toggleKeepFullHistory);

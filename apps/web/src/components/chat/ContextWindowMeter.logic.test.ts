@@ -2,11 +2,14 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  type CompactionChipChoices,
   formatContextWindowCompactionMessage,
   hasAvailableCompactionProvider,
   hasDismissedResumeCompaction,
   formatContextWindowCost,
   resolveContextWindowModelDisplayName,
+  resolveKeepFullHistory,
+  setCompactionChipChoice,
   shouldOfferResumeCompaction,
   shouldReserveContextWindowMeter,
 } from "./ContextWindowMeter.logic";
@@ -195,6 +198,38 @@ describe("shouldOfferResumeCompaction", () => {
         now,
       }),
     ).toBe(false);
+  });
+});
+
+describe("Compact chip choices", () => {
+  const empty: CompactionChipChoices = new Map();
+
+  it("follows the default for threads without a choice", () => {
+    expect(resolveKeepFullHistory(empty, "thread-a", true)).toBe(false);
+    expect(resolveKeepFullHistory(empty, "thread-a", false)).toBe(true);
+  });
+
+  it("lets a thread's choice override the default either way", () => {
+    const keepFull = setCompactionChipChoice(empty, "thread-a", true);
+    expect(resolveKeepFullHistory(keepFull, "thread-a", true)).toBe(true);
+    expect(resolveKeepFullHistory(keepFull, "thread-b", true)).toBe(false);
+
+    const compact = setCompactionChipChoice(empty, "thread-a", false);
+    expect(resolveKeepFullHistory(compact, "thread-a", false)).toBe(false);
+    expect(resolveKeepFullHistory(compact, "thread-b", false)).toBe(true);
+  });
+
+  it("returns a thread to the default once its choice is cleared after a send", () => {
+    const compact = setCompactionChipChoice(empty, "thread-a", false);
+    const cleared = setCompactionChipChoice(compact, "thread-a", null);
+    expect(resolveKeepFullHistory(cleared, "thread-a", false)).toBe(true);
+    expect(resolveKeepFullHistory(cleared, "thread-a", true)).toBe(false);
+  });
+
+  it("keeps the same map when the choice does not change", () => {
+    const keepFull = setCompactionChipChoice(empty, "thread-a", true);
+    expect(setCompactionChipChoice(keepFull, "thread-a", true)).toBe(keepFull);
+    expect(setCompactionChipChoice(empty, "thread-a", null)).toBe(empty);
   });
 });
 
