@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useFocusEffect } from "@react-navigation/native";
+import { useCallback, useRef, useState } from "react";
 import {
   BackHandler,
   Keyboard,
@@ -34,14 +35,16 @@ export function AppBar(props: AppBarProps) {
     setSearchOpen(false);
     Keyboard.dismiss();
   }, [onSearchChange]);
-  useEffect(() => {
-    if (!searching || search?.mode === "inline") return;
-    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
-      closeSearch();
-      return true;
-    });
-    return () => subscription.remove();
-  }, [closeSearch, searching, search?.mode]);
+  useFocusEffect(
+    useCallback(() => {
+      if (!searching || search?.mode === "inline") return;
+      const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+        closeSearch();
+        return true;
+      });
+      return () => subscription.remove();
+    }, [closeSearch, searching, search?.mode]),
+  );
   const menuView = props.menus?.map((menu) => (
     <Menu
       key={menu.title}

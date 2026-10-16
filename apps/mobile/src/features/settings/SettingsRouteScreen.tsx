@@ -2,6 +2,7 @@ import { Toolbar } from "../../components/ui/Toolbar";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAuth, useUser } from "@clerk/expo";
 import { useNavigation } from "@react-navigation/native";
+import { useState } from "react";
 import { Platform, View } from "react-native";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -18,20 +19,38 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { SettingsSearchResults } from "./components/SettingsSearchResults";
 
 export function SettingsRouteScreen() {
   const navigation = useNavigation();
   const { layout } = useAdaptiveWorkspaceLayout();
-  const content = hasCloudPublicConfig() ? (
-    <ConfiguredSettingsRouteScreen />
-  ) : (
-    <LocalSettingsRouteScreen />
-  );
+  const [searchQuery, setSearchQuery] = useState("");
+  const content =
+    searchQuery.trim().length > 0 ? (
+      <SettingsSearchResults query={searchQuery} />
+    ) : hasCloudPublicConfig() ? (
+      <ConfiguredSettingsRouteScreen />
+    ) : (
+      <LocalSettingsRouteScreen />
+    );
 
   return (
     <>
       {Platform.OS === "ios" ? (
-        <NativeStackScreenOptions options={{ headerBackVisible: !layout.usesSplitView }} />
+        <NativeStackScreenOptions
+          options={{
+            headerBackVisible: !layout.usesSplitView,
+            headerSearchBarOptions: {
+              autoCapitalize: "none",
+              hideNavigationBar: false,
+              hideWhenScrolling: false,
+              obscureBackground: false,
+              placeholder: "Search settings",
+              onChangeText: (event) => setSearchQuery(event.nativeEvent.text),
+              onCancelButtonPress: () => setSearchQuery(""),
+            },
+          }}
+        />
       ) : null}
       {Platform.OS === "ios" && layout.usesSplitView ? (
         <>
@@ -46,7 +65,15 @@ export function SettingsRouteScreen() {
       ) : null}
       <SettingsEnvironmentFilterHeader closeSettings />
       {Platform.OS === "android" ? (
-        <SettingsScreen title="Settings" trailing={<AndroidSettingsEnvironmentFilter />}>
+        <SettingsScreen
+          title="Settings"
+          search={{
+            value: searchQuery,
+            onChangeText: setSearchQuery,
+            placeholder: "Search settings",
+          }}
+          trailing={<AndroidSettingsEnvironmentFilter />}
+        >
           {content}
         </SettingsScreen>
       ) : (
@@ -72,6 +99,8 @@ function ConfiguredSettingsRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
         className="flex-1"
         contentContainerClassName="gap-4 px-5 pt-4"
@@ -110,6 +139,8 @@ function LocalSettingsRouteScreen() {
     <View collapsable={false} className="flex-1 bg-sheet">
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode="on-drag"
         showsVerticalScrollIndicator={false}
         className="flex-1"
         contentContainerClassName="gap-4 px-5 pt-4"
