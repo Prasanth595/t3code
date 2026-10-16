@@ -43,7 +43,13 @@ import { newRunId, nextAttempt, runIdToString, type RunId } from "../ledger/runI
 import { formatTs } from "../ledger/time.ts";
 import { isUtcSecond } from "../tracker/approvalHistory.ts";
 import type { BoundGitHub, GitHubError, IssueDetail } from "../tracker/github.ts";
-import type { FactorySessions, Model, SessionsError } from "../t3/sessions.ts";
+import type {
+  FactorySessions,
+  MessageRejectedError,
+  Model,
+  SessionsError,
+  ThreadNotFoundError,
+} from "../t3/sessions.ts";
 import {
   CANNOT_CONFIRM,
   CUT_SHORT_COMMENT,
@@ -72,12 +78,15 @@ export type Tracker = Pick<
   | "upsertStatusComment"
   | "newestFactoryComment"
   | "textCheck"
+  | "markPrReady"
+  | "markPrDraft"
+  | "commentOnPr"
 >;
 
 /** The subset of `FactorySessions` the claim calls. */
 export type Sessions = Pick<
   FactorySessions["Service"],
-  "findProject" | "launch" | "thread" | "archive" | "removeWorktree"
+  "findProject" | "launch" | "thread" | "archive" | "removeWorktree" | "send"
 >;
 
 export interface StartContext {
@@ -128,7 +137,9 @@ export type StartError =
   | LedgerError
   | InvalidTransition
   | GateRunningError
-  | SessionsError;
+  | SessionsError
+  | ThreadNotFoundError
+  | MessageRejectedError;
 
 /** An issue as the pass's lines and the skip reasons name it. */
 export const mention = (issue: number) => `#${issue}`;
