@@ -21,6 +21,7 @@ const FORK_RESTORED_SETTINGS = [
   ["recoverInterruptedTurnsSubagentMessage", "Recover interrupted subagents message"],
   ["backgroundWorkDetails", "Background work details"],
   ["preferOriginRemote", "Prefer origin remote"],
+  ["threadLinkChips", "Thread link chips"],
   ["pullRequestWatchRemarkFilter", "Pull request watch remarks"],
   ["agentSessionImportWindowDays", "Session import window"],
   ["agentSessionImportMaxMessages", "Imported messages per session"],

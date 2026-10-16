@@ -1422,6 +1422,11 @@ export const ServerSettings = Schema.Struct({
    * checkout then lists, reads and watches the pull requests of the fork, not of upstream.
    */
   preferOriginRemote: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Fork: thread links render as the attached-thread chip, and an https thread address of an
+   * environment that the client knows opens inside T3. A server setting, so the mobile app reads it.
+   */
+  threadLinkChips: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Fork: machine map connection. See `MachineMapSettings`. */
   machineMap: MachineMapSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /** Fork: how a Cloudflare Access sign-in of a browser meets the clients of the map. See `ClientAccessMode`. */
@@ -1705,6 +1710,7 @@ export const ServerSettingsPatch = Schema.Struct({
   reviewGuideInstructions: Schema.optionalKey(TrimmedString),
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   preferOriginRemote: Schema.optionalKey(Schema.Boolean),
+  threadLinkChips: Schema.optionalKey(Schema.Boolean),
   /** Replaces the saved groups whole: a merge would keep deleted groups and assignments. */
   sidebarGroups: Schema.optionalKey(SidebarGroups),
   /** Per surface: a patched layout replaces the saved one, and `null` restores the built-in card. */

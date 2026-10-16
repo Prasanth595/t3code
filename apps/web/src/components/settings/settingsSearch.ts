@@ -264,6 +264,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["thread card sidebar compact density rows builder layout mobile branch"],
   },
   {
+    id: "thread-link-chips",
+    title: "Thread link chips",
+    to: "/settings/appearance",
+    searchTerms: ["thread link chip chat message url open app machine environment"],
+    environmentOnly: true,
+  },
+  {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",
