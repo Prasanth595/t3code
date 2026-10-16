@@ -19,7 +19,9 @@
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
-		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:@HOME@/.local/bin</string>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:@HOME@/.local/bin:@HOME@/.local/share/vite-plus/bin</string>
+		<key>GH_CONFIG_DIR</key>
+		<string>@HOME@/.config/t3fac/gh</string>
 	</dict>
 	<key>RunAtLoad</key>
 	<true/>
