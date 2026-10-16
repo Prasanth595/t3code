@@ -18,7 +18,6 @@ import type { RunInfo } from "./ledger/listRuns.ts";
 import { newRunId, runIdToString, type RunId } from "./ledger/runId.ts";
 import { formatTs } from "./ledger/time.ts";
 import {
-  GATE_PASSED_LINE,
   runPass,
   type Loaded,
   type PassError,
@@ -35,6 +34,7 @@ import {
   type LimitOutcome,
   type WatchOutcome,
 } from "./runner/building.ts";
+import type { LastPass } from "./runner/gating.ts";
 import { GateRunningError, type StartError, type StartOutcome } from "./runner/start.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
 import { SessionsError } from "./t3/sessions.ts";
@@ -45,6 +45,11 @@ const OTHER = "rawphp/other";
 /** What the fake's clock reads until a test moves it. */
 const T0 = 1_791_380_000_000;
 const BUILDING: State = "building";
+/** The head a pr-open run's pass ran on, the base tip it ran against, and where each moves to. */
+const HEAD = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
+const BASE = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
+const PUSHED = "7e6d5c4b3a291807f6e5d4c3b2a190817263a4b5";
+const MOVED = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
 
 const rid = (issue: number, repo = REPO): RunId => newRunId(repo, String(issue), 1);
 
@@ -127,6 +132,12 @@ class Fake implements PassWorld {
   pendingSendFails = false;
   /** What `gate` answers per `"<repo>#<issue>"`; started otherwise. */
   gateStarts: Record<string, GateStart> = {};
+  /** What `lastPass` answers per `"<repo>#<issue>"`: a pass on `HEAD` against `BASE` unless scripted; `"error"` is a ledger that cannot be read. */
+  lastPasses: Record<string, LastPass | null | "error"> = {};
+  /** The tip of each repo's base branch: `BASE` unless scripted; `"error"` is a read that fails. */
+  baseTips: Record<string, string | "error"> = {};
+  /** The head of each open pull request per `"<repo>#<pr>"`: `HEAD` unless scripted; `null` is one that ended, `"error"` a read that fails. */
+  openHeads: Record<string, string | null | "error"> = {};
   now = T0;
   calls: Array<string> = [];
   events: Array<MachineEvent> = [];
@@ -377,6 +388,34 @@ class Fake implements PassWorld {
       );
     }
     return Effect.succeed(this.pendingSends.includes(runIdToString(run)));
+  }
+
+  lastPass(run: RunId) {
+    const key = `${run.repo}#${run.issue}`;
+    this.calls.push(`last_pass ${key}`);
+    const found =
+      this.lastPasses[key] === undefined
+        ? { pr: 12, head: HEAD, base: BASE }
+        : this.lastPasses[key];
+    if (found === "error") {
+      return Effect.fail(
+        new LedgerIoError({ path: "/data/runs/x.jsonl", cause: new Error("unreadable") }),
+      );
+    }
+    return Effect.succeed(found);
+  }
+
+  baseTip(repo: Repo) {
+    this.calls.push(`base_tip ${repo.watched.repo}`);
+    const found = this.baseTips[repo.watched.repo] ?? BASE;
+    return found === "error" ? Effect.fail(trackerFailure()) : Effect.succeed(found);
+  }
+
+  openHead(repo: Repo, pr: number) {
+    const key = `${repo.watched.repo}#${pr}`;
+    this.calls.push(`open_head ${key}`);
+    const found = this.openHeads[key] === undefined ? HEAD : this.openHeads[key];
+    return found === "error" ? Effect.fail(trackerFailure()) : Effect.succeed(found);
   }
 
   gate(repo: Repo, run: RunId) {
@@ -2544,35 +2583,6 @@ describe("following a building run", () => {
     }),
   );
 
-  it.effect("a pr-open run is worked: the time limit, then advance, with no watch", () =>
-    Effect.gen(function* () {
-      const fake = new Fake();
-      fake.runIn(41, "pr-open", REPO, true);
-      fake.advances[`${REPO}#41`] = [{ kind: "passed", pr: 3 }];
-      const { lines } = yield* pass(fake, machine([REPO], 5));
-      assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#41`, `advance ${REPO}#41`]);
-      assert.equal(runLine(lines, `${REPO}#41 `), `${REPO}#41 pr-open: ${GATE_PASSED_LINE}`);
-    }),
-  );
-
-  it.effect("a pr-open run whose pull request ended says so and needs nobody", () =>
-    Effect.gen(function* () {
-      const fake = new Fake();
-      fake.runIn(41, "pr-open", REPO, true);
-      fake.advances[`${REPO}#41`] = [{ kind: "ended" }];
-      const { report, lines } = yield* pass(fake, machine([REPO], 5));
-      assert.equal(
-        runLine(lines, `${REPO}#41 `),
-        `${REPO}#41 pr-open: its pull request was merged or closed, the run is finished`,
-      );
-      assert.equal(report.attention, 0);
-      assert.deepEqual(
-        fake.events.filter((e) => e.event === "attention"),
-        [],
-      );
-    }),
-  );
-
   it.effect("an abandoned run says so, raises an attention line and is recorded", () =>
     Effect.gen(function* () {
       const fake = new Fake();
@@ -2992,6 +3002,207 @@ describe("attention items", () => {
       fake.items = [open({ id: "a", kind: "attention", run: RUN_40 })];
       yield* pass(fake, machine([REPO], 5));
       assert.deepEqual(ids(fake), ["a"]);
+    }),
+  );
+});
+
+// ---- pr-open runs: gated again when something moved ----
+
+describe("pr-open runs: gated again only when something moved", () => {
+  const pr = (fake: Fake, issue: number, repo = REPO) => fake.runIn(issue, "pr-open", repo, false);
+  const gated = (fake: Fake) => fake.calls.filter((c) => c.startsWith("gate "));
+  const reads = (fake: Fake, name: string) => fake.calls.filter((c) => c.startsWith(`${name} `));
+  const lineOf = (lines: ReadonlyArray<string>, issue: number) =>
+    lines.filter((l) => l.startsWith(`${REPO}#${issue} `));
+
+  it.effect("a quiet run prints nothing and starts nothing", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      const { lines, report } = yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(gated(fake), []);
+      assert.deepEqual(lineOf(lines, 41), []);
+      assert.equal(report.errors, 0);
+      // The comparison reads the ledger, the base tip, and the pull request's head.
+      assert.deepEqual(
+        fake.calls.filter((c) => /^(last_pass|base_tip|open_head) /.test(c)),
+        [`last_pass ${REPO}#41`, `base_tip ${REPO}`, `open_head ${REPO}#12`],
+      );
+    }),
+  );
+
+  it.effect(
+    "a pr-open run is not worked as a building run: no stop request, limit or advance",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        pr(fake, 41);
+        yield* pass(fake, machine([REPO], 5));
+        assert.deepEqual(
+          fake.calls.filter((c) =>
+            /^(stop_request|time_limit|watch|forward|advance|start|resume) /.test(c),
+          ),
+          [],
+        );
+      }),
+  );
+
+  it.effect("a head that moved starts the gate", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      fake.openHeads[`${REPO}#12`] = PUSHED;
+      const { lines } = yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(gated(fake), [`gate ${REPO}#41`]);
+      assert.deepEqual(lineOf(lines, 41), [`${REPO}#41 pr-open: gate started in the background`]);
+    }),
+  );
+
+  it.effect("a base that moved starts the gate", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      fake.baseTips[REPO] = MOVED;
+      yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(gated(fake), [`gate ${REPO}#41`]);
+    }),
+  );
+
+  it.effect("a head in a different case is the same head", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      fake.openHeads[`${REPO}#12`] = HEAD.toUpperCase();
+      fake.baseTips[REPO] = BASE.toUpperCase();
+      yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(gated(fake), []);
+    }),
+  );
+
+  it.effect("a pull request that ended starts the gate, which ends the run", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      fake.openHeads[`${REPO}#12`] = null;
+      yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(gated(fake), [`gate ${REPO}#41`]);
+    }),
+  );
+
+  it.effect("a run with no last pass is left to the gate", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      fake.lastPasses[`${REPO}#41`] = null;
+      yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(gated(fake), [`gate ${REPO}#41`]);
+      // Nothing is read from GitHub for a run the gate will look at anyway.
+      assert.deepEqual(reads(fake, "base_tip"), []);
+      assert.deepEqual(reads(fake, "open_head"), []);
+    }),
+  );
+
+  it.effect("a ledger that cannot be read for the comparison is left to the gate", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      fake.lastPasses[`${REPO}#41`] = "error";
+      yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(gated(fake), [`gate ${REPO}#41`]);
+    }),
+  );
+
+  it.effect(
+    "a failed read of the base tip starts the gate and the repo's tip is not read again",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        pr(fake, 41);
+        pr(fake, 42);
+        fake.baseTips[REPO] = "error";
+        const { report } = yield* pass(fake, machine([REPO], 5));
+        assert.deepEqual(gated(fake), [`gate ${REPO}#41`, `gate ${REPO}#42`]);
+        assert.equal(reads(fake, "base_tip").length, 1);
+        assert.deepEqual(reads(fake, "open_head"), []);
+        // The gate process reports a failed read itself.
+        assert.equal(report.errors, 0);
+      }),
+  );
+
+  it.effect(
+    "a failed read of the pull request starts the gate and the repo is not read again",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        pr(fake, 41);
+        pr(fake, 42);
+        fake.openHeads[`${REPO}#12`] = "error";
+        yield* pass(fake, machine([REPO], 5));
+        assert.deepEqual(gated(fake), [`gate ${REPO}#41`, `gate ${REPO}#42`]);
+        assert.equal(reads(fake, "base_tip").length, 1);
+        assert.equal(reads(fake, "open_head").length, 1);
+      }),
+  );
+
+  it.effect("the tip is read once for two runs of one repo, and once for each repo", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      pr(fake, 42);
+      pr(fake, 43, OTHER);
+      yield* pass(fake, machine([REPO, OTHER], 5));
+      assert.deepEqual(reads(fake, "base_tip"), [`base_tip ${REPO}`, `base_tip ${OTHER}`]);
+      assert.deepEqual(gated(fake), []);
+    }),
+  );
+
+  it.effect("a run whose gate is running says so and reads nothing", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      fake.gateLocks.push(runIdToString(rid(41)));
+      const { lines } = yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(lineOf(lines, 41), [`${REPO}#41 pr-open: gate running`]);
+      assert.deepEqual(gated(fake), []);
+      assert.deepEqual(reads(fake, "last_pass"), []);
+    }),
+  );
+
+  it.effect("a gate that cannot start because gates are running says it is queued", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      fake.baseTips[REPO] = MOVED;
+      fake.gateStarts[`${REPO}#41`] = { kind: "queued", running: 2, max: 2 };
+      const { lines } = yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(lineOf(lines, 41), [
+        `${REPO}#41 pr-open: gate queued: 2 gates running, max_concurrent_gates is 2`,
+      ]);
+    }),
+  );
+
+  it.effect("a pr-open run of a repo that did not load is left alone", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41, OTHER);
+      fake.projects[OTHER] = "bad config";
+      fake.baseTips[OTHER] = MOVED;
+      yield* pass(fake, machine([REPO, OTHER], 5));
+      assert.deepEqual(gated(fake), []);
+      assert.deepEqual(reads(fake, "last_pass"), []);
+    }),
+  );
+
+  it.effect("a pr-open run does not hold a slot, and its gate does not stop a claim", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      pr(fake, 41);
+      fake.baseTips[REPO] = MOVED;
+      fake.ready[REPO] = [1];
+      fake.pushStart(`${REPO}#1`, started(1));
+      const { report } = yield* pass(fake, machine([REPO], 1));
+      assert.equal(report.claimed, 1);
+      assert.deepEqual(gated(fake), [`gate ${REPO}#41`]);
     }),
   );
 });

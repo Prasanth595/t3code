@@ -30,6 +30,7 @@ import {
   FactoryRuntime,
   gateDecided,
   gateItem,
+  regateWords,
   liveWorld,
   ownedThreads,
   wakeOn,
@@ -39,7 +40,7 @@ import { makeCause } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
 import { scanMachineLog } from "./ledger/machineLog.ts";
 import { readRun } from "./ledger/read.ts";
-import { newRunId, runIdToString, type RunId } from "./ledger/runId.ts";
+import { newRunId, runIdToString, runPath, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
 import type { Repo } from "./pass.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
@@ -660,6 +661,75 @@ describe("liveWorld", () => {
 
   const ago = (ms: number) => utcSecond(NOW - ms);
 
+  const SHA = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
+  const pullView = (state: string, head: string) =>
+    JSON.stringify({
+      number: 12,
+      isDraft: false,
+      state,
+      headRefName: "t3code/abc",
+      isCrossRepository: false,
+      baseRefName: "main",
+      headRefOid: head,
+    });
+
+  it.effect("the base tip is read from the repo's base branch, in lower case", () =>
+    Effect.gen(function* () {
+      const { process, calls } = ghWith(() =>
+        JSON.stringify({ object: { type: "commit", sha: SHA } }),
+      );
+      const tip = yield* worldOf(process).baseTip({
+        ...repo,
+        project: { ...repo.project, base: "main" },
+      });
+      assert.strictEqual(tip, SHA);
+      assert.deepStrictEqual(calls[0]?.slice(0, 2), [
+        "api",
+        "repos/rawphp/softfac/git/ref/heads/main",
+      ]);
+    }),
+  );
+
+  it.effect("a base tip that cannot be read is a tracker error", () =>
+    Effect.gen(function* () {
+      const { process } = ghWith(() => null);
+      const failed = yield* Effect.flip(worldOf(process).baseTip(repo));
+      assert.strictEqual(failed.kind, "tracker");
+    }),
+  );
+
+  it.effect("the head of an open pull request is read in lower case; one that ended has none", () =>
+    Effect.gen(function* () {
+      const open = ghWith(() => pullView("OPEN", SHA.toUpperCase()));
+      assert.strictEqual(yield* worldOf(open.process).openHead(repo, 12), SHA);
+      for (const state of ["MERGED", "CLOSED"]) {
+        const ended = ghWith(() => pullView(state, SHA));
+        assert.strictEqual(yield* worldOf(ended.process).openHead(repo, 12), null, state);
+      }
+    }),
+  );
+
+  it.effect("a pull request GitHub no longer has has no head, and a failed read is an error", () =>
+    Effect.gen(function* () {
+      const gone: FactoryProcess["Service"] = {
+        run: () =>
+          Effect.succeed({
+            exitCode: 1,
+            timedOut: false,
+            tail: "",
+            stderrTail: "GraphQL: Could not resolve to a PullRequest with the number of 12.",
+            truncated: false,
+          } satisfies RunResult),
+      };
+      assert.strictEqual(yield* worldOf(gone).openHead(repo, 12), null);
+      const broken = ghWith(() => null);
+      assert.strictEqual(
+        (yield* Effect.flip(worldOf(broken.process).openHead(repo, 12))).kind,
+        "tracker",
+      );
+    }),
+  );
+
   it.effect("a ready issue anyone is assigned to is not listed", () =>
     Effect.gen(function* () {
       const { process } = ghWith((args) =>
@@ -981,81 +1051,159 @@ describe("the gate in the background", () => {
   const tempDir = useTempDirs();
   const REPO = "rawphp/softfac";
 
+  /** What `gh pr view` answers for pull request 12 of `REPO`, as `state`, at `head`. */
+  const PR_VIEW = (state: "OPEN" | "MERGED", head: string) =>
+    JSON.stringify({
+      number: 12,
+      isDraft: false,
+      state,
+      headRefName: "t3code/abc",
+      isCrossRepository: false,
+      baseRefName: "main",
+      headRefOid: head,
+    });
+  const HEAD = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
+  const BASE = "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d";
+
+  /** A run whose gate passed at `HEAD` against `BASE`, whose worktree is removed and whose issue is `pr-open`. */
+  const prOpenRun = (dataDir: string): RunId => {
+    const run = newRunId(REPO, "10", 1);
+    const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
+    const cause = makeCause("gate", "seed", { attempt: 1 });
+    for (const event of [
+      {
+        event: "session_launched",
+        data: {
+          thread_id: "thread-1",
+          worktree: "/t3/wt",
+          branch: null,
+          model_instance: null,
+          model: null,
+          resumed_from: null,
+        },
+      },
+      { event: "pr_opened", data: { pr: 12, url: "https://github.com/rawphp/softfac/pull/12" } },
+      {
+        event: "gate_checkout",
+        data: { attempt: 1, dir: "/gone", sha: HEAD, base_sha: BASE },
+      },
+      {
+        event: "gate_command",
+        data: { attempt: 1, command: "cargo test", exit_code: 0, duration_ms: 5 },
+      },
+      { event: "step_changed", data: { step: `gate-passed ${HEAD} 1` } },
+      { event: "worktree_removed", data: { path: "/t3/wt" } },
+      { event: "state_changed", data: { from: "building", to: "pr-open" } },
+    ] as const) {
+      ledger.append(event, cause);
+    }
+    ledger.close();
+    return run;
+  };
+
+  const background = {
+    ghConfigDir: "/gh/rawphp",
+    pollSeconds: 60,
+    maxConcurrentRuns: 1,
+    maxConcurrentGates: 1,
+    modelInstance: "claudeAgent",
+    model: "claude-sonnet-5-5",
+    notify: true,
+    repos: [{ repo: REPO, path: "/p" }],
+  } satisfies MachineConfig;
+  const backgroundRepo: Repo = {
+    watched: background.repos[0]!,
+    project: timeLimitOnlyProjectConfig(),
+    trackerUser: "rawphp",
+  };
+
   it.effect("runs the gate step as a background fiber and wakes the loop once it decided", () =>
     Effect.gen(function* () {
       const dataDir = tempDir();
-      const run = newRunId(REPO, "10", 1);
-      // A run whose gate passed and whose move to pr-open is written: the gate has nothing left
-      // to do and decides at once, with no call to GitHub or T3.
-      const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
-      ledger.append(
-        {
-          event: "session_launched",
-          data: {
-            thread_id: "thread-1",
-            worktree: null,
-            branch: null,
-            model_instance: null,
-            model: null,
-            resumed_from: null,
-          },
+      // A pr-open run whose pull request was merged: the re-gate ends the run at once, with no
+      // command run and nothing written on GitHub.
+      const run = prOpenRun(dataDir);
+      const seen: Array<ReadonlyArray<string>> = [];
+      const gh: FactoryProcess["Service"] = {
+        run: (input) => {
+          seen.push(input.args ?? []);
+          return answered(PR_VIEW("MERGED", HEAD));
         },
-        makeCause("start", "seed"),
-      );
-      ledger.append(
-        { event: "pr_opened", data: { pr: 12, url: "https://github.com/rawphp/softfac/pull/12" } },
-        makeCause("advance", "seed"),
-      );
-      ledger.append(
-        { event: "state_changed", data: { from: "building", to: "pr-open" } },
-        makeCause("gate", "seed"),
-      );
-      ledger.close();
-      const machine: MachineConfig = {
-        ghConfigDir: "/gh/rawphp",
-        pollSeconds: 60,
-        maxConcurrentRuns: 1,
-        maxConcurrentGates: 1,
-        modelInstance: "claudeAgent",
-        model: "claude-sonnet-5-5",
-        notify: true,
-        repos: [{ repo: REPO, path: "/p" }],
-      };
-      const repo = {
-        watched: machine.repos[0]!,
-        project: timeLimitOnlyProjectConfig(),
-        trackerUser: "rawphp",
-      };
-      const deadProcess: FactoryProcess["Service"] = {
-        run: () =>
-          Effect.fail(new RunSpawnError({ shell: false, cause: new Error("gh not found") })),
       };
       const woken = yield* Deferred.make<void>();
+      const archived: Array<string> = [];
       const world = liveWorld(
-        machine,
+        background,
         dataDir,
-        deadProcess,
-        stubSessions,
+        gh,
+        Sessions.FactorySessions.of({
+          ...stubSessions,
+          archive: (threadId) => Effect.sync(() => void archived.push(threadId)),
+        }),
         () => 1_000,
         "mac-mini",
         noAttention,
         {
-          gate: { run: () => Effect.die("no gate runs for a recorded pass") },
+          gate: { run: () => Effect.die("no gate runs for a merged pull request") },
           wake: Deferred.succeed(woken, undefined).pipe(Effect.asVoid),
           scope: yield* Scope.make(),
         },
       );
-      assert.deepStrictEqual(yield* world.gate(repo, run), { kind: "started" });
+      assert.deepStrictEqual(yield* world.gate(backgroundRepo, run), { kind: "started" });
       assert.strictEqual(world.gateRunning(run), true);
       // A second start while the first runs is queued at max_concurrent_gates 1.
-      assert.deepStrictEqual(yield* world.gate(repo, newRunId(REPO, "11", 1)), {
+      assert.deepStrictEqual(yield* world.gate(backgroundRepo, newRunId(REPO, "11", 1)), {
         kind: "queued",
         running: 1,
         max: 1,
       });
       yield* Deferred.await(woken);
       assert.strictEqual(world.gateRunning(run), false);
+      assert.deepStrictEqual(archived, ["thread-1"]);
+      assert.strictEqual(readRun(dataDir, run).entries.at(-1)?.event, "finished");
+      // It read the pull request, for a re-gate; a gate of a pr-open run would have read nothing.
+      assert.ok(
+        seen.some((args) => args.includes("view")),
+        JSON.stringify(seen),
+      );
     }),
+  );
+
+  it.effect(
+    "a pr-open run that nothing moved for is re-gated quietly: no decision, no wake, no write",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const run = prOpenRun(dataDir);
+        const before = NodeFS.readFileSync(runPath(dataDir, run), "utf8");
+        const woken = yield* Ref.make(0);
+        const gh: FactoryProcess["Service"] = {
+          run: (input) =>
+            answered(
+              input.args?.includes("view") === true
+                ? PR_VIEW("OPEN", HEAD)
+                : JSON.stringify({ object: { type: "commit", sha: BASE } }),
+            ),
+        };
+        const world = liveWorld(
+          background,
+          dataDir,
+          gh,
+          stubSessions,
+          () => 1_000,
+          "mac-mini",
+          noAttention,
+          {
+            gate: { run: () => Effect.die("nothing moved, so nothing is gated") },
+            wake: Ref.update(woken, (n) => n + 1),
+            scope: yield* Scope.make(),
+          },
+        );
+        assert.deepStrictEqual(yield* world.gate(backgroundRepo, run), { kind: "started" });
+        while (world.gateRunning(run)) yield* Effect.yieldNow;
+        assert.strictEqual(yield* Ref.get(woken), 0);
+        assert.strictEqual(NodeFS.readFileSync(runPath(dataDir, run), "utf8"), before);
+      }),
   );
 
   /** What `gh issue view` answers for the open `factory:building` issue the gate reads before anything else. */
@@ -1283,9 +1431,51 @@ describe("the gate in the background", () => {
     // Nothing changed: the normal poll carries the next try, so a session still at work or a
     // rate limit does not spin the loop.
     assert.strictEqual(gateDecided({ kind: "not-ready" }), false);
+    assert.strictEqual(gateDecided({ kind: "unchanged" }), false);
     assert.strictEqual(gateDecided({ kind: "running" }), false);
     assert.strictEqual(gateDecided({ kind: "queued", running: 2, max: 2 }), false);
     assert.strictEqual(gateDecided(null), false);
+  });
+
+  it("says what a re-gate did in the words of softfac's run line, and nothing for an unchanged one", () => {
+    const words = (
+      step: Parameters<typeof regateWords>[2],
+      moved: Parameters<typeof regateWords>[3],
+    ) => regateWords("run-1", REPO, step, moved);
+    assert.strictEqual(words({ kind: "unchanged" }, null), null);
+    assert.strictEqual(
+      words({ kind: "passed", pr: 12 }, "base"),
+      "the base branch moved, the gate passed again, PR https://github.com/rawphp/softfac/pull/12 stays ready for review",
+    );
+    assert.strictEqual(
+      words({ kind: "passed", pr: 12 }, "head"),
+      "the pull request's head moved, the gate passed again, PR https://github.com/rawphp/softfac/pull/12 stays ready for review",
+    );
+    assert.strictEqual(
+      words({ kind: "sent-back", attempt: 2 }, "both"),
+      "the pull request's head and the base branch moved, the gate failed on attempt 2, the PR is a draft again and the session was told",
+    );
+    assert.strictEqual(
+      words({ kind: "sent-back", attempt: 3 }, "unknown"),
+      "the base of the last pass was not recorded, the gate failed on attempt 3, the PR is a draft again and the session was told",
+    );
+    assert.strictEqual(
+      words({ kind: "passed", pr: 12 }, null),
+      "no pass was on record, the gate passed again, PR https://github.com/rawphp/softfac/pull/12 stays ready for review",
+    );
+    assert.strictEqual(
+      words({ kind: "stuck", reason: "r" }, "base"),
+      `stuck, the reason is in the ledger of run run-1`,
+    );
+    assert.strictEqual(
+      words({ kind: "ended" }, null),
+      "the pull request was merged or closed, the run is finished",
+    );
+    assert.strictEqual(
+      words({ kind: "abandoned" }, null),
+      "the issue is closed, the run is closed",
+    );
+    assert.strictEqual(words({ kind: "not-ready" }, null), "the gate waits for the session");
   });
 
   it("raises a stuck item for a gate that ended stuck, as the pass does, and nothing else", () => {
