@@ -5548,22 +5548,24 @@ describe("regate: a person closed the issue", () => {
   );
 
   it.effect(
-    "while a re-gate is under way, a merged or closed pull request ends the run, whoever closed the issue",
+    "while a re-gate is under way, a pull request merged, closed or gone ends the run, whatever the issue",
     () =>
       Effect.gen(function* () {
-        const cases: ReadonlyArray<[string, PullRequest, "merged" | "closed"]> = [
-          ["merged", mergedPull(), "merged"],
-          ["closed unmerged", { ...defaultPr(), open: false }, "closed"],
+        const cases: ReadonlyArray<[string, boolean, PullRequest | null, "merged" | "closed"]> = [
+          ["merged, issue closed", true, mergedPull(), "merged"],
+          ["closed unmerged, issue closed", true, { ...defaultPr(), open: false }, "closed"],
+          ["closed unmerged, issue open", false, { ...defaultPr(), open: false }, "closed"],
+          ["gone, issue open", false, null, "closed"],
         ];
-        for (const [label, pull, prEnd] of cases) {
+        for (const [label, issueClosed, pull, prEnd] of cases) {
           const rig = yield* prOpenRun();
           baseMoved(rig, 0);
           appendLines(rig, [regateLine(BASE, MOVED)] as ReadonlyArray<RunEvent>);
-          rig.gh.closed = true;
+          rig.gh.closed = issueClosed;
           rig.gh.pr = pull;
           assert.deepStrictEqual(yield* regateStep(rig), { kind: "ended" }, label);
           // Nothing is gated or launched, and the run ends with its pull request's end in its
-          // summary line, as one found before a re-gate does, not as abandoned.
+          // summary line, as one found before a re-gate does: not abandoned, and not gated again.
           assert.deepStrictEqual(rig.ws.calls, [], label);
           assert.deepStrictEqual(rig.t3.launches, [], label);
           assert.deepStrictEqual(linesOf(rig).at(-1), finishedPrEnded(1, prEnd), label);
