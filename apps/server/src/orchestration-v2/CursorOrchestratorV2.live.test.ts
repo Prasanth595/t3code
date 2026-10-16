@@ -105,7 +105,6 @@ const layerProviderInstanceRegistry = ProviderInstanceRegistryHydration.layer.pi
       Layer.mock(CodexManagedTokenBroker.CodexManagedTokenBroker)({
         endpoint: Effect.succeed("unused-private-pipe"),
       }),
-      // The Codex driver now resolves managed ChatGPT installs; these runs never launch Codex.
       Layer.mock(CodexInstallation.CodexInstallation)({
         managedDirectory: "unused-managed-installation",
       }),
