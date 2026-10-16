@@ -3038,7 +3038,11 @@ interface ClaudeLiveQueryContext {
   // ("early") or only on its result. "acknowledged": the CLI confirmed it took a prompt's uuid
   // before any echo, so it echoes, but a resume's own turns can still run ahead of that prompt.
   promptEchoMode: "unknown" | "acknowledged" | "early" | "result_only";
-  readonly openedPermissionMode: PermissionMode;
+  // Follows the process's first init frame: managed policy can refuse the
+  // requested mode, and the CLI also refuses to switch to it later. Init
+  // repeats every turn, so later ones can carry an EnterPlanMode self-switch.
+  openedPermissionMode: PermissionMode;
+  openedPermissionModeReported: boolean;
   permissionMode: PermissionMode;
   stopping: boolean;
   readonly subagentsFromEarlierProcesses: ReadonlySet<ActiveClaudeSubagent>;
@@ -8167,6 +8171,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             lastTurn: null,
             promptEchoMode: "unknown",
             openedPermissionMode: queryOptions.permissionMode,
+            openedPermissionModeReported: false,
             permissionMode: queryOptions.permissionMode,
             stopping: false,
             subagentsFromEarlierProcesses: new Set(
@@ -8180,14 +8185,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             Stream.runForEach((message) =>
               sdkMessageLock.withPermits(1)(
                 Effect.suspend(() => {
+                  let downgradedFrom: PermissionMode | undefined;
                   if (
                     message.type === "system" &&
                     (message.subtype === "init" || message.subtype === "status") &&
                     message.permissionMode !== undefined
                   ) {
                     context.permissionMode = message.permissionMode;
+                    if (message.subtype === "init" && !context.openedPermissionModeReported) {
+                      context.openedPermissionModeReported = true;
+                      if (message.permissionMode !== context.openedPermissionMode) {
+                        downgradedFrom = context.openedPermissionMode;
+                        context.openedPermissionMode = message.permissionMode;
+                      }
+                    }
                   }
-                  return handleSdkMessage({ query: querySession, message });
+                  const handled = handleSdkMessage({ query: querySession, message });
+                  return downgradedFrom === undefined
+                    ? handled
+                    : Effect.logWarning("orchestration-v2.claude-permission-mode-downgraded", {
+                        nativeThreadId,
+                        requested: downgradedFrom,
+                        effective: context.openedPermissionMode,
+                      }).pipe(Effect.andThen(handled));
                 }),
               ),
             ),

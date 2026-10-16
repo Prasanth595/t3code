@@ -3866,6 +3866,88 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // Managed policy can disable bypassPermissions: the CLI then opens in another
+  // mode and rejects any later switch back to bypassPermissions.
+  it.effect.each([
+    {
+      title: "keeps the mode the CLI opened in when policy refuses the requested one",
+      turnOneModes: [["init", "default"]],
+      expected: [],
+    },
+    {
+      title: "restores the mode the CLI opened in after Claude enters plan mode",
+      turnOneModes: [
+        ["init", "default"],
+        ["status", "plan"],
+      ],
+      expected: ["default"],
+    },
+    {
+      title: "does not take a later init's plan mode as the opened mode",
+      turnOneModes: [
+        ["init", "default"],
+        ["status", "plan"],
+        ["init", "plan"],
+      ],
+      expected: ["default"],
+    },
+  ] as const)("$title", ({ turnOneModes, expected }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-opened-mode-1"),
+            text: "First prompt.",
+            attachments: [],
+          }),
+        );
+        for (const [index, [subtype, permissionMode]] of turnOneModes.entries()) {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "system",
+              subtype,
+              ...(subtype === "status" ? { status: null } : {}),
+              permissionMode,
+              uuid: `00000000-0000-4000-8000-00000000060${index}`,
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+        }
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000609",
+            result: "First answer.",
+          }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-opened-mode-2"),
+            providerTurnOrdinal: 2,
+            text: "Second prompt.",
+            attachments: [],
+          }),
+        );
+        assert.deepEqual(harness.permissionModeChanges, [...expected]);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("preserves typed Claude plans and todos through generic tool completion", () =>
     Effect.scoped(
       Effect.gen(function* () {
