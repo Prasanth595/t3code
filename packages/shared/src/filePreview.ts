@@ -87,12 +87,17 @@ export function officePreviewFormat(file: {
 }): OfficePreviewFormat | null {
   const mime = file.mimeType?.split(";", 1)[0]?.trim().toLowerCase() ?? "";
   const generic = !mime || mime === "application/octet-stream" || mime === "text/plain";
+  const office =
+    mime === "application/vnd.ms-powerpoint" ||
+    Object.values(OFFICE_PREVIEW_MIME_TYPES).some((type) => mime === type);
+  let mimeFormat: OfficePreviewFormat | null = null;
   for (const [extension, expectedMime] of Object.entries(OFFICE_PREVIEW_MIME_TYPES)) {
-    if (mime === expectedMime || (generic && file.name.toLowerCase().endsWith(extension))) {
+    if ((generic || office) && file.name.toLowerCase().endsWith(extension)) {
       return extension.slice(1) as OfficePreviewFormat;
     }
+    if (mime === expectedMime) mimeFormat = extension.slice(1) as OfficePreviewFormat;
   }
-  return null;
+  return mimeFormat;
 }
 
 export function officePreviewMimeTypeFromExtension(extension: string): string | null {
