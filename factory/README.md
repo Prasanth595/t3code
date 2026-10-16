@@ -30,9 +30,45 @@ Build, install and roll back the darwin-arm64 binary (LaunchAgent `io.github.raw
 
 ```sh
 factory/scripts/build.sh                      # clean tree only: build, smoke test, then -> release/t3fac-<version>-darwin-arm64.tar.gz
-factory/scripts/install.sh <archive>          # unpack, point `current` at it, restart the job
-factory/scripts/rollback.sh                   # point `current` at the previous version, restart the job
+factory/scripts/install.sh <archive>          # unpack, point `current` at it, restart the job, wait for it to come up, roll back if it does not
+factory/scripts/rollback.sh                   # point `current` at the previous version, restart the job and check it comes up
 ```
+
+## Recovery
+
+`install.sh` and `rollback.sh` check that the job came up. After the restart they wait up to `T3FAC_HEALTH_WAIT` seconds (default 90) for the server to accept connections on port 3876 and for a `factory started` or `no factory config` line to be written to `~/Library/Logs/t3fac/t3fac.log` after the restart. Lines from before the restart do not count. If either is missing, the script prints the last 50 log lines. A failed `install.sh` then runs `rollback.sh` and exits 1 with `install of <version> failed its health check; rolled back to <previous>`. With no earlier version it exits 1 and says so.
+
+### Telling the fork is down
+
+```sh
+launchctl print gui/$(id -u)/io.github.rawphp.t3fac
+tail -n 50 ~/Library/Logs/t3fac/t3fac.log
+```
+
+A non-zero exit from `launchctl print`, or output with no `pid` line, means the job is not running. A `last exit code` other than 0 together with a changing `runs` count is a crash loop. In the log, look for `factory started` or `no factory config` after the last start. Neither means the server never got as far as the factory.
+
+### Rolling back by hand
+
+```sh
+factory/scripts/rollback.sh
+```
+
+It points `current` at `previous`, restarts the job, removes `previous` and runs the same health check on the restored version. It exits 1 with `rollback to <previous> from <current> failed its health check` when that check fails too. When there is no `previous`, install an older archive from `release/` with `factory/scripts/install.sh <archive>`.
+
+### Handing this repo back to the Rust factory
+
+Do this when every installed version has a bug that stops the fork from building its own fix. It is the reverse of the #21 switch.
+
+1. Check that no run of either factory holds an issue for this repo: `softfac runs list` for the Rust factory, `softfac runs list --data-dir ~/.config/t3fac/factory` for the fork, and `gh issue list --repo original-solutions/t3code-factory --label factory:building` and `--label factory:triage` both come back empty.
+2. Remove `original-solutions/t3code-factory` from `repos` in `~/.config/t3fac/factory/config.yml`.
+3. Add it to `repos` in `~/.config/softfac/config.yml` with `repo`, `path` and `user`.
+4. Restart each factory so it rereads its config.
+
+The Rust factory then builds the fix.
+
+### Moving it back
+
+Once `install.sh` has installed a fixed archive and it passed its health check, repeat the steps above in reverse: check that no run holds an issue, remove the repo from `~/.config/softfac/config.yml`, add it to `repos` in `~/.config/t3fac/factory/config.yml`, and restart each factory.
 
 ## Syncing with upstream
 
