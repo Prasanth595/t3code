@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { formatTs, parseTs } from "./time.ts";
+import { duration, formatTs, parseTs } from "./time.ts";
 
 describe("format ts", () => {
   it("format ts epoch", () => {
@@ -62,5 +62,29 @@ describe("parse ts", () => {
     ]) {
       expect(parseTs(text), JSON.stringify(text)).toBeNull();
     }
+  });
+});
+
+describe("duration", () => {
+  it("duration says seconds under a minute", () => {
+    expect(duration(0)).toBe("0s");
+    expect(duration(999)).toBe("0s");
+    expect(duration(59_999)).toBe("59s");
+  });
+
+  it("duration says whole minutes under an hour", () => {
+    expect(duration(60_000)).toBe("1m");
+    expect(duration(3_599_999)).toBe("59m");
+  });
+
+  it("duration says hours and two-digit minutes under a day", () => {
+    expect(duration(3_600_000)).toBe("1h00m");
+    expect(duration(2 * 3_600_000)).toBe("2h00m");
+    expect(duration(2 * 3_600_000 + 5 * 60_000)).toBe("2h05m");
+  });
+
+  it("duration says days and two-digit hours from a day on", () => {
+    expect(duration(86_400_000)).toBe("1d00h");
+    expect(duration(90_000_000)).toBe("1d01h");
   });
 });

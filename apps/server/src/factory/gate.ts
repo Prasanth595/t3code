@@ -10,7 +10,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import type { AppendIo } from "./ledger/appendFile.ts";
-import { errnoCode, isLedgerError, type LedgerError } from "./ledger/errors.ts";
+import { errnoCode, ledgerCall, type LedgerError } from "./ledger/errors.ts";
 import { makeCause } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
 import { readRun } from "./ledger/read.ts";
@@ -728,16 +728,6 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
 };
 
 // ---- the gate -------------------------------------------------------------------------------
-
-/** Runs a ledger call, which throws typed `LedgerError`s, as an effect; anything else it throws is a defect. */
-const ledgerCall = <A>(call: () => A): Effect.Effect<A, LedgerError> =>
-  Effect.suspend(() => {
-    try {
-      return Effect.succeed(call());
-    } catch (error) {
-      return isLedgerError(error) ? Effect.fail(error) : Effect.die(error);
-    }
-  });
 
 const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, GateError> => {
   const options = input.options ?? {};
