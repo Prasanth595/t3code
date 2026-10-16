@@ -334,6 +334,7 @@ export default defineConfig({
           "apps/web/src/components/pullRequest/useThreadLinkedPullRequest.ts",
           "apps/web/src/components/preview/useAgentOpenedPreviews.ts",
           "apps/web/src/components/terminal/**",
+          "apps/web/src/hooks/useIncrementalTimelineEntries.ts",
           "apps/web/src/hooks/useProactivePanels.ts",
           "apps/web/src/hooks/useRightPanelSurfaceClose.ts",
         ],
