@@ -28,8 +28,9 @@ if [[ ! -f $ledger ]]; then
   exit 1
 fi
 
+# $1 is why; $2, when given, is how the run ends instead.
 not_building() {
-  echo "run $id is not building: $1. Only a building run is stopped this way; to end one in another state, close its issue." >&2
+  echo "run $id is not building: $1. Only a building run is stopped this way.${2:+ $2}" >&2
   exit 1
 }
 
@@ -38,12 +39,17 @@ if grep -q '"event":"finished"' "$ledger"; then
   not_building "it is finished"
 fi
 
+# The state is the `to` key of the last `state_changed` line, wherever the key sits in it: no
+# other key of that line is named `to`, and a quote inside a value is escaped.
 state=$({ grep '"event":"state_changed"' "$ledger" || true; } |
   tail -n 1 |
-  sed -n 's/.*"data":{"from":"[^"]*","to":"\([^"]*\)"}.*/\1/p')
+  sed -n 's/.*"to":"\([^"]*\)".*/\1/p')
+close_it="To end it, close its issue."
 case $state in
   building) ;;
-  "") not_building "it has no state yet" ;;
+  "") not_building "it has no state yet" "$close_it" ;;
+  triage | needs-info) not_building "its state is $state" "$close_it" ;;
+  pr-open) not_building "its state is $state" "It ends when its pull request is merged or closed." ;;
   *) not_building "its state is $state" ;;
 esac
 

@@ -20,8 +20,14 @@ const tempDir = useTempDirs();
 
 const run10: RunId = { repo: "rawphp/softfac", issue: "10", attempt: 1 };
 const ID = runIdToString(run10);
-const NOT_BUILDING_TAIL =
-  "Only a building run is stopped this way; to end one in another state, close its issue.";
+const NOT_BUILDING_TAIL = "Only a building run is stopped this way.";
+/** How a run in `state` ends instead, as the refusal says it. */
+const endsBy = (state: string) =>
+  state === "pr-open"
+    ? " It ends when its pull request is merged or closed."
+    : state === "triage" || state === "needs-info"
+      ? " To end it, close its issue."
+      : "";
 
 const moved = (from: string, to: string): RunEvent =>
   ({ event: "state_changed", data: { from, to } }) as RunEvent;
@@ -123,7 +129,7 @@ describe("factory/scripts/stop-run.sh", () => {
       assert.strictEqual(result.status, 1, state);
       assert.strictEqual(
         result.stderr,
-        `run ${ID} is not building: its state is ${state}. ${NOT_BUILDING_TAIL}\n`,
+        `run ${ID} is not building: its state is ${state}. ${NOT_BUILDING_TAIL}${endsBy(state)}\n`,
         state,
       );
       assert.strictEqual(NodeFS.existsSync(NodePath.join(dataDir, "stop-requests")), false);
@@ -137,7 +143,7 @@ describe("factory/scripts/stop-run.sh", () => {
     assert.strictEqual(result.status, 1);
     assert.strictEqual(
       result.stderr,
-      `run ${ID} is not building: it has no state yet. ${NOT_BUILDING_TAIL}\n`,
+      `run ${ID} is not building: it has no state yet. ${NOT_BUILDING_TAIL}${endsBy("triage")}\n`,
     );
   });
 
@@ -145,6 +151,28 @@ describe("factory/scripts/stop-run.sh", () => {
     const dataDir = tempDir();
     seed(dataDir, [...BUILDING, moved("building", "pr-open"), moved("pr-open", "building")]);
     assert.strictEqual(stop(dataDir, ID).status, 0);
+  });
+
+  it("reads the state from the `to` key wherever it sits in the line", () => {
+    // The ledger writes `from` first; a line written another way must read the same.
+    for (const [to, status] of [
+      ["building", 0],
+      ["pr-open", 1],
+    ] as const) {
+      const dataDir = tempDir();
+      seed(dataDir, [CLAIMED, moved("ready", "triage")]);
+      NodeFS.appendFileSync(
+        NodePath.join(dataDir, "runs", `${ID}.jsonl`),
+        `${JSON.stringify({
+          ts: "2026-10-16T00:00:00.000Z",
+          ms: 0,
+          event: "state_changed",
+          data: { to, from: "triage" },
+          cause: { step: "start", reason: "seed" },
+        })}\n`,
+      );
+      assert.strictEqual(stop(dataDir, ID).status, status, to);
+    }
   });
 
   it("writes the request and says what happens next", () => {

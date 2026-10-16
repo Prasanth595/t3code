@@ -13,7 +13,7 @@ import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
 import { makeCause, type Cause, type CauseStep } from "../ledger/events.ts";
 import type { Ledger } from "../ledger/ledger.ts";
 import type { RunId } from "../ledger/runId.ts";
-import type { BoundGitHub, GitHubError, PullRequest } from "../tracker/github.ts";
+import type { BoundGitHub, GitHubError, IssueDetail, PullRequest } from "../tracker/github.ts";
 import { ThreadNotFoundError } from "../t3/sessions.ts";
 import type { FactorySessions, MessageRejectedError, SessionsError } from "../t3/sessions.ts";
 import { questionsComment, statusBody, stuckComment, type WorkLeft } from "./messages.ts";
@@ -432,19 +432,20 @@ export const movedOnByClosing = (
   });
 
 /**
- * What the run's issue being closed means for it. A run that has nothing left to write
- * (`pr-open`, `stuck`) asks nothing of GitHub, and neither does a step that would skip the run
- * (the caller checks that first).
+ * What the run's issue being closed means for it, with the issue as read for that (`detail`, null
+ * when it was not read), so a caller that needs the issue too does not read it again. A run that
+ * has nothing left to write (`pr-open`, `stuck`) asks nothing of GitHub, and neither does a step
+ * that would skip the run (the caller checks that first).
  */
 export const closedIssue = (
   ctx: RunContext,
   run: RunId,
   seen: Seen,
-): Effect.Effect<Closing, RunError> =>
+): Effect.Effect<{ readonly closing: Closing; readonly detail: IssueDetail | null }, RunError> =>
   Effect.gen(function* () {
-    if (seen.state === "pr-open" || seen.state === "stuck") return OPEN;
+    if (seen.state === "pr-open" || seen.state === "stuck") return { closing: OPEN, detail: null };
     const detail = yield* ctx.tracker.issue(Number(run.issue));
-    return yield* movedOnByClosing(ctx, seen, detail.closed);
+    return { closing: yield* movedOnByClosing(ctx, seen, detail.closed), detail };
   });
 
 /**

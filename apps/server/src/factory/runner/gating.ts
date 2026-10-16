@@ -246,7 +246,7 @@ export const gate = (ctx: GateContext, run: RunId): Effect.Effect<GateStep, Gate
       const issue = Number(run.issue);
       // Before anything is decided or written: a closed issue is a person's move, or the run's
       // own merged pull request, which ends the run here unless a recorded pass finishes it below.
-      const closing = yield* closedIssue(ctx, run, seen);
+      const { closing } = yield* closedIssue(ctx, run, seen);
       if (closing.kind === "persons-move") {
         yield* abandon(ctx, yield* out.open, run, seen, "gate");
         return { kind: "abandoned" } as const;

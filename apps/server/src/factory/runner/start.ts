@@ -135,9 +135,15 @@ export type StartOutcome =
   /**
    * The issue is closed and a person closed it: its unfinished runs are finished and their
    * sessions archived. `mayHaveSession` names the runs that sent a launch the ledger never got a
-   * thread for: a session may exist that this could not archive.
+   * thread for: a session may exist that this could not archive. `error` is why a later run could
+   * not be ended after earlier ones were, which the next call tries again; the runs it names are
+   * finished, so this is the only time they are named.
    */
-  | { readonly kind: "abandoned"; readonly mayHaveSession: ReadonlyArray<RunId> };
+  | {
+      readonly kind: "abandoned";
+      readonly mayHaveSession: ReadonlyArray<RunId>;
+      readonly error?: StartError;
+    };
 
 /** An older unfinished run of the issue has its gate running, so nothing was called or written. */
 export class GateRunningError extends Schema.TaggedError<GateRunningError>()("GateRunningError", {
@@ -216,7 +222,9 @@ const closed = (issue: number): StartOutcome => ({
  * Nothing is claimed or written on GitHub. A run in `pr-open` or `stuck` has nothing left to
  * write and is left alone, as is a run whose own merged pull request closed the issue: `advance`
  * or `gate` ends that one. While the gate of any of those runs is running, none of them is
- * touched (`GateRunningError`). With no run to abandon the issue is `skipped` as closed.
+ * touched (`GateRunningError`). With no run to abandon the issue is `skipped` as closed. A run
+ * that cannot be ended stops the walk: with no run ended before it that is the error, and after
+ * one it is `abandoned` with the error, so the runs already finished are still named.
  */
 const abandonClosed = (ctx: StartContext, issue: number): Effect.Effect<StartOutcome, StartError> =>
   Effect.gen(function* () {
@@ -230,14 +238,24 @@ const abandonClosed = (ctx: StartContext, issue: number): Effect.Effect<StartOut
     let abandoned = false;
     const mayHaveSession: Array<RunId> = [];
     for (const { id, seen } of unfinished) {
-      const closing = yield* movedOnByClosing(ctx, seen, true);
-      if (closing.kind !== "persons-move") continue;
-      const out = yield* ledger(() => Ledger.open(ctx.dataDir, id, { clock: ctx.clock }));
-      try {
-        if (yield* abandon(ctx, out, id, seen, "start")) mayHaveSession.push(id);
-      } finally {
-        out.close();
+      const ended = yield* Effect.result(
+        Effect.gen(function* () {
+          const closing = yield* movedOnByClosing(ctx, seen, true);
+          if (closing.kind !== "persons-move") return "left" as const;
+          const out = yield* ledger(() => Ledger.open(ctx.dataDir, id, { clock: ctx.clock }));
+          try {
+            return (yield* abandon(ctx, out, id, seen, "start")) ? "may-have-session" : "ended";
+          } finally {
+            out.close();
+          }
+        }),
+      );
+      if (ended._tag === "Failure") {
+        if (!abandoned) return yield* Effect.fail(ended.failure);
+        return { kind: "abandoned", mayHaveSession, error: ended.failure };
       }
+      if (ended.success === "left") continue;
+      if (ended.success === "may-have-session") mayHaveSession.push(id);
       abandoned = true;
     }
     return abandoned ? { kind: "abandoned", mayHaveSession } : closed(issue);

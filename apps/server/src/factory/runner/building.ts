@@ -27,7 +27,7 @@ import { makeCause, type CauseStep, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { readRun } from "../ledger/read.ts";
 import { asciiLower, runIdToString, type RunId } from "../ledger/runId.ts";
-import type { BoundGitHub, PullRequest } from "../tracker/github.ts";
+import type { BoundGitHub, IssueDetail, PullRequest } from "../tracker/github.ts";
 import {
   MessageRejectedError,
   ThreadNotFoundError,
@@ -391,7 +391,7 @@ export const advance = (
       // Before anything is decided or written: a closed issue is a person's move, or the run's
       // own merged pull request, which ends the run here unless a recorded pass has the gate
       // finish it.
-      const closing = yield* closedIssue(ctx, run, seen);
+      const { closing, detail } = yield* closedIssue(ctx, run, seen);
       if (closing.kind === "persons-move") {
         yield* abandon(ctx, yield* out.open, run, seen, "advance");
         return { kind: "abandoned" } as const;
@@ -424,7 +424,7 @@ export const advance = (
       // `state_changed` is the commit marker: a run in `needs-info` has had every write done, and
       // a person may have changed the issue since, so it is ended and nothing is written on GitHub.
       if (at.state === "needs-info") {
-        yield* releaseOldClaim(ctx, issue);
+        yield* releaseOldClaim(ctx, issue, detail);
         yield* endNeedsInfo(ctx, out, at);
         return { kind: "needs-info" } as const;
       }
@@ -599,11 +599,11 @@ const remindedStep: RunEvent = { event: "step_changed", data: { step: RESULT_LIN
  * its `state_changed` marker, so a crash between the two leaves the issue claimed with no
  * unfinished run. Only that exact shape is touched: the label is `factory:building` and the
  * machine's user is the only assignee. Any other label or assignee is a person's, and is left
- * alone. Both calls are safe to repeat.
+ * alone. Both calls are safe to repeat. `read` is the issue as this step already read it, if it did.
  */
-const releaseOldClaim = (ctx: BuildingContext, issue: number) =>
+const releaseOldClaim = (ctx: BuildingContext, issue: number, read: IssueDetail | null) =>
   Effect.gen(function* () {
-    const detail = yield* ctx.tracker.issue(issue);
+    const detail = read ?? (yield* ctx.tracker.issue(issue));
     const ours =
       detail.assignees.length === 1 &&
       asciiLower(detail.assignees[0]!) === asciiLower(ctx.trackerUser);
@@ -741,7 +741,7 @@ export const watch = (
     // Only a run that has reported a pull request can have been closed by its own merge: no read
     // for any other. `advance` ends that run; a closed issue otherwise changes nothing here.
     if (seen.opened.length > 0) {
-      const closing = yield* closedIssue(ctx, run, seen);
+      const { closing } = yield* closedIssue(ctx, run, seen);
       if (closing.kind === "own-merge") return { kind: "skipped", why: "pr-merged" } as const;
     }
     const at = progressFrom("watch", seen, "building");
@@ -806,7 +806,7 @@ export const timeLimit = (
     // Only a run that has reported a pull request can have been closed by its own merge: no read
     // for any other.
     if (seen.opened.length > 0) {
-      const closing = yield* closedIssue(ctx, run, seen);
+      const { closing } = yield* closedIssue(ctx, run, seen);
       if (closing.kind === "own-merge") return { kind: "skipped", why: "pr-merged" } as const;
     }
     // Read before the archive: the next attempt is told where the work is.

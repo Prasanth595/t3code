@@ -2360,6 +2360,83 @@ describe("following a building run", () => {
     }),
   );
 
+  it.effect(
+    "a claim whose start or resume abandons an earlier run says so and claims nothing",
+    () =>
+      Effect.gen(function* () {
+        for (const [listing, call] of [
+          ["ready", "start"],
+          ["triage", "resume"],
+        ] as const) {
+          // The earlier run is not confirmed, so the run step leaves it to the claim.
+          const fake = new Fake();
+          fake.runs.push({
+            id: rid(12),
+            state: "triage",
+            unreadable: false,
+            confirmed: false,
+            session: false,
+            prReported: false,
+          });
+          fake[listing][REPO] = [12];
+          fake.pushStart(`${REPO}#12`, { kind: "abandoned", mayHaveSession: [rid(12)] });
+          const { report, lines } = yield* pass(fake, machine([REPO], 3));
+          const run = runIdToString(rid(12));
+          assert.deepEqual(starts(fake), [`${call} ${REPO}#12`], listing);
+          assert.equal(
+            runLine(lines, `${REPO}#12 `),
+            `${REPO}#12 ${listing}: the issue is closed, the run is closed`,
+          );
+          assert.deepEqual(
+            lines.filter((l) => l.startsWith("ATTENTION: ")),
+            [
+              `ATTENTION: ${REPO}#12 Abandoned: the issue was closed, so the factory stopped the session and closed the run`,
+              `ATTENTION: ${REPO}#12 the issue was closed, and a session may exist for ${run}: look for launch command id softfac:${run}:launch in T3 Code and archive that thread by hand`,
+            ],
+            listing,
+          );
+          assert.deepEqual([report.attention, report.claimed], [2, 0], listing);
+          assert.deepEqual(
+            fake.items.map((item) => item.id),
+            [`attention:${run}:abandoned`, `attention:${run}:session-may-exist`],
+            listing,
+          );
+          assert.deepEqual(
+            fake.events.filter((e) => e.event === "attention"),
+            [
+              { event: "attention", data: { run, reason: "abandoned" } },
+              { event: "attention", data: { run, reason: "session-may-exist" } },
+            ],
+            listing,
+          );
+        }
+      }),
+  );
+
+  it.effect("an abandon cut short by an error still says the session that may exist", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, "triage");
+      fake.pushStart(`${REPO}#12`, {
+        kind: "abandoned",
+        mayHaveSession: [rid(12)],
+        error: githubFailure(),
+      });
+      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      const older = runIdToString(rid(12));
+      assert.ok(
+        lines.some((l) => l.includes(`a session may exist for ${older}`)),
+        lines.join("\n"),
+      );
+      assert.equal(report.attention, 2);
+      assert.equal(report.errors, 1);
+      assert.ok(
+        lines.some((l) => l.startsWith(`error: ${REPO}#12 start:`)),
+        lines.join("\n"),
+      );
+    }),
+  );
+
   it.effect("a stop request is taken for every confirmed run, before the time limit", () =>
     Effect.gen(function* () {
       const fake = new Fake();

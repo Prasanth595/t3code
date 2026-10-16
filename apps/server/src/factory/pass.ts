@@ -149,6 +149,23 @@ export const stuckItem = (repo: string, issue: number, run: string): NewItem => 
   message: `${plain(repo)}${mention(issue)} ${stuckLine(run)}`,
 });
 
+/** The attention line for a run whose issue a person closed, after the issue's label. */
+const abandonedText = (label: string): string =>
+  `${label} Abandoned: the issue was closed, so the factory stopped the session and closed the run`;
+
+/**
+ * The item `abandoned` raises for a run whose issue a person closed, which the background gate
+ * raises too when it is the step that finds the issue closed.
+ */
+export const abandonedItem = (repo: string, issue: number, run: string): NewItem => ({
+  id: `attention:${run}:abandoned`,
+  kind: "attention",
+  repo,
+  issue,
+  run,
+  message: abandonedText(`${plain(repo)}${mention(issue)}`),
+});
+
 /** The counts the pass prints in its last line. */
 export interface Report {
   runs: number;
@@ -649,7 +666,13 @@ const resumeRun = (
         pass.stuck(notes, runIdToString(outcome.success.run));
         break;
       case "abandoned":
-        yield* abandoned(pass, notes, runIdToString(info.id), outcome.success.mayHaveSession);
+        yield* abandoned(
+          pass,
+          notes,
+          runIdToString(info.id),
+          outcome.success.mayHaveSession,
+          outcome.success.error,
+        );
         break;
       case "skipped":
       case "refused": {
@@ -752,23 +775,21 @@ const advanceRun = (
  * The run's issue was closed by a person, so the run is over and its session stopped. Says so,
  * and asks for a person to look: that the issue was closed on purpose is their call to check.
  * `mayHaveSession` names the runs that sent a launch and never got a thread, whose session this
- * could not archive; each is raised with the command id to look for.
+ * could not archive; each is raised with the command id to look for. `error` is why `start` could
+ * not end a later run of the issue, which the next pass tries again.
  */
 const abandoned = (
   pass: Pass,
   notes: Notes,
   run: string | null,
   mayHaveSession: ReadonlyArray<RunId>,
+  error?: StartError,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     notes.parts.push("the issue is closed, the run is closed");
+    if (error !== undefined) pass.failed(notes, "start", "start", error);
     if (run !== null) {
-      yield* pass.attention(
-        notes,
-        `${notes.label} Abandoned: the issue was closed, so the factory stopped the session and closed the run`,
-        run,
-        "abandoned",
-      );
+      yield* pass.attention(notes, abandonedText(notes.label), run, "abandoned");
     }
     for (const id of mayHaveSession) {
       const name = runIdToString(id);
@@ -1033,7 +1054,7 @@ const noteStart = (
       case "abandoned": {
         // The runs the call ended are not told apart; the newest one known before it stands for them.
         const run = before === null ? null : runIdToString(before);
-        yield* abandoned(pass, notes, run, outcome.success.mayHaveSession);
+        yield* abandoned(pass, notes, run, outcome.success.mayHaveSession, outcome.success.error);
         return null;
       }
       case "skipped":

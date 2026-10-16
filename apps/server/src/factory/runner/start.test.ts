@@ -1645,4 +1645,22 @@ describe("start: a closed issue", () => {
       assert.strictEqual(isFinished(dataDir, one), true);
     }),
   );
+
+  it.effect("whose later run fails to end still names the runs it ended, with the error", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const sent = sessionRun(dataDir, 1, "triage", { launchSent: true });
+      const two = sessionRun(dataDir, 2, "triage", { thread: "thread-2" });
+      const before = entriesOf(dataDir, two);
+      const failing = fakeSessions(dataDir, { archive: [sessionsError("archive", "boom")] });
+      const { tracker } = fakeTracker({ issues: [detail("ready", [], true)] });
+      const outcome = yield* start(ctxFor(dataDir, tracker, failing.sessions), 7);
+      if (outcome.kind !== "abandoned") return assert.fail(`not abandoned: ${outcome.kind}`);
+      // The first run is finished, so this is the only place its session can still be named.
+      assert.deepStrictEqual(outcome.mayHaveSession, [sent]);
+      assert.strictEqual(outcome.error?._tag, "FactorySessionsError");
+      assert.strictEqual(isFinished(dataDir, sent), true);
+      assert.deepStrictEqual(entriesOf(dataDir, two), before);
+    }),
+  );
 });

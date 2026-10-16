@@ -992,10 +992,10 @@ describe("advance: a run left in needs-info", () => {
     Effect.gen(function* () {
       const rig = waitingInNeedsInfo();
       assert.deepStrictEqual(yield* advanceIn(rig), { kind: "needs-info" });
-      // Nothing is written on GitHub: the label stays factory:needs-info. The issue is read to
-      // see whether it is closed, then for an old claim.
+      // Nothing is written on GitHub: the label stays factory:needs-info. The issue is read once,
+      // for whether it is closed and for an old claim.
       assert.deepStrictEqual(rig.gh, []);
-      assert.deepStrictEqual(rig.reads, ["issue 10", "issue 10"]);
+      assert.deepStrictEqual(rig.reads, ["issue 10"]);
       assert.deepStrictEqual(rig.world.archived, ["thread-1"]);
       assert.deepStrictEqual(rig.t3.slice(0, 3), [
         "archive thread-1",
@@ -1024,7 +1024,7 @@ describe("advance: a run left in needs-info", () => {
       rig.world.issue = issueDetail("needs-info", []);
       assert.deepStrictEqual(yield* advanceIn(rig), { kind: "needs-info" });
       assert.deepStrictEqual(rig.gh, []);
-      assert.deepStrictEqual(rig.reads, ["issue 10", "issue 10"]);
+      assert.deepStrictEqual(rig.reads, ["issue 10"]);
       assert.deepStrictEqual(linesOf(rig).at(-1), FINISHED("needs-info"));
     }),
   );
@@ -1044,7 +1044,7 @@ describe("advance: a run left in needs-info", () => {
         rig.world.issue = issueDetail(state, assignees);
         assert.deepStrictEqual(yield* advanceIn(rig), { kind: "needs-info" }, `${state}`);
         assert.deepStrictEqual(rig.gh, [], `${state} ${assignees}`);
-        assert.deepStrictEqual(rig.reads, ["issue 10", "issue 10"], `${state} ${assignees}`);
+        assert.deepStrictEqual(rig.reads, ["issue 10"], `${state} ${assignees}`);
         assert.deepStrictEqual(linesOf(rig).at(-1), FINISHED("needs-info"));
       }
     }),
@@ -1056,7 +1056,7 @@ describe("advance: a run left in needs-info", () => {
       rig.world.issue = issueDetail("building", ["RawPHP"]);
       assert.deepStrictEqual(yield* advanceIn(rig), { kind: "needs-info" });
       assert.deepStrictEqual(rig.gh, ["setState 10 needs-info", "unassign 10 rawphp"]);
-      assert.deepStrictEqual(rig.reads, ["issue 10", "issue 10"]);
+      assert.deepStrictEqual(rig.reads, ["issue 10"]);
       assert.deepStrictEqual(rig.world.archived, ["thread-1"]);
       assert.deepStrictEqual(linesOf(rig).slice(-2), [worktreeRemoved, FINISHED("needs-info")]);
     }),

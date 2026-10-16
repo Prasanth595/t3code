@@ -1299,8 +1299,18 @@ describe("the gate in the background", () => {
     assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "passed", pr: 12 }), null);
     assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "sent-back", attempt: 1 }), null);
     assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "ended" }), null);
-    assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "abandoned" }), null);
     assert.strictEqual(gateItem(REPO, 10, "run-1", null), null);
+  });
+
+  it("raises the abandoned item for a gate that found the issue closed, as the pass does", () => {
+    assert.deepStrictEqual(gateItem(REPO, 10, "run-1", { kind: "abandoned" }), {
+      id: "attention:run-1:abandoned",
+      kind: "attention",
+      repo: REPO,
+      issue: 10,
+      run: "run-1",
+      message: `${REPO}#10 Abandoned: the issue was closed, so the factory stopped the session and closed the run`,
+    });
   });
 
   it.effect("takes a stop request the operator left in the data dir", () =>
