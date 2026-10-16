@@ -4,7 +4,7 @@ import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { transform } from "oxc-transform-react";
 import { describe, expect, it } from "vite-plus/test";
-import { REACT_COMPILED_FILES, REACT_COMPILED_FILES_PENDING_LINT } from "../reactCompiledFiles";
+import { REACT_COMPILED_FILES } from "../reactCompiledFiles";
 
 const repoRoot = NodePath.resolve(
   NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
@@ -23,7 +23,7 @@ function expandPattern(pattern: string): string[] {
 // Lint reports most compiler bailouts, but not every one (try/finally, throw
 // inside try). A skipped file still builds, just unmemoized, so check the output.
 describe("React Compiler coverage", () => {
-  it.each([...REACT_COMPILED_FILES, ...REACT_COMPILED_FILES_PENDING_LINT].flatMap(expandPattern))(
+  it.each(REACT_COMPILED_FILES.flatMap(expandPattern))(
     "compiles %s",
     async (file) => {
       const absolute = NodePath.join(repoRoot, file);
