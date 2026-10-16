@@ -40,7 +40,13 @@ import { isOurs, resume, start, utcSecond, type StartContext } from "./runner/st
 import * as Events from "./t3/events.ts";
 import * as Paths from "./t3/paths.ts";
 import * as T3Sessions from "./t3/sessions.ts";
-import { bindProcess, makeGitHub, type GitHubError, type IssueSummary } from "./tracker/github.ts";
+import {
+  bindProcess,
+  ClaimMemo,
+  makeGitHub,
+  type GitHubError,
+  type IssueSummary,
+} from "./tracker/github.ts";
 
 /** The running factory, for the code that wakes it (a thread's run changing, a person's request). */
 export class FactoryLoop extends Context.Service<FactoryLoop, Loop>()("t3/factory/FactoryLoop") {}
@@ -117,6 +123,8 @@ export const liveWorld = (
   clock: () => number,
   host: string,
 ): PassWorld => {
+  // Built once per process, so judgements last as long as the factory runs.
+  const claimMemo = new ClaimMemo();
   const withProcess = <A, E>(effect: Effect.Effect<A, E, FactoryProcess>) =>
     Effect.provideService(effect, FactoryProcess, process);
   const githubFor = (watched: WatchedRepo) =>
@@ -165,13 +173,21 @@ export const liveWorld = (
         })),
         Effect.mapError(asPassError("tracker")),
       ),
-    unassignedClaims: (repo: Repo) =>
+    unassignedClaims: (repo: Repo, known: ReadonlySet<number>) =>
       withProcess(
         githubFor(repo.watched).unassignedClaims(
           utcSecond(clock() - CLAIM_GRACE_MS),
           repo.trackerUser,
+          known,
+          claimMemo,
         ),
-      ).pipe(Effect.mapError(asPassError("tracker"))),
+      ).pipe(
+        Effect.map((scan) => ({
+          claims: scan.claims,
+          unread: scan.unread.map((u) => ({ issue: u.issue, message: u.error.message })),
+        })),
+        Effect.mapError(asPassError("tracker")),
+      ),
     // The comment first, then the label, as a refusal does: a label call that fails leaves the
     // issue where a later pass finds it again, and the comment is not posted twice while it is
     // still the issue's newest factory comment.

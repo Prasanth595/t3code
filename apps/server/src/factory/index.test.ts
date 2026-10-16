@@ -462,7 +462,9 @@ describe("liveWorld", () => {
             ? "[]"
             : null,
       );
-      const result = yield* Effect.result(worldOf(process).unassignedClaims(repo));
+      const result = yield* Effect.result(
+        worldOf(process).unassignedClaims(repo, new Set<number>()),
+      );
       const historyRead = calls.some((args) => args[0] === "api" && args[1] === "graphql");
       return { result, historyRead };
     });
@@ -470,7 +472,7 @@ describe("liveWorld", () => {
   it.effect("a claim changed within the last 15 minutes is not looked at", () =>
     Effect.gen(function* () {
       const { result, historyRead } = yield* unassignedUpdated(14 * MINUTE);
-      assert.ok(result._tag === "Success" && result.success.length === 0);
+      assert.ok(result._tag === "Success" && result.success.claims.length === 0);
       assert.isFalse(historyRead);
     }),
   );
@@ -480,6 +482,73 @@ describe("liveWorld", () => {
       const { historyRead } = yield* unassignedUpdated(16 * MINUTE);
       assert.isTrue(historyRead);
     }),
+  );
+
+  /** A label history in which `by` applied `factory:triage`, as the history read answers it. */
+  const labelledByReply = (by: string) =>
+    JSON.stringify({
+      data: {
+        repository: {
+          issue: {
+            timelineItems: {
+              totalCount: 1,
+              nodes: [
+                {
+                  __typename: "LabeledEvent",
+                  createdAt: "2026-10-04T10:00:00Z",
+                  actor: { __typename: "User", login: by },
+                  label: { name: "factory:triage" },
+                },
+              ],
+            },
+            lastEditedAt: null,
+            editor: null,
+            userContentEdits: { totalCount: 0, nodes: [] },
+          },
+        },
+      },
+    });
+
+  const isHistory = (args: ReadonlyArray<string>) => args[0] === "api" && args[1] === "graphql";
+
+  it.effect("a judgement that an issue is not the factory's lasts across passes of one world", () =>
+    Effect.gen(function* () {
+      const { process, calls } = ghWith((args) =>
+        isList(args, "factory:triage")
+          ? JSON.stringify([{ number: 9, assignees: [], updatedAt: ago(16 * MINUTE) }])
+          : isList(args, "factory:building")
+            ? "[]"
+            : isHistory(args)
+              ? labelledByReply("eve")
+              : null,
+      );
+      const world = worldOf(process);
+      const first = yield* world.unassignedClaims(repo, new Set<number>());
+      const second = yield* world.unassignedClaims(repo, new Set<number>());
+      assert.deepStrictEqual(first.claims, []);
+      assert.deepStrictEqual(second.claims, []);
+      assert.strictEqual(calls.filter(isHistory).length, 1);
+    }),
+  );
+
+  it.effect(
+    "a history read that fails is reported to the pass with the issue and the message",
+    () =>
+      Effect.gen(function* () {
+        const { process } = ghWith((args) =>
+          isList(args, "factory:triage")
+            ? JSON.stringify([{ number: 9, assignees: [], updatedAt: ago(16 * MINUTE) }])
+            : isList(args, "factory:building")
+              ? "[]"
+              : null,
+        );
+        const result = yield* worldOf(process).unassignedClaims(repo, new Set<number>());
+        assert.deepStrictEqual(result.claims, []);
+        assert.strictEqual(result.unread.length, 1);
+        const unread = result.unread[0]!;
+        assert.strictEqual(unread.issue, 9);
+        assert.isTrue(unread.message.length > 0);
+      }),
   );
 
   /** gh for a release: the issue's comments (its newest factory comment is `newest`), and labels that move unless `labelFails`. */

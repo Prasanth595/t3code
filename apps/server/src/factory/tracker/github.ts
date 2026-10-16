@@ -161,6 +161,12 @@ export type GitHubError =
   | GitHubParse
   | GitHubRateLimited;
 
+/** A failure that is the one call's own, so another call may well succeed; the others say GitHub or `gh` is refusing every call. */
+const isCallSpecific = (error: GitHubError): boolean =>
+  error._tag === "GitHubFailed" ||
+  error._tag === "GitHubParse" ||
+  error._tag === "GitHubOutputTooLarge";
+
 /** GitHub saying the thing asked for is not there: `gh` failed with a 404. */
 export const isNotFound = (error: GitHubError): boolean =>
   error._tag === "GitHubFailed" && error.stderr.includes("HTTP 404");
@@ -291,6 +297,34 @@ export type ClaimOutcome =
 export interface UnassignedClaim {
   readonly issue: number;
   readonly state: State;
+}
+
+/**
+ * What cut-short scans remember for the life of the factory process: the issues a scan judged
+ * not the factory's, by login, repo, issue and state label, with GitHub's `updatedAt` at the
+ * time. Any change to the issue moves `updatedAt`, so a remembered judgement stands only while
+ * nothing changed, and a newer judgement replaces it: one entry per login, issue and label.
+ */
+export class ClaimMemo {
+  private readonly notOurs = new Map<string, string>();
+
+  private key(user: string, repo: string, issue: number, state: State): string {
+    return `${user.toLowerCase()}:${repo}#${issue}:${state}`;
+  }
+
+  judgedNotOurs(user: string, repo: string, issue: number, state: State, updatedAt: string) {
+    return this.notOurs.get(this.key(user, repo, issue, state)) === updatedAt;
+  }
+
+  rememberNotOurs(user: string, repo: string, issue: number, state: State, updatedAt: string) {
+    this.notOurs.set(this.key(user, repo, issue, state), updatedAt);
+  }
+}
+
+/** What a cut-short scan found: the claims, and the issues whose label history could not be read. */
+export interface ClaimScan {
+  readonly claims: Array<UnassignedClaim>;
+  readonly unread: Array<{ readonly issue: number; readonly error: GitHubError }>;
 }
 
 /** A comment the factory posted: its text without the marker, and when GitHub says it was created. */
@@ -1175,12 +1209,22 @@ export const makeGitHub = (options: GitHubOptions) => {
    * machine's claims and is left out. `before` and GitHub's `updatedAt` are both
    * `YYYY-MM-DDTHH:MM:SSZ`, so they compare as text. An issue whose `updatedAt` is not in that
    * form is left out: an issue that cannot be dated is not moved. The label history is read
-   * only for an issue that passed the other two checks, and one that cannot be read is an error.
+   * only for an issue that passed the other two checks, is not in `known` (the issues the pass
+   * has a run for), and was not judged not ours by `memo` at the same `updatedAt`. A history
+   * that cannot be read because of that issue (`gh` failed on it, or its answer could not be
+   * parsed or was too large) is reported in `unread` and the scan goes on with the rest. A
+   * rate limit, a timeout, or `gh` not starting would fail every call, so it ends the scan.
    */
-  const unassignedClaims = (before: string, user: string): GitHubEffect<Array<UnassignedClaim>> =>
+  const unassignedClaims = (
+    before: string,
+    user: string,
+    known: ReadonlySet<number>,
+    memo: ClaimMemo,
+  ): GitHubEffect<ClaimScan> =>
     Effect.gen(function* () {
       yield* requireUtcSecond(before);
       const found: Array<UnassignedClaim> = [];
+      const unread: ClaimScan["unread"] = [];
       for (const state of ["triage", "building"] as const) {
         const args = [
           ...repoArgs(["issue", "list"]),
@@ -1194,23 +1238,32 @@ export const makeGitHub = (options: GitHubOptions) => {
           "number,assignees,updatedAt",
         ];
         const raw = yield* ghJson(args, ClaimedRows, "a JSON array of issues");
-        const numbers = raw
+        const rows = raw
           .filter((i) => i.assignees.length === 0)
           .filter((i) => isUtcSecond(i.updatedAt) && i.updatedAt < before)
-          .map((i) => i.number)
-          .sort((a, b) => a - b);
-        for (const number of numbers) {
-          const history = yield* readHistory(number);
+          .toSorted((a, b) => a.number - b.number);
+        for (const { number, updatedAt } of rows) {
+          if (known.has(number) || memo.judgedNotOurs(user, repo, number, state, updatedAt))
+            continue;
+          const read = yield* Effect.result(readHistory(number));
+          if (read._tag === "Failure") {
+            if (!isCallSpecific(read.failure)) return yield* read.failure;
+            unread.push({ issue: number, error: read.failure });
+            continue;
+          }
+          const history = read.success;
           const labelledBy = history.timelineItems.nodes
             .toReversed()
             .find((e) => e.__typename === "LabeledEvent" && e.label.name === stateLabel(state));
           const actor = labelledBy?.actor ?? null;
           if (actor !== null && actor.login.toLowerCase() === user.toLowerCase()) {
             found.push({ issue: number, state });
+          } else {
+            memo.rememberNotOurs(user, repo, number, state, updatedAt);
           }
         }
       }
-      return found;
+      return { claims: found, unread };
     });
 
   /**
