@@ -11,9 +11,11 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as AcpSchema from "effect-acp/compat";
+import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlow";
@@ -26,6 +28,23 @@ type Runtime = Pick<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   "initialize" | "authenticate" | "start" | "handleElicitation" | "logout"
 >;
+
+const isAcpRequestError = Schema.is(EffectAcpErrors.AcpRequestError);
+// Mistral Vibe's JSON-RPC error message when its own browser sign-in status poll
+// fails (`POLL_FAILED` in vibe/setup/auth/http_browser_sign_in_gateway.py, #15118).
+const BROWSER_SIGN_IN_POLL_FAILED = "Browser sign-in status could not be retrieved.";
+
+/**
+ * Adds canonical text for a recognized sign-in failure an agent sent. The
+ * agent's own message is never copied and stays in `cause`.
+ */
+function withAgentReason(detail: string, cause: unknown) {
+  return isAcpRequestError(cause) &&
+    cause.operation === "receive-response" &&
+    cause.errorMessage.includes(BROWSER_SIGN_IN_POLL_FAILED)
+    ? `${detail.replace(/\.$/u, "")}: ${BROWSER_SIGN_IN_POLL_FAILED}`
+    : detail;
+}
 
 /** ACP credentials stay in the agent's own store, using the same launch environment as chat. */
 export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (options: {
@@ -48,7 +67,12 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
   const agentKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : options.settings.agentId;
   const failure = (operation: string, detail: string, cause?: unknown) =>
-    new ProviderSetupError({ instanceId: options.instanceId, operation, detail, cause });
+    new ProviderSetupError({
+      instanceId: options.instanceId,
+      operation,
+      detail: withAgentReason(detail, cause),
+      cause,
+    });
   const resolve = catalog
     .resolve(options.settings, options.cwd, options.environment)
     .pipe(
