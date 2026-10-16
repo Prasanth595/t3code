@@ -127,9 +127,28 @@ export type StudioActivityState = {
   failures: number;
   retryAt: number;
 };
+/** Decode/identity failures are recoverable only after preserving the original file. */
+export class ActivityStateInvalidError extends Error {
+  constructor() {
+    super("activity_state_invalid");
+  }
+}
+
+/** A 409 is an ordering observation, never a durable acceptance receipt. */
+export class ActivityConflictError extends Error {
+  readonly stamp: ActivityProducerStamp;
+  readonly payloadHash: string;
+  constructor(stamp: ActivityProducerStamp, payloadHash: string) {
+    super("activity_conflict");
+    this.stamp = stamp;
+    this.payloadHash = payloadHash;
+  }
+}
+
 export type StudioActivityStateStore = {
   load: () => Promise<StudioActivityState | null>;
   save: (state: StudioActivityState) => Promise<void>;
+  quarantine?: () => Promise<void>;
 };
 
 export type StudioActivityPublisherOptions = {
@@ -364,19 +383,28 @@ export class StudioActivityPublisher {
     this.retryBaseMs = options.retryBaseMs ?? 1000;
   }
 
-  /** Restore before reading or sending; a broken store must not silently lose pending work. */
+  /** Invalid state is preserved before starting fresh; I/O failures remain retryable. */
   async initialize(): Promise<void> {
     if (this.initialized) return;
-    const state = await this.stateStore?.load();
+    let state: StudioActivityState | null | undefined;
+    try {
+      state = await this.stateStore?.load();
+      if (state) {
+        try {
+          decodeStudioActivityState(state);
+        } catch {
+          throw new ActivityStateInvalidError();
+        }
+        if (state.producerId !== this.producerId || state.epoch !== this.epoch)
+          throw new ActivityStateInvalidError();
+      }
+    } catch (error) {
+      if (!(error instanceof ActivityStateInvalidError) || !this.stateStore?.quarantine)
+        throw error;
+      await this.stateStore.quarantine();
+      state = null;
+    }
     if (state) {
-      if (
-        state.version !== 1 ||
-        state.producerId !== this.producerId ||
-        state.epoch !== this.epoch ||
-        !Number.isSafeInteger(state.nextSequence) ||
-        state.pending.length > 1
-      )
-        throw new Error("activity_state_invalid");
       this.nextSequence = Math.max(this.nextSequence, state.nextSequence);
       this.watermark = state.watermark;
       this.pending = state.pending;
@@ -428,7 +456,41 @@ export class StudioActivityPublisher {
   }
 
   private async deliver(entry: QueuedActivityUpdate): Promise<void> {
-    const receipt = await this.sink.send(entry.envelope);
+    let receipt: ActivityAcknowledgement | void;
+    try {
+      receipt = await this.sink.send(entry.envelope);
+    } catch (error) {
+      if (
+        error instanceof ActivityConflictError &&
+        error.stamp.producer_id === this.producerId &&
+        error.stamp.epoch === this.epoch
+      ) {
+        // Readback must supply an acceptance event ID before pending can be cleared.
+        await this.recover();
+        if (
+          this.pending[0] === entry &&
+          error.stamp.sequence >= entry.stamp.sequence &&
+          error.stamp.sequence < Number.MAX_SAFE_INTEGER - 1
+        ) {
+          // An explicit rejection permits a new identity for this full snapshot.
+          // Keep it pending until its own durable ACK; never acknowledge the rejected stamp.
+          this.nextSequence = Math.max(this.nextSequence, error.stamp.sequence + 1);
+          this.queue(
+            {
+              ...entry.envelope,
+              stamp: {
+                ...entry.stamp,
+                sequence: this.nextSequence,
+                emitted_at: this.now(),
+              },
+            },
+            entry.canonicalBytes,
+          );
+          await this.persist();
+        }
+      }
+      throw error;
+    }
     if (
       !receipt ||
       !receipt.eventId ||

@@ -25,6 +25,7 @@ import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore
 import { nofunTeamFromEnv } from "../terminal/contextEnv.ts";
 import { personaRootViolation, readNofunPersonaScope } from "./persona.ts";
 import {
+  ActivityStateInvalidError,
   StudioActivityPublisher,
   activityPayloadHash,
   decodeStudioActivityState,
@@ -101,6 +102,52 @@ export interface StudioActivityBridgeOptions {
   readonly publishOnStart?: boolean;
 }
 
+/** Promise adapter for the runtime's durable publisher file; never consumes credentials. */
+export function makeStudioActivityFileStateStore(
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  statePath: string,
+): StudioActivityStateStore {
+  return {
+    load: async () => {
+      const text = await Effect.runPromise(
+        Effect.gen(function* () {
+          if (!(yield* fs.exists(statePath))) return null;
+          return yield* fs.readFileString(statePath);
+        }),
+      );
+      if (text === null) return null;
+      try {
+        return decodeStudioActivityState(JSON.parse(text));
+      } catch {
+        throw new ActivityStateInvalidError();
+      }
+    },
+    quarantine: () =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          const directory = yield* fs.makeTempDirectory({
+            directory: path.dirname(statePath),
+            prefix: "activity-quarantine-",
+          });
+          const quarantinePath = path.join(directory, `state-${Date.now()}.json`);
+          yield* fs.rename(statePath, quarantinePath);
+          yield* Effect.logError(
+            "studio activity state invalid; quarantined original file; recovering from bridge readback",
+            { quarantinePath },
+          );
+        }),
+      ),
+    save: (state) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          yield* fs.writeFileString(`${statePath}.pending`, JSON.stringify(state), { mode: 0o600 });
+          yield* fs.rename(`${statePath}.pending`, statePath);
+        }),
+      ),
+  };
+}
+
 /**
  * Event-driven bridge layer. Requires the shared projection/project/event
  * stores from the surrounding runtime; provides nothing. Without credentials,
@@ -158,33 +205,14 @@ export const layerWithBridgeOptions = (options: StudioActivityBridgeOptions = {}
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const serverConfig = yield* ServerConfig.ServerConfig;
-      // Namespace by endpoint and producer, never by credential bytes. Runtime
+      // Namespace by endpoint, never by credential bytes. Runtime
       // persistence uses the configured environment's state directory only.
       const statePath = path.join(
         serverConfig.stateDir,
         `studio-activity-${activityPayloadHash(config.baseUrl).slice(0, 16)}.json`,
       );
       const stateStore =
-        options.stateStore ??
-        ({
-          load: () =>
-            Effect.runPromise(
-              Effect.gen(function* () {
-                if (!(yield* fs.exists(statePath))) return null;
-                const text = yield* fs.readFileString(statePath);
-                return decodeStudioActivityState(JSON.parse(text));
-              }),
-            ),
-          save: (state) =>
-            Effect.runPromise(
-              Effect.gen(function* () {
-                yield* fs.writeFileString(`${statePath}.pending`, JSON.stringify(state), {
-                  mode: 0o600,
-                });
-                yield* fs.rename(`${statePath}.pending`, statePath);
-              }),
-            ),
-        } satisfies StudioActivityStateStore);
+        options.stateStore ?? makeStudioActivityFileStateStore(fs, path, statePath);
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const projects = yield* ProjectStore.ProjectStoreV2;
       const events = yield* OrchestrationEventStore.OrchestrationEventStore;
@@ -244,9 +272,8 @@ export const layerWithBridgeOptions = (options: StudioActivityBridgeOptions = {}
             await publisher.initialize();
             if (nowMs() >= recoverAt) {
               // Keep each replay turn bounded; subsequent timer ticks drain more pages.
-              recoverAt = nowMs() + (options.idleIntervalMs ?? 30_000);
               const more = await publisher.recover();
-              if (more) recoverAt = nowMs();
+              recoverAt = more ? nowMs() : nowMs() + (options.idleIntervalMs ?? 30_000);
             }
             // On restart, retry the exact durable identity before allocating a
             // fresh snapshot. A readback watermark may already have covered it.

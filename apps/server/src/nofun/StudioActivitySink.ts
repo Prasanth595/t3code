@@ -1,6 +1,7 @@
 // HTTP boundary for structural activity snapshots and owner-scoped list_events readback.
 import { z } from "zod";
 import {
+  ActivityConflictError,
   canonicalActivityJson,
   type ActivityAcknowledgement,
   type StudioActivitySink,
@@ -44,6 +45,11 @@ const stampSchema = z.object({
 const receiptSchema = z.object({
   eventId: z.string().min(1).max(200),
   verdict: z.enum(["accept", "replay_duplicate"]),
+  stamp: stampSchema,
+  payloadHash: z.string().min(1).max(64),
+});
+const conflictSchema = z.object({
+  verdict: z.enum(["reject_stale", "reject_conflict", "reject_epoch_reset_required"]),
   stamp: stampSchema,
   payloadHash: z.string().min(1).max(64),
 });
@@ -101,6 +107,7 @@ export function makeStudioActivityHttpSink(options: {
   const request = async (
     target: string,
     init: RequestInit,
+    allowConflict = false,
   ): Promise<{ value: unknown; status: number; text: string }> => {
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -126,6 +133,7 @@ export function makeStudioActivityHttpSink(options: {
             signal: controller.signal,
           });
           status = response.status;
+          const parseBody = response.ok || (allowConflict && response.status === 409);
           const reader = response.body?.getReader();
           activeReader = reader;
           const decoder = new TextDecoder();
@@ -136,13 +144,13 @@ export function makeStudioActivityHttpSink(options: {
                 const part = await reader.read();
                 if (part.done) break;
                 bytes += part.value.byteLength;
-                const limit = response.ok ? BODY_LIMIT : EXCERPT_LIMIT;
+                const limit = parseBody ? BODY_LIMIT : EXCERPT_LIMIT;
                 text += decoder.decode(
                   part.value.subarray(0, Math.max(0, limit - (bytes - part.value.byteLength))),
                   { stream: true },
                 );
                 if (bytes >= limit) {
-                  if (response.ok)
+                  if (parseBody)
                     throw new StudioActivityTransportError("body_too_large", status, excerpt(text));
                   break;
                 }
@@ -151,7 +159,7 @@ export function makeStudioActivityHttpSink(options: {
           } finally {
             if (reader) void reader.cancel().catch(() => {});
           }
-          if (!response.ok) throw new StudioActivityTransportError("http", status, excerpt(text));
+          if (!parseBody) throw new StudioActivityTransportError("http", status, excerpt(text));
           let value: unknown;
           try {
             value = JSON.parse(text);
@@ -176,7 +184,17 @@ export function makeStudioActivityHttpSink(options: {
   };
   return {
     send: async (input) => {
-      const response = await request(url, { method: "POST", body: JSON.stringify(input) });
+      const response = await request(url, { method: "POST", body: JSON.stringify(input) }, true);
+      if (response.status === 409) {
+        const conflict = conflictSchema.safeParse(response.value);
+        if (!conflict.success)
+          throw new StudioActivityTransportError(
+            "ack_invalid",
+            response.status,
+            excerpt(response.text),
+          );
+        throw new ActivityConflictError(conflict.data.stamp, conflict.data.payloadHash);
+      }
       const parsed = receiptSchema.safeParse(response.value);
       if (
         !parsed.success ||

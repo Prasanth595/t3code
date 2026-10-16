@@ -1,6 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import {
+  ActivityStateInvalidError,
+  ActivityConflictError,
   activityPayloadHash,
   decodeStudioActivityState,
   canonicalActivityJson,
@@ -472,4 +474,196 @@ describe("observed acceptance and recovery", () => {
     expect(restarted.pendingCount).toBe(0);
     expect((state as StudioActivityState | null)?.seenEventIds).toEqual(["evt_1"]);
   });
+  it.each(["decode", "producer", "epoch"])(
+    "quarantines invalid %s state once and resumes from readback",
+    async (reason) => {
+      let saved: StudioActivityState | null = null;
+      const seed = new StudioActivityPublisher({
+        epoch: EPOCH,
+        allowedProjectIds: [],
+        reads: { listActivityThreads: () => [] },
+        sink: { send: ack },
+        stateStore: {
+          load: async () => null,
+          save: async (state) => {
+            saved = state;
+          },
+        },
+      });
+      await seed.publishNow();
+      const invalid = structuredClone(saved!);
+      if (reason === "producer") invalid.producerId = "foreign";
+      if (reason === "epoch") invalid.epoch = "foreign";
+      let quarantines = 0;
+      const publisher = new StudioActivityPublisher({
+        epoch: EPOCH,
+        allowedProjectIds: [],
+        reads: { listActivityThreads: () => [] },
+        stateStore: {
+          load: async () => {
+            if (reason === "decode") throw new ActivityStateInvalidError();
+            return invalid;
+          },
+          quarantine: async () => {
+            quarantines++;
+          },
+          save: async (state) => {
+            saved = state;
+          },
+        },
+        sink: {
+          send: ack,
+          readEvents: async (cursor) => {
+            expect(cursor).toBeNull();
+            return {
+              events: [],
+              cursor: "fresh",
+              has_more: false,
+              watermark: {
+                ...invalid.watermark!,
+                stamp: { ...invalid.watermark!.stamp, sequence: 99 },
+              },
+            };
+          },
+        },
+      });
+      await publisher.recover();
+      const result = await publisher.publishNow();
+      expect(result.delivered).toBe(true);
+      expect(result.envelope.stamp?.sequence).toBe(100);
+      expect(quarantines).toBe(1);
+    },
+  );
+
+  it("does not quarantine an unavailable store or continue after a failed quarantine", async () => {
+    for (const decode of [false, true]) {
+      let quarantines = 0;
+      const publisher = new StudioActivityPublisher({
+        epoch: EPOCH,
+        allowedProjectIds: [],
+        reads: { listActivityThreads: () => [] },
+        sink: { send: ack },
+        stateStore: {
+          load: async () => {
+            throw decode ? new ActivityStateInvalidError() : new Error("unavailable");
+          },
+          save: async () => {},
+          quarantine: async () => {
+            quarantines++;
+            throw new Error("rename_failed");
+          },
+        },
+      });
+      await expect(publisher.initialize()).rejects.toThrow(
+        decode ? "rename_failed" : "unavailable",
+      );
+      expect(quarantines).toBe(decode ? 1 : 0);
+    }
+  });
+
+  it("reconciles a conflict through durable readback without claiming the rejected envelope was delivered", async () => {
+    let input: ActivityProducerInput | undefined;
+    let reads = 0;
+    const publisher = new StudioActivityPublisher({
+      epoch: EPOCH,
+      allowedProjectIds: [],
+      reads: { listActivityThreads: () => [] },
+      sink: {
+        send: (value) => {
+          input = value;
+          throw new ActivityConflictError({ ...value.stamp!, sequence: 10 }, "new-hash");
+        },
+        readEvents: async () => {
+          reads++;
+          return {
+            events: [],
+            cursor: "next",
+            has_more: false,
+            watermark: {
+              ...ack(input!),
+              stamp: { ...input!.stamp!, sequence: 10 },
+              payloadHash: "new-hash",
+            },
+          };
+        },
+      },
+    });
+    expect((await publisher.publishNow()).delivered).toBe(false);
+    expect(reads).toBe(1);
+    expect(publisher.lastAckedStamp?.sequence).toBe(10);
+    expect(publisher.pendingCount).toBe(0);
+  });
+  it("reissues a rejected conflicting snapshot above the bridge sequence without fabricating an ACK", async () => {
+    const sent: ActivityProducerInput[] = [];
+    let clock = 1000;
+    const publisher = new StudioActivityPublisher({
+      epoch: EPOCH,
+      now: () => NOW,
+      nowMs: () => clock,
+      allowedProjectIds: [],
+      reads: { listActivityThreads: () => [] },
+      sink: {
+        send: (input) => {
+          sent.push(input);
+          if (sent.length === 1) throw new ActivityConflictError(input.stamp!, "conflicting-hash");
+          return ack(input);
+        },
+        readEvents: async () => ({
+          events: [],
+          cursor: null,
+          has_more: false,
+          watermark: {
+            ...ack(sent[0]!),
+            payloadHash: "conflicting-hash",
+          },
+        }),
+      },
+    });
+    expect((await publisher.publishNow()).delivered).toBe(false);
+    expect(publisher.lastAckedStamp).toBeNull();
+    expect(publisher.pendingCount).toBe(1);
+    clock += 1000;
+    expect((await publisher.retryPending())[0]?.sent).toBe(true);
+    expect(sent[1]!.stamp!.sequence).toBeGreaterThan(sent[0]!.stamp!.sequence);
+    expect(sent[1]!.records).toEqual(sent[0]!.records);
+    expect(sent[1]!.payloadHash).toBe(sent[0]!.payloadHash);
+    expect(publisher.pendingCount).toBe(0);
+  });
+  it.each(["producer", "epoch"])(
+    "keeps pending identity on a foreign %s conflict",
+    async (foreign) => {
+      let saved: StudioActivityState | null = null;
+      const publisher = new StudioActivityPublisher({
+        epoch: EPOCH,
+        allowedProjectIds: [],
+        reads: { listActivityThreads: () => [] },
+        stateStore: {
+          load: async () => null,
+          save: async (state) => {
+            saved = state;
+          },
+        },
+        sink: {
+          send: (input) => {
+            throw new ActivityConflictError(
+              {
+                ...input.stamp!,
+                ...(foreign === "producer" ? { producer_id: "foreign" } : { epoch: "foreign" }),
+              },
+              input.payloadHash!,
+            );
+          },
+          readEvents: async () => {
+            throw new Error("must not reconcile a foreign stream");
+          },
+        },
+      });
+      const result = await publisher.publishNow();
+      expect(result.delivered).toBe(false);
+      expect(publisher.lastAckedStamp).toBeNull();
+      expect((saved as StudioActivityState | null)?.pending[0]?.stamp).toEqual(
+        result.envelope.stamp,
+      );
+    },
+  );
 });

@@ -233,3 +233,21 @@ describe("studio activity HTTP sink", () => {
     });
   });
 });
+
+describe("conflict readback", () => {
+  it.each(["reject_stale", "reject_conflict", "reject_epoch_reset_required"])(
+    "preserves a valid 409 %s stamp and hash for reconciliation",
+    async (verdict) => {
+      const current = { ...envelope().stamp!, sequence: 12 };
+      const sink = makeStudioActivitySink({
+        config: { baseUrl: BASE_URL, token: TOKEN },
+        fetchFn: async () =>
+          Response.json({ verdict, stamp: current, payloadHash: "current-hash" }, { status: 409 }),
+      });
+      await expect(sink.send(envelope())).rejects.toMatchObject({
+        stamp: current,
+        payloadHash: "current-hash",
+      });
+    },
+  );
+});

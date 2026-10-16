@@ -22,6 +22,8 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { StudioActivityPublisher, type StudioActivityState } from "./StudioActivityPublisher.ts";
 import * as Layer from "effect/Layer";
@@ -674,4 +676,45 @@ it.effect("startup retries the persisted envelope before allocating a fresh snap
       ),
     );
   }),
+);
+
+it.effect(
+  "quarantines malformed on-disk state without deleting its bytes and saves recovered state",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "activity-recovery-" });
+      const statePath = path.join(directory, "studio-activity.json");
+      const original = "{poisoned state";
+      yield* fs.writeFileString(statePath, original);
+      const store = StudioActivityBridge.makeStudioActivityFileStateStore(fs, path, statePath);
+      const publisher = new StudioActivityPublisher({
+        epoch: "recovery",
+        allowedProjectIds: [],
+        reads: { listActivityThreads: () => [] },
+        stateStore: store,
+        sink: {
+          send: (input) => ({
+            eventId: "evt_recovered",
+            verdict: "accept",
+            stamp: input.stamp!,
+            payloadHash: input.payloadHash!,
+          }),
+          readEvents: async () => ({ events: [], cursor: null, has_more: false, watermark: null }),
+        },
+      });
+      yield* Effect.promise(() => publisher.recover());
+      const result = yield* Effect.promise(() => publisher.publishNow());
+      expect(result.delivered).toBe(true);
+      const entries = yield* fs.readDirectory(directory);
+      const quarantines = entries.filter((name) => name.startsWith("activity-quarantine-"));
+      expect(quarantines).toHaveLength(1);
+      const quarantine = path.join(directory, quarantines[0]!);
+      const files = yield* fs.readDirectory(quarantine);
+      expect(files).toHaveLength(1);
+      expect(files[0]).toMatch(/^state-\d+\.json$/);
+      expect(yield* fs.readFileString(path.join(quarantine, files[0]!))).toBe(original);
+      expect((yield* Effect.promise(() => store.load()))?.watermark?.eventId).toBe("evt_recovered");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
