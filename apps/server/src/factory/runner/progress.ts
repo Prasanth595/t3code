@@ -70,6 +70,18 @@ export interface Seen {
    * by the next `gate_command`, which shows the gate ran; a forward's only by a newer ended run.
    */
   readonly waitingAfter: number | null;
+  /**
+   * The ordinal in the newest wait marker of either kind (a forward's, a reminder's or a
+   * send-back's), kept after the marker is dropped: `forward` writes no second marker for the
+   * same ordinal.
+   */
+  readonly lastWait: number | null;
+  /** The id of every comment a `comment_forwarded` line names: it is in the session. */
+  readonly forwarded: ReadonlySet<string>;
+  /** The time of every `body-edit-forwarded <edited_at>` step: that edit of the body is in the session. */
+  readonly bodyEdits: ReadonlySet<string>;
+  /** The id of every comment a `comment-dropped <id>` step names: the issue was told it was not forwarded. */
+  readonly dropped: ReadonlySet<string>;
   /** The newest `session_paused` line: a person stopped the session's run in T3, and this is its ordinal. */
   readonly paused: { readonly runOrdinal: number | null } | null;
   /** Milliseconds spent in `triage` and `building` in stints that have ended. */
@@ -106,6 +118,10 @@ export const RESULT_LINE_REMINDING = "result-line-reminding";
 export const RESULT_LINE_REMINDED = "result-line-reminded";
 /** The ledger step that waits for a run newer than `k` (a forwarded comment); read here for the steps that write it. */
 export const FORWARD_WAIT = "forward-wait";
+/** The ledger step written once an edit of the issue body is in the session: `body-edit-forwarded <edited_at>`. */
+export const BODY_EDIT_FORWARDED = "body-edit-forwarded";
+/** The ledger step written once the issue was told that an instructor's comment was not forwarded: `comment-dropped <id>`. */
+export const COMMENT_DROPPED = "comment-dropped";
 /** The ledger step written before a failed attempt is sent: `gate-sending <attempt> <ordinal>`. */
 export const GATE_SENDING = "gate-sending";
 /** The ledger step that records the decision that an attempt passed: `gate-passed <sha> <n>`. */
@@ -123,6 +139,13 @@ const canonical = (text: string): number | null =>
 /** The `k` of a step written as `<name> <k>`, `k` a number without a sign or leading zero. */
 const stepNumber = (step: string, name: string): number | null =>
   step.startsWith(`${name} `) ? canonical(step.slice(name.length + 1)) : null;
+
+/** The id in a `comment-dropped <id>` step, or null when it is not one plain token (empty, or with a space or control character). */
+const commentDroppedId = (step: string): string | null => {
+  if (!step.startsWith(`${COMMENT_DROPPED} `)) return null;
+  const id = step.slice(COMMENT_DROPPED.length + 1);
+  return id === "" || /[\s\p{Cc}]/u.test(id) ? null : id;
+};
 
 /** The `gate-sending <attempt> <ordinal>` step's numbers, or null for text that breaks the rules. */
 export const parseGateSending = (
@@ -169,6 +192,10 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let reminded = false;
   let waitingAfter: number | null = null;
   let waitIsForward = false;
+  let lastWait: number | null = null;
+  const forwarded = new Set<string>();
+  const bodyEdits = new Set<string>();
+  const dropped = new Set<string>();
   let paused: Seen["paused"] = null;
   let workedMs = 0;
   let workingSince: number | null = entries[0]?.ms ?? null;
@@ -190,6 +217,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
       waitingAfter = k;
       waitIsForward = forward;
     }
+    lastWait = lastWait === null ? k : Math.max(lastWait, k);
   };
   const number = (value: unknown): number | null => (typeof value === "number" ? value : null);
   for (const entry of entries) {
@@ -213,6 +241,11 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         }
         const forwardRun = stepNumber(step, FORWARD_WAIT);
         if (forwardRun !== null) awaitRun(forwardRun, true);
+        if (step.startsWith(`${BODY_EDIT_FORWARDED} `)) {
+          bodyEdits.add(step.slice(BODY_EDIT_FORWARDED.length + 1));
+        }
+        const droppedId = commentDroppedId(step);
+        if (droppedId !== null) dropped.add(droppedId);
         if (step === LAUNCH_SENDING || step.startsWith(`${LAUNCH_SENDING} resumed-from `)) {
           launchSent = true;
         }
@@ -271,6 +304,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         // A new session has run numbers of its own, one reminder, and no stop by hand yet.
         waitingAfter = null;
         waitIsForward = false;
+        lastWait = null;
         reminding = null;
         reminded = false;
         paused = null;
@@ -288,6 +322,11 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
       case "stop_requested":
         stopRequested = true;
         break;
+      case "comment_forwarded": {
+        const id = field(entry.data, "comment_id");
+        if (typeof id === "string") forwarded.add(id);
+        break;
+      }
       case "questions_posted":
         questionsPosted = true;
         break;
@@ -380,6 +419,10 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     reminding,
     reminded,
     waitingAfter,
+    lastWait,
+    forwarded,
+    bodyEdits,
+    dropped,
     paused,
     workedMs,
     workingSince,

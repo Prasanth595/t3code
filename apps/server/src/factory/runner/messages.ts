@@ -7,6 +7,7 @@
 import type { State } from "../domain/lifecycle.ts";
 import type { CommandResult } from "../gate.ts";
 import { commandLine, sanitize } from "../text.ts";
+import type { DropReason } from "../tracker/github.ts";
 
 /** The public reason when a run has no record of what approved it. */
 export const CANNOT_CONFIRM = "the factory could not confirm the issue text was approved";
@@ -171,6 +172,75 @@ export const CHANGED_DURING_BUILD =
 /** The public reason when the edit histories of a building run cannot be judged. */
 export const CANNOT_VERIFY_DURING_BUILD =
   "the factory could not verify who changed the issue text during the build";
+
+/** The longest instructor comment or issue body that is forwarded, in characters. */
+export const INSTRUCTION_LIMIT = 20_000;
+
+/** The longest login that is forwarded, in characters. */
+export const LOGIN_LIMIT = 100;
+
+/**
+ * Control characters and the invisible or bidirectional marks become spaces, and nothing else is
+ * changed: unlike session text, an instructor's text is an instruction for the session, so it is
+ * not escaped. `keepLines` keeps newline and tab.
+ */
+export const cleanInstruction = (text: string, keepLines: boolean): string =>
+  sanitize(text, keepLines);
+
+/**
+ * An instructor's comment or issue body, ready to go into the session: line endings normalised,
+ * cut at {@link INSTRUCTION_LIMIT} characters with a last line that says so and where to read the
+ * rest, and cleaned.
+ */
+export const instructionText = (text: string, repo: string, issue: number): string => {
+  const chars = Array.from(text.replaceAll("\r\n", "\n"));
+  const head = chars.slice(0, INSTRUCTION_LIMIT).join("");
+  const cut =
+    chars.length > INSTRUCTION_LIMIT
+      ? `${head}\n[The factory cut this text at ${INSTRUCTION_LIMIT} characters. Read the full text with: gh issue view ${issue} --repo ${repo} --comments]`
+      : head;
+  return cleanInstruction(cut, true);
+};
+
+/** A GitHub login from the API, as one clean line of at most {@link LOGIN_LIMIT} characters. */
+export const loginText = (login: string): string =>
+  cleanInstruction(Array.from(login).slice(0, LOGIN_LIMIT).join(""), false);
+
+/**
+ * What an instructor's comment on the issue looks like inside the session. The text is trusted as
+ * an instruction, unlike session output, but is still cleaned and capped.
+ */
+export const commentMessage = (repo: string, issue: number, author: string, body: string): string =>
+  `Forwarded instructor comment on ${repo}#${issue} from ${loginText(author)}. Apply it at your next step boundary.\n\n${instructionText(body, repo, issue)}`;
+
+/**
+ * What an instructor's edit of the issue body looks like inside the session: back to the contract
+ * step, with the body as it stands now.
+ */
+export const bodyEditMessage = (
+  repo: string,
+  issue: number,
+  editor: string,
+  body: string,
+): string =>
+  `The body of ${repo}#${issue} was edited by ${loginText(editor)}. Go back to your Contract step and work from the new body:\n\n${instructionText(body, repo, issue)}`;
+
+/**
+ * The comment the factory posts when an instructor's comment was not sent to the session, in its
+ * own fixed words. It names the comment by link and quotes nothing from it.
+ */
+export const droppedCommentMessage = (
+  repo: string,
+  issue: number,
+  commentId: string,
+  reason: DropReason,
+): string => {
+  const why =
+    reason === "edited-by-other"
+      ? "someone who is not an instructor edited it"
+      : "the factory could not check who edited it";
+  return `The factory did not send an instructor's comment to the build session, because ${why}.\n\nComment: https://github.com/${repo}/issues/${issue}#issuecomment-${commentId}\n\nPost the instruction as a new comment and the factory will send it.`;
+};
 
 /** The line the gate puts in front of everything it sends back into the session, so the session's next run ends the way `advance` reads. */
 export const END_WITH_DONE =

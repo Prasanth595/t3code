@@ -34,6 +34,7 @@ import {
   ownedThreads,
   wakeOn,
 } from "./index.ts";
+import { isLedgerError } from "./ledger/errors.ts";
 import { makeCause } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
 import { scanMachineLog } from "./ledger/machineLog.ts";
@@ -1355,5 +1356,65 @@ describe("the gate in the background", () => {
       assert.strictEqual(readRun(dataDir, run).entries.at(-1)?.event, "stop_requested");
       assert.strictEqual(yield* world.takeStopRequest(run), "none");
     }),
+  );
+
+  it.effect(
+    "says a gate send is pending from the run's ledger until the send-back is recorded",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDir();
+        const run = newRunId(REPO, "10", 1);
+        const other = newRunId(REPO, "11", 1);
+        const seed = (id: RunId, steps: ReadonlyArray<string>) => {
+          const ledger = Ledger.create(dataDir, id, { clock: () => 1_000 });
+          ledger.append(
+            { event: "state_changed", data: { from: "triage", to: "building" } },
+            makeCause("start", "seed"),
+          );
+          for (const step of steps) {
+            ledger.append({ event: "step_changed", data: { step } }, makeCause("gate", "seed"));
+          }
+          ledger.close();
+        };
+        seed(run, ["gate-sending 1 1"]);
+        // Another run with nothing pending: the answer is the asked run's.
+        seed(other, []);
+        const world = liveWorld(
+          {
+            ghConfigDir: "/gh/rawphp",
+            pollSeconds: 60,
+            maxConcurrentRuns: 1,
+            maxConcurrentGates: 1,
+            modelInstance: "claudeAgent",
+            model: "claude-sonnet-5-5",
+            notify: true,
+            repos: [{ repo: REPO, path: "/p" }],
+          },
+          dataDir,
+          { run: () => Effect.die("no gh") },
+          stubSessions,
+          () => 2_000,
+          "mac-mini",
+          noAttention,
+          {
+            gate: { run: () => Effect.die("no gate") },
+            wake: Effect.void,
+            scope: yield* Scope.make(),
+          },
+        );
+        assert.strictEqual(yield* world.hasPendingGateSend(run), true);
+        assert.strictEqual(yield* world.hasPendingGateSend(other), false);
+
+        const ledger = Ledger.open(dataDir, run, { clock: () => 1_500 });
+        ledger.append(
+          { event: "gate_sent_back", data: { attempt: 1, run_ordinal: 1 } },
+          makeCause("gate", "seed"),
+        );
+        ledger.close();
+        assert.strictEqual(yield* world.hasPendingGateSend(run), false);
+
+        const missing = yield* Effect.flip(world.hasPendingGateSend(newRunId(REPO, "12", 1)));
+        assert.ok(isLedgerError(missing), missing.message);
+      }),
   );
 });

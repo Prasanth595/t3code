@@ -17,7 +17,9 @@ import { isCommitId } from "../text.ts";
 import {
   APPROVAL_QUERY,
   ApprovalAnswer,
+  HISTORY_PAGE,
   editedSince,
+  isInstructor,
   isUtcSecond,
   judgeApproval,
   textChangesSince,
@@ -78,6 +80,30 @@ const ClosedByAnswer = Schema.Struct({
     }),
   }),
 });
+/** Any comment containing this was written by the factory. */
+const MARKER_PREFIX = "<!-- softfac";
+
+/** The issue's body and who edited it last, with the history of its edits (newest first). Comments are read separately, from REST. */
+export const ACTIVITY_QUERY =
+  "query($owner: String!, $name: String!, $number: Int!) { " +
+  "repository(owner: $owner, name: $name) { issue(number: $number) { " +
+  "body lastEditedAt editor { login } " +
+  `userContentEdits(first: ${HISTORY_PAGE}) { totalCount nodes { editedAt editor { login } } } } } }`;
+
+/**
+ * Who edited comments, by node id, up to 100 ids in one call: the last editor and the last 100
+ * edits of each. `Comment` is the interface that an issue comment implements. REST names only
+ * the author, and anyone with write access can edit another person's comment. An id of a comment
+ * that is gone answers `null`.
+ */
+export const COMMENT_EDITOR_QUERY =
+  "query($ids: [ID!]!) { nodes(ids: $ids) { " +
+  "... on Comment { id lastEditedAt editor { __typename login } " +
+  `userContentEdits(first: ${HISTORY_PAGE}) { totalCount nodes { editedAt editor { __typename login } } } } } }`;
+
+/** How many ids one {@link COMMENT_EDITOR_QUERY} call carries: the most `nodes` accepts. */
+const COMMENT_EDITOR_IDS = 100;
+
 /** The most a file read through the contents API may be. A project config is a few lines. */
 export const MAX_FILE_BYTES = 64 * 1024;
 
@@ -246,6 +272,76 @@ const CommentRows = Schema.Array(
   }),
 );
 
+/** One comment of the REST listing. `user` is null for a deleted account. */
+const ActivityCommentRows = Schema.Array(
+  Schema.Struct({
+    id: Schema.Number,
+    node_id: OptionalText,
+    user: Schema.optional(Schema.NullOr(Login)),
+    created_at: OptionalText,
+    updated_at: OptionalText,
+    body: OptionalText,
+  }),
+);
+
+/** `editor` is null for a deleted account. */
+const EditHistory = Schema.Struct({
+  totalCount: Schema.Number,
+  nodes: Schema.Array(
+    Schema.Struct({ editedAt: Schema.String, editor: Schema.optional(Schema.NullOr(Login)) }),
+  ),
+});
+
+const ActivityAnswer = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      issue: Schema.Struct({
+        body: OptionalText,
+        lastEditedAt: OptionalText,
+        editor: Schema.optional(Schema.NullOr(Login)),
+        userContentEdits: EditHistory,
+      }),
+    }),
+  }),
+});
+
+/** One entry for each id asked for, in no promised order; `null` for a comment that is gone. */
+const CommentEditorsAnswer = Schema.Struct({
+  data: Schema.Struct({
+    nodes: Schema.Array(
+      Schema.NullOr(
+        Schema.Struct({
+          id: Schema.String,
+          lastEditedAt: OptionalText,
+          editor: Schema.optional(Schema.NullOr(Login)),
+          userContentEdits: EditHistory,
+        }),
+      ),
+    ),
+  }),
+});
+type CommentEditors = NonNullable<(typeof CommentEditorsAnswer.Type)["data"]["nodes"][number]>;
+
+/**
+ * Whether an edit history can be trusted to show every edit up to the latest one: it is not cut
+ * off (a full page, or a total larger than the page, may hide entries) and, when there is a
+ * latest edit, the newest entry is that edit by that editor.
+ */
+const editsWhole = (
+  edits: typeof EditHistory.Type,
+  lastEditedAt: string | null | undefined,
+  editor: { readonly login: string } | null | undefined,
+): boolean => {
+  if (edits.nodes.length >= HISTORY_PAGE || edits.totalCount > edits.nodes.length) return false;
+  if (lastEditedAt === null || lastEditedAt === undefined) return true;
+  const newest = edits.nodes[0];
+  return (
+    newest !== undefined &&
+    newest.editedAt === lastEditedAt &&
+    (newest.editor?.login ?? null) === (editor?.login ?? null)
+  );
+};
+
 const AssigneesView = Schema.Struct({ assignees: Schema.Array(Login) });
 const ClaimedRows = Schema.Array(
   Schema.Struct({
@@ -310,6 +406,38 @@ export interface IssueSummary {
 export interface Listing<T> {
   readonly items: ReadonlyArray<T>;
   readonly cut: boolean;
+}
+
+/** An instructor's comment made during a build. */
+export interface Comment {
+  readonly id: string;
+  readonly author: string;
+  readonly createdAt: string;
+  readonly body: string;
+}
+
+/** An instructor's edit of the issue body: when, by whom, and the whole body as it stands now. */
+export interface BodyEdit {
+  readonly editedAt: string;
+  readonly editor: string;
+  readonly body: string;
+}
+
+/** Why an instructor's comment was not forwarded. */
+export type DropReason = "edited-by-other" | "unverifiable";
+
+/** An instructor's comment that was not forwarded because its text may not be the instructor's. */
+export interface Dropped {
+  readonly id: string;
+  readonly reason: DropReason;
+}
+
+/** What the instructors did on an issue since a moment. */
+export interface Activity {
+  /** Oldest first. */
+  readonly comments: ReadonlyArray<Comment>;
+  readonly bodyEdit: BodyEdit | null;
+  readonly dropped: ReadonlyArray<Dropped>;
 }
 
 export interface IssueDetail {
@@ -1230,6 +1358,160 @@ export const makeGitHub = (options: GitHubOptions) => {
       return editedSince(yield* readHistory(issue), since);
     });
 
+  /**
+   * The last editor and the last 100 edits of the comments with these node ids, keyed by id: one
+   * call for each 100 ids, and none for no ids. A comment that is gone is not in the map. A call
+   * that fails fails the read.
+   */
+  const commentEditors = (ids: ReadonlyArray<string>): GitHubEffect<Map<string, CommentEditors>> =>
+    Effect.gen(function* () {
+      const found = new Map<string, CommentEditors>();
+      for (let start = 0; start < ids.length; start += COMMENT_EDITOR_IDS) {
+        const args = [
+          "api",
+          "graphql",
+          "-f",
+          `query=${COMMENT_EDITOR_QUERY}`,
+          ...ids.slice(start, start + COMMENT_EDITOR_IDS).flatMap((id) => ["-f", `ids[]=${id}`]),
+        ];
+        const answer = yield* ghJson(
+          args,
+          CommentEditorsAnswer,
+          "a GraphQL response with the comments",
+        );
+        for (const node of answer.data.nodes) if (node !== null) found.set(node.id, node);
+      }
+      return found;
+    });
+
+  /**
+   * Whether a comment that was updated after it was written may be trusted, from its entry in
+   * {@link commentEditors}: GitHub has no edit of it (the update was not to its body), or every
+   * edit in its history is an instructor's. Unlike a body edit there is no `since` cut-off: the
+   * comment is the instructor's own text from the start, so any other editor at any time
+   * disqualifies it. A deleted account among the editors counts as another editor. An edit by
+   * someone else that the answer shows is `other` even when the history is also too long to read
+   * whole. A history that may hide more is `unverifiable`. No entry (no node id, or a comment
+   * that is gone) is `gone`.
+   */
+  const checkEdits = (
+    node: CommentEditors | undefined,
+    instructors: ReadonlyArray<string>,
+  ): "instructors" | "other" | "unverifiable" | "gone" => {
+    if (node === undefined) return "gone";
+    const lastOther =
+      node.lastEditedAt !== null &&
+      node.lastEditedAt !== undefined &&
+      !isInstructor(node.editor, instructors);
+    // Every entry, the creation included (its editor is the author, an instructor).
+    const anyOther = node.userContentEdits.nodes.some(
+      (edit) => !isInstructor(edit.editor, instructors),
+    );
+    if (lastOther || anyOther) return "other";
+    return editsWhole(node.userContentEdits, node.lastEditedAt, node.editor)
+      ? "instructors"
+      : "unverifiable";
+  };
+
+  /**
+   * Comments and a body edit on the issue made by `instructors` after `since`. The factory's own
+   * comments are left out.
+   *
+   * Comments come from the paginated REST listing (so a long thread cannot hide a new comment),
+   * oldest first; the body edit comes from one small GraphQL call. `since` must be GitHub's
+   * uniform UTC form, `2026-10-04T10:13:16Z`; anything else is rejected before `gh` runs.
+   * Timestamps are compared as strings, so an equal timestamp is not "after".
+   *
+   * The text of an edited comment is its last editor's, so a comment whose history has anyone
+   * else in it is not forwarded but listed in `dropped`, with a reason; one that cannot be
+   * looked up or is gone is neither. The body shown is the whole current body, so every edit
+   * after `since` must be an instructor's, not only the last, and the history must be whole:
+   * anything else leaves `bodyEdit` empty.
+   */
+  const activitySince = (
+    issue: number,
+    since: string,
+    instructors: ReadonlyArray<string>,
+  ): GitHubEffect<Activity> =>
+    Effect.gen(function* () {
+      const commentsPath = `repos/${repo}/issues/${issue}/comments`;
+      const query = yield* issueQueryArgs(ACTIVITY_QUERY, issue);
+      if (!isUtcSecond(since)) {
+        return yield* parseError(
+          ["api", commentsPath],
+          `\`since\` as YYYY-MM-DDTHH:MM:SSZ, got ${quoted(since)}`,
+        );
+      }
+      const listed = yield* ghPages(
+        ["api", `${commentsPath}?since=${since}&per_page=100`, "--paginate"],
+        ActivityCommentRows,
+        "JSON arrays of comments",
+      );
+      const written = listed
+        .filter((c) => c.created_at !== null && c.created_at !== undefined && c.created_at > since)
+        .filter((c) => isInstructor(c.user, instructors))
+        .filter((c) => !(c.body ?? "").includes(MARKER_PREFIX))
+        .toSorted((a, b) =>
+          a.created_at! < b.created_at! ? -1 : a.created_at! > b.created_at! ? 1 : 0,
+        );
+      const edited = (c: (typeof written)[number]) =>
+        (c.updated_at ?? null) !== (c.created_at ?? null);
+      // Who edited the edited ones, in one call for each 100 of them.
+      const editors = yield* commentEditors(
+        written.flatMap((c) =>
+          edited(c) && c.node_id !== null && c.node_id !== undefined ? [c.node_id] : [],
+        ),
+      );
+      const comments: Array<Comment> = [];
+      const dropped: Array<Dropped> = [];
+      for (const c of written) {
+        if (edited(c)) {
+          const verdict = checkEdits(
+            c.node_id === null || c.node_id === undefined ? undefined : editors.get(c.node_id),
+            instructors,
+          );
+          if (verdict === "other" || verdict === "unverifiable") {
+            dropped.push({
+              id: String(c.id),
+              reason: verdict === "other" ? "edited-by-other" : "unverifiable",
+            });
+            continue;
+          }
+          // Not forwardable and not reported: there is nothing to point a notice at.
+          if (verdict === "gone") continue;
+        }
+        comments.push({
+          id: String(c.id),
+          author: c.user?.login ?? "",
+          createdAt: c.created_at ?? "",
+          body: c.body ?? "",
+        });
+      }
+
+      const answer = yield* ghJson(query, ActivityAnswer, "a GraphQL response with the issue");
+      const found = answer.data.repository.issue;
+      // The history comes newest first, so a page that is full or short of the total may be
+      // missing the latest edits, and a newest entry that is not the latest edit means the same:
+      // fail closed. The creation entry is before `since` for an issue that existed before the run.
+      const onlyInstructors =
+        editsWhole(found.userContentEdits, found.lastEditedAt, found.editor) &&
+        found.userContentEdits.nodes
+          .filter((edit) => edit.editedAt > since)
+          .every((edit) => isInstructor(edit.editor, instructors));
+      const lastEditedAt = found.lastEditedAt;
+      const bodyEdit: BodyEdit | null =
+        onlyInstructors &&
+        lastEditedAt !== null &&
+        lastEditedAt !== undefined &&
+        lastEditedAt > since &&
+        found.editor !== null &&
+        found.editor !== undefined &&
+        isInstructor(found.editor, instructors)
+          ? { editedAt: lastEditedAt, editor: found.editor.login, body: found.body ?? "" }
+          : null;
+      return { comments, bodyEdit, dropped };
+    });
+
   /** The login `gh` is authenticated as, from the API. */
   const login = (): GitHubEffect<string> =>
     Effect.gen(function* () {
@@ -1410,6 +1692,7 @@ export const makeGitHub = (options: GitHubOptions) => {
     approval,
     textCheck,
     textEditedSince,
+    activitySince,
   };
 };
 

@@ -956,7 +956,7 @@ describe("build.sh smoke test", () => {
         "      res.end();",
         "    })",
         '    .listen(port, "127.0.0.1", () => {',
-        '      if (mode === "ok") console.log("factory started");',
+        '      if (mode === "ok") console.log("no factory config");',
         "    });",
         "}",
         "",
@@ -1024,10 +1024,10 @@ describe("build.sh smoke test", () => {
       "/.well-known/t3/environment did not answer 200 within 1s",
     ],
     [
-      "never logs that the factory started",
+      "never logs that it has no factory config",
       "quiet",
       {},
-      'server log does not hold "factory started"',
+      'server log does not hold "no factory config"',
     ],
   ])(
     "fails and releases nothing when the server %s",

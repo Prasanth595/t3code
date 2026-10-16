@@ -22,6 +22,7 @@ import { duration, formatTs } from "./ledger/time.ts";
 import type {
   AdvanceOutcome,
   BuildingError,
+  ForwardOutcome,
   LimitOutcome,
   WatchOutcome,
 } from "./runner/building.ts";
@@ -105,10 +106,17 @@ export interface PassWorld {
   readonly timeLimit: (repo: Repo, run: RunId) => Effect.Effect<LimitOutcome, BuildingError>;
   /** The text watch: `watch`. */
   readonly watch: (repo: Repo, run: RunId) => Effect.Effect<WatchOutcome, BuildingError>;
+  /** The instructors' comments and edits of the issue body, sent to the session: `forward`. */
+  readonly forward: (repo: Repo, run: RunId) => Effect.Effect<ForwardOutcome, BuildingError>;
   /** The session's result: `advance`. */
   readonly advance: (repo: Repo, run: RunId) => Effect.Effect<AdvanceOutcome, BuildingError>;
   /** Whether the run's gate is running now. */
   readonly gateRunning: (run: RunId) => boolean;
+  /**
+   * Whether a gate send is pending in the run's ledger (`gateSendPending`): only the gate records
+   * that the send arrived, so a pass that finds one calls the gate whatever the session is doing.
+   */
+  readonly hasPendingGateSend: (run: RunId) => Effect.Effect<boolean, LedgerError>;
   /**
    * Starts the run's gate (`runner/gating.ts`) in the background and returns at once: a pass
    * never waits for a gate. The ledger has the result, and the next pass carries on from there.
@@ -687,7 +695,16 @@ const resumeRun = (
     }
   });
 
-/** The watch, then `advance`, for a building run: what the session did, in a line. */
+/** The line of a run whose gate was held back because something was sent to its session. */
+const GATE_WAITS = "the gate waits for the next pass because a comment was sent";
+
+/**
+ * The watch, then `forward`, then `advance`, for a building run: what the session did, in a line.
+ * A forward that failed may have sent something before it did, so it counts as having sent; a
+ * pass where something was sent does not start the gate, since the message starts a new run
+ * that the gate would judge too early. A forward that cannot write the ledger leaves the run
+ * alone for the pass.
+ */
 const followBuilding = (
   world: PassWorld,
   repo: Repo,
@@ -699,7 +716,22 @@ const followBuilding = (
     const watched = yield* Effect.result(world.watch(repo, info.id));
     if (watched._tag === "Failure") return pass.failed(notes, "watch", "watch", watched.failure);
     if (watched.success.kind === "stopped") return pass.stuck(notes, runIdToString(info.id));
-    yield* advanceRun(world, repo, info, notes, pass);
+    let sent = false;
+    const forwarded = yield* Effect.result(world.forward(repo, info.id));
+    if (forwarded._tag === "Failure") {
+      pass.failed(notes, "forward", "forward", forwarded.failure);
+      if (errorKind(forwarded.failure) === "ledger") return;
+      sent = true;
+    } else {
+      const { comments, bodyEdit, skipped } = forwarded.success;
+      if (skipped === "abandoned") {
+        return yield* abandoned(pass, notes, runIdToString(info.id), []);
+      }
+      if (comments > 0) notes.parts.push(`forwarded ${comments} ${plural(comments, "comment")}`);
+      if (bodyEdit) notes.parts.push("forwarded the edited issue body");
+      sent = comments > 0 || bodyEdit;
+    }
+    yield* advanceRun(world, repo, info, notes, pass, sent);
   });
 
 /** Starts the run's gate in the background, and says so, or that it is queued. */
@@ -713,13 +745,17 @@ const startGate = (
     notes.parts.push(start.kind === "started" ? GATE_STARTED : gateQueued(start));
   });
 
-/** `advance` for a run, and what it did in a line. */
+/**
+ * `advance` for a run, and what it did in a line. The gate is not started when `sent` says
+ * something was sent into the session this pass.
+ */
 const advanceRun = (
   world: PassWorld,
   repo: Repo,
   info: RunInfo,
   notes: Notes,
   pass: Pass,
+  sent = false,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     const run = runIdToString(info.id);
@@ -727,6 +763,9 @@ const advanceRun = (
     // A `NotBuildingError` is a run that finished meanwhile: softfac prints it as an error too.
     if (advanced._tag === "Failure")
       return pass.failed(notes, "advance", "advance", advanced.failure);
+    // softfac's `advance_and_gate`: the gate starts for a session that finished, and for a run with
+    // a gate send pending while the session still lives, which only the gate can settle.
+    let wantsGate = false;
     switch (advanced.success.kind) {
       case "running":
         notes.parts.push("session still running");
@@ -741,7 +780,7 @@ const advanceRun = (
         break;
       case "ready-for-gate":
         notes.parts.push("session finished");
-        yield* startGate(world, repo, info, notes);
+        wantsGate = true;
         break;
       case "passed":
         notes.parts.push(GATE_PASSED_LINE);
@@ -769,6 +808,19 @@ const advanceRun = (
         yield* abandoned(pass, notes, run, []);
         break;
     }
+    const kind = advanced.success.kind;
+    const mayGatePending =
+      kind === "running" || kind === "reminded" || kind === "paused" || kind === "ready-for-gate";
+    let pending = false;
+    if (mayGatePending) {
+      const read = yield* Effect.result(world.hasPendingGateSend(info.id));
+      if (read._tag === "Failure") {
+        return pass.trouble(notes, "ledger", "gate send check", read.failure.message);
+      }
+      pending = read.success;
+    }
+    if (wantsGate && sent && !pending) notes.parts.push(GATE_WAITS);
+    else if (wantsGate || pending) yield* startGate(world, repo, info, notes);
   });
 
 /**

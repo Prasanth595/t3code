@@ -1,9 +1,10 @@
 /**
  * The steps that work a building run, ported from softfac's `runner/building.rs`: `advance`
  * reads how the session ended and moves the issue on, `watch` stops a run whose issue text was
- * changed by someone who is not an instructor, `timeLimit` stops a run that took too long. The
- * rest of `building.rs` (interruptions and relaunches, forwarding comments) belongs to later
- * issues; the gate itself is `gating.ts`. `advance` also ends a run whose pull request was merged
+ * changed by someone who is not an instructor, `forward` sends the session an instructor's
+ * comments and edits of the issue body, `timeLimit` stops a run that took too long. The rest of
+ * `building.rs` (interruptions and relaunches, review feedback) belongs to later issues; the gate
+ * itself is `gating.ts`. `advance` also ends a run whose pull request was merged
  * or closed, whose issue a person closed, or that an operator stopped by hand (#20).
  *
  * Each step reads the ledger first and does only what it does not record, so calling it again
@@ -27,7 +28,16 @@ import { makeCause, type CauseStep, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { readRun } from "../ledger/read.ts";
 import { asciiLower, runIdToString, type RunId } from "../ledger/runId.ts";
-import type { BoundGitHub, IssueDetail, PullRequest } from "../tracker/github.ts";
+import { formatTs } from "../ledger/time.ts";
+import { isUtcSecond } from "../tracker/approvalHistory.ts";
+import {
+  GitHubParse,
+  type Activity,
+  type BoundGitHub,
+  type Dropped,
+  type IssueDetail,
+  type PullRequest,
+} from "../tracker/github.ts";
 import {
   MessageRejectedError,
   ThreadNotFoundError,
@@ -45,9 +55,15 @@ import {
   TIME_LIMIT,
   WRONG_ACCOUNT,
   WRONG_ACCOUNT_PREFIX,
+  bodyEditMessage,
+  commentMessage,
+  droppedCommentMessage,
   prepareSessionText,
 } from "./messages.ts";
 import {
+  BODY_EDIT_FORWARDED,
+  COMMENT_DROPPED,
+  FORWARD_WAIT,
   RESULT_LINE_REMINDED,
   RESULT_LINE_REMINDING,
   readProgress,
@@ -89,6 +105,7 @@ export interface BuildingContext extends RunContext {
     | "markPrDraft"
     | "commentOnPr"
     | "textCheck"
+    | "activitySince"
     | "issue"
     | "closedBy"
   >;
@@ -173,6 +190,27 @@ export type WatchOutcome =
       readonly kind: "skipped";
       readonly why: "finished" | "no-session" | "not-building" | "gate-passed" | "pr-merged";
     };
+
+/** Why `forward` did nothing for a run. */
+export type SkipReason =
+  | "finished"
+  | "no-session"
+  | "not-building"
+  /** A gate attempt is being sent into the session: a message sent now could be mistaken for the proof that it arrived. */
+  | "gate-send-pending"
+  /** A person closed the issue: the run is over. */
+  | "abandoned"
+  /** The run's own pull request was merged and closed the issue: `advance` ends it. */
+  | "pr-merged"
+  /** T3 no longer has the session's thread. */
+  | "no-thread";
+
+/** What `forward` did: how many comments and whether the edited body went into the session. */
+export interface ForwardOutcome {
+  readonly comments: number;
+  readonly bodyEdit: boolean;
+  readonly skipped: SkipReason | null;
+}
 
 /** What `timeLimit` did. */
 export type LimitOutcome =
@@ -751,6 +789,243 @@ export const watch = (
     );
     return { kind: "stopped", reason: recordedReason(stop) } as const;
   });
+
+/**
+ * A gate attempt was being sent into the session (a `gate-sending` step with no matching
+ * `gate_sent_back`), so a message sent now could be mistaken for the proof that it arrived.
+ */
+export const gateSendPending = (seen: Seen): boolean =>
+  seen.sending !== null && !seen.sentBackAttempts.has(seen.sending.attempt);
+
+/**
+ * The `since` of every read of an issue's activity for a run: the run's first ledger line, cut
+ * to whole seconds, never a moving cursor. The milliseconds are cut off, not rounded, so `since`
+ * may be early, never late.
+ */
+const sinceRunStart = (firstMs: number): string => `${formatTs(firstMs).slice(0, 19)}Z`;
+
+/**
+ * What `forward` still has to send from one read of the instructors' activity: the comments the
+ * ledger has no `comment_forwarded` for, oldest first and each id once, and the body edit whose
+ * time has no `body-edit-forwarded` step. A comment the issue was told about as dropped is never
+ * sent later, whatever a later read says: the instructor was asked to post it again. A body edit
+ * time that is not GitHub's form is refused before anything is sent or written: it ends up in the
+ * ledger and in a command id.
+ */
+const unsent = (seen: Seen, activity: Activity) =>
+  Effect.gen(function* () {
+    const edit = activity.bodyEdit;
+    if (edit !== null && !isUtcSecond(edit.editedAt)) {
+      return yield* new GitHubParse({
+        args: ["api", "graphql"],
+        expected: `the body edit time as YYYY-MM-DDTHH:MM:SSZ, got "${Array.from(edit.editedAt).slice(0, 40).join("").replaceAll("\n", "\\n")}"`,
+      });
+    }
+    const told = new Set([...seen.forwarded, ...seen.dropped]);
+    const comments = activity.comments.filter((comment) => {
+      if (told.has(comment.id)) return false;
+      told.add(comment.id);
+      return true;
+    });
+    return {
+      comments,
+      bodyEdit: edit !== null && !seen.bodyEdits.has(edit.editedAt) ? edit : null,
+    };
+  });
+
+/**
+ * The dropped comments the issue was not told about yet, in the order read, each id once. A
+ * comment already forwarded is left out: the session has the instructor's own words, and a later
+ * edit by someone else changes nothing it holds.
+ */
+const unreported = (seen: Seen, activity: Activity): ReadonlyArray<Dropped> => {
+  const told = new Set(seen.dropped);
+  return activity.dropped.filter((dropped) => {
+    if (seen.forwarded.has(dropped.id) || told.has(dropped.id)) return false;
+    told.add(dropped.id);
+    return true;
+  });
+};
+
+/**
+ * Tells the issue, once per dropped comment, that it was not sent to the session: the comment
+ * first and the `comment-dropped <id>` step after it, so a crash between them posts it a second
+ * time (comments are at-least-once). A failure stops the call and the rest is said on the next one.
+ */
+const reportDrops = (
+  ctx: BuildingContext,
+  out: Out,
+  issue: number,
+  drops: ReadonlyArray<Dropped>,
+): Effect.Effect<void, BuildingError> =>
+  Effect.forEach(
+    drops,
+    (dropped) =>
+      Effect.gen(function* () {
+        yield* ctx.tracker.postComment(
+          issue,
+          droppedCommentMessage(ctx.repo, issue, dropped.id, dropped.reason),
+        );
+        yield* append(
+          out,
+          { event: "step_changed", data: { step: `${COMMENT_DROPPED} ${dropped.id}` } },
+          "forward",
+          "comment-dropped",
+        );
+      }),
+    { discard: true },
+  );
+
+/**
+ * Sends the session the instructors' new comments and their edit of the issue body, once each.
+ * Activity is read from the run's first ledger line on (`sinceRunStart`), never from a moving
+ * cursor, and what the ledger already holds (`comment_forwarded` by comment id, the
+ * `body-edit-forwarded <edited_at>` step) is not sent again, so every call is safe to repeat. The
+ * comments go in oldest first, then the edit, which may be the same text the comments came
+ * after. A comment goes under the command id `softfac:<run>:comment:<id>` and then
+ * `comment_forwarded` is written; an edit under `softfac:<run>:body:<edited_at>`, then its step.
+ * A send that fails fails the call: what was sent stays recorded and the rest goes in on the next
+ * call under the same ids.
+ *
+ * A session that is idle (its latest run ended, or it has none) starts a new run when it gets a
+ * message, so `forward-wait <k>` (`k` the ordinal of the run that ended) is written before the
+ * first send: the session counts as working until a run newer than `k` has ended, and `advance`
+ * and the gate wait for it instead of judging the old run again. A session that is working has
+ * the message steered into its run, which needs no marker. The status is read only when there is
+ * something to send.
+ *
+ * The read also lists the instructors' comments it could not forward (`Activity.dropped`). After
+ * the sends, each one the ledger has no `comment-dropped <id>` step for, and that was not
+ * forwarded earlier, gets one comment on the issue in the factory's own fixed words (a link to
+ * the comment, nothing quoted), then the step. A call that skips the run, or finds the thread
+ * gone, reports nothing.
+ *
+ * `forward` changes no state, and it has no loop or timer: the caller decides how often to call
+ * it, and should not gate in a pass where it sent something. A run that is finished, has no
+ * session, is not `building` (or has a gate pass, a stuck or questions decision not yet
+ * committed, or a stop by hand), or whose gate send is pending makes no call (`skipped`). A
+ * closed issue ends the run, as for `advance`, when a person closed it (`abandoned`: the thread
+ * is archived, the ledger finished, nothing written on GitHub); the run's own merge is left to
+ * `advance`. A thread T3 no longer has is `no-thread`. A run of another repo is an error.
+ */
+export const forward = (
+  ctx: BuildingContext,
+  run: RunId,
+): Effect.Effect<ForwardOutcome, BuildingError> =>
+  withLedger(ctx, run, (out) =>
+    Effect.gen(function* () {
+      yield* checkRepo(ctx, run);
+      const record = yield* ledger(() => readRun(ctx.dataDir, run));
+      const seen = readProgress(record.entries);
+      const skip = (skipped: SkipReason): ForwardOutcome => ({
+        comments: 0,
+        bodyEdit: false,
+        skipped,
+      });
+      if (seen.finished) return skip("finished");
+      const first = record.entries[0];
+      const threadId = seen.threadId;
+      if (threadId === null || first === undefined) return skip("no-session");
+      // `state_changed` is the commit marker, so a stuck decision or posted questions without it
+      // are a transition that was cut short. A recorded gate pass is not interrupted.
+      if (
+        seen.state !== "building" ||
+        seen.pass !== null ||
+        seen.stuck !== null ||
+        seen.stopRequested ||
+        seen.questionsPosted
+      ) {
+        return skip("not-building");
+      }
+      // The gate infers that a send-back reached the session from a newer run having ended. A
+      // run that a forwarded message starts would count too, and burn the attempt, so the
+      // message waits until the gate has sent the failure and recorded it.
+      if (gateSendPending(seen)) return skip("gate-send-pending");
+      // Only a run that would read the issue's activity asks whether the issue is closed. A run
+      // whose own merge closed the issue gets nothing more sent; `advance` ends it.
+      const { closing } = yield* closedIssue(ctx, run, seen);
+      if (closing.kind === "persons-move") {
+        yield* abandon(ctx, yield* out.open, run, seen, "forward");
+        return skip("abandoned");
+      }
+      if (closing.kind === "own-merge") return skip("pr-merged");
+
+      const issue = Number(run.issue);
+      const activity = yield* ctx.tracker.activitySince(
+        issue,
+        sinceRunStart(first.ms),
+        ctx.project.instructors,
+      );
+      const { comments, bodyEdit } = yield* unsent(seen, activity);
+      const drops = unreported(seen, activity);
+      if (comments.length === 0 && bodyEdit === null) {
+        yield* reportDrops(ctx, out, issue, drops);
+        return { comments: 0, bodyEdit: false, skipped: null };
+      }
+
+      // Something is to be sent: is the session idle? A message sent into an ended run starts a
+      // new run, and the gate must wait for that run, not judge the old one again.
+      const status = yield* threadStatus(ctx, threadId);
+      if (status === null) return skip("no-thread");
+      if (status.run === null || isTerminal(status.run)) {
+        const k = status.runOrdinal ?? 0;
+        if (seen.lastWait !== k) {
+          yield* append(
+            out,
+            { event: "step_changed", data: { step: `${FORWARD_WAIT} ${k}` } },
+            "forward",
+            "forward-waiting",
+          );
+        }
+      }
+      const opened = yield* out.open;
+      const at = progressFrom("forward", seen, "building");
+      const runName = runIdToString(run);
+      for (const comment of comments) {
+        const { actions } = yield* Effect.fromResult(
+          transition("building", { kind: "instructor-commented", commentId: comment.id }),
+        );
+        yield* applyActions(
+          ctx,
+          issue,
+          opened,
+          at,
+          actions,
+          makeCause("forward", "comment-forwarded"),
+          {
+            forward: {
+              commandId: `softfac:${runName}:comment:${comment.id}`,
+              text: commentMessage(ctx.repo, issue, comment.author, comment.body),
+            },
+          },
+        );
+      }
+      // The edit goes after the comments of this call, which may have been written before it.
+      if (bodyEdit !== null) {
+        const { actions } = yield* Effect.fromResult(
+          transition("building", { kind: "body-edited" }),
+        );
+        yield* applyActions(
+          ctx,
+          issue,
+          opened,
+          at,
+          actions,
+          makeCause("forward", "body-edit-forwarded"),
+          {
+            forward: {
+              commandId: `softfac:${runName}:body:${bodyEdit.editedAt}`,
+              text: bodyEditMessage(ctx.repo, issue, bodyEdit.editor, bodyEdit.body),
+              step: `${BODY_EDIT_FORWARDED} ${bodyEdit.editedAt}`,
+            },
+          },
+        );
+      }
+      // Last: telling the issue about a dropped comment must not hold back what the session needs.
+      yield* reportDrops(ctx, out, issue, drops);
+      return { comments: comments.length, bodyEdit: bodyEdit !== null, skipped: null };
+    }),
+  );
 
 /** The branch the thread works on, or `undefined` when it has none or T3 cannot say: a read that fails is not a stop. */
 const branchOf = (ctx: BuildingContext, threadId: string): Effect.Effect<string | undefined> =>

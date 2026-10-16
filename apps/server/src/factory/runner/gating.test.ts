@@ -45,11 +45,12 @@ import {
 import {
   GitHubFailed,
   GitHubRateLimited,
+  type Activity,
   type GitHubError,
   type IssueDetail,
   type PullRequest,
 } from "../tracker/github.ts";
-import { advance, type AdvanceOutcome } from "./building.ts";
+import { advance, forward, type AdvanceOutcome } from "./building.ts";
 import {
   gate,
   mergeConflictMessage,
@@ -334,6 +335,8 @@ class FakeGh {
   readyByRateLimited = false;
   /** `markPrDraft` fails and has no effect, whatever `failAt` says. */
   markDraftFails = false;
+  /** What the instructors did on the issue since the run began: what `forward` reads. */
+  activity: Activity = { comments: [], bodyEdit: null, dropped: [] };
 
   /** Records the call, then applies `effect` unless the call fails before reaching GitHub. */
   run(call: string, effect: (world: World) => void): Effect.Effect<void, GitHubError> {
@@ -346,6 +349,10 @@ class FakeGh {
   }
 
   readonly tracker: GateContext["tracker"] = {
+    activitySince: (n, since, instructors) => {
+      this.reads.push(`activity ${n} ${since} ${instructors.join(",")}`);
+      return Effect.succeed(this.activity);
+    },
     issue: (n) => {
       this.reads.push(`issue ${n}`);
       return this.issueFails
@@ -3103,6 +3110,160 @@ describe("gate: a run stopped by hand", () => {
       assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
       assert.deepStrictEqual(rig.gh.calls, []);
       assert.deepStrictEqual(rig.ws.calls, []);
+    }),
+  );
+});
+
+// ---- gate: waiting for the run a forwarded message starts ------------------------------------------
+// The tests of the other half of softfac's section, which need no gate, are in `forward.test.ts`.
+
+const FORWARD_RUN_COMMENT = (id: number, text: string) =>
+  `send thread-1 softfac:${RUN}:comment:${id} Forwarded instructor comment on rawphp/softfac#10 from rawphp. Apply it at your next step boundary.\n\n${text}`;
+const waitStep = (k: number): RunEvent => step(`forward-wait ${k}`);
+const commentForwarded = (id: number): Line => ({
+  event: "comment_forwarded",
+  data: { comment_id: String(id) },
+});
+const instructorsComment = (id: number, body: string) => ({
+  id: String(id),
+  author: "rawphp",
+  createdAt: "2026-10-04T10:13:16Z",
+  body,
+});
+
+/** A run whose session has reported its pull request and carries `markers`, with the latest run `ordinal` ended. */
+const waitingRig = (markers: ReadonlyArray<RunEvent>, ordinal: number): Rig => {
+  const rig = rigFor([...BASE_EVENTS, ...markers]);
+  setRun(rig, "completed", ordinal);
+  return rig;
+};
+
+/** Whether `advance` and the gate both hold back: they must agree, whatever the ledger says. */
+const isWaiting = (rig: Rig) =>
+  Effect.gen(function* () {
+    const advanced = yield* advanceIn(rig);
+    const gated = yield* gateIn(rig);
+    assert.strictEqual(
+      advanced.kind === "running",
+      gated.kind === "not-ready",
+      `${advanced.kind} ${gated.kind}`,
+    );
+    return advanced.kind === "running";
+  });
+
+describe("gate: waiting for the run a forwarded message starts", () => {
+  it.effect(
+    "an idle session gets a wait marker before the send, and the flow waits for a newer run",
+    () =>
+      Effect.gen(function* () {
+        // The first run ended with FACTORY-DONE and `advance` recorded the draft pull request.
+        const rig = yield* readyForGate();
+        rig.gh.activity = {
+          comments: [instructorsComment(101, "also do this")],
+          bodyEdit: null,
+          dropped: [],
+        };
+        assert.deepStrictEqual(yield* forward(rig.ctx, rig.run), {
+          comments: 1,
+          bodyEdit: false,
+          skipped: null,
+        });
+        // The status is read once, then the message goes in.
+        assert.deepStrictEqual(rig.t3.calls, [
+          "status thread-1",
+          FORWARD_RUN_COMMENT(101, "also do this"),
+        ]);
+        assert.deepStrictEqual(linesOf(rig), [...BASE_EVENTS, waitStep(1), commentForwarded(101)]);
+
+        // The status still shows run 1, the one that ended, as the latest: the message has not
+        // started its run yet, so nothing is gated and nothing is written.
+        clearCalls(rig);
+        const bytes = bytesOf(rig);
+        assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "not-ready" });
+        assert.deepStrictEqual(rig.ws.calls, []);
+        assert.deepStrictEqual(rig.gh.calls, []);
+        assert.strictEqual(bytesOf(rig), bytes);
+
+        // The new run is active, then it ends with FACTORY-DONE: the flow goes on.
+        setRun(rig, "running", 2);
+        assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "not-ready" });
+        assert.strictEqual(bytesOf(rig), bytes);
+        setRun(rig, "completed", 2);
+        const ready = yield* advanceIn(rig);
+        assert.strictEqual(ready.kind, "ready-for-gate");
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+        assert.deepStrictEqual(linesOf(rig), [
+          ...BASE_EVENTS,
+          waitStep(1),
+          commentForwarded(101),
+          ...passingAttempt(1),
+          ...PASS_TAIL,
+        ]);
+      }),
+  );
+
+  it.effect("the newest marker governs a forward wait after a send-back", () =>
+    Effect.gen(function* () {
+      const markers = () => [
+        { event: "gate_sent_back", data: { attempt: 1, run_ordinal: 1 } } satisfies RunEvent,
+        waitStep(3),
+      ];
+      // Run 2 is newer than the send-back's 1 but not than the wait's 3.
+      assert.isTrue(yield* isWaiting(waitingRig(markers(), 2)));
+      assert.isTrue(yield* isWaiting(waitingRig(markers(), 3)));
+      assert.isFalse(yield* isWaiting(waitingRig(markers(), 4)));
+    }),
+  );
+
+  it.effect("the awaited run never goes down when a send-back is recorded after a later wait", () =>
+    Effect.gen(function* () {
+      const markers = () => [
+        waitStep(3),
+        { event: "gate_sent_back", data: { attempt: 1, run_ordinal: 2 } } satisfies RunEvent,
+      ];
+      // The send-back came after the wait for run 3 but names run 2: the wait for run 3 stays.
+      assert.isTrue(yield* isWaiting(waitingRig(markers(), 2)));
+      assert.isTrue(yield* isWaiting(waitingRig(markers(), 3)));
+      assert.isFalse(yield* isWaiting(waitingRig(markers(), 4)));
+    }),
+  );
+
+  it.effect("a later pull request or gate line does not clear a forward wait", () =>
+    Effect.gen(function* () {
+      const markers = (): Array<RunEvent> => [
+        waitStep(1),
+        PR_OPENED,
+        {
+          event: "gate_command",
+          data: { attempt: 1, command: FMT, exit_code: 0, duration_ms: 1_234 },
+        },
+      ];
+      assert.isTrue(yield* isWaiting(waitingRig(markers(), 1)));
+      // Only a newer ended run satisfies it.
+      assert.isFalse(yield* isWaiting(waitingRig(markers(), 2)));
+    }),
+  );
+
+  it.effect("a forward wait is not satisfied by a newer run that has not ended", () =>
+    Effect.gen(function* () {
+      const rig = waitingRig([waitStep(1)], 2);
+      setRun(rig, "running", 2);
+      assert.isTrue(yield* isWaiting(rig));
+    }),
+  );
+
+  it.effect("a step that only looks like a wait marker does not hold the session", () =>
+    Effect.gen(function* () {
+      for (const bad of [
+        "forward-wait 007",
+        "forward-wait -1",
+        "forward-wait 1 ",
+        "forward-wait x",
+      ]) {
+        assert.isFalse(yield* isWaiting(waitingRig([step(bad)], 1)), bad);
+      }
     }),
   );
 });

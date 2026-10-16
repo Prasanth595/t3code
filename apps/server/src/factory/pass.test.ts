@@ -31,6 +31,7 @@ import {
   NotBuildingError,
   type AdvanceOutcome,
   type BuildingError,
+  type ForwardOutcome,
   type LimitOutcome,
   type WatchOutcome,
 } from "./runner/building.ts";
@@ -81,6 +82,13 @@ const started = (issue: number, repo = REPO): StartOutcome => ({
 
 type Answers<T> = Record<string, T | "error">;
 
+/** What `forward` answers when the instructors said nothing new. */
+const NOTHING_SENT: ForwardOutcome = {
+  comments: 0,
+  bodyEdit: false,
+  skipped: null,
+};
+
 /** Everything the pass can touch, scripted. `calls` logs each call in order. */
 class Fake implements PassWorld {
   projects: Record<string, ProjectConfig | string> = {};
@@ -101,6 +109,7 @@ class Fake implements PassWorld {
   /** Scripted answers per `"<repo>#<issue>"`, popped per call; an exhausted script answers the default. */
   timeLimits: Record<string, Array<LimitOutcome | BuildingError>> = {};
   watches: Record<string, Array<WatchOutcome | BuildingError>> = {};
+  forwards: Record<string, Array<ForwardOutcome | BuildingError>> = {};
   advances: Record<string, Array<AdvanceOutcome | BuildingError>> = {};
   /** What `takeStopRequest` answers per `"<repo>#<issue>"`; `none` otherwise. */
   stopRequests: Record<string, StopRequestOutcome | LedgerIoError> = {};
@@ -112,6 +121,10 @@ class Fake implements PassWorld {
   runErrorFails = false;
   /** The runs whose gate lock is held, by run id. */
   gateLocks: Array<string> = [];
+  /** The runs with a gate send pending in their ledger, by run id. */
+  pendingSends: Array<string> = [];
+  /** Reading a run's ledger for a pending gate send fails. */
+  pendingSendFails = false;
   /** What `gate` answers per `"<repo>#<issue>"`; started otherwise. */
   gateStarts: Record<string, GateStart> = {};
   now = T0;
@@ -304,6 +317,18 @@ class Fake implements PassWorld {
     return this.scripted(this.watches, "watch", repo, Number(run.issue), { kind: "unchanged" });
   }
 
+  /** A forward of a run whose issue a person closed ends the run, as the ledger does. */
+  forward(repo: Repo, run: RunId) {
+    const key = `${repo.watched.repo}#${run.issue}`;
+    this.calls.push(`forward ${key}`);
+    const answer = this.forwards[key]?.shift() ?? NOTHING_SENT;
+    if (!("comments" in answer)) return Effect.fail(answer);
+    if (answer.skipped === "abandoned") {
+      this.runs = this.runs.filter((r) => runIdToString(r.id) !== runIdToString(run));
+    }
+    return Effect.succeed(answer);
+  }
+
   /** An advance that ends the run (`needs-info`, `stuck`) takes it off the list, as the ledger does. */
   advance(repo: Repo, run: RunId) {
     const answered = this.scripted(this.advances, "advance", repo, Number(run.issue), {
@@ -343,6 +368,15 @@ class Fake implements PassWorld {
 
   gateRunning(run: RunId) {
     return this.gateLocks.includes(runIdToString(run));
+  }
+
+  hasPendingGateSend(run: RunId) {
+    if (this.pendingSendFails) {
+      return Effect.fail(
+        new LedgerIoError({ path: "/data/runs/x.jsonl", cause: new Error("disk") }),
+      );
+    }
+    return Effect.succeed(this.pendingSends.includes(runIdToString(run)));
   }
 
   gate(repo: Repo, run: RunId) {
@@ -1018,9 +1052,14 @@ describe("runs that are confirmed and still in triage", () => {
       fake.runIn(40, BUILDING, REPO, true);
       const { lines } = yield* pass(fake, machine([REPO], 3));
       const calls = fake.calls.filter((c) =>
-        /^(time_limit|watch|advance|start|resume|gate) /.test(c),
+        /^(time_limit|watch|forward|advance|start|resume|gate) /.test(c),
       );
-      assert.deepEqual(calls, [`time_limit ${REPO}#40`, `watch ${REPO}#40`, `advance ${REPO}#40`]);
+      assert.deepEqual(calls, [
+        `time_limit ${REPO}#40`,
+        `watch ${REPO}#40`,
+        `forward ${REPO}#40`,
+        `advance ${REPO}#40`,
+      ]);
       assert.equal(
         runLine(lines, `${REPO}#40 building:`),
         `${REPO}#40 building: session still running`,
@@ -1047,7 +1086,7 @@ describe("runs that are confirmed and still in triage", () => {
       }
       const { lines } = yield* pass(fake, machine([REPO], 3));
       const calls = fake.calls.filter((c) =>
-        /^(time_limit|watch|advance|start|resume|gate) /.test(c),
+        /^(time_limit|watch|forward|advance|start|resume|gate) /.test(c),
       );
       assert.deepEqual(calls, []);
       for (const issue of [12, 40, 41]) {
@@ -1965,7 +2004,7 @@ void runIdToString;
 describe("following a building run", () => {
   const stopped = (reason = "the reason") => ({ kind: "stopped" as const, reason });
   const callsOf = (fake: Fake) =>
-    fake.calls.filter((c) => /^(time_limit|watch|advance|start|resume|gate) /.test(c));
+    fake.calls.filter((c) => /^(time_limit|watch|forward|advance|start|resume|gate) /.test(c));
 
   it.effect("a triage run gets the time limit before resume", () =>
     Effect.gen(function* () {
@@ -2012,6 +2051,7 @@ describe("following a building run", () => {
         assert.deepEqual(callsOf(fake), [
           `time_limit ${REPO}#40`,
           `watch ${REPO}#40`,
+          `forward ${REPO}#40`,
           `advance ${REPO}#40`,
           `gate ${REPO}#40`,
         ]);
@@ -2038,6 +2078,7 @@ describe("following a building run", () => {
       assert.deepEqual(callsOf(fake), [
         `time_limit ${REPO}#40`,
         `watch ${REPO}#40`,
+        `forward ${REPO}#40`,
         `advance ${REPO}#40`,
       ]);
     }),
@@ -2077,6 +2118,7 @@ describe("following a building run", () => {
       assert.deepEqual(callsOf(fake), [
         `time_limit ${REPO}#40`,
         `watch ${REPO}#40`,
+        `forward ${REPO}#40`,
         `advance ${REPO}#40`,
         `gate ${REPO}#40`,
       ]);
@@ -2106,6 +2148,238 @@ describe("following a building run", () => {
       const { lines } = yield* pass(fake, machine([REPO], 3));
       assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#40`, `watch ${REPO}#40`]);
       assert.include(runLine(lines, `${REPO}#40 `), "stuck, the reason is in the ledger of run");
+    }),
+  );
+
+  const sent = (comments: number, bodyEdit: boolean): ForwardOutcome => ({
+    comments,
+    bodyEdit,
+    skipped: null,
+  });
+  const forwardLine = (fake: Fake) =>
+    Effect.gen(function* () {
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      return runLine(lines, `${REPO}#40 `);
+    });
+  const building = () => {
+    const fake = new Fake();
+    fake.runIn(40, BUILDING, REPO, true);
+    return fake;
+  };
+
+  it.effect("a forward that sent something says so before the session's own line", () =>
+    Effect.gen(function* () {
+      const cases: ReadonlyArray<readonly [ForwardOutcome, string]> = [
+        [sent(1, false), "forwarded 1 comment"],
+        [sent(2, false), "forwarded 2 comments"],
+        [sent(0, true), "forwarded the edited issue body"],
+        [sent(3, true), "forwarded 3 comments, forwarded the edited issue body"],
+      ];
+      for (const [outcome, words] of cases) {
+        const fake = building();
+        fake.forwards[`${REPO}#40`] = [outcome];
+        assert.equal(
+          yield* forwardLine(fake),
+          `${REPO}#40 building: ${words}, session still running`,
+        );
+        assert.deepEqual(callsOf(fake), [
+          `time_limit ${REPO}#40`,
+          `watch ${REPO}#40`,
+          `forward ${REPO}#40`,
+          `advance ${REPO}#40`,
+        ]);
+      }
+    }),
+  );
+
+  it.effect("a forward that skipped the run or sent nothing says nothing", () =>
+    Effect.gen(function* () {
+      for (const outcome of [
+        sent(0, false),
+        { comments: 0, bodyEdit: false, skipped: "not-building" },
+        { comments: 0, bodyEdit: false, skipped: "gate-send-pending" },
+        { comments: 0, bodyEdit: false, skipped: "no-thread" },
+        { comments: 0, bodyEdit: false, skipped: "pr-merged" },
+      ] satisfies ReadonlyArray<ForwardOutcome>) {
+        const fake = building();
+        fake.forwards[`${REPO}#40`] = [outcome];
+        assert.equal(yield* forwardLine(fake), `${REPO}#40 building: session still running`);
+      }
+    }),
+  );
+
+  it.effect("the gate waits for the next pass when a comment was sent", () =>
+    Effect.gen(function* () {
+      for (const outcome of [sent(1, false), sent(0, true)]) {
+        const fake = building();
+        fake.forwards[`${REPO}#40`] = [outcome];
+        fake.advances[`${REPO}#40`] = [
+          { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
+        ];
+        const line = yield* forwardLine(fake);
+        assert.ok(
+          line.endsWith(
+            "session finished, the gate waits for the next pass because a comment was sent",
+          ),
+          line,
+        );
+        assert.deepEqual(callsOf(fake), [
+          `time_limit ${REPO}#40`,
+          `watch ${REPO}#40`,
+          `forward ${REPO}#40`,
+          `advance ${REPO}#40`,
+        ]);
+      }
+    }),
+  );
+
+  it.effect("a pending gate send starts the gate while the session still runs or is paused", () =>
+    Effect.gen(function* () {
+      for (const kind of ["running", "reminded", "paused"] as const) {
+        for (const pending of [true, false]) {
+          const fake = building();
+          if (pending) fake.pendingSends = [runIdToString(fake.runs[0]!.id)];
+          fake.advances[`${REPO}#40`] = [{ kind }];
+          yield* pass(fake, machine([REPO], 3));
+          assert.equal(
+            callsOf(fake).includes(`gate ${REPO}#40`),
+            pending,
+            `${kind} pending=${pending}`,
+          );
+        }
+      }
+    }),
+  );
+
+  it.effect("a pending gate send wins over the gate waiting for a sent comment", () =>
+    Effect.gen(function* () {
+      const fake = building();
+      fake.pendingSends = [runIdToString(fake.runs[0]!.id)];
+      fake.forwards[`${REPO}#40`] = [sent(1, false)];
+      fake.advances[`${REPO}#40`] = [
+        { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
+      ];
+      const line = yield* forwardLine(fake);
+      assert.ok(!line.includes("the gate waits"), line);
+      assert.ok(callsOf(fake).includes(`gate ${REPO}#40`));
+    }),
+  );
+
+  it.effect("a run that ended or needs a person never starts the gate for a pending send", () =>
+    Effect.gen(function* () {
+      for (const outcome of [{ kind: "stuck", reason: "x" }, { kind: "needs-info" }] as const) {
+        const kind = outcome.kind;
+        const fake = building();
+        fake.pendingSends = [runIdToString(fake.runs[0]!.id)];
+        fake.advances[`${REPO}#40`] = [outcome];
+        yield* pass(fake, machine([REPO], 3));
+        assert.ok(!callsOf(fake).includes(`gate ${REPO}#40`), kind);
+      }
+    }),
+  );
+
+  it.effect(
+    "a ledger that cannot be read for a pending gate send starts no gate and is recorded",
+    () =>
+      Effect.gen(function* () {
+        const fake = building();
+        fake.pendingSendFails = true;
+        fake.advances[`${REPO}#40`] = [{ kind: "running" }];
+        const { report } = yield* pass(fake, machine([REPO], 3));
+        assert.equal(report.errors, 1);
+        assert.ok(!callsOf(fake).includes(`gate ${REPO}#40`));
+      }),
+  );
+
+  it.effect(
+    "a finished session whose ledger cannot be read for a pending gate send is not gated this pass",
+    () =>
+      Effect.gen(function* () {
+        // As softfac's `advance_and_gate`: the read comes before the gate, and its failure ends the
+        // run's turn in the pass, so the next pass gates it.
+        const fake = building();
+        fake.pendingSendFails = true;
+        fake.advances[`${REPO}#40`] = [
+          { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
+        ];
+        const { report, lines } = yield* pass(fake, machine([REPO], 3));
+        assert.equal(report.errors, 1);
+        assert.deepEqual(callsOf(fake), [
+          `time_limit ${REPO}#40`,
+          `watch ${REPO}#40`,
+          `forward ${REPO}#40`,
+          `advance ${REPO}#40`,
+        ]);
+        assert.deepEqual(
+          fake.runErrors.map((e) => `${e.step} ${e.kind}`),
+          ["pass ledger"],
+        );
+        assert.ok(
+          lines.some((line) => line.includes("gate send check")),
+          lines.join("\n"),
+        );
+      }),
+  );
+
+  it.effect("a run whose issue a person closed is over after the forward", () =>
+    Effect.gen(function* () {
+      const fake = building();
+      fake.forwards[`${REPO}#40`] = [{ comments: 0, bodyEdit: false, skipped: "abandoned" }];
+      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      assert.equal(
+        runLine(lines, `${REPO}#40 `),
+        `${REPO}#40 building: the issue is closed, the run is closed`,
+      );
+      assert.deepEqual(callsOf(fake), [
+        `time_limit ${REPO}#40`,
+        `watch ${REPO}#40`,
+        `forward ${REPO}#40`,
+      ]);
+      assert.equal(report.attention, 1);
+    }),
+  );
+
+  it.effect("a failing forward is recorded with step forward, and counts as having sent", () =>
+    Effect.gen(function* () {
+      const fake = building();
+      fake.forwards[`${REPO}#40`] = [
+        new SessionsError({ operation: "send", cause: new Error("x") }),
+      ];
+      fake.advances[`${REPO}#40`] = [
+        { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
+      ];
+      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      assert.equal(report.errors, 1);
+      assert.equal(fake.runErrors.length, 1);
+      assert.equal(fake.runErrors[0]?.step, "forward");
+      assert.equal(fake.runErrors[0]?.kind, "t3");
+      // The message may have gone in before the failure, so the gate is not started this pass.
+      assert.deepEqual(callsOf(fake), [
+        `time_limit ${REPO}#40`,
+        `watch ${REPO}#40`,
+        `forward ${REPO}#40`,
+        `advance ${REPO}#40`,
+      ]);
+      assert.ok(
+        lines.some((l) => l.includes("the gate waits for the next pass")),
+        lines.join("\n"),
+      );
+    }),
+  );
+
+  it.effect("a forward that cannot write the ledger leaves the run alone for the pass", () =>
+    Effect.gen(function* () {
+      const fake = yield* failing(
+        "forwards",
+        new LedgerIoError({ path: "/data/runs/x.jsonl", cause: new Error("disk") }),
+        "forward",
+        "ledger",
+      );
+      assert.deepEqual(callsOf(fake), [
+        `time_limit ${REPO}#40`,
+        `watch ${REPO}#40`,
+        `forward ${REPO}#40`,
+      ]);
     }),
   );
 
@@ -2146,7 +2420,7 @@ describe("following a building run", () => {
   );
 
   const failing = (
-    script: "advances" | "watches" | "timeLimits",
+    script: "advances" | "watches" | "timeLimits" | "forwards",
     error: BuildingError,
     step: string,
     kind: ErrorKind,

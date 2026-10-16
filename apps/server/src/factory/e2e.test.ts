@@ -32,7 +32,13 @@ import * as Contract from "./t3/contract.testkit.ts";
 import * as Paths from "./t3/paths.ts";
 import * as Sessions from "./t3/sessions.ts";
 import { APPROVAL_QUERY } from "./tracker/approvalHistory.ts";
-import { CLOSED_BY_QUERY, MARKER, READY_BY_QUERY, STATUS_MARKER } from "./tracker/github.ts";
+import {
+  ACTIVITY_QUERY,
+  CLOSED_BY_QUERY,
+  MARKER,
+  READY_BY_QUERY,
+  STATUS_MARKER,
+} from "./tracker/github.ts";
 
 const OWNER = "acme";
 const NAME = "widgets";
@@ -184,6 +190,23 @@ const makeGitHub = (input: { readonly baseSha: string; readonly projectConfig: s
         }),
       );
     }
+    if (query === ACTIVITY_QUERY) {
+      // The instructors never comment or edit the body in these runs.
+      return ok(
+        json({
+          data: {
+            repository: {
+              issue: {
+                body: "Build it.",
+                lastEditedAt: null,
+                editor: null,
+                userContentEdits: { totalCount: 0, nodes: [] },
+              },
+            },
+          },
+        }),
+      );
+    }
     if (query === CLOSED_BY_QUERY) {
       return ok(json({ data: { repository: { issue: { timelineItems: { nodes: [] } } } } }));
     }
@@ -221,7 +244,11 @@ const makeGitHub = (input: { readonly baseSha: string; readonly projectConfig: s
           }),
         );
       }
-      if (first === `${repoPath}/issues/${ISSUE}/comments`) {
+      // The listing `forward` reads, from the start of the run on: all the comments there are.
+      if (
+        first === `${repoPath}/issues/${ISSUE}/comments` ||
+        first.startsWith(`${repoPath}/issues/${ISSUE}/comments?since=`)
+      ) {
         return ok(
           json(
             comments.map((c) => ({
