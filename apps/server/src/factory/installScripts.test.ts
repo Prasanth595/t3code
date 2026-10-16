@@ -5,7 +5,7 @@ import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vite-plus/test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vite-plus/test";
 
 const scripts = NodePath.resolve(import.meta.dirname, "../../../../factory/scripts");
 const label = "io.github.rawphp.t3fac";
@@ -97,7 +97,8 @@ const makeArchive = (version: string, options: { binary?: boolean; label?: strin
 // A little launchd-like, one loaded flag and drain file per job label (the main job and the
 // logrotate job): bootout leaves the job loaded for two more `print` polls (or
 // LAUNCHCTL_BOOTOUT_DRAIN, main job only), and bootstrap fails with EIO while it is still loaded (or when
-// LAUNCHCTL_BOOTSTRAP_FAIL is set, main job only). Only the main job's bootstrap writes "factory started" to the log when
+// LAUNCHCTL_BOOTSTRAP_FAIL is set, main job only; LAUNCHCTL_BOOTSTRAP_FAIL_LOGROTATE fails the
+// logrotate job's bootstrap only). Only the main job's bootstrap writes "factory started" to the log when
 // LAUNCHCTL_HEALTHY (space-separated `current` targets) lists the version `current` points at
 // (LAUNCHCTL_HEALTHY_LINE writes another line instead, LAUNCHCTL_HEALTHY_DELAY writes it that many
 // seconds later, as a server still starting would); LAUNCHCTL_TRUNCATE_LOG empties the log first,
@@ -134,7 +135,7 @@ const setupSandbox = () => {
       '    [ -e "$loaded" ] && exit 0',
       "    exit 113 ;;",
       "  bootstrap)",
-      '    if { [ "$main" = 1 ] && [ -n "$LAUNCHCTL_BOOTSTRAP_FAIL" ]; } || [ -e "$loaded" ]; then',
+      '    if { [ "$main" = 1 ] && [ -n "$LAUNCHCTL_BOOTSTRAP_FAIL" ]; } || { [ "$main" = 0 ] && [ -n "$LAUNCHCTL_BOOTSTRAP_FAIL_LOGROTATE" ]; } || [ -e "$loaded" ]; then',
       '      echo "Bootstrap failed: 5: Input/output error" >&2',
       "      exit 5",
       "    fi",
@@ -361,6 +362,42 @@ describe("install.sh and rollback.sh failure cases", () => {
     expect(retry.status).toBe(0);
     expect(retry.calls.at(-1)).toBe(`bootstrap gui/${uid} ${plistPath()}`);
     expect(NodeFS.existsSync(NodePath.join(root(), "previous"))).toBe(false);
+  });
+});
+
+describe("install.sh and rollback.sh when the logrotate job cannot be reloaded", () => {
+  const warning =
+    "warning: could not reload io.github.rawphp.t3fac.logrotate; log rotation is not running";
+
+  beforeEach(() => {
+    setupInstalledSandbox();
+  });
+
+  afterEach(() => {
+    NodeFS.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it("install.sh warns and still restarts and health-checks the server", () => {
+    archives[v3] = makeArchive(v3);
+    const result = runWith(
+      { LAUNCHCTL_BOOTSTRAP_FAIL_LOGROTATE: "1" },
+      "install.sh",
+      archives[v3]!,
+    );
+    expect(result.status).toBe(0);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v3}`);
+    expect(result.stderr).toContain(warning);
+    expectRestartSequence(result.calls);
+    expect(mainCalls(result.calls).filter((c) => c.startsWith("bootstrap "))).toHaveLength(1);
+  });
+
+  it("rollback.sh warns and still restores the previous version", () => {
+    const result = runWith({ LAUNCHCTL_BOOTSTRAP_FAIL_LOGROTATE: "1" }, "rollback.sh");
+    expect(result.status).toBe(0);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v1}`);
+    expect(NodeFS.existsSync(NodePath.join(root(), "previous"))).toBe(false);
+    expect(result.stderr).toContain(warning);
+    expectRestartSequence(result.calls);
   });
 });
 
