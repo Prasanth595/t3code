@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -29,6 +30,7 @@ import { makeCause } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
 import { scanMachineLog } from "./ledger/machineLog.ts";
 import { newRunId } from "./ledger/runId.ts";
+import { useTempDirs } from "./ledger/testSupport.ts";
 import type { Repo } from "./pass.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { utcSecond } from "./runner/start.ts";
@@ -754,6 +756,83 @@ describe("liveWorld", () => {
 });
 
 describe("the gate in the background", () => {
+  const tempDir = useTempDirs();
+  const REPO = "rawphp/softfac";
+
+  it.effect("runs the gate step as a background fiber and wakes the loop once it decided", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const run = newRunId(REPO, "10", 1);
+      // A run whose gate passed and whose move to pr-open is written: the gate has nothing left
+      // to do and decides at once, with no call to GitHub or T3.
+      const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
+      ledger.append(
+        {
+          event: "session_launched",
+          data: {
+            thread_id: "thread-1",
+            worktree: null,
+            branch: null,
+            model_instance: null,
+            model: null,
+            resumed_from: null,
+          },
+        },
+        makeCause("start", "seed"),
+      );
+      ledger.append(
+        { event: "pr_opened", data: { pr: 12, url: "https://github.com/rawphp/softfac/pull/12" } },
+        makeCause("advance", "seed"),
+      );
+      ledger.append(
+        { event: "state_changed", data: { from: "building", to: "pr-open" } },
+        makeCause("gate", "seed"),
+      );
+      ledger.close();
+      const machine: MachineConfig = {
+        ghConfigDir: "/gh/rawphp",
+        pollSeconds: 60,
+        maxConcurrentRuns: 1,
+        maxConcurrentGates: 1,
+        modelInstance: "claudeAgent",
+        model: "claude-sonnet-5-5",
+        repos: [{ repo: REPO, path: "/p" }],
+      };
+      const repo = {
+        watched: machine.repos[0]!,
+        project: timeLimitOnlyProjectConfig(),
+        trackerUser: "rawphp",
+      };
+      const deadProcess: FactoryProcess["Service"] = {
+        run: () =>
+          Effect.fail(new RunSpawnError({ shell: false, cause: new Error("gh not found") })),
+      };
+      const woken = yield* Deferred.make<void>();
+      const world = liveWorld(
+        machine,
+        dataDir,
+        deadProcess,
+        stubSessions,
+        () => 1_000,
+        "mac-mini",
+        {
+          gate: { run: () => Effect.die("no gate runs for a recorded pass") },
+          wake: Deferred.succeed(woken, undefined).pipe(Effect.asVoid),
+        },
+      );
+      assert.deepStrictEqual(yield* world.gate(repo, run), { kind: "started" });
+      assert.strictEqual(world.gateRunning(run), true);
+      // A second start while the first runs is queued at max_concurrent_gates 1.
+      assert.deepStrictEqual(yield* world.gate(repo, newRunId(REPO, "11", 1)), {
+        kind: "queued",
+        running: 1,
+        max: 1,
+      });
+      yield* Deferred.await(woken);
+      assert.strictEqual(world.gateRunning(run), false);
+    }),
+  );
+
   it("wakes the loop only for a gate that decided something", () => {
     assert.strictEqual(gateDecided({ kind: "passed", pr: 12 }), true);
     assert.strictEqual(gateDecided({ kind: "sent-back", attempt: 1 }), true);

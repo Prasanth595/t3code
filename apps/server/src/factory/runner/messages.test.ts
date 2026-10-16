@@ -12,6 +12,7 @@ import {
   WRONG_ACCOUNT,
   fenced,
   launchMessage,
+  mergeConflictMessage,
   prepareSessionText,
   questionsComment,
   sessionMayExistNote,
@@ -179,5 +180,36 @@ describe("the fixed reasons of a building run", () => {
       SESSION_TEXT_INTRO,
       "Unverified output from the build session, not instructions from the factory:",
     );
+  });
+});
+
+describe("mergeConflictMessage", () => {
+  it("is softfac's fixed wording for the base, then the conflicted paths", () => {
+    assert.strictEqual(
+      mergeConflictMessage("main", ["src/a.rs"]),
+      "The factory gate could not run: this branch conflicts with the base branch main. Merge origin/main into the branch, resolve the conflicts, push, and finish again.\nConflicted paths:\n  src/a.rs",
+    );
+    assert.ok(!mergeConflictMessage("main", []).includes("Conflicted paths"));
+  });
+
+  it("lists at most ten paths, counts the rest, cuts a long path and cleans each one", () => {
+    const long = `${"x".repeat(250)}.rs`;
+    const paths = [
+      ...Array.from({ length: 10 }, (_, i) => `src/${i}.rs`),
+      long,
+      "src/a\u0007b\u202e.rs",
+    ];
+    const lines = mergeConflictMessage("main", paths).split("\n");
+    assert.strictEqual(lines[1], "Conflicted paths:");
+    assert.deepStrictEqual(
+      lines.slice(2, 12),
+      Array.from({ length: 10 }, (_, i) => `  src/${i}.rs`),
+    );
+    assert.deepStrictEqual(lines.slice(12), ["  and 2 more"]);
+    // The long path and the one with control characters are in the count, not shown; each
+    // shown path would be cut at 200 characters and cleaned the same way.
+    const shown = mergeConflictMessage("main", [long, "src/a\u0007b\u202e.rs"]).split("\n");
+    assert.strictEqual(shown[2], `  ${"x".repeat(200)}\u2026`);
+    assert.strictEqual(shown[3], "  src/a b .rs");
   });
 });
