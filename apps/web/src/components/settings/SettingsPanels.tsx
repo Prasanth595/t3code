@@ -1,4 +1,3 @@
-import { GlobalScriptsSettings } from "./GlobalScriptsSettings";
 import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
@@ -57,22 +56,7 @@ import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
-import { ForkChangelogSettingsRow } from "./ForkChangelogSettingsRow";
-import { InstalledAppSettingsRow } from "./InstalledAppSettingsRow";
-import { WebPushSettingsRow } from "./WebPushSettingsRow";
-import { AppToggleShortcutsSettingsRow } from "./AppToggleShortcutsSettingsRow";
-import { PullRequestFilterChipsSettingsRow } from "./PullRequestFilterChipsSettingsRow";
-import { SnoozeQuickOptionsSettingsRow } from "./SnoozeQuickOptionsSettingsRow";
-import { RepositoryOwnerFiltersSettingsRow } from "./RepositoryOwnerFiltersSettingsRow";
-import { SidebarGroupsSettingsRow } from "./SidebarGroupsSettingsRow";
-import {
-  AgentSessionImportSettingsRows,
-  BackgroundWorkDetailsSettingsRow,
-  CheckNewerBeforeUpdateInstallSettingsRow,
-  ForkAutoUpdateSettingsRow,
-  TerminalAppShortcutsFirstSettingsRow,
-  TerminalCloseConfirmationSettingsRow,
-} from "./ForkSettingsRows";
+import * as Fork from "./ForkSettingsPanelRows";
 import {
   canCheckForUpdate,
   getDesktopUpdateButtonTooltip,
@@ -104,14 +88,8 @@ import {
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
-import { RecoverInterruptedTurnsSettings } from "./RecoverInterruptedTurnsSettings";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
-import {
-  openIdleInstallPromptIfAgentsRun,
-  useIdleInstallArmed,
-} from "../desktop/DesktopUpdateIdleInstall";
-import { prepareNewestUpdateInstall } from "../desktop/DesktopUpdateNewerCheck";
 import {
   getCustomModelOptionsByInstance,
   resolveAppModelSelectionState,
@@ -191,9 +169,6 @@ import {
   useSettingsSearchTargetId,
 } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
-import { ThreadCardLayoutSettingsSection } from "./ThreadCardLayoutSettings";
-import { ThreadLinkChipsSettingsSection } from "./ThreadLinkChipsSettings";
-import { FORK_SETTINGS_RESTORE_PATCH, forkChangedSettingLabels } from "./forkSettingsRestore";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
 
@@ -308,7 +283,7 @@ export function AboutVersionSection() {
   const updateState = useDesktopUpdateState();
   const [isChangingUpdateChannel, setIsChangingUpdateChannel] = useState(false);
   const [isUpdateActionPending, setIsUpdateActionPending] = useState(false);
-  const idleInstallArmed = useIdleInstallArmed();
+  const idleInstallArmed = Fork.useIdleInstallArmed();
 
   const hasDesktopBridge = typeof window !== "undefined" && Boolean(window.desktopBridge);
   const selectedUpdateChannel = updateState?.channel ?? "latest";
@@ -365,7 +340,7 @@ export function AboutVersionSection() {
 
     if (action === "install") {
       if (isUpdateActionPending) return;
-      if (openIdleInstallPromptIfAgentsRun()) return;
+      if (Fork.openIdleInstallPromptIfAgentsRun()) return;
       setIsUpdateActionPending(true);
       let confirmed = false;
       try {
@@ -385,7 +360,7 @@ export function AboutVersionSection() {
         );
         return;
       }
-      if (!confirmed || !(await prepareNewestUpdateInstall(bridge))) {
+      if (!confirmed || !(await Fork.prepareNewestUpdateInstall(bridge))) {
         setIsUpdateActionPending(false);
         return;
       }
@@ -560,7 +535,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
   );
   const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
-  const forkSettingLabels = useMemo(() => forkChangedSettingLabels(settings), [settings]);
+  const forkSettingLabels = useMemo(() => Fork.forkChangedSettingLabels(settings), [settings]);
 
   const changedSettingLabels = useMemo(
     () => [
@@ -881,7 +856,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       browserAutoShowFloatingPreview: DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview,
       pullRequestLinksOpenInApp: DEFAULT_UNIFIED_SETTINGS.pullRequestLinksOpenInApp,
       enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
-      ...FORK_SETTINGS_RESTORE_PATCH,
+      ...Fork.FORK_SETTINGS_RESTORE_PATCH,
     });
     onRestored?.();
   }, [
@@ -1489,8 +1464,7 @@ export function AppearanceSettingsPanel() {
         />
       </SettingsSection>
 
-      <ThreadCardLayoutSettingsSection />
-      <ThreadLinkChipsSettingsSection />
+      <Fork.AppearanceSections />
 
       <SettingsSection id="motion" title="Motion">
         <SettingsRow
@@ -2251,7 +2225,7 @@ export function GeneralSettingsPanel() {
   return (
     <SettingsPageContainer>
       <ProjectDefaultsSettings category="general" />
-      <GlobalScriptsSettings />
+      <Fork.GlobalScriptsSettings />
       <SettingsSection id="organization" title="Organization">
         <SettingsRow
           {...searchableSetting("project-grouping")}
@@ -2491,8 +2465,7 @@ export function GeneralSettingsPanel() {
 
       <SettingsSection id="behavior" title="Behavior">
         <NotificationSettings />
-        <InstalledAppSettingsRow />
-        <WebPushSettingsRow />
+        <Fork.NotificationRows />
         <SettingsRow
           {...searchableSetting("in-app-notifications")}
           description="Show a toast when another thread finishes, fails, or needs input or approval while this app has focus."
@@ -2958,7 +2931,7 @@ export function GeneralSettingsPanel() {
           }
         />
 
-        <RecoverInterruptedTurnsSettings />
+        <Fork.RecoverInterruptedTurnsSettings />
 
         <SettingsRow
           serverScoped
@@ -3115,7 +3088,7 @@ export function GeneralSettingsPanel() {
             />
           }
         />
-        <AgentSessionImportSettingsRows />
+        <Fork.AgentSessionImportSettingsRows />
       </SettingsSection>
 
       <SettingsSection id="confirmations" title="Confirmations">
@@ -3197,21 +3170,7 @@ export function GeneralSettingsPanel() {
           }
         />
 
-        <TerminalCloseConfirmationSettingsRow />
-
-        <TerminalAppShortcutsFirstSettingsRow />
-
-        {isElectron ? <AppToggleShortcutsSettingsRow /> : null}
-
-        <RepositoryOwnerFiltersSettingsRow />
-
-        <PullRequestFilterChipsSettingsRow />
-
-        <SidebarGroupsSettingsRow />
-
-        <SnoozeQuickOptionsSettingsRow />
-
-        <BackgroundWorkDetailsSettingsRow />
+        <Fork.BehaviorRows />
 
         {isElectron ? (
           <SettingsRow
@@ -3375,9 +3334,7 @@ export function GeneralSettingsPanel() {
             />
           </>
         )}
-        <ForkChangelogSettingsRow />
-        <ForkAutoUpdateSettingsRow />
-        <CheckNewerBeforeUpdateInstallSettingsRow />
+        <Fork.AboutRows />
         <SettingsRow
           {...searchableSetting("privacy-policy")}
           description="How we handle your data, including the anonymous usage data T3 Code collects."
