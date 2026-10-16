@@ -27,8 +27,10 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -307,6 +309,7 @@ export const layer: Layer.Layer<
   ProviderEventIngestorV2,
   never,
   | EventSink.EventSinkV2
+  | GitVcsDriver.GitVcsDriver
   | IdAllocator.IdAllocatorV2
   | ProjectionStore.ProjectionStoreV2
   | ThreadCommandExecutor.ThreadCommandExecutor
@@ -314,6 +317,7 @@ export const layer: Layer.Layer<
   ProviderEventIngestorV2,
   Effect.gen(function* () {
     const eventSink = yield* EventSink.EventSinkV2;
+    const git = yield* GitVcsDriver.GitVcsDriver;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
@@ -537,7 +541,7 @@ export const layer: Layer.Layer<
       Effect.gen(function* () {
         switch (input.event.type) {
           case "app_thread.created": {
-            let offered = input.event.appThread;
+            const offered = input.event.appThread;
             const existing = yield* projections.getThread(offered.id).pipe(
               Effect.catchTags({
                 ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
@@ -549,21 +553,6 @@ export const layer: Layer.Layer<
               modelSelectionsEqual(existing.modelSelection, offered.modelSelection)
             )
               return [];
-            if (
-              existing === null &&
-              offered.lineage.parentThreadId !== null &&
-              offered.worktreePath !== null
-            ) {
-              const parent = yield* projections.getThread(offered.lineage.parentThreadId).pipe(
-                Effect.catchTags({
-                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
-                }),
-              );
-              // Native adapters may still hold the parent's turn-start branch snapshot.
-              if (parent !== null && parent.worktreePath === offered.worktreePath) {
-                offered = { ...offered, branch: parent.branch, worktreePath: parent.worktreePath };
-              }
-            }
             const now = yield* DateTime.now;
             return [
               yield* makeDomainEvent(input, {
@@ -801,38 +790,34 @@ export const layer: Layer.Layer<
               const created = storedEvents.find((stored) => stored.event.type === "thread.created");
               if (created?.event.type !== "thread.created") return storedEvents;
               const child = created.event.payload;
-              if (child.lineage.parentThreadId === null || child.worktreePath === null)
-                return storedEvents;
-              // A rename's final scan can miss this child before its commit. The child's
-              // lock still covers this recheck and write, so its workspace cannot move.
-              const parent = yield* projections.getThread(child.lineage.parentThreadId).pipe(
-                Effect.catchTags({
-                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
-                }),
-              );
               if (
-                parent === null ||
-                parent.worktreePath !== child.worktreePath ||
-                parent.branch === child.branch
+                child.worktreePath === null ||
+                child.branch === null ||
+                !isTemporaryWorktreeBranch(child.branch)
               )
                 return storedEvents;
+              // Git renames before scanning committed threads. If that scan missed this
+              // creation, HEAD already has the new name, even if the parent moved away.
+              const branch = yield* git.resolveBranchName(child.worktreePath, "HEAD");
+              if (branch === null || branch === child.branch) return storedEvents;
               const now = yield* DateTime.now;
               const event = yield* makeDomainEvent(input, {
                 type: "thread.metadata-updated",
                 threadId: child.id,
-                payload: { ...child, branch: parent.branch, updatedAt: now },
+                payload: { ...child, branch, updatedAt: now },
                 occurredAt: now,
               });
               const synced = yield* eventSink.write({ events: [event] });
               return [...storedEvents, ...synced];
             }).pipe(
-              Effect.mapError(
-                (cause) =>
-                  new ProviderEventPublishError({
-                    providerSessionId: input.providerSessionId,
-                    eventCount: 1,
-                    cause,
-                  }),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Native thread worktree branch recheck failed", {
+                  threadId:
+                    input.event.type === "app_thread.created"
+                      ? input.event.appThread.id
+                      : input.threadId,
+                  cause,
+                }).pipe(Effect.as(storedEvents)),
               ),
             ),
           ),

@@ -1154,13 +1154,36 @@ it.effect.each(
   ),
 )("renames shared temporary branches with %j", ({ archived, parentMoved }) =>
   Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-rename-" });
+    const repo = `${directory}/repo`;
+    const worktreePath = `${directory}/shared`;
+    const movedPath = `${directory}/moved`;
+    yield* fs.makeDirectory(repo);
+    const command = (cwd: string, args: string[]) =>
+      git.execute({ operation: "launch-test", cwd, args });
+    yield* command(repo, ["init", "-b", "main"]);
+    yield* command(repo, [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.test",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "initial",
+    ]);
+    yield* command(repo, ["worktree", "add", "-b", "t3/abcd1234", worktreePath]);
+    yield* command(repo, ["worktree", "add", "-b", "user/checkout", movedPath]);
     const branchNameStarted = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
     const allowBranchName = yield* Deferred.make<void>();
     const harness = makeHarness({
       createWorktree: (input) =>
         Effect.succeed({
-          worktree: { path: "/repo-worktrees/temp", refName: input.newRefName, headSha: "abc" },
+          worktree: { path: worktreePath, refName: input.newRefName, headSha: "abc" },
         } as never),
+      renameBranch: git.renameBranch,
       generateBranchName: () =>
         Effect.fiber.pipe(
           Effect.flatMap((fiber) => Deferred.succeed(branchNameStarted, fiber)),
@@ -1210,13 +1233,13 @@ it.effect.each(
       const childThreadId = delegated.subagents[0]!.childThreadId!;
       const child = yield* threads.getThreadProjection(childThreadId);
       assert.equal(child.thread.branch, "t3/abcd1234");
-      assert.equal(child.thread.worktreePath, "/repo-worktrees/temp");
+      assert.equal(child.thread.worktreePath, worktreePath);
       assert.equal(child.thread.lineage.parentThreadId, launched.threadId);
 
       const otherThreadId = ThreadId.make("thread:launch:other-branch");
       const otherPathThreadId = ThreadId.make("thread:launch:other-worktree");
-      for (const [threadId, branch, worktreePath] of [
-        [otherThreadId, "other-feature", "/repo-worktrees/temp"],
+      for (const [threadId, branch, otherWorktreePath] of [
+        [otherThreadId, "other-feature", worktreePath],
         [otherPathThreadId, "t3/abcd1234", "/repo-worktrees/other"],
       ] as const) {
         yield* threads.dispatch({
@@ -1229,7 +1252,7 @@ it.effect.each(
           runtimeMode: "full-access",
           interactionMode: "default",
           branch,
-          worktreePath,
+          worktreePath: otherWorktreePath,
           createdBy: "user",
           creationSource: "web",
         });
@@ -1251,18 +1274,19 @@ it.effect.each(
           commandId: CommandId.make("command:launch:parent-moved"),
           threadId: launched.threadId,
           branch: "user/checkout",
-          worktreePath: "/repo-worktrees/moved",
+          worktreePath: movedPath,
         });
       }
       yield* Deferred.succeed(allowBranchName, undefined);
       yield* Fiber.await(renameFiber);
+      assert.equal(yield* git.resolveBranchName(worktreePath, "HEAD"), "generated-branch");
       assert.equal(
         (yield* threads.getThreadProjection(launched.threadId)).thread.branch,
         parentMoved ? "user/checkout" : "generated-branch",
       );
       assert.equal(
         (yield* threads.getThreadProjection(launched.threadId)).thread.worktreePath,
-        parentMoved ? "/repo-worktrees/moved" : "/repo-worktrees/temp",
+        parentMoved ? movedPath : worktreePath,
       );
       assert.equal(
         (yield* threads.getThreadProjection(childThreadId)).thread.branch,
@@ -1283,7 +1307,7 @@ it.effect.each(
           threadId: otherThreadId,
           branch: "generated-branch",
           expectedBranch: "t3/abcd1234",
-          expectedWorktreePath: "/repo-worktrees/temp",
+          expectedWorktreePath: worktreePath,
         })
         .pipe(Effect.flip);
       assert.equal(staleUpdate._tag, "OrchestratorDispatchError");
@@ -1292,12 +1316,19 @@ it.effect.each(
         unrelatedBeforeRename.thread,
       );
       assert.deepEqual(harness.renameBranch.mock.calls[0]?.[0], {
-        cwd: "/repo-worktrees/temp",
+        cwd: worktreePath,
         oldBranch: "t3/abcd1234",
         newBranch: "generated-branch",
       });
     }).pipe(Effect.provide(harness.layer));
-  }),
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-git-" })),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
 );
 
 it.effect("provisions under t3-<hash> when a plain t3 branch blocks t3/*", () =>
