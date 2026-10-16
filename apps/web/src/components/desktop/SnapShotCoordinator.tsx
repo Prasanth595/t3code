@@ -3,7 +3,10 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { useCallback, useEffect, useRef } from "react";
+import { useLocation } from "@tanstack/react-router";
+import { useCallback, useEffect, useLayoutEffect, useRef } from "react";
+import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
 
 import {
   type DraftId,
@@ -13,6 +16,9 @@ import {
 import { useHandleNewThread } from "../../hooks/useHandleNewThread";
 import { useClientSettings } from "../../hooks/useSettings";
 import { readThreadShell } from "../../state/entities";
+import { environmentThreadShells } from "../../state/threads";
+import { environmentShell } from "../../state/shell";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { compressImageToByteLimit, dataUrlToFile } from "../../lib/imageCompression";
 import { resolveThreadActionProjectRef } from "../../lib/chatThreadActions";
 import {
@@ -57,6 +63,33 @@ export function resolveExistingSnapShotTarget(
     : null;
 }
 
+type SnapShotCaptureContext = Pick<
+  ReturnType<typeof useHandleNewThread>,
+  "activeDraftThread" | "activeThread" | "defaultProjectRef" | "handleNewThread" | "routeThreadRef"
+>;
+
+// Reuses the last target while it is still valid for the given route, otherwise creates a draft
+// in the context's project. Drain passes pass the context they started with, so navigation during
+// `listPendingSnapShots` cannot redirect an unpinned capture.
+async function resolveSnapShotCaptureTarget(
+  context: SnapShotCaptureContext,
+  lastTarget: CaptureTarget | null,
+): Promise<CaptureTarget | null> {
+  if (lastTarget) {
+    const existingTarget = resolveExistingSnapShotTarget(lastTarget, context.routeThreadRef);
+    if (existingTarget) return existingTarget;
+  }
+  const projectRef = resolveThreadActionProjectRef({
+    activeDraftThread: context.activeDraftThread,
+    activeThread: context.activeThread ?? undefined,
+    defaultProjectRef: context.defaultProjectRef,
+    handleNewThread: context.handleNewThread,
+  });
+  if (!projectRef) return null;
+  const created = await context.handleNewThread(projectRef);
+  return created?.draftId ?? null;
+}
+
 const NEXT_PAINT_FALLBACK_MS = 100;
 
 export async function beginSnapShotAnimationWhenReady(
@@ -86,7 +119,6 @@ export function dismissFailedSnapShot(
     void dismissSnapShotAnimation(id);
   } else {
     pendingStarts.clear();
-    soundedIds.clear();
     dismissAllSnapShotAnimations();
   }
 }
@@ -213,120 +245,239 @@ export function SnapShotCoordinator() {
   const rerunRequestedRef = useRef(false);
   const soundedCaptureIdsRef = useRef(new Set<string>());
   const pendingAnimationStartsRef = useRef(new Set<string>());
+  const waitingThreadShellsRef = useRef(new Map<string, () => void>());
+  const stopWaitingForThreadShell = useCallback((id?: string) => {
+    if (id) {
+      waitingThreadShellsRef.current.get(id)?.();
+      waitingThreadShellsRef.current.delete(id);
+    } else {
+      for (const unsubscribe of waitingThreadShellsRef.current.values()) unsubscribe();
+      waitingThreadShellsRef.current.clear();
+    }
+  }, []);
 
   const currentTarget = routeThreadRef ?? routeDraftId;
-  if (currentTarget) lastTargetRef.current = currentTarget;
+  const routeHref = useLocation({ select: (location) => location.href });
+  const defaultProjectKey = defaultProjectRef
+    ? `${defaultProjectRef.environmentId}:${defaultProjectRef.projectId}`
+    : null;
+  const latestContextRef = useRef({
+    activeDraftThread,
+    activeThread,
+    animateCaptures,
+    captureSound,
+    defaultProjectRef,
+    handleNewThread,
+    routeThreadRef,
+    routeHref,
+    defaultProjectKey,
+  });
 
-  const resolveTarget = useCallback(async (): Promise<CaptureTarget | null> => {
-    const lastTarget = lastTargetRef.current;
-    if (lastTarget) {
-      const existingTarget = resolveExistingSnapShotTarget(lastTarget, routeThreadRef);
-      if (existingTarget) {
-        lastTargetRef.current = existingTarget;
-        return existingTarget;
-      }
-      lastTargetRef.current = null;
+  useLayoutEffect(() => {
+    if (currentTarget) {
+      lastTargetRef.current = currentTarget;
     }
-    const projectRef = resolveThreadActionProjectRef({
+    latestContextRef.current = {
       activeDraftThread,
-      activeThread: activeThread ?? undefined,
+      activeThread,
+      animateCaptures,
+      captureSound,
       defaultProjectRef,
       handleNewThread,
-    });
-    if (!projectRef) return null;
-    const created = await handleNewThread(projectRef);
-    if (!created) return null;
-    lastTargetRef.current = created.draftId;
-    return created.draftId;
-  }, [activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef]);
+      routeThreadRef,
+      routeHref,
+      defaultProjectKey,
+    };
+  }, [
+    activeDraftThread,
+    activeThread,
+    animateCaptures,
+    captureSound,
+    currentTarget,
+    defaultProjectRef,
+    handleNewThread,
+    routeThreadRef,
+    routeHref,
+    defaultProjectKey,
+  ]);
 
   const resolveCaptureTarget = useCallback(
-    () => resolveSnapShotTargetOnce(targetResolutionRef, resolveTarget),
-    [resolveTarget],
-  );
-
-  const playCaptureSound = useCallback(
-    (id: string) => {
-      if (!captureSound || soundedCaptureIdsRef.current.has(id)) return;
-      soundedCaptureIdsRef.current.add(id);
-      try {
-        playSnapShotSound(captureSound);
-      } catch {}
-    },
-    [captureSound],
-  );
-
-  const drain = useCallback(async () => {
-    const bridge = getDesktopSnapShotBridge();
-    if (!bridge) return;
-    if (drainingRef.current) {
-      rerunRequestedRef.current = true;
-      return drainingRef.current;
-    }
-
-    const operation = (async () => {
-      do {
-        rerunRequestedRef.current = false;
-        const pending = await bridge.listPendingSnapShots();
-        for (const item of pending) {
-          playCaptureSound(item.id);
-          const capturedTarget = await resolveSnapShotDeliveryTarget(
-            captureTargetsRef.current,
-            item.id,
-            resolveCaptureTarget,
-          );
-          const target = capturedTarget
-            ? resolveExistingSnapShotTarget(capturedTarget, routeThreadRef)
-            : null;
-          if (!target) {
-            await dismissSnapShotAnimation(item.id);
-            soundedCaptureIdsRef.current.delete(item.id);
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: "Snapshot taken, but no project is available",
-                description: "Add a project, then capture the window again.",
-              }),
-            );
-            continue;
-          }
-
-          try {
-            await deliverSnapShot(bridge, item, target);
-            captureTargetsRef.current.delete(item.id);
-            soundedCaptureIdsRef.current.delete(item.id);
-          } catch (error) {
-            await dismissSnapShotAnimation(item.id);
-            soundedCaptureIdsRef.current.delete(item.id);
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: "Snapshot failed",
-                description: `Capture ${item.id}: ${
-                  error instanceof Error ? error.message : "Try the capture again."
-                }`,
-              }),
-            );
-          }
+    () =>
+      resolveSnapShotTargetOnce(targetResolutionRef, async () => {
+        const context = latestContextRef.current;
+        const lastTarget = lastTargetRef.current;
+        const target = await resolveSnapShotCaptureTarget(context, lastTarget);
+        // A committed navigation owns the live target, even if an older creation finishes later.
+        if (
+          context.routeHref === latestContextRef.current.routeHref &&
+          context.defaultProjectKey === latestContextRef.current.defaultProjectKey &&
+          lastTargetRef.current === lastTarget
+        ) {
+          lastTargetRef.current = target;
         }
-      } while (rerunRequestedRef.current);
-    })()
-      .catch((error: unknown) => {
-        dismissAllSnapShotAnimations();
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Snapshot failed",
-            description: error instanceof Error ? error.message : "Try the capture again.",
-          }),
-        );
-      })
-      .finally(() => {
-        drainingRef.current = null;
-      });
-    drainingRef.current = operation;
-    return operation;
-  }, [playCaptureSound, resolveCaptureTarget, routeThreadRef]);
+        return target;
+      }),
+    [],
+  );
+
+  const playCaptureSound = useCallback((id: string) => {
+    const sound = latestContextRef.current.captureSound;
+    if (!sound || soundedCaptureIdsRef.current.has(id)) return;
+    soundedCaptureIdsRef.current.add(id);
+    try {
+      playSnapShotSound(sound);
+    } catch {}
+  }, []);
+
+  const drain = useCallback(
+    async function drainPendingSnapShots(): Promise<void> {
+      const bridge = getDesktopSnapShotBridge();
+      if (!bridge) return;
+      if (drainingRef.current) {
+        rerunRequestedRef.current = true;
+        return drainingRef.current;
+      }
+
+      const operation = (async () => {
+        do {
+          rerunRequestedRef.current = false;
+          // Resolve and validate against the context this pass started on: a capture for a routed
+          // thread whose shell has not loaded yet must not be dropped or redirected because the
+          // user navigated mid-pass.
+          const passContext = latestContextRef.current;
+          let passLastTarget = lastTargetRef.current;
+          const passResolutionRef = { current: null as Promise<CaptureTarget | null> | null };
+          const resolvePassTarget = () =>
+            resolveSnapShotTargetOnce(passResolutionRef, async () => {
+              passLastTarget = await resolveSnapShotCaptureTarget(passContext, passLastTarget);
+              return passLastTarget;
+            });
+          const pending = await bridge.listPendingSnapShots();
+          for (const item of pending) {
+            playCaptureSound(item.id);
+            let capturedTarget = await resolveSnapShotDeliveryTarget(
+              captureTargetsRef.current,
+              item.id,
+              resolvePassTarget,
+            );
+            // An animated capture may still be waiting on creation abandoned before this ready pass.
+            // Its null result is evicted by resolveSnapShotDeliveryTarget; retry from this pass's route.
+            if (!capturedTarget) {
+              if (
+                passContext.routeHref !== latestContextRef.current.routeHref ||
+                passContext.defaultProjectKey !== latestContextRef.current.defaultProjectKey
+              ) {
+                rerunRequestedRef.current = true;
+                continue;
+              }
+              capturedTarget = await resolveSnapShotDeliveryTarget(
+                captureTargetsRef.current,
+                item.id,
+                resolvePassTarget,
+              );
+            }
+            const target = capturedTarget
+              ? resolveExistingSnapShotTarget(capturedTarget, passContext.routeThreadRef)
+              : null;
+            if (!target) {
+              if (capturedTarget && typeof capturedTarget !== "string") {
+                const waitingTarget = capturedTarget;
+                const availability = Atom.make((get) => {
+                  if (get(environmentThreadShells.threadShellAtom(waitingTarget)) !== null) {
+                    return "available";
+                  }
+                  const shell = get(environmentShell.stateValueAtom(waitingTarget.environmentId));
+                  return shell.status === "live" &&
+                    Option.isSome(shell.snapshot) &&
+                    !shell.snapshot.value.threads.some(
+                      (thread) => thread.id === waitingTarget.threadId,
+                    )
+                    ? "missing"
+                    : "waiting";
+                });
+                if (appAtomRegistry.get(availability) === "missing") {
+                  stopWaitingForThreadShell(item.id);
+                  await dismissSnapShotAnimation(item.id);
+                  toastManager.add(
+                    stackedThreadToast({
+                      type: "error",
+                      title: "Snapshot failed",
+                      description:
+                        "The original thread is no longer available. Capture again in an existing thread.",
+                    }),
+                  );
+                  continue;
+                }
+                if (!waitingThreadShellsRef.current.has(item.id)) {
+                  // Only retained captures with an unavailable target need a shell subscription.
+                  // Availability changes, including a live snapshot confirming deletion, retry once.
+                  const retryWhenAvailable = () => {
+                    if (appAtomRegistry.get(availability) === "waiting") return;
+                    stopWaitingForThreadShell(item.id);
+                    void drainPendingSnapShots();
+                  };
+                  waitingThreadShellsRef.current.set(
+                    item.id,
+                    appAtomRegistry.subscribe(availability, retryWhenAvailable),
+                  );
+                  retryWhenAvailable();
+                }
+                await dismissSnapShotAnimation(item.id);
+                continue;
+              }
+              await dismissSnapShotAnimation(item.id);
+              soundedCaptureIdsRef.current.delete(item.id);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Snapshot taken, but no project is available",
+                  description: "Add a project, then capture the window again.",
+                }),
+              );
+              continue;
+            }
+
+            stopWaitingForThreadShell(item.id);
+            try {
+              await deliverSnapShot(bridge, item, target);
+              captureTargetsRef.current.delete(item.id);
+              soundedCaptureIdsRef.current.delete(item.id);
+            } catch (error) {
+              await dismissSnapShotAnimation(item.id);
+              soundedCaptureIdsRef.current.delete(item.id);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Snapshot failed",
+                  description: `Capture ${item.id}: ${
+                    error instanceof Error ? error.message : "Try the capture again."
+                  }`,
+                }),
+              );
+            }
+          }
+        } while (rerunRequestedRef.current);
+      })()
+        .catch((error: unknown) => {
+          dismissAllSnapShotAnimations();
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Snapshot failed",
+              description: error instanceof Error ? error.message : "Try the capture again.",
+            }),
+          );
+        })
+        .finally(() => {
+          drainingRef.current = null;
+        });
+      drainingRef.current = operation;
+      return operation;
+    },
+    [playCaptureSound, stopWaitingForThreadShell],
+  );
+
+  useEffect(() => () => stopWaitingForThreadShell(), [stopWaitingForThreadShell]);
 
   useEffect(() => {
     const bridge = getDesktopSnapShotBridge();
@@ -336,7 +487,9 @@ export function SnapShotCoordinator() {
       switch (event.type) {
         case "requested": {
           const current = lastTargetRef.current;
-          const target = current ? resolveExistingSnapShotTarget(current, routeThreadRef) : null;
+          const target = current
+            ? resolveExistingSnapShotTarget(current, latestContextRef.current.routeThreadRef)
+            : null;
           // Creating a new draft would navigate the renderer before a self-capture finishes.
           if (target) {
             void resolveSnapShotDeliveryTarget(captureTargetsRef.current, event.id, () =>
@@ -347,7 +500,10 @@ export function SnapShotCoordinator() {
         }
         case "started": {
           playCaptureSound(event.id);
-          if (animateCaptures && !window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+          if (
+            latestContextRef.current.animateCaptures &&
+            !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+          ) {
             void beginSnapShotAnimationWhenReady(
               event.id,
               resolveSnapShotDeliveryTarget(
@@ -364,7 +520,10 @@ export function SnapShotCoordinator() {
           void drain();
           return;
         case "failed": {
-          if (event.id) captureTargetsRef.current.delete(event.id);
+          if (event.id) {
+            stopWaitingForThreadShell(event.id);
+            captureTargetsRef.current.delete(event.id);
+          }
           dismissFailedSnapShot(
             event.id,
             soundedCaptureIdsRef.current,
@@ -386,7 +545,18 @@ export function SnapShotCoordinator() {
       }
     });
     return unsubscribe;
-  }, [animateCaptures, drain, playCaptureSound, resolveCaptureTarget, routeThreadRef]);
+  }, [drain, playCaptureSound, resolveCaptureTarget, stopWaitingForThreadShell]);
+
+  // Captures persisted before the route bootstrapped, or whose draft creation was abandoned by
+  // navigation, get no new `ready` event. Retry when the location or default project changes,
+  // which streaming updates to the same thread never do.
+  const retryKey = currentTarget || defaultProjectKey ? `${routeHref} ${defaultProjectKey}` : null;
+  const previousRetryKeyRef = useRef(retryKey);
+  useEffect(() => {
+    const previousRetryKey = previousRetryKeyRef.current;
+    previousRetryKeyRef.current = retryKey;
+    if (retryKey !== null && retryKey !== previousRetryKey) void drain();
+  }, [drain, retryKey]);
 
   useEffect(() => {
     const dismissOnBlur = () => {
