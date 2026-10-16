@@ -301,22 +301,23 @@ export interface UnassignedClaim {
 
 /**
  * What cut-short scans remember for the life of the factory process: the issues a scan judged
- * not the factory's, keyed by repo, issue, state label and GitHub's `updatedAt`. Any change to
- * the issue moves `updatedAt`, so a remembered judgement stands only while nothing changed.
+ * not the factory's, by login, repo, issue and state label, with GitHub's `updatedAt` at the
+ * time. Any change to the issue moves `updatedAt`, so a remembered judgement stands only while
+ * nothing changed, and a newer judgement replaces it: one entry per login, issue and label.
  */
 export class ClaimMemo {
-  private readonly notOurs = new Set<string>();
+  private readonly notOurs = new Map<string, string>();
 
-  private key(repo: string, issue: number, state: State, updatedAt: string): string {
-    return `${repo}#${issue}:${state}@${updatedAt}`;
+  private key(user: string, repo: string, issue: number, state: State): string {
+    return `${user.toLowerCase()}:${repo}#${issue}:${state}`;
   }
 
-  judgedNotOurs(repo: string, issue: number, state: State, updatedAt: string): boolean {
-    return this.notOurs.has(this.key(repo, issue, state, updatedAt));
+  judgedNotOurs(user: string, repo: string, issue: number, state: State, updatedAt: string) {
+    return this.notOurs.get(this.key(user, repo, issue, state)) === updatedAt;
   }
 
-  rememberNotOurs(repo: string, issue: number, state: State, updatedAt: string): void {
-    this.notOurs.add(this.key(repo, issue, state, updatedAt));
+  rememberNotOurs(user: string, repo: string, issue: number, state: State, updatedAt: string) {
+    this.notOurs.set(this.key(user, repo, issue, state), updatedAt);
   }
 }
 
@@ -1242,7 +1243,8 @@ export const makeGitHub = (options: GitHubOptions) => {
           .filter((i) => isUtcSecond(i.updatedAt) && i.updatedAt < before)
           .toSorted((a, b) => a.number - b.number);
         for (const { number, updatedAt } of rows) {
-          if (known.has(number) || memo.judgedNotOurs(repo, number, state, updatedAt)) continue;
+          if (known.has(number) || memo.judgedNotOurs(user, repo, number, state, updatedAt))
+            continue;
           const read = yield* Effect.result(readHistory(number));
           if (read._tag === "Failure") {
             if (!isCallSpecific(read.failure)) return yield* read.failure;
@@ -1257,7 +1259,7 @@ export const makeGitHub = (options: GitHubOptions) => {
           if (actor !== null && actor.login.toLowerCase() === user.toLowerCase()) {
             found.push({ issue: number, state });
           } else {
-            memo.rememberNotOurs(repo, number, state, updatedAt);
+            memo.rememberNotOurs(user, repo, number, state, updatedAt);
           }
         }
       }

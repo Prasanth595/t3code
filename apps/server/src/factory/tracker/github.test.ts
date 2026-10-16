@@ -3771,6 +3771,64 @@ it.effect(
     }),
 );
 
+it.effect(
+  "unassignedClaims judges again for another login, even while updatedAt is unchanged",
+  () =>
+    Effect.gen(function* () {
+      const triage = '[{"number":1,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"}]';
+      const byOther = labelledBy("another-machine", "factory:triage");
+      const memo = new ClaimMemo();
+      const t1 = setup(reply(triage), reply(byOther), reply("[]"));
+      assert.deepStrictEqual((yield* t1.ok(scan(t1, new Set<number>(), memo))).claims, []);
+      // gh is now logged in as the machine that added the label: issue 1 is its claim.
+      const t2 = setup(reply(triage), reply(byOther), reply("[]"));
+      const found = yield* t2.ok(
+        t2.github.unassignedClaims(BEFORE, "Another-Machine", new Set<number>(), memo),
+      );
+      assert.deepStrictEqual(found.claims, [{ issue: 1, state: "triage" }]);
+      assert.deepStrictEqual(t2.calls()[1], historyCallFor(1));
+    }),
+);
+
+it.effect("unassignedClaims keeps one repo's judgement off the same number in another repo", () =>
+  Effect.gen(function* () {
+    const triage = '[{"number":9,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"}]';
+    const memo = new ClaimMemo();
+    const t1 = setup(reply(triage), reply(labelledBy("eve", "factory:triage")), reply("[]"));
+    assert.deepStrictEqual((yield* t1.ok(scan(t1, new Set<number>(), memo))).claims, []);
+    const t2 = setup(reply(triage), reply(labelledBy("rawphp", "factory:triage")), reply("[]"));
+    const other = makeGitHub({ repo: "rawphp/other", ghConfigDir: GH_CONFIG_DIR });
+    const found = yield* t2.ok(other.unassignedClaims(BEFORE, "rawphp", new Set<number>(), memo));
+    assert.deepStrictEqual(found.claims, [{ issue: 9, state: "triage" }]);
+    assert.deepStrictEqual(
+      t2.calls()[1],
+      historyCallFor(9).map((arg) => (arg === "name=softfac" ? "name=other" : arg)),
+    );
+  }),
+);
+
+it.effect("unassignedClaims keeps one label's judgement off the issue's other label", () =>
+  Effect.gen(function* () {
+    const on = (at: string, by: string, label: string) => labelEvent("LabeledEvent", at, by, label);
+    const listed = '[{"number":5,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"}]';
+    // A person added triage, the factory added building.
+    const history = eventsReply(
+      [on(LABELED, "eve", "factory:triage"), on(AFTER, "rawphp", "factory:building")],
+      null,
+      [],
+    );
+    const t = setup(reply(listed), reply(history), reply(listed), reply(history));
+    const found = yield* t.ok(scan(t));
+    assert.deepStrictEqual(found.claims, [{ issue: 5, state: "building" }]);
+    assert.deepStrictEqual(t.calls(), [
+      claimedListCall("factory:triage"),
+      historyCallFor(5),
+      claimedListCall("factory:building"),
+      historyCallFor(5),
+    ]);
+  }),
+);
+
 it.effect("unassignedClaims: a history read that fails is an error for that issue only", () =>
   Effect.gen(function* () {
     const triage = `[
@@ -3783,7 +3841,8 @@ it.effect("unassignedClaims: a history read that fails is an error for that issu
       reply(labelledBy("rawphp", "factory:triage")),
       reply("[]"),
     );
-    const found = yield* t.ok(scan(t));
+    const memo = new ClaimMemo();
+    const found = yield* t.ok(scan(t, new Set<number>(), memo));
     assert.deepStrictEqual(found.claims, [{ issue: 2, state: "triage" }]);
     assert.strictEqual(found.unread.length, 1);
     const unread = found.unread[0]!;
@@ -3799,6 +3858,19 @@ it.effect("unassignedClaims: a history read that fails is an error for that issu
       historyCallFor(2),
       claimedListCall("factory:building"),
     ]);
+    // An issue that could not be read is not judged, so the next scan reads it again.
+    const again = setup(
+      reply(triage),
+      reply(labelledBy("rawphp", "factory:triage")),
+      reply(labelledBy("rawphp", "factory:triage")),
+      reply("[]"),
+    );
+    const next = yield* again.ok(scan(again, new Set<number>(), memo));
+    assert.deepStrictEqual(next.claims, [
+      { issue: 1, state: "triage" },
+      { issue: 2, state: "triage" },
+    ]);
+    assert.deepStrictEqual(again.calls()[1], historyCallFor(1));
   }),
 );
 
@@ -3828,6 +3900,41 @@ it.effect(
         claimedListCall("factory:building"),
       ]);
     }),
+);
+
+it.effect("unassignedClaims: an oversized history is that issue's error and the next is read", () =>
+  Effect.gen(function* () {
+    const triage = `[
+      {"number":1,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"},
+      {"number":2,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"}
+    ]`;
+    const t = setup(
+      reply(triage),
+      truncated(),
+      reply(labelledBy("rawphp", "factory:triage")),
+      reply("[]"),
+    );
+    const found = yield* t.ok(scan(t));
+    assert.deepStrictEqual(found.claims, [{ issue: 2, state: "triage" }]);
+    assert.deepStrictEqual(
+      found.unread.map((u) => [u.issue, u.error._tag]),
+      [[1, "GitHubOutputTooLarge"]],
+    );
+    assert.deepStrictEqual(t.calls()[2], historyCallFor(2));
+  }),
+);
+
+it.effect("unassignedClaims ends the scan when gh cannot start, with no further call", () =>
+  Effect.gen(function* () {
+    const triage = `[
+      {"number":1,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"},
+      {"number":2,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"}
+    ]`;
+    const t = setup(reply(triage), spawnError());
+    const error = yield* t.err(scan(t));
+    assert.strictEqual(error._tag, "GitHubSpawnError");
+    assert.deepStrictEqual(t.calls(), [claimedListCall("factory:triage"), historyCallFor(1)]);
+  }),
 );
 
 it.effect(
