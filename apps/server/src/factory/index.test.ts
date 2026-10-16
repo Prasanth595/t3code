@@ -1,22 +1,30 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 
 import { describe } from "vite-plus/test";
 
 import { timeLimitOnlyProjectConfig, type MachineConfig } from "./config.ts";
-import { FactoryRuntime, liveWorld } from "./index.ts";
+import { factoryRuntime, FactoryLoop, FactoryRuntime, liveWorld, ownsThread } from "./index.ts";
+import { makeCause } from "./ledger/events.ts";
+import { Ledger } from "./ledger/ledger.ts";
 import { scanMachineLog } from "./ledger/machineLog.ts";
+import { newRunId } from "./ledger/runId.ts";
 import type { Repo } from "./pass.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { utcSecond } from "./runner/start.ts";
 import { MARKER } from "./tracker/github.ts";
 import { FactoryProcess, RunSpawnError, type RunInput, type RunResult } from "./process.ts";
+import { EventsError, FactoryEvents } from "./t3/events.ts";
 import * as Paths from "./t3/paths.ts";
 import * as Sessions from "./t3/sessions.ts";
 
@@ -39,6 +47,12 @@ const stubSessions = Sessions.FactorySessions.of({
   removeWorktree: () => Effect.die("not removed"),
 });
 const noSessions = Layer.succeed(Sessions.FactorySessions, stubSessions);
+
+/** FactoryEvents that never says anything. */
+const quietEvents = Layer.succeed(
+  FactoryEvents,
+  FactoryEvents.of({ runStatusChanges: Stream.never }),
+);
 
 const messageText = (message: unknown): string => {
   const first = Array.isArray(message) ? message[0] : message;
@@ -90,6 +104,7 @@ const logsFor = (
             ),
             Layer.provide(gh),
             Layer.provide(noSessions),
+            Layer.provide(quietEvents),
           ),
         ),
       ).pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false })));
@@ -180,6 +195,103 @@ it.effect("logs each pass line as it is decided, so a pass that dies has said wh
     assert.ok(logs.includes("factory pass failed"), logs.join("\n"));
   }),
 );
+
+// ---- the wake ----
+
+describe("waking the pass when a factory thread's run changes status", () => {
+  /** A factory dir with a valid config and one unfinished run whose session is `thread-1`. */
+  const seeded = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const { join } = yield* Path.Path;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "factory-wake-" });
+    const factoryDir = join(baseDir, "factory");
+    yield* fs.makeDirectory(factoryDir);
+    const machineConfigPath = join(factoryDir, "config.yml");
+    yield* fs.writeFileString(machineConfigPath, VALID);
+    const out = Ledger.create(factoryDir, newRunId("a/b", "1", 1));
+    try {
+      out.append(
+        { event: "claimed", data: { machine: "m", github_user: "u" } },
+        makeCause("start", "seed"),
+      );
+      out.append(
+        {
+          event: "session_launched",
+          data: {
+            thread_id: "thread-1",
+            worktree: "/t3/wt",
+            branch: "t3code/abc",
+            model_instance: "claudeAgent",
+            model: "claude-sonnet-5-5",
+            resumed_from: null,
+          },
+        },
+        makeCause("start", "seed"),
+      );
+    } finally {
+      out.close();
+    }
+    return { baseDir, factoryDir, machineConfigPath, worktreesDir: join(baseDir, "worktrees") };
+  });
+
+  it.effect("a thread named by an unfinished run's session is owned; any other is not", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { factoryDir } = yield* seeded;
+        assert.isTrue(yield* ownsThread(factoryDir, "thread-1"));
+        assert.isFalse(yield* ownsThread(factoryDir, "thread-other"));
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("an owned thread starts the next pass, and a stream that failed is run again", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { baseDir, factoryDir, machineConfigPath, worktreesDir } = yield* seeded;
+        const queue = yield* Queue.unbounded<string>();
+        // The first run of the stream fails; the one after it reads the queue.
+        const failures = yield* Ref.make(1);
+        const events = Layer.succeed(
+          FactoryEvents,
+          FactoryEvents.of({
+            runStatusChanges: Stream.unwrap(
+              Ref.modify(failures, (left) =>
+                left > 0
+                  ? ([
+                      Stream.fail(new EventsError({ cause: new Error("gone") })),
+                      left - 1,
+                    ] as const)
+                  : ([Stream.fromQueue(queue), 0] as const),
+              ),
+            ),
+          }),
+        );
+        const loop = yield* Layer.build(
+          factoryRuntime({ restartDelay: 0 }).pipe(
+            Layer.provide(
+              Layer.succeed(Paths.FactoryPaths, {
+                baseDir,
+                worktreesDir,
+                factoryDir,
+                machineConfigPath,
+              }),
+            ),
+            Layer.provide(noGh),
+            Layer.provide(noSessions),
+            Layer.provide(events),
+          ),
+        ).pipe(Effect.map((context) => Context.get(context, FactoryLoop)));
+        const started = () =>
+          scanMachineLog(factoryDir).filter((entry) => entry.event === "pass_started").length;
+        yield* Queue.offer(queue, "thread-other");
+        yield* Queue.offer(queue, "thread-1");
+        // The first pass, then the one the owned thread woke; the poll is a minute away.
+        while (started() < 2) yield* loop.awaitPass;
+        assert.isAtLeast(started(), 2);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+});
 
 // ---- the live world over gh ----
 
