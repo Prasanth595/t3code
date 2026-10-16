@@ -1,6 +1,9 @@
 import {
   EnvironmentManagerError,
   type EnvironmentIdentity,
+  type EnvironmentInteractiveOutputEvent,
+  type EnvironmentInteractiveProcessRequest,
+  type EnvironmentInteractiveStartResult,
   type EnvironmentManager,
   type EnvironmentProcessRequest,
   type EnvironmentProcessResult,
@@ -160,6 +163,69 @@ export function createEnvironmentManagerHttpClient(options: EnvironmentManagerHt
       }
       if (!result) throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager ended process execution without a result");
       return result;
+    },
+    async startInteractive(request, command, process: EnvironmentInteractiveProcessRequest = {}): Promise<EnvironmentInteractiveStartResult> {
+      const response = await post("pty/start", {
+        ...environmentBody(request), command,
+        process: {
+          ...(process.cwd === undefined ? {} : { cwd: process.cwd }),
+          ...(process.environment === undefined ? {} : { environment: process.environment }),
+          ...(process.clientSessionId === undefined ? {} : { clientSessionId: process.clientSessionId }),
+        },
+      });
+      const value: unknown = await response.json();
+      if (!isRecord(value) || typeof value.sessionId !== "string") throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned an invalid interactive session");
+      return { sessionId: value.sessionId };
+    },
+    async writeInteractive(request, sessionId, data): Promise<void> {
+      await post("pty/input", { ...environmentBody(request), sessionId, data: Buffer.from(data).toString("base64") });
+    },
+    async resizeInteractive(request, sessionId, columns, rows): Promise<void> {
+      await post("pty/resize", { ...environmentBody(request), sessionId, columns, rows });
+    },
+    async *attachInteractiveOutput(request, sessionId, afterSequence = 0): AsyncIterable<EnvironmentInteractiveOutputEvent | { readonly type: "exit"; readonly result: EnvironmentProcessResult }> {
+      const response = await post("pty/output", { ...environmentBody(request), sessionId, afterSequence });
+      if (!response.body) throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned no interactive output stream");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let pending = "";
+      const parseLine = (line: string) => {
+        if (!line) return undefined;
+        let event: unknown;
+        try { event = JSON.parse(line); } catch (cause) { throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned invalid interactive output", { cause }); }
+        if (!isRecord(event)) throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned invalid interactive output");
+        if (event.type === "output" && Number.isSafeInteger(event.sequence) && typeof event.data === "string") {
+          return { type: "output", sequence: event.sequence as number, data: Buffer.from(event.data, "base64") } as const;
+        }
+        if (event.type === "exit" && isRecord(event.result) && (typeof event.result.exitCode === "number" || event.result.exitCode === null) && typeof event.result.cancelled === "boolean") {
+          return { type: "exit", result: { exitCode: event.result.exitCode, cancelled: event.result.cancelled } } as const;
+        }
+        if (event.type === "error") throw new EnvironmentManagerError("BACKEND_FAILURE", `Interactive process failed (${typeof event.code === "string" ? event.code : "unknown"})`);
+        throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned an unknown interactive output event");
+      };
+      try {
+        while (true) {
+          const part = await reader.read();
+          if (part.done) break;
+          pending += decoder.decode(part.value, { stream: true });
+          let newline = pending.indexOf("\n");
+          while (newline >= 0) {
+            const event = parseLine(pending.slice(0, newline));
+            pending = pending.slice(newline + 1);
+            if (event) yield event;
+            newline = pending.indexOf("\n");
+          }
+          if (pending.length > 1_048_576) throw new EnvironmentManagerError("BACKEND_FAILURE", "Interactive output event exceeded the allowed size");
+        }
+        pending += decoder.decode();
+        const event = parseLine(pending);
+        if (event) yield event;
+      } finally {
+        await reader.cancel().catch(() => undefined);
+      }
+    },
+    async terminateInteractive(request, sessionId): Promise<void> {
+      await post("pty/terminate", { ...environmentBody(request), sessionId });
     },
     async reconcile() {
       const response = await post("reconcile");

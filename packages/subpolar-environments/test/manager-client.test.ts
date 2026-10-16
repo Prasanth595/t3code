@@ -59,3 +59,40 @@ test("manager client decodes streamed process output and results", async () => {
 test("manager client rejects URLs with embedded credentials", () => {
   expect(() => createEnvironmentManagerHttpClient({ baseUrl: "http://user:password@manager", token: TOKEN })).toThrow(/cannot contain credentials/);
 });
+
+test("manager client resumes and controls a persistent interactive session", async () => {
+  const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+  const output = [
+    JSON.stringify({ type: "output", sequence: 5, data: "cHJvbXB0" }),
+    JSON.stringify({ type: "exit", result: { exitCode: 0, cancelled: false } }),
+  ].join("\n") + "\n";
+  const manager = createEnvironmentManagerHttpClient({
+    baseUrl: "http://manager:8080", token: TOKEN,
+    fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
+      calls.push({ url, body });
+      if (url.endsWith("/pty/start")) return Response.json({ sessionId: "manager-session" });
+      if (url.endsWith("/pty/output")) return new Response(output, { headers: { "content-type": "application/x-ndjson" } });
+      return Response.json({ ok: true });
+    }) as typeof fetch,
+  });
+  const request = { ownerId: identity.ownerId, workspaceId: identity.workspaceId, storageRoot: identity.storageRoot, worktreePath: identity.worktreePath };
+
+  const session = await manager.startInteractive(request, ["/bin/sh"], { clientSessionId: "thread-1-terminal-1" });
+  await manager.writeInteractive(request, session.sessionId, Buffer.from("ls\n"));
+  await manager.resizeInteractive(request, session.sessionId, 120, 40);
+  const events = [];
+  for await (const event of manager.attachInteractiveOutput(request, session.sessionId, 4)) events.push(event);
+  await manager.terminateInteractive(request, session.sessionId);
+
+  expect(session).toEqual({ sessionId: "manager-session" });
+  expect(events).toEqual([
+    { type: "output", sequence: 5, data: Buffer.from("prompt") },
+    { type: "exit", result: { exitCode: 0, cancelled: false } },
+  ]);
+  expect(calls.map(({ url }) => url.split("/").at(-1))).toEqual(["start", "input", "resize", "output", "terminate"]);
+  expect(calls[0]?.body.process).toEqual({ clientSessionId: "thread-1-terminal-1" });
+  expect(calls[1]?.body.data).toBe("bHMK");
+  expect(calls[3]?.body.afterSequence).toBe(4);
+});

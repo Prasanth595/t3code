@@ -7,6 +7,7 @@ import {
   EnvironmentManagerError,
   type EnvironmentBackend,
   type EnvironmentIdentity,
+  type EnvironmentInteractiveSession,
   type ManagedEnvironment,
 } from "../src/index.ts";
 
@@ -143,6 +144,76 @@ describe("environment lifecycle coordinator", () => {
       message: "Environment backend does not support managed process execution",
     });
     expect(backend.calls).toEqual([]);
+  });
+
+  test("binds interactive sessions to an environment and replays retained output after reconnect", async () => {
+    const { request } = await fixture();
+    const backend = new FakeBackend();
+    let starts = 0;
+    let terminated = 0;
+    const interactiveBackend = {
+      id: backend.id,
+      inspect: backend.inspect.bind(backend),
+      create: backend.create.bind(backend),
+      start: backend.start.bind(backend),
+      stop: backend.stop.bind(backend),
+      remove: backend.remove.bind(backend),
+      startInteractive: async (): Promise<EnvironmentInteractiveSession> => {
+        starts += 1;
+        return {
+          async write() {},
+          async resize() {},
+          output: { async *[Symbol.asyncIterator]() { yield new TextEncoder().encode("prompt"); } },
+          result: Promise.resolve({ exitCode: 0, cancelled: false }),
+          async terminate() { terminated += 1; },
+        };
+      },
+    };
+    const manager = createEnvironmentManager(interactiveBackend);
+    const first = await manager.startInteractive(request, ["/bin/sh"], { clientSessionId: "thread-terminal" });
+    const reconnected = await manager.startInteractive(request, ["/bin/sh"], { clientSessionId: "thread-terminal" });
+    expect(reconnected).toEqual(first);
+    expect(starts).toBe(1);
+
+    const firstAttachment = manager.attachInteractiveOutput(request, first.sessionId)[Symbol.asyncIterator]();
+    await expect(firstAttachment.next()).resolves.toMatchObject({ value: { type: "output", sequence: 1, data: new TextEncoder().encode("prompt") } });
+    await firstAttachment.return?.();
+    const resumed = [];
+    for await (const event of manager.attachInteractiveOutput(request, first.sessionId, 0)) resumed.push(event);
+    expect(resumed).toEqual([
+      { type: "output", sequence: 1, data: new TextEncoder().encode("prompt") },
+      { type: "exit", result: { exitCode: 0, cancelled: false } },
+    ]);
+
+    await expect(manager.writeInteractive({ ...request, ownerId: "other-owner" }, first.sessionId, new Uint8Array([1])))
+      .rejects.toMatchObject({ code: "OWNERSHIP_MISMATCH" });
+    await manager.terminateInteractive(request, first.sessionId);
+    expect(terminated).toBe(1);
+    await manager.startInteractive(request, ["/bin/sh"]);
+    await manager.stop(request);
+    expect(terminated).toBe(2);
+  });
+
+  test("applies bounded backpressure to retained interactive output", async () => {
+    const { request } = await fixture();
+    const backend = new FakeBackend();
+    const interactiveBackend = {
+      id: backend.id,
+      inspect: backend.inspect.bind(backend), create: backend.create.bind(backend),
+      start: backend.start.bind(backend), stop: backend.stop.bind(backend), remove: backend.remove.bind(backend),
+      startInteractive: async (): Promise<EnvironmentInteractiveSession> => ({
+        async write() {}, async resize() {},
+        output: { async *[Symbol.asyncIterator]() { yield new Uint8Array(1_048_576); yield new Uint8Array([1]); } },
+        result: Promise.resolve({ exitCode: 0, cancelled: false }), async terminate() {},
+      }),
+    };
+    const manager = createEnvironmentManager(interactiveBackend);
+    const { sessionId } = await manager.startInteractive(request, ["/bin/sh"]);
+    const events = [];
+    for await (const event of manager.attachInteractiveOutput(request, sessionId)) events.push(event);
+    expect(events.map((event) => event.type === "output" ? [event.sequence, event.data.byteLength] : [event.type])).toEqual([
+      [1, 1_048_576], [2, 1], ["exit"],
+    ]);
   });
 
   test("rejects lexical and symlink escapes from the configured storage root", async () => {

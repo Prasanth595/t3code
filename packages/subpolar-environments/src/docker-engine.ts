@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { request as httpRequest, type IncomingMessage, type RequestOptions } from "node:http";
-import type { DockerClient, DockerContainerCreateOptions, DockerContainerInspection, DockerContainerProcessRequest } from "./docker.ts";
-import type { EnvironmentProcessResult } from "./index.ts";
+import type { DockerClient, DockerContainerCreateOptions, DockerContainerInspection, DockerContainerProcessRequest, DockerContainerInteractiveRequest } from "./docker.ts";
+import type { EnvironmentInteractiveSession, EnvironmentProcessResult } from "./index.ts";
 
 export interface DockerEngineClientOptions {
   readonly socketPath: string;
@@ -12,12 +12,19 @@ export interface DockerEngineClientOptions {
   readonly dockerBinary?: string;
   readonly workerCommand?: readonly string[];
   readonly processRunner?: DockerContainerProcessRunner;
+  readonly interactiveRunner?: DockerContainerInteractiveRunner;
 }
 
 export type DockerContainerProcessRunner = (
   containerId: string,
   request: DockerContainerProcessRequest,
 ) => Promise<EnvironmentProcessResult>;
+
+export type DockerContainerInteractiveRunner = (
+  containerId: string,
+  request: DockerContainerInteractiveRequest,
+  resize: (execId: string, columns: number, rows: number) => Promise<void>,
+) => Promise<EnvironmentInteractiveSession>;
 
 export interface DockerEngineTransportRequest {
   readonly method: string;
@@ -236,6 +243,170 @@ async function runDockerWorker(
   }
 }
 
+const MAX_TTY_BUFFER_BYTES = 1_048_576;
+
+async function runDockerTty(
+  socketPath: string,
+  version: string,
+  timeoutMs: number,
+  containerId: string,
+  request: DockerContainerInteractiveRequest,
+  resize: (execId: string, columns: number, rows: number) => Promise<void>,
+): Promise<EnvironmentInteractiveSession> {
+  const create = await new Promise<IncomingMessage>((resolve, reject) => {
+    const outgoing = httpRequest({
+      socketPath, method: "POST", path: `/${version}/containers/${encodeURIComponent(containerId)}/exec`, timeout: timeoutMs,
+      headers: { "content-type": "application/json" },
+    }, resolve);
+    outgoing.once("error", reject);
+    outgoing.end(JSON.stringify({
+      Cmd: request.command,
+      WorkingDir: request.workingDirectory,
+      Env: Object.entries(request.environment ?? {}).map(([key, value]) => `${key}=${value}`),
+      AttachStdin: true,
+      AttachStdout: true,
+      AttachStderr: true,
+      Tty: true,
+    }));
+  });
+  const createBody = await readResponse(create, 1024 * 1024);
+  if (create.statusCode !== 201) throw new DockerEngineClientError(create.statusCode, "Docker Engine could not create an interactive process");
+  const created = record(decodeDockerJson(createBody));
+  const execId = text(created.Id);
+  if (!execId) throw new DockerEngineClientError(undefined, "Docker Engine did not return an interactive process ID");
+
+  const socket = await new Promise<import("node:stream").Duplex>((resolve, reject) => {
+    const outgoing = httpRequest({
+      socketPath, method: "POST", path: `/${version}/exec/${encodeURIComponent(execId)}/start`, timeout: timeoutMs,
+      headers: {
+        "content-type": "application/json",
+        "content-length": Buffer.byteLength('{"Detach":false,"Tty":true}'),
+        Connection: "Upgrade",
+        Upgrade: "tcp",
+      },
+    });
+    outgoing.once("upgrade", (response, upgraded, head) => {
+      if (response.statusCode !== 101) {
+        upgraded.destroy();
+        reject(new DockerEngineClientError(response.statusCode, "Docker Engine did not attach the interactive process"));
+        return;
+      }
+      if (head.byteLength) upgraded.unshift(head);
+      resolve(upgraded);
+    });
+    outgoing.once("response", (response) => {
+      response.resume();
+      reject(new DockerEngineClientError(response.statusCode, "Docker Engine rejected the interactive attach"));
+    });
+    outgoing.once("error", reject);
+    outgoing.end('{"Detach":false,"Tty":true}');
+  });
+  let buffers: Buffer[] = [];
+  let bufferedBytes = 0;
+  let ended = false;
+  let failure: Error | undefined;
+  let resolveRead: (() => void) | undefined;
+  let resolveSpace: (() => void) | undefined;
+  const wakeReader = () => { resolveRead?.(); resolveRead = undefined; };
+  const wakeWriter = () => { resolveSpace?.(); resolveSpace = undefined; };
+  const put = async (chunk: Buffer) => {
+    while (!ended && bufferedBytes + chunk.byteLength > MAX_TTY_BUFFER_BYTES) {
+      await new Promise<void>((resolve) => { resolveSpace = resolve; });
+    }
+    if (ended) return;
+    buffers.push(chunk);
+    bufferedBytes += chunk.byteLength;
+    wakeReader();
+  };
+  socket.on("data", (chunk: Buffer) => {
+    socket.pause();
+    void put(Buffer.from(chunk)).then(() => socket.resume(), (error: unknown) => {
+      failure = error instanceof Error ? error : new Error("Interactive output failed");
+      ended = true;
+      wakeReader();
+    });
+  });
+  socket.once("error", (error) => { failure = error; ended = true; wakeReader(); wakeWriter(); });
+
+  let claimed = false;
+  const output: AsyncIterable<Uint8Array> = {
+    async *[Symbol.asyncIterator]() {
+      if (claimed) throw new Error("Interactive output already has an attached reader");
+      claimed = true;
+      try {
+        while (true) {
+          const chunk = buffers.shift();
+          if (chunk) {
+            bufferedBytes -= chunk.byteLength;
+            wakeWriter();
+            yield chunk;
+          } else if (ended) {
+            if (failure) throw failure;
+            return;
+          } else {
+            await new Promise<void>((resolve) => { resolveRead = resolve; });
+          }
+        }
+      } finally {
+        // A disconnected output reader leaves the terminal alive and bounded.
+      }
+    },
+  };
+
+  let resolveResult!: (result: EnvironmentProcessResult) => void;
+  const result = new Promise<EnvironmentProcessResult>((resolve) => { resolveResult = resolve; });
+  socket.once("close", () => {
+    ended = true;
+    wakeReader();
+    wakeWriter();
+    void (async () => {
+      let exitCode: number | null = null;
+      try {
+        const response = await new Promise<IncomingMessage>((resolve, reject) => {
+          const outgoing = httpRequest({ socketPath, method: "GET", path: `/${version}/exec/${encodeURIComponent(execId)}/json`, timeout: timeoutMs }, resolve);
+          outgoing.once("error", reject);
+          outgoing.end();
+        });
+        const body = await readResponse(response, 1024 * 1024);
+        if (response.statusCode === 200) {
+          const inspected = record(decodeDockerJson(body));
+          if (typeof inspected.ExitCode === "number") exitCode = inspected.ExitCode;
+        }
+      } catch { /* The terminal is already closed; retain the unknown exit code. */ }
+      resolveResult({ exitCode, cancelled: terminating });
+    })();
+  });
+
+  let terminating = false;
+  socket.resume();
+  return {
+    output,
+    result,
+    async write(data) {
+      if (ended || socket.destroyed) throw new DockerEngineClientError(undefined, "Interactive process has ended");
+      if (!socket.write(data)) await new Promise<void>((resolve, reject) => {
+        socket.once("drain", resolve);
+        socket.once("error", reject);
+      });
+    },
+    async resize(columns, rows) { await resize(execId, columns, rows); },
+    async terminate() {
+      if (ended || terminating) return;
+      terminating = true;
+      // With a TTY, VINTR delivers SIGINT to the foreground process group.
+      socket.write(Buffer.from([3]));
+      await Promise.race([result, new Promise<void>((resolve) => setTimeout(resolve, 1_000))]);
+      if (!ended) socket.destroy();
+      await result;
+    },
+  };
+}
+
+function decodeDockerJson(body: Uint8Array): unknown {
+  try { return JSON.parse(Buffer.from(body).toString("utf8")); }
+  catch (cause) { throw new DockerEngineClientError(undefined, "Docker Engine returned invalid JSON", { cause }); }
+}
+
 /**
  * Docker Engine lifecycle client for a dedicated manager process. Do not
  * construct this inside the T3 gateway; possession of the socket is root-like.
@@ -252,6 +423,10 @@ export function createDockerEngineClient(options: DockerEngineClientOptions): Do
     throw new Error("Docker worker command configuration is invalid");
   }
   const processRunner = options.processRunner ?? ((containerId, request) => runDockerWorker(dockerBinary, workerCommand, containerId, request));
+  const interactiveRunner: DockerContainerInteractiveRunner = options.interactiveRunner ?? ((containerId, request, resize) => {
+    if (options.transport) throw new DockerEngineClientError(undefined, "Interactive TTY requires the Docker Engine socket transport");
+    return runDockerTty(options.socketPath, version, timeoutMs, containerId, request, resize);
+  });
 
   const request = async (
     method: string,
@@ -334,6 +509,11 @@ export function createDockerEngineClient(options: DockerEngineClientOptions): Do
     },
     async executeContainer(id, processRequest) {
       return processRunner(id, processRequest);
+    },
+    async startInteractiveContainer(id, interactiveRequest) {
+      return interactiveRunner(id, interactiveRequest, async (execId, columns, rows) => {
+        await request("POST", `/exec/${encodeURIComponent(execId)}/resize?h=${rows}&w=${columns}`, undefined, [200]);
+      });
     },
   };
 }

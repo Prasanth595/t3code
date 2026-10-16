@@ -18,7 +18,7 @@ const environment: ManagedEnvironment = {
 };
 
 function managerFixture() {
-  const calls: Array<{ method: string; request?: EnvironmentRequest; command?: readonly string[] }> = [];
+  const calls: Array<{ method: string; request?: EnvironmentRequest; command?: readonly string[]; sessionId?: string; data?: Uint8Array; columns?: number; rows?: number }> = [];
   const manager = {
     identity: async () => ({ ...environment }),
     ensure: async (request: EnvironmentRequest) => { calls.push({ method: "ensure", request }); return environment; },
@@ -30,6 +30,18 @@ function managerFixture() {
       await process.onOutput?.({ stream: "stdout", data: new TextEncoder().encode("ok") });
       return { processId: "process-a", exitCode: 0, cancelled: false };
     },
+    startInteractive: async (request: EnvironmentRequest, command: readonly string[]) => {
+      calls.push({ method: "startInteractive", request, command });
+      return { sessionId: "session-a" };
+    },
+    writeInteractive: async (request: EnvironmentRequest, sessionId: string, data: Uint8Array) => { calls.push({ method: "writeInteractive", request, sessionId, data }); },
+    resizeInteractive: async (request: EnvironmentRequest, sessionId: string, columns: number, rows: number) => { calls.push({ method: "resizeInteractive", request, sessionId, columns, rows }); },
+    attachInteractiveOutput: async function* (request: EnvironmentRequest, sessionId: string) {
+      calls.push({ method: "attachInteractiveOutput", request, sessionId });
+      yield { type: "output" as const, sequence: 1, data: new TextEncoder().encode("prompt") };
+      yield { type: "exit" as const, result: { exitCode: 0, cancelled: false } };
+    },
+    terminateInteractive: async (request: EnvironmentRequest, sessionId: string) => { calls.push({ method: "terminateInteractive", request, sessionId }); },
     reconcile: async () => [],
   } satisfies EnvironmentManager;
   return { manager, calls };
@@ -124,4 +136,36 @@ test("manager API cancels managed execution when its output stream is abandoned"
   await reader.cancel("client disconnected");
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(aborted).toBe(true);
+});
+
+test("manager API starts, attaches to, controls, and terminates an authenticated TTY session", async () => {
+  const { manager, calls } = managerFixture();
+  const handle = createEnvironmentManagerHttpHandler(manager, TOKEN);
+  const start = await handle(makeRequest("/v1/environments/pty/start", {
+    environment: requestInput, command: ["/bin/sh"], process: { cwd: "packages", clientSessionId: "thread-1-terminal-1" },
+  }));
+  expect(start.status).toBe(200);
+  await expect(start.json()).resolves.toEqual({ sessionId: "session-a" });
+
+  const input = await handle(makeRequest("/v1/environments/pty/input", {
+    environment: requestInput, sessionId: "session-a", data: Buffer.from("ls\n").toString("base64"),
+  }));
+  expect(input.status).toBe(200);
+  const resize = await handle(makeRequest("/v1/environments/pty/resize", {
+    environment: requestInput, sessionId: "session-a", columns: 120, rows: 40,
+  }));
+  expect(resize.status).toBe(200);
+  const output = await handle(makeRequest("/v1/environments/pty/output", {
+    environment: requestInput, sessionId: "session-a", afterSequence: 0,
+  }));
+  expect((await output.text()).trim().split("\n").map((line) => JSON.parse(line))).toEqual([
+    { type: "output", sequence: 1, data: "cHJvbXB0" },
+    { type: "exit", result: { exitCode: 0, cancelled: false } },
+  ]);
+  const terminate = await handle(makeRequest("/v1/environments/pty/terminate", { environment: requestInput, sessionId: "session-a" }));
+  expect(terminate.status).toBe(200);
+  expect(calls.map((call) => call.method)).toEqual([
+    "startInteractive", "writeInteractive", "resizeInteractive", "attachInteractiveOutput", "terminateInteractive",
+  ]);
+  expect(calls[1]?.data).toEqual(Buffer.from("ls\n"));
 });

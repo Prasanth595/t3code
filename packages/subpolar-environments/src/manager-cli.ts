@@ -56,6 +56,11 @@ server.listen(port, host, () => {
   }).catch(() => process.stderr.write("Environment reconciliation failed\n"));
 });
 
-const shutdown = () => server.close(() => { process.exitCode = 0; });
+let shuttingDown = false;
+const shutdown = () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  void Promise.resolve(manager.closeInteractiveSessions?.()).finally(() => server.close(() => { process.exitCode = 0; }));
+};
 process.once("SIGINT", shutdown);
 process.once("SIGTERM", shutdown);

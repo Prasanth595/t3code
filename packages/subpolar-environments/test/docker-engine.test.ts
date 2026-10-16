@@ -127,3 +127,34 @@ test("routes container process requests through the worker runner", async () => 
   expect(seen).toEqual({ id: "container-9", request });
   expect(output).toEqual(["stderr:warning"]);
 });
+
+test("routes interactive sessions through the TTY runner and Docker resize API", async () => {
+  const requests: string[] = [];
+  let seen: { id: string; request: unknown } | undefined;
+  const client = createDockerEngineClient({
+    socketPath: "/var/run/docker.sock",
+    transport: async (request) => {
+      requests.push(`${request.method} ${request.path}`);
+      return { statusCode: 200, body: new Uint8Array() };
+    },
+    interactiveRunner: async (id, request, resize) => {
+      seen = { id, request };
+      return {
+        output: { async *[Symbol.asyncIterator]() { yield Buffer.from("prompt"); } },
+        result: Promise.resolve({ exitCode: null, cancelled: false }),
+        async write() {},
+        resize: (columns, rows) => resize("exec-tty", columns, rows),
+        async terminate() {},
+      };
+    },
+  });
+  const processRequest = { command: ["/bin/sh"], worktreeDirectory: "/workspaces/repo", workingDirectory: "/workspaces/repo" };
+  const session = await client.startInteractiveContainer!("container-tty", processRequest);
+  await session.resize(120, 40);
+  const output = [];
+  for await (const chunk of session.output) output.push(chunk);
+
+  expect(seen).toEqual({ id: "container-tty", request: processRequest });
+  expect(requests).toEqual(["POST /v1.41/exec/exec-tty/resize?h=40&w=120"]);
+  expect(output).toEqual([Buffer.from("prompt")]);
+});

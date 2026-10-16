@@ -101,6 +101,21 @@ function processRequest(value: unknown): EnvironmentProcessRequest {
   };
 }
 
+function interactiveProcessRequest(value: unknown): { cwd?: string; environment?: Record<string, string>; clientSessionId?: string } {
+  if (value === undefined) return {};
+  if (!isRecord(value)) throw new EnvironmentManagerError("INVALID_REQUEST", "Interactive process options are invalid");
+  if (value.cwd !== undefined && typeof value.cwd !== "string") throw new EnvironmentManagerError("INVALID_REQUEST", "Process working directory is invalid");
+  if (value.clientSessionId !== undefined && typeof value.clientSessionId !== "string") throw new EnvironmentManagerError("INVALID_REQUEST", "Client session ID is invalid");
+  if (value.environment !== undefined && (!isRecord(value.environment) || Object.values(value.environment).some((entry) => typeof entry !== "string"))) {
+    throw new EnvironmentManagerError("INVALID_REQUEST", "Process environment is invalid");
+  }
+  return {
+    ...(value.cwd === undefined ? {} : { cwd: value.cwd }),
+    ...(value.environment === undefined ? {} : { environment: value.environment as Record<string, string> }),
+    ...(value.clientSessionId === undefined ? {} : { clientSessionId: value.clientSessionId }),
+  };
+}
+
 function statusFor(error: unknown): number {
   if (error instanceof EnvironmentManagerError) {
     if (error.code === "INVALID_REQUEST" || error.code === "WORKTREE_OUTSIDE_ROOT") return 400;
@@ -128,14 +143,100 @@ export function createEnvironmentManagerHttpHandler(manager: EnvironmentManager,
     if (!isAuthorized(request, token)) return jsonResponse({ error: "UNAUTHORIZED" }, 401, { "www-authenticate": "Bearer" });
     if (request.method !== "POST") return jsonResponse({ error: "METHOD_NOT_ALLOWED" }, 405, { allow: "POST" });
 
-    const route = new URL(request.url).pathname.match(/^\/v1\/environments\/(identity|ensure|start|stop|remove|execute|reconcile)$/)?.[1];
-    if (!route) return jsonResponse({ error: "NOT_FOUND" }, 404);
+    const pathname = new URL(request.url).pathname;
+    const interactiveRoute = pathname.match(/^\/v1\/environments\/pty\/(start|input|resize|output|terminate)$/)?.[1];
+    const route = pathname.match(/^\/v1\/environments\/(identity|ensure|start|stop|remove|execute|reconcile)$/)?.[1];
+    if (!route && !interactiveRoute) return jsonResponse({ error: "NOT_FOUND" }, 404);
 
     try {
       if (route === "reconcile") return jsonResponse({ results: await manager.reconcile() });
       const body = await readJson(request);
       if (!isRecord(body)) throw new EnvironmentManagerError("INVALID_REQUEST", "Request body must be a JSON object");
       const environment = environmentRequest(body.environment);
+      if (interactiveRoute) {
+        if (interactiveRoute === "start") {
+          if (!Array.isArray(body.command) || body.command.length === 0 || body.command.length > 256 ||
+              body.command.some((part) => typeof part !== "string" || !part || part.includes("\0"))) {
+            throw new EnvironmentManagerError("INVALID_REQUEST", "Interactive command must be a valid argv array");
+          }
+          return jsonResponse(await manager.startInteractive(environment, body.command as string[], interactiveProcessRequest(body.process)));
+        }
+        if (typeof body.sessionId !== "string" || !body.sessionId || body.sessionId.length > 256) {
+          throw new EnvironmentManagerError("INVALID_REQUEST", "Interactive session ID is invalid");
+        }
+        if (interactiveRoute === "input") {
+          if (typeof body.data !== "string" || body.data.length > 87_384 || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(body.data)) {
+            throw new EnvironmentManagerError("INVALID_REQUEST", "Interactive input must be base64 encoded");
+          }
+          const data = Buffer.from(body.data, "base64");
+          if (data.byteLength > 65_536) throw new EnvironmentManagerError("INVALID_REQUEST", "Interactive input exceeds 64 KiB");
+          await manager.writeInteractive(environment, body.sessionId, data);
+          return jsonResponse({ written: data.byteLength });
+        }
+        if (interactiveRoute === "resize") {
+          if (typeof body.columns !== "number" || typeof body.rows !== "number") throw new EnvironmentManagerError("INVALID_REQUEST", "Terminal dimensions are invalid");
+          await manager.resizeInteractive(environment, body.sessionId, body.columns, body.rows);
+          return jsonResponse({ resized: true });
+        }
+        if (interactiveRoute === "terminate") {
+          await manager.terminateInteractive(environment, body.sessionId);
+          return jsonResponse({ terminated: true });
+        }
+        const afterSequence = body.afterSequence ?? 0;
+        if (typeof afterSequence !== "number" || !Number.isSafeInteger(afterSequence) || afterSequence < 0) {
+          throw new EnvironmentManagerError("INVALID_REQUEST", "Interactive output cursor is invalid");
+        }
+        const controller = new AbortController();
+        const abortFromRequest = () => controller.abort(request.signal.reason);
+        if (request.signal.aborted) abortFromRequest();
+        else request.signal.addEventListener("abort", abortFromRequest, { once: true });
+        const iterator = manager.attachInteractiveOutput(environment, body.sessionId, afterSequence)[Symbol.asyncIterator]();
+        let closed = false;
+        let consumerReady = false;
+        let wakeProducer: (() => void) | undefined;
+        const stream = new ReadableStream<Uint8Array>({
+          start(controllerStream) {
+            const emit = async (event: unknown) => {
+              while (!closed && !consumerReady) await new Promise<void>((resolve) => { wakeProducer = resolve; });
+              if (closed) return;
+              consumerReady = false;
+              controllerStream.enqueue(new TextEncoder().encode(`${JSON.stringify(event, (_key, value) => value instanceof Uint8Array ? Buffer.from(value).toString("base64") : value)}\n`));
+            };
+            void (async () => {
+              try {
+                while (!closed && !controller.signal.aborted) {
+                  const next = await iterator.next();
+                  if (next.done) break;
+                  const event = next.value.type === "output"
+                    ? { type: "output", sequence: next.value.sequence, data: Buffer.from(next.value.data).toString("base64") }
+                    : next.value;
+                  await emit(event);
+                  if (next.value.type === "exit") break;
+                }
+                if (!closed) { closed = true; controllerStream.close(); }
+              } catch (error) {
+                if (!closed) {
+                  closed = true;
+                  controllerStream.enqueue(new TextEncoder().encode(`${JSON.stringify({ type: "error", code: errorCode(error) })}\n`));
+                  controllerStream.close();
+                }
+              } finally {
+                await iterator.return?.();
+                request.signal.removeEventListener("abort", abortFromRequest);
+              }
+            })();
+          },
+          pull() { consumerReady = true; wakeProducer?.(); },
+          async cancel() {
+            closed = true;
+            controller.abort();
+            wakeProducer?.();
+            await iterator.return?.();
+            request.signal.removeEventListener("abort", abortFromRequest);
+          },
+        });
+        return new Response(stream, { headers: { "content-type": "application/x-ndjson; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
+      }
       if (route === "identity") return jsonResponse(await manager.identity(environment));
       if (route === "ensure") return jsonResponse(await manager.ensure(environment));
       if (route === "start") return jsonResponse(await manager.start(environment));
