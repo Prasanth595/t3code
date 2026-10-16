@@ -9,6 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vite-plus/
 
 const scripts = NodePath.resolve(import.meta.dirname, "../../../../factory/scripts");
 const label = "io.github.rawphp.t3fac";
+const logrotateLabel = "io.github.rawphp.t3fac.logrotate";
 const uid = process.getuid?.() ?? 0;
 
 const v1 = "0.0.1-test+fac.aaaaaaa";
@@ -39,6 +40,8 @@ afterAll(async () => {
 
 const plistPath = () => NodePath.join(home, "Library/LaunchAgents", `${label}.plist`);
 const root = () => NodePath.join(home, ".local/share/t3fac");
+const logrotatePlistPath = () =>
+  NodePath.join(home, "Library/LaunchAgents", `${logrotateLabel}.plist`);
 const logPath = () => NodePath.join(home, "Library/Logs/t3fac/t3fac.log");
 
 const run = (script: string, ...args: Array<string>) => runWith({}, script, ...args);
@@ -91,9 +94,10 @@ const makeArchive = (version: string, options: { binary?: boolean; label?: strin
   return archive;
 };
 
-// A little launchd-like: bootout leaves the job loaded for two more `print` polls (or
-// LAUNCHCTL_BOOTOUT_DRAIN), and bootstrap fails with EIO while it is still loaded (or when
-// LAUNCHCTL_BOOTSTRAP_FAIL is set). A bootstrap writes "factory started" to the log when
+// A little launchd-like, one loaded flag and drain file per job label (the main job and the
+// logrotate job): bootout leaves the job loaded for two more `print` polls (or
+// LAUNCHCTL_BOOTOUT_DRAIN, main job only), and bootstrap fails with EIO while it is still loaded (or when
+// LAUNCHCTL_BOOTSTRAP_FAIL is set, main job only). Only the main job's bootstrap writes "factory started" to the log when
 // LAUNCHCTL_HEALTHY (space-separated `current` targets) lists the version `current` points at
 // (LAUNCHCTL_HEALTHY_LINE writes another line instead, LAUNCHCTL_HEALTHY_DELAY writes it that many
 // seconds later, as a server still starting would); LAUNCHCTL_TRUNCATE_LOG empties the log first,
@@ -113,22 +117,29 @@ const setupSandbox = () => {
       "#!/bin/sh",
       'echo "$@" >> "$LAUNCHCTL_LOG"',
       'case "$1" in',
+      "  print|bootout) job=${2##*/} ;;",
+      '  bootstrap) job=$(basename "$3" .plist) ;;',
+      "esac",
+      'loaded="$LAUNCHCTL_LOADED.$job"',
+      'drain="$LAUNCHCTL_DRAIN.$job"',
+      'main=0; [ "$job" = "io.github.rawphp.t3fac" ] && main=1',
+      'case "$1" in',
       "  print)",
-      '    if [ -e "$LAUNCHCTL_DRAIN" ]; then',
-      '      n=$(cat "$LAUNCHCTL_DRAIN")',
-      '      if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$LAUNCHCTL_DRAIN"; exit 0; fi',
-      '      rm -f "$LAUNCHCTL_DRAIN" "$LAUNCHCTL_LOADED"',
+      '    if [ -e "$drain" ]; then',
+      '      n=$(cat "$drain")',
+      '      if [ "$n" -gt 0 ]; then echo $((n - 1)) > "$drain"; exit 0; fi',
+      '      rm -f "$drain" "$loaded"',
       "      exit 113",
       "    fi",
-      '    [ -e "$LAUNCHCTL_LOADED" ] && exit 0',
+      '    [ -e "$loaded" ] && exit 0',
       "    exit 113 ;;",
       "  bootstrap)",
-      '    if [ -n "$LAUNCHCTL_BOOTSTRAP_FAIL" ] || [ -e "$LAUNCHCTL_LOADED" ]; then',
+      '    if { [ "$main" = 1 ] && [ -n "$LAUNCHCTL_BOOTSTRAP_FAIL" ]; } || [ -e "$loaded" ]; then',
       '      echo "Bootstrap failed: 5: Input/output error" >&2',
       "      exit 5",
       "    fi",
-      '    touch "$LAUNCHCTL_LOADED"',
-      '    if [ -n "${LAUNCHCTL_HEALTHY+x}" ]; then',
+      '    touch "$loaded"',
+      '    if [ "$main" = 1 ] && [ -n "${LAUNCHCTL_HEALTHY+x}" ]; then',
       '      target=$(readlink "$HOME/.local/share/t3fac/current")',
       "      for entry in $LAUNCHCTL_HEALTHY; do",
       '        if [ "$entry" = "$target" ]; then',
@@ -143,7 +154,8 @@ const setupSandbox = () => {
       "        fi",
       "      done",
       "    fi ;;",
-      '  bootout) echo "${LAUNCHCTL_BOOTOUT_DRAIN:-2}" > "$LAUNCHCTL_DRAIN" ;;',
+      "  bootout)",
+      '    if [ "$main" = 1 ]; then echo "${LAUNCHCTL_BOOTOUT_DRAIN:-2}" > "$drain"; else echo 2 > "$drain"; fi ;;',
       "esac",
       "exit 0",
       "",
@@ -161,8 +173,14 @@ const setupInstalledSandbox = () => {
   expect(run("install.sh", archives[v2]!).status).toBe(0);
 };
 
-// bootout, then at least one print poll, then bootstrap.
-const expectRestartSequence = (calls: Array<string>) => {
+// The launchctl calls about each job. The logrotate job's come first: install.sh and
+// rollback.sh restart it just before the main job.
+const mainCalls = (calls: Array<string>) => calls.filter((c) => !c.includes(logrotateLabel));
+const logrotateCalls = (calls: Array<string>) => calls.filter((c) => c.includes(logrotateLabel));
+
+// bootout, then at least one print poll, then bootstrap, for the main job.
+const expectRestartSequence = (allCalls: Array<string>) => {
+  const calls = mainCalls(allCalls);
   expect(calls[0]).toBe(`print gui/${uid}/${label}`);
   expect(calls[1]).toBe(`bootout gui/${uid}/${label}`);
   expect(calls.at(-1)).toBe(`bootstrap gui/${uid} ${plistPath()}`);
@@ -206,9 +224,39 @@ describe("install.sh and rollback.sh", () => {
       expect(plist).toContain(part);
     }
 
-    expect(result.calls).toEqual([
+    expect(mainCalls(result.calls)).toEqual([
       `print gui/${uid}/${label}`,
       `bootstrap gui/${uid} ${plistPath()}`,
+    ]);
+  });
+
+  it("writes, installs and bootstraps the logrotate job on a first install", () => {
+    setupSandbox();
+    archives[v1] = makeArchive(v1);
+    const result = run("install.sh", archives[v1]!);
+    expect(result.status).toBe(0);
+
+    const plist = NodeFS.readFileSync(logrotatePlistPath(), "utf8");
+    expect(plist).not.toContain("@HOME@");
+    for (const part of [
+      `<string>${logrotateLabel}</string>`,
+      "StartInterval",
+      "<integer>600</integer>",
+      `${home}/.local/share/t3fac/rotate-log.sh`,
+      `${home}/Library/Logs/t3fac/t3fac.log`,
+    ]) {
+      expect(plist).toContain(part);
+    }
+
+    const installed = NodePath.join(root(), "rotate-log.sh");
+    expect(NodeFS.readFileSync(installed, "utf8")).toBe(
+      NodeFS.readFileSync(NodePath.join(scripts, "rotate-log.sh"), "utf8"),
+    );
+    expect(NodeFS.statSync(installed).mode & 0o111).not.toBe(0);
+
+    expect(logrotateCalls(result.calls)).toEqual([
+      `print gui/${uid}/${logrotateLabel}`,
+      `bootstrap gui/${uid} ${logrotatePlistPath()}`,
     ]);
   });
 
@@ -220,6 +268,21 @@ describe("install.sh and rollback.sh", () => {
     expectRestartSequence(result.calls);
   });
 
+  it("boots the logrotate job out and back in on a second install, leaving the main restart alone", () => {
+    const result = run("install.sh", archives[v2]!);
+    expect(result.status).toBe(0);
+    const rotate = logrotateCalls(result.calls);
+    expect(rotate[0]).toBe(`print gui/${uid}/${logrotateLabel}`);
+    expect(rotate[1]).toBe(`bootout gui/${uid}/${logrotateLabel}`);
+    expect(rotate.at(-1)).toBe(`bootstrap gui/${uid} ${logrotatePlistPath()}`);
+    // Every logrotate call comes before the main job's first, and the main sequence between
+    // its own print and bootstrap never names the logrotate job.
+    const firstMain = result.calls.findIndex((c) => !c.includes(logrotateLabel));
+    expect(result.calls.slice(0, firstMain)).toEqual(rotate);
+    expect(result.calls.slice(firstMain).some((c) => c.includes(logrotateLabel))).toBe(false);
+    expectRestartSequence(result.calls);
+  });
+
   it("rolls back to the previous version", () => {
     const result = run("rollback.sh");
     expect(result.status).toBe(0);
@@ -227,6 +290,11 @@ describe("install.sh and rollback.sh", () => {
     expect(NodeFS.existsSync(NodePath.join(root(), "previous"))).toBe(false);
     expect(NodeFS.lstatSync(plistPath()).isFile()).toBe(true);
     expectRestartSequence(result.calls);
+    const rotate = logrotateCalls(result.calls);
+    expect(rotate[1]).toBe(`bootout gui/${uid}/${logrotateLabel}`);
+    expect(rotate.at(-1)).toBe(`bootstrap gui/${uid} ${logrotatePlistPath()}`);
+    const firstMain = result.calls.findIndex((c) => !c.includes(logrotateLabel));
+    expect(result.calls.slice(0, firstMain)).toEqual(rotate);
   });
 
   it("exits 1 when there is no earlier version", () => {
@@ -379,12 +447,13 @@ describe("install.sh and rollback.sh when the job never unloads", () => {
     ["rollback.sh", () => []],
   ])("%s fails without bootstrapping", (script, args) => {
     const result = runWith(stuck, script, ...args());
-    NodeFS.rmSync(launchctlDrain, { force: true });
+    NodeFS.rmSync(`${launchctlDrain}.${label}`, { force: true });
+    const main = mainCalls(result.calls);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain(`job ${label} is still loaded 1s after bootout`);
-    expect(result.calls[1]).toBe(`bootout gui/${uid}/${label}`);
-    expect(result.calls.length).toBeGreaterThan(3);
-    expect(result.calls.some((call) => call.startsWith("bootstrap"))).toBe(false);
+    expect(main[1]).toBe(`bootout gui/${uid}/${label}`);
+    expect(main.length).toBeGreaterThan(3);
+    expect(main.some((call) => call.startsWith("bootstrap"))).toBe(false);
   });
 });
 
@@ -406,7 +475,8 @@ describe("install.sh and rollback.sh health check", () => {
   };
 
   const link = (name: string) => NodeFS.readlinkSync(NodePath.join(root(), name));
-  const bootstraps = (calls: Array<string>) => calls.filter((c) => c.startsWith("bootstrap"));
+  const bootstraps = (calls: Array<string>) =>
+    mainCalls(calls).filter((c) => c.startsWith("bootstrap"));
 
   afterEach(() => {
     NodeFS.rmSync(tmp, { recursive: true, force: true });
