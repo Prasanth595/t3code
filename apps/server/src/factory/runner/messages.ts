@@ -127,6 +127,24 @@ export const sessionMayExistNote = (what: string, commandId: string): string =>
 export const WRONG_ACCOUNT_PREFIX = "the session's gh account is ";
 
 /**
+ * The pull request a launch continues, and why: the session's worktree is made from `branch` at its
+ * tip on `origin`. `after` is only `failed-regate` here: the run's own pull request passed the
+ * gate and failed it when it ran again (instructor feedback and the time-limit resume belong to
+ * later issues).
+ */
+export interface ResumeFrom {
+  readonly branch: string;
+  readonly prUrl: string;
+  readonly after: "failed-regate";
+}
+
+/** The paragraph a resumed launch adds, in the factory's fixed words; empty for a first launch. */
+const resumedParagraph = (resumed: ResumeFrom | undefined): string =>
+  resumed === undefined
+    ? ""
+    : `\n\nThe pull request ${resumed.prUrl} of this issue passed the gate, and the gate failed when it ran again. The worktree holds that pull request's branch at its tip on origin. Fix the failure below from there and push your commits to the same branch with \`git push origin HEAD:${resumed.branch}\`, so the same pull request is updated. Do not open another pull request.`;
+
+/**
  * The first message of a session for a GitHub issue: invokes `/factory`, says nobody is in the
  * chat, and names the GitHub identity the session acts as (`login`, and the `ghConfigDir` its T3
  * server should have been started with) with what to do when `gh` says otherwise.
@@ -136,8 +154,9 @@ export const launchMessage = (
   issue: number,
   login: string,
   ghConfigDir: string,
+  resumed?: ResumeFrom,
 ): string =>
-  `/factory ${repo}#${issue}\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR.\n\nYou act on GitHub as ${login}. Your T3 server should have been started with GH_CONFIG_DIR=${ghConfigDir}. Before anything else run gh api user --jq .login exactly as written, in the environment you were started with. Never set GH_CONFIG_DIR, GH_TOKEN or GH_HOST, and never use gh auth token or gh auth switch, on any command. If it prints any other login, end with FACTORY-STOP: stuck and make the first line of your message "${WRONG_ACCOUNT_PREFIX}<x>, not ${login}".`;
+  `/factory ${repo}#${issue}\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR.${resumedParagraph(resumed)}\n\nYou act on GitHub as ${login}. Your T3 server should have been started with GH_CONFIG_DIR=${ghConfigDir}. Before anything else run gh api user --jq .login exactly as written, in the environment you were started with. Never set GH_CONFIG_DIR, GH_TOKEN or GH_HOST, and never use gh auth token or gh auth switch, on any command. If it prints any other login, end with FACTORY-STOP: stuck and make the first line of your message "${WRONG_ACCOUNT_PREFIX}<x>, not ${login}".`;
 
 /** The issue's single status comment. */
 export const statusBody = (

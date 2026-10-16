@@ -41,6 +41,7 @@ import {
 } from "../tracker/github.ts";
 import {
   advance,
+  checkBinding,
   timeLimit,
   watch,
   type AdvanceOutcome,
@@ -2290,27 +2291,25 @@ describe("advance: a merged or closed pull request ends the run", () => {
       }),
   );
 
-  for (const [label, pull, prEnd] of [
-    ["merged", mergedPr(), "merged"],
-    ["closed", closedPr(), "closed"],
-    ["gone", null, "closed"],
-  ] as const) {
-    it.effect(`a pr-open run whose pull request is ${label} is ended as ${prEnd}`, () =>
-      Effect.gen(function* () {
-        const rig = rigFor(PR_OPEN_RUN);
-        rig.world.pr = pull;
-        assert.deepStrictEqual(yield* advanceIn(rig), { kind: "ended" });
-        // The only read is the pull request; the issue is not read for a run with nothing to write.
-        assert.deepStrictEqual(rig.gh, ["pullRequest 12"]);
-        assert.deepStrictEqual(rig.reads, []);
-        // The thread is archived again; its worktree line is not written twice.
-        assert.deepStrictEqual(rig.t3, ["archive thread-1"]);
-        assert.deepStrictEqual(linesOf(rig), [...PR_OPEN_RUN, finishedPrEnd(prEnd)]);
-        assert.deepStrictEqual(lastCause(rig), { step: "advance", reason: "pull-request-ended" });
-        yield* expectNotBuilding(rig);
-      }),
-    );
-  }
+  it.effect.each([
+    { label: "merged", pull: mergedPr(), prEnd: "merged" },
+    { label: "closed", pull: closedPr(), prEnd: "closed" },
+    { label: "gone", pull: null, prEnd: "closed" },
+  ] as const)("a pr-open run whose pull request is $label is ended as $prEnd", ({ pull, prEnd }) =>
+    Effect.gen(function* () {
+      const rig = rigFor(PR_OPEN_RUN);
+      rig.world.pr = pull;
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "ended" });
+      // The only read is the pull request; the issue is not read for a run with nothing to write.
+      assert.deepStrictEqual(rig.gh, ["pullRequest 12"]);
+      assert.deepStrictEqual(rig.reads, []);
+      // The thread is archived again; its worktree line is not written twice.
+      assert.deepStrictEqual(rig.t3, ["archive thread-1"]);
+      assert.deepStrictEqual(linesOf(rig), [...PR_OPEN_RUN, finishedPrEnd(prEnd)]);
+      assert.deepStrictEqual(lastCause(rig), { step: "advance", reason: "pull-request-ended" });
+      yield* expectNotBuilding(rig);
+    }),
+  );
 
   it.effect("a pr-open run whose pull request is still open stays open and writes nothing", () =>
     Effect.gen(function* () {
@@ -2779,4 +2778,30 @@ describe("watch and timeLimit: the end of a run", () => {
       assert.deepStrictEqual(noPr.reads, []);
     }),
   );
+});
+
+describe("checkBinding: a session relaunched from a pull request's branch", () => {
+  const pull = (headRef: string): PullRequest => ({ ...defaultPr(), headRef });
+  const NOT_ITS_BRANCH = "the session reported PR #12 but its branch is not this session's branch";
+
+  it("binds the pull request on the branch it was started from", () => {
+    assert.strictEqual(
+      checkBinding(pull("t3code/abc"), 12, "main", "t3code/def", false, "t3code/abc"),
+      null,
+    );
+    assert.strictEqual(
+      checkBinding(pull("t3code/abc"), 12, "main", null, false, "t3code/abc"),
+      null,
+    );
+  });
+
+  it("refuses a pull request on any other branch", () => {
+    for (const branch of ["t3code/def", null]) {
+      assert.strictEqual(
+        checkBinding(pull("someone/else"), 12, "main", branch, false, "t3code/abc")?.public,
+        NOT_ITS_BRANCH,
+        String(branch),
+      );
+    }
+  });
 });

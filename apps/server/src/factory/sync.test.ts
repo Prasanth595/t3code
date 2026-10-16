@@ -134,7 +134,7 @@ const makeFork = (upstreamLine: string, forkChanges: Record<string, string> = {}
   write(fork, "factory/scripts/regenerate-routes.sh", regenerateStub, 0o755);
   for (const [file, content] of Object.entries(forkChanges)) write(fork, file, content);
   commit(fork, "factory files");
-  git(dir, "init", "-q", "--bare", origin);
+  git(dir, "init", "-q", "--bare", "-b", "main", origin);
   git(fork, "remote", "set-url", "origin", ORIGIN_URL);
   git(fork, "config", `url.${origin}.insteadOf`, ORIGIN_URL);
   git(fork, "push", "-q", "-u", "origin", "main");

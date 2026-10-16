@@ -183,6 +183,17 @@ export const gateResultsComment = (
   baseSha: string,
 ): string => resultsComment("passed", results, attempt, headSha, baseSha);
 
+/**
+ * The comment for a pull request that was ready already and passed the gate again on a head or a
+ * base branch that had moved: the same table, headed `passed again`.
+ */
+export const regateResultsComment = (
+  results: ReadonlyArray<CommandResult>,
+  attempt: number,
+  headSha: string,
+  baseSha: string,
+): string => resultsComment("passed again", results, attempt, headSha, baseSha);
+
 // ---- types ----------------------------------------------------------------------------------
 
 export interface GateOptions {
@@ -324,6 +335,63 @@ const listNames = (dir: string): ReadonlyArray<string> => {
     return [];
   }
 };
+
+/**
+ * Removes a checkout, or whatever is at `dir`: a symlink is unlinked and never followed, here
+ * and inside the directory. A checkout that is already gone is fine.
+ */
+const removeCheckout = (dir: string): Effect.Effect<void, WorkspaceCleanupError> =>
+  Effect.tryPromise({
+    // Asynchronous: a checkout with installed dependencies takes seconds to delete, and this
+    // runs inside the server.
+    try: async () => {
+      let stat: NodeFS.Stats;
+      try {
+        stat = await NodeFS.promises.lstat(dir);
+      } catch (error) {
+        if (errnoCode(error) === "ENOENT") return;
+        throw error;
+      }
+      if (stat.isDirectory()) await NodeFS.promises.rm(dir, { recursive: true, force: true });
+      else await NodeFS.promises.unlink(dir);
+    },
+    catch: (cause) => new WorkspaceCleanupError({ what: `${dir}: ${causeText(cause)}` }),
+  });
+
+/**
+ * What is under the run's gate directory, in name order. While no gate runs for the run, every
+ * entry is a checkout of a call the server died in.
+ */
+export const leftoverCheckouts = (dataDir: string, run: RunId): ReadonlyArray<string> =>
+  listNames(gateRoot(dataDir, run));
+
+/**
+ * Removes every entry under a run's gate directory `root`, in name order, as the gate removes its
+ * own checkout. `failed` is called with each one that is still there and the error the gate's
+ * `gate_cleanup_failed` line records; the caller decides whether to write the line. The gate calls
+ * this before each checkout, and `regate` before it reads anything.
+ */
+export const removeLeftoverCheckouts = <E>(
+  root: string,
+  failed: (dir: string, error: string) => Effect.Effect<void, E>,
+): Effect.Effect<void, E> =>
+  Effect.gen(function* () {
+    for (const name of listNames(root)) {
+      const dir = NodePath.join(root, name);
+      const removed = yield* Effect.result(removeCheckout(dir));
+      if (Result.isFailure(removed)) yield* failed(dir, removed.failure.message);
+    }
+  });
+
+/** Removes a run's gate directory `root` when it is empty. */
+export const removeEmptyGateRoot = (root: string): Effect.Effect<void> =>
+  Effect.sync(() => {
+    try {
+      NodeFS.rmdirSync(root);
+    } catch {
+      // Not empty, or already gone.
+    }
+  });
 
 const exists = (path: string): boolean => {
   try {
@@ -637,27 +705,7 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
       return { head, merge: { _tag: "merged" } } satisfies Checkout;
     });
 
-  /**
-   * Removes a checkout, or whatever is at `dir`: a symlink is unlinked and never followed, here
-   * and inside the directory. A checkout that is already gone is fine.
-   */
-  const remove = (dir: string): Effect.Effect<void, WorkspaceCleanupError> =>
-    Effect.tryPromise({
-      // Asynchronous: a checkout with installed dependencies takes seconds to delete, and this
-      // runs inside the server.
-      try: async () => {
-        let stat: NodeFS.Stats;
-        try {
-          stat = await NodeFS.promises.lstat(dir);
-        } catch (error) {
-          if (errnoCode(error) === "ENOENT") return;
-          throw error;
-        }
-        if (stat.isDirectory()) await NodeFS.promises.rm(dir, { recursive: true, force: true });
-        else await NodeFS.promises.unlink(dir);
-      },
-      catch: (cause) => new WorkspaceCleanupError({ what: `${dir}: ${causeText(cause)}` }),
-    });
+  const remove = removeCheckout;
 
   /**
    * Makes a standalone repository in `dir` (which should not exist yet), fetches `sha` (a pull
@@ -734,13 +782,9 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
 
         // Anything under the root is a leftover of a call the server died in. One that cannot be
         // removed is noted once per directory, and is tried again by the next call.
-        const removeLeftovers = Effect.gen(function* () {
-          const leftovers = listNames(root);
-          let noted: ReadonlySet<string> | undefined;
-          for (const name of leftovers) {
-            const leftover = NodePath.join(root, name);
-            const removed = yield* Effect.result(workspace.remove(leftover));
-            if (Result.isSuccess(removed)) continue;
+        let noted: ReadonlySet<string> | undefined;
+        const removeLeftovers = removeLeftoverCheckouts(root, (leftover, error) =>
+          Effect.gen(function* () {
             noted ??= new Set(
               (yield* ledgerCall(() => readRun(dataDir, run))).entries.flatMap((entry) =>
                 entry.event === "gate_cleanup_failed" &&
@@ -752,16 +796,13 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
                   : [],
               ),
             );
-            if (noted.has(leftover)) continue;
+            if (noted.has(leftover)) return;
             yield* append(
-              {
-                event: "gate_cleanup_failed",
-                data: { dir: leftover, error: removed.failure.message },
-              },
+              { event: "gate_cleanup_failed", data: { dir: leftover, error } },
               makeCause("gate", "gate-cleanup-failed"),
             );
-          }
-        });
+          }),
+        );
 
         // After the checkout made `dir`, on every path out: remove it, and note it in the ledger
         // when that fails. The result of the attempt stands either way.
@@ -923,17 +964,7 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
         });
 
         // Only an empty root goes.
-        return yield* attemptInDir.pipe(
-          Effect.ensuring(
-            Effect.sync(() => {
-              try {
-                NodeFS.rmdirSync(root);
-              } catch {
-                // Not empty, or already gone.
-              }
-            }),
-          ),
-        );
+        return yield* attemptInDir.pipe(Effect.ensuring(removeEmptyGateRoot(root)));
       }),
     );
   });
