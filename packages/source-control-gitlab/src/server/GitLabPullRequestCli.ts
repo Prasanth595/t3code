@@ -1,5 +1,8 @@
+import * as Cache from "effect/Cache";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -34,6 +37,7 @@ import {
   decodeNotesJson,
   decodeOwnAwardIdJson,
   decodeProjectMergeCapabilitiesJson,
+  decodeProjectPathJson,
   decodeProjectUsersJson,
   decodeRepositoryBlobsJson,
   decodeViewerJson,
@@ -183,6 +187,8 @@ const CONVERSATION_PAGES = 10;
 const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DIFF_TIMEOUT_MS = 60_000;
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
+const PROJECT_PATH_CACHE_CAPACITY = 128;
+const PROJECT_PATH_CACHE_TTL = Duration.minutes(10);
 
 export interface GitLabMergeRequestListBatch {
   readonly items: ReadonlyArray<GitLabMergeRequestListItem>;
@@ -199,6 +205,18 @@ export interface GitLabMergeRequestDiffSlice {
 export class GitLabPullRequestCli extends Context.Service<
   GitLabPullRequestCli,
   {
+    /**
+     * The path GitLab's API knows `repository` by. A repository read from a browser URL carries
+     * the installation's URL prefix, which glab adds to every API call itself, so only GitLab can
+     * say where the prefix ends and the project path begins. Never fails: a host that does not
+     * answer is asked about `repository` as given.
+     */
+    readonly resolveProjectPath: (input: {
+      readonly cwd: string;
+      readonly host: string;
+      readonly repository: string;
+    }) => Effect.Effect<string>;
+
     readonly getViewerUsername: (input: {
       readonly cwd: string;
     }) => Effect.Effect<string, GitLabPullRequestCliError>;
@@ -495,6 +513,36 @@ export const make = Effect.gen(function* () {
       ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
       ...(input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs }),
     });
+
+  const projectPaths = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd = "", host = "", repository = ""] = key.split("\u0000");
+      return gitlab
+        .execute({
+          cwd,
+          args: ["repo", "view", `https://${host}/${repository}`, "--output", "json"],
+        })
+        .pipe(
+          Effect.flatMap((result): Effect.Effect<string, GitLabPullRequestCliError> => {
+            const decoded = decodeProjectPathJson(result.stdout.trim());
+            return Result.isSuccess(decoded)
+              ? Effect.succeed(decoded.success)
+              : Effect.fail(
+                  new GitLabMergeRequestReadError({
+                    command: "glab",
+                    cwd,
+                    operation: "resolveProjectPath",
+                    cause: decoded.failure,
+                  }),
+                );
+          }),
+        );
+    },
+    {
+      capacity: PROJECT_PATH_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? PROJECT_PATH_CACHE_TTL : Duration.zero),
+    },
+  );
 
   const listPage = (input: {
     readonly cwd: string;
@@ -1045,6 +1093,11 @@ export const make = Effect.gen(function* () {
     );
 
   return GitLabPullRequestCli.of({
+    resolveProjectPath: (input) =>
+      Cache.get(projectPaths, [input.cwd, input.host, input.repository].join("\u0000")).pipe(
+        Effect.orElseSucceed(() => input.repository),
+      ),
+
     getViewerUsername: viewerUsername,
 
     listMergeRequests: (input) => {

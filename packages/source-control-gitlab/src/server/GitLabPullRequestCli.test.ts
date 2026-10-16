@@ -1,4 +1,4 @@
-import { afterEach, assert, expect, it, vi } from "@effect/vitest";
+import { afterEach, assert, describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
@@ -1495,4 +1495,98 @@ layer("GitLabPullRequestCli.layer", (it) => {
       assert.strictEqual(mockedExecute.mock.calls.length, 3);
     }),
   );
+
+  describe("resolveProjectPath", () => {
+    const projectJson = (pathWithNamespace: string) =>
+      output(JSON.stringify({ id: 12, path_with_namespace: pathWithNamespace }));
+
+    it.effect("asks GitLab for the project path behind an installation prefix", () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(Effect.succeed(projectJson("team/subgroup/project")));
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+        const path = yield* cli.resolveProjectPath({
+          cwd: "/w",
+          host: "code.example.com",
+          repository: "gitlab/team/subgroup/project",
+        });
+
+        assert.strictEqual(path, "team/subgroup/project");
+        expect(argsOfCall(0)).toEqual([
+          "repo",
+          "view",
+          "https://code.example.com/gitlab/team/subgroup/project",
+          "--output",
+          "json",
+        ]);
+      }),
+    );
+
+    it.effect("keeps a group named like the prefix when no prefix is installed", () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(Effect.succeed(projectJson("gitlab/project")));
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+        const path = yield* cli.resolveProjectPath({
+          cwd: "/w",
+          host: "plain.example.com",
+          repository: "gitlab/project",
+        });
+
+        assert.strictEqual(path, "gitlab/project");
+      }),
+    );
+
+    it.effect("drops the prefix once when a group is named like it", () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(Effect.succeed(projectJson("gitlab/project")));
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+        const path = yield* cli.resolveProjectPath({
+          cwd: "/w",
+          host: "nested.example.com",
+          repository: "gitlab/gitlab/project",
+        });
+
+        assert.strictEqual(path, "gitlab/project");
+      }),
+    );
+
+    it.effect("asks once per repository while the answer is fresh", () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValue(Effect.succeed(projectJson("team/project")));
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+        const input = { cwd: "/w", host: "fresh.example.com", repository: "gitlab/team/project" };
+
+        yield* cli.resolveProjectPath(input);
+        const path = yield* cli.resolveProjectPath(input);
+
+        assert.strictEqual(path, "team/project");
+        assert.strictEqual(mockedExecute.mock.calls.length, 1);
+      }),
+    );
+
+    it.effect("uses the repository as given when GitLab cannot answer, and asks again", () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(
+          Effect.fail(
+            new GitLabCli.GitLabCliCommandError({
+              operation: "execute",
+              command: "glab",
+              cwd: "/w",
+              cause: new Error("glab exited with status 1"),
+            }),
+          ),
+        );
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output("not json")));
+        mockedExecute.mockReturnValueOnce(Effect.succeed(projectJson("team/project")));
+        const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+        const input = { cwd: "/w", host: "flaky.example.com", repository: "gitlab/team/project" };
+
+        assert.strictEqual(yield* cli.resolveProjectPath(input), "gitlab/team/project");
+        assert.strictEqual(yield* cli.resolveProjectPath(input), "gitlab/team/project");
+        assert.strictEqual(yield* cli.resolveProjectPath(input), "team/project");
+      }),
+    );
+  });
 });
