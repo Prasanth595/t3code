@@ -121,6 +121,10 @@ class Fake implements PassWorld {
   runErrorFails = false;
   /** The runs whose gate lock is held, by run id. */
   gateLocks: Array<string> = [];
+  /** The runs with a gate send pending in their ledger, by run id. */
+  pendingSends: Array<string> = [];
+  /** Reading a run's ledger for a pending gate send fails. */
+  pendingSendFails = false;
   /** What `gate` answers per `"<repo>#<issue>"`; started otherwise. */
   gateStarts: Record<string, GateStart> = {};
   now = T0;
@@ -364,6 +368,15 @@ class Fake implements PassWorld {
 
   gateRunning(run: RunId) {
     return this.gateLocks.includes(runIdToString(run));
+  }
+
+  hasPendingGateSend(run: RunId) {
+    if (this.pendingSendFails) {
+      return Effect.fail(
+        new LedgerIoError({ path: "/data/runs/x.jsonl", cause: new Error("disk") }),
+      );
+    }
+    return Effect.succeed(this.pendingSends.includes(runIdToString(run)));
   }
 
   gate(repo: Repo, run: RunId) {
@@ -2218,6 +2231,63 @@ describe("following a building run", () => {
         ]);
       }
     }),
+  );
+
+  it.effect("a pending gate send starts the gate while the session still runs or is paused", () =>
+    Effect.gen(function* () {
+      for (const kind of ["running", "reminded", "paused"] as const) {
+        for (const pending of [true, false]) {
+          const fake = building();
+          if (pending) fake.pendingSends = [runIdToString(fake.runs[0]!.id)];
+          fake.advances[`${REPO}#40`] = [{ kind }];
+          yield* pass(fake, machine([REPO], 3));
+          assert.equal(
+            callsOf(fake).includes(`gate ${REPO}#40`),
+            pending,
+            `${kind} pending=${pending}`,
+          );
+        }
+      }
+    }),
+  );
+
+  it.effect("a pending gate send wins over the gate waiting for a sent comment", () =>
+    Effect.gen(function* () {
+      const fake = building();
+      fake.pendingSends = [runIdToString(fake.runs[0]!.id)];
+      fake.forwards[`${REPO}#40`] = [sent(1, false)];
+      fake.advances[`${REPO}#40`] = [
+        { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
+      ];
+      const line = yield* forwardLine(fake);
+      assert.ok(!line.includes("the gate waits"), line);
+      assert.ok(callsOf(fake).includes(`gate ${REPO}#40`));
+    }),
+  );
+
+  it.effect("a run that ended or needs a person never starts the gate for a pending send", () =>
+    Effect.gen(function* () {
+      for (const kind of ["stuck", "needs-info"] as const) {
+        const fake = building();
+        fake.pendingSends = [runIdToString(fake.runs[0]!.id)];
+        fake.advances[`${REPO}#40`] = [{ kind }];
+        yield* pass(fake, machine([REPO], 3));
+        assert.ok(!callsOf(fake).includes(`gate ${REPO}#40`), kind);
+      }
+    }),
+  );
+
+  it.effect(
+    "a ledger that cannot be read for a pending gate send starts no gate and is recorded",
+    () =>
+      Effect.gen(function* () {
+        const fake = building();
+        fake.pendingSendFails = true;
+        fake.advances[`${REPO}#40`] = [{ kind: "running" }];
+        const { report } = yield* pass(fake, machine([REPO], 3));
+        assert.equal(report.errors, 1);
+        assert.ok(!callsOf(fake).includes(`gate ${REPO}#40`));
+      }),
   );
 
   it.effect("a run whose issue a person closed is over after the forward", () =>
