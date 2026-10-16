@@ -266,6 +266,27 @@ export function hasMarkdownFilePrimaryAction(input: {
   );
 }
 
+export function markdownFileCopyMenuItems(input: {
+  targetPath: string;
+  workspaceRelativePath: string | null;
+  displayPath: string;
+}) {
+  return [
+    {
+      id: "copy-relative",
+      label: "Copy relative path",
+      value: input.displayPath,
+      title: "Relative path",
+    },
+    {
+      id: "copy-full",
+      label: "Copy full path",
+      value: input.targetPath,
+      title: "Full path",
+    },
+  ] as const;
+}
+
 export function shouldUseMarkdownFileBrowserPrimaryAction(input: {
   iconPath: string;
   canOpenInEditor: boolean;
@@ -2050,6 +2071,11 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       if (!api) return;
 
       try {
+        const copyItems = markdownFileCopyMenuItems({
+          targetPath,
+          workspaceRelativePath,
+          displayPath,
+        });
         const clicked = await api.contextMenu.show(
           [
             ...(onOpenMedia ? ([{ id: "preview-media", label: "Preview media" }] as const) : []),
@@ -2058,8 +2084,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
               ? ([{ id: "open-in-browser", label: "Open in integrated browser" }] as const)
               : []),
             ...(onReveal && revealLabel ? ([{ id: "reveal", label: revealLabel }] as const) : []),
-            { id: "copy-relative", label: "Copy relative path" },
-            { id: "copy-full", label: "Copy full path" },
+            ...copyItems.map(({ id, label }) => ({ id, label })),
           ] as const,
           position,
         );
@@ -2080,12 +2105,9 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
           handleRevealInFileManager();
           return;
         }
-        if (clicked === "copy-relative") {
-          handleCopy(displayPath, "Relative path");
-          return;
-        }
-        if (clicked === "copy-full") {
-          handleCopy(targetPath, "Full path");
+        const copyItem = copyItems.find(({ id }) => id === clicked);
+        if (copyItem) {
+          handleCopy(copyItem.value, copyItem.title);
         }
       } catch (cause) {
         reportMarkdownActionFailure(
@@ -2107,6 +2129,7 @@ const MarkdownFileLink = memo(function MarkdownFileLink({
       openInEditorMenuLabel,
       revealLabel,
       targetPath,
+      workspaceRelativePath,
     ],
   );
 
