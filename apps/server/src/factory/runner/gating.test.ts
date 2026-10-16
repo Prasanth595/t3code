@@ -34,10 +34,9 @@ import {
 import { makeCause, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { readRun } from "../ledger/read.ts";
-import { runIdToString, runPath, type RunId } from "../ledger/runId.ts";
+import { runPath, type RunId } from "../ledger/runId.ts";
 import { T0, useTempDirs } from "../ledger/testSupport.ts";
 import {
-  MessageRejectedError,
   SessionsError,
   ThreadNotFoundError,
   type RunStatus,
@@ -51,7 +50,13 @@ import {
   type PullRequest,
 } from "../tracker/github.ts";
 import { advance, type AdvanceOutcome } from "./building.ts";
-import { gate, mergeConflictMessage, type GateContext, type GateStep } from "./gating.ts";
+import {
+  gate,
+  mergeConflictMessage,
+  type GateContext,
+  type GateStep,
+  type GateStepError,
+} from "./gating.ts";
 import { failureMessage, prepareOutputTail, prepareSessionText } from "./messages.ts";
 import { applyActions, progressFrom, type Progress } from "./run.ts";
 import { readProgress } from "./progress.ts";
@@ -230,7 +235,7 @@ const exhausted = (attempts: number) =>
 // ---- the fakes ----------------------------------------------------------------------------------
 
 const ghFailure = () => new GitHubFailed({ args: ["issue"], status: 1, stderr: "boom" });
-const ghRateLimit = () => new GitHubRateLimited({ args: ["issue"], until: "2026-10-04T12:00:00Z" });
+const ghRateLimit = () => new GitHubRateLimited({ args: ["issue"], stderr: "rate limit" });
 const sessionsFailure = (operation: "status" | "send" | "archive" | "thread") =>
   new SessionsError({ operation, cause: "timeout" });
 
@@ -367,7 +372,7 @@ class FakeGh {
       }),
     readyBy: (pr) =>
       this.run(`readyBy ${pr}`, () => {}).pipe(
-        Effect.flatMap(() => {
+        Effect.flatMap((): Effect.Effect<string | null, GitHubError> => {
           if (this.readyByFails) return Effect.fail(ghFailure());
           if (this.readyByRateLimited) return Effect.fail(ghRateLimit());
           return Effect.succeed(this.readyBy);
@@ -417,16 +422,18 @@ class FakeT3 {
   readonly countedAtArchive: Array<number> = [];
   archiveFails = false;
   failAt: number | null = null;
-  private counted = 0;
   worktreeRemoveFails = false;
+  private readonly gh: FakeGh;
 
-  constructor(private readonly gh: FakeGh) {}
+  constructor(gh: FakeGh) {
+    this.gh = gh;
+  }
 
+  /** Records the call; the zero-based call `failAt` among the ones a crash can hit fails. */
   private call(text: string): SessionsError | null {
     this.calls.push(text);
-    const failing = this.failAt === this.counted;
-    this.counted += 1;
-    return failing ? sessionsFailure("status") : null;
+    const index = this.calls.filter((c) => !c.startsWith("removeWorktree")).length - 1;
+    return this.failAt === index ? sessionsFailure("status") : null;
   }
 
   readonly sessions: GateContext["sessions"] = {
@@ -531,9 +538,8 @@ class FakeGate {
     const root = gateRoot(dataDir, run);
     const dir = NodePath.join(root, String(attempt));
     const clock = input.options?.clock ?? (() => T0);
-    const open = () => Ledger.open(dataDir, run, { clock });
     const append = (event: RunEvent, cause: Parameters<Ledger["append"]>[1]) => {
-      const ledger = open();
+      const ledger = Ledger.open(dataDir, run, { clock });
       try {
         ledger.append(event, cause);
       } finally {
@@ -566,7 +572,14 @@ class FakeGate {
       }
       NodeFS.rmSync(path, { recursive: true, force: true });
     };
-    return Effect.gen(this, function* () {
+    const rmdirRoot = () => {
+      try {
+        NodeFS.rmdirSync(root);
+      } catch {
+        // Not empty.
+      }
+    };
+    return Effect.suspend((): Effect.Effect<GateResult, GateError> => {
       NodeFS.mkdirSync(root, { recursive: true });
       // Leftovers of a call the server died in.
       for (const name of NodeFS.readdirSync(root).sort()) remove(NodePath.join(root, name), {});
@@ -576,14 +589,16 @@ class FakeGate {
       this.onCheckout?.(input.base);
       if (this.checkoutFails) {
         if (!this.dead) NodeFS.rmSync(dir, { recursive: true, force: true });
-        return yield* new WorkspaceSpawnError({ cause: new Error("died") });
+        return Effect.fail(new WorkspaceSpawnError({ cause: new Error("died") }));
       }
       const head = this.checkoutHead(input.head);
       if (head.toLowerCase() !== input.head.toLowerCase()) {
         remove(dir, { attempt });
-        return yield* new WorkspaceUnexpectedError({
-          what: `the checkout is at ${head} but the pull request's head is ${input.head}`,
-        });
+        return Effect.fail(
+          new WorkspaceUnexpectedError({
+            what: `the checkout is at ${head} but the pull request's head is ${input.head}`,
+          }),
+        );
       }
       append(
         { event: "gate_checkout", data: { attempt, dir, sha: input.head, base_sha: input.base } },
@@ -604,7 +619,8 @@ class FakeGate {
           makeCause("gate", "gate-merge-conflict", { attempt }),
         );
         remove(dir, { attempt });
-        return { _tag: "conflict", dir, paths: merged.paths } satisfies GateResult;
+        rmdirRoot();
+        return Effect.succeed({ _tag: "conflict", dir, paths: merged.paths } satisfies GateResult);
       }
       const all = [...input.provision, ...input.gate];
       this.calls.push(`gate ${dir} ${all.join(", ")}`);
@@ -612,7 +628,9 @@ class FakeGate {
       this.gateCalls += 1;
       if (this.failGateAt === n) {
         if (!this.dead) remove(dir, { attempt });
-        return yield* new GateCommandSpawnError({ command: all[0]!, cause: new Error("no shell") });
+        return Effect.fail(
+          new GateCommandSpawnError({ command: all[0]!, cause: new Error("no shell") }),
+        );
       }
       const results = this.script(n, all);
       const ran: Array<CommandResult> = [];
@@ -639,14 +657,12 @@ class FakeGate {
         }
       }
       remove(dir, { attempt });
-      try {
-        NodeFS.rmdirSync(root);
-      } catch {
-        // Not empty.
-      }
-      return failure === null
-        ? ({ _tag: "pass", dir, commands: ran, gateCount } satisfies GateResult)
-        : ({ _tag: "fail", dir, commands: ran, failure, gateCount } satisfies GateResult);
+      rmdirRoot();
+      return Effect.succeed(
+        failure === null
+          ? ({ _tag: "pass", dir, commands: ran, gateCount } satisfies GateResult)
+          : ({ _tag: "fail", dir, commands: ran, failure, gateCount } satisfies GateResult),
+      );
     });
   }
 }
@@ -1832,10 +1848,9 @@ describe("gate: the retries run out", () => {
       const output = "ping @octocat <!-- softfac -->\n```\nend\n";
       rig.ws.script = (_, commands) => failingLast(commands, 1, output);
       const step = yield* gateIn(rig);
-      assert.strictEqual(step.kind, "stuck");
       const prepared = prepareSessionText(failureMessage(result(TEST, 1, 12_300, output)));
       assert.ok(prepared.includes("@​octocat"));
-      assert.strictEqual(step.reason, joined(exhausted(1), prepared));
+      assert.deepStrictEqual(step, { kind: "stuck", reason: joined(exhausted(1), prepared) });
       const comment = rig.gh.world.comments[0]!;
       // The output has a run of three backticks, so the fence is four.
       assert.ok(comment.includes(`\`\`\`\`text\n${prepared}\n\`\`\`\``), comment);
@@ -1901,7 +1916,7 @@ const settledLedger = (events: ReadonlyArray<Line>): Array<Line> =>
   );
 
 /** What the loop does after an error: `advance` first, and `gate` when it says the run is ready. */
-const advanceThenGate = (rig: Rig): Effect.Effect<GateStep, unknown> =>
+const advanceThenGate = (rig: Rig): Effect.Effect<GateStep, GateStepError> =>
   Effect.gen(function* () {
     const outcome: AdvanceOutcome = yield* advanceIn(rig);
     switch (outcome.kind) {
@@ -1929,7 +1944,7 @@ const t3CrashCalls = (rig: Rig) =>
  */
 const gateCrashMatrix = (
   name: string,
-  setup: () => Effect.Effect<Rig>,
+  setup: () => Effect.Effect<Rig, GateStepError>,
   want: GateStep,
   comment: { at: number; on: "pr" | "issue" } | null,
   normalise: (events: ReadonlyArray<Line>) => Array<Line> = withoutRepeatedCommands,
@@ -2752,5 +2767,3 @@ describe("apply: a failed re-gate's actions", () => {
       }),
   );
 });
-
-void MessageRejectedError;

@@ -16,6 +16,7 @@ import { Ledger } from "./ledger/ledger.ts";
 import { readRun } from "./ledger/read.ts";
 import { runIdToString, validateRunId, type RunId } from "./ledger/runId.ts";
 import { FactoryProcess, type RunInput, type RunResult, type RunSpawnError } from "./process.ts";
+import { commandLine } from "./runner/messages.ts";
 import { sanitize } from "./text.ts";
 
 /**
@@ -34,8 +35,6 @@ const DEFAULT_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_GIT_TIMEOUT_MS = 30_000;
 const DEFAULT_CHECKOUT_TIMEOUT_MS = 10 * 60 * 1000;
 const GIT_TAIL_BYTES = 1024 * 1024;
-/** The longest command shown in the results comment, in characters. */
-const MAX_COMMAND_CHARS = 300;
 /** The `gate_command` line of an attempt that ran no command because the head conflicts with the base. */
 const MERGE_COMMAND = "softfac: merge the base branch into the head";
 
@@ -135,14 +134,6 @@ export class GateRecordError extends Schema.TaggedError<GateRecordError>()("Gate
 export type GateError = WorkspaceError | GateCommandSpawnError | GateRecordError | LedgerError;
 
 // ---- text -----------------------------------------------------------------------------------
-
-/** The command as one short line: sanitised, newlines and tabs turned into spaces, cut at 300 characters. */
-const commandLine = (command: string): string => {
-  const chars = Array.from(sanitize(command, false));
-  return chars.length > MAX_COMMAND_CHARS
-    ? `${chars.slice(0, MAX_COMMAND_CHARS).join("")}…`
-    : chars.join("");
-};
 
 /**
  * `command` as one line in a code span for a table cell: the span's backticks are longer than any
@@ -244,6 +235,10 @@ export interface CommandResult {
   readonly timedOut: boolean;
   /** The tail of the combined stdout and stderr. */
   readonly output: string;
+  /** The time limit the command had, when it timed out. */
+  readonly timeoutMs?: number;
+  /** Output was dropped from the front of `output`. */
+  readonly truncated?: boolean;
 }
 
 export type GateResult =
@@ -878,12 +873,15 @@ const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, Ga
                 ),
               );
             const ended = yield* Clock.currentTimeMillis;
+            const timeoutMs = options.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
             const result: CommandResult = {
               command,
               exitCode: ran.timedOut || ran.exitCode === null ? -1 : ran.exitCode,
               durationMs: Math.max(0, ended - started),
               timedOut: ran.timedOut,
               output: ran.tail,
+              ...(ran.timedOut && { timeoutMs }),
+              ...(ran.truncated && { truncated: true }),
             };
             commands.push(result);
             if (!provision) gateCount += 1;

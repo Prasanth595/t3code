@@ -154,6 +154,10 @@ const fakeTracker = (script: {
       calls.push(`textCheck ${n} ${since} ${instructors.join(",")}`);
       return answer<TextCheck>(textChecks, "unchanged");
     },
+    // The gate's actions: the claim never performs them.
+    markPrReady: () => Effect.die("not the claim's"),
+    markPrDraft: () => Effect.die("not the claim's"),
+    commentOnPr: () => Effect.die("not the claim's"),
   };
   return { tracker, calls };
 };
@@ -228,6 +232,7 @@ const fakeSessions = (
       calls.push(`removeWorktree ${path}`);
       return script.removeWorktree === undefined ? Effect.void : Effect.fail(script.removeWorktree);
     },
+    send: () => Effect.die("not the claim's"),
   };
   return { sessions, calls, launchRequests };
 };

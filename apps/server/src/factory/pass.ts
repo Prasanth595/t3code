@@ -101,6 +101,11 @@ export interface PassWorld {
   readonly advance: (repo: Repo, run: RunId) => Effect.Effect<AdvanceOutcome, BuildingError>;
   /** Whether the run's gate is running now. */
   readonly gateRunning: (run: RunId) => boolean;
+  /**
+   * Starts the run's gate (`runner/gating.ts`) in the background and returns at once: a pass
+   * never waits for a gate. The ledger has the result, and the next pass carries on from there.
+   */
+  readonly gate: (repo: Repo, run: RunId) => Effect.Effect<GateStart>;
   /** Appends an `error` line to the run's own ledger. */
   readonly recordError: (
     run: RunId,
@@ -114,6 +119,11 @@ export interface PassWorld {
   /** Writes one event to the machine log. */
   readonly record: (event: MachineEvent) => Effect.Effect<void, LedgerError>;
 }
+
+/** What starting a gate did: it runs now, or `max_concurrent_gates` are running already. */
+export type GateStart =
+  | { readonly kind: "started" }
+  | { readonly kind: "queued"; readonly running: number; readonly max: number };
 
 /** The counts the pass prints in its last line. */
 export interface Report {
@@ -181,8 +191,11 @@ const errorKind = (error: StartError | BuildingError): ErrorKind => {
 const sameRepo = (a: string, b: string) => asciiLower(a) === asciiLower(b);
 
 const GATE_RUNNING = "gate running";
-/** The line of a building run whose session reported its pull request. */
-const READY_FOR_GATE = "session finished, ready for the gate";
+/** The line of a building run whose gate this pass started. */
+const GATE_STARTED = "gate started in the background";
+/** The words for a gate that could not start: `max_concurrent_gates` are running. */
+const gateQueued = (start: Extract<GateStart, { kind: "queued" }>) =>
+  `gate queued: ${start.running} gates running, max_concurrent_gates is ${start.max}`;
 
 const FROM_TEXT = " (from Depends on, add the GitHub link)";
 
@@ -427,10 +440,11 @@ const runs = (world: PassWorld, pass: Pass): Effect.Effect<ReadonlyArray<RunInfo
  * runs it applies to). A run in `triage` (or with no state yet) is gone on with by `resume`, from
  * its ledger, so a run cut short after the launch was sent is finished and its session never runs
  * on untracked. A building run has its text watched and its session's result read by `advance`,
- * until its session reports its pull request: the build is then done, and the run waits for the
- * gate (#19) with no tracker or T3 call. A run left in `needs-info` or `stuck` (an end cut short)
- * is finished by `advance`, so its thread is archived and its slot freed. The gate and the states
- * after it are later steps. A run of a repo that is not loaded is left alone. None of it is a new
+ * until its session reports its pull request: the build is then done, and the run gets its gate,
+ * started in the background (softfac's `softfac gate` child), with no tracker or T3 call in the
+ * pass. A run left in `needs-info` or `stuck` (an end cut short) is finished by `advance`, so its
+ * thread is archived and its slot freed. The states after `pr-open` are later steps. A run of a
+ * repo that is not loaded is left alone. None of it is a new
  * claim, so none is counted as one. An issue put back to `ready` is left to the claim step, which
  * finishes its run when it claims the issue.
  */
@@ -456,9 +470,13 @@ const workRuns = (
         notes.parts.push(GATE_RUNNING);
       } else if (yield* withinLimit(world, repo, info, notes, pass)) {
         if (inTriage(info)) yield* resumeRun(world, repo, info, notes, pass);
-        // The session's pull request waits for the gate: nothing is left to read or decide.
-        else if (info.state === "building" && info.prReported) notes.parts.push(READY_FOR_GATE);
-        else if (info.state === "building") yield* followBuilding(world, repo, info, notes, pass);
+        // The session's pull request waits for the gate: nothing is left to read or decide
+        // here, and the gate decides in the background.
+        else if (info.state === "building" && info.prReported) {
+          yield* startGate(world, repo, info, notes);
+        } else if (info.state === "building") {
+          yield* followBuilding(world, repo, info, notes, pass);
+        }
         // A run left in `needs-info` or `stuck` has its end done by `advance` (softfac's `finishing`).
         else if (info.state === "needs-info" || info.state === "stuck") {
           yield* advanceRun(world, repo, info, notes, pass);
@@ -542,6 +560,17 @@ const followBuilding = (
     yield* advanceRun(world, repo, info, notes, pass);
   });
 
+/** Starts the run's gate in the background, and says so, or that it is queued. */
+const startGate = (
+  world: PassWorld,
+  repo: Repo,
+  info: RunInfo,
+  notes: Notes,
+): Effect.Effect<void> =>
+  Effect.map(world.gate(repo, info.id), (start) => {
+    notes.parts.push(start.kind === "started" ? GATE_STARTED : gateQueued(start));
+  });
+
 /** `advance` for a run, and what it did in a line. */
 const advanceRun = (
   world: PassWorld,
@@ -569,7 +598,11 @@ const advanceRun = (
         );
         break;
       case "ready-for-gate":
-        notes.parts.push(READY_FOR_GATE);
+        notes.parts.push("session finished");
+        yield* startGate(world, repo, info, notes);
+        break;
+      case "passed":
+        notes.parts.push("the gate passed and the pull request is ready for review");
         break;
       case "needs-info":
         notes.parts.push(

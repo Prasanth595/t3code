@@ -12,12 +12,18 @@ import { makeCause, type Cause, type CauseStep } from "../ledger/events.ts";
 import type { Ledger } from "../ledger/ledger.ts";
 import type { BoundGitHub, GitHubError } from "../tracker/github.ts";
 import { ThreadNotFoundError } from "../t3/sessions.ts";
-import type { FactorySessions, SessionsError } from "../t3/sessions.ts";
+import type { FactorySessions, MessageRejectedError, SessionsError } from "../t3/sessions.ts";
 import { questionsComment, statusBody, stuckComment, type WorkLeft } from "./messages.ts";
-import type { Seen } from "./progress.ts";
+import { GATE_RESULTS_POSTED, type Seen } from "./progress.ts";
 
-/** What the stop and finish paths can fail with. */
-export type RunError = GitHubError | LedgerError | InvalidTransition | SessionsError;
+/** What the stop, finish and gate-action paths can fail with. */
+export type RunError =
+  | GitHubError
+  | LedgerError
+  | InvalidTransition
+  | SessionsError
+  | ThreadNotFoundError
+  | MessageRejectedError;
 
 /** What the stop and finish paths call: the tracker and the sessions, whichever step runs them. */
 export interface RunContext {
@@ -27,9 +33,19 @@ export interface RunContext {
   readonly project: { readonly base: string };
   readonly tracker: Pick<
     BoundGitHub,
-    "setState" | "unassign" | "postComment" | "upsertStatusComment"
+    | "setState"
+    | "assign"
+    | "unassign"
+    | "postComment"
+    | "upsertStatusComment"
+    | "markPrReady"
+    | "markPrDraft"
+    | "commentOnPr"
   >;
-  readonly sessions: Pick<FactorySessions["Service"], "archive" | "thread" | "removeWorktree">;
+  readonly sessions: Pick<
+    FactorySessions["Service"],
+    "archive" | "thread" | "removeWorktree" | "send"
+  >;
 }
 
 /**
@@ -49,6 +65,14 @@ export interface Progress {
   stop: Stop | null;
   /** What the ledger said when the step began: the comment-once guards read it. */
   readonly seen: Seen;
+  /** The comment `post-gate-results` posts on the pull request. */
+  gateComment?: string;
+  /** The ledger already says the gate results are on the pull request. */
+  gateResultsPosted: boolean;
+  /** The command id of the message `send-gate-failure` sends, so a retry is the same command. */
+  gateCommandId?: string;
+  /** The attempt and run ordinal `send-gate-failure` records as sent back, right after the send. */
+  gateSent?: { readonly attempt: number; readonly runOrdinal: number };
 }
 
 /** Where the issue stands, from what the ledger says. `fallback` is the state of a run that has none yet. */
@@ -61,6 +85,7 @@ export const progressFrom = (step: CauseStep, seen: Seen, fallback: State): Prog
   pr: seen.lastPr?.pr ?? null,
   stop: null,
   seen,
+  gateResultsPosted: seen.resultsPosted,
 });
 
 /** The words for what a failed call said: its message when it has one. */
@@ -97,7 +122,10 @@ export const finishBuilding = (
  * `at.seen` says (the questions, and the stuck decision, which `at.stop` words). The
  * `state_changed` line is written last, after every action, so a ledger that still shows the old
  * state means the transition may be unfinished and is run again. `cause` is the cause of every
- * line written. Actions that belong to later steps are an `InvalidTransition`.
+ * line written. The gate's actions: marking the pull request ready is repeated safely, its
+ * results comment is posted once (`at.gateResultsPosted`, the `gate-results-posted` step), and
+ * a failure is sent under `at.gateCommandId` and then recorded as sent back when `at.gateSent`
+ * says which attempt and run. Actions that belong to later steps are an `InvalidTransition`.
  */
 export const applyActions = (
   ctx: RunContext,
@@ -163,9 +191,56 @@ export const applyActions = (
           yield* ctx.tracker.setState(issue, action.state);
           movedTo = action.state;
           break;
+        case "assign-to-machine":
+          yield* ctx.tracker.assign(issue, ctx.trackerUser);
+          break;
         case "unassign":
           yield* ctx.tracker.unassign(issue, ctx.trackerUser);
           break;
+        case "mark-pr-draft":
+          yield* ctx.tracker.markPrDraft(action.pr);
+          break;
+        case "mark-pr-ready":
+          yield* ctx.tracker.markPrReady(action.pr);
+          break;
+        case "post-gate-results": {
+          if (at.gateResultsPosted) break;
+          const body = at.gateComment;
+          if (body === undefined) {
+            return yield* new InvalidTransition({ state: at.state, event: action.kind });
+          }
+          yield* ctx.tracker.commentOnPr(action.pr, body);
+          yield* ledger(() =>
+            out.append(
+              { event: "step_changed", data: { step: GATE_RESULTS_POSTED } },
+              makeCause(at.step, "gate-results-posted"),
+            ),
+          );
+          at.gateResultsPosted = true;
+          break;
+        }
+        case "send-gate-failure": {
+          const commandId = at.gateCommandId;
+          if (at.threadId === null || commandId === undefined) {
+            return yield* new InvalidTransition({ state: at.state, event: action.kind });
+          }
+          // The command id is the run's and the attempt's, so a send repeated after a crash is
+          // the same command.
+          yield* ctx.sessions.send(at.threadId, commandId, action.output);
+          const sent = at.gateSent;
+          if (sent !== undefined) {
+            yield* ledger(() =>
+              out.append(
+                {
+                  event: "gate_sent_back",
+                  data: { attempt: sent.attempt, run_ordinal: sent.runOrdinal },
+                },
+                makeCause(at.step, cause.reason, { attempt: sent.attempt }),
+              ),
+            );
+          }
+          break;
+        }
         case "update-status-comment":
           yield* ctx.tracker.upsertStatusComment(
             issue,

@@ -38,6 +38,26 @@ export const LIST_LIMIT = 200;
 export const MARKER = "<!-- softfac -->";
 /** Ends the single status comment instead of {@link MARKER}. */
 export const STATUS_MARKER = "<!-- softfac:status -->";
+
+/** Who took a pull request out of draft last: the newest ready-for-review event's actor. */
+export const READY_BY_QUERY =
+  "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { timelineItems(itemTypes: [READY_FOR_REVIEW_EVENT], last: 1) { nodes { ... on ReadyForReviewEvent { actor { login } } } } } } }";
+
+const ReadyByAnswer = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      pullRequest: Schema.Struct({
+        timelineItems: Schema.Struct({
+          nodes: Schema.Array(
+            Schema.Struct({
+              actor: Schema.optional(Schema.NullOr(Schema.Struct({ login: Schema.String }))),
+            }),
+          ),
+        }),
+      }),
+    }),
+  }),
+});
 /** The most a file read through the contents API may be. A project config is a few lines. */
 export const MAX_FILE_BYTES = 64 * 1024;
 
@@ -930,6 +950,22 @@ export const makeGitHub = (options: GitHubOptions) => {
     );
 
   /**
+   * The login of whoever took pull request `pr` out of draft last. `null` when it never was or
+   * GitHub names no actor (a deleted account). One GraphQL call.
+   */
+  const readyBy = (pr: number): GitHubEffect<string | null> =>
+    Effect.gen(function* () {
+      const args = yield* issueQueryArgs(READY_BY_QUERY, pr);
+      const answer = yield* ghJson(
+        args,
+        ReadyByAnswer,
+        "a GraphQL response with the pull request's timeline",
+      );
+      const last = answer.data.repository.pullRequest.timelineItems.nodes.at(-1);
+      return last?.actor?.login ?? null;
+    });
+
+  /**
    * How `head` stands against `base`, by GitHub's compare API (`status` of `base...head`).
    * A ref that GitHub does not know (a 404) is null. Only the status is read, so a long
    * history costs one small answer. Each ref goes into the API path the way `branchTip`
@@ -1331,6 +1367,7 @@ export const makeGitHub = (options: GitHubOptions) => {
     markPrReady,
     markPrDraft,
     commentOnPr,
+    readyBy,
     compare,
     checks,
     openBlockers,

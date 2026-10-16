@@ -419,7 +419,10 @@ describe("liveWorld", () => {
   };
 
   const worldOf = (process: FactoryProcess["Service"]) =>
-    liveWorld(machine, "/factory-test/data", process, stubSessions, () => NOW, "mac-mini");
+    liveWorld(machine, "/factory-test/data", process, stubSessions, () => NOW, "mac-mini", {
+      gate: { run: () => Effect.succeed({ _tag: "running" as const }) },
+      wake: Effect.void,
+    });
 
   const repo: Repo = {
     watched: machine.repos[0]!,
