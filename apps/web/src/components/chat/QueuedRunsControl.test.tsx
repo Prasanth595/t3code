@@ -68,6 +68,7 @@ describe("QueuedRunsControl automatic completion delivery", () => {
         editingRunId={null}
         onEditQueuedRun={() => undefined}
         onCancelEdit={() => undefined}
+        onResumeLimitedThread={() => undefined}
       />,
     );
 
@@ -109,6 +110,7 @@ describe("QueuedRunsControl attachments and edit mode", () => {
         editingRunId={null}
         onEditQueuedRun={() => undefined}
         onCancelEdit={() => undefined}
+        onResumeLimitedThread={() => undefined}
       />,
     );
 
@@ -145,6 +147,7 @@ describe("QueuedRunsControl attachments and edit mode", () => {
         editingRunId={null}
         onEditQueuedRun={() => undefined}
         onCancelEdit={() => undefined}
+        onResumeLimitedThread={() => undefined}
       />,
     );
 
@@ -163,6 +166,7 @@ describe("QueuedRunsControl attachments and edit mode", () => {
         editingRunId={"run:queued" as never}
         onEditQueuedRun={() => undefined}
         onCancelEdit={() => undefined}
+        onResumeLimitedThread={() => undefined}
       />,
     );
 

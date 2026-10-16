@@ -63,6 +63,8 @@ export function QueuedRunsControl({
   readonly editingRunId: RunId | null;
   readonly onEditQueuedRun: (request: EditQueuedRunRequest) => void;
   readonly onCancelEdit: () => void;
+  /** The composer's Resume: continues the usage-limited run, then the queue. */
+  readonly onResumeLimitedThread: () => void;
 }) {
   const projection = useThreadProjection(
     scopeThreadRef(props.environmentId, props.threadId),
@@ -242,8 +244,16 @@ export function QueuedRunsControl({
     }
   };
 
+  // Fork guards until upstream #14617 lands. Replace with upstream when #14617 merges.
+  // Resuming mid-edit would send the saved text, not the draft being edited.
+  const resumeBlockedByEdit = props.editingRunId !== null;
   const resume = async () => {
-    if (resuming) return;
+    if (resuming || resumeBlockedByEdit) return;
+    // The server keeps a usage-limited queue closed until the limited run continues.
+    if (workflow?.heldByUsageLimit) {
+      props.onResumeLimitedThread();
+      return;
+    }
     setResuming(true);
     try {
       await resumeQueue({
@@ -291,14 +301,25 @@ export function QueuedRunsControl({
               Queue paused
             </ComposerBanner.Content>
             <ComposerBanner.Actions>
-              <Button
-                size="xs"
-                variant="ghost"
-                disabled={resuming || busyRunId !== null}
-                onClick={() => void resume()}
-              >
-                Resume queue
-              </Button>
+              <Tooltip>
+                <TooltipTrigger render={<span className="flex shrink-0" />}>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    disabled={resuming || busyRunId !== null || resumeBlockedByEdit}
+                    onClick={() => void resume()}
+                  >
+                    Resume queue
+                  </Button>
+                </TooltipTrigger>
+                <TooltipPopup>
+                  {resumeBlockedByEdit
+                    ? "Save or cancel the queued message edit first"
+                    : workflow.heldByUsageLimit
+                      ? "Continue the limited thread, then the queue"
+                      : "Send the next queued message"}
+                </TooltipPopup>
+              </Tooltip>
             </ComposerBanner.Actions>
           </ComposerBanner.Row>
         ) : null}

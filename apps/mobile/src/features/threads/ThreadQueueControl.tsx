@@ -196,9 +196,21 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       {workflow?.isHeld && queuedRuns.length > 0 ? (
         <View className="gap-2 py-3">
           <Text className="text-sm text-foreground-muted">Queue held after restart</Text>
+          {/* Fork guards until upstream #14617 lands. Replace with upstream when #14617 merges.
+              Mobile cannot continue a usage-limited run, and the server refuses the queue until
+              it continues. Resuming mid-edit would send the saved text, not the draft. */}
+          {workflow.heldByUsageLimit || editing !== null ? (
+            <Text className="text-sm text-foreground-muted">
+              {workflow.heldByUsageLimit
+                ? "A usage limit holds this queue until the thread continues."
+                : "Save or cancel the queued message edit first."}
+            </Text>
+          ) : null}
           <Button
             label="Resume queue"
-            disabled={resuming || busyRunId !== null}
+            disabled={
+              resuming || busyRunId !== null || workflow.heldByUsageLimit || editing !== null
+            }
             onPress={async () => {
               if (busyRef.current) return;
               busyRef.current = true;

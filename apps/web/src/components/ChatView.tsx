@@ -10482,12 +10482,14 @@ export default function ChatView(props: ChatViewProps) {
           editingRunId={editingQueuedRun?.runId ?? null}
           onEditQueuedRun={beginEditingQueuedRunStable}
           onCancelEdit={cancelEditingQueuedRunStable}
+          onResumeLimitedThread={onComposerResumeStable}
         />
       ) : null,
     [
       activeThread,
       beginEditingQueuedRunStable,
       cancelEditingQueuedRunStable,
+      onComposerResumeStable,
       editingQueuedRun?.runId,
       isServerThread,
       keybindings,
