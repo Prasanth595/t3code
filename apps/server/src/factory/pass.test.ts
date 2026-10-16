@@ -110,7 +110,14 @@ class Fake implements PassWorld {
   events: Array<MachineEvent> = [];
 
   runIn(issue: number, state: State | null, repo = REPO, session = false) {
-    this.runs.push({ id: rid(issue, repo), state, unreadable: false, confirmed: true, session });
+    this.runs.push({
+      id: rid(issue, repo),
+      state,
+      unreadable: false,
+      confirmed: true,
+      session,
+      prReported: false,
+    });
   }
 
   pushStart(key: string, answer: StartOutcome | StartError) {
@@ -213,6 +220,7 @@ class Fake implements PassWorld {
         unreadable: false,
         confirmed: true,
         session: false,
+        prReported: false,
       });
     }
     if ("kind" in answer && answer.kind === "started") {
@@ -227,6 +235,7 @@ class Fake implements PassWorld {
           unreadable: false,
           confirmed: true,
           session: false,
+          prReported: false,
         });
       return Effect.succeed(answer);
     }
@@ -376,6 +385,24 @@ describe("claiming new issues", () => {
       fake.ready[REPO] = [1];
       yield* pass(fake, machine([REPO], 1));
       assert.deepEqual(starts(fake), []);
+    }),
+  );
+
+  it.effect("a building run whose pull request waits for the gate uses no slot", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runs.push({
+        id: rid(40),
+        state: BUILDING,
+        unreadable: false,
+        confirmed: true,
+        session: true,
+        prReported: true,
+      });
+      fake.ready[REPO] = [1];
+      fake.pushStart(`${REPO}#1`, started(1));
+      yield* pass(fake, machine([REPO], 1));
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
     }),
   );
 
@@ -562,6 +589,7 @@ describe("claiming new issues", () => {
         unreadable: true,
         confirmed: false,
         session: false,
+        prReported: false,
       });
       fake.ready[REPO] = [1];
       fake.pushStart(`${REPO}#1`, started(1));
@@ -736,6 +764,7 @@ describe("runs that are confirmed and still in triage", () => {
         unreadable: false,
         confirmed: true,
         session: false,
+        prReported: false,
       });
       fake.pushStart(`${REPO}#13`, started(13));
       yield* pass(fake, machine([REPO], 3));
@@ -962,6 +991,7 @@ describe("runs that are confirmed and still in triage", () => {
           unreadable: false,
           confirmed: false,
           session: true,
+          prReported: false,
         });
       }
       const { lines } = yield* pass(fake, machine([REPO], 3));
@@ -1034,6 +1064,7 @@ describe("claims that have no run in the ledger", () => {
         unreadable: false,
         confirmed: false,
         session: false,
+        prReported: false,
       });
       fake.triage[REPO] = [12];
       fake.pushStart(`${REPO}#12`, { kind: "stuck", run: rid(12), reason: "could not confirm" });
@@ -1052,6 +1083,7 @@ describe("claims that have no run in the ledger", () => {
         unreadable: false,
         confirmed: false,
         session: false,
+        prReported: false,
       });
       fake.ready[REPO] = [3];
       fake.pushStart(`${REPO}#3`, started(3));
@@ -1592,6 +1624,7 @@ describe("what the pass records", () => {
         unreadable: true,
         confirmed: false,
         session: false,
+        prReported: false,
       });
       const { report, lines } = yield* pass(fake, machine([REPO], 1));
       assert.deepEqual(fake.events[0], { event: "pass_started", data: {} });

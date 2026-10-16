@@ -66,9 +66,30 @@ describe("listUnfinishedRuns", () => {
     runAt(dataDir, rid(2), T0 + 10_000, "pr-open", true);
     runAt(dataDir, rid(4), T0 + 30_000, null);
     expect(listUnfinishedRuns(dataDir)).toEqual([
-      { id: rid(1), state: "triage", unreadable: false, confirmed: true, session: false },
-      { id: rid(3), state: "building", unreadable: false, confirmed: true, session: false },
-      { id: rid(4), state: null, unreadable: false, confirmed: true, session: false },
+      {
+        id: rid(1),
+        state: "triage",
+        unreadable: false,
+        confirmed: true,
+        session: false,
+        prReported: false,
+      },
+      {
+        id: rid(3),
+        state: "building",
+        unreadable: false,
+        confirmed: true,
+        session: false,
+        prReported: false,
+      },
+      {
+        id: rid(4),
+        state: null,
+        unreadable: false,
+        confirmed: true,
+        session: false,
+        prReported: false,
+      },
     ]);
   });
 
@@ -84,8 +105,22 @@ describe("listUnfinishedRuns", () => {
     // A directory named like a run file is a run whose file cannot be read.
     NodeFS.mkdirSync(NodePath.join(dataDir, RUNS_DIR, runIdFileName(rid(6))));
     expect(listUnfinishedRuns(dataDir)).toEqual([
-      { id: rid(7), state: "building", unreadable: false, confirmed: true, session: false },
-      { id: rid(6), state: null, unreadable: true, confirmed: false, session: false },
+      {
+        id: rid(7),
+        state: "building",
+        unreadable: false,
+        confirmed: true,
+        session: false,
+        prReported: false,
+      },
+      {
+        id: rid(6),
+        state: null,
+        unreadable: true,
+        confirmed: false,
+        session: false,
+        prReported: false,
+      },
     ]);
   });
 
@@ -105,7 +140,14 @@ describe("listUnfinishedRuns", () => {
       `{"ts":"2026-10-04T10:13:16.123Z","ms":${T0},"event":"state_changed","data":{"from":"ready","to":"later"}}\n`,
     );
     expect(listUnfinishedRuns(dataDir)).toEqual([
-      { id: rid(9), state: null, unreadable: false, confirmed: false, session: false },
+      {
+        id: rid(9),
+        state: null,
+        unreadable: false,
+        confirmed: false,
+        session: false,
+        prReported: false,
+      },
     ]);
   });
 
@@ -113,7 +155,14 @@ describe("listUnfinishedRuns", () => {
     const dataDir = tempDir();
     runAt(dataDir, rid(8), T0, "triage", false, false);
     expect(listUnfinishedRuns(dataDir)).toEqual([
-      { id: rid(8), state: "triage", unreadable: false, confirmed: false, session: false },
+      {
+        id: rid(8),
+        state: "triage",
+        unreadable: false,
+        confirmed: false,
+        session: false,
+        prReported: false,
+      },
     ]);
   });
 
@@ -126,13 +175,21 @@ describe("listUnfinishedRuns", () => {
     // A file of another issue that cannot be read is not opened, so it is not listed.
     NodeFS.mkdirSync(NodePath.join(dataDir, RUNS_DIR, runIdFileName(rid(3))));
     expect(listUnfinishedRuns(dataDir, { repo: "RawPhp/Softfac", issue: 1 })).toEqual([
-      { id: rid(1), state: "triage", unreadable: false, confirmed: true, session: false },
+      {
+        id: rid(1),
+        state: "triage",
+        unreadable: false,
+        confirmed: true,
+        session: false,
+        prReported: false,
+      },
       {
         id: rid(1, "rawphp/softfac", 2),
         state: "building",
         unreadable: false,
         confirmed: true,
         session: false,
+        prReported: false,
       },
     ]);
   });
@@ -197,7 +254,14 @@ describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
     const open = writeRun(dataDir, rid(2), stateLine("building"));
     vi.mocked(NodeFS.readFileSync).mockClear();
     expect(listUnfinishedRuns(dataDir)).toEqual([
-      { id: rid(2), state: "building", unreadable: false, confirmed: false, session: false },
+      {
+        id: rid(2),
+        state: "building",
+        unreadable: false,
+        confirmed: false,
+        session: false,
+        prReported: false,
+      },
     ]);
     expect(fullReads()).toContain(open);
     expect(fullReads()).not.toContain(finished);
@@ -217,7 +281,14 @@ describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
     const dataDir = tempDir();
     writeRun(dataDir, rid(1), stateLine("building") + finishedLine.slice(0, 40));
     expect(listUnfinishedRuns(dataDir)).toEqual([
-      { id: rid(1), state: "building", unreadable: false, confirmed: false, session: false },
+      {
+        id: rid(1),
+        state: "building",
+        unreadable: false,
+        confirmed: false,
+        session: false,
+        prReported: false,
+      },
     ]);
   });
 
@@ -230,7 +301,14 @@ describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
     );
     vi.mocked(NodeFS.readFileSync).mockClear();
     expect(listUnfinishedRuns(dataDir)).toEqual([
-      { id: rid(1), state: "building", unreadable: false, confirmed: false, session: false },
+      {
+        id: rid(1),
+        state: "building",
+        unreadable: false,
+        confirmed: false,
+        session: false,
+        prReported: false,
+      },
     ]);
     expect(fullReads()).toContain(path);
   });
@@ -251,7 +329,14 @@ describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
     const dataDir = tempDir();
     writeRun(dataDir, rid(1), stateLine("building") + "garbage\n");
     expect(listUnfinishedRuns(dataDir)).toEqual([
-      { id: rid(1), state: "building", unreadable: false, confirmed: false, session: false },
+      {
+        id: rid(1),
+        state: "building",
+        unreadable: false,
+        confirmed: false,
+        session: false,
+        prReported: false,
+      },
     ]);
   });
 
@@ -272,7 +357,13 @@ describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
     writeRun(dataDir, rid(1), "\n");
     writeRun(dataDir, rid(2), "\n\n");
     writeRun(dataDir, rid(3), "\n\r\n");
-    const unfinished = { state: null, unreadable: false, confirmed: false, session: false };
+    const unfinished = {
+      state: null,
+      unreadable: false,
+      confirmed: false,
+      session: false,
+      prReported: false,
+    };
     expect(listUnfinishedRuns(dataDir)).toEqual([
       { id: rid(1), ...unfinished },
       { id: rid(2), ...unfinished },
@@ -284,8 +375,28 @@ describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
     const dataDir = tempDir();
     writeRun(dataDir, rid(1), stateLine("building") + "\n".repeat(9000));
     expect(listUnfinishedRuns(dataDir)).toEqual([
-      { id: rid(1), state: "building", unreadable: false, confirmed: false, session: false },
+      {
+        id: rid(1),
+        state: "building",
+        unreadable: false,
+        confirmed: false,
+        session: false,
+        prReported: false,
+      },
     ]);
+  });
+});
+
+describe("listUnfinishedRuns: a reported pull request", () => {
+  it("is listed from pr_opened until the run is building again", () => {
+    const dataDir = tempDir();
+    runAt(dataDir, rid(1), T0, "building");
+    const opened = handles.at(-1)!;
+    opened.append({ event: "pr_opened", data: { pr: 12, url: "https://x/pull/12" } }, cause);
+    expect(listUnfinishedRuns(dataDir).map((info) => info.prReported)).toEqual([true]);
+    opened.append({ event: "state_changed", data: { from: "building", to: "pr-open" } }, cause);
+    opened.append({ event: "state_changed", data: { from: "pr-open", to: "building" } }, cause);
+    expect(listUnfinishedRuns(dataDir).map((info) => info.prReported)).toEqual([false]);
   });
 });
 
@@ -296,6 +407,7 @@ describe("holdsSlot", () => {
     unreadable,
     confirmed,
     session: false,
+    prReported: false,
   });
 
   it("every confirmed unfinished run holds a slot but one waiting in pr-open", () => {
@@ -308,6 +420,10 @@ describe("holdsSlot", () => {
   it("a run that is not confirmed holds no slot: it never launches a session", () => {
     expect(holdsSlot(run("triage", false))).toBe(false);
     expect(holdsSlot(run(null, false))).toBe(false);
+  });
+
+  it("a building run whose session reported its pull request holds no slot: it waits for the gate", () => {
+    expect(holdsSlot({ ...run("building", true), prReported: true })).toBe(false);
   });
 
   it("a run whose file cannot be read holds a slot", () => {
