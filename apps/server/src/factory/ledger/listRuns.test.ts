@@ -292,9 +292,25 @@ describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
     const small = writeRun(dataDir, rid(1), stateLine("triage") + finishedLine);
     const blank = writeRun(dataDir, rid(2), stateLine("triage") + finishedLine + "\n\n");
     const crlf = writeRun(dataDir, rid(3), stateLine("triage") + finishedLine + "\r\n");
+    // The control: an open sibling is read whole, so the reads below are the ones recorded.
+    const open = writeRun(dataDir, rid(4), stateLine("building"));
     vi.mocked(NodeFS.readFileSync).mockClear();
-    expect(listUnfinishedRuns(dataDir)).toEqual([]);
+    expect(listUnfinishedRuns(dataDir).map((run) => run.id)).toEqual([rid(4)]);
+    expect(fullReads()).toContain(open);
     for (const path of [small, blank, crlf]) expect(fullReads()).not.toContain(path);
+  });
+
+  it("a run file that vanishes between its listing and its read is no row", () => {
+    const dataDir = tempDir();
+    const gone = writeRun(dataDir, rid(1), stateLine("building"));
+    writeRun(dataDir, rid(2), stateLine("building"));
+    // The file is still there for the listing and the lstat; the read finds it gone.
+    vi.mocked(NodeFS.readFileSync).mockImplementation(((target: never, ...rest: never[]) => {
+      if (String(target) === gone) throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+      return (actualFs.readFileSync as (...args: never[]) => unknown)(target, ...rest);
+    }) as typeof NodeFS.readFileSync);
+    expect(listUnfinishedRuns(dataDir).map((run) => run.id)).toEqual([rid(2)]);
+    expect(readRuns(dataDir).map((read) => read.summary.id)).toEqual([rid(2)]);
   });
 
   it("reads a file whose last line is cut off in full and lists it as unfinished", () => {

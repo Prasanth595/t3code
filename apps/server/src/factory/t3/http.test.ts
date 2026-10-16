@@ -28,7 +28,7 @@ import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 import { Attention, type AttentionItem } from "../attention.ts";
-import { FactoryLoop } from "../index.ts";
+import { FactoryLoop, hostName } from "../index.ts";
 import { makeCause, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { readRun } from "../ledger/read.ts";
@@ -301,6 +301,7 @@ describe("GET /api/factory/status", () => {
       assert.strictEqual(body.state, "idle");
       assert.strictEqual(body.reason, "no factory config");
       assert.strictEqual(body.version, packageJson.version);
+      assert.strictEqual(body.machine, hostName());
       assert.strictEqual(body.machine_config, NodePath.join(dir, "config.yml"));
       assert.strictEqual(body.data_dir, dir);
       assert.deepStrictEqual(Object.keys(body), [
