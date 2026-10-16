@@ -84,6 +84,13 @@ import {
   MachineMapRequestError,
 } from "./machineMapClient.ts";
 import {
+  WebPushEndpointInput,
+  WebPushError,
+  WebPushPublicKey,
+  WebPushSubscribeInput,
+  WebPushTestResult,
+} from "./webPush.ts";
+import {
   AuthAccessStreamError,
   AuthAccessStreamEvent,
   EnvironmentAuthorizationError,
@@ -602,6 +609,11 @@ export const WS_METHODS = {
   machineMapReportDesktop: "machineMap.reportDesktop",
   machineMapShareSettings: "machineMap.shareSettings",
   machineMapRead: "machineMap.read",
+
+  // Fork: Web Push (webPush.ts)
+  webPushPublicKey: "webPush.publicKey",
+  webPushSubscribe: "webPush.subscribe",
+  webPushTest: "webPush.test",
 } as const;
 
 const forkChangelogError = Schema.Union([ForkChangelogError, EnvironmentAuthorizationError]);
@@ -668,6 +680,25 @@ const WsMachineMapReadRpc = Rpc.make(WS_METHODS.machineMapRead, {
   payload: Schema.Struct({}),
   success: MachineMapPanelState,
   error: machineMapError,
+});
+
+const webPushError = Schema.Union([WebPushError, EnvironmentAuthorizationError]);
+/** Fork: the key that a browser subscribes with, so that this server can push to it. */
+const WsWebPushPublicKeyRpc = Rpc.make(WS_METHODS.webPushPublicKey, {
+  payload: Schema.Struct({}),
+  success: WebPushPublicKey,
+  error: webPushError,
+});
+const WsWebPushSubscribeRpc = Rpc.make(WS_METHODS.webPushSubscribe, {
+  payload: WebPushSubscribeInput,
+  success: Schema.Struct({}),
+  error: webPushError,
+});
+/** Fork: sends a test notification to one subscription of this server. */
+const WsWebPushTestRpc = Rpc.make(WS_METHODS.webPushTest, {
+  payload: WebPushEndpointInput,
+  success: WebPushTestResult,
+  error: webPushError,
 });
 
 const WsServerUpsertKeybindingRpc = Rpc.make(WS_METHODS.serverUpsertKeybinding, {
@@ -2154,4 +2185,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsMachineMapShareSettingsRpc,
   WsMachineMapReadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,
+  WsWebPushPublicKeyRpc,
+  WsWebPushSubscribeRpc,
+  WsWebPushTestRpc,
 ).middleware(RpcScopeAuthorization);

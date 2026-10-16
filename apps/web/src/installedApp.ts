@@ -8,6 +8,7 @@ import { getClientSettings } from "./hooks/useSettings";
 
 const SERVICE_WORKER_URL = "/sw.js";
 const NOTIFICATION_CLICK = "t3code:notification-click";
+const OPEN_URL = "t3code:open-url";
 
 function supported(): boolean {
   return !isElectron && "serviceWorker" in navigator;
@@ -60,15 +61,24 @@ export async function showInstalledAppNotification(
   return shown ?? null;
 }
 
-/** Runs the click action of a worker notification. Returns the cleanup for the listener. */
-export function listenForInstalledAppNotificationClicks(): () => void {
+/**
+ * Runs the click action of a worker notification. The click on a Web Push notification, which has
+ * no action in this page, opens its path with `openUrl`. Returns the cleanup for the listener.
+ */
+export function listenForInstalledAppNotificationClicks(
+  openUrl: (url: string) => void,
+): () => void {
   if (!supported()) return () => undefined;
   const onMessage = (event: MessageEvent<unknown>) => {
     const message = event.data;
+    if (typeof message !== "object" || message === null || !("type" in message)) return;
+    if (message.type === OPEN_URL) {
+      if ("url" in message && typeof message.url === "string" && message.url.startsWith("/")) {
+        openUrl(message.url);
+      }
+      return;
+    }
     if (
-      typeof message !== "object" ||
-      message === null ||
-      !("type" in message) ||
       message.type !== NOTIFICATION_CLICK ||
       !("tag" in message) ||
       typeof message.tag !== "string"

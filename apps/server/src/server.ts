@@ -171,6 +171,7 @@ import * as ForkUpdates from "./fork/ForkUpdates.ts";
 import * as MachineHost from "./fork/machineMap/MachineHost.ts";
 import * as MachineMap from "./fork/machineMap/MachineMap.ts";
 import * as MachineMapState from "./fork/machineMap/MachineMapState.ts";
+import * as WebPush from "./fork/webPush/WebPush.ts";
 import * as MachinePeers from "./fork/machineMap/MachinePeers.ts";
 import * as MachineResources from "./fork/machineMap/MachineResources.ts";
 import * as MachineTunnel from "./fork/machineMap/MachineTunnel.ts";
@@ -621,6 +622,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
   // Fork: the machine map portal connection. Off by default (machineMap setting).
   layerMachineMap,
+  // Fork: Web Push to the browsers that subscribed on this server.
+  WebPush.layerWorker.pipe(Layer.provideMerge(WebPush.layer)),
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),

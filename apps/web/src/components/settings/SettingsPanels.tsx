@@ -59,6 +59,7 @@ import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../..
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { ForkChangelogSettingsRow } from "./ForkChangelogSettingsRow";
 import { InstalledAppSettingsRow } from "./InstalledAppSettingsRow";
+import { WebPushSettingsRow } from "./WebPushSettingsRow";
 import { AppToggleShortcutsSettingsRow } from "./AppToggleShortcutsSettingsRow";
 import { PullRequestFilterChipsSettingsRow } from "./PullRequestFilterChipsSettingsRow";
 import { SnoozeQuickOptionsSettingsRow } from "./SnoozeQuickOptionsSettingsRow";
@@ -2487,6 +2488,7 @@ export function GeneralSettingsPanel() {
       <SettingsSection id="behavior" title="Behavior">
         <NotificationSettings />
         <InstalledAppSettingsRow />
+        <WebPushSettingsRow />
         <SettingsRow
           {...searchableSetting("in-app-notifications")}
           description="Show a toast when another thread finishes, fails, or needs input or approval while this app has focus."

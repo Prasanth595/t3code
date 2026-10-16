@@ -242,6 +242,7 @@ import * as ForkChangelog from "./fork/ForkChangelog.ts";
 import * as MachineMap from "./fork/machineMap/MachineMap.ts";
 import * as MachineMapState from "./fork/machineMap/MachineMapState.ts";
 import { guardOwnerOnlyPatch, requireLocalDesktop } from "./fork/machineMap/browserAccess.ts";
+import * as WebPush from "./fork/webPush/WebPush.ts";
 import { isLocalDesktopSubject, isMachineSubject } from "./fork/machineMap/machineAccess.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as SourceControlBuiltInDrivers from "./sourceControl/builtInDrivers.ts";
@@ -555,6 +556,9 @@ const ServerWsRpcGroupCore = ServerWsRpcGroup.omit(
   WS_METHODS.machineMapShareSettings,
   WS_METHODS.forkChangelogSyncStatus,
   WS_METHODS.forkChangelogStartSync,
+  WS_METHODS.webPushPublicKey,
+  WS_METHODS.webPushSubscribe,
+  WS_METHODS.webPushTest,
 );
 // Replaying each intervening event costs a shell refetch; past this gap a
 // single O(active-threads) snapshot is cheaper and bounded.
@@ -3197,10 +3201,34 @@ const layerWsRpc = (
     ),
     Layer.merge(
       ServerWsRpcGroup.toLayerHandler(
+        WS_METHODS.webPushPublicKey,
+        WebPush.WebPush.pipe(
+          Effect.map(
+            (webPush) => () => webPush.publicKey.pipe(Effect.map((publicKey) => ({ publicKey }))),
+          ),
+        ),
+      ),
+    ),
+    Layer.merge(
+      ServerWsRpcGroup.toLayerHandler(
         WS_METHODS.forkChangelogStartSync,
         ForkChangelog.ForkChangelog.pipe(
           Effect.map((forkChangelog) => () => forkChangelog.startSync),
         ),
+      ),
+    ),
+    Layer.merge(
+      ServerWsRpcGroup.toLayerHandler(
+        WS_METHODS.webPushSubscribe,
+        WebPush.WebPush.pipe(
+          Effect.map((webPush) => (input) => webPush.subscribe(input).pipe(Effect.as({}))),
+        ),
+      ),
+    ),
+    Layer.merge(
+      ServerWsRpcGroup.toLayerHandler(
+        WS_METHODS.webPushTest,
+        WebPush.WebPush.pipe(Effect.map((webPush) => (input) => webPush.test(input.endpoint))),
       ),
     ),
   );

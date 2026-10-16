@@ -86,7 +86,7 @@ import type {
 import { PauseState } from "./api.ts";
 import { configured, ownerEmails } from "./access.ts";
 import { HEALTH_TABLES, HealthStore } from "./healthStore.ts";
-import { sendPush, vapidKey, type PushTarget, type VapidKey } from "./push.ts";
+import { sendPush, vapidKey, type PushTarget, type VapidKey } from "@t3tools/shared/webPush";
 import {
   approvalsAppProblem,
   CLIENT_POLICY_NAME,
