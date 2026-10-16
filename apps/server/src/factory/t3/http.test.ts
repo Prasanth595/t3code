@@ -52,7 +52,12 @@ const layerRoutes = Layer.mergeAll(FactoryRoutes, testOnlyRoute).pipe(
 );
 
 const loopWith = (status: FactoryStatus) =>
-  FactoryLoop.of({ wake: Effect.void, awaitPass: Effect.never, status });
+  FactoryLoop.of({
+    wake: Effect.void,
+    awaitPass: Effect.never,
+    passRunning: Effect.succeed(false),
+    status,
+  });
 
 /** Runs `use` against the factory's routes behind T3's auth, with a loop reporting `status`. */
 const serving = <A>(
@@ -97,6 +102,10 @@ const serving = <A>(
   }).pipe(Effect.provide(layerEnvironmentAuth));
 
 const idle: FactoryStatus = { state: "idle", reason: "no factory config" };
+const running: FactoryStatus = {
+  state: "running",
+  settings: { pollSeconds: 60, maxConcurrentRuns: 2, repos: ["a/b"] },
+};
 
 describe("GET /api/factory/status", () => {
   it("is served at the path the Factory page calls", () => {
@@ -135,10 +144,10 @@ describe("GET /api/factory/status", () => {
   );
 
   it.effect("reports a running factory with no reason", () =>
-    serving({ state: "running" }, async (get, tokens) => {
+    serving(running, async (get, tokens) => {
       const response = await get(STATUS_PATH, tokens.read);
       assert.strictEqual(response.status, 200);
-      assert.deepStrictEqual(await response.json(), { state: "running" });
+      assert.deepStrictEqual(await response.json(), running);
     }),
   );
 });

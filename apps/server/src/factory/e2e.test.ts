@@ -530,7 +530,10 @@ const scenario = (spec: Spec) =>
             Effect.provide(Logger.layer([capture], { mergeWithExisting: false })),
           );
           const loop = Context.get(built, FactoryLoop);
-          assert.deepStrictEqual(loop.status, { state: "running" });
+          assert.deepStrictEqual(loop.status, {
+            state: "running",
+            settings: { pollSeconds: 10, maxConcurrentRuns: 1, repos: [REPO] },
+          });
 
           // No wake of our own: the thread's run settling and a finished gate wake the loop, as
           // they do in the server, so the loop is never faster than that. Waiting only on the
