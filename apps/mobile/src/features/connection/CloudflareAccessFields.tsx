@@ -17,11 +17,7 @@ import { Pressable, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
-import {
-  moveRequestHeaders,
-  readRequestHeaders,
-  saveRequestHeaders,
-} from "../../connection/requestHeaderCommands";
+import { readRequestHeaders, saveRequestHeaders } from "../../connection/requestHeaderCommands";
 import { isCloudflareAccessChallenged } from "../../connection/requestHeaders";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
@@ -363,28 +359,4 @@ export function useAddEnvironmentCloudflareAccess(input: {
     ),
     stage: () => stageToken(input.pairingUrl, form),
   };
-}
-
-/**
- * Edit environment: request headers are stored per origin, so after an address
- * change they move to the new origin. Call it after the change succeeded.
- */
-export function useRequestHeadersFollowAddress(
-  environments: ReadonlyArray<{ readonly environmentId: string; readonly displayUrl: string }>,
-) {
-  const moveHeaders = useAtomCommand(moveRequestHeaders, "request headers move");
-  return useCallback(
-    async (environmentId: string, displayUrl: string) => {
-      const previous = environments.find((entry) => entry.environmentId === environmentId);
-      const from = previous ? requestHeaderOrigin(previous.displayUrl) : null;
-      const to = requestHeaderOrigin(displayUrl);
-      if (from === null || to === null || from === to) return;
-      const keepFrom = environments.some(
-        (entry) =>
-          entry.environmentId !== environmentId && requestHeaderOrigin(entry.displayUrl) === from,
-      );
-      await moveHeaders({ from, to, keepFrom });
-    },
-    [environments, moveHeaders],
-  );
 }

@@ -21,7 +21,7 @@ import { useWorkspaceEnvironments } from "../../state/workspace";
 import { relayEnvironmentDiscovery } from "../../state/relay";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { relayManagedEnvironmentIds } from "./environmentSections";
-import { useRequestHeadersFollowAddress } from "./CloudflareAccessFields";
+import { useRequestHeadersFollowAddress } from "./useRequestHeadersFollowAddress";
 
 export interface RelayEnvironmentView {
   readonly environment: RelayClientEnvironmentRecord;
