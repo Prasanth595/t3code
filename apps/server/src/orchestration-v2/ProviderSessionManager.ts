@@ -171,6 +171,13 @@ export interface ProviderSessionManagerV2Shape {
     Option.Option<ProviderAdapter.ProviderAdapterV2SessionRuntime>,
     ProviderSessionManagerV2Error
   >;
+  /**
+   * The session's running runtime. Unlike `get`, not activity, so a read the
+   * user did not ask an agent for cannot keep an idle session open.
+   */
+  readonly peek: (
+    providerSessionId: ProviderSessionId,
+  ) => Effect.Effect<Option.Option<ProviderAdapter.ProviderAdapterV2SessionRuntime>>;
   /** Whether the session's runtime is running. Unlike `get`, not activity. */
   readonly isLive: (providerSessionId: ProviderSessionId) => Effect.Effect<boolean>;
   readonly close: (
@@ -2372,6 +2379,12 @@ export const layerWithOptions = (
               yield* scheduleIdleRelease(input.providerSessionId);
               return exposedRuntime;
             }),
+          ),
+        peek: (providerSessionId) =>
+          Ref.get(sessions).pipe(
+            Effect.map((current) =>
+              Option.fromUndefinedOr(current.get(sessionKey(providerSessionId))?.exposedRuntime),
+            ),
           ),
         isLive: (providerSessionId) =>
           Ref.get(sessions).pipe(

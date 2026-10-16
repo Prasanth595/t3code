@@ -48,6 +48,11 @@ Set **Auto-compact after** in the Claude provider settings to an integer between
 300,000 tokens. This changes when compaction happens, not the model's context
 window. Leave it empty for Claude Code's default.
 
+The **Context** section of the thread details card lists what fills a Claude
+thread's window while its agent session runs. Turn on **Settings → General →
+Remember context breakdown** to save that breakdown after each turn, so the card
+still shows it after the session stops or T3 Code restarts.
+
 You can also send `/compact` in an existing conversation. Web and desktop offer
 **Compact context** from the context meter. When you return to a large thread
 after Claude's prompt cache expires, a **Compact** chip with the thread's token count shows

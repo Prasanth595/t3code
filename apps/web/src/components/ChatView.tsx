@@ -471,6 +471,7 @@ import {
 } from "./chat/PanelLayoutControls";
 import { expandedImageKey, type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { ThreadDetailsPanel, type ThreadDetailsPanelProps } from "./chat/ThreadDetailsPanel";
+import { isContextCommand, useThreadContextAttentionStore } from "./chat/threadContextAttention";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import {
   type EnvironmentOption,
@@ -5960,6 +5961,20 @@ export default function ChatView(props: ChatViewProps) {
     useRightPanelStore.getState().toggleThreadPanel(activeThreadRef, threadPanelPresentation);
   };
   const toggleThreadPanelStable = useStableCallback(toggleThreadPanel);
+  // `/context` opens the details card on the Context section, or pulses the
+  // section when the card is already showing. The agent never sees it.
+  const openThreadContext = () => {
+    if (!activeThreadRef) return;
+    if (!threadPanelOpen) {
+      useRightPanelStore
+        .getState()
+        .setThreadPanelOpen(activeThreadRef, threadPanelPresentation, true);
+    }
+    useThreadContextAttentionStore
+      .getState()
+      .requestAttention(scopedThreadKey(activeThreadRef), { highlight: threadPanelOpen });
+  };
+  const openThreadContextStable = useStableCallback(openThreadContext);
   // A thread started for a link the OS opened shows its browser maximized, like a browser window.
   useEffect(() => {
     if (!canMaximizeRightPanel) return;
@@ -8635,6 +8650,19 @@ export default function ChatView(props: ChatViewProps) {
       }
       return;
     }
+    if (
+      isServerThread &&
+      !draftId &&
+      !directAnnotation &&
+      !composerHasNonPromptContent &&
+      isContextCommand(promptRef.current)
+    ) {
+      openThreadContext();
+      promptRef.current = "";
+      setComposerDraftPrompt(composerDraftTarget, "");
+      composerRef.current?.resetCursorState();
+      return;
+    }
 
     const notifyDirectAnnotationAttached = () => {
       if (!directAnnotation) return;
@@ -11050,6 +11078,17 @@ export default function ChatView(props: ChatViewProps) {
     onAddProjectScript: saveProjectScriptStable,
     onUpdateProjectScript: updateProjectScriptStable,
     onDeleteProjectScript: deleteProjectScriptStable,
+    contextWindow: activeContextWindow,
+    activeProviderThreadId: serverProjection?.thread.activeProviderThreadId ?? null,
+    savedContextBreakdown:
+      serverProjection?.providerThreads.find(
+        (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
+      )?.contextBreakdown ?? null,
+    isWorking,
+    ...(manualCompactionProviderAvailable && canOperateThread
+      ? { onCompactContext: onComposerCompactContextStable }
+      : {}),
+    compactDisabledReason,
   };
   const panelToggleControlProps = {
     terminalAvailable: activeProject !== null,
@@ -11563,6 +11602,11 @@ export default function ChatView(props: ChatViewProps) {
                                 usageLimitsKey !== null &&
                                 !composerHasNonPromptContent
                                   ? openUsageLimitsStable
+                                  : undefined
+                              }
+                              onContextCommand={
+                                isServerThread && !draftId && !composerHasNonPromptContent
+                                  ? openThreadContextStable
                                   : undefined
                               }
                               environmentUnavailable={activeEnvironmentUnavailableState}

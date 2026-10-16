@@ -1,4 +1,4 @@
-import type { OrchestrationV2HistoricalMessage } from "@t3tools/contracts";
+import type { OrchestrationV2HistoricalMessage, ThreadContextUsage } from "@t3tools/contracts";
 import {
   ChatAttachment,
   CheckpointId,
@@ -665,6 +665,15 @@ export interface ProviderAdapterV2SessionRuntime {
    * provider are not interactive and their tool calls stay plain tool rows.
    */
   readonly mcpApps?: ProviderAdapterV2McpApps;
+  /**
+   * Breaks down what currently fills one provider thread's context window,
+   * read from the live native session (Claude). Succeeds with null while no
+   * native process belongs to the thread, such as before its first turn.
+   * Absent means the provider cannot measure its context composition.
+   */
+  readonly readContextUsage?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+  }) => Effect.Effect<ThreadContextUsage | null, ProviderAdapterV2Error>;
   readonly rollbackThread: (
     input: ProviderAdapterV2RollbackThreadInput,
   ) => Effect.Effect<ProviderAdapterV2ThreadSnapshot, ProviderAdapterV2Error>;

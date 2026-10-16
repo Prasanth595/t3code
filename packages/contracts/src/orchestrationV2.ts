@@ -72,6 +72,7 @@ import {
   ToolActivitySource,
 } from "./providerRuntime.ts";
 import { ThreadTokenUsageSnapshot } from "./providerRuntime.ts";
+import { ThreadContextBreakdown } from "./threadContextUsage.ts";
 
 export const OrchestrationV2Actor = Schema.Literals(["user", "agent", "system"]);
 export type OrchestrationV2Actor = typeof OrchestrationV2Actor.Type;
@@ -282,6 +283,8 @@ export const OrchestrationV2ContextCapabilities = Schema.Struct({
   supportsDeltaHandoff: Schema.Boolean,
   supportsFullThreadHandoff: Schema.Boolean,
   maxRecommendedHandoffChars: Schema.NullOr(PositiveInt),
+  /** The live session can say what fills its context window (`readContextUsage`). */
+  reportsContextBreakdown: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2ContextCapabilities = typeof OrchestrationV2ContextCapabilities.Type;
 
@@ -979,6 +982,10 @@ export const OrchestrationV2ProviderThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   contextUsage: Schema.optional(Schema.NullOr(ThreadTokenUsageSnapshot)).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
+  /** Last saved context breakdown, when the provider's "Remember context breakdown" is on. */
+  contextBreakdown: Schema.optional(Schema.NullOr(ThreadContextBreakdown)).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
   nativeMetadata: Schema.optional(Schema.NullOr(OrchestrationV2ProviderThreadNativeMetadata)).pipe(

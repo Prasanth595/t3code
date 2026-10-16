@@ -2,9 +2,13 @@ import type {
   EditorId,
   EnvironmentId,
   ProjectScript,
+  ProviderThreadId,
+  ThreadContextBreakdown,
   ResolvedKeybindingsConfig,
   ThreadId,
 } from "@t3tools/contracts";
+
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 
 import type { DraftId } from "../../composerDraftStore";
 import { useT3ProjectFileScripts } from "../../hooks/useT3ProjectFileScripts";
@@ -16,6 +20,9 @@ import ProjectScriptsControl, {
   type ProjectScriptActionResult,
 } from "../ProjectScriptsControl";
 import { memo, type ComponentProps } from "react";
+import type { ContextWindowSnapshot } from "~/lib/contextWindow";
+import { ThreadContextSection } from "./ThreadContextSection";
+import { useThreadContextAttentionStore } from "./threadContextAttention";
 import { ThreadDetailsCard } from "./ThreadDetailsCard";
 import { OpenInPicker } from "./OpenInPicker";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
@@ -62,6 +69,12 @@ export interface ThreadDetailsPanelProps extends Pick<
     input: NewProjectScriptInput,
   ) => Promise<ProjectScriptActionResult>;
   onDeleteProjectScript: (scriptId: string) => Promise<ProjectScriptActionResult>;
+  contextWindow: ContextWindowSnapshot | null;
+  activeProviderThreadId: ProviderThreadId | null;
+  savedContextBreakdown: ThreadContextBreakdown | null;
+  isWorking: boolean;
+  onCompactContext?: (() => void) | undefined;
+  compactDisabledReason: string | null;
 }
 
 export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
@@ -70,6 +83,11 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     props.activeProjectScripts ? props.gitCwd : null,
   );
   const activeThreadRef = { environmentId: props.environmentId, threadId: props.threadId };
+  // `/context` asked for the section, so it stays even when the card is too
+  // short for anything but essentials.
+  const contextRequested = useThreadContextAttentionStore((state) =>
+    state.requestedThreadKeys.has(scopedThreadKey(activeThreadRef)),
+  );
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
     environmentId: props.environmentId,
@@ -170,6 +188,19 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 ) : null}
               </div>
             </ThreadDetailsSection>
+          ) : null}
+
+          {(density !== "essential" || contextRequested) && !props.draftId ? (
+            <ThreadContextSection
+              environmentId={props.environmentId}
+              threadId={props.threadId}
+              providerThreadId={props.activeProviderThreadId}
+              savedBreakdown={props.savedContextBreakdown}
+              snapshot={props.contextWindow}
+              isWorking={props.isWorking}
+              onCompact={props.onCompactContext}
+              compactDisabledReason={props.compactDisabledReason}
+            />
           ) : null}
 
           {density === "full" && !props.draftId ? (

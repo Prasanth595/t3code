@@ -634,6 +634,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
         ? ["Continue threads after restarts"]
         : []),
+      ...(settings.rememberContextBreakdown !== DEFAULT_UNIFIED_SETTINGS.rememberContextBreakdown
+        ? ["Remember context breakdown"]
+        : []),
       ...(isBackgroundActivityDirty ? ["Background activity"] : []),
       ...(settings.defaultThreadEnvMode !== DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode
         ? ["New thread mode"]
@@ -708,6 +711,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.persistComposerContextStrip,
       settings.enableProviderUpdateChecks,
       settings.continueThreadsAfterServerUpdate,
+      settings.rememberContextBreakdown,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleKeepPullRequests,
       settings.sidebarAutoSettleOnMerge,
@@ -824,6 +828,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
+      rememberContextBreakdown: DEFAULT_UNIFIED_SETTINGS.rememberContextBreakdown,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -2975,6 +2980,36 @@ export function GeneralSettingsPanel() {
                 updateSettings({ continueThreadsAfterServerUpdate: Boolean(checked) })
               }
               aria-label="Continue threads after restarts"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("remember-context-breakdown")}
+          serverScoped
+          settingKeys={["rememberContextBreakdown"]}
+          description="Save what fills the context window after each turn, so the thread details card still shows it once the agent session stops. Claude only."
+          resetAction={
+            settings.rememberContextBreakdown !==
+            DEFAULT_UNIFIED_SETTINGS.rememberContextBreakdown ? (
+              <SettingResetButton
+                label="remember context breakdown"
+                onClick={() =>
+                  updateSettings({
+                    rememberContextBreakdown: DEFAULT_UNIFIED_SETTINGS.rememberContextBreakdown,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["rememberContextBreakdown"]}
+              checked={settings.rememberContextBreakdown}
+              onCheckedChange={(checked) =>
+                updateSettings({ rememberContextBreakdown: Boolean(checked) })
+              }
+              aria-label="Remember context breakdown"
             />
           }
         />

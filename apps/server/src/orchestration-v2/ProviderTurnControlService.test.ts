@@ -273,6 +273,10 @@ it.effect(
             Effect.succeed(
               providerSessionId === oldSessionId ? Option.some(runtime) : Option.none(),
             ),
+          peek: (providerSessionId) =>
+            Effect.succeed(
+              providerSessionId === oldSessionId ? Option.some(runtime) : Option.none(),
+            ),
           isLive: (providerSessionId) => Effect.succeed(providerSessionId === oldSessionId),
           close: () => Effect.void,
           closeInstance: () => Effect.void,

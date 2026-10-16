@@ -473,6 +473,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "remember-context-breakdown",
+    title: "Remember context breakdown",
+    to: "/settings/general",
+    searchTerms: ["context window usage tokens claude save persist /context details card"],
+    scope: "environment-defaults",
+  },
+  {
     id: "continue-threads-after-server-update",
     title: "Continue threads after restarts",
     to: "/settings/general",

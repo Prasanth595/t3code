@@ -24,6 +24,9 @@ vi.mock("../ProjectScriptsControl", () => ({
 vi.mock("./ThreadAutomationsPanel", () => ({
   ThreadAutomationsPanel: () => null,
 }));
+vi.mock("./ThreadContextSection", () => ({
+  ThreadContextSection: () => null,
+}));
 vi.mock("./ThreadRelationshipsControl", () => ({
   ThreadRelationshipsPanel: () => null,
 }));
@@ -78,6 +81,11 @@ describe("ThreadDetailsPanel", () => {
       onAddProjectScript: vi.fn() as ThreadDetailsPanelProps["onAddProjectScript"],
       onUpdateProjectScript: vi.fn() as ThreadDetailsPanelProps["onUpdateProjectScript"],
       onDeleteProjectScript: vi.fn() as ThreadDetailsPanelProps["onDeleteProjectScript"],
+      contextWindow: null,
+      activeProviderThreadId: null,
+      savedContextBreakdown: null,
+      isWorking: false,
+      compactDisabledReason: null,
     };
 
     renderToStaticMarkup(<ThreadDetailsPanel {...props} />);

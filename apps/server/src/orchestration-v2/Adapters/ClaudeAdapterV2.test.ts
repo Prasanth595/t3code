@@ -7,6 +7,7 @@ import * as NodeStream from "node:stream";
 
 import type {
   Query as ClaudeQuery,
+  SDKControlGetContextUsageResponse,
   SDKMessage,
   SDKResultMessage,
   SDKUserMessage,
@@ -43,6 +44,7 @@ import {
   ProviderTurnId,
   RunAttemptId,
   RunId,
+  ThreadContextUsage,
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
@@ -887,7 +889,130 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
   });
 });
 
+const isThreadContextUsage = Schema.is(ThreadContextUsage);
+
+// Shape of a `getContextUsage({ detail: "summary" })` reply from a session
+// with MCP servers, memory files, skills, and agents configured.
+function makeClaudeContextUsageResponse(): SDKControlGetContextUsageResponse {
+  return {
+    categories: [
+      { name: "System prompt", tokens: 3_120.4, color: "promptBorder", kind: "used" },
+      { name: "System tools", tokens: 11_480, color: "inactive", kind: "used" },
+      { name: "MCP tools", tokens: 0, color: "cyan_FOR_SUBAGENTS_ONLY", kind: "used" },
+      {
+        name: "MCP tools (deferred)",
+        tokens: 6_200,
+        color: "inactive",
+        isDeferred: true,
+        kind: "deferred",
+      },
+      { name: "Memory files", tokens: 2_310, color: "claude", kind: "used" },
+      { name: "  ", tokens: 15, color: "inactive", kind: "used" },
+      { name: "Messages", tokens: 24_325, color: "purple_FOR_SUBAGENTS_ONLY", kind: "used" },
+      { name: "Free space", tokens: 0, color: "promptBorder", kind: "free" },
+      { name: "Autocompact buffer", tokens: 33_000, color: "inactive", kind: "buffer" },
+    ],
+    totalTokens: 41_235,
+    maxTokens: 200_000,
+    rawMaxTokens: 200_000,
+    percentage: 21,
+    gridRows: [],
+    model: "claude-sonnet-4-6",
+    memoryFiles: [
+      { path: "/workspace/CLAUDE.md", type: "Project", tokens: 410 },
+      { path: "/home/user/.claude/CLAUDE.md", type: "User", tokens: 1_900 },
+    ],
+    mcpTools: [
+      { name: "mcp__github__create_issue", serverName: "github", tokens: 650 },
+      { name: "mcp__github__search", serverName: "github", tokens: 1_200, isLoaded: true },
+      { name: " ", serverName: "github", tokens: 90 },
+    ],
+    agents: [],
+    skills: {
+      totalSkills: 2,
+      includedSkills: 2,
+      tokens: 180,
+      skillFrontmatter: [
+        { name: "pdf", source: "plugin", tokens: 120 },
+        { name: "tdd", source: "", tokens: 60 },
+      ],
+    },
+    isAutoCompactEnabled: true,
+    apiUsage: null,
+  };
+}
+
 describe("ClaudeAdapterV2 context usage", () => {
+  it("maps the CLI's context breakdown to the thread context usage contract", () => {
+    const usage = ClaudeAdapterV2.claudeThreadContextUsage(makeClaudeContextUsageResponse());
+
+    assert.deepEqual(usage, {
+      model: "claude-sonnet-4-6",
+      usedTokens: 41_235,
+      maxTokens: 200_000,
+      // Empty and nameless rows drop out; the free row stays even when empty.
+      categories: [
+        { name: "System prompt", tokens: 3_120, kind: "used" },
+        { name: "System tools", tokens: 11_480, kind: "used" },
+        { name: "MCP tools (deferred)", tokens: 6_200, kind: "deferred" },
+        { name: "Memory files", tokens: 2_310, kind: "used" },
+        { name: "Messages", tokens: 24_325, kind: "used" },
+        { name: "Free space", tokens: 0, kind: "free" },
+        { name: "Autocompact buffer", tokens: 33_000, kind: "buffer" },
+      ],
+      groups: [
+        {
+          id: "mcp-tools",
+          items: [
+            { name: "mcp__github__search", tokens: 1_200, detail: "github" },
+            { name: "mcp__github__create_issue", tokens: 650, detail: "github" },
+          ],
+        },
+        {
+          id: "memory-files",
+          items: [
+            { name: "/home/user/.claude/CLAUDE.md", tokens: 1_900, detail: "User" },
+            { name: "/workspace/CLAUDE.md", tokens: 410, detail: "Project" },
+          ],
+        },
+        {
+          id: "skills",
+          items: [
+            { name: "pdf", tokens: 120, detail: "plugin" },
+            { name: "tdd", tokens: 60 },
+          ],
+        },
+      ],
+    });
+    assert.isTrue(isThreadContextUsage(usage));
+  });
+
+  it("classifies rows from older CLIs by their deferred flag and omits an unknown window", () => {
+    const response = makeClaudeContextUsageResponse();
+    const usage = ClaudeAdapterV2.claudeThreadContextUsage({
+      ...response,
+      model: " ",
+      maxTokens: 0,
+      categories: [
+        { name: "MCP tools", tokens: 900, color: "inactive", isDeferred: true },
+        { name: "Messages", tokens: 400, color: "inactive" },
+      ] as unknown as SDKControlGetContextUsageResponse["categories"],
+      memoryFiles: [],
+      mcpTools: [],
+    });
+
+    assert.deepEqual(usage.categories, [
+      { name: "MCP tools", tokens: 900, kind: "deferred" },
+      { name: "Messages", tokens: 400, kind: "used" },
+    ]);
+    assert.isUndefined(usage.model);
+    assert.isUndefined(usage.maxTokens);
+    assert.deepEqual(
+      usage.groups.map((group) => group.id),
+      ["skills"],
+    );
+  });
+
   it("projects assistant usage against the selected context window", () => {
     const usage = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
       {
@@ -2350,10 +2475,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly backgroundTasks?: (
       toolUseId: string,
     ) => Effect.Effect<boolean, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
+    readonly getContextUsage?: ClaudeAdapterV2.ClaudeAgentSdkQuerySession["getContextUsage"];
     readonly environment?: NodeJS.ProcessEnv;
     readonly subagentLaunchToolUseId?: string;
     readonly nativeSessionId?: string;
     readonly settings?: ClaudeSettings;
+    readonly rememberContextBreakdown?: boolean;
     // A CLI process opened after the first streams from its own queue, so the
     // first one can exit (Queue.shutdown) and a later turn can start another.
     readonly freshQueueOnReopen?: boolean;
@@ -2397,10 +2524,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.unbounded<
           Extract<ProviderAdapter.ProviderAdapterV2Event, { type: "turn_item.updated" }>
         >();
+      const contextBreakdownReceipts = yield* Queue.unbounded<OrchestrationV2ProviderThread>();
       let openedOptions: ClaudeAdapterV2.ClaudeAgentSdkQueryOptions | undefined;
       const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
         instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
         settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
+        ...(options?.rememberContextBreakdown === undefined
+          ? {}
+          : { rememberContextBreakdown: Effect.succeed(options.rememberContextBreakdown) }),
         environment: options?.environment ?? {},
         attachmentsDir,
         fileSystem,
@@ -2473,6 +2604,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
                   }),
                 backgroundTasks: options?.backgroundTasks ?? (() => Effect.succeed(false)),
                 stopTask: options?.stopTask ?? (() => Effect.void),
+                ...(options?.getContextUsage === undefined
+                  ? {}
+                  : { getContextUsage: options.getContextUsage }),
                 interrupt: options?.interrupt ?? Effect.void,
                 close: options?.close?.(sdkMessages) ?? Effect.void,
               };
@@ -2507,6 +2641,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             }
             if (event.type === "turn_item.updated" && event.turnItem.type === "system_notice") {
               yield* Queue.offer(systemNoticeReceipts, event);
+            }
+            if (
+              event.type === "provider_thread.updated" &&
+              event.providerThread.contextBreakdown != null
+            ) {
+              yield* Queue.offer(contextBreakdownReceipts, event.providerThread);
             }
           }),
         ),
@@ -2545,6 +2685,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         terminalReceipts,
         subagentReceipts,
         systemNoticeReceipts,
+        contextBreakdownReceipts,
         getOpenedOptions: () => openedOptions,
         terminalEvents,
         hasPendingBackgroundWork,
@@ -2654,6 +2795,119 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.deepEqual(item.input, { city: "Berlin" });
       }
       assert.equal(new Set(items.map((item) => item.id)).size, 1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("reads context usage from the live query of its own provider thread only", () =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const harness = yield* makeWakeHarnessWithOptions({
+        getContextUsage: Effect.sync(() => {
+          reads++;
+          return makeClaudeContextUsageResponse();
+        }),
+      });
+      const readUsage = (providerThread: OrchestrationV2ProviderThread) =>
+        harness.runtime.readContextUsage!({ providerThread });
+      // Before a turn there is no CLI process to ask, and none is started.
+      assert.isNull(yield* readUsage(harness.providerThread));
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("context-usage"),
+          text: "Hello",
+          attachments: [],
+        }),
+      );
+      const usage = yield* readUsage(harness.providerThread);
+      assert.equal(usage?.usedTokens, 41_235);
+      assert.equal(usage?.maxTokens, 200_000);
+      assert.equal(reads, 1);
+      const nativeThreadRef = harness.providerThread.nativeThreadRef;
+      assert.isNotNull(nativeThreadRef);
+      const foreign = yield* readUsage({
+        ...harness.providerThread,
+        nativeThreadRef: { ...nativeThreadRef, nativeId: "another-native-thread" },
+      });
+      assert.isNull(foreign);
+      assert.equal(reads, 1);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("saves the context breakdown after a turn when the user opts in", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        rememberContextBreakdown: true,
+        getContextUsage: Effect.sync(makeClaudeContextUsageResponse),
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("context-breakdown-saved"),
+          text: "Hello",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "breakdown-terminal", result: "Done" }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+
+      const saved = (yield* Queue.take(harness.contextBreakdownReceipts)).contextBreakdown;
+      assert.equal(saved?.usedTokens, 41_235);
+      assert.isAbove(saved?.categories.length ?? 0, 0);
+      // Item lists stay on-demand so the thread payload stays small.
+      assert.notProperty(saved, "groups");
+      // The run stops ingesting provider events at the terminal, so the save
+      // must land before it.
+      const savedAt = harness.events.findIndex(
+        (event) =>
+          event.type === "provider_thread.updated" && event.providerThread.contextBreakdown != null,
+      );
+      const terminalAt = harness.events.findIndex((event) => event.type === "turn.terminal");
+      assert.isBelow(savedAt, terminalAt);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("gives up on a context usage request the CLI never answers", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({ getContextUsage: Effect.never });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("context-usage-silent"),
+          text: "Hello",
+          attachments: [],
+        }),
+      );
+      const reading = yield* harness.runtime.readContextUsage!({
+        providerThread: harness.providerThread,
+      }).pipe(Effect.exit, Effect.forkChild);
+      yield* TestClock.adjust("5 seconds");
+
+      assert.isTrue(Exit.isFailure(yield* Fiber.join(reading)));
     }).pipe(
       Effect.scoped,
       Effect.provide(

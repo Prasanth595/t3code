@@ -1,4 +1,4 @@
-import { ORCHESTRATION_V2_WS_METHODS, type ThreadId } from "@t3tools/contracts";
+import { ORCHESTRATION_V2_WS_METHODS, WS_METHODS, type ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
@@ -102,6 +102,14 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       tag: ORCHESTRATION_V2_WS_METHODS.getTurnItem,
       staleTimeMs: 60_000,
       idleTtlMs: 60_000,
+    }),
+    // Asks the live provider session what fills the context window. Callers
+    // refresh it when a new usage report lands.
+    threadContextUsage: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:orchestration:thread-context-usage",
+      tag: WS_METHODS.providerReadContextUsage,
+      staleTimeMs: 30_000,
+      idleTtlMs: 30_000,
     }),
     fullThreadDiff: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:full-thread-diff",

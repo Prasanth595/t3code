@@ -232,6 +232,14 @@ Provider commands must start the message to run. T3 Code commands such as
 Send `/compact` in an existing conversation to reduce context usage when the
 provider supports it. Web and desktop also offer compaction from the context meter.
 
+To see what fills the context window on web and desktop, open the thread details
+card and look at **Context**. In a Claude thread with a running agent session it
+lists messages, tools, memory files, skills, and the rest of Claude's own
+breakdown. Other providers report only totals, so their threads show the latest
+usage report, split into cached input, new input, and output when the provider
+reports them. **Compact** in the section header summarizes the history, like
+`/compact`. Send `/context` to open the card on this section.
+
 ## Goals
 
 With Codex and Claude, send `/goal` followed by what "done" means, for example

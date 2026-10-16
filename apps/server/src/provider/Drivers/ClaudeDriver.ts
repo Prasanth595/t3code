@@ -174,6 +174,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       });
 
       const scopedLimitNames = yield* makeClaudeScopedLimitNames;
+      const { settings: serverSettings } = yield* ProviderHost.ProviderHost;
       const orchestrationAdapter = yield* createClaudeAdapterV2(
         {
           instanceId,
@@ -183,7 +184,14 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
           enabled,
           config,
         },
-        { scopedLimitNames, onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+        {
+          scopedLimitNames,
+          onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+          rememberContextBreakdown: serverSettings.get.pipe(
+            Effect.map((settings) => settings.rememberContextBreakdown),
+            Effect.orElseSucceed(() => false),
+          ),
+        },
       ).pipe(
         Effect.mapError(
           (cause) =>

@@ -34,6 +34,7 @@ import {
   type SpawnedProcess as ClaudeSpawnedProcess,
   type SDKAssistantMessage,
   type SDKAPIRetryMessage,
+  type SDKControlGetContextUsageResponse,
   type SDKMessage,
   type SDKRateLimitInfo,
   type SDKResultMessage,
@@ -85,6 +86,9 @@ import {
   type ProviderUserInputAnswers,
   type ProviderThreadId,
   type RunId,
+  type ThreadContextUsage,
+  type ThreadContextUsageCategory,
+  type ThreadContextUsageGroup,
   type ThreadId,
 } from "@t3tools/contracts";
 
@@ -228,6 +232,97 @@ export function claudeProviderTurnTokenUsage(
     updatedAt,
   };
 }
+
+const CLAUDE_CONTEXT_CATEGORY_KINDS: ReadonlySet<string> = new Set<
+  ThreadContextUsageCategory["kind"]
+>(["used", "free", "buffer", "deferred"]);
+
+const contextTokens = (tokens: number) =>
+  Number.isFinite(tokens) ? Math.max(0, Math.round(tokens)) : 0;
+
+/**
+ * Maps the CLI's context breakdown to the thread context usage contract.
+ * Empty rows are dropped, except the free row, which still says the window is
+ * full; itemized groups list their largest items first.
+ */
+export function claudeThreadContextUsage(
+  response: SDKControlGetContextUsageResponse,
+): ThreadContextUsage {
+  const categories = response.categories.flatMap((category) => {
+    const name = category.name.trim();
+    const tokens = contextTokens(category.tokens);
+    // Older CLIs only flag deferred rows; never classify on the English name.
+    const kind = CLAUDE_CONTEXT_CATEGORY_KINDS.has(category.kind)
+      ? category.kind
+      : category.isDeferred === true
+        ? "deferred"
+        : "used";
+    if (name === "" || (tokens === 0 && kind !== "free")) return [];
+    return [{ name, tokens, kind }];
+  });
+  const group = (
+    id: ThreadContextUsageGroup["id"],
+    entries: ReadonlyArray<{
+      readonly name: string;
+      readonly tokens: number;
+      readonly detail: string;
+    }>,
+  ): ReadonlyArray<ThreadContextUsageGroup> => {
+    const items = entries
+      .flatMap((entry) => {
+        const name = entry.name.trim();
+        const detail = entry.detail.trim();
+        if (name === "") return [];
+        return [
+          { name, tokens: contextTokens(entry.tokens), ...(detail === "" ? {} : { detail }) },
+        ];
+      })
+      .toSorted((left, right) => right.tokens - left.tokens);
+    return items.length === 0 ? [] : [{ id, items }];
+  };
+  const model = response.model.trim();
+  const maxTokens = contextTokens(response.maxTokens);
+  return {
+    ...(model === "" ? {} : { model }),
+    usedTokens: contextTokens(response.totalTokens),
+    ...(maxTokens > 0 ? { maxTokens } : {}),
+    categories,
+    groups: [
+      ...group(
+        "mcp-tools",
+        response.mcpTools.map((tool) => ({
+          name: tool.name,
+          tokens: tool.tokens,
+          detail: tool.serverName,
+        })),
+      ),
+      ...group(
+        "memory-files",
+        response.memoryFiles.map((file) => ({
+          name: file.path,
+          tokens: file.tokens,
+          detail: file.type,
+        })),
+      ),
+      ...group(
+        "skills",
+        (response.skills?.skillFrontmatter ?? []).map((skill) => ({
+          name: skill.name,
+          tokens: skill.tokens,
+          detail: skill.source,
+        })),
+      ),
+      ...group(
+        "agents",
+        response.agents.map((agent) => ({
+          name: agent.agentType,
+          tokens: agent.tokens,
+          detail: agent.source,
+        })),
+      ),
+    ],
+  };
+}
 export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROVIDER);
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
 // Entry extensions the Claude SDK runs through node instead of executing.
@@ -235,6 +330,11 @@ const CLAUDE_SCRIPT_EXTENSIONS = [".js", ".mjs", ".tsx", ".ts", ".jsx"];
 // The SDK puts no deadline on control requests. The CLI answers
 // mcp_set_servers once each server connected or hit its own 30 s timeout.
 const CLAUDE_MCP_REGISTRATION_TIMEOUT = "90 seconds";
+// A CLI that stops answering control requests must not leave the context
+// panel waiting; the SDK's request has no deadline of its own.
+const CLAUDE_CONTEXT_USAGE_TIMEOUT = "5 seconds";
+// Saving a breakdown sits on the turn's terminal path, so it gets less time.
+const CLAUDE_SETTLED_CONTEXT_BREAKDOWN_TIMEOUT = "2 seconds";
 
 /**
  * Starts the Claude CLI as the leader of its own process group. When the CLI
@@ -343,6 +443,7 @@ export const ClaudeProviderCapabilitiesV2 = {
     supportsDeltaHandoff: true,
     supportsFullThreadHandoff: true,
     maxRecommendedHandoffChars: null,
+    reportsContextBreakdown: true,
   },
   checkpointing: {
     appCanCheckpointFilesystem: true,
@@ -427,6 +528,14 @@ export interface ClaudeAgentSdkQuerySession {
     mode: PermissionMode,
   ) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly stopTask: (taskId: string) => Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
+  /**
+   * The CLI's own breakdown of what fills the context window. Optional so
+   * scripted sessions that never read it need not fake it.
+   */
+  readonly getContextUsage?: Effect.Effect<
+    SDKControlGetContextUsageResponse,
+    ClaudeAgentSdkQueryRunnerError
+  >;
   /** Moves the foreground task one tool call started to the background; false when none matched. */
   readonly backgroundTasks: (
     toolUseId: string,
@@ -592,6 +701,14 @@ export type ClaudeAgentSdkProtocolLogEvent =
       readonly payload: {
         readonly type: "query.stop_task";
         readonly taskId: string;
+      };
+    }
+  | {
+      readonly direction: "outgoing";
+      readonly stage: "decoded";
+      readonly payload: {
+        readonly type: "query.get_context_usage";
+        readonly detail: "summary";
       };
     }
   | {
@@ -935,6 +1052,20 @@ export const layerQueryRunner: Layer.Layer<
                 }),
               ),
             ),
+          // "summary" answers from the last response's usage and local
+          // estimates, so reading it costs no token-count API calls.
+          getContextUsage: Effect.tryPromise({
+            try: () => queryRuntime.getContextUsage({ detail: "summary" }),
+            catch: (cause) => queryRunnerError(cause, "getContextUsage"),
+          }).pipe(
+            Effect.tap(() =>
+              logProtocolEvent({
+                direction: "outgoing",
+                stage: "decoded",
+                payload: { type: "query.get_context_usage", detail: "summary" },
+              }),
+            ),
+          ),
           backgroundTasks: (toolUseId) =>
             Effect.tryPromise({
               try: () => queryRuntime.backgroundTasks(toolUseId),
@@ -3472,6 +3603,8 @@ export function claudeProposedPlan(input: unknown): string | null {
 export interface ClaudeAdapterV2Options {
   readonly instanceId: ProviderInstanceId;
   readonly settings: ClaudeSettings;
+  /** The server's "Remember context breakdown" setting, read after each turn. Absent means off. */
+  readonly rememberContextBreakdown?: Effect.Effect<boolean>;
   readonly environment: NodeJS.ProcessEnv;
   readonly attachmentsDir: string;
   readonly fileSystem: FileSystem.FileSystem;
@@ -4077,6 +4210,39 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             driver: CLAUDE_PROVIDER,
             providerThread,
           });
+        });
+
+        /**
+         * The context breakdown to save on the provider thread as a turn ends:
+         * the categories when the user opted in, null to drop a saved one once
+         * they opt out, undefined to keep what is there. Read before the turn's
+         * terminal event, since the run stops ingesting provider events after
+         * it; the short timeout keeps a silent CLI from holding the turn open.
+         */
+        const contextBreakdownForSettledTurn = Effect.fnUntraced(function* (
+          nativeThreadId: string,
+        ) {
+          if (!(yield* adapterOptions.rememberContextBreakdown ?? Effect.succeed(false))) {
+            return null;
+          }
+          const liveQuery = yield* Ref.get(queryContext);
+          const getContextUsage = liveQuery?.query.getContextUsage;
+          if (
+            liveQuery === null ||
+            liveQuery.stopping ||
+            liveQuery.nativeThreadId !== nativeThreadId ||
+            getContextUsage === undefined
+          ) {
+            return undefined;
+          }
+          const usage = yield* getContextUsage.pipe(
+            Effect.timeoutOption(CLAUDE_SETTLED_CONTEXT_BREAKDOWN_TIMEOUT),
+            Effect.map(Option.map(claudeThreadContextUsage)),
+            Effect.orElseSucceed(() => Option.none()),
+          );
+          if (Option.isNone(usage)) return undefined;
+          const { groups: _groups, ...breakdown } = usage.value;
+          return { ...breakdown, updatedAt: DateTime.formatIso(yield* DateTime.now) };
         });
 
         /** Applies one root frame's goal signal and writes any change onto the provider thread. */
@@ -6166,9 +6332,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     ...(goal.checks === undefined ? {} : { checks: goal.checks }),
                   });
                 }
+                const contextBreakdown =
+                  input.status === "completed" && nativeThreadId !== null
+                    ? yield* contextBreakdownForSettledTurn(nativeThreadId)
+                    : undefined;
                 const providerThread: OrchestrationV2ProviderThread = {
                   ...input.context.input.providerThread,
                   providerSessionId: session.id,
+                  ...(contextBreakdown === undefined ? {} : { contextBreakdown }),
                   ...(clearConversationHead ? { nativeConversationHeadRef: null } : {}),
                   ...(nativeThreadId !== null && goalsByNativeThread.has(nativeThreadId)
                     ? { goal: goalsByNativeThread.get(nativeThreadId) ?? null }
@@ -9422,6 +9593,41 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ),
               );
             }),
+          readContextUsage: ({ providerThread }) =>
+            Effect.gen(function* () {
+              const liveQuery = yield* Ref.get(queryContext);
+              const getContextUsage = liveQuery?.query.getContextUsage;
+              // No CLI process to ask, and reading must not start one.
+              if (
+                liveQuery === null ||
+                liveQuery.stopping ||
+                liveQuery.nativeThreadId !== providerThread.nativeThreadRef?.nativeId ||
+                getContextUsage === undefined
+              ) {
+                return null;
+              }
+              const response = yield* getContextUsage.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CLAUDE_PROVIDER,
+                      detail: "Context usage request failed",
+                      cause,
+                    }),
+                ),
+                Effect.timeoutOrElse({
+                  duration: CLAUDE_CONTEXT_USAGE_TIMEOUT,
+                  orElse: () =>
+                    Effect.fail(
+                      new ProviderAdapter.ProviderAdapterProtocolError({
+                        driver: CLAUDE_PROVIDER,
+                        detail: "Claude Code did not answer the context usage request",
+                      }),
+                    ),
+                }),
+              );
+              return claudeThreadContextUsage(response);
+            }),
           interruptTurn,
           stopSubagent: Effect.fn("ClaudeAdapterV2.stopSubagent")(function* (input) {
             const existing = yield* Ref.get(queryContext);
@@ -9704,7 +9910,10 @@ export type ClaudeAdapterV2DriverEnv =
 export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
   function* (
     input: ProviderAdapterDriverCreateInput<ClaudeSettings>,
-    hooks: Pick<ClaudeAdapterV2Options, "scopedLimitNames" | "onUsageLimits"> = {},
+    hooks: Pick<
+      ClaudeAdapterV2Options,
+      "scopedLimitNames" | "onUsageLimits" | "rememberContextBreakdown"
+    > = {},
   ) {
     const { instanceId, environment, enabled, config } = input;
     const fileSystem = yield* FileSystem.FileSystem;
