@@ -188,3 +188,32 @@ export const scanMachineLog = (dataDir: string): Array<MachineEntry> => {
   }
   return entries;
 };
+
+/** How long T3 trouble in the machine log counts as the cause of a session ending badly: ten minutes, fixed. */
+const T3_TROUBLE_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * The newest sign of T3 trouble in the machine log at or after `nowMs` minus ten minutes: a
+ * `preflight_failed` whose check is `t3` (its `why`), or an `error` whose kind is `t3` (its
+ * `message`). Only the machine log is read, never a run's ledger. Null for none, and for a log
+ * that does not exist yet.
+ */
+export const t3TroubleSince = (dataDir: string, nowMs: number): string | null => {
+  const since = nowMs - T3_TROUBLE_WINDOW_MS;
+  let newest: { readonly ms: number; readonly text: string } | null = null;
+  for (const entry of scanMachineLog(dataDir)) {
+    if (entry.ms < since) continue;
+    const data = typeof entry.data === "object" && entry.data !== null ? entry.data : {};
+    const field = (key: string): unknown => (data as Record<string, unknown>)[key];
+    const text =
+      entry.event === "preflight_failed" && field("check") === "t3"
+        ? field("why")
+        : entry.event === "error" && field("kind") === "t3"
+          ? field("message")
+          : undefined;
+    if (typeof text === "string" && (newest === null || entry.ms >= newest.ms)) {
+      newest = { ms: entry.ms, text };
+    }
+  }
+  return newest === null ? null : newest.text;
+};

@@ -807,7 +807,7 @@ const resumeFrom = (
   });
 
 /** Whether `name` can go into a ref the factory passes to git: not empty, not an option, no whitespace or control character, no `..`. */
-const isPlainRefName = (name: string): boolean =>
+export const isPlainRefName = (name: string): boolean =>
   name !== "" && !name.startsWith("-") && !name.includes("..") && !/[\s\p{Cc}]/u.test(name);
 
 /**

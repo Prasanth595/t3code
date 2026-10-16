@@ -50,7 +50,6 @@ import {
   type AdvanceOutcome,
   type Evidence,
   type InterruptContext,
-  type InterruptOutcome,
 } from "./building.ts";
 import { launchMessage, type ResumeFrom } from "./messages.ts";
 import { resume, start } from "./start.ts";
@@ -1086,24 +1085,23 @@ describe("interrupted: a thread that is gone", () => {
       const launched = readRun(rig.dataDir, run10b).entries.find(
         (entry) => entry.event === "session_launched",
       );
-      assert.deepStrictEqual((launched?.data as { resumed_from: unknown }).resumed_from, {
+      assert.ok(launched !== undefined);
+      assert.deepStrictEqual((launched.data as { resumed_from: unknown }).resumed_from, {
         run: "rawphp__softfac__10__1",
         branch: "t3code/abc",
       });
-      assert.strictEqual(launched?.cause?.reason, "resumed-from-branch");
+      assert.strictEqual(launched.cause?.reason, "resumed-from-branch");
     }),
   );
 
-  it.effect("has the interrupted paragraph in the factory's fixed words", () =>
-    Effect.gen(function* () {
-      const message = launchMessage(REPO, 10, "rawphp", "/gh/rawphp", RESUMED_FROM_ABC);
-      assert.ok(
-        message.includes(`\n\n${INTERRUPTED_WORDS}\n\nYou act on GitHub as rawphp.`),
-        message,
-      );
-      assert.ok(!message.includes("time limit"));
-    }),
-  );
+  it("has the interrupted paragraph in the factory's fixed words", () => {
+    const message = launchMessage(REPO, 10, "rawphp", "/gh/rawphp", RESUMED_FROM_ABC);
+    assert.ok(
+      message.includes(`\n\n${INTERRUPTED_WORDS}\n\nYou act on GitHub as rawphp.`),
+      message,
+    );
+    assert.ok(!message.includes("time limit"));
+  });
 
   it.effect("with no evidence goes stuck as thread-gone", () =>
     Effect.gen(function* () {

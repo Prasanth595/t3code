@@ -3,9 +3,12 @@
  * reads how the session ended and moves the issue on, `watch` stops a run whose issue text was
  * changed by someone who is not an instructor, `forward` sends the session an instructor's
  * comments and edits of the issue body, `timeLimit` stops a run that took too long. The rest of
- * `building.rs` (interruptions and relaunches, review feedback) belongs to later issues; the gate
+ * `building.rs` (review feedback) belongs to later issues; the gate
  * itself is `gating.ts`. `advance` also ends a run whose pull request was merged
- * or closed, whose issue a person closed, or that an operator stopped by hand (#20).
+ * or closed, whose issue a person closed, or that an operator stopped by hand (#20). A session
+ * that ended `failed` or `cancelled`, or whose thread is gone, is reported by `advance` and decided
+ * by `interrupted` (an interruption, resumed in its thread or relaunched from its branch, or a
+ * stop).
  *
  * Each step reads the ledger first and does only what it does not record, so calling it again
  * resumes whatever an earlier call left half done. A failure of the tracker or of T3 is an
@@ -49,6 +52,7 @@ import {
   CANNOT_CONFIRM,
   CANNOT_VERIFY_DURING_BUILD,
   CHANGED_DURING_BUILD,
+  INTERRUPTION_MESSAGE,
   RESULT_LINE_REMINDER,
   STOPPED_BY_HAND,
   THREAD_GONE,
@@ -64,8 +68,10 @@ import {
   BODY_EDIT_FORWARDED,
   COMMENT_DROPPED,
   FORWARD_WAIT,
+  INTERRUPTION_SENT,
   RESULT_LINE_REMINDED,
   RESULT_LINE_REMINDING,
+  field,
   readProgress,
   type Seen,
 } from "./progress.ts";
@@ -86,6 +92,13 @@ import {
   type RunError,
   type Stop,
 } from "./run.ts";
+import {
+  isPlainRefName,
+  resume,
+  type GateRunningError,
+  type StartContext,
+  type StartOutcome,
+} from "./start.ts";
 
 /** What the steps of a building run ask of the factory: the run's repo and project, the tracker and the sessions. */
 export interface BuildingContext extends RunContext {
@@ -147,8 +160,20 @@ export class WrongRepoError extends Schema.TaggedError<WrongRepoError>()("WrongR
   }
 }
 
+/** A relaunch that cannot be carried out: the run has no recorded approval, or the context has no claim to go on with. */
+export class RelaunchUnsupportedError extends Schema.TaggedError<RelaunchUnsupportedError>()(
+  "RelaunchUnsupportedError",
+  { run: RunRef },
+) {
+  override get message(): string {
+    return `run ${runIdToString(this.run)} cannot be relaunched: it has no recorded approval, or no claim to go on with`;
+  }
+}
+
 export type BuildingError =
   | RunError
+  | GateRunningError
+  | RelaunchUnsupportedError
   | NotBuildingError
   | NoSessionError
   | WrongRepoError
@@ -178,7 +203,52 @@ export type AdvanceOutcome =
   /** The session asked its questions: they are on the issue and the run is ended. */
   | { readonly kind: "needs-info" }
   /** The issue went to `stuck`. `reason` is the one the ledger records. */
+  | { readonly kind: "stuck"; readonly reason: string }
+  /**
+   * The session's run ended `failed` or `cancelled` with no `FACTORY-DONE` line, or T3 no longer
+   * has its thread. Nothing was written: the pass decides about these together (`interrupted`).
+   */
+  | { readonly kind: "ended-badly"; readonly what: BadEnd }
+  /** A relaunch decided earlier was finished: the old run is over and `start` went on for the next attempt. */
+  | { readonly kind: "relaunched"; readonly start: StartOutcome };
+
+/** How a session ended badly, as `advance` says it. */
+export type BadEnd = "failed" | "cancelled" | "thread-gone";
+
+/**
+ * What the pass knows when it decides about a session that ended badly: the newest T3 trouble in
+ * the machine log within the last ten minutes, and how many sessions ended badly in the pass.
+ */
+export interface Evidence {
+  /** The error text of a failed T3 preflight or an `error` of kind `t3` in that window. */
+  readonly t3Error: string | null;
+  /** How many runs `advance` said ended badly in this pass, this one included. */
+  readonly endedInPass: number;
+}
+
+/** What `interrupted` did. */
+export type InterruptOutcome =
+  /** The run is no longer one that ended badly (its thread has a newer run, say), or a relaunch is already decided. Nothing was written. */
+  | { readonly kind: "unchanged"; readonly why: string }
+  /** The session was sent one resume message in its thread and the run stays `building`. `resumes` of `limit` are used, this one included. */
+  | {
+      readonly kind: "resumed";
+      readonly resumes: number;
+      readonly limit: number;
+      readonly status: "failed" | "cancelled";
+    }
+  /** The thread could not be resumed: the run is finished, and `start` went on for the next attempt, which continues from the run's branch. */
+  | {
+      readonly kind: "relaunched";
+      readonly resumes: number;
+      readonly limit: number;
+      readonly start: StartOutcome;
+    }
+  /** Not an interruption, or the cap is used up: the issue went to `stuck`. `reason` is the one the ledger records. */
   | { readonly kind: "stuck"; readonly reason: string };
+
+/** What `interrupted` asks: the steps of a building run, and the claim's context to start the next attempt with. */
+export type InterruptContext = BuildingContext & StartContext;
 
 /** What `watch` did. */
 export type WatchOutcome =
@@ -188,12 +258,20 @@ export type WatchOutcome =
   | { readonly kind: "stopped"; readonly reason: string }
   | {
       readonly kind: "skipped";
-      readonly why: "finished" | "no-session" | "not-building" | "gate-passed" | "pr-merged";
+      readonly why:
+        | "finished"
+        | "relaunching"
+        | "no-session"
+        | "not-building"
+        | "gate-passed"
+        | "pr-merged";
     };
 
 /** Why `forward` did nothing for a run. */
 export type SkipReason =
   | "finished"
+  /** A relaunch is decided: `advance` finishes it. */
+  | "relaunching"
   | "no-session"
   | "not-building"
   /** A gate attempt is being sent into the session: a message sent now could be mistaken for the proof that it arrived. */
@@ -219,7 +297,13 @@ export type LimitOutcome =
   | { readonly kind: "stopped"; readonly reason: string }
   | {
       readonly kind: "skipped";
-      readonly why: "finished" | "not-running" | "launch-unrecorded" | "pr-reported" | "pr-merged";
+      readonly why:
+        | "finished"
+        | "relaunching"
+        | "not-running"
+        | "launch-unrecorded"
+        | "pr-reported"
+        | "pr-merged";
     };
 
 const MINUTE_MS = 60_000;
@@ -293,6 +377,35 @@ const isEndedBadly = (status: RunStatus): boolean =>
 /** Whether a run status is one the run has finished with. An active status is not. */
 export const isTerminal = (status: RunStatus): boolean =>
   status === "completed" || status === "interrupted" || isEndedBadly(status);
+
+/**
+ * The run's newest `session_interrupted` line is a relaunch: the pass decided to start the next
+ * attempt, and `advance` finishes that whatever else is true of the run (a time limit, an edit of
+ * the issue text), so nothing else may stop the run first and leave the next attempt's ledger
+ * with nothing to start it.
+ */
+const relaunchDecided = (seen: Seen): boolean =>
+  seen.interruption !== null && seen.interruption.relaunch;
+
+/**
+ * Whether the session's latest run ended badly, as of now: its status is `failed`, `cancelled`
+ * or `rolled_back`, nothing is still owed a newer run (see `sessionBusy`), and its last message
+ * has no `FACTORY-DONE` line. The one place that says so, for `advance` (which reports it) and
+ * `interrupted` (which decides it, and looks again because the thread may have moved on).
+ * `what` is set when the pass may call it an interruption: `failed` or `cancelled`, and only with
+ * an ordinal to wait for a newer run by. A `rolled_back` run is a stop with no second look.
+ */
+const endedBadlyNow = (
+  seen: Seen,
+  status: ThreadStatus,
+  result: SessionResult,
+): { readonly name: string; readonly what: "failed" | "cancelled" | null } | null => {
+  const run = status.run;
+  if (run === null || sessionBusy(seen, status) || !isEndedBadly(run)) return null;
+  if (result.kind === "done") return null;
+  const what = run === "failed" || run === "cancelled" ? run : null;
+  return { name: run, what: status.runOrdinal === null ? null : what };
+};
 
 /**
  * Whether the session ended without any result line: no message, or a last line that is none of
@@ -419,6 +532,14 @@ const stuckOutcome = (stop: Stop): AdvanceOutcome => ({
  * pull request closing it, unless a gate pass is recorded, which the gate finishes. An operator's
  * stop (`stop_requested`) sends the run to `stuck` as stopped by hand, whatever the session is
  * doing and without reading it.
+ *
+ * A run that ended `failed` or `cancelled` with no `FACTORY-DONE` line, and a thread T3 no longer
+ * has, are `ended-badly` with nothing written: the pass decides about them together, with what the
+ * machine log says of T3 (`interrupted`). A `rolled_back` run, and a failed or cancelled one with
+ * no ordinal to wait for a newer run by, go `stuck` at once. A `session_interrupted` line with no
+ * `interruption-sent <n>` step is a resume cut short, sent again here (see `interrupted`), and a
+ * relaunch decided in the ledger is finished here whatever else is true of the run
+ * (`relaunched`).
  */
 export const advance = (
   ctx: BuildingContext,
@@ -461,6 +582,12 @@ export const advance = (
       if (seen.stopRequested && at.state === "building") {
         return yield* stuck("stop-requested", { reason: STOPPED_BY_HAND });
       }
+      // A relaunch is decided once, in `interrupted`, and carried out from the ledger: this is the
+      // rest of one that was cut short. No evidence is needed again.
+      if (relaunchDecided(seen)) {
+        const start = yield* carryOutRelaunch(ctx, run, seen);
+        return { kind: "relaunched", start } as const;
+      }
       const threadId = seen.threadId;
       if (threadId === null) return yield* new NoSessionError({ run });
       // `state_changed` is the commit marker: a run in `needs-info` has had every write done, and
@@ -492,11 +619,34 @@ export const advance = (
         yield* finishBuilding(ctx, issue, yield* out.open, at);
       }
 
-      // A thread T3 no longer has is a stop.
+      // A thread T3 no longer has is not stuck by itself: the pass decides (see `interrupted`).
       const status = yield* threadStatus(ctx, threadId);
-      if (status === null) return yield* stuck("thread-gone", stopOf(THREAD_GONE, null));
+      if (status === null) return { kind: "ended-badly", what: "thread-gone" } as const;
       const message = status.lastAssistantMessage;
       const result = parseSessionResult(ctx.repo, message ?? undefined);
+      // A `session_interrupted` line with no `interruption-sent <n>` after it is a resume cut short
+      // before its send or its step, as for the reminder below: if the thread already has a run
+      // newer than the one that ended, the message arrived and only the step is written;
+      // otherwise the send is made again, under the same command id. A thread T3 no longer has
+      // is the thread-gone case.
+      const owedResume = seen.interruption;
+      if (owedResume !== null && !owedResume.relaunch && !owedResume.sent) {
+        const arrived =
+          status.runOrdinal !== null &&
+          owedResume.runOrdinal !== null &&
+          status.runOrdinal > owedResume.runOrdinal;
+        if (!arrived) {
+          const resent = yield* sendInterruption(ctx, run, threadId, owedResume.resumes);
+          if (resent === "gone") return { kind: "ended-badly", what: "thread-gone" } as const;
+        }
+        yield* append(
+          out,
+          { event: "step_changed", data: { step: `${INTERRUPTION_SENT} ${owedResume.resumes}` } },
+          "advance",
+          "interruption-sent",
+        );
+        if (!arrived) return { kind: "running" } as const;
+      }
       // Sends the reminder for run `k`; a thread T3 no longer has, or a refusal, ends the run.
       const remind = (k: number) =>
         Effect.gen(function* () {
@@ -543,10 +693,15 @@ export const advance = (
         }
         return { kind: "paused" } as const;
       }
-      if (status.run !== null && result.kind !== "done" && isEndedBadly(status.run)) {
+      const endedBadly = endedBadlyNow(seen, status, result);
+      if (endedBadly !== null) {
+        // A failed or cancelled run may be an interruption, which the pass decides. It needs an
+        // ordinal to wait for a newer run by, so a run without one is stuck as it always was.
+        if (endedBadly.what !== null)
+          return { kind: "ended-badly", what: endedBadly.what } as const;
         return yield* stuck(
           "session-ended-badly",
-          stopOf(`the session run ended as ${status.run}`, message),
+          stopOf(`the session run ended as ${endedBadly.name}`, message),
         );
       }
       if (owed && status.runOrdinal !== null) {
@@ -773,6 +928,7 @@ export const watch = (
     yield* checkRepo(ctx, run);
     const seen = yield* readSeen(ctx, run);
     if (seen.finished) return { kind: "skipped", why: "finished" } as const;
+    if (relaunchDecided(seen)) return { kind: "skipped", why: "relaunching" } as const;
     if (seen.threadId === null) return { kind: "skipped", why: "no-session" } as const;
     if (
       seen.state !== "building" ||
@@ -934,6 +1090,7 @@ export const forward = (
         skipped,
       });
       if (seen.finished) return skip("finished");
+      if (relaunchDecided(seen)) return skip("relaunching");
       const first = record.entries[0];
       const threadId = seen.threadId;
       if (threadId === null || first === undefined) return skip("no-session");
@@ -1073,6 +1230,7 @@ export const timeLimit = (
     yield* checkRepo(ctx, run);
     const seen = yield* readSeen(ctx, run);
     if (seen.finished) return { kind: "skipped", why: "finished" } as const;
+    if (relaunchDecided(seen)) return { kind: "skipped", why: "relaunching" } as const;
     const working =
       seen.state === null ||
       seen.state === "ready" ||
@@ -1110,4 +1268,308 @@ export const timeLimit = (
       ),
     );
     return { kind: "stopped", reason: recordedReason(stop) } as const;
+  });
+
+/**
+ * Sends the session its resume message under `softfac:<run>:interrupted:<n>`: a send repeated
+ * after a crash is the same command. The caller writes the `interruption-sent <n>` step after. T3
+ * not having the thread is `"gone"`; any other failure is an error, and the next call sends again.
+ */
+const sendInterruption = (
+  ctx: BuildingContext,
+  run: RunId,
+  threadId: string,
+  n: number,
+): Effect.Effect<"sent" | "gone", BuildingError> =>
+  ctx.sessions
+    .send(threadId, `softfac:${runIdToString(run)}:interrupted:${n}`, INTERRUPTION_MESSAGE)
+    .pipe(
+      Effect.as("sent" as const),
+      Effect.catchIf(isThreadNotFound, () => Effect.succeed("gone" as const)),
+    );
+
+/** The stuck path of a session that ended badly and is not an interruption, or of a stop by hand: as `advance` once decided it. */
+const stuckEnded = (
+  ctx: BuildingContext,
+  run: RunId,
+  seen: Seen,
+  code: string,
+  stop: Stop,
+): Effect.Effect<InterruptOutcome, BuildingError> =>
+  withLedger(ctx, run, (out) =>
+    Effect.gen(function* () {
+      const opened = yield* out.open;
+      yield* goStuck(
+        ctx,
+        issueOf(run),
+        opened,
+        progressFrom("advance", seen, "building"),
+        code,
+        stop,
+      );
+      return { kind: "stuck", reason: recordedReason(stop) } as const;
+    }),
+  );
+
+/**
+ * The interruptions a run has used: the count on its newest `session_interrupted` line, or, when
+ * it has none, the count its issue's previous attempt ended with when that attempt was relaunched
+ * into this one (its newest `session_interrupted` line is a relaunch). Any other previous attempt,
+ * a person's retry, starts again from zero.
+ */
+const resumesUsed = (
+  ctx: BuildingContext,
+  run: RunId,
+  seen: Seen,
+): Effect.Effect<number, BuildingError> =>
+  Effect.gen(function* () {
+    if (seen.interruption !== null) return seen.interruption.resumes;
+    if (run.attempt < 2) return 0;
+    const previous: RunId = { ...run, attempt: run.attempt - 1 };
+    const record = yield* ledger(() => readRun(ctx.dataDir, previous)).pipe(
+      Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
+    );
+    const newest = record?.entries.findLast((entry) => entry.event === "session_interrupted");
+    if (newest === undefined || field(newest.data, "relaunch") !== true) return 0;
+    const resumes = field(newest.data, "resumes");
+    return typeof resumes === "number" ? resumes : 0;
+  });
+
+/**
+ * Decides what a session that ended badly (`advance` said `ended-badly`) is: an interruption or a
+ * stop.
+ *
+ * It is an interruption when `evidence` shows one (T3 Code was in trouble in the last ten
+ * minutes, or another session ended badly in the same pass) and the run has resumes left
+ * (`limits.interruptionResumes`, shared by resumes and relaunches, and carried over a relaunch).
+ * Otherwise the issue goes `stuck` exactly as `advance` once decided: `the session run ended as
+ * <failed|cancelled>` with the session's message, or `the T3 thread no longer exists`. A run that
+ * ended `interrupted` is paused (`advance`) and never reaches this function.
+ *
+ * The ledger and the thread are read again here: the status may have moved on since `advance`
+ * looked, and then nothing is done (`unchanged`). So may a stop by hand, which wins over any
+ * evidence at every step.
+ *
+ * A resume writes `session_interrupted` (with the T3 error, the count and the branch) first, then
+ * sends the fixed message into the same thread under `softfac:<run>:interrupted:<n>`, then writes
+ * the step `interruption-sent <n>`. The line is also the wait marker, so `advance` waits for a run
+ * newer than the one that ended; if the send or the step is lost, `advance` sends again. A send
+ * that fails is an error (the next pass sends again), except that T3 not having the thread is the
+ * thread-gone case.
+ *
+ * A thread that is gone (not found, or archived) is relaunched: `session_interrupted` with
+ * `relaunch` is written, then `carryOutRelaunch` finishes this run without `stuck` and starts the
+ * next attempt from the run's branch. A run with no recorded approval cannot be relaunched, since
+ * the new attempt could not confirm the issue text, and goes `stuck`.
+ */
+export const interrupted = (
+  ctx: InterruptContext,
+  run: RunId,
+  evidence: Evidence,
+): Effect.Effect<InterruptOutcome, BuildingError> =>
+  Effect.gen(function* () {
+    yield* checkRepo(ctx, run);
+    const seen = yield* readSeen(ctx, run);
+    if (seen.finished) return yield* new NotBuildingError({ run });
+    const threadId = seen.threadId;
+    if (threadId === null) return yield* new NoSessionError({ run });
+    // The operator stopped the run after `advance` looked: a stop by hand, not an interruption,
+    // whatever the evidence says.
+    const byHand = (from: Seen) =>
+      stuckEnded(ctx, run, from, "stop-requested", stopOf(STOPPED_BY_HAND, null));
+    if (seen.stopRequested) return yield* byHand(seen);
+    if (relaunchDecided(seen)) {
+      return { kind: "unchanged", why: "a relaunch is already decided" } as const;
+    }
+    const limit = ctx.project.limits.interruptionResumes;
+    const may = (used: number) =>
+      (evidence.t3Error !== null || evidence.endedInPass >= 2) && used < limit;
+    const t3Error = evidence.t3Error === null ? null : prepareSessionText(evidence.t3Error);
+    const goneStuck = (from: Seen) =>
+      stuckEnded(ctx, run, from, "thread-gone", stopOf(THREAD_GONE, null));
+    const relaunch = (from: Seen, resumes: number) =>
+      Effect.gen(function* () {
+        const branch = yield* relaunchBranchOf(ctx, from);
+        yield* withLedger(ctx, run, (out) =>
+          append(
+            out,
+            {
+              event: "session_interrupted",
+              data: {
+                resumes,
+                relaunch: true,
+                run_ordinal: null,
+                branch,
+                t3_error: t3Error,
+                ended_in_pass: evidence.endedInPass,
+              },
+            },
+            "advance",
+            "session-interrupted",
+          ),
+        );
+        const decided = yield* readSeen(ctx, run);
+        const start = yield* carryOutRelaunch(ctx, run, decided);
+        return { kind: "relaunched", resumes, limit, start } as const;
+      });
+    const gone = Effect.gen(function* () {
+      // The operator may have stopped the run since the ledger was read: the stop writes its line
+      // before it archives, so a thread that stop took away always comes with the line, and a stop
+      // by hand is never a relaunch.
+      const latest = yield* readSeen(ctx, run);
+      if (latest.stopRequested) return yield* byHand(latest);
+      // A resume cut short before its send was never made, so it is not charged to a relaunch.
+      const used =
+        seen.interruption !== null && !seen.interruption.sent
+          ? Math.max(0, seen.interruption.resumes - 1)
+          : yield* resumesUsed(ctx, run, seen);
+      if (may(used) && seen.approvedAt !== null) return yield* relaunch(seen, used + 1);
+      return yield* goneStuck(seen);
+    });
+
+    const status = yield* threadStatus(ctx, threadId);
+    if (status === null) return yield* gone;
+    const message = status.lastAssistantMessage;
+    const result = parseSessionResult(ctx.repo, message ?? undefined);
+    const ended = endedBadlyNow(seen, status, result);
+    if (ended === null || ended.what === null) {
+      return { kind: "unchanged", why: "its thread has moved on since" } as const;
+    }
+    const used = yield* resumesUsed(ctx, run, seen);
+    if (!may(used)) {
+      return yield* stuckEnded(
+        ctx,
+        run,
+        seen,
+        "session-ended-badly",
+        stopOf(`the session run ended as ${ended.name}`, message),
+      );
+    }
+    const n = used + 1;
+    yield* withLedger(ctx, run, (out) =>
+      append(
+        out,
+        {
+          event: "session_interrupted",
+          data: {
+            resumes: n,
+            relaunch: false,
+            run_ordinal: status.runOrdinal,
+            branch: status.branch,
+            t3_error: t3Error,
+            ended_in_pass: evidence.endedInPass,
+          },
+        },
+        "advance",
+        "session-interrupted",
+      ),
+    );
+    const sent = yield* sendInterruption(ctx, run, threadId, n);
+    if (sent === "gone") {
+      // The attempt to resume did not happen, so it is one interruption and not two. A stop by
+      // hand that landed meanwhile wins, as above.
+      const latest = yield* readSeen(ctx, run);
+      if (latest.stopRequested) return yield* byHand(latest);
+      if (latest.approvedAt !== null) return yield* relaunch(latest, n);
+      return yield* goneStuck(latest);
+    }
+    yield* withLedger(ctx, run, (out) =>
+      append(
+        out,
+        { event: "step_changed", data: { step: `${INTERRUPTION_SENT} ${n}` } },
+        "advance",
+        "interruption-sent",
+      ),
+    );
+    return { kind: "resumed", resumes: n, limit, status: ended.what } as const;
+  });
+
+/**
+ * The branch the work of a run whose thread is lost is on, for the relaunch to continue from, read
+ * before the decision is written. In order: the newest branch the ledger names (a launch line
+ * usually has none, as it is written before the worktree exists); the branch the thread itself
+ * reports, which T3 keeps for an archived thread (one it does not know gives nothing); the head
+ * branch of the run's own pull request, when that is a plain ref name and not a fork's. `null`
+ * starts the next attempt from `base`. A read that fails, other than T3 not knowing the thread,
+ * is an error with nothing written, and the next pass reads again.
+ */
+const relaunchBranchOf = (
+  ctx: BuildingContext,
+  seen: Seen,
+): Effect.Effect<string | null, BuildingError> =>
+  Effect.gen(function* () {
+    if (seen.lastBranch !== null) return seen.lastBranch;
+    if (seen.threadId !== null) {
+      const thread = yield* ctx.sessions
+        .thread(seen.threadId)
+        .pipe(Effect.catchIf(isThreadNotFound, () => Effect.succeed(null)));
+      if (thread !== null && thread.branch !== null) return thread.branch;
+    }
+    if (seen.lastPr !== null) {
+      const pull = yield* ctx.tracker.pullRequest(seen.lastPr.pr);
+      if (pull !== null && !pull.crossRepository && isPlainRefName(pull.headRef)) {
+        return pull.headRef;
+      }
+    }
+    return null;
+  });
+
+/** Whether a building context can also start a session: it carries the claim's own context. */
+const canStart = (ctx: BuildingContext): ctx is InterruptContext =>
+  "repoPath" in ctx && "ghConfigDir" in ctx && "model" in ctx;
+
+/**
+ * Carries out a relaunch the ledger holds the decision for, in an order a crash can be picked up
+ * from: the next attempt's ledger first, with the same `approved <labeled_at>` step as this run's
+ * (so the approval and the text checks carry over), then the issue's label back to `triage` (it
+ * stays assigned to the factory's user, which is the shape `resume` goes on from; not when the
+ * next attempt has already been claimed), then this run's worktree removed and the run finished
+ * without a stuck label or comment, and last `resume` for the issue. Every part is safe to
+ * repeat, so `advance` calls it again for a run that has the decision and is not finished.
+ */
+const carryOutRelaunch = (
+  ctx: BuildingContext,
+  run: RunId,
+  seen: Seen,
+): Effect.Effect<StartOutcome, BuildingError> =>
+  Effect.gen(function* () {
+    if (seen.approvedAt === null || !canStart(ctx)) {
+      return yield* new RelaunchUnsupportedError({ run });
+    }
+    const labeledAt = seen.approvedAt;
+    const next: RunId = { ...run, attempt: run.attempt + 1 };
+    const existing = yield* ledger(() => readRun(ctx.dataDir, next)).pipe(
+      Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
+    );
+    const nextSeen = existing === null ? null : readProgress(existing.entries);
+    // The label goes back to `triage` only for an attempt `resume` has not begun: once the next
+    // attempt is claimed, or has any state, the issue's label is its own.
+    const begun = nextSeen !== null && (nextSeen.claimed || nextSeen.state !== null);
+    yield* ledger(() => {
+      const fresh =
+        existing === null
+          ? Ledger.create(ctx.dataDir, next, { clock: ctx.clock })
+          : Ledger.open(ctx.dataDir, next, { clock: ctx.clock });
+      try {
+        if (nextSeen?.approvedAt == null) {
+          fresh.append(
+            { event: "step_changed", data: { step: `approved ${labeledAt}` } },
+            makeCause("advance", "approved"),
+          );
+        }
+      } finally {
+        fresh.close();
+      }
+    });
+    if (!begun) yield* ctx.tracker.setState(issueOf(run), "triage");
+    yield* withLedger(ctx, run, (out) =>
+      Effect.gen(function* () {
+        const opened = yield* out.open;
+        yield* stopSession(ctx, opened, progressFrom("advance", seen, "building"));
+        yield* ledger(() =>
+          opened.finish("stuck", null, null, makeCause("advance", "session-interrupted")),
+        );
+      }),
+    );
+    return yield* resume(ctx, issueOf(run));
   });

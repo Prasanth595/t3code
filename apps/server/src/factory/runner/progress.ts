@@ -31,6 +31,18 @@ export interface CommandLine {
   readonly durationMs: number;
 }
 
+/** A `session_interrupted` line as `readProgress` keeps it. */
+export interface Interruption {
+  /** How many interruptions the run has been through, this one included. */
+  readonly resumes: number;
+  /** The thread could not be resumed: the next attempt is started instead. */
+  readonly relaunch: boolean;
+  /** The ordinal of the run that ended, for a resume. */
+  readonly runOrdinal: number | null;
+  /** The `interruption-sent <resumes>` step for this resume is in the ledger. */
+  readonly sent: boolean;
+}
+
 export interface Seen {
   readonly claimed: boolean;
   /** The moment in the first `approved <time>` step: when an instructor applied the label the run was approved on. */
@@ -92,6 +104,10 @@ export interface Seen {
   readonly dropped: ReadonlySet<string>;
   /** The newest `session_paused` line: a person stopped the session's run in T3, and this is its ordinal. */
   readonly paused: { readonly runOrdinal: number | null } | null;
+  /** The newest `session_interrupted` line, until a new session is launched: the decision to resume or to relaunch. */
+  readonly interruption: Interruption | null;
+  /** The newest branch a `session_launched` or `session_interrupted` line names: where the run's work is. */
+  readonly lastBranch: string | null;
   /** Milliseconds spent in `triage` and `building` in stints that have ended. */
   readonly workedMs: number;
   /** When the stint that is running began; null when the run is not working. */
@@ -126,6 +142,8 @@ export const APPROVAL_RECHECKED = "approval-rechecked";
 export const RESULT_LINE_REMINDING = "result-line-reminding";
 /** The ledger step written after the reminder was sent. */
 export const RESULT_LINE_REMINDED = "result-line-reminded";
+/** The ledger step written once the resume of a `session_interrupted` line was sent: `interruption-sent <resumes>`. */
+export const INTERRUPTION_SENT = "interruption-sent";
 /** The ledger step that waits for a run newer than `k` (a forwarded comment); read here for the steps that write it. */
 export const FORWARD_WAIT = "forward-wait";
 /** The ledger step written once an edit of the issue body is in the session: `body-edit-forwarded <edited_at>`. */
@@ -183,6 +201,11 @@ export const parseGatePassed = (
   return n === null || n === 0 ? null : { sha: sha.toLowerCase(), count: n };
 };
 
+const sentInterruption = (interruption: Interruption): Interruption => ({
+  ...interruption,
+  sent: true,
+});
+
 export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let claimed = false;
   let approvedAt: string | null = null;
@@ -210,6 +233,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   const bodyEdits = new Set<string>();
   const dropped = new Set<string>();
   let paused: Seen["paused"] = null;
+  let interruption: Interruption | null = null;
+  let lastBranch: string | null = null;
   let workedMs = 0;
   let workingSince: number | null = entries[0]?.ms ?? null;
   const commandAttempts = new Set<number>();
@@ -254,6 +279,15 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         }
         const forwardRun = stepNumber(step, FORWARD_WAIT);
         if (forwardRun !== null) awaitRun(forwardRun, true);
+        const sentRun = stepNumber(step, INTERRUPTION_SENT);
+        if (
+          sentRun !== null &&
+          interruption !== null &&
+          !interruption.relaunch &&
+          interruption.resumes === sentRun
+        ) {
+          interruption = sentInterruption(interruption);
+        }
         if (step.startsWith(`${BODY_EDIT_FORWARDED} `)) {
           bodyEdits.add(step.slice(BODY_EDIT_FORWARDED.length + 1));
         }
@@ -321,6 +355,10 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         const from = field(entry.data, "resumed_from");
         const fromBranch = field(from, "branch");
         resumedFrom = typeof fromBranch === "string" ? fromBranch : null;
+        const launchedBranch = field(entry.data, "branch");
+        if (typeof launchedBranch === "string") lastBranch = launchedBranch;
+        // A resume owed to the old thread is not owed to this one.
+        if (interruption !== null) interruption = sentInterruption(interruption);
         // A new session has run numbers of its own, one reminder, and no stop by hand yet.
         waitingAfter = null;
         waitIsForward = false;
@@ -363,6 +401,19 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
       case "pr_ready_outside":
         readyOutside = true;
         break;
+      case "session_interrupted": {
+        const resumes = number(field(entry.data, "resumes"));
+        const ordinal = number(field(entry.data, "run_ordinal"));
+        const branch = field(entry.data, "branch");
+        if (typeof branch === "string") lastBranch = branch;
+        if (resumes === null) break;
+        const relaunch = field(entry.data, "relaunch") === true;
+        interruption = { resumes, relaunch, runOrdinal: ordinal, sent: false };
+        // The resume starts a new run: the session is working until one newer than the run that
+        // ended has ended. Like a forward's, only a newer run drops the wait.
+        if (!relaunch && ordinal !== null) awaitRun(ordinal, true);
+        break;
+      }
       case "session_paused": {
         const ordinal = field(entry.data, "run_ordinal");
         paused = { runOrdinal: typeof ordinal === "number" ? ordinal : null };
@@ -446,6 +497,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     bodyEdits,
     dropped,
     paused,
+    interruption,
+    lastBranch,
     workedMs,
     workingSince,
     commandAttempts,

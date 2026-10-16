@@ -36,7 +36,7 @@ import { Ledger } from "./ledger/ledger.ts";
 import { listUnfinishedRuns } from "./ledger/listRuns.ts";
 import { readRun } from "./ledger/read.ts";
 import { runIdToString, type RunId } from "./ledger/runId.ts";
-import { MachineLog } from "./ledger/machineLog.ts";
+import { MachineLog, t3TroubleSince } from "./ledger/machineLog.ts";
 import { runLoop, type Loop } from "./loop.ts";
 import {
   GATE_PASSED_LINE,
@@ -60,9 +60,11 @@ import {
   advance,
   forward,
   gateSendPending,
+  interrupted,
   timeLimit,
   watch,
   type BuildingContext,
+  type InterruptContext,
 } from "./runner/building.ts";
 import { gate as gateStep, type GateContext, type GateStep } from "./runner/gating.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
@@ -276,6 +278,16 @@ export const liveWorld = (
     sessions,
     clock,
   });
+  // The steps of a building run that can also start the next attempt: `advance` finishes a
+  // relaunch, `interrupted` decides one. The tracker and the sessions are the same for both.
+  const interruptContext = (repo: Repo): InterruptContext => ({
+    ...buildingContext(repo),
+    repoPath: repo.watched.path,
+    ghConfigDir: machine.ghConfigDir,
+    model: { instanceId: machine.modelInstance, model: machine.model },
+    tracker: trackerFor(repo.watched),
+    sessions,
+  });
   const gateContext = (repo: Repo): GateContext => ({
     ...buildingContext(repo),
     tracker: trackerFor(repo.watched),
@@ -411,7 +423,9 @@ export const liveWorld = (
     timeLimit: (repo, run) => timeLimit(buildingContext(repo), run),
     watch: (repo, run) => watch(buildingContext(repo), run),
     forward: (repo, run) => forward(buildingContext(repo), run),
-    advance: (repo, run) => advance(buildingContext(repo), run),
+    advance: (repo, run) => advance(interruptContext(repo), run),
+    t3Trouble: () => ledger(() => t3TroubleSince(dataDir, clock())),
+    interrupted: (repo, run, evidence) => interrupted(interruptContext(repo), run, evidence),
     gateRunning: (run) =>
       gating.has(runIdToString(run)) || NodeFS.existsSync(gateLockFile(dataDir, run)),
     hasPendingGateSend: (run) =>

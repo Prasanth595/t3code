@@ -37,7 +37,7 @@ import {
 import { isLedgerError } from "./ledger/errors.ts";
 import { makeCause } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
-import { scanMachineLog } from "./ledger/machineLog.ts";
+import { MachineLog, scanMachineLog } from "./ledger/machineLog.ts";
 import { readRun } from "./ledger/read.ts";
 import { newRunId, runIdToString, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
@@ -973,6 +973,39 @@ describe("liveWorld", () => {
       assert.strictEqual(error.kind, "config");
       assert.include(error.message, "`develop`");
       assert.include(error.message, "`main`");
+    }),
+  );
+
+  const tempDirForLogs = useTempDirs();
+
+  it.effect("T3 trouble is the newest t3 error in the machine log within ten minutes", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDirForLogs();
+      const { process } = ghWith(() => null);
+      const world = liveWorld(
+        machine,
+        dataDir,
+        process,
+        stubSessions,
+        () => NOW,
+        "mac-mini",
+        noAttention,
+        {
+          gate: { run: () => Effect.succeed({ _tag: "running" as const }) },
+          wake: Effect.void,
+          scope: Scope.makeUnsafe(),
+        },
+      );
+      // No machine log yet: no trouble.
+      assert.strictEqual(yield* world.t3Trouble(), null);
+      const log = MachineLog.open(dataDir, { clock: () => NOW - 20 * MINUTE });
+      log.append({ event: "error", data: { step: "pass", kind: "t3", message: "too old" } });
+      log.close();
+      assert.strictEqual(yield* world.t3Trouble(), null);
+      const recent = MachineLog.open(dataDir, { clock: () => NOW - 2 * MINUTE });
+      recent.append({ event: "error", data: { step: "pass", kind: "t3", message: "timed out" } });
+      recent.close();
+      assert.strictEqual(yield* world.t3Trouble(), "timed out");
     }),
   );
 });

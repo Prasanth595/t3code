@@ -21,8 +21,11 @@ import { asciiLower, runIdToString, type RunId } from "./ledger/runId.ts";
 import { duration, formatTs } from "./ledger/time.ts";
 import type {
   AdvanceOutcome,
+  BadEnd,
   BuildingError,
+  Evidence,
   ForwardOutcome,
+  InterruptOutcome,
   LimitOutcome,
   WatchOutcome,
 } from "./runner/building.ts";
@@ -110,6 +113,18 @@ export interface PassWorld {
   readonly forward: (repo: Repo, run: RunId) => Effect.Effect<ForwardOutcome, BuildingError>;
   /** The session's result: `advance`. */
   readonly advance: (repo: Repo, run: RunId) => Effect.Effect<AdvanceOutcome, BuildingError>;
+  /**
+   * The newest sign of T3 trouble in the machine log within the last ten minutes (a failed `t3`
+   * preflight or an `error` of kind `t3`), as its text; null for none. Read once a pass, and only
+   * when a session ended badly.
+   */
+  readonly t3Trouble: () => Effect.Effect<string | null, LedgerError>;
+  /** Decides about a session `advance` said ended badly, with the pass's evidence: `interrupted`. */
+  readonly interrupted: (
+    repo: Repo,
+    run: RunId,
+    evidence: Evidence,
+  ) => Effect.Effect<InterruptOutcome, BuildingError>;
   /** Whether the run's gate is running now. */
   readonly gateRunning: (run: RunId) => boolean;
   /**
@@ -192,6 +207,8 @@ interface Notes {
   readonly errors: Array<NoteError>;
   /** The attention items to raise when the notes are flushed. */
   readonly raises: Array<NewItem>;
+  /** How `advance` found the session's run ended, when it ended badly: the pass decides about it after every run. */
+  endedBadly: BadEnd | null;
 }
 
 /** An error, as printed and as recorded. */
@@ -377,6 +394,7 @@ class Pass {
       parts: [],
       errors: [],
       raises: [],
+      endedBadly: null,
     };
   }
 
@@ -564,6 +582,8 @@ const workRuns = (
   pass: Pass,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
+    // The runs whose session `advance` found ended badly: they are decided together below.
+    const ended: Array<EndedBadly> = [];
     for (const info of [...known.infos]) {
       if (info.unreadable || !info.confirmed) continue;
       const loaded = repos.find(
@@ -590,8 +610,124 @@ const workRuns = (
           yield* advanceRun(world, repo, info, notes, pass);
         }
       }
+      if (notes.endedBadly !== null) ended.push({ info, repo, what: notes.endedBadly });
       yield* known.refresh(world, pass, name, issue);
       yield* pass.flush(notes, info.id);
+    }
+    yield* decideInterruptions(world, ended, pass);
+  });
+
+/** A run `advance` found ended badly, with the repo it is in. */
+interface EndedBadly {
+  readonly info: RunInfo;
+  readonly repo: Repo;
+  readonly what: BadEnd;
+}
+
+/** How a pass says a session ended, from what `advance` called it. */
+const endedAs = (what: BadEnd): string =>
+  what === "thread-gone" ? "the T3 thread is gone" : `session ended as ${what}`;
+
+/**
+ * Decides, for the sessions `advance` found ended badly in this pass, whether each is an
+ * interruption or a stop (`interrupted` in `runner/building.ts`). The evidence is the same for all
+ * of them: the newest T3 trouble in the machine log, and how many sessions ended badly. The log
+ * is read once, and not at all when none did. A log that cannot be read is an error line, and then
+ * only two or more sessions that ended badly are decided; a lone one waits for the next pass.
+ */
+const decideInterruptions = (
+  world: PassWorld,
+  ended: ReadonlyArray<EndedBadly>,
+  pass: Pass,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    if (ended.length === 0) return;
+    const trouble = yield* Effect.result(world.t3Trouble());
+    let t3Error: string | null = null;
+    if (trouble._tag === "Failure") {
+      yield* pass.fail(
+        null,
+        passError(
+          "ledger",
+          "cannot read the machine log for T3 trouble: ",
+          trouble.failure.message,
+        ),
+      );
+      // Without the log a lone session cannot be told from a stop, and a stop cannot be undone:
+      // those runs stay as they are and `advance` reports them again next pass. Two or more need
+      // no log.
+      if (ended.length < 2) return;
+    } else {
+      t3Error = trouble.success;
+    }
+    const evidence: Evidence = { t3Error, endedInPass: ended.length };
+    for (const { info, repo, what } of ended) {
+      const notes = pass.notes(repo.watched.repo, Number(info.id.issue), info.state);
+      const why = endedAs(what);
+      const decided = yield* Effect.result(world.interrupted(repo, info.id, evidence));
+      if (decided._tag === "Failure") {
+        pass.failed(notes, "interrupted", "advance", decided.failure);
+      } else {
+        const outcome = decided.success;
+        switch (outcome.kind) {
+          case "resumed":
+            notes.parts.push(
+              `${why}; interrupted, sent it a resume (${outcome.resumes} of ${outcome.limit})`,
+            );
+            break;
+          case "relaunched":
+            yield* relaunched(
+              pass,
+              notes,
+              why,
+              ` (${outcome.resumes} of ${outcome.limit})`,
+              outcome.start,
+            );
+            break;
+          case "unchanged":
+            notes.parts.push(`${why}, but ${outcome.why}; left alone`);
+            break;
+          case "stuck":
+            pass.stuck(notes, runIdToString(info.id));
+            break;
+        }
+      }
+      yield* pass.flush(notes, info.id);
+    }
+  });
+
+/**
+ * What a pass says of the next attempt that a relaunch started: `counted` is the resume count,
+ * when there is one to say.
+ */
+const relaunched = (
+  pass: Pass,
+  notes: Notes,
+  why: string,
+  counted: string,
+  start: StartOutcome,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    switch (start.kind) {
+      case "started":
+        notes.parts.push(
+          `${why}; interrupted, relaunched as run ${runIdToString(start.run)}${counted}`,
+        );
+        break;
+      case "stuck":
+        notes.parts.push(`${why}; interrupted, relaunched${counted}`);
+        pass.stuck(notes, runIdToString(start.run));
+        break;
+      case "abandoned":
+        notes.parts.push(`${why}; interrupted, relaunching${counted}`);
+        yield* abandoned(pass, notes, null, start.mayHaveSession, start.error);
+        break;
+      case "skipped":
+      case "refused":
+        notes.parts.push(
+          `${why}; interrupted, relaunching${counted}, the new attempt starts on the next pass`,
+        );
+        break;
     }
   });
 
@@ -806,6 +942,13 @@ const advanceRun = (
         break;
       case "abandoned":
         yield* abandoned(pass, notes, run, []);
+        break;
+      case "ended-badly":
+        // Said at the decision, after every run has been through the pass.
+        notes.endedBadly = advanced.success.what;
+        break;
+      case "relaunched":
+        yield* relaunched(pass, notes, endedAs("thread-gone"), "", advanced.success.start);
         break;
     }
     const kind = advanced.success.kind;
