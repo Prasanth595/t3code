@@ -293,16 +293,54 @@ describe("liveWorld", () => {
     }),
   );
 
-  /** gh for a release: the issue's comments (its newest factory comment is `newest`), and labels that move unless `labelFails`. */
-  const releaseGh = (newest: string | null, labelFails: boolean) =>
+  /** The approval history call, as `readHistory` sends it. */
+  const isHistory = (args: ReadonlyArray<string>) => args[0] === "api" && args[1] === "graphql";
+
+  /** A history whose only entries are these `factory:triage` label events, oldest first. */
+  const historyOf = (labeledAt: ReadonlyArray<string>) =>
+    JSON.stringify({
+      data: {
+        repository: {
+          issue: {
+            timelineItems: {
+              totalCount: labeledAt.length,
+              nodes: labeledAt.map((createdAt) => ({
+                __typename: "LabeledEvent",
+                createdAt,
+                actor: { __typename: "User", login: "rawphp" },
+                label: { name: "factory:triage" },
+              })),
+            },
+            lastEditedAt: null,
+            editor: null,
+            userContentEdits: { totalCount: 0, nodes: [] },
+          },
+        },
+      },
+    });
+
+  const OLD = "2026-07-01T01:00:00Z";
+  const LABEL_AT = "2026-10-08T00:30:00Z";
+  const COMMENT_AT = "2026-10-08T01:00:00Z";
+
+  /**
+   * gh for a release: the issue's comments (its newest factory comment is `newest`, created at
+   * `commentAt`), the label history (`labels` is when `factory:triage` was added, or null when the
+   * history cannot be read), and labels that move unless `labelFails`.
+   */
+  const releaseGh = (
+    newest: string | null,
+    labelFails: boolean,
+    commentAt: string = COMMENT_AT,
+    labels: ReadonlyArray<string> | null = [LABEL_AT],
+  ) =>
     ghWith((args) => {
       if (args[0] === "api" && args[1] === `repos/${REPO}/issues/9/comments`) {
         return JSON.stringify(
-          newest === null
-            ? []
-            : [{ id: 1, body: `${newest}\n\n${MARKER}`, created_at: "2026-10-08T01:00:00Z" }],
+          newest === null ? [] : [{ id: 1, body: `${newest}\n\n${MARKER}`, created_at: commentAt }],
         );
       }
+      if (isHistory(args)) return labels === null ? null : historyOf(labels);
       if (args[0] === "issue" && args[1] === "comment") return "https://github.com/x/1";
       if (args[0] === "issue" && args[1] === "view") {
         return '{"labels":[{"name":"factory:triage"}]}';
@@ -313,7 +351,13 @@ describe("liveWorld", () => {
 
   const steps = (calls: ReadonlyArray<ReadonlyArray<string>>) =>
     calls.map((args) =>
-      args[0] === "api" ? "comments" : args[1] === "comment" ? "comment" : `${args[1]}`,
+      args[0] === "api"
+        ? args[1] === "graphql"
+          ? "history"
+          : "comments"
+        : args[1] === "comment"
+          ? "comment"
+          : `${args[1]}`,
     );
 
   it.effect("a cut-short claim is commented on, then moved to proposed", () =>
@@ -330,10 +374,44 @@ describe("liveWorld", () => {
       const error = yield* Effect.flip(worldOf(first.process).releaseClaim(repo, 9, "triage"));
       assert.strictEqual(error.kind, "tracker");
       assert.deepStrictEqual(steps(first.calls), ["comments", "comment", "view", "edit"]);
-      // The next pass finds the issue where it was, with the comment already its newest.
+      // The next pass finds the issue where it was: the comment is newer than the label event.
       const again = releaseGh(CUT_SHORT_COMMENT, false);
       yield* worldOf(again.process).releaseClaim(repo, 9, "triage");
-      assert.deepStrictEqual(steps(again.calls), ["comments", "view", "edit"]);
+      assert.deepStrictEqual(steps(again.calls), ["comments", "history", "view", "edit"]);
+    }),
+  );
+
+  it.effect("an old cut-short comment from before the current label is said again", () =>
+    Effect.gen(function* () {
+      const { process, calls } = releaseGh(CUT_SHORT_COMMENT, false, OLD);
+      yield* worldOf(process).releaseClaim(repo, 9, "triage");
+      assert.deepStrictEqual(steps(calls), ["comments", "history", "comment", "view", "edit"]);
+    }),
+  );
+
+  it.effect(
+    "a newest comment that is not the cut-short text is followed by one, unread history",
+    () =>
+      Effect.gen(function* () {
+        const { process, calls } = releaseGh("Something else the factory said.", false);
+        yield* worldOf(process).releaseClaim(repo, 9, "triage");
+        assert.deepStrictEqual(steps(calls), ["comments", "comment", "view", "edit"]);
+      }),
+  );
+
+  it.effect("a history that cannot be read still gets the comment, then the move", () =>
+    Effect.gen(function* () {
+      const { process, calls } = releaseGh(CUT_SHORT_COMMENT, false, COMMENT_AT, null);
+      yield* worldOf(process).releaseClaim(repo, 9, "triage");
+      assert.deepStrictEqual(steps(calls), ["comments", "history", "comment", "view", "edit"]);
+    }),
+  );
+
+  it.effect("a history with no label event of the state gets the comment", () =>
+    Effect.gen(function* () {
+      const { process, calls } = releaseGh(CUT_SHORT_COMMENT, false, COMMENT_AT, []);
+      yield* worldOf(process).releaseClaim(repo, 9, "triage");
+      assert.deepStrictEqual(steps(calls), ["comments", "history", "comment", "view", "edit"]);
     }),
   );
 
