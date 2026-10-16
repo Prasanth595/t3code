@@ -171,17 +171,21 @@ describe("environment lifecycle coordinator", () => {
     };
     const manager = createEnvironmentManager(interactiveBackend);
     const first = await manager.startInteractive(request, ["/bin/sh"], { clientSessionId: "thread-terminal" });
-    const reconnected = await manager.startInteractive(request, ["/bin/sh"], { clientSessionId: "thread-terminal" });
-    expect(reconnected).toEqual(first);
-    expect(starts).toBe(1);
+    expect(first.outputSequence).toBe(0);
 
     const firstAttachment = manager.attachInteractiveOutput(request, first.sessionId)[Symbol.asyncIterator]();
     await expect(firstAttachment.next()).resolves.toMatchObject({ value: { type: "output", sequence: 1, data: new TextEncoder().encode("prompt") } });
     await firstAttachment.return?.();
+    const replay = manager.attachInteractiveOutput(request, first.sessionId, 0)[Symbol.asyncIterator]();
+    await expect(replay.next()).resolves.toMatchObject({ value: { type: "output", sequence: 1 } });
+    await replay.return?.();
+    const reconnected = await manager.startInteractive(request, ["/bin/sh"], { clientSessionId: "thread-terminal" });
+    expect(reconnected).toEqual({ sessionId: first.sessionId, outputSequence: 1 });
+    expect(starts).toBe(1);
+
     const resumed = [];
-    for await (const event of manager.attachInteractiveOutput(request, first.sessionId, 0)) resumed.push(event);
+    for await (const event of manager.attachInteractiveOutput(request, first.sessionId, reconnected.outputSequence)) resumed.push(event);
     expect(resumed).toEqual([
-      { type: "output", sequence: 1, data: new TextEncoder().encode("prompt") },
       { type: "exit", result: { exitCode: 0, cancelled: false } },
     ]);
 

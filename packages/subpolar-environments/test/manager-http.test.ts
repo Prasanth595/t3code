@@ -32,7 +32,7 @@ function managerFixture() {
     },
     startInteractive: async (request: EnvironmentRequest, command: readonly string[]) => {
       calls.push({ method: "startInteractive", request, command });
-      return { sessionId: "session-a" };
+      return { sessionId: "session-a", outputSequence: 0 };
     },
     writeInteractive: async (request: EnvironmentRequest, sessionId: string, data: Uint8Array) => { calls.push({ method: "writeInteractive", request, sessionId, data }); },
     resizeInteractive: async (request: EnvironmentRequest, sessionId: string, columns: number, rows: number) => { calls.push({ method: "resizeInteractive", request, sessionId, columns, rows }); },
@@ -145,7 +145,7 @@ test("manager API starts, attaches to, controls, and terminates an authenticated
     environment: requestInput, command: ["/bin/sh"], process: { cwd: "packages", clientSessionId: "thread-1-terminal-1" },
   }));
   expect(start.status).toBe(200);
-  await expect(start.json()).resolves.toEqual({ sessionId: "session-a" });
+  await expect(start.json()).resolves.toEqual({ sessionId: "session-a", outputSequence: 0 });
 
   const input = await handle(makeRequest("/v1/environments/pty/input", {
     environment: requestInput, sessionId: "session-a", data: Buffer.from("ls\n").toString("base64"),

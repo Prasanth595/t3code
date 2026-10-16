@@ -77,6 +77,7 @@ export interface EnvironmentInteractiveProcessBackend extends EnvironmentBackend
 
 export interface EnvironmentInteractiveStartResult {
   readonly sessionId: string;
+  readonly outputSequence: number;
 }
 
 export interface EnvironmentInteractiveOutputEvent {
@@ -386,7 +387,7 @@ export function createEnvironmentManager(
         const sameOptions = JSON.stringify([previous.command, priorOptions.cwd ?? ".", environmentEntries(priorOptions.environment)]) ===
           JSON.stringify([command, process.cwd ?? ".", environmentEntries(process.environment)]);
         if (!sameOptions) throw new EnvironmentManagerError("OWNERSHIP_MISMATCH", "Client session key is already bound to a different process");
-        return { sessionId: previous.sessionId };
+        return { sessionId: previous.sessionId, outputSequence: previous.sequence };
       }
       if (interactiveSessions.size >= MAX_INTERACTIVE_SESSIONS) {
         const completed = [...interactiveSessions.entries()].find(([, entry]) => entry.done);
@@ -430,7 +431,7 @@ export function createEnvironmentManager(
           entry.wakeSpace?.();
         }
       })();
-      return { sessionId };
+      return { sessionId, outputSequence: 0 };
     });
   };
 

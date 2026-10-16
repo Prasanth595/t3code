@@ -174,8 +174,10 @@ export function createEnvironmentManagerHttpClient(options: EnvironmentManagerHt
         },
       });
       const value: unknown = await response.json();
-      if (!isRecord(value) || typeof value.sessionId !== "string") throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned an invalid interactive session");
-      return { sessionId: value.sessionId };
+      if (!isRecord(value) || typeof value.sessionId !== "string" || !Number.isSafeInteger(value.outputSequence) || (value.outputSequence as number) < 0) {
+        throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned an invalid interactive session");
+      }
+      return { sessionId: value.sessionId, outputSequence: value.outputSequence as number };
     },
     async writeInteractive(request, sessionId, data): Promise<void> {
       await post("pty/input", { ...environmentBody(request), sessionId, data: Buffer.from(data).toString("base64") });
