@@ -399,6 +399,22 @@ describe("install.sh and rollback.sh when the logrotate job cannot be reloaded",
     expect(result.stderr).toContain(warning);
     expectRestartSequence(result.calls);
   });
+
+  it("install.sh leaves no temporary script behind when the copy cannot land", () => {
+    // An unwritable directory in the script's place makes the rename fail after mktemp.
+    const script = NodePath.join(root(), "rotate-log.sh");
+    NodeFS.rmSync(script);
+    NodeFS.mkdirSync(script, { mode: 0o555 });
+    archives[v3] = makeArchive(v3);
+    const result = run("install.sh", archives[v3]!);
+    NodeFS.chmodSync(script, 0o755);
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(warning);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v3}`);
+    expect(NodeFS.readdirSync(root()).filter((f) => f.startsWith(".rotate-log."))).toEqual([]);
+    expect(logrotateCalls(result.calls)).toEqual([]);
+    expectRestartSequence(result.calls);
+  });
 });
 
 describe("install.sh reinstalling the current version", () => {
