@@ -1,6 +1,7 @@
 import type {
   PullRequestActivity,
   PullRequestCheck,
+  PullRequestChecksState,
   PullRequestDetail,
   PullRequestListEntry,
   PullRequestMergeability,
@@ -211,4 +212,12 @@ export function pullRequestBranchSummary(
   if (pr.baseComparison === "behind") return `${pr.behindBy ?? ""} behind ${pr.baseBranch}`.trim();
   if (pr.baseComparison === "up-to-date") return "Up to date";
   return pr.mergeability === "mergeable" ? "No conflicts" : "Not reported";
+}
+
+export function pullRequestChecksStatus(state: PullRequestChecksState) {
+  if (state === "passing")
+    return { icon: "checkmark.circle", tint: "accent-adaptive-emerald-600-400" } as const;
+  if (state === "failing")
+    return { icon: "xmark.circle.fill", tint: "accent-danger-foreground" } as const;
+  return { icon: "clock", tint: "accent-warning-foreground" } as const;
 }

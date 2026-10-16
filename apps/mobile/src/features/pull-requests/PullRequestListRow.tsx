@@ -22,7 +22,11 @@ import {
   pullRequestListRowsAreEqual,
   type EnvironmentPullRequestListEntry,
 } from "./pullRequestList";
-import { pullRequestConflict, pullRequestStatus } from "./pullRequestStatus";
+import {
+  pullRequestChecksStatus,
+  pullRequestConflict,
+  pullRequestStatus,
+} from "./pullRequestStatus";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
 
 export const PullRequestListRow = memo(
@@ -54,12 +58,7 @@ export const PullRequestListRow = memo(
     const status = pullRequestStatus(item);
     const conflict = pullRequestConflict(item);
     const review = pullRequestListReviewStatus(item);
-    const checkTint =
-      item.checksState === "passing"
-        ? "accent-adaptive-emerald-600-400"
-        : item.checksState === "failing"
-          ? "accent-danger-foreground"
-          : "accent-warning-foreground";
+    const checks = item.checksState ? pullRequestChecksStatus(item.checksState) : null;
     return (
       <View style={props.sidebar ? THREAD_LIST_V2_SIDEBAR_ROW_CONTAINER_STYLE : undefined}>
         <Menu
@@ -172,19 +171,9 @@ export const PullRequestListRow = memo(
                     </Text>
                   ) : null}
                 </View>
-                {item.checksState ? (
+                {checks ? (
                   <View className="shrink-0" accessibilityLabel={`Checks ${item.checksState}`}>
-                    <SymbolView
-                      name={
-                        item.checksState === "passing"
-                          ? "checkmark.circle"
-                          : item.checksState === "failing"
-                            ? "xmark.circle.fill"
-                            : "clock"
-                      }
-                      size={13}
-                      tintColorClassName={checkTint}
-                    />
+                    <SymbolView name={checks.icon} size={13} tintColorClassName={checks.tint} />
                   </View>
                 ) : null}
                 {review ? (
