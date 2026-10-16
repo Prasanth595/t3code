@@ -56,6 +56,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
+import { writeFakeCli } from "@t3tools/provider-testing/fakeCli";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -3511,18 +3512,22 @@ describe("AcpAdapterV2", () => {
       const mockAgentPath = yield* path.fromFileUrl(
         new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
       );
+      const hostPlatform = yield* HostProcess.Platform;
       // Stands in for `grok inspect --json`, the catalog behind the $ picker.
-      const grokPath = path.join(yield* fileSystem.makeTempDirectoryScoped(), "grok");
       const catalog = { skills: [{ name: "deploy", source: { path: "/s/deploy/SKILL.md" } }] };
-      yield* fileSystem.writeFileString(grokPath, `#!/bin/sh\necho '${JSON.stringify(catalog)}'\n`);
-      yield* fileSystem.chmod(grokPath, 0o755);
+      const grokPath = writeFakeCli({
+        directory: yield* fileSystem.makeTempDirectoryScoped(),
+        name: "grok",
+        source: `process.stdout.write(${JSON.stringify(`${JSON.stringify(catalog)}\n`)});\n`,
+        platform: hostPlatform,
+      });
       const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
       const instanceId = ProviderInstanceId.make("grok-test-skill-mention");
       const adapter = yield* makeGrokAdapterV2({
         instanceId,
         settings: { ...DEFAULT_GROK_SETTINGS, binaryPath: grokPath },
         environment: {},
-        hostPlatform: yield* HostProcess.Platform,
+        hostPlatform,
         selfInvocation: yield* resolveSelfInvocation(),
         makeRuntime: (input) =>
           makeMockRuntime({ childProcessSpawner, mockAgentPath, protocolEvents })(input).pipe(
