@@ -9,6 +9,27 @@ import type { CommandResult } from "../gate.ts";
 import { commandLine, sanitize } from "../text.ts";
 import type { DropReason } from "../tracker/github.ts";
 
+// TEMPORARY: the same shapes as the ones the tracker packet adds to `tracker/github.ts`; the
+// orchestrator replaces these with `import type { Feedback, InlineComment } from "../tracker/github.ts"`.
+export interface InlineComment {
+  readonly path: string;
+  readonly line: number | null;
+  readonly body: string;
+}
+export type FeedbackKind =
+  | { readonly kind: "review"; readonly state: string }
+  | { readonly kind: "pr-comment" }
+  | { readonly kind: "issue-comment" };
+export interface Feedback {
+  readonly id: string;
+  readonly author: string;
+  readonly kind: FeedbackKind;
+  readonly createdAt: string;
+  readonly body: string;
+  readonly inline: ReadonlyArray<InlineComment>;
+  readonly inlineUnread: number;
+}
+
 /** The public reason when a run has no record of what approved it. */
 export const CANNOT_CONFIRM = "the factory could not confirm the issue text was approved";
 
@@ -128,21 +149,23 @@ export const WRONG_ACCOUNT_PREFIX = "the session's gh account is ";
 
 /**
  * The pull request a launch continues, and why: the session's worktree is made from `branch` at its
- * tip on `origin`. `after` is only `failed-regate` here: the run's own pull request passed the
- * gate and failed it when it ran again (instructor feedback and the time-limit resume belong to
- * later issues).
+ * tip on `origin`. `after` says why: the run's own pull request passed the gate and failed it
+ * when it ran again, or passed it and an instructor left feedback (the time-limit resume belongs
+ * to a later issue).
  */
 export interface ResumeFrom {
   readonly branch: string;
   readonly prUrl: string;
-  readonly after: "failed-regate";
+  readonly after: "failed-regate" | "feedback";
 }
 
 /** The paragraph a resumed launch adds, in the factory's fixed words; empty for a first launch. */
-const resumedParagraph = (resumed: ResumeFrom | undefined): string =>
-  resumed === undefined
-    ? ""
+const resumedParagraph = (resumed: ResumeFrom | undefined): string => {
+  if (resumed === undefined) return "";
+  return resumed.after === "feedback"
+    ? `\n\nThe pull request ${resumed.prUrl} of this issue passed the gate and waits for review, and an instructor left feedback on it or on the issue, below. The worktree holds that pull request's branch at its tip on origin. Address the feedback from there and push your commits to the same branch with \`git push origin HEAD:${resumed.branch}\`, so the same pull request is updated. Do not open another pull request.`
     : `\n\nThe pull request ${resumed.prUrl} of this issue passed the gate, and the gate failed when it ran again. The worktree holds that pull request's branch at its tip on origin. Fix the failure below from there and push your commits to the same branch with \`git push origin HEAD:${resumed.branch}\`, so the same pull request is updated. Do not open another pull request.`;
+};
 
 /**
  * The first message of a session for a GitHub issue: invokes `/factory`, says nobody is in the
@@ -332,4 +355,82 @@ export const mergeConflictMessage = (base: string, paths: ReadonlyArray<string>)
   }
   if (paths.length > MAX_LISTED_PATHS) text += `\n  and ${paths.length - MAX_LISTED_PATHS} more`;
   return text;
+};
+
+/** The longest path a block of feedback shows, in characters. */
+const FEEDBACK_PATH_LIMIT = 200;
+
+/** The words for the kind of a piece of feedback in its block. */
+const feedbackKind = (kind: FeedbackKind): string => {
+  switch (kind.kind) {
+    case "review":
+      switch (kind.state) {
+        case "CHANGES_REQUESTED":
+          return "review, changes requested";
+        case "COMMENTED":
+          return "review, commented";
+        case "APPROVED":
+          return "review, approved";
+        case "DISMISSED":
+          return "review, dismissed";
+        default:
+          return "review";
+      }
+    case "pr-comment":
+      return "pull request comment";
+    case "issue-comment":
+      return "issue comment";
+  }
+};
+
+/**
+ * The first message's block of new feedback from instructors: the factory's fixed words, then
+ * each item numbered, with its author, its kind, its text and, for a review, each inline comment
+ * with its path and line. Everything from GitHub is cleaned like an instructor's text and put in
+ * a fence, so none of it can leave its place in the block. The texts together are cut at
+ * {@link INSTRUCTION_LIMIT} characters, and a cut says so and where to read the rest. `prUrl` is
+ * the pull request the feedback is on.
+ */
+export const feedbackMessage = (prUrl: string, items: ReadonlyArray<Feedback>): string => {
+  let left = INSTRUCTION_LIMIT;
+  let cut = false;
+  /** `raw` cleaned and fenced, `(none)` when empty, `(cut)` when the budget is spent, else cut to what is left. */
+  const budgeted = (raw: string): string => {
+    const text = Array.from(cleanInstruction(raw.replaceAll("\r\n", "\n").trim(), true));
+    if (text.length === 0) return "(none)";
+    if (left === 0) {
+      cut = true;
+      return "(cut)";
+    }
+    const shown = text.slice(0, left);
+    cut ||= text.length > shown.length;
+    left -= shown.length;
+    return fenced(shown.join(""));
+  };
+  const total = items.length;
+  const blocks = [
+    `The factory forwards new feedback from instructors on the pull request ${prUrl} and its issue. Address every item, then push to the same branch.`,
+  ];
+  items.forEach((item, i) => {
+    let block = `Feedback ${i + 1} of ${total}\nAuthor: ${loginText(item.author)}\nKind: ${feedbackKind(item.kind)}\nText:\n${budgeted(item.body)}`;
+    for (const comment of item.inline) {
+      const path = Array.from(cleanInstruction(comment.path, false))
+        .slice(0, FEEDBACK_PATH_LIMIT)
+        .join("");
+      const place = comment.line === null ? path : `${path}:${comment.line}`;
+      block += `\nInline comment: ${place}\n${budgeted(comment.body)}`;
+    }
+    if (item.inlineUnread === 1) {
+      block += `\n[1 inline comment of this review was not read by the factory. Read the review on GitHub, on the pull request ${prUrl}.]`;
+    } else if (item.inlineUnread > 1) {
+      block += `\n[${item.inlineUnread} inline comments of this review were not read by the factory. Read the review on GitHub, on the pull request ${prUrl}.]`;
+    }
+    blocks.push(block);
+  });
+  if (cut) {
+    blocks.push(
+      `[The factory cut this feedback at ${INSTRUCTION_LIMIT} characters. Read all of it on the pull request ${prUrl} and on its issue.]`,
+    );
+  }
+  return blocks.join("\n\n");
 };
