@@ -13,7 +13,6 @@
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -543,7 +542,7 @@ const scenario = (spec: Spec) =>
             github,
             entries,
             ledgerLines: entries.map(describe),
-            threadId: ThreadId.make(threadId),
+            threadId,
             thread: yield* sessions.thread(threadId),
             status: yield* sessions.status(threadId),
             removedPath: (removed?.data as { path: string }).path,
