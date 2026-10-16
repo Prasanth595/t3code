@@ -180,7 +180,7 @@ Local on this Mac. No CI macOS runners, so no cost to the `rawphp` budget. Signi
 3. `cargo build --locked --release` in `native/resource-monitor`
 4. `node apps/server/scripts/cli.ts build-exe` with the SEA Node version upstream pins
 5. `node scripts/build-cli-archive.ts --platform mac --arch arm64 --version <v> …`
-6. Smoke test: `t3 serve` on a throwaway base dir, wait for `/.well-known/t3/environment`, then hit `/api/factory/status`.
+6. Smoke test: `t3 serve` on a throwaway home and base dir, wait for `/.well-known/t3/environment` to answer 200, then check the server log holds `factory started`. It does not call `/api/factory/status`, which needs a paired session (see Decided below).
 
 Version: `<upstream nightly version>+fac.<fork short sha>`, for example `0.0.46-nightly.20261014.2950+fac.1a2b3c4`.
 

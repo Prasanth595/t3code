@@ -8,6 +8,7 @@ import { assert, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpServerResponse } from "effect/http";
 import * as Etag from "effect/http/Etag";
 import * as HttpPlatform from "effect/http/HttpPlatform";
@@ -58,7 +59,7 @@ const serving = <A>(
   status: FactoryStatus,
   use: (
     get: (path: string, token?: string) => Promise<Response>,
-    issue: (scopes: ReadonlyArray<AuthEnvironmentScope>) => Promise<string>,
+    tokens: { readonly read: string; readonly settingsWrite: string },
   ) => Promise<A>,
 ) =>
   Effect.gen(function* () {
@@ -66,6 +67,16 @@ const serving = <A>(
     const context = Context.make(EnvironmentAuth.EnvironmentAuth, auth).pipe(
       Context.add(FactoryLoop, loopWith(status)),
     );
+    // Issued on the live clock: the handler checks expiry on it, not on the test clock.
+    const issue = (scope: AuthEnvironmentScope) =>
+      auth.issueSession({ scopes: [scope] }).pipe(
+        TestClock.withLive,
+        Effect.map((session) => session.token),
+      );
+    const tokens = {
+      read: yield* issue(AuthOrchestrationReadScope),
+      settingsWrite: yield* issue(AuthSettingsWriteScope),
+    };
     return yield* Effect.acquireUseRelease(
       Effect.sync(() => HttpRouter.toWebHandler(layerRoutes, { disableLogger: true })),
       ({ handler }) =>
@@ -78,7 +89,7 @@ const serving = <A>(
                 }),
                 context,
               ),
-            async (scopes) => (await Effect.runPromise(auth.issueSession({ scopes }))).token,
+            tokens,
           ),
         ),
       ({ dispose }) => Effect.promise(dispose),
@@ -88,7 +99,7 @@ const serving = <A>(
 const idle: FactoryStatus = { state: "idle", reason: "no factory config at /x/config.yml" };
 
 describe("GET /api/factory/status", () => {
-  it("is served at the path the Factory page and the build smoke test call", () => {
+  it("is served at the path the Factory page calls", () => {
     assert.strictEqual(STATUS_PATH, "/api/factory/status");
   });
 
@@ -108,42 +119,82 @@ describe("GET /api/factory/status", () => {
   );
 
   it.effect("needs orchestration:read, the scope every reading client holds", () =>
-    serving(idle, async (get, issue) => {
-      const response = await get(STATUS_PATH, await issue([AuthSettingsWriteScope]));
+    serving(idle, async (get, tokens) => {
+      const response = await get(STATUS_PATH, tokens.settingsWrite);
       assert.strictEqual(response.status, 403);
       assert.strictEqual(((await response.json()) as { code: string }).code, "insufficient_scope");
     }),
   );
 
   it.effect("reports an idle factory and why", () =>
-    serving(idle, async (get, issue) => {
-      const response = await get("/api/factory/status", await issue([AuthOrchestrationReadScope]));
+    serving(idle, async (get, tokens) => {
+      const response = await get("/api/factory/status", tokens.read);
       assert.strictEqual(response.status, 200);
       assert.deepStrictEqual(await response.json(), idle);
     }),
   );
 
   it.effect("reports a running factory with no reason", () =>
-    serving({ state: "running" }, async (get, issue) => {
-      const response = await get(STATUS_PATH, await issue([AuthOrchestrationReadScope]));
+    serving({ state: "running" }, async (get, tokens) => {
+      const response = await get(STATUS_PATH, tokens.read);
       assert.strictEqual(response.status, 200);
       assert.deepStrictEqual(await response.json(), { state: "running" });
     }),
   );
 });
 
+describe("an auth failure inside T3", () => {
+  it.effect("answers 500 internal_error, not 401, and never runs the handler", () => {
+    let handled = false;
+    const failingRoute = route(
+      "GET",
+      "/api/factory/test/internal",
+      AuthOrchestrationReadScope,
+      Effect.sync(() => {
+        handled = true;
+        return HttpServerResponse.empty({ status: 204 });
+      }),
+    );
+    return Effect.gen(function* () {
+      const auth = yield* EnvironmentAuth.EnvironmentAuth;
+      const context = Context.make(EnvironmentAuth.EnvironmentAuth, {
+        ...auth,
+        authenticateHttpRequest: () =>
+          Effect.fail(
+            new EnvironmentAuth.ServerAuthSessionCredentialValidationError({
+              cause: new Error("session store unreadable"),
+            }),
+          ),
+      }).pipe(Context.add(FactoryLoop, loopWith(idle)));
+      const layer = failingRoute.pipe(Layer.provideMerge(layerRoutes));
+      const response = yield* Effect.acquireUseRelease(
+        Effect.sync(() => HttpRouter.toWebHandler(layer, { disableLogger: true })),
+        ({ handler }) =>
+          Effect.promise(() =>
+            handler(new Request("http://127.0.0.1/api/factory/test/internal"), context),
+          ),
+        ({ dispose }) => Effect.promise(dispose),
+      );
+      assert.strictEqual(response.status, 500);
+      const body = (yield* Effect.promise(() => response.json())) as { code: string };
+      assert.strictEqual(body.code, "internal_error");
+      assert.isFalse(handled);
+    }).pipe(Effect.provide(layerEnvironmentAuth));
+  });
+});
+
 describe("the scope a route requires", () => {
   it.effect("answers 403 to a session without it", () =>
-    serving(idle, async (get, issue) => {
-      const response = await get(TEST_ROUTE_PATH, await issue([AuthOrchestrationReadScope]));
+    serving(idle, async (get, tokens) => {
+      const response = await get(TEST_ROUTE_PATH, tokens.read);
       assert.strictEqual(response.status, 403);
       assert.strictEqual(((await response.json()) as { code: string }).code, "insufficient_scope");
     }),
   );
 
   it.effect("lets a session with it through", () =>
-    serving(idle, async (get, issue) => {
-      const response = await get(TEST_ROUTE_PATH, await issue([AuthSettingsWriteScope]));
+    serving(idle, async (get, tokens) => {
+      const response = await get(TEST_ROUTE_PATH, tokens.settingsWrite);
       assert.strictEqual(response.status, 204);
     }),
   );
