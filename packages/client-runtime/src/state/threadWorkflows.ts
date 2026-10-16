@@ -35,9 +35,7 @@ export interface ThreadQueueWorkflowState {
   readonly canPromoteToSteer: boolean;
 }
 
-// A /compact or /logout run is provider maintenance: it cannot take a steer,
-// so follow-ups sent while it runs queue behind it.
-export function isMaintenanceCommandMessage(message: {
+function isMaintenanceCommandMessage(message: {
   readonly text: string;
   readonly attachments: ReadonlyArray<unknown>;
 }): boolean {
@@ -49,6 +47,18 @@ export function isMaintenanceCommandMessage(message: {
 
 export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Run | null {
   return projection.runs.findLast((run) => ACTIVE_RUN_STATUSES.has(run.status)) ?? null;
+}
+
+// A /compact or /logout run is provider maintenance: it cannot take a steer,
+// so follow-ups sent while it runs queue behind it. Read the active run's own
+// message, since a reordered queue can leave a later message last in the thread.
+export function activeRunIsMaintenance(projection: Pick<Projection, "runs" | "messages">): boolean {
+  const activeRun = resolveActiveThreadRun(projection);
+  const message =
+    activeRun === null
+      ? undefined
+      : projection.messages.find((candidate) => candidate.id === activeRun.userMessageId);
+  return message !== undefined && isMaintenanceCommandMessage(message);
 }
 
 /**
@@ -138,12 +148,9 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
   const activeRun = resolveActiveThreadRun(projection);
   const session = resolveThreadProviderSession(projection);
   const capabilities = session?.capabilities.turns;
-  const activeMessage = projection.messages.find(
-    (message) => message.id === activeRun?.userMessageId,
-  );
   const hasSteerableProviderTurn =
     activeRun?.status === "running" &&
-    (activeMessage === undefined || !isMaintenanceCommandMessage(activeMessage)) &&
+    !activeRunIsMaintenance(projection) &&
     activeRun.activeAttemptId !== null &&
     projection.providerTurns.some(
       (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
 
 import {
+  activeRunIsMaintenance,
   canDetachThreadProviderSession,
   canForkProjectedAssistantItem,
   deriveThreadQueueWorkflowState,
@@ -367,6 +368,36 @@ describe("thread workflows", () => {
     } as never);
 
     expect(state.canPromoteToSteer).toBe(expected);
+  });
+
+  it("reads the active run's own message after a reordered queue", () => {
+    // The ordinary message was moved ahead of /compact, ran, and is still the
+    // last message in the thread while /compact runs.
+    const projection = (activeRunId: string) =>
+      ({
+        runs: [
+          {
+            id: "compact",
+            status: activeRunId === "compact" ? "running" : "completed",
+            userMessageId: "compact-message",
+            ordinal: 1,
+          },
+          {
+            id: "ordinary",
+            status: activeRunId === "ordinary" ? "running" : "completed",
+            userMessageId: "ordinary-message",
+            ordinal: 2,
+          },
+        ],
+        messages: [
+          { id: "compact-message", text: "/compact", attachments: [] },
+          { id: "ordinary-message", text: "ship it", attachments: [] },
+        ],
+      }) as never;
+
+    expect(activeRunIsMaintenance(projection("compact"))).toBe(true);
+    expect(activeRunIsMaintenance(projection("ordinary"))).toBe(false);
+    expect(activeRunIsMaintenance(projection("none"))).toBe(false);
   });
 
   it("does not expose known unsupported queue or fork actions", () => {

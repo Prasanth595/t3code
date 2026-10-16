@@ -110,7 +110,7 @@ import {
   presentProviderGoal,
 } from "@t3tools/client-runtime/state/thread-execution";
 import {
-  isMaintenanceCommandMessage,
+  activeRunIsMaintenance,
   threadSupportsProviderHandoff,
 } from "@t3tools/client-runtime/state/thread-workflows";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
@@ -1786,6 +1786,10 @@ export default function ChatView(props: ChatViewProps) {
   });
   const serverThreadProjection = useThreadProjection(routeThreadDetailRef);
   const serverProjection = serverThreadProjection?.projection ?? null;
+  const serverActiveRunIsMaintenance = useMemo(
+    () => serverProjection !== null && activeRunIsMaintenance(serverProjection),
+    [serverProjection],
+  );
   const reportedModelSelection = serverProjection
     ? deriveReportedModelSelection(serverProjection)
     : null;
@@ -3590,12 +3594,7 @@ export default function ChatView(props: ChatViewProps) {
     !compactionSettled;
   // Stays on until the /compact or /logout run settles, which can be after the
   // compaction item completes, so a follow-up never targets it with a steer.
-  const activeTurnIsMaintenance =
-    isCompacting ||
-    (latestServerUserItem?.type === "user_message" &&
-      isMaintenanceCommandMessage(latestServerUserItem) &&
-      latestServerUserItem.runId === activeActivityRun?.runId &&
-      !isLatestRunSettled(activeActivityRun, activeRuntime));
+  const activeTurnIsMaintenance = isCompacting || serverActiveRunIsMaintenance;
   const isWorking =
     phase === "running" ||
     isSendBusy ||
