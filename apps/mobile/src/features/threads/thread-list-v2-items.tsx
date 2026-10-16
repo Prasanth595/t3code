@@ -991,7 +991,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       className={cn(
         spacingClassName,
         "text-base",
-        // Background work recedes to regular weight, matching web.
         !recede && "font-t3-medium",
         selected ? selectedThreadRowColors.foregroundClassName : rowAppearance.foregroundClassName,
       )}
@@ -1078,9 +1077,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     </View>
   ) : null;
   const providerIcons = providerInstance ? (
-    // Earlier owners peek out behind the current provider so a
-    // handed-off thread shows where it has been. The current owner
-    // keeps its account badge so same-driver instances stay distinct.
     <View className="flex-row items-center">
       {providerDrivers.slice(0, -1).map((driver, index) => (
         <View key={`${driver}:${index}`} className="-mr-1 opacity-30">

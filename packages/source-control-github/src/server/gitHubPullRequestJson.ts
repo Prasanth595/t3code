@@ -711,7 +711,7 @@ interface RemarkFields {
   readonly id: string;
   readonly lastEditedAt: string | null;
   readonly author: ActorFields | null;
-  readonly authorAssociation: string | null;
+  readonly authorAssociation: string;
   readonly body: string;
   readonly url: string | null;
 }

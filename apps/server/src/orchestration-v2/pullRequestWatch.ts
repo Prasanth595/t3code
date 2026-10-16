@@ -32,6 +32,11 @@ export interface PullRequestWatchReport {
 const isFailedCheck = (check: PullRequestCheck) =>
   check.status === "failure" || check.status === "cancelled" || check.status === "action-required";
 
+/**
+ * Fork: by default, remarks from the agent's own account never wake it. `remarkFilter` can
+ * replace that rule with allowed repository roles and logins, and can skip remarks with an
+ * agent marker.
+ */
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
   detail: Pick<PullRequestDetail, "headSha" | "checks" | "mergeability" | "viewer" | "author">,

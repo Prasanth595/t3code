@@ -1809,10 +1809,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
 
   const diff = latestRunDiff(thread);
 
-  // The visible state owns this slot's width: status at rest, actions on
-  // hover/keyboard focus or while the popover is open. Keeping the hidden state
-  // out of flow lets the project label reclaim space without either state
-  // overlapping it.
   const statusSlot = sortable?.isDragging ? (
     dragDestination
   ) : (
@@ -1822,9 +1818,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         props.sweepAction !== null && "hidden",
       )}
     >
-      {/* Read-only status labels yield to the hover actions. Woke is
-        itself an action, so it stays pointer-enabled and visible
-        while the other controls appear beside it. */}
       <span
         data-sidebar-status={topStatus?.label}
         className={cn(
@@ -1865,8 +1858,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
                   </span>
                 ) : status === "waiting" ? (
-                  // Waiting starts when the turn ends and background
-                  // work keeps the thread held.
                   <span aria-hidden>
                     <WorkingDuration startedAt={thread.latestRun?.completedAt ?? null} />
                   </span>
@@ -1941,9 +1932,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const favicon = props.project ? (
     <ProjectFavicon project={props.project} className="size-4 shrink-0" />
   ) : null;
-  // A sweep hides the status slot rather than unmounting it, so the pressed
-  // action button stays connected and a cancelled sweep's release click still
-  // fires and is consumed.
   const sweepDestination = props.sweepAction !== null ? dragDestination : null;
   const titleLine = (
     <>
@@ -1955,9 +1943,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       ) : null}
     </>
   );
-  // Always the branch. The plan step used to take this slot while working, but
-  // it truncated to a half-sentence and dropped the branch, so the row lost its
-  // most stable identifier.
   const branchLabel = thread.branch ? (
     <ThreadCardBranch
       branch={thread.branch}

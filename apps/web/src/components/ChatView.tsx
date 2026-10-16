@@ -4807,7 +4807,7 @@ export default function ChatView(props: ChatViewProps) {
     storeCloseTerminal(activeThreadRef, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
   };
-  const runProjectScript = async (
+  const runProjectScript = async function runScript(
     script: ProjectScript,
     options?: {
       cwd?: string;
@@ -4818,7 +4818,7 @@ export default function ChatView(props: ChatViewProps) {
       /** Where the script's preview opens. The right panel when omitted. */
       previewPresentation?: "panel" | "floating";
     },
-  ) => {
+  ): Promise<void> {
     // Fork: an overlay action shows its page in the app overlay and runs its command, in a
     // background terminal, only when the page is down.
     const overlayUrl = appOverlayUrl(environmentId, script);
@@ -4827,8 +4827,7 @@ export default function ChatView(props: ChatViewProps) {
         overlayUrl,
         script.name,
         hasTerminalWriteAccess()
-          ? () =>
-              runProjectScript({ ...script, previewOverlay: false, runInBackground: true }, options)
+          ? () => runScript({ ...script, previewOverlay: false, runInBackground: true }, options)
           : undefined,
       );
       return;
@@ -4965,17 +4964,19 @@ export default function ChatView(props: ChatViewProps) {
   }, [runProjectScriptStable]);
   // Pins run like a pick from the scripts menu. A global script does not
   // become the project's preferred script, since it is not one of them.
-  const runPinnedProjectScript = useCallback((script: ProjectScript) => {
+  const runPinnedProjectScript = (script: ProjectScript) => {
     void runProjectScriptRef.current(script);
-  }, []);
+  };
+  const runPinnedProjectScriptStable = useStableCallback(runPinnedProjectScript);
   // A global script belongs to no project, so its preview floats over the thread as a popup
   // instead of taking the project's right panel.
-  const runGlobalScript = useCallback((script: ProjectScript) => {
+  const runGlobalScript = (script: ProjectScript) => {
     void runProjectScriptRef.current(script, {
       rememberAsLastInvoked: false,
       previewPresentation: "floating",
     });
-  }, []);
+  };
+  const runGlobalScriptStable = useStableCallback(runGlobalScript);
   const globalScripts = settings.globalScripts;
   // The title bar sits outside this view, so it reaches the runner through the store.
   useEffect(() => {
@@ -4984,7 +4985,7 @@ export default function ChatView(props: ChatViewProps) {
       environmentId,
       projectId: activeProject.id,
       projectScripts: activeProjectScripts,
-      runScript: canOperateTerminal ? runGlobalScript : undefined,
+      runScript: canOperateTerminal ? runGlobalScriptStable : undefined,
     };
     usePinnedScriptsTargetStore.setState({ target });
     return () => {
@@ -4992,7 +4993,13 @@ export default function ChatView(props: ChatViewProps) {
         usePinnedScriptsTargetStore.setState({ target: null });
       }
     };
-  }, [activeProject, activeProjectScripts, canOperateTerminal, environmentId, runGlobalScript]);
+  }, [
+    activeProject,
+    activeProjectScripts,
+    canOperateTerminal,
+    environmentId,
+    runGlobalScriptStable,
+  ]);
   const runShellCommand = (command: string) => {
     void runProjectScriptRef.current(
       {
@@ -5311,10 +5318,11 @@ export default function ChatView(props: ChatViewProps) {
     useRightPanelStore.getState().open(activeThreadRef, "pull-requests");
   };
   const addPullRequestsSurfaceStable = useStableCallback(addPullRequestsSurface);
-  const addMachinesSurface = useCallback(() => {
+  const addMachinesSurface = () => {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "machines");
-  }, [activeThreadRef]);
+  };
+  const addMachinesSurfaceStable = useStableCallback(addMachinesSurface);
   const { state: deviceState, loaded: deviceStateLoaded } = useDeviceState(
     activeThreadRef?.environmentId ?? null,
   );
@@ -10817,7 +10825,7 @@ export default function ChatView(props: ChatViewProps) {
     ...(isServerThread && isGitRepo ? { onOpenChanges: openChangesFromThreadPanelStable } : {}),
     onRunProjectScript: runProjectScriptStable,
     globalScripts,
-    onRunGlobalScript: runGlobalScript,
+    onRunGlobalScript: runGlobalScriptStable,
     onAddProjectScript: saveProjectScriptStable,
     onUpdateProjectScript: updateProjectScriptStable,
     onDeleteProjectScript: deleteProjectScriptStable,
@@ -10961,7 +10969,7 @@ export default function ChatView(props: ChatViewProps) {
             rightPanelOpen={inlineRightPanelOwnsTitleBar}
             onNewThreadInProject={handleNewThreadInActiveProjectStable}
             projectScripts={activeProjectScripts}
-            onRunPinnedScript={canOperateTerminal ? runPinnedProjectScript : undefined}
+            onRunPinnedScript={canOperateTerminal ? runPinnedProjectScriptStable : undefined}
             {...(activeDraftLogicalProjectKey
               ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
               : {})}
@@ -11615,7 +11623,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddFiles={addFilesSurfaceStable}
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
-          onAddMachines={addMachinesSurface}
+          onAddMachines={addMachinesSurfaceStable}
           machinesAvailable={activeThreadRef !== null}
           onAddDevice={addDeviceSurfaceStable}
           browserAvailable={canOperatePreview && browserAvailable}
@@ -11672,7 +11680,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddFiles={addFilesSurfaceStable}
             onAddPullRequest={addPullRequestSurfaceStable}
             onAddPullRequests={addPullRequestsSurfaceStable}
-            onAddMachines={addMachinesSurface}
+            onAddMachines={addMachinesSurfaceStable}
             machinesAvailable={activeThreadRef !== null}
             onAddDevice={addDeviceSurfaceStable}
             browserAvailable={canOperatePreview && browserAvailable}

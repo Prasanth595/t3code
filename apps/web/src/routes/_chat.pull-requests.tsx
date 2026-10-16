@@ -415,16 +415,11 @@ function PullRequestsRouteView() {
       ),
     [allProjects, environmentIds],
   );
-  // Searching asks the hosts, which takes a round trip, so the text is held for a moment before
-  // it is sent. Until it lands, the rows already on screen are narrowed locally: the answer is
-  // late but the page is not.
   const typedQuery = (search.q ?? "").trim();
   const sentQuery = useDebouncedValue(typedQuery, SEARCH_DEBOUNCE_MS);
   const querySettled = typedQuery === sentQuery;
   const ownerFiltersEnabled = useClientSettings(selectRepositoryOwnerFilters);
   const filterChipsEnabled = useClientSettings(selectPullRequestFilterChips);
-  // What was typed, split into the qualifiers the hosts can act on and the words that are left.
-  // The URL keeps the line as it was written; only the request sees the two halves.
   const typedParsed = useMemo(
     () => parsePullRequestQuery(typedQuery, { ownerQualifiers: ownerFiltersEnabled }),
     [ownerFiltersEnabled, typedQuery],
