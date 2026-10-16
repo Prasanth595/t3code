@@ -303,10 +303,7 @@ import {
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
-import { SidebarOwnerFilterMenu, SidebarOwnerFilterNotice } from "./sidebar/SidebarOwnerFilter";
-import { useSidebarOwnerFilter } from "./sidebar/useSidebarOwnerFilter";
-import { SidebarGroupTabs } from "./sidebar/SidebarGroupTabs";
-import { useSidebarGroups } from "./sidebar/useSidebarGroups";
+import * as ForkSidebar from "./sidebar/ForkSidebar";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { MiddleTruncate } from "./ui/middle-truncate";
@@ -2417,22 +2414,13 @@ export default function Sidebar() {
   projectGroupsRef.current = projectGroups;
   // Fork: the owner filter shows only or hides the projects of the selected repository owners.
   // The project scope offers only the projects that it shows.
-  const {
-    repositoryOwnerFiltersEnabled,
-    savedOwnerFilter,
-    ownerFilter,
-    ownerOptions,
-    ownerVisibleProjectKeys,
-    visibleProjectGroups,
-    ownerHiddenProjectCount,
-    ownerHiddenThreadsNeedingUser,
-    setOwnerFilter,
-  } = useSidebarOwnerFilter({
+  const owner = ForkSidebar.useSidebarOwnerFilter({
     unsortedProjectGroups,
     projectGroups,
     projectGroupingSettings,
     threads,
   });
+  const { ownerFilter, ownerVisibleProjectKeys, visibleProjectGroups } = owner;
   // Threads on non-primary environments (T3 Connect, hosted) resolve their
   // provider entry from their own environment's config: default instance ids
   // are driver slugs, so a flat map would collide across environments.
@@ -2648,7 +2636,7 @@ export default function Sidebar() {
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
   const isSearchingThreads = threadSearchQuery.trim().length > 0;
   // Fork: thread groups as tabs. The list shows the threads of the open tab.
-  const sidebarGroups = useSidebarGroups({
+  const sidebarGroups = ForkSidebar.useSidebarGroups({
     threads,
     ownerVisibleProjectKeys,
     scopedProjectKeys,
@@ -4716,15 +4704,7 @@ export default function Sidebar() {
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
-              ownerFilter={
-                repositoryOwnerFiltersEnabled ? (
-                  <SidebarOwnerFilterMenu
-                    options={ownerOptions}
-                    filter={savedOwnerFilter}
-                    onChange={setOwnerFilter}
-                  />
-                ) : null
-              }
+              ownerFilter={<ForkSidebar.OwnerFilterMenu owner={owner} />}
               projectScope={
                 <Combobox
                   items={projectScopeItems}
@@ -4867,27 +4847,18 @@ export default function Sidebar() {
               activeSearchResultIndex={activeSearchResultIndex}
               onClearSearch={clearThreadSearch}
             />
-            {ownerFilter !== null ? (
-              <SidebarOwnerFilterNotice
-                filter={savedOwnerFilter}
-                hiddenProjectCount={ownerHiddenProjectCount}
-                hiddenThreadsNeedingUser={ownerHiddenThreadsNeedingUser}
-                onChange={setOwnerFilter}
-              />
-            ) : null}
-            {sidebarGroups.enabled ? (
-              <SidebarGroupTabs
-                groups={sidebarGroups}
-                dragging={dragState !== null}
-                routeThreadKey={routeThreadKey}
-                projectFor={(thread) =>
-                  projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
-                }
-                onOpenThread={(thread) =>
-                  navigateToThread(scopeThreadRef(thread.environmentId, thread.id))
-                }
-              />
-            ) : null}
+            <ForkSidebar.HeaderFilterRows
+              owner={owner}
+              groups={sidebarGroups}
+              dragging={dragState !== null}
+              routeThreadKey={routeThreadKey}
+              projectFor={(thread) =>
+                projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
+              }
+              onOpenThread={(thread) =>
+                navigateToThread(scopeThreadRef(thread.environmentId, thread.id))
+              }
+            />
           </SidebarGroup>
         }
       >

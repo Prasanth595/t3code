@@ -464,9 +464,9 @@ import {
   resolveComposerTimelineInset,
   resolveScrollToEndClearance,
 } from "./composerFooterLayout";
-import { appOverlayUrl, runAppOverlayAction } from "./AppOverlay";
+import { runAppOverlayScript } from "./AppOverlay";
 import { ChatHeader } from "./chat/ChatHeader";
-import { type PinnedScriptsTarget, usePinnedScriptsTargetStore } from "./PinnedScripts";
+import { useThreadPinnedScripts } from "./PinnedScripts";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -4819,19 +4819,12 @@ export default function ChatView(props: ChatViewProps) {
       previewPresentation?: "panel" | "floating";
     },
   ): Promise<void> {
-    // Fork: an overlay action shows its page in the app overlay and runs its command, in a
-    // background terminal, only when the page is down.
-    const overlayUrl = appOverlayUrl(environmentId, script);
-    if (overlayUrl !== null) {
-      await runAppOverlayAction(
-        overlayUrl,
-        script.name,
-        hasTerminalWriteAccess()
-          ? () => runScript({ ...script, previewOverlay: false, runInBackground: true }, options)
-          : undefined,
-      );
-      return;
-    }
+    const overlayRun = runAppOverlayScript(
+      environmentId,
+      script,
+      hasTerminalWriteAccess() ? (overlayScript) => runScript(overlayScript, options) : undefined,
+    );
+    if (overlayRun !== null) return overlayRun;
     if (!hasTerminalWriteAccess() || !activeThreadId || !activeProject || !activeThread) return;
     if (options?.rememberAsLastInvoked !== false) {
       setLastInvokedScriptByProjectId((current) => {
@@ -4962,44 +4955,13 @@ export default function ChatView(props: ChatViewProps) {
   useLayoutEffect(() => {
     runProjectScriptRef.current = runProjectScriptStable;
   }, [runProjectScriptStable]);
-  // Pins run like a pick from the scripts menu. A global script does not
-  // become the project's preferred script, since it is not one of them.
-  const runPinnedProjectScript = (script: ProjectScript) => {
-    void runProjectScriptRef.current(script);
-  };
-  const runPinnedProjectScriptStable = useStableCallback(runPinnedProjectScript);
-  // A global script belongs to no project, so its preview floats over the thread as a popup
-  // instead of taking the project's right panel.
-  const runGlobalScript = (script: ProjectScript) => {
-    void runProjectScriptRef.current(script, {
-      rememberAsLastInvoked: false,
-      previewPresentation: "floating",
-    });
-  };
-  const runGlobalScriptStable = useStableCallback(runGlobalScript);
-  const globalScripts = settings.globalScripts;
-  // The title bar sits outside this view, so it reaches the runner through the store.
-  useEffect(() => {
-    if (!activeProject) return;
-    const target: PinnedScriptsTarget = {
-      environmentId,
-      projectId: activeProject.id,
-      projectScripts: activeProjectScripts,
-      runScript: canOperateTerminal ? runGlobalScriptStable : undefined,
-    };
-    usePinnedScriptsTargetStore.setState({ target });
-    return () => {
-      if (usePinnedScriptsTargetStore.getState().target === target) {
-        usePinnedScriptsTargetStore.setState({ target: null });
-      }
-    };
-  }, [
+  const pinnedScripts = useThreadPinnedScripts({
+    environmentId,
     activeProject,
     activeProjectScripts,
     canOperateTerminal,
-    environmentId,
-    runGlobalScriptStable,
-  ]);
+    runProjectScriptRef,
+  });
   const runShellCommand = (command: string) => {
     void runProjectScriptRef.current(
       {
@@ -10826,8 +10788,8 @@ export default function ChatView(props: ChatViewProps) {
     onComposerFocusRequest: scheduleComposerFocusStable,
     ...(isServerThread && isGitRepo ? { onOpenChanges: openChangesFromThreadPanelStable } : {}),
     onRunProjectScript: runProjectScriptStable,
-    globalScripts,
-    onRunGlobalScript: runGlobalScriptStable,
+    globalScripts: settings.globalScripts,
+    onRunGlobalScript: pinnedScripts.runGlobalScript,
     onAddProjectScript: saveProjectScriptStable,
     onUpdateProjectScript: updateProjectScriptStable,
     onDeleteProjectScript: deleteProjectScriptStable,
@@ -10971,7 +10933,7 @@ export default function ChatView(props: ChatViewProps) {
             rightPanelOpen={inlineRightPanelOwnsTitleBar}
             onNewThreadInProject={handleNewThreadInActiveProjectStable}
             projectScripts={activeProjectScripts}
-            onRunPinnedScript={canOperateTerminal ? runPinnedProjectScriptStable : undefined}
+            onRunPinnedScript={pinnedScripts.runPinnedProjectScript}
             {...(activeDraftLogicalProjectKey
               ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
               : {})}

@@ -47,9 +47,7 @@ import {
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import {
-  CLOUDFLARE_ACCESS_MESSAGE,
   RelayConnectionRegistration,
-  requestHeaderOrigin,
   RelayConnectionTarget,
   connectionRoutes,
   connectionStatusText,
@@ -83,21 +81,10 @@ import {
   useRelativeTimeTick,
 } from "./settingsLayout";
 import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
-import { TunnelPairingSettingsRow } from "./TunnelPairingSettingsRow";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
-import {
-  EMPTY_REQUEST_HEADERS_FORM,
-  OriginRequestHeadersEditor,
-  RequestHeadersFields,
-  type RequestHeadersForm,
-  environmentRequestHeaderOrigins,
-  isCloudflareAccessChallenged,
-  requestHeadersFromForm,
-  supportsRequestHeaders,
-  useCloudflareAccessChallenged,
-} from "./RequestHeadersEditor";
+import * as ForkConnections from "./ForkConnectionsSettings";
 import { usePreparedConnection } from "~/state/session";
 import {
   EnvironmentRow,
@@ -181,11 +168,7 @@ import { environmentCatalog } from "~/connection/catalog";
 import {
   connectPairing as connectPairingAtom,
   connectSshEnvironment as connectSshEnvironmentAtom,
-  readRequestHeaders as readRequestHeadersAtom,
-  saveRequestHeaders as saveRequestHeadersAtom,
 } from "~/connection/onboarding";
-import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
-import { type SiblingIssue, useSiblingIssues } from "~/connection/siblingEnvironments";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useEnvironmentQuery } from "~/state/query";
 import {
@@ -1492,7 +1475,6 @@ function SavedBackendListRow({
 }: SavedBackendListRowProps) {
   const [routesOpen, setRoutesOpen] = useState(false);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
-  const [requestHeadersOpen, setRequestHeadersOpen] = useState(false);
   const environmentId = environment.environmentId;
   const unsupported = environment.connection.phase === "unsupported";
   const enabled = environment.entry.enabled && !unsupported;
@@ -1580,11 +1562,8 @@ function SavedBackendListRow({
       (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
   );
   const routeCount = connectionRoutes(environment.entry).length;
-  const requestHeaderOrigins = supportsRequestHeaders()
-    ? environmentRequestHeaderOrigins(environment.entry)
-    : [];
-  const accessChallenged = useCloudflareAccessChallenged(
-    requestHeaderOrigins,
+  const requestHeaders = ForkConnections.useEnvironmentRequestHeaders(
+    environment.entry,
     environment.connection.error,
   );
   const subtitleText = [
@@ -1607,7 +1586,7 @@ function SavedBackendListRow({
       : enabled
         ? connectionStatusText(environment.connection)
         : "Switched off"
-  }${enabled && accessChallenged ? `\n${CLOUDFLARE_ACCESS_MESSAGE}` : ""}${
+  }${ForkConnections.accessChallengeSubtitle(enabled && requestHeaders.accessChallenged)}${
     versionMismatch
       ? `\nUpdate available: ${versionMismatch.serverVersion} → ${versionMismatch.clientVersion}`
       : ""
@@ -1680,29 +1659,10 @@ function SavedBackendListRow({
               )}
             />
           </button>
-          {requestHeaderOrigins.length > 0 ? (
-            <>
-              <span aria-hidden className="shrink-0">
-                ·
-              </span>
-              <button
-                type="button"
-                aria-expanded={requestHeadersOpen}
-                aria-controls={`request-headers-${environmentId}`}
-                onClick={() => setRequestHeadersOpen((open) => !open)}
-                className="inline-flex shrink-0 items-center gap-0.5 rounded-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-              >
-                Request headers
-                <ChevronRightIcon
-                  aria-hidden
-                  className={cn(
-                    "size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
-                    requestHeadersOpen && "rotate-90",
-                  )}
-                />
-              </button>
-            </>
-          ) : null}
+          <ForkConnections.RequestHeadersToggle
+            state={requestHeaders}
+            environmentId={environmentId}
+          />
         </span>
       }
       below={
@@ -1712,9 +1672,9 @@ function SavedBackendListRow({
               <ServerUpdateProgress state={serverUpdateState} />
             </div>
           ) : null}
-          {enabled && accessChallenged ? (
-            <p className="mt-1 text-xs text-destructive">{CLOUDFLARE_ACCESS_MESSAGE}</p>
-          ) : null}
+          <ForkConnections.AccessChallengeMessage
+            show={enabled && requestHeaders.accessChallenged}
+          />
         </>
       }
       detail={
@@ -1737,20 +1697,10 @@ function SavedBackendListRow({
               />
             </div>
           )}
-          {requestHeadersOpen && (
-            <div
-              id={`request-headers-${environmentId}`}
-              className="mt-2 max-w-xl border-t border-border/50"
-            >
-              {requestHeaderOrigins.map((origin) => (
-                <OriginRequestHeadersEditor
-                  key={origin}
-                  origin={origin}
-                  showOrigin={requestHeaderOrigins.length > 1}
-                />
-              ))}
-            </div>
-          )}
+          <ForkConnections.RequestHeadersPanel
+            state={requestHeaders}
+            environmentId={environmentId}
+          />
         </>
       }
     >
@@ -2045,45 +1995,6 @@ function CloudLinkRow({
   return <ConfiguredCloudLinkRow canManageRelay={canManageRelay} />;
 }
 
-// Fork: trusted siblings that could not pair yet. Most often the browser has no
-// Cloudflare Access cookie for them: opening one signs in, and the page tries
-// again when it gets focus. A browser key can also wait for approval (MM-918),
-// or the machine map can be paused (MM-718).
-const SIBLING_ISSUE_TEXT: Record<SiblingIssue, { title: string; description: string }> = {
-  "sign-in": {
-    title: "Sign in at",
-    description: "Open it once to sign in with Cloudflare Access, then come back to this tab.",
-  },
-  waiting: {
-    title: "Waiting for approval at",
-    description: "Approve this browser in the machine map portal. The page checks every minute.",
-  },
-  paused: {
-    title: "Paused at",
-    description: "The machine map is paused. The page tries again in 10 minutes.",
-  },
-};
-
-function SiblingSignInRows() {
-  const issues = useSiblingIssues();
-  return [...issues].map(([origin, issue]) => (
-    <SettingsRow
-      key={origin}
-      title={`${SIBLING_ISSUE_TEXT[issue].title} ${origin}`}
-      description={SIBLING_ISSUE_TEXT[issue].description}
-      control={
-        <Button
-          size="xs"
-          variant="outline"
-          render={<a href={origin} target="_blank" rel="noreferrer" />}
-        >
-          Open
-        </Button>
-      }
-    />
-  ));
-}
-
 function EmptyRemoteEnvironments({ cloudEnabled = true }: { readonly cloudEnabled?: boolean }) {
   return (
     <Empty className="min-h-52">
@@ -2126,8 +2037,6 @@ export function ConnectionsSettings() {
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const connectPairing = useAtomCommand(connectPairingAtom, { reportFailure: false });
-  const readRequestHeaders = useAtomCommand(readRequestHeadersAtom, { reportFailure: false });
-  const saveRequestHeaders = useAtomCommand(saveRequestHeadersAtom, { reportFailure: false });
   const connectSshEnvironment = useAtomCommand(connectSshEnvironmentAtom, {
     reportFailure: false,
   });
@@ -2251,10 +2160,7 @@ export function ConnectionsSettings() {
   const [savedBackendMode, setSavedBackendMode] = useState<"remote" | "ssh">("remote");
   const [savedBackendHost, setSavedBackendHost] = useState("");
   const [savedBackendPairingCode, setSavedBackendPairingCode] = useState("");
-  const [savedBackendRequestHeadersOpen, setSavedBackendRequestHeadersOpen] = useState(false);
-  const [savedBackendRequestHeaders, setSavedBackendRequestHeaders] = useState<RequestHeadersForm>(
-    EMPTY_REQUEST_HEADERS_FORM,
-  );
+  const savedBackendRequestHeaders = ForkConnections.useAddBackendRequestHeaders();
   const [savedBackendSshHost, setSavedBackendSshHost] = useState("");
   const [savedBackendSshUsername, setSavedBackendSshUsername] = useState("");
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
@@ -2683,41 +2589,18 @@ export function ConnectionsSettings() {
       return;
     }
 
-    const failAdd = (message: string) => {
-      setSavedBackendError(message);
+    const requestHeaders = await savedBackendRequestHeaders.saveForPairing(remotePairingInput);
+    if (requestHeaders._tag === "Error") {
+      setSavedBackendError(requestHeaders.message);
       toastManager.add(
-        stackedThreadToast({ type: "error", title: "Could not add backend", description: message }),
+        stackedThreadToast({
+          type: "error",
+          title: "Could not add backend",
+          description: requestHeaders.message,
+        }),
       );
       setIsAddingSavedBackend(false);
-    };
-    // Headers are keyed by origin, so they are saved before pairing to let
-    // the pairing request itself pass a proxy such as Cloudflare Access.
-    let httpBaseUrl: string;
-    try {
-      httpBaseUrl = resolveRemotePairingTarget(remotePairingInput).httpBaseUrl;
-    } catch (error) {
-      failAdd(error instanceof Error ? error.message : "Failed to add backend.");
       return;
-    }
-    const headerOrigin = requestHeaderOrigin(httpBaseUrl);
-    const parsedHeaders = requestHeadersFromForm(savedBackendRequestHeaders);
-    if ("error" in parsedHeaders) {
-      failAdd(parsedHeaders.error);
-      return;
-    }
-    let previousHeaders: ReadonlyArray<{ readonly name: string; readonly value: string }> | null =
-      null;
-    if (headerOrigin !== null && parsedHeaders.headers.length > 0) {
-      const previous = await readRequestHeaders(headerOrigin);
-      const saved =
-        previous._tag === "Success"
-          ? await saveRequestHeaders({ origin: headerOrigin, headers: parsedHeaders.headers })
-          : previous;
-      if (previous._tag !== "Success" || saved._tag !== "Success") {
-        failAdd("Could not save the request headers.");
-        return;
-      }
-      previousHeaders = previous.value;
     }
 
     const result = await connectPairing({
@@ -2725,17 +2608,12 @@ export function ConnectionsSettings() {
       ...(routeTarget ? { expectedEnvironmentId: routeTarget.environmentId } : {}),
     });
     if (result._tag === "Failure") {
-      // A failed pairing saves no environment, so restore the origin's headers.
-      if (headerOrigin !== null && previousHeaders !== null) {
-        await saveRequestHeaders({ origin: headerOrigin, headers: previousHeaders });
-      }
+      await requestHeaders.restore();
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
-        const message = (await isCloudflareAccessChallenged(httpBaseUrl))
-          ? CLOUDFLARE_ACCESS_MESSAGE
-          : error instanceof Error
-            ? error.message
-            : "Failed to add backend.";
+        const message = await requestHeaders.failureMessage(
+          error instanceof Error ? error.message : "Failed to add backend.",
+        );
         setSavedBackendError(message);
         toastManager.add(
           stackedThreadToast({
@@ -2751,8 +2629,7 @@ export function ConnectionsSettings() {
 
     setSavedBackendHost("");
     setSavedBackendPairingCode("");
-    setSavedBackendRequestHeaders(EMPTY_REQUEST_HEADERS_FORM);
-    setSavedBackendRequestHeadersOpen(false);
+    savedBackendRequestHeaders.reset();
     setSavedBackendSshHost("");
     setSavedBackendSshUsername("");
     setSavedBackendSshPort("");
@@ -2775,8 +2652,6 @@ export function ConnectionsSettings() {
     routeTarget,
     connectPairing,
     connectSavedBackendSshTarget,
-    readRequestHeaders,
-    saveRequestHeaders,
     savedBackendHost,
     savedBackendMode,
     savedBackendPairingCode,
@@ -3058,34 +2933,10 @@ export function ConnectionsSettings() {
           Paste a full pairing URL here to fill both fields automatically.
         </span>
       </div>
-      {supportsRequestHeaders() ? (
-        <div>
-          <button
-            type="button"
-            aria-expanded={savedBackendRequestHeadersOpen}
-            onClick={() => setSavedBackendRequestHeadersOpen((open) => !open)}
-            className="inline-flex items-center gap-0.5 rounded-sm text-xs font-medium text-foreground outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-          >
-            Request headers
-            <ChevronRightIcon
-              aria-hidden
-              className={cn(
-                "size-3 shrink-0 transition-transform duration-150 motion-reduce:transition-none",
-                savedBackendRequestHeadersOpen && "rotate-90",
-              )}
-            />
-          </button>
-          {savedBackendRequestHeadersOpen ? (
-            <div className="mt-2">
-              <RequestHeadersFields
-                form={savedBackendRequestHeaders}
-                disabled={isAddingSavedBackend}
-                onChange={setSavedBackendRequestHeaders}
-              />
-            </div>
-          ) : null}
-        </div>
-      ) : null}
+      <ForkConnections.AddBackendRequestHeadersFields
+        state={savedBackendRequestHeaders}
+        disabled={isAddingSavedBackend}
+      />
     </div>
   );
   const relayRouteOffer =
@@ -3775,7 +3626,7 @@ export function ConnectionsSettings() {
             {canManageLocalBackend && desktopBridge ? (
               <>
                 {renderNetworkAccessRow()}
-                <TunnelPairingSettingsRow />
+                <ForkConnections.TunnelPairingSettingsRow />
                 {renderEndpointRows("endpoint-rail")}
                 {renderTailscaleRow()}
                 {renderWslRow()}
@@ -4226,7 +4077,7 @@ export function ConnectionsSettings() {
             }}
           />
         ))}
-        <SiblingSignInRows />
+        <ForkConnections.SiblingSignInRows />
         <CloudRemoteEnvironmentRows
           primaryEnvironmentId={primaryEnvironmentId}
           savedEnvironments={savedEnvironments}

@@ -13,7 +13,7 @@ import type { FilterOperator } from "../filters/FilterChip";
 import { pullRequestProjectKey } from "./PullRequestListFilters";
 
 /** Fork: the part of a project that the repository owner filter reads. */
-interface OwnedProject {
+export interface OwnedProject {
   readonly id: ProjectId;
   readonly environmentId: EnvironmentId;
   readonly repositoryIdentity?: RepositoryIdentity | null | undefined;
