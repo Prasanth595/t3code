@@ -12,7 +12,7 @@ import type { HandPause } from "./claims.ts";
 import { timeLimitOnlyProjectConfig, type MachineConfig, type ProjectConfig } from "./config.ts";
 import type { State } from "./domain/lifecycle.ts";
 import { LedgerIoError } from "./ledger/errors.ts";
-import type { ErrorKind, MachineEvent } from "./ledger/events.ts";
+import type { CauseStep, ErrorKind, MachineEvent } from "./ledger/events.ts";
 import type { RunInfo } from "./ledger/listRuns.ts";
 import { newRunId, runIdToString, type RunId } from "./ledger/runId.ts";
 import { formatTs } from "./ledger/time.ts";
@@ -24,6 +24,13 @@ import {
   type Repo,
   type Report,
 } from "./pass.ts";
+import {
+  NotBuildingError,
+  type AdvanceOutcome,
+  type BuildingError,
+  type LimitOutcome,
+  type WatchOutcome,
+} from "./runner/building.ts";
 import { GateRunningError, type StartError, type StartOutcome } from "./runner/start.ts";
 import { SessionsError } from "./t3/sessions.ts";
 import { GitHubFailed, type Blocker } from "./tracker/github.ts";
@@ -86,6 +93,10 @@ class Fake implements PassWorld {
   starts: Record<string, Array<StartOutcome | StartError>> = {};
   /** Issues whose `start` leaves a `triage` run behind, whatever it answers. */
   startLeavesRun: Array<number> = [];
+  /** Scripted answers per `"<repo>#<issue>"`, popped per call; an exhausted script answers the default. */
+  timeLimits: Record<string, Array<LimitOutcome | BuildingError>> = {};
+  watches: Record<string, Array<WatchOutcome | BuildingError>> = {};
+  advances: Record<string, Array<AdvanceOutcome | BuildingError>> = {};
   pause: HandPause | null = null;
   machineLogFails = false;
   /** What the pass wrote to a run's ledger as an `error` line. */
@@ -99,7 +110,14 @@ class Fake implements PassWorld {
   events: Array<MachineEvent> = [];
 
   runIn(issue: number, state: State | null, repo = REPO, session = false) {
-    this.runs.push({ id: rid(issue, repo), state, unreadable: false, confirmed: true, session });
+    this.runs.push({
+      id: rid(issue, repo),
+      state,
+      unreadable: false,
+      confirmed: true,
+      session,
+      prReported: false,
+    });
   }
 
   pushStart(key: string, answer: StartOutcome | StartError) {
@@ -202,6 +220,7 @@ class Fake implements PassWorld {
         unreadable: false,
         confirmed: true,
         session: false,
+        prReported: false,
       });
     }
     if ("kind" in answer && answer.kind === "started") {
@@ -216,11 +235,49 @@ class Fake implements PassWorld {
           unreadable: false,
           confirmed: true,
           session: false,
+          prReported: false,
         });
       return Effect.succeed(answer);
     }
     if ("kind" in answer) return Effect.succeed(answer);
     return Effect.fail(answer);
+  }
+
+  private scripted<T extends { readonly kind: string }>(
+    table: Record<string, Array<T | BuildingError>>,
+    call: string,
+    repo: Repo,
+    issue: number,
+    fallback: T,
+  ) {
+    const key = `${repo.watched.repo}#${issue}`;
+    this.calls.push(`${call} ${key}`);
+    const answer = table[key]?.shift() ?? fallback;
+    return "kind" in answer ? Effect.succeed(answer as T) : Effect.fail(answer);
+  }
+
+  timeLimit(repo: Repo, run: RunId) {
+    return this.scripted(this.timeLimits, "time_limit", repo, Number(run.issue), {
+      kind: "within",
+    });
+  }
+
+  watch(repo: Repo, run: RunId) {
+    return this.scripted(this.watches, "watch", repo, Number(run.issue), { kind: "unchanged" });
+  }
+
+  /** An advance that ends the run (`needs-info`, `stuck`) takes it off the list, as the ledger does. */
+  advance(repo: Repo, run: RunId) {
+    const answered = this.scripted(this.advances, "advance", repo, Number(run.issue), {
+      kind: "running",
+    });
+    return Effect.tap(answered, (outcome) =>
+      Effect.sync(() => {
+        if (outcome.kind === "needs-info" || outcome.kind === "stuck") {
+          this.runs = this.runs.filter((r) => runIdToString(r.id) !== runIdToString(run));
+        }
+      }),
+    );
   }
 
   handPause() {
@@ -231,7 +288,7 @@ class Fake implements PassWorld {
     return this.now;
   }
 
-  recordError(run: RunId, step: "pass" | "start", kind: ErrorKind, message: string) {
+  recordError(run: RunId, step: CauseStep, kind: ErrorKind, message: string) {
     if (this.runErrorFails) {
       return Effect.fail(
         new LedgerIoError({ path: "/data/runs/x.jsonl", cause: new Error("finished") }),
@@ -328,6 +385,24 @@ describe("claiming new issues", () => {
       fake.ready[REPO] = [1];
       yield* pass(fake, machine([REPO], 1));
       assert.deepEqual(starts(fake), []);
+    }),
+  );
+
+  it.effect("a building run whose pull request waits for the gate uses no slot", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runs.push({
+        id: rid(40),
+        state: BUILDING,
+        unreadable: false,
+        confirmed: true,
+        session: true,
+        prReported: true,
+      });
+      fake.ready[REPO] = [1];
+      fake.pushStart(`${REPO}#1`, started(1));
+      yield* pass(fake, machine([REPO], 1));
+      assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
     }),
   );
 
@@ -514,6 +589,7 @@ describe("claiming new issues", () => {
         unreadable: true,
         confirmed: false,
         session: false,
+        prReported: false,
       });
       fake.ready[REPO] = [1];
       fake.pushStart(`${REPO}#1`, started(1));
@@ -547,7 +623,10 @@ describe("a ready issue whose older run is gating", () => {
       fake.blockers[`${REPO}#14`] = blockerList([[REPO, 13]]);
       const { report, lines } = yield* pass(fake, machine([REPO], 1));
       assert.deepEqual(starts(fake), []);
-      assert.equal(runLine(lines, "rawphp/softfac#14 "), "rawphp/softfac#14 ready: gate running");
+      assert.equal(
+        runLine(lines, "rawphp/softfac#14 ready"),
+        "rawphp/softfac#14 ready: gate running",
+      );
       assert.ok(!fake.calls.includes("blockers rawphp/softfac#14"), fake.calls.join("\n"));
       assert.deepEqual(
         fake.events.filter((e) => e.event === "claim_skipped"),
@@ -685,6 +764,7 @@ describe("runs that are confirmed and still in triage", () => {
         unreadable: false,
         confirmed: true,
         session: false,
+        prReported: false,
       });
       fake.pushStart(`${REPO}#13`, started(13));
       yield* pass(fake, machine([REPO], 3));
@@ -883,12 +963,43 @@ describe("runs that are confirmed and still in triage", () => {
     }),
   );
 
-  it.effect("a building run is left alone", () =>
+  it.effect("a building run is worked: time limit, watch, advance, in that order", () =>
     Effect.gen(function* () {
       const fake = new Fake();
-      fake.runIn(40, BUILDING);
-      yield* pass(fake, machine([REPO], 3));
-      assert.deepEqual(starts(fake), []);
+      fake.runIn(40, BUILDING, REPO, true);
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const calls = fake.calls.filter((c) => /^(time_limit|watch|advance|start|resume) /.test(c));
+      assert.deepEqual(calls, [`time_limit ${REPO}#40`, `watch ${REPO}#40`, `advance ${REPO}#40`]);
+      assert.equal(
+        runLine(lines, `${REPO}#40 building:`),
+        `${REPO}#40 building: session still running`,
+      );
+    }),
+  );
+
+  it.effect("a run that is not confirmed is never time-limited, watched or advanced", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      for (const [issue, state] of [
+        [12, "triage"],
+        [40, BUILDING],
+        [41, "stuck"],
+      ] as const) {
+        fake.runs.push({
+          id: rid(issue),
+          state,
+          unreadable: false,
+          confirmed: false,
+          session: true,
+          prReported: false,
+        });
+      }
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const calls = fake.calls.filter((c) => /^(time_limit|watch|advance|start|resume) /.test(c));
+      assert.deepEqual(calls, []);
+      for (const issue of [12, 40, 41]) {
+        assert.ok(!lines.some((l) => l.startsWith(`${REPO}#${issue} `)), lines.join("\n"));
+      }
     }),
   );
 
@@ -953,6 +1064,7 @@ describe("claims that have no run in the ledger", () => {
         unreadable: false,
         confirmed: false,
         session: false,
+        prReported: false,
       });
       fake.triage[REPO] = [12];
       fake.pushStart(`${REPO}#12`, { kind: "stuck", run: rid(12), reason: "could not confirm" });
@@ -971,6 +1083,7 @@ describe("claims that have no run in the ledger", () => {
         unreadable: false,
         confirmed: false,
         session: false,
+        prReported: false,
       });
       fake.ready[REPO] = [3];
       fake.pushStart(`${REPO}#3`, started(3));
@@ -1511,6 +1624,7 @@ describe("what the pass records", () => {
         unreadable: true,
         confirmed: false,
         session: false,
+        prReported: false,
       });
       const { report, lines } = yield* pass(fake, machine([REPO], 1));
       assert.deepEqual(fake.events[0], { event: "pass_started", data: {} });
@@ -1762,3 +1876,277 @@ describe("text that is printed", () => {
 const _loaded: Loaded = { kind: "broken", name: REPO };
 void _loaded;
 void runIdToString;
+
+// ---- following a building run ----
+
+describe("following a building run", () => {
+  const stopped = (reason = "the reason") => ({ kind: "stopped" as const, reason });
+  const callsOf = (fake: Fake) =>
+    fake.calls.filter((c) => /^(time_limit|watch|advance|start|resume) /.test(c));
+
+  it.effect("a triage run gets the time limit before resume", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, "triage");
+      yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#12`, `resume ${REPO}#12`]);
+    }),
+  );
+
+  it.effect("a triage run stopped at its limit is not resumed and its line says stuck", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, "triage");
+      fake.timeLimits[`${REPO}#12`] = [stopped()];
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#12`]);
+      assert.equal(
+        runLine(lines, `${REPO}#12 `),
+        `${REPO}#12 triage: stuck, the reason is in the ledger of run ${runIdToString(rid(12))}`,
+      );
+    }),
+  );
+
+  it.effect("a building run whose pull request waits for the gate gets no watch or advance", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runs.push({
+        id: rid(40),
+        state: BUILDING,
+        unreadable: false,
+        confirmed: true,
+        session: true,
+        prReported: true,
+      });
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#40`]);
+      assert.equal(
+        runLine(lines, `${REPO}#40 `),
+        `${REPO}#40 building: session finished, ready for the gate`,
+      );
+    }),
+  );
+
+  it.effect("a building run stopped by the time limit gets no watch or advance", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.timeLimits[`${REPO}#40`] = [stopped()];
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#40`]);
+      assert.include(runLine(lines, `${REPO}#40 `), "stuck, the reason is in the ledger of run");
+    }),
+  );
+
+  it.effect("a building run stopped by watch gets no advance", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.watches[`${REPO}#40`] = [stopped()];
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#40`, `watch ${REPO}#40`]);
+      assert.include(runLine(lines, `${REPO}#40 `), "stuck, the reason is in the ledger of run");
+    }),
+  );
+
+  const advanceLines: ReadonlyArray<readonly [AdvanceOutcome, string]> = [
+    [{ kind: "running" }, "session still running"],
+    [{ kind: "reminded" }, "session ended without a result line, sent it a reminder"],
+    [
+      { kind: "paused" },
+      "session stopped by hand, waiting for an instructor's comment on the pull request or the issue",
+    ],
+    [
+      { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
+      "session finished, ready for the gate",
+    ],
+    [
+      { kind: "needs-info" },
+      "session asked questions, the issue is now needs-info and the run is finished",
+    ],
+    [
+      { kind: "stuck", reason: "r" },
+      `stuck, the reason is in the ledger of run ${runIdToString(rid(40))}`,
+    ],
+  ];
+
+  it.effect("each advance outcome has its line", () =>
+    Effect.gen(function* () {
+      for (const [outcome, words] of advanceLines) {
+        const fake = new Fake();
+        fake.runIn(40, BUILDING, REPO, true);
+        fake.advances[`${REPO}#40`] = [outcome];
+        const { lines } = yield* pass(fake, machine([REPO], 3));
+        assert.equal(runLine(lines, `${REPO}#40 `), `${REPO}#40 building: ${words}`);
+      }
+    }),
+  );
+
+  const failing = (
+    script: "advances" | "watches" | "timeLimits",
+    error: BuildingError,
+    step: string,
+    kind: ErrorKind,
+  ) =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake[script][`${REPO}#40`] = [error];
+      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      assert.equal(report.errors, 1);
+      assert.ok(
+        lines.some((l) => l.startsWith("error: ")),
+        lines.join("\n"),
+      );
+      assert.equal(fake.runErrors.length, 1);
+      assert.equal(fake.runErrors[0]?.step, step);
+      assert.equal(fake.runErrors[0]?.kind, kind);
+      return fake;
+    });
+
+  it.effect("a failing advance is an error line on the run, its kind by the error", () =>
+    Effect.gen(function* () {
+      yield* failing(
+        "advances",
+        new NotBuildingError({ run: { repo: REPO, issue: "40", attempt: 1 } }),
+        "advance",
+        "ledger",
+      );
+      yield* failing(
+        "advances",
+        new SessionsError({ operation: "status", cause: new Error("x") }),
+        "advance",
+        "t3",
+      );
+      yield* failing(
+        "advances",
+        new GitHubFailed({ args: ["pr", "view"], status: 1, stderr: "boom" }),
+        "advance",
+        "tracker",
+      );
+    }),
+  );
+
+  it.effect("a failing watch is recorded with step watch", () =>
+    Effect.gen(function* () {
+      const fake = yield* failing(
+        "watches",
+        new GitHubFailed({ args: ["issue", "view"], status: 1, stderr: "boom" }),
+        "watch",
+        "tracker",
+      );
+      assert.ok(!fake.calls.some((c) => c.startsWith("advance ")));
+    }),
+  );
+
+  it.effect(
+    "a failing time limit is recorded with step pass and the run is left for the pass",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* failing(
+          "timeLimits",
+          new SessionsError({ operation: "status", cause: new Error("x") }),
+          "pass",
+          "t3",
+        );
+        assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#40`]);
+      }),
+  );
+
+  it.effect("a building run that goes stuck in the pass frees its slot for a claim", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.advances[`${REPO}#40`] = [{ kind: "stuck", reason: "r" }];
+      fake.ready[REPO] = [7];
+      fake.pushStart(`${REPO}#7`, started(7));
+      const { report } = yield* pass(fake, machine([REPO], 1));
+      assert.deepEqual(starts(fake), [`start ${REPO}#7`]);
+      assert.equal(report.claimed, 1);
+    }),
+  );
+
+  it.effect("a needs-info run is advanced, with no watch and no resume", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(42, "needs-info", REPO, true);
+      fake.advances[`${REPO}#42`] = [{ kind: "needs-info" }];
+      const { lines } = yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#42`, `advance ${REPO}#42`]);
+      assert.equal(
+        runLine(lines, `${REPO}#42 `),
+        `${REPO}#42 needs-info: session asked questions, the issue is now needs-info and the run is finished`,
+      );
+    }),
+  );
+
+  it.effect("a stuck run is advanced, with no watch and no resume", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(43, "stuck", REPO, true);
+      fake.advances[`${REPO}#43`] = [{ kind: "stuck", reason: "r" }];
+      const { lines } = yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#43`, `advance ${REPO}#43`]);
+      assert.equal(
+        runLine(lines, `${REPO}#43 `),
+        `${REPO}#43 stuck: stuck, the reason is in the ledger of run ${runIdToString(rid(43))}`,
+      );
+    }),
+  );
+
+  it.effect("a failing advance of a needs-info run is recorded with step advance", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(42, "needs-info", REPO, true);
+      fake.advances[`${REPO}#42`] = [
+        new SessionsError({ operation: "archive", cause: new Error("x") }),
+      ];
+      const { report } = yield* pass(fake, machine([REPO], 5));
+      assert.equal(report.errors, 1);
+      assert.equal(fake.runErrors[0]?.step, "advance");
+    }),
+  );
+
+  it.effect("a pr-open run gets only the time limit", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(41, "pr-open", REPO, true);
+      const { lines } = yield* pass(fake, machine([REPO], 5));
+      assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#41`]);
+      assert.ok(!lines.some((l) => l.startsWith(`${REPO}#41`)), lines.join("\n"));
+    }),
+  );
+
+  it.effect("a needs-info run that its advance finishes frees its slot for a claim", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(42, "needs-info", REPO, true);
+      fake.advances[`${REPO}#42`] = [{ kind: "needs-info" }];
+      fake.ready[REPO] = [7];
+      fake.pushStart(`${REPO}#7`, started(7));
+      const { report } = yield* pass(fake, machine([REPO], 1));
+      assert.deepEqual(starts(fake), [`start ${REPO}#7`]);
+      assert.equal(report.claimed, 1);
+    }),
+  );
+
+  it.effect("a building run whose gate is running is not worked", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, REPO, true);
+      fake.gateLocks = [runIdToString(rid(40))];
+      const { lines } = yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(callsOf(fake), []);
+      assert.equal(runLine(lines, `${REPO}#40 `), `${REPO}#40 building: gate running`);
+    }),
+  );
+
+  it.effect("a building run of a repo that is not loaded is left alone", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(40, BUILDING, "acme/other", true);
+      yield* pass(fake, machine([REPO], 3));
+      assert.deepEqual(callsOf(fake), []);
+    }),
+  );
+});

@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
+import * as RuntimeLayer from "../../orchestration-v2/runtimeLayer.ts";
 import { latestRun, type RunStatus } from "./sessions.ts";
 
 /**
@@ -119,3 +120,11 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(FactoryEvents, make);
+
+/**
+ * `layer` with the event sink the application runs on: its live stream is that instance's own,
+ * so a second sink would see nothing. `RuntimeLayer.layerEventSink` is the one layer value every
+ * other service takes the sink from, so a build shares one instance. `server.ts` has the stores
+ * it reads in scope where the factory is merged in, but does not expose the sink itself.
+ */
+export const layerLive = layer.pipe(Layer.provide(RuntimeLayer.layerEventSink));

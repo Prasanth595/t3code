@@ -13,13 +13,19 @@ import * as Effect from "effect/Effect";
 import type { HandPause } from "./claims.ts";
 import type { MachineConfig, ProjectConfig, WatchedRepo } from "./config.ts";
 import { stateLabel, type State } from "./domain/lifecycle.ts";
-import { sanitize } from "./gate.ts";
 import type { LedgerError } from "./ledger/errors.ts";
-import type { ErrorKind, MachineEvent } from "./ledger/events.ts";
+import type { CauseStep, ErrorKind, MachineEvent } from "./ledger/events.ts";
 import { holdsSlot, type RunInfo } from "./ledger/listRuns.ts";
 import { asciiLower, runIdToString, type RunId } from "./ledger/runId.ts";
 import { duration, formatTs } from "./ledger/time.ts";
+import type {
+  AdvanceOutcome,
+  BuildingError,
+  LimitOutcome,
+  WatchOutcome,
+} from "./runner/building.ts";
 import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
+import { sanitize } from "./text.ts";
 import { LIST_LIMIT, type Blocker, type Listing, type UnassignedClaim } from "./tracker/github.ts";
 
 /** An error of the pass's own: what kind it is for the machine log, and what it says. */
@@ -76,12 +82,18 @@ export interface PassWorld {
   readonly start: (repo: Repo, issue: number) => Effect.Effect<StartOutcome, StartError>;
   /** The claim gone on with, never made: `resume` in `runner/start.ts`. */
   readonly resume: (repo: Repo, issue: number) => Effect.Effect<StartOutcome, StartError>;
+  /** The time limit: `runner/building.ts` `timeLimit`. */
+  readonly timeLimit: (repo: Repo, run: RunId) => Effect.Effect<LimitOutcome, BuildingError>;
+  /** The text watch: `watch`. */
+  readonly watch: (repo: Repo, run: RunId) => Effect.Effect<WatchOutcome, BuildingError>;
+  /** The session's result: `advance`. */
+  readonly advance: (repo: Repo, run: RunId) => Effect.Effect<AdvanceOutcome, BuildingError>;
   /** Whether the run's gate is running now. */
   readonly gateRunning: (run: RunId) => boolean;
   /** Appends an `error` line to the run's own ledger. */
   readonly recordError: (
     run: RunId,
-    step: "pass" | "start",
+    step: CauseStep,
     kind: ErrorKind,
     message: string,
   ) => Effect.Effect<void, LedgerError>;
@@ -112,7 +124,7 @@ interface Notes {
 interface NoteError {
   /** The error line, without its `error: ` prefix. */
   readonly line: string;
-  readonly step: "pass" | "start";
+  readonly step: CauseStep;
   readonly kind: ErrorKind;
   /** What went wrong, before it is cleaned for the ledger. */
   readonly message: string;
@@ -130,7 +142,7 @@ const passError = (kind: ErrorKind, what: string, detail: string): NoteError => 
 });
 
 /** Every call `start` makes is a tracker call, whatever host the tracker runs on. */
-const errorKind = (error: StartError): ErrorKind => {
+const errorKind = (error: StartError | BuildingError): ErrorKind => {
   switch (error._tag) {
     case "GitHubSpawnError":
     case "GitHubInvalidArgument":
@@ -143,7 +155,11 @@ const errorKind = (error: StartError): ErrorKind => {
     case "GateRunningError":
       return "gate";
     case "FactorySessionsError":
+    case "FactoryThreadNotFoundError":
+    case "FactoryMessageRejectedError":
       return "t3";
+    case "WrongRepoError":
+      return "config";
     default:
       // The run's own record disagrees with what the step expected.
       return "ledger";
@@ -154,6 +170,8 @@ const errorKind = (error: StartError): ErrorKind => {
 const sameRepo = (a: string, b: string) => asciiLower(a) === asciiLower(b);
 
 const GATE_RUNNING = "gate running";
+/** The line of a building run whose session reported its pull request. */
+const READY_FOR_GATE = "session finished, ready for the gate";
 
 const FROM_TEXT = " (from Depends on, add the GitHub link)";
 
@@ -252,11 +270,11 @@ class Pass {
     return { label: plain(label), state: state ?? "starting", parts: [], errors: [] };
   }
 
-  /** The step `name` failed for this issue. */
-  failed(notes: Notes, name: string, error: StartError): void {
+  /** The step called `label` in the pass line failed for this issue; the ledger records it under `step`. */
+  failed(notes: Notes, label: string, step: CauseStep, error: StartError | BuildingError): void {
     notes.errors.push({
-      line: `${notes.label} ${name}: ${plain(error.message)}`,
-      step: name === "start" ? "start" : "pass",
+      line: `${notes.label} ${label}: ${plain(error.message)}`,
+      step,
       kind: errorKind(error),
       message: error.message,
     });
@@ -375,8 +393,8 @@ const runs = (world: PassWorld, pass: Pass): Effect.Effect<ReadonlyArray<RunInfo
     }
     for (const info of listed.success) {
       pass.report.runs += 1;
-      const id = runIdToString(info.id);
       if (info.unreadable) {
+        const id = runIdToString(info.id);
         // Its own ledger is what cannot be read, so the machine log takes the error.
         yield* pass.fail(
           info.id,
@@ -394,11 +412,16 @@ const runs = (world: PassWorld, pass: Pass): Effect.Effect<ReadonlyArray<RunInfo
   });
 
 /**
- * Calls `resume` for each confirmed run still in `triage` (or with no state yet), which goes on
- * from its ledger, so a run cut short after the launch was sent is finished and its session
- * never runs on untracked. A run of a repo that is not loaded is left alone. The other states
- * are worked by later steps. It is not a new claim, so it is not counted as one. An issue put
- * back to `ready` is left to the claim step, which finishes its run when it claims the issue.
+ * Works each confirmed run: the time limit first, for every state (the runner decides which
+ * runs it applies to). A run in `triage` (or with no state yet) is gone on with by `resume`, from
+ * its ledger, so a run cut short after the launch was sent is finished and its session never runs
+ * on untracked. A building run has its text watched and its session's result read by `advance`,
+ * until its session reports its pull request: the build is then done, and the run waits for the
+ * gate (#19) with no tracker or T3 call. A run left in `needs-info` or `stuck` (an end cut short)
+ * is finished by `advance`, so its thread is archived and its slot freed. The gate and the states
+ * after it are later steps. A run of a repo that is not loaded is left alone. None of it is a new
+ * claim, so none is counted as one. An issue put back to `ready` is left to the claim step, which
+ * finishes its run when it claims the issue.
  */
 const workRuns = (
   world: PassWorld,
@@ -408,7 +431,7 @@ const workRuns = (
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     for (const info of [...known.infos]) {
-      if (!inTriage(info)) continue;
+      if (info.unreadable || !info.confirmed) continue;
       const loaded = repos.find(
         (l) => l.kind === "ready" && sameRepo(l.repo.watched.repo, info.id.repo),
       );
@@ -417,32 +440,134 @@ const workRuns = (
       const name = repo.watched.repo;
       const issue = Number(info.id.issue);
       const notes = pass.notes(`${name}${mention(issue)}`, info.state);
-      const outcome = yield* Effect.result(world.resume(repo, issue));
-      if (outcome._tag === "Failure") {
-        if (outcome.failure._tag === "GateRunningError") notes.parts.push(GATE_RUNNING);
-        else pass.failed(notes, "start", outcome.failure);
-      } else {
-        switch (outcome.success.kind) {
-          case "started":
-            notes.parts.push("session started, the issue is building");
-            break;
-          case "stuck":
-            pass.stuck(notes, runIdToString(outcome.success.run));
-            break;
-          case "skipped":
-          case "refused": {
-            const moved = outcome.success.kind === "skipped" ? outcome.success.moved : undefined;
-            if (moved === "ready") notes.parts.push(READY_AGAIN);
-            else {
-              const run = runIdToString(info.id);
-              yield* stalled(pass, notes, run, outcome.success.reason, moved === "closed");
-            }
-            break;
-          }
+      if (world.gateRunning(info.id)) {
+        // The gate has the run: nothing else is done for it (softfac's `work_runs`).
+        notes.parts.push(GATE_RUNNING);
+      } else if (yield* withinLimit(world, repo, info, notes, pass)) {
+        if (inTriage(info)) yield* resumeRun(world, repo, info, notes, pass);
+        // The session's pull request waits for the gate: nothing is left to read or decide.
+        else if (info.state === "building" && info.prReported) notes.parts.push(READY_FOR_GATE);
+        else if (info.state === "building") yield* followBuilding(world, repo, info, notes, pass);
+        // A run left in `needs-info` or `stuck` has its end done by `advance` (softfac's `finishing`).
+        else if (info.state === "needs-info" || info.state === "stuck") {
+          yield* advanceRun(world, repo, info, notes, pass);
         }
+        // `pr-open` waits for the gate, a later step.
       }
       yield* known.refresh(world, pass, name, issue);
       yield* pass.flush(notes, info.id);
+    }
+  });
+
+/** The time limit for the run. False when the run was stopped or the call failed: it is done for this pass. */
+const withinLimit = (
+  world: PassWorld,
+  repo: Repo,
+  info: RunInfo,
+  notes: Notes,
+  pass: Pass,
+): Effect.Effect<boolean> =>
+  Effect.gen(function* () {
+    const outcome = yield* Effect.result(world.timeLimit(repo, info.id));
+    if (outcome._tag === "Failure") {
+      pass.failed(notes, "time limit", "pass", outcome.failure);
+      return false;
+    }
+    if (outcome.success.kind === "stopped") {
+      pass.stuck(notes, runIdToString(info.id));
+      return false;
+    }
+    return true;
+  });
+
+/** `resume` for a run in `triage`. */
+const resumeRun = (
+  world: PassWorld,
+  repo: Repo,
+  info: RunInfo,
+  notes: Notes,
+  pass: Pass,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const issue = Number(info.id.issue);
+    const outcome = yield* Effect.result(world.resume(repo, issue));
+    if (outcome._tag === "Failure") {
+      if (outcome.failure._tag === "GateRunningError") notes.parts.push(GATE_RUNNING);
+      else pass.failed(notes, "start", "start", outcome.failure);
+      return;
+    }
+    switch (outcome.success.kind) {
+      case "started":
+        notes.parts.push("session started, the issue is building");
+        break;
+      case "stuck":
+        pass.stuck(notes, runIdToString(outcome.success.run));
+        break;
+      case "skipped":
+      case "refused": {
+        const moved = outcome.success.kind === "skipped" ? outcome.success.moved : undefined;
+        if (moved === "ready") notes.parts.push(READY_AGAIN);
+        else {
+          const run = runIdToString(info.id);
+          yield* stalled(pass, notes, run, outcome.success.reason, moved === "closed");
+        }
+        break;
+      }
+    }
+  });
+
+/** The watch, then `advance`, for a building run: what the session did, in a line. */
+const followBuilding = (
+  world: PassWorld,
+  repo: Repo,
+  info: RunInfo,
+  notes: Notes,
+  pass: Pass,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const watched = yield* Effect.result(world.watch(repo, info.id));
+    if (watched._tag === "Failure") return pass.failed(notes, "watch", "watch", watched.failure);
+    if (watched.success.kind === "stopped") return pass.stuck(notes, runIdToString(info.id));
+    yield* advanceRun(world, repo, info, notes, pass);
+  });
+
+/** `advance` for a run, and what it did in a line. */
+const advanceRun = (
+  world: PassWorld,
+  repo: Repo,
+  info: RunInfo,
+  notes: Notes,
+  pass: Pass,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const run = runIdToString(info.id);
+    const advanced = yield* Effect.result(world.advance(repo, info.id));
+    // A `NotBuildingError` is a run that finished meanwhile: softfac prints it as an error too.
+    if (advanced._tag === "Failure")
+      return pass.failed(notes, "advance", "advance", advanced.failure);
+    switch (advanced.success.kind) {
+      case "running":
+        notes.parts.push("session still running");
+        break;
+      case "reminded":
+        notes.parts.push("session ended without a result line, sent it a reminder");
+        break;
+      case "paused":
+        notes.parts.push(
+          "session stopped by hand, waiting for an instructor's comment on the pull request or the issue",
+        );
+        break;
+      case "ready-for-gate":
+        notes.parts.push(READY_FOR_GATE);
+        break;
+      case "needs-info":
+        notes.parts.push(
+          "session asked questions, the issue is now needs-info and the run is finished",
+        );
+        break;
+      case "stuck":
+        pass.stuck(notes, run);
+        break;
     }
   });
 
@@ -660,7 +785,7 @@ const noteStart = (
     }
     yield* known.refresh(world, pass, name, issue);
     if (outcome._tag === "Failure") {
-      pass.failed(notes, "start", outcome.failure);
+      pass.failed(notes, "start", "start", outcome.failure);
       return madeSince(newestRun(known.of(name, issue)), before);
     }
     switch (outcome.success.kind) {
