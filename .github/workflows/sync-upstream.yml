@@ -25,7 +25,7 @@ jobs:
     name: Merge pingdotgg/t3code main
     if: github.repository != 'pingdotgg/t3code'
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@v6
         with:
@@ -35,6 +35,9 @@ jobs:
           # edits them often. SYNC_TOKEN: fine-grained PAT with Contents, Workflows and
           # Pull requests read/write on this repo.
           token: ${{ secrets.SYNC_TOKEN || github.token }}
+
+      - name: Test typecheck recovery
+        run: python3 .github/scripts/repair-upstream-typecheck.test.py
 
       - id: merge
         name: Merge upstream
@@ -99,10 +102,10 @@ jobs:
 
       - name: Fix typecheck failures with Codex
         if: steps.typecheck.outcome == 'failure'
-        timeout-minutes: 30
+        timeout-minutes: 60
         env:
           CODEX_AUTH_JSON: ${{ secrets.CODEX_AUTH_JSON }}
-          MODEL: ${{ vars.SYNC_RESOLVE_MODEL || 'gpt-6-luna' }}
+          MODEL: ${{ vars.SYNC_REPAIR_MODEL || 'gpt-6.1-sol' }}
           PROMPT: |
             A `git merge upstream/main` is in progress. Conflicts have been resolved, but
             `vpr typecheck` failed. Read the diagnostics in
@@ -114,10 +117,7 @@ jobs:
             or remove functionality to make the check pass. Run `vpr typecheck` and iterate
             until it succeeds. Stage all repaired files with `git add`.
             Do not commit, push, abort the merge, or change workflow files.
-        run: |
-          mkdir -p ~/.codex && printf '%s' "$CODEX_AUTH_JSON" > ~/.codex/auth.json
-          npx -y @openai/codex@latest exec --dangerously-bypass-approvals-and-sandbox \
-            -m "$MODEL" -c model_reasoning_effort=medium "$PROMPT"
+        run: bash .github/scripts/repair-upstream-typecheck.sh
 
       - name: Verify repaired resolution
         if: steps.typecheck.outcome == 'failure'
