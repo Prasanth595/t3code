@@ -544,6 +544,10 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Diff colors"]
         : []),
       ...(settings.chatWidth !== DEFAULT_UNIFIED_SETTINGS.chatWidth ? ["Chat width"] : []),
+      ...(settings.threadDetailsOpenByDefault !==
+      DEFAULT_UNIFIED_SETTINGS.threadDetailsOpenByDefault
+        ? ["Thread details panel"]
+        : []),
       ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
         ? ["Panel animations"]
         : []),
@@ -676,6 +680,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.appearanceContrast,
       settings.diffColorScheme,
       settings.chatWidth,
+      settings.threadDetailsOpenByDefault,
       settings.enableAgentBrowserAccess,
       settings.confirmQuit,
       settings.confirmThreadArchive,
@@ -794,6 +799,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
+      threadDetailsOpenByDefault: DEFAULT_UNIFIED_SETTINGS.threadDetailsOpenByDefault,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
@@ -1460,6 +1466,33 @@ export function AppearanceSettingsPanel() {
                 </SelectPopup>
               </Select>
             </div>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("thread-details")}
+          description="Start new threads with the Thread details panel hidden."
+          resetAction={
+            settings.threadDetailsOpenByDefault !==
+            DEFAULT_UNIFIED_SETTINGS.threadDetailsOpenByDefault ? (
+              <SettingResetButton
+                label="thread details panel"
+                onClick={() =>
+                  updateSettings({
+                    threadDetailsOpenByDefault: DEFAULT_UNIFIED_SETTINGS.threadDetailsOpenByDefault,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.threadDetailsOpenByDefault}
+              onCheckedChange={(checked) =>
+                updateSettings({ threadDetailsOpenByDefault: Boolean(checked) })
+              }
+              aria-label="Show thread details by default"
+            />
           }
         />
       </SettingsSection>

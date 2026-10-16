@@ -162,6 +162,18 @@ describe("ClientSettings rich text composer", () => {
   });
 });
 
+describe("ClientSettings thread details panel", () => {
+  it("keeps the panel open by default for existing settings", () => {
+    expect(decodeClientSettings({}).threadDetailsOpenByDefault).toBe(true);
+  });
+
+  it("round-trips a hidden-by-default preference", () => {
+    const preference = { threadDetailsOpenByDefault: false };
+    expect(decodeClientSettingsPatch(preference)).toEqual(preference);
+    expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
+  });
+});
+
 describe("ServerSettings default permissions", () => {
   it("keeps full access for settings saved before a default was configured", () => {
     expect(decodeServerSettings({}).defaultRuntimeMode).toBe("full-access");

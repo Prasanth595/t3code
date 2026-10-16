@@ -12,6 +12,7 @@ import {
   resolveThreadDetailsCardLayout,
 } from "./threadDetailsCardLayout";
 import { observeResize } from "../../lib/observeResize";
+import { useClientSettings } from "../../hooks/useSettings";
 
 /** One card owns its placement and folds content only when that content cannot fit. */
 export function ThreadDetailsCard({
@@ -28,6 +29,9 @@ export function ThreadDetailsCard({
   children: (density: "full" | "compact" | "essential") => ReactNode;
 }) {
   const canvas = useChatCanvas();
+  const threadDetailsOpenByDefault = useClientSettings(
+    (settings) => settings.threadDetailsOpenByDefault,
+  );
   const preferredPlacement = canvas
     ? resolveThreadDetailsCardLayout({
         container: canvas.container,
@@ -48,7 +52,12 @@ export function ThreadDetailsCard({
   const mode = placement ? "inline" : "popover";
   const topInset = canvas?.detailsCardTopInset ?? 0;
   const inlineOpen = useRightPanelStore((state) =>
-    selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "inline"),
+    selectThreadPanelOpen(
+      state.threadPanelVisibilityByThreadKey,
+      threadRef,
+      "inline",
+      threadDetailsOpenByDefault,
+    ),
   );
   const popoverOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(state.threadPanelVisibilityByThreadKey, threadRef, "popover"),

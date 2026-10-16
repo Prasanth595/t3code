@@ -597,6 +597,30 @@ describe("rightPanelStore", () => {
     ).toEqual({ inlineOpen: true, popoverOpen: false });
   });
 
+  it("uses the configured default while preserving an explicit reopen", () => {
+    const store = useRightPanelStore.getState();
+
+    expect(
+      selectThreadPanelOpen(store.threadPanelVisibilityByThreadKey, refA, "inline", false),
+    ).toBe(false);
+    store.toggleThreadPanel(refA, "inline", false);
+    expect(
+      selectThreadPanelOpen(
+        useRightPanelStore.getState().threadPanelVisibilityByThreadKey,
+        refA,
+        "inline",
+        false,
+      ),
+    ).toBe(true);
+    expect(
+      useRightPanelStore.getState().threadPanelVisibilityByThreadKey["env-1:thread-A"],
+    ).toEqual({
+      inlineOpen: true,
+      popoverOpen: false,
+      inlineOpenExplicit: true,
+    });
+  });
+
   it("closes the popover atomically when the real right panel opens", () => {
     useRightPanelStore.getState().setThreadPanelOpen(refA, "popover", true);
     useRightPanelStore.getState().open(refA, "diff");

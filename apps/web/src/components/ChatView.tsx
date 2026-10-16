@@ -2502,11 +2502,15 @@ export default function ChatView(props: ChatViewProps) {
   const [threadPanelPresentation, setThreadPanelPresentation] =
     useState<ThreadPanelPresentation>("inline");
   const [threadPanelPopoverHandle] = useState(PopoverCreateHandle);
+  const threadDetailsOpenByDefault = useClientSettings(
+    (settings) => settings.threadDetailsOpenByDefault,
+  );
   const threadPanelOpen = useRightPanelStore((state) =>
     selectThreadPanelOpen(
       state.threadPanelVisibilityByThreadKey,
       activeThreadRef,
       threadPanelPresentation,
+      threadDetailsOpenByDefault,
     ),
   );
 
@@ -5957,7 +5961,9 @@ export default function ChatView(props: ChatViewProps) {
   const toggleRightPanelStable = useStableCallback(toggleRightPanel);
   const toggleThreadPanel = () => {
     if (!activeThreadRef) return;
-    useRightPanelStore.getState().toggleThreadPanel(activeThreadRef, threadPanelPresentation);
+    useRightPanelStore
+      .getState()
+      .toggleThreadPanel(activeThreadRef, threadPanelPresentation, threadDetailsOpenByDefault);
   };
   const toggleThreadPanelStable = useStableCallback(toggleThreadPanel);
   // A thread started for a link the OS opened shows its browser maximized, like a browser window.
