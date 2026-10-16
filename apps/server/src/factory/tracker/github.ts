@@ -161,6 +161,12 @@ export type GitHubError =
   | GitHubParse
   | GitHubRateLimited;
 
+/** A failure that is the one call's own, so another call may well succeed; the others say GitHub or `gh` is refusing every call. */
+const isCallSpecific = (error: GitHubError): boolean =>
+  error._tag === "GitHubFailed" ||
+  error._tag === "GitHubParse" ||
+  error._tag === "GitHubOutputTooLarge";
+
 /** GitHub saying the thing asked for is not there: `gh` failed with a 404. */
 export const isNotFound = (error: GitHubError): boolean =>
   error._tag === "GitHubFailed" && error.stderr.includes("HTTP 404");
@@ -1204,7 +1210,9 @@ export const makeGitHub = (options: GitHubOptions) => {
    * form is left out: an issue that cannot be dated is not moved. The label history is read
    * only for an issue that passed the other two checks, is not in `known` (the issues the pass
    * has a run for), and was not judged not ours by `memo` at the same `updatedAt`. A history
-   * that cannot be read is reported in `unread` for that issue; the scan goes on with the rest.
+   * that cannot be read because of that issue (`gh` failed on it, or its answer could not be
+   * parsed or was too large) is reported in `unread` and the scan goes on with the rest. A
+   * rate limit, a timeout, or `gh` not starting would fail every call, so it ends the scan.
    */
   const unassignedClaims = (
     before: string,
@@ -1237,6 +1245,7 @@ export const makeGitHub = (options: GitHubOptions) => {
           if (known.has(number) || memo.judgedNotOurs(repo, number, state, updatedAt)) continue;
           const read = yield* Effect.result(readHistory(number));
           if (read._tag === "Failure") {
+            if (!isCallSpecific(read.failure)) return yield* read.failure;
             unread.push({ issue: number, error: read.failure });
             continue;
           }
