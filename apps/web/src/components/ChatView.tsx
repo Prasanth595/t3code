@@ -421,6 +421,10 @@ import {
   serverEnvironment,
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
+import {
+  createRunAndSendOutputRequests,
+  type RunAndSendOutputAction,
+} from "../lib/runAndSendOutput";
 import { threadEnvironment } from "../state/threads";
 import { workspacePreparationRetryRunIds } from "@t3tools/client-runtime/state/turn-item-presentation";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
@@ -1684,6 +1688,8 @@ function makeModelDisabledReason(
   };
 }
 
+const runAndSendOutputRequest = createRunAndSendOutputRequests();
+
 export default function ChatView(props: ChatViewProps) {
   const {
     environmentId,
@@ -1698,6 +1704,12 @@ export default function ChatView(props: ChatViewProps) {
   const hasTerminalWriteAccess = () =>
     readEnvironmentScope(environmentId, AuthTerminalOperateScope);
   const canReadTerminal = useEnvironmentScope(environmentId, AuthTerminalReadScope);
+  const canRunAndSendOutput = useAtomValue(
+    terminalEnvironment.runAndSend.permissionAtom(environmentId),
+  );
+  const startRunAndSendOutput = useAtomCommand(terminalEnvironment.runAndSend, {
+    reportFailure: false,
+  });
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
   const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
@@ -5093,6 +5105,56 @@ export default function ChatView(props: ChatViewProps) {
     );
   };
   const runShellCommandStable = useStableCallback(runShellCommand);
+
+  // Capture the originating thread and environment; navigation must not retarget a pending run.
+  const runAndSendOutput = useCallback(
+    (command: string, sourceId: string, action?: RunAndSendOutputAction): Promise<boolean> => {
+      if (!canRunAndSendOutput || !activeThreadRef || !activeProject || !activeThread) {
+        return Promise.resolve(false);
+      }
+      const threadRef = activeThreadRef;
+      return runAndSendOutputRequest(
+        threadRef.environmentId,
+        sourceId,
+        {
+          threadId: threadRef.threadId,
+          command,
+          cwd: gitCwd ?? activeProject.workspaceRoot,
+          ...(activeThread.worktreePath ? { worktreePath: activeThread.worktreePath } : {}),
+        },
+        async (request) => {
+          const result = await startRunAndSendOutput(request);
+          if (result._tag === "Failure") {
+            if (!isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              toastManager.add({
+                type: "error",
+                title: action?.retrySendingOutput
+                  ? "Could not retry sending output"
+                  : "Could not run and send output",
+                description:
+                  error instanceof Error ? error.message : "An unexpected error occurred.",
+              });
+            }
+            return false;
+          }
+          // The server created the terminal and owns completion and output delivery.
+          storeEnsureTerminal(threadRef, request.input.terminalId, { open: true, active: true });
+          return true;
+        },
+        action,
+      );
+    },
+    [
+      canRunAndSendOutput,
+      activeThreadRef,
+      activeProject,
+      activeThread,
+      gitCwd,
+      startRunAndSendOutput,
+      storeEnsureTerminal,
+    ],
+  );
 
   const supportsProjectSettingsOverrides =
     environmentById.get(environmentId)?.serverConfig?.environment.capabilities
@@ -11271,6 +11333,9 @@ export default function ChatView(props: ChatViewProps) {
                   ? {
                       onCiteAssistantText: citeAssistantTextStable,
                       ...(activeProject ? { onRunShellCommand: runShellCommandStable } : {}),
+                      ...(activeProject && canRunAndSendOutput
+                        ? { onRunAndSendOutput: runAndSendOutput }
+                        : {}),
                     }
                   : {})}
                 isWorking={!paintOnlyDisplayedTimeline && isWorking}

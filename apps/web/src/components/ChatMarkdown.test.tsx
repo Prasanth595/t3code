@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { EnvironmentId, type AuthEnvironmentScope } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId, type AuthEnvironmentScope } from "@t3tools/contracts";
 import { createRoot } from "react-dom/client";
 import { useThreadFindHighlights } from "./chat/threadFindHighlights";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
@@ -12,6 +12,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { createRunAndSendOutputRequests } from "../lib/runAndSendOutput";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
 import { Button } from "./ui/button";
@@ -280,6 +281,7 @@ describe("ChatMarkdown streaming", () => {
   it("runs only a complete single-line shell block after a click", async () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     const onRunShellCommand = vi.fn();
+    const onRunAndSendOutput = vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true);
     let renderer: ReactTestRenderer | undefined;
     const message = (text: string, isStreaming = false) => (
       <ChatMarkdown
@@ -287,6 +289,7 @@ describe("ChatMarkdown streaming", () => {
         text={text}
         isStreaming={isStreaming}
         onRunShellCommand={onRunShellCommand}
+        onRunAndSendOutput={onRunAndSendOutput}
       />
     );
     try {
@@ -297,7 +300,9 @@ describe("ChatMarkdown streaming", () => {
       expect(
         mounted.root
           .findAllByType(Button)
-          .some((button) => button.props["aria-label"] === "Run in terminal"),
+          .some((button) =>
+            ["Run in terminal", "Run and send output"].includes(button.props["aria-label"]),
+          ),
       ).toBe(false);
 
       await act(async () => {
@@ -307,6 +312,28 @@ describe("ChatMarkdown streaming", () => {
         codeButton(mounted, "Run in terminal").onClick?.({} as never);
       });
       expect(onRunShellCommand).toHaveBeenCalledExactlyOnceWith("echo hello");
+      await act(async () => {
+        const send = codeButton(mounted, "Run and send output");
+        send.onClick?.({} as never);
+        send.onClick?.({} as never);
+      });
+      expect(onRunAndSendOutput).toHaveBeenCalledExactlyOnceWith("echo hello", "0", {
+        newExecution: false,
+      });
+      expect(codeButton(mounted, "Run and send output").disabled).toBe(false);
+      await act(async () => {
+        codeButton(mounted, "Run and send output").onClick?.({} as never);
+      });
+      expect(onRunAndSendOutput).toHaveBeenCalledTimes(2);
+      expect(codeButton(mounted, "Run again and send output").disabled).toBe(false);
+      await act(async () => {
+        codeButton(mounted, "Run again and send output").onClick?.({} as never);
+      });
+      expect(onRunAndSendOutput).toHaveBeenLastCalledWith("echo hello", "0", {
+        newExecution: true,
+      });
+      expect(codeButton(mounted, "Run again and send output").disabled).toBe(false);
+      expect(codeButton(mounted, "Run in terminal").disabled).not.toBe(true);
 
       for (const text of [
         "~~~bash\necho tilde\n~~~",
@@ -317,6 +344,7 @@ describe("ChatMarkdown streaming", () => {
           mounted.update(message(text));
         });
         expect(codeButton(mounted, "Run in terminal")).toBeDefined();
+        expect(codeButton(mounted, "Run and send output").disabled).toBe(false);
       }
 
       for (const text of [
@@ -337,9 +365,116 @@ describe("ChatMarkdown streaming", () => {
         expect(
           mounted.root
             .findAllByType(Button)
-            .some((button) => button.props["aria-label"] === "Run in terminal"),
+            .some((button) =>
+              ["Run in terminal", "Run and send output"].includes(button.props["aria-label"]),
+            ),
         ).toBe(false);
       }
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("disables starting, enables deliberate reruns, and preserves identity across remounts", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const requests = createRunAndSendOutputRequests();
+    let accept!: (value: boolean) => void;
+    const start = vi.fn<Parameters<typeof requests>[3]>(
+      () => new Promise<boolean>((resolve) => (accept = resolve)),
+    );
+    const onRunAndSendOutput: NonNullable<
+      ComponentProps<typeof ChatMarkdown>["onRunAndSendOutput"]
+    > = (command, sourceId, action) =>
+      requests(
+        EnvironmentId.make("environment-a"),
+        sourceId,
+        { threadId: ThreadId.make("thread-a"), command, cwd: "/tmp/project" },
+        start,
+        action,
+      );
+    const message = () => (
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={"```bash\necho hello\n```"}
+        onRunAndSendOutput={onRunAndSendOutput}
+      />
+    );
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(message());
+      });
+      await act(async () => {
+        codeButton(renderer!, "Run and send output").onClick?.({} as never);
+      });
+      expect(codeButton(renderer!, "Starting…").disabled).toBe(true);
+      await act(async () => {
+        renderer!.unmount();
+        renderer = create(message());
+      });
+      await act(async () => {
+        codeButton(renderer!, "Run and send output").onClick?.({} as never);
+      });
+      expect(start).toHaveBeenCalledTimes(1);
+      await act(async () => {
+        accept(true);
+      });
+      expect(codeButton(renderer!, "Run again and send output").disabled).toBe(false);
+      await act(async () => {
+        codeButton(renderer!, "Run again and send output").onClick?.({} as never);
+      });
+      expect(codeButton(renderer!, "Starting…").disabled).toBe(true);
+      expect(start).toHaveBeenCalledTimes(2);
+      expect(start.mock.calls[1]?.[0]).not.toEqual(start.mock.calls[0]?.[0]);
+      await act(async () => {
+        accept(false);
+      });
+      await act(async () => {
+        codeButton(renderer!, "Run and send output").onClick?.({} as never);
+      });
+      expect(start.mock.calls[2]?.[0]).toEqual(start.mock.calls[1]?.[0]);
+      await act(async () => {
+        accept(true);
+      });
+      await act(async () => {
+        renderer!.unmount();
+        renderer = create(message());
+      });
+      expect(start).toHaveBeenCalledTimes(3);
+      await act(async () => {
+        codeButton(renderer!, "Run and send output").onClick?.({} as never);
+      });
+      expect(start).toHaveBeenCalledTimes(3);
+      expect(codeButton(renderer!, "Run again and send output").disabled).toBe(false);
+      await act(async () => {
+        codeButton(renderer!, "Retry sending output").onClick?.({} as never);
+        codeButton(renderer!, "Retry sending output").onClick?.({} as never);
+      });
+      expect(start).toHaveBeenCalledTimes(4);
+      expect(start.mock.calls[3]?.[0]).toEqual(start.mock.calls[2]?.[0]);
+      expect(codeButton(renderer!, "Retrying sending output…").disabled).toBe(true);
+      expect(codeButton(renderer!, "Run again and send output").disabled).toBe(true);
+      await act(async () => {
+        accept(false);
+      });
+      expect(codeButton(renderer!, "Retry sending output").disabled).toBe(false);
+      await act(async () => {
+        codeButton(renderer!, "Retry sending output").onClick?.({} as never);
+      });
+      expect(start.mock.calls[4]?.[0]).toEqual(start.mock.calls[3]?.[0]);
+      await act(async () => {
+        accept(true);
+      });
+      await act(async () => {
+        codeButton(renderer!, "Run again and send output").onClick?.({} as never);
+      });
+      expect(start.mock.calls[5]?.[0].input.terminalId).not.toBe(
+        start.mock.calls[4]?.[0].input.terminalId,
+      );
+      await act(async () => {
+        accept(true);
+      });
     } finally {
       await act(async () => renderer?.unmount());
       vi.unstubAllGlobals();

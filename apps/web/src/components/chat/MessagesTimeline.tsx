@@ -1,3 +1,4 @@
+import type { RunAndSendOutputAction } from "../../lib/runAndSendOutput";
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
 import { MarkdownFindContext, useFindRevealRef } from "./markdownFindContext";
@@ -338,6 +339,9 @@ interface TimelineRowSharedState {
    */
   onAppFullscreenChange: (rowId: string, fullscreen: boolean) => void;
   onRunShellCommand: ((command: string) => void) | undefined;
+  onRunAndSendOutput:
+    | ((command: string, sourceId: string, action?: RunAndSendOutputAction) => Promise<boolean>)
+    | undefined;
   findActive: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   displayThreadKey?: string;
@@ -503,6 +507,11 @@ interface MessagesTimelineProps {
   onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   onSendAppMessage?: (text: string) => Promise<void>;
   onRunShellCommand?: (command: string) => void;
+  onRunAndSendOutput?: (
+    command: string,
+    sourceId: string,
+    action?: RunAndSendOutputAction,
+  ) => Promise<boolean>;
   isRevertingCheckpoint: boolean;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   onFileOpen?: (attachment: ChatFileAttachment) => void;
@@ -609,6 +618,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onUseArtifactTemplate = NOOP_USE_ARTIFACT_TEMPLATE,
   onSendAppMessage,
   onRunShellCommand,
+  onRunAndSendOutput,
   isRevertingCheckpoint,
   onImageExpand,
   onFileOpen = NOOP_OPEN_ATTACHMENT,
@@ -1364,6 +1374,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       activeThreadEnvironmentId,
       onRevertToTurnCount,
       onRunShellCommand,
+      onRunAndSendOutput,
       findActive,
       onImageExpand,
       onFileOpen,
@@ -1402,6 +1413,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       activeThreadEnvironmentId,
       onRevertToTurnCount,
       onRunShellCommand,
+      onRunAndSendOutput,
       findActive,
       onImageExpand,
       onFileOpen,
@@ -2900,6 +2912,16 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
               headingLevelOffset={MESSAGE_HEADING_LEVEL}
               onUseArtifactTemplate={ctx.onUseArtifactTemplate}
               onRunShellCommand={ctx.onRunShellCommand}
+              onRunAndSendOutput={
+                ctx.onRunAndSendOutput
+                  ? (command, sourceId, action) =>
+                      ctx.onRunAndSendOutput!(
+                        command,
+                        JSON.stringify([row.message.id, sourceId]),
+                        action,
+                      )
+                  : undefined
+              }
               onImageExpand={ctx.onImageExpand}
             />
           </AssistantCitationSource>

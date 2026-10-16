@@ -10,6 +10,7 @@ import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import {
   DEFAULT_TERMINAL_ID,
   TerminalCwdError,
+  TerminalRunAndSendError,
   TerminalCwdNotDirectoryError,
   TerminalCwdNotFoundError,
   TerminalCwdStatError,
@@ -162,6 +163,17 @@ export class TerminalManager extends Context.Service<
       input: TerminalOpenInput,
     ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
 
+    /** Persists the delivery failure notice even after the command shell exits. */
+    readonly reportDeliveryError: (input: {
+      readonly threadId: string;
+      readonly terminalId: string;
+    }) => Effect.Effect<void, TerminalError>;
+    /** Runs once in a fresh terminal, selecting the script for the actual shell candidate. */
+    readonly openForCommand: (
+      input: TerminalOpenInput,
+      scripts: { readonly posix: string; readonly fish: string; readonly powershell: string },
+    ) => Effect.Effect<TerminalSessionSnapshot, TerminalError | TerminalRunAndSendError>;
+
     /**
      * Attach to a terminal and stream its initial snapshot followed by live events.
      *
@@ -308,6 +320,7 @@ interface TerminalSessionState {
   /** Normalized child command name when `hasRunningSubprocess`; cleared when idle. */
   childCommandLabel: string | null;
   runtimeEnv: Record<string, string> | null;
+  commandScripts?: { readonly posix: string; readonly fish: string; readonly powershell: string };
 }
 
 interface PersistHistoryRequest {
@@ -1655,13 +1668,24 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     });
   });
 
+  const commandProcesses = new WeakSet<PtyAdapter.PtyProcess>();
+  const signalProcess = (process: PtyAdapter.PtyProcess, signal: "SIGTERM" | "SIGKILL") => {
+    if (
+      commandProcesses.has(process) &&
+      "killGroup" in process &&
+      typeof process.killGroup === "function"
+    ) {
+      process.killGroup(signal);
+    } else process.kill(signal);
+  };
+
   const runKillEscalation = Effect.fn("terminal.runKillEscalation")(function* (
     process: PtyAdapter.PtyProcess,
     threadId: string,
     terminalId: string,
   ) {
     const terminated = yield* Effect.try({
-      try: () => process.kill("SIGTERM"),
+      try: () => signalProcess(process, "SIGTERM"),
       catch: (cause) =>
         new TerminalProcessSignalError({
           cause,
@@ -1686,7 +1710,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* Effect.sleep(processKillGraceMs);
 
     yield* Effect.try({
-      try: () => process.kill("SIGKILL"),
+      try: () => signalProcess(process, "SIGKILL"),
       catch: (cause) =>
         new TerminalProcessSignalError({
           cause,
@@ -2191,9 +2215,46 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       );
     }
 
+    const shellName = candidate.shell
+      .split(/[\\/]/)
+      .at(-1)
+      ?.replace(/\.exe$/i, "")
+      .toLowerCase();
+    const script =
+      session.commandScripts === undefined
+        ? undefined
+        : shellName === "fish"
+          ? session.commandScripts.fish
+          : shellName === "pwsh" || shellName === "powershell"
+            ? session.commandScripts.powershell
+            : shellName === "sh" ||
+                shellName === "bash" ||
+                shellName === "zsh" ||
+                shellName === "dash" ||
+                shellName === "ksh"
+              ? session.commandScripts.posix
+              : null;
+    if (script === null) {
+      return yield* trySpawn(
+        shellCandidates,
+        spawnEnv,
+        session,
+        index + 1,
+        new PtyAdapter.PtySpawnError({
+          adapter: "terminal-manager",
+          attemptedShells: [candidate.shell],
+        }),
+      );
+    }
+    const args =
+      script === undefined
+        ? (candidate.args ?? [])
+        : shellName === "pwsh" || shellName === "powershell"
+          ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script]
+          : ["-c", script];
     const launch = yield* agentScope.wrap({
       command: candidate.shell,
-      args: candidate.args ?? [],
+      args,
       name: "terminal",
       env: spawnEnv,
       survivesRestart: true,
@@ -2210,6 +2271,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
 
     if (attempt._tag === "Success") {
+      if (session.commandScripts) {
+        commandProcesses.add(attempt.success);
+        delete session.commandScripts;
+      }
       return {
         process: attempt.success,
         shellLabel: formatShellCandidate(candidate),
@@ -2600,7 +2665,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   );
 
   const openWithWorkspaceLease = Effect.fn("terminal.openLocked")(function* (
-    input: TerminalOpenInput,
+    input: TerminalOpenInput & { readonly commandScripts?: TerminalSessionState["commandScripts"] },
   ) {
     const terminalId = input.terminalId;
     yield* assertValidCwd(input.cwd);
@@ -2637,6 +2702,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         hasRunningSubprocess: false,
         childCommandLabel: null,
         runtimeEnv: normalizedRuntimeEnv(input.env),
+        ...(input.commandScripts ? { commandScripts: input.commandScripts } : {}),
       };
 
       const createdSession = session;
@@ -2725,7 +2791,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     return snapshot(liveSession);
   });
 
-  const openLocked = (input: TerminalOpenInput) =>
+  const openLocked = (
+    input: TerminalOpenInput & { readonly commandScripts?: TerminalSessionState["commandScripts"] },
+  ) =>
     withWorkspaceLease(
       path.resolve(input.worktreePath ?? input.cwd),
       openWithWorkspaceLease(input),
@@ -2735,6 +2803,25 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     withThreadLock(
       input.threadId,
       resolveLaunchInputEnvironment(input).pipe(Effect.flatMap(openLocked)),
+    );
+
+  const openForCommand: TerminalManager["Service"]["openForCommand"] = (input, scripts) =>
+    withThreadLock(
+      input.threadId,
+      Effect.gen(function* () {
+        const existing = yield* getSession(input.threadId, input.terminalId);
+        if (Option.isSome(existing)) {
+          return yield* new TerminalRunAndSendError({
+            threadId: input.threadId,
+            terminalId: input.terminalId,
+            operation: "terminalCollision",
+            cause: "Terminal identity already exists",
+          });
+        }
+        return yield* resolveLaunchInputEnvironment(input).pipe(
+          Effect.flatMap((resolved) => openLocked({ ...resolved, commandScripts: scripts })),
+        );
+      }),
     );
 
   const openOrAttachForStream = (input: TerminalAttachInput) =>
@@ -2975,6 +3062,27 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     );
   };
 
+  const reportDeliveryError: TerminalManager["Service"]["reportDeliveryError"] = (input) =>
+    withThreadLock(
+      input.threadId,
+      Effect.gen(function* () {
+        const session = yield* getSession(input.threadId, input.terminalId);
+        const data = "\r\n[T3 Code] Output could not be sent. Use Retry sending output.\r\n";
+        const history = Option.isSome(session)
+          ? session.value.history
+          : yield* readHistory(input.threadId, input.terminalId);
+        history.append(data);
+        const stamp = Option.isSome(session) ? advanceEventSequence(session.value) : undefined;
+        yield* persistHistory(input.threadId, input.terminalId, history);
+        yield* publishEvent({
+          type: "output",
+          ...input,
+          ...(stamp ? { sequence: stamp.sequence } : {}),
+          data,
+        });
+      }),
+    );
+
   const write: TerminalManager["Service"]["write"] = Effect.fn("terminal.write")(function* (input) {
     const terminalId = input.terminalId;
     const session = yield* requireSession(input.threadId, terminalId);
@@ -3201,6 +3309,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   return TerminalManager.of({
     open,
+    openForCommand,
+    reportDeliveryError,
     attachStream,
     observeStream,
     write,

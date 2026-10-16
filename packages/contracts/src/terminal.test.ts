@@ -11,6 +11,7 @@ import {
   TerminalOpenInput,
   TerminalProviderEnvironmentError,
   TerminalResizeInput,
+  TerminalRunAndSendInput,
   TerminalSessionSnapshot,
   TerminalThreadInput,
   TerminalWriteInput,
@@ -344,4 +345,19 @@ describe("TerminalEvent", () => {
       }),
     ).toBe(true);
   });
+});
+
+describe("TerminalRunAndSendInput", () => {
+  const input = { threadId: "original-thread", terminalId: "run-unique", cwd: "/tmp/project" };
+
+  it("preserves command whitespace and accepts a single shell line", () => {
+    expect(
+      decodeSync(TerminalRunAndSendInput, { ...input, command: "  printf 'a\\nb'  " }).command,
+    ).toBe("  printf 'a\\nb'  ");
+  });
+
+  it.each(["", " ", "echo a\necho b", "echo a\recho b", "echo \0", "x".repeat(16_385)])(
+    "rejects empty, multiline, null and oversized commands",
+    (command) => expect(decodes(TerminalRunAndSendInput, { ...input, command })).toBe(false),
+  );
 });

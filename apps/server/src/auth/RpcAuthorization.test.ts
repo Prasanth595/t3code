@@ -451,3 +451,55 @@ it.effect("denies manual cleanup before the handler without settings permission"
     expect(handled).toBe(false);
   }).pipe(Effect.scoped),
 );
+
+it.effect("requires both shell and task permissions before starting run-and-send", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.terminalRunAndSend> =>
+          tag !== WS_METHODS.terminalRunAndSend,
+      ),
+    );
+    const input = { threadId: "original", terminalId: "unique", command: "pwd", cwd: "/repo" };
+    for (const scopes of [
+      [AuthTerminalOperateScope],
+      [AuthOrchestrationOperateScope],
+      [AuthTerminalOperateScope, AuthOrchestrationOperateScope],
+    ]) {
+      let handled = 0;
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.terminalRunAndSend, () =>
+              Effect.sync(() => {
+                handled += 1;
+                return {
+                  threadId: input.threadId,
+                  terminalId: input.terminalId,
+                  status: "started" as const,
+                };
+              }),
+            ),
+            RpcAuthorization.layer(scopes),
+          ),
+        ),
+      );
+      if (scopes.length === 2) {
+        expect((yield* client[WS_METHODS.terminalRunAndSend](input)).status).toBe("started");
+        expect(handled).toBe(1);
+      } else {
+        expect(yield* client[WS_METHODS.terminalRunAndSend](input).pipe(Effect.flip)).toMatchObject(
+          {
+            requiredPermission:
+              scopes[0] === AuthTerminalOperateScope
+                ? AuthOrchestrationOperateScope
+                : AuthTerminalOperateScope,
+          },
+        );
+        expect(handled).toBe(0);
+      }
+    }
+  }).pipe(Effect.scoped),
+);

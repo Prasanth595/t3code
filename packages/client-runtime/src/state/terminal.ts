@@ -72,6 +72,12 @@ export function createTerminalEnvironmentAtoms<R, E>(
       scheduler: lifecycleScheduler,
       concurrency: lifecycleConcurrency,
     }),
+    runAndSend: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:terminal:run-and-send",
+      tag: WS_METHODS.terminalRunAndSend,
+      scheduler: lifecycleScheduler,
+      concurrency: lifecycleConcurrency,
+    }),
     write: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:terminal:write",
       tag: WS_METHODS.terminalWrite,

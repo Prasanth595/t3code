@@ -1,5 +1,8 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  AuthTerminalOperateScope,
+  AuthOrchestrationOperateScope,
+  clientRpcRequiredScopes,
   EnvironmentAuthorizationError,
   EnvironmentId,
   type RelayClientInstallProgressEvent,
@@ -33,6 +36,8 @@ import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   EnvironmentRpcRequestObserver,
   request,
+  requestGuarded,
+  RpcPermissionGuard,
   runStream,
   subscribe,
   subscribeDynamicWithSession,
@@ -89,6 +94,68 @@ const makeHarness = Effect.fn("TestEnvironmentRpc.makeHarness")(function* () {
 });
 
 describe("environment RPC", () => {
+  it.effect("denies run-and-send without a permission boundary before calling the server", () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      const client = {
+        [WS_METHODS.terminalRunAndSend]: () => {
+          calls += 1;
+          return Effect.succeed({ threadId: "original", terminalId: "unique", status: "started" });
+        },
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const result = yield* requestGuarded(WS_METHODS.terminalRunAndSend, {
+        threadId: "original",
+        terminalId: "unique",
+        cwd: "/tmp/project",
+        command: "pwd",
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(result)).toBe(true);
+      expect(calls).toBe(0);
+    }),
+  );
+
+  it.effect("authorizes run-and-send against its destination environment with both grants", () =>
+    Effect.gen(function* () {
+      const input = {
+        threadId: "original",
+        terminalId: "unique",
+        cwd: "/tmp/project",
+        command: "pwd",
+      };
+      const calls: unknown[] = [];
+      const client = {
+        [WS_METHODS.terminalRunAndSend]: (payload: unknown) =>
+          Effect.sync(() => {
+            calls.push(payload);
+            return { threadId: "original", terminalId: "unique", status: "started" as const };
+          }),
+      } as unknown as WsRpcProtocolClient;
+      const { activeSession, supervisor } = yield* makeHarness();
+      yield* SubscriptionRef.set(activeSession, Option.some(session(client)));
+      const result = yield* requestGuarded(WS_METHODS.terminalRunAndSend, input).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(RpcPermissionGuard, {
+          authorize: (environmentId, method, payload) =>
+            Effect.sync(() => {
+              expect(environmentId).toBe(TARGET.environmentId);
+              expect(payload).toEqual(input);
+              expect(clientRpcRequiredScopes(method, payload)).toEqual([
+                AuthTerminalOperateScope,
+                AuthOrchestrationOperateScope,
+              ]);
+            }),
+        }),
+      );
+      expect(result.status).toBe("started");
+      expect(calls).toEqual([input]);
+    }),
+  );
+
   it.effect("reuses the session config stream instead of opening a duplicate subscription", () =>
     Effect.gen(function* () {
       const event: ServerConfigStreamEvent = {

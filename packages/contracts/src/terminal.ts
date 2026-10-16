@@ -69,6 +69,38 @@ export const TerminalWriteInput = Schema.Struct({
 });
 export type TerminalWriteInput = Schema.Codec.Encoded<typeof TerminalWriteInput>;
 
+/** A unique terminal id also identifies retries of this run. */
+export const TerminalRunAndSendInput = Schema.Struct({
+  ...TerminalSessionInput.fields,
+  // eslint-disable-next-line no-control-regex -- Reject embedded null bytes in shell commands.
+  command: Schema.String.check(Schema.isPattern(/^[^\r\n\x00]+$/))
+    .check(Schema.isMaxLength(16_384))
+    .check(Schema.isPattern(/\S/)),
+  cwd: TrimmedNonEmptyStringSchema,
+  worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyStringSchema)),
+});
+export type TerminalRunAndSendInput = typeof TerminalRunAndSendInput.Type;
+
+export const TerminalRunAndSendResult = Schema.Struct({
+  ...TerminalSessionInput.fields,
+  status: Schema.Literals(["started", "already_started"]),
+});
+export type TerminalRunAndSendResult = typeof TerminalRunAndSendResult.Type;
+
+export class TerminalRunAndSendError extends Schema.TaggedError<TerminalRunAndSendError>()(
+  "TerminalRunAndSendError",
+  {
+    threadId: Schema.String,
+    terminalId: Schema.String,
+    operation: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `Could not run and send terminal output for thread '${this.threadId}' (${this.operation}).`;
+  }
+}
+
 export const TerminalResizeInput = Schema.Struct({
   ...TerminalSessionInput.fields,
   cols: TerminalColsSchema,

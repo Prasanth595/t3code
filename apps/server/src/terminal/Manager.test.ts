@@ -42,6 +42,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "./Manager.ts";
+import * as NodePtyAdapter from "./NodePtyAdapter.ts";
 import * as PtyAdapter from "@t3tools/shared/PtyAdapter";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
@@ -421,6 +422,175 @@ it.layer(
   Layer.merge(NodeServices.layer, ProcessRunner.layer.pipe(Layer.provide(NodeServices.layer))),
   { excludeTestServices: true },
 )("TerminalManager", (it) => {
+  it.effect("closing a real command terminal terminates its owned child process group", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) === "win32") return;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      if (!(yield* fs.exists("/bin/bash"))) return;
+      const logsDir = yield* fs.makeTempDirectoryScoped({ prefix: "run-send-cancellation-" });
+      const acknowledgementPath = path.join(logsDir, "child-exited");
+      const manager = yield* TerminalManager.makeWithOptions({
+        logsDir,
+        ptyAdapter: yield* NodePtyAdapter.make(),
+        shellResolver: () => "/bin/bash",
+        processKillGraceMs: 20,
+      });
+      const childPid = yield* Deferred.make<number>();
+      let output = "";
+      const unsubscribe = yield* manager.subscribe((event) =>
+        Effect.sync(() => {
+          if (event.type === "output") output += event.data;
+        }).pipe(
+          Effect.andThen(() => {
+            const match = /CHILD_PID:(\d+)/.exec(output);
+            return match
+              ? Deferred.succeed(childPid, Number(match[1])).pipe(Effect.asVoid)
+              : Effect.void;
+          }),
+        ),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      const processes = yield* ProcessRunner.ProcessRunner;
+      yield* processes.run({ command: "/usr/bin/mkfifo", args: [acknowledgementPath] });
+      const acknowledgedExit = yield* processes
+        .run({
+          command: "/bin/cat",
+          args: [acknowledgementPath],
+        })
+        .pipe(Effect.forkScoped);
+      const executable = yield* HostProcess.ExecutablePath;
+      const quoteShell = (text: string) => "'" + text.replaceAll("'", "'\\''") + "'";
+      const childCode = `process.on('exit',()=>require('node:fs').writeFileSync(${JSON.stringify(acknowledgementPath)},String(process.pid)));process.on('SIGTERM',()=>process.exit(0));console.log('CHILD_PID:'+process.pid);setInterval(()=>{},60000)`;
+      const command = `${quoteShell(executable)} -e ${quoteShell(childCode)} & wait`;
+      yield* manager.openForCommand(openInput(), {
+        posix: command,
+        fish: command,
+        powershell: command,
+      });
+      const pid = yield* Deferred.await(childPid);
+      yield* manager.close({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+      // Node's exit hook is irrevocable: this acknowledgement proves the known child
+      // entered process termination after the invocation's process group was signalled.
+      expect((yield* Fiber.join(acknowledgedExit)).stdout).toBe(String(pid));
+    }),
+  );
+
+  it.effect(
+    "retains delivery failure notices in history and publishes them after terminal close",
+    () =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter, getEvents } = yield* createManager();
+        yield* manager.open(openInput());
+        yield* manager.reportDeliveryError({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+        });
+        const live = yield* manager.open(openInput());
+        expect(live.history).toContain(
+          "[T3 Code] Output could not be sent. Use Retry sending output.",
+        );
+        yield* manager.close({ threadId: "thread-1", terminalId: DEFAULT_TERMINAL_ID });
+        const spawnsBeforeNotice = ptyAdapter.spawnInputs.length;
+        yield* manager.reportDeliveryError({
+          threadId: "thread-1",
+          terminalId: DEFAULT_TERMINAL_ID,
+        });
+        expect(ptyAdapter.spawnInputs).toHaveLength(spawnsBeforeNotice);
+        const events = yield* getEvents;
+        const notices = events.filter(
+          (event) => event.type === "output" && event.data.includes("Retry sending output"),
+        );
+        expect(notices).toHaveLength(2);
+        const reopened = yield* manager.open(openInput());
+        expect(reopened.history.match(/Retry sending output/g)).toHaveLength(2);
+      }),
+  );
+
+  it.effect("selects command scripts for the shell that actually spawns after fallback", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        shellResolver: () => "/missing/fish",
+        env: { SHELL: "/bin/bash" },
+      }).pipe(Effect.provide(layerWithHostPlatform("darwin")));
+      ptyAdapter.spawnFailures.push(new Error("posix_spawnp failed."));
+      const scripts = { posix: "posix-script", fish: "fish-script", powershell: "ps-script" };
+      expect((yield* manager.openForCommand(openInput(), scripts)).status).toBe("running");
+      expect(ptyAdapter.spawnInputs[0]).toMatchObject({
+        shell: "/missing/fish",
+        args: ["-c", scripts.fish],
+      });
+      expect(ptyAdapter.spawnInputs[1]).toMatchObject({
+        shell: "/bin/bash",
+        args: ["-c", scripts.posix],
+      });
+      expect(ptyAdapter.processes[0]?.writes).toEqual([]);
+      expect(yield* manager.openForCommand(openInput(), scripts).pipe(Effect.flip)).toMatchObject({
+        _tag: "TerminalRunAndSendError",
+        operation: "terminalCollision",
+      });
+      expect(ptyAdapter.spawnInputs).toHaveLength(2);
+    }),
+  );
+
+  it.effect(
+    "uses noninteractive PowerShell and never silently falls back to cmd for commands",
+    () =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+          env: { ComSpec: "cmd.exe", SystemRoot: "C:\\Windows" },
+        }).pipe(Effect.provide(layerWithHostPlatform("win32")));
+        const scripts = { posix: "posix-script", fish: "fish-script", powershell: "ps-script" };
+        yield* manager.openForCommand(openInput(), scripts);
+        expect(ptyAdapter.spawnInputs[0]).toMatchObject({
+          shell: "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+          args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", scripts.powershell],
+        });
+        yield* manager.close({ threadId: "thread-1" });
+        ptyAdapter.spawnFailures.push(...Array.from({ length: 20 }, () => new Error("ENOENT")));
+        expect(
+          (yield* manager.openForCommand(openInput({ terminalId: "other" }), scripts)).status,
+        ).toBe("error");
+        expect(ptyAdapter.spawnInputs.some((input) => /cmd(?:\.exe)?$/i.test(input.shell))).toBe(
+          false,
+        );
+      }),
+  );
+
+  it.effect(
+    "reopening and restarting a completed command creates ordinary shells without replay",
+    () =>
+      Effect.gen(function* () {
+        const { manager, ptyAdapter } = yield* createManager(5, {
+          shellResolver: () => "/bin/bash",
+        });
+        const scripts = {
+          posix: "side-effect-script",
+          fish: "fish-script",
+          powershell: "ps-script",
+        };
+        yield* manager.openForCommand(openInput(), scripts);
+        const exited = yield* Deferred.make<void>();
+        const unsubscribe = yield* manager.subscribe((event) =>
+          event.type === "exited"
+            ? Deferred.succeed(exited, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        );
+        ptyAdapter.processes[0]!.emitExit({ exitCode: 0, signal: 0 });
+        yield* Deferred.await(exited);
+        unsubscribe();
+        yield* manager.open(openInput());
+        yield* manager.restart(restartInput());
+        expect(ptyAdapter.spawnInputs).toHaveLength(3);
+        expect(ptyAdapter.spawnInputs[0]?.args).toEqual(["-c", scripts.posix]);
+        for (const input of ptyAdapter.spawnInputs.slice(1)) {
+          expect(input.args ?? []).not.toContain(scripts.posix);
+          expect(input.args ?? []).not.toContain("-c");
+        }
+      }),
+  );
+
   it.effect("spawns lazily and reuses running terminal per thread", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();

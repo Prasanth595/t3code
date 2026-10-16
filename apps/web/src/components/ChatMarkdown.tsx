@@ -1,3 +1,4 @@
+import type { RunAndSendOutputAction } from "../lib/runAndSendOutput";
 import { MarkdownFindContext, useFindRevealRef } from "./chat/markdownFindContext";
 import {
   buildFileLinkParentSuffixByPath,
@@ -38,6 +39,7 @@ import {
   MessageSquareWarningIcon,
   OctagonAlertIcon,
   PlayIcon,
+  SendIcon,
   PresentationIcon,
   SparklesIcon,
   TriangleAlertIcon,
@@ -233,6 +235,9 @@ interface ChatMarkdownProps {
   /** Append a prompt that invokes a newly created artifact-template skill. */
   onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
   onRunShellCommand?: ((command: string) => void) | undefined;
+  onRunAndSendOutput?:
+    | ((command: string, sourceId: string, action?: RunAndSendOutputAction) => Promise<boolean>)
+    | undefined;
   /** Directory that anchors relative links and images; defaults to `cwd`. Set
       to the file's own directory when rendering a markdown file. */
   imageBaseDir?: string | undefined;
@@ -848,6 +853,8 @@ function MarkdownCodeBlock({
   fenceTitle,
   theme,
   onRunShellCommand,
+  onRunAndSendOutput,
+  sourceId,
   isStreaming,
   viewToggle,
   canWrap = true,
@@ -859,6 +866,10 @@ function MarkdownCodeBlock({
   fenceTitle: string | null;
   theme: "light" | "dark";
   onRunShellCommand?: ((command: string) => void) | undefined;
+  onRunAndSendOutput?:
+    | ((command: string, sourceId: string, action?: RunAndSendOutputAction) => Promise<boolean>)
+    | undefined;
+  sourceId?: string | undefined;
   isStreaming: boolean;
   /** Switches between source and rendered content; sits left of copy in both views. */
   viewToggle?: ReactNode;
@@ -868,13 +879,26 @@ function MarkdownCodeBlock({
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
+  const [outputRequested, setOutputRequested] = useState<string | null>(null);
+  const outputRequestPending = useRef<string | null>(null);
+  const [outputRetrying, setOutputRetrying] = useState(false);
+  const [outputAccepted, setOutputAccepted] = useState<string | null>(null);
   const [wrapped, setWrapped] = useState(readInitialWordWrapSetting);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
   const copyLabel = copied ? "Copied" : "Copy code";
   const command = code.trim();
+  const outputRequestKey = JSON.stringify([sourceId, command]);
+  const outputRequestLabel =
+    outputRequested === outputRequestKey
+      ? outputRetrying
+        ? "Run again and send output"
+        : "Starting…"
+      : outputAccepted === outputRequestKey
+        ? "Run again and send output"
+        : "Run and send output";
   const canRun =
-    onRunShellCommand !== undefined &&
+    (onRunShellCommand !== undefined || onRunAndSendOutput !== undefined) &&
     !isStreaming &&
     /^(?:sh|bash|zsh|fish|shell|powershell|pwsh)$/.test(language) &&
     code.endsWith("\n") &&
@@ -984,7 +1008,7 @@ function MarkdownCodeBlock({
               <TooltipPopup side="top">{wrapLabel}</TooltipPopup>
             </Tooltip>
           ) : null}
-          {canRun ? (
+          {canRun && onRunShellCommand ? (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -1000,6 +1024,93 @@ function MarkdownCodeBlock({
                 <PlayIcon className="size-3" />
               </TooltipTrigger>
               <TooltipPopup side="top">Run in terminal</TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {canRun && onRunAndSendOutput && sourceId !== undefined ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost-muted"
+                    size="xs"
+                    disabled={outputRequested === outputRequestKey}
+                    onClick={() => {
+                      if (outputRequestPending.current === outputRequestKey) return;
+                      outputRequestPending.current = outputRequestKey;
+                      const newExecution = outputAccepted === outputRequestKey;
+                      setOutputAccepted(null);
+                      setOutputRetrying(false);
+                      setOutputRequested(outputRequestKey);
+                      void onRunAndSendOutput(command, sourceId, { newExecution }).then(
+                        (accepted) => {
+                          if (outputRequestPending.current !== outputRequestKey) return;
+                          outputRequestPending.current = null;
+                          setOutputRequested(null);
+                          setOutputAccepted(accepted ? outputRequestKey : null);
+                        },
+                        () => {
+                          if (outputRequestPending.current !== outputRequestKey) return;
+                          outputRequestPending.current = null;
+                          setOutputRequested(null);
+                        },
+                      );
+                    }}
+                    aria-label={outputRequestLabel}
+                  />
+                }
+              >
+                <SendIcon className="size-3" />
+                {outputRequestLabel}
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                {outputAccepted === outputRequestKey
+                  ? "Run again and send output to this thread. The previous execution may still be running."
+                  : "Run in terminal and send the output to this thread"}
+              </TooltipPopup>
+            </Tooltip>
+          ) : null}
+          {canRun &&
+          onRunAndSendOutput &&
+          sourceId !== undefined &&
+          outputAccepted === outputRequestKey ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    variant="ghost-muted"
+                    size="xs"
+                    disabled={outputRequested === outputRequestKey}
+                    onClick={() => {
+                      if (outputRequestPending.current === outputRequestKey) return;
+                      outputRequestPending.current = outputRequestKey;
+                      setOutputRetrying(true);
+                      setOutputRequested(outputRequestKey);
+                      const settle = () => {
+                        if (outputRequestPending.current !== outputRequestKey) return;
+                        outputRequestPending.current = null;
+                        setOutputRequested(null);
+                        setOutputRetrying(false);
+                      };
+                      void onRunAndSendOutput(command, sourceId, { retrySendingOutput: true }).then(
+                        settle,
+                        settle,
+                      );
+                    }}
+                    aria-label={
+                      outputRetrying ? "Retrying sending output…" : "Retry sending output"
+                    }
+                  />
+                }
+              >
+                <SendIcon className="size-3" />
+                {outputRetrying ? "Retrying sending output…" : "Retry sending output"}
+              </TooltipTrigger>
+              <TooltipPopup side="top">
+                Retry sending captured output without running the command again. Output may still be
+                pending.
+              </TooltipPopup>
             </Tooltip>
           ) : null}
           {viewToggle}
@@ -2332,6 +2443,7 @@ function useChatMarkdownState({
   skills = EMPTY_MARKDOWN_SKILLS,
   onUseArtifactTemplate,
   onRunShellCommand,
+  onRunAndSendOutput,
   imageBaseDir,
   onImageExpand,
   renderContextReference,
@@ -2754,6 +2866,7 @@ function useChatMarkdownState({
       onTaskListChange,
       onUseArtifactTemplate,
       onRunShellCommand,
+      onRunAndSendOutput,
       openChangeRequestLink,
       openDeferredMarkdownLink,
       openExternalLinkInPreview,
@@ -2787,6 +2900,7 @@ function useChatMarkdownState({
       onTaskListChange,
       onUseArtifactTemplate,
       onRunShellCommand,
+      onRunAndSendOutput,
       openChangeRequestLink,
       openDeferredMarkdownLink,
       openExternalLinkInPreview,
@@ -3364,9 +3478,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     return <MarkdownDetails open={detailsOpen}>{children}</MarkdownDetails>;
   },
   pre: function MarkdownPre({ node, children, ...props }) {
-    const { resolvedTheme, diffThemeName, expandMedia, isStreaming, onRunShellCommand, text } = use(
-      ChatMarkdownRendererContext,
-    );
+    const {
+      resolvedTheme,
+      diffThemeName,
+      expandMedia,
+      isStreaming,
+      onRunShellCommand,
+      onRunAndSendOutput,
+      text,
+    } = use(ChatMarkdownRendererContext);
     const codeBlock = extractCodeBlock(children);
     if (!codeBlock) {
       return <pre {...props}>{children}</pre>;
@@ -3421,6 +3541,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
             ? onRunShellCommand
             : undefined
         }
+        onRunAndSendOutput={
+          onRunAndSendOutput && !isStreaming && isClosedCodeFence(node, text)
+            ? onRunAndSendOutput
+            : undefined
+        }
+        sourceId={node?.position?.start.offset?.toString()}
         isStreaming={isStreaming}
       >
         {highlightedCode}

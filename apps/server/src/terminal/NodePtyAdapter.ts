@@ -203,6 +203,19 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
     this.process.resize(cols, rows);
   }
 
+  /** One-shot command terminals own their PTY process group on POSIX. */
+  killGroup(signal: "SIGTERM" | "SIGKILL"): void {
+    if (this.platform === "win32") {
+      this.kill(signal);
+      return;
+    }
+    try {
+      globalThis.process.kill(-this.pid, signal);
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== "ESRCH") throw cause;
+    }
+  }
+
   kill(signal?: string): void {
     // node-pty terminates the Windows process tree without a POSIX signal.
     this.process.kill(this.platform === "win32" ? undefined : signal);
