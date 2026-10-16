@@ -1,5 +1,13 @@
 // @vitest-environment jsdom
-import { AuthSourceControlWriteScope, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  AuthSourceControlWriteScope,
+  DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  ProjectId,
+  ThreadId,
+  type GitRunStackedActionToastCta,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -9,16 +17,29 @@ const state = vi.hoisted(() => ({
     input: { threadId?: string; action: string };
   }[],
   toasts: [] as { type?: string; description?: string; actionProps?: { onClick: () => void } }[],
+  settings: undefined as ServerSettings | undefined,
+  toastCta: undefined as GitRunStackedActionToastCta | undefined,
+  afterAction: undefined as (() => void) | undefined,
+  openedPrs: [] as string[],
   scopes: new Set<string>(),
   primaryScopes: new Set<string>(),
 }));
 
 vi.mock("@effect/atom-react", () => ({
-  useAtomValue: (atom: unknown) => (atom === "vcs-state" ? { isRunning: false } : null),
+  useAtomValue: (atom: unknown) =>
+    atom === "vcs-state"
+      ? { isRunning: false }
+      : atom === "server-config"
+        ? { settings: state.settings }
+        : null,
 }));
 vi.mock("~/state/entities", () => ({
   useThreadProjection: () => null,
-  useThreadShell: (ref: { threadId: string }) => ({ branch: "main", id: ref.threadId }),
+  useThreadShell: (ref: { threadId: string }) => ({
+    branch: "main",
+    id: ref.threadId,
+    projectId: `${ref.threadId}-project`,
+  }),
 }));
 vi.mock("~/state/session", () => ({
   useEnvironmentScope: (environmentId: unknown, scope: string) =>
@@ -27,7 +48,12 @@ vi.mock("~/state/session", () => ({
     (environmentId === "environment" ? state.scopes : state.primaryScopes).has(scope),
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
-vi.mock("~/state/server", () => ({ serverEnvironment: { configValueAtom: () => null } }));
+vi.mock("~/state/server", () => ({
+  serverEnvironment: { configValueAtom: () => "server-config" },
+}));
+vi.mock("~/rpc/atomRegistry", () => ({
+  appAtomRegistry: { get: () => ({ settings: state.settings }) },
+}));
 vi.mock("~/state/sourceControl", () => ({ sourceControlEnvironment: { discovery: () => null } }));
 vi.mock("~/state/vcs", () => ({
   vcsEnvironment: { status: () => null },
@@ -75,6 +101,7 @@ vi.mock("~/lib/sourceControlActions", () => ({
   useGitStackedAction: (scope: { environmentId: string | null; cwd: string | null }) => ({
     run: async (input: { featureBranch?: boolean; threadId?: string; action: string }) => {
       state.actions.push({ scope, input });
+      state.afterAction?.();
       return {
         _tag: "Success",
         value: {
@@ -82,11 +109,7 @@ vi.mock("~/lib/sourceControlActions", () => ({
           toast: {
             title: "Committed",
             description: "Committed",
-            cta: {
-              kind: "run_action",
-              label: "Push & create PR",
-              action: { kind: "commit_push_pr" },
-            },
+            cta: state.toastCta,
           },
         },
       };
@@ -96,7 +119,9 @@ vi.mock("~/lib/sourceControlActions", () => ({
 vi.mock("~/lib/utils", () => ({ cn: () => "", randomUUID: () => "action" }));
 vi.mock("~/editorPreferences", () => ({ useOpenInPreferredEditor: () => () => {} }));
 vi.mock("~/browser/useOpenLink", () => ({ useOpenLink: () => () => {} }));
-vi.mock("~/lib/openPullRequestLink", () => ({ useOpenPrLink: () => () => {} }));
+vi.mock("~/lib/openPullRequestLink", () => ({
+  useOpenPrLink: () => (_event: unknown, url: string) => state.openedPrs.push(url),
+}));
 vi.mock("~/components/ui/toast", () => ({
   stackedThreadToast: (input: unknown) => input,
   toastManager: {
@@ -191,6 +216,14 @@ beforeEach(() => {
   state.primaryScopes = new Set([AuthSourceControlWriteScope]);
   state.actions = [];
   state.toasts = [];
+  state.settings = { ...DEFAULT_SERVER_SETTINGS };
+  state.toastCta = {
+    kind: "run_action",
+    label: "Push & create PR",
+    action: { kind: "commit_push_pr" },
+  };
+  state.afterAction = undefined;
+  state.openedPrs = [];
 });
 
 afterEach(async () => {
@@ -230,5 +263,107 @@ describe("Git action targets across thread navigation", () => {
       await clickQuickAction(renderer);
       expect(state.actions.at(-1)).toMatchObject({ scope: { cwd }, input: { threadId: thread } });
     }
+  });
+});
+
+describe("PR creation in result notifications", () => {
+  it.each(["create_pr", "commit_push_pr"] as const)(
+    "omits a %s notification action when PR creation is disabled",
+    async (kind) => {
+      state.settings = { ...DEFAULT_SERVER_SETTINGS, pullRequestCreationEnabled: false };
+      state.toastCta = { kind: "run_action", label: "Create PR", action: { kind } };
+      const renderer = await renderActions("first", "/first");
+      await clickQuickAction(renderer);
+      expect(state.actions.map(({ input }) => input.action)).toEqual(["commit_push"]);
+      expect(state.toasts.at(-1)?.type).toBe("success");
+      expect(state.toasts.at(-1)?.actionProps).toBeUndefined();
+    },
+  );
+
+  it("checks the setting again when the action finishes", async () => {
+    state.afterAction = () => {
+      state.settings = { ...DEFAULT_SERVER_SETTINGS, pullRequestCreationEnabled: false };
+    };
+    const renderer = await renderActions("first", "/first");
+    await clickQuickAction(renderer);
+    expect(state.toasts.at(-1)?.type).toBe("success");
+    expect(state.toasts.at(-1)?.actionProps).toBeUndefined();
+  });
+
+  it.each(["create_pr", "commit_push_pr"] as const)(
+    "blocks a retained %s action after its project disables PR creation",
+    async (kind) => {
+      state.toastCta = { kind: "run_action", label: "Create PR", action: { kind } };
+      const renderer = await renderActions("first", "/first");
+      await clickQuickAction(renderer);
+      const toast = state.toasts.find((toast) => toast.actionProps)!;
+      expect(toast).toBeDefined();
+      await act(async () => {
+        renderer.update(createElement(MemoGitActionsControl, props("second", "/second")));
+      });
+      state.settings = {
+        ...DEFAULT_SERVER_SETTINGS,
+        projectSettingsOverrides: {
+          [ProjectId.make("first-project")]: { pullRequestCreationEnabled: false },
+        },
+      };
+      const previousActionCount = state.actions.length;
+      await act(async () => {
+        toast.actionProps!.onClick();
+      });
+      expect(state.actions).toHaveLength(previousActionCount);
+    },
+  );
+
+  it("uses the originating project's enabled override for a retained action", async () => {
+    state.settings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      pullRequestCreationEnabled: false,
+      projectSettingsOverrides: {
+        [ProjectId.make("first-project")]: { pullRequestCreationEnabled: true },
+      },
+    };
+    const renderer = await renderActions("first", "/first");
+    await clickQuickAction(renderer);
+    const toast = state.toasts.find((toast) => toast.actionProps)!;
+    expect(toast).toBeDefined();
+    await act(async () => {
+      renderer.update(createElement(MemoGitActionsControl, props("second", "/second")));
+    });
+    await act(async () => {
+      toast.actionProps!.onClick();
+    });
+    expect(state.actions.at(-1)).toMatchObject({
+      scope: { cwd: "/first" },
+      input: { threadId: "first", action: "commit_push_pr" },
+    });
+  });
+
+  it("keeps Push notification actions when PR creation is disabled", async () => {
+    state.settings = { ...DEFAULT_SERVER_SETTINGS, pullRequestCreationEnabled: false };
+    state.toastCta = { kind: "run_action", label: "Push", action: { kind: "push" } };
+    const renderer = await renderActions("first", "/first");
+    await clickQuickAction(renderer);
+    const toast = state.toasts.find((toast) => toast.actionProps)!;
+    expect(toast).toBeDefined();
+    await act(async () => {
+      toast.actionProps!.onClick();
+    });
+    expect(state.actions.map(({ input }) => input.action)).toEqual(["commit_push", "push"]);
+  });
+
+  it("keeps links to existing PRs when PR creation is disabled", async () => {
+    state.settings = { ...DEFAULT_SERVER_SETTINGS, pullRequestCreationEnabled: false };
+    const url = "https://example.com/pull/1";
+    state.toastCta = { kind: "open_pr", label: "View PR", url };
+    const renderer = await renderActions("first", "/first");
+    await clickQuickAction(renderer);
+    const toast = state.toasts.find((toast) => toast.actionProps)!;
+    expect(toast).toBeDefined();
+    await act(async () => {
+      toast.actionProps!.onClick();
+    });
+    expect(state.openedPrs).toEqual([url]);
+    expect(state.actions).toHaveLength(1);
   });
 });

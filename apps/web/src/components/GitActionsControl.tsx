@@ -1,6 +1,7 @@
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import { useAtomValue } from "@effect/atom-react";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
@@ -1282,6 +1283,15 @@ export default function GitActionsControl({
           !readEnvironmentScope(activeEnvironmentId, AuthOrchestrationOperateScope))
       )
         return;
+      // Retained toast callbacks must use current settings for their original project.
+      const canRunAction = (candidate: GitStackedAction) =>
+        (candidate !== "create_pr" && candidate !== "commit_push_pr") ||
+        resolveProjectSettings(
+          appAtomRegistry.get(serverEnvironment.configValueAtom(activeEnvironmentId))?.settings ??
+            DEFAULT_SERVER_SETTINGS,
+          activeServerThread?.projectId ?? activeDraftThread?.projectId ?? null,
+        ).settings.pullRequestCreationEnabled;
+      if (!canRunAction(action)) return;
       const actionStatus = statusOverride ?? gitStatusForActions;
       const actionBranch = actionStatus?.refName ?? null;
       const actionIsDefaultBranch = featureBranch ? false : isDefaultRef;
@@ -1370,7 +1380,7 @@ export default function GitActionsControl({
         children: string;
         onClick: (event: MouseEvent<HTMLButtonElement>) => void;
       } | null = null;
-      if (toastCta.kind === "run_action") {
+      if (toastCta.kind === "run_action" && canRunAction(toastCta.action.kind)) {
         toastActionProps = {
           children: toastCta.label,
           onClick: () => {

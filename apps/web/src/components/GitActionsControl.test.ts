@@ -48,6 +48,7 @@ vi.mock("~/state/session", () => ({
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
 vi.mock("~/state/server", () => ({ serverEnvironment: { configValueAtom: () => null } }));
+vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: { get: () => null } }));
 vi.mock("~/state/sourceControl", () => ({ sourceControlEnvironment: {} }));
 vi.mock("~/state/vcs", () => ({
   vcsEnvironment: { status: () => null },
