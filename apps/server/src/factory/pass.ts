@@ -10,6 +10,7 @@
  */
 import * as Effect from "effect/Effect";
 
+import type { Attention, NewItem } from "./attention.ts";
 import type { HandPause } from "./claims.ts";
 import type { MachineConfig, ProjectConfig, WatchedRepo } from "./config.ts";
 import { stateLabel, type State } from "./domain/lifecycle.ts";
@@ -119,6 +120,8 @@ export interface PassWorld {
   readonly nowMs: () => number;
   /** Writes one event to the machine log. */
   readonly record: (event: MachineEvent) => Effect.Effect<void, LedgerError>;
+  /** The open attention items: what the pass raises when it needs a person, and what it clears. */
+  readonly attention: Pick<Attention["Service"], "raise" | "clear">;
 }
 
 /** What starting a gate did: it runs now, or `max_concurrent_gates` are running already. */
@@ -140,10 +143,14 @@ export interface Report {
 
 /** What the pass has to say about one issue, collected as its steps go and printed at the end. */
 interface Notes {
+  readonly repo: string;
+  readonly issue: number;
   readonly label: string;
   readonly state: string;
   readonly parts: Array<string>;
   readonly errors: Array<NoteError>;
+  /** The attention items to raise when the notes are flushed. */
+  readonly raises: Array<NewItem>;
 }
 
 /** An error, as printed and as recorded. */
@@ -264,13 +271,24 @@ class Pass {
   }
 
   /**
-   * A line a person has to act on about `run`, and the machine log's `attention` event for it
-   * with the ledger.md `reason` code.
+   * A line a person has to act on about `run`, the machine log's `attention` event for it with
+   * the ledger.md `reason` code, and an attention item whose message is the line.
    */
-  attention(text: string, run: string, reason: string): Effect.Effect<void> {
+  attention(notes: Notes, text: string, run: string, reason: string): Effect.Effect<void> {
     this.report.attention += 1;
     this.out(`ATTENTION: ${text}`);
-    return this.record({ event: "attention", data: { run, reason } });
+    return this.record({ event: "attention", data: { run, reason } }).pipe(
+      Effect.andThen(
+        this.world.attention.raise({
+          id: `attention:${run}:${reason}`,
+          kind: "attention",
+          repo: notes.repo,
+          issue: notes.issue,
+          run,
+          message: text,
+        }),
+      ),
+    );
   }
 
   /**
@@ -309,8 +327,16 @@ class Pass {
       .pipe(Effect.catch(() => toMachineLog(runIdToString(run))));
   }
 
-  notes(label: string, state: State | null): Notes {
-    return { label: plain(label), state: state ?? "starting", parts: [], errors: [] };
+  notes(repo: string, issue: number, state: State | null): Notes {
+    return {
+      repo,
+      issue,
+      label: `${plain(repo)}${mention(issue)}`,
+      state: state ?? "starting",
+      parts: [],
+      errors: [],
+      raises: [],
+    };
   }
 
   /** The step called `label` in the pass line failed for this issue; the ledger records it under `step`. */
@@ -332,13 +358,27 @@ class Pass {
   /** The run ended in `stuck`. */
   stuck(notes: Notes, run: string): void {
     notes.parts.push(stuckLine(run));
+    notes.raises.push({
+      id: `run:${run}:stuck`,
+      kind: "stuck",
+      repo: notes.repo,
+      issue: notes.issue,
+      run,
+      message: `${notes.label} ${stuckLine(run)}`,
+    });
   }
 
   flush(notes: Notes, run: RunId | null): Effect.Effect<void> {
     if (notes.parts.length > 0) {
       this.line(`${notes.label} ${notes.state}: ${notes.parts.join(", ")}`);
     }
-    return Effect.forEach(notes.errors, (error) => this.fail(run, error), { discard: true });
+    return Effect.forEach(notes.raises, (item) => this.world.attention.raise(item), {
+      discard: true,
+    }).pipe(
+      Effect.andThen(
+        Effect.forEach(notes.errors, (error) => this.fail(run, error), { discard: true }),
+      ),
+    );
   }
 
   sayIfCut(repo: string, state: State, cut: boolean): void {
@@ -359,6 +399,10 @@ export const runPass = (
   Effect.gen(function* () {
     const pass = new Pass(world, out);
     yield* pass.record({ event: "pass_started", data: {} });
+    // A repo that left the config has nothing the factory still needs a person for.
+    yield* world.attention.clear(
+      (item) => item.repo !== null && !machine.repos.some((r) => sameRepo(r.repo, item.repo!)),
+    );
     const repos = yield* loadRepos(world, machine, pass);
     // Without the ledger there is no telling how many runs are active, so nothing is claimed.
     const infos = yield* runs(world, pass);
@@ -368,6 +412,16 @@ export const runPass = (
       yield* untrackedClaims(world, repos, known, pass);
       yield* unassignedClaims(world, repos, known, pass);
       yield* claim(world, repos, known, machine, pass);
+      // A run-bound attention item whose run is no longer unfinished (stopped, abandoned, timed
+      // out, claimed on) is over. `stuck` and `needs-info` items are about finished runs and stay.
+      if (!known.lost) {
+        yield* world.attention.clear(
+          (item) =>
+            item.kind === "attention" &&
+            item.run !== null &&
+            !known.infos.some((info) => runIdToString(info.id) === item.run),
+        );
+      }
     }
     const report = pass.report;
     pass.line(
@@ -484,7 +538,7 @@ const workRuns = (
       const repo = loaded.repo;
       const name = repo.watched.repo;
       const issue = Number(info.id.issue);
-      const notes = pass.notes(`${name}${mention(issue)}`, info.state);
+      const notes = pass.notes(name, issue, info.state);
       if (world.gateRunning(info.id)) {
         // The gate has the run: nothing else is done for it (softfac's `work_runs`).
         notes.parts.push(GATE_RUNNING);
@@ -622,6 +676,14 @@ const advanceRun = (
         notes.parts.push(
           "session asked questions, the issue is now needs-info and the run is finished",
         );
+        notes.raises.push({
+          id: `run:${run}:needs-info`,
+          kind: "needs-info",
+          repo: notes.repo,
+          issue: notes.issue,
+          run,
+          message: `${notes.label} needs-info, the session asked questions on the issue`,
+        });
         break;
       case "stuck":
         pass.stuck(notes, run);
@@ -635,6 +697,7 @@ const advanceRun = (
  */
 const waitsOnItself = (pass: Pass, notes: Notes, run: string): Effect.Effect<void> =>
   pass.attention(
+    notes,
     `${notes.label} run ${run} is not progressing and holds a slot: its issue is ready again, and the new claim waits for a slot this run holds. Put the issue back to \`factory:triage\` assigned to the factory's user so \`start\` can finish this run, or free a slot`,
     run,
     "not-progressing",
@@ -664,6 +727,7 @@ const stalled = (
     ? `If it was closed by mistake, reopen it and ${back}`
     : `If you moved the issue by hand, ${back}`;
   return pass.attention(
+    notes,
     `${notes.label} run ${run} is not progressing and holds a slot: ${plain(why)}. ${advice}`,
     run,
     "not-progressing",
@@ -742,7 +806,7 @@ const untrackedClaims = (
       pass.sayIfCut(name, "triage", listing.success.cut);
       for (const issue of listing.success.items) {
         if (known.of(name, issue).some((i) => i.unreadable || i.confirmed)) continue;
-        const notes = pass.notes(`${name}${mention(issue)}`, "triage");
+        const notes = pass.notes(name, issue, "triage");
         const run = yield* noteStart(world, pass, known, notes, repo, issue, "resume", {
           claimed: (run) => `no run on record, claimed in run ${run}`,
           notTaken: "no run on record, not ours to resume",
@@ -793,7 +857,7 @@ const unassignedClaims = (
       }
       for (const { issue, state } of issues.success.claims) {
         if (known.of(name, issue).length > 0) continue;
-        const notes = pass.notes(`${name}${mention(issue)}`, state);
+        const notes = pass.notes(name, issue, state);
         const released = yield* Effect.result(world.releaseClaim(repo, issue, state));
         if (released._tag === "Success") {
           notes.parts.push("no run on record and no assignee, moved to proposed");
@@ -852,6 +916,10 @@ const noteStart = (
   Effect.gen(function* () {
     const name = repo.watched.repo;
     const before = newestRun(known.of(name, issue));
+    // The issue was claimed again, so what was open about its earlier runs is over.
+    const clearEarlier = world.attention.clear(
+      (item) => item.repo !== null && sameRepo(item.repo, name) && item.issue === issue,
+    );
     const outcome = yield* Effect.result(world[call](repo, issue));
     if (outcome._tag === "Failure" && outcome.failure._tag === "GateRunningError") {
       // Nothing was called or written.
@@ -868,6 +936,7 @@ const noteStart = (
         const run = runIdToString(outcome.success.run);
         notes.parts.push(words.claimed(run));
         if (notes.state === "ready") pass.report.claimed += 1;
+        yield* clearEarlier;
         return outcome.success.run;
       }
       case "skipped":
@@ -885,6 +954,8 @@ const noteStart = (
       case "stuck": {
         const run = runIdToString(outcome.success.run);
         notes.parts.push(words.stuck);
+        // The new run's item is raised when the pass flushes, so it outlives this clear.
+        yield* clearEarlier;
         pass.stuck(notes, run);
         return outcome.success.run;
       }
@@ -957,7 +1028,7 @@ const claim = (
       const repo = queue.repo;
       const name = repo.watched.repo;
       const issue = queue.issues.shift()!;
-      const notes = pass.notes(`${name}${mention(issue)}`, "ready");
+      const notes = pass.notes(name, issue, "ready");
       // An issue with a run whose gate is running waits: `start` would finish that run under
       // its gate. It takes no slot, no blocker read, and is not counted as left over.
       const gating = known.of(name, issue).some((info) => world.gateRunning(info.id));
