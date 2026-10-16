@@ -3802,6 +3802,34 @@ it.effect("unassignedClaims: a history read that fails is an error for that issu
   }),
 );
 
+it.effect(
+  "unassignedClaims ends the scan on a rate-limited history read, with no further call",
+  () =>
+    Effect.gen(function* () {
+      const triage = `[
+        {"number":1,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"},
+        {"number":2,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"}
+      ]`;
+      const t = setup(reply(triage), fail(1, "GraphQL: API rate limit already exceeded"));
+      const error = yield* t.err(scan(t));
+      assert.strictEqual(error._tag, "GitHubRateLimited");
+      assert.deepStrictEqual(t.calls(), [claimedListCall("factory:triage"), historyCallFor(1)]);
+    }),
+);
+
+it.effect("unassignedClaims ends the scan on a timed-out history read, with no further call", () =>
+  Effect.gen(function* () {
+    const triage = `[
+        {"number":1,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"},
+        {"number":2,"assignees":[],"updatedAt":"2026-10-07T00:00:00Z"}
+      ]`;
+    const t = setup(reply(triage), timedOut());
+    const error = yield* t.err(scan(t));
+    assert.strictEqual(error._tag, "GitHubTimedOut");
+    assert.deepStrictEqual(t.calls(), [claimedListCall("factory:triage"), historyCallFor(1)]);
+  }),
+);
+
 it.effect("unassignedClaims skips an issue whose time is not GitHub's form", () =>
   Effect.gen(function* () {
     const triage = `[
