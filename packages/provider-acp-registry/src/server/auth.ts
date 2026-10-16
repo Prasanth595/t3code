@@ -11,6 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
+import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import type * as AcpSchema from "effect-acp/compat";
@@ -26,6 +27,8 @@ type Runtime = Pick<
   AcpSessionRuntime.AcpSessionRuntime["Service"],
   "initialize" | "authenticate" | "start" | "handleElicitation" | "logout"
 >;
+
+const MAX_AUTH_FORM_PAYLOAD_BYTES = 256 * 1024;
 
 export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (options: {
   readonly instanceId: ProviderInstanceId;
@@ -66,7 +69,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
             authenticateOnAuthRequired: false,
             clientCapabilities: {
               auth: { terminal: Option.isSome(pty) },
-              elicitation: { url: {} },
+              elicitation: { form: {}, url: {} },
               fs: { readTextFile: false, writeTextFile: false },
               terminal: false,
             },
@@ -239,31 +242,96 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
           const runtime = yield* makeRuntime(resolved.spawn).pipe(
             Effect.provideService(Scope.Scope, runtimeScope),
           );
+          const elicitationLock = yield* Semaphore.make(1);
+          let formInteractionOrdinal = 0;
           yield* runtime.handleElicitation((request) =>
-            Effect.gen(function* () {
-              if (
-                request.mode !== "url" ||
-                !("url" in request) ||
-                !("elicitationId" in request) ||
-                typeof request.url !== "string" ||
-                typeof request.elicitationId !== "string"
-              )
-                return { action: "decline" } as const;
-              const url = normalizeAcpRegistryWebUrl(request.url);
-              const id = request.elicitationId.trim();
-              if (!url || !id || id.length > 128) return { action: "decline" } as const;
-              const consent = yield* Deferred.make<boolean>();
-              yield* context.setInteraction(
-                { type: "browser", id, url, requiresConsent: true },
-                (response) =>
-                  response.type === "browser"
-                    ? Deferred.succeed(consent, response.action === "accept").pipe(Effect.asVoid)
-                    : Effect.void,
-              );
-              return (yield* Deferred.await(consent))
-                ? ({ action: "accept" } as const)
-                : ({ action: "decline" } as const);
-            }),
+            elicitationLock.withPermit(
+              Effect.gen(function* () {
+                if (request.mode === "form" && "requestedSchema" in request) {
+                  const properties = request.requestedSchema.properties ?? {};
+                  const entries = Object.entries(properties);
+                  const requiredNames = request.requestedSchema.required ?? [];
+                  const propertyNames = new Set(entries.map(([name]) => name));
+                  if (
+                    entries.length === 0 ||
+                    entries.length > 16 ||
+                    requiredNames.some((name) => !propertyNames.has(name)) ||
+                    entries.some(
+                      ([name, property]) =>
+                        !isAuthFieldName(name) ||
+                        property.type !== "string" ||
+                        (property.enum != null && property.enum.length > 0) ||
+                        (property.oneOf != null && property.oneOf.length > 0),
+                    )
+                  )
+                    return { action: "decline" } as const;
+
+                  const required = new Set(requiredNames);
+                  const fields = entries.map(([name, property]) => {
+                    const title = property.title?.trim();
+                    const label = `${title || name}${required.has(name) ? " (required)" : ""}`;
+                    return {
+                      name,
+                      label: label.slice(0, 256),
+                      secret: isSecretAuthField(
+                        name,
+                        property.title,
+                        property.description,
+                        property.format,
+                      ),
+                    };
+                  });
+                  const id = `acp-form-${++formInteractionOrdinal}`;
+                  const values = yield* Deferred.make<Readonly<Record<string, string>> | null>();
+                  yield* context.setInteraction(
+                    { type: "credentials", id, fields },
+                    (response) =>
+                      response.type === "credentials"
+                        ? Deferred.succeed(values, response.values).pipe(Effect.asVoid)
+                        : Effect.void,
+                  );
+                  const submitted = yield* Deferred.await(values);
+                  if (submitted === null) return { action: "decline" } as const;
+                  if (requiredNames.some((name) => !submitted[name]?.trim()))
+                    return { action: "decline" } as const;
+                  const content = Object.fromEntries(
+                    entries.flatMap(([name]) =>
+                      typeof submitted[name] === "string" ? [[name, submitted[name]]] : [],
+                    ),
+                  );
+                  if (
+                    Buffer.byteLength(JSON.stringify(content), "utf8") >
+                    MAX_AUTH_FORM_PAYLOAD_BYTES
+                  )
+                    return { action: "decline" } as const;
+                  return { action: "accept", content } as const;
+                }
+                if (
+                  request.mode !== "url" ||
+                  !("url" in request) ||
+                  !("elicitationId" in request) ||
+                  typeof request.url !== "string" ||
+                  typeof request.elicitationId !== "string"
+                )
+                  return { action: "decline" } as const;
+                const url = normalizeAcpRegistryWebUrl(request.url);
+                const id = request.elicitationId.trim();
+                if (!url || !id || id.length > 128) return { action: "decline" } as const;
+                const consent = yield* Deferred.make<boolean>();
+                yield* context.setInteraction(
+                  { type: "browser", id, url, requiresConsent: true },
+                  (response) =>
+                    response.type === "browser"
+                      ? Deferred.succeed(consent, response.action === "accept").pipe(
+                          Effect.asVoid,
+                        )
+                      : Effect.void,
+                );
+                return (yield* Deferred.await(consent))
+                  ? ({ action: "accept" } as const)
+                  : ({ action: "decline" } as const);
+              }),
+            ),
           );
           const initialized = yield* runtime
             .initialize()
@@ -365,3 +433,26 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
     logout: signOut,
   });
 });
+
+function isAuthFieldName(value: string) {
+  return value.length > 0 && value.length <= 128 && value.trim() === value;
+}
+
+function isSecretAuthField(
+  name: string,
+  title: string | null | undefined,
+  description: string | null | undefined,
+  format: string | null | undefined,
+) {
+  const hint = `${name} ${title ?? ""} ${description ?? ""}`;
+  if (
+    /(?:password|passphrase|secret|token|credential|api[ _-]?key|private[ _-]?key|access[ _-]?key)/iu.test(
+      hint,
+    )
+  )
+    return true;
+  if (format === "email" || format === "uri") return false;
+  return !/(?:^|[^a-z])(?:user(?:name)?|login|email|account|organization|workspace|host|url)(?:$|[^a-z])/iu.test(
+    `${name} ${title ?? ""}`,
+  );
+}

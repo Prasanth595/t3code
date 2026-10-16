@@ -20,6 +20,7 @@ import {
   type PiSdkConfig,
   type PiSdkModule,
 } from "@subpolar/runtime-pi";
+import { createAcpCredentialStore } from "./credentialStore.ts";
 
 export interface SubpolarAcpOptions {
   readonly piConfig?: PiSdkConfig;
@@ -190,7 +191,22 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
         return false;
       }
     };
-    const runtime = createRuntimeHost(options, sessions, requestPermission, (sessionId, runId, event) => {
+    const workerMode = process.env.SUBPOLAR_ACP_WORKER_MODE === "1";
+    const piConfig = workerMode
+      ? {
+          ...options.piConfig,
+          modelRuntimeFactory: async (sdk: PiSdkModule, sessionId: string) => {
+            if (!sdk.ModelRuntime) throw new Error("Pi credential runtime is unavailable");
+            return sdk.ModelRuntime.create({
+              credentials: createAcpCredentialStore(agent.client, sessionId),
+              modelsPath: null,
+              refreshOnCreate: false,
+              allowModelNetwork: false,
+            });
+          },
+        }
+      : options.piConfig;
+    const runtime = createRuntimeHost({ ...options, piConfig }, sessions, requestPermission, (sessionId, runId, event) => {
       activeRunIds.set(sessionId, runId);
       const candidate = event as { type?: unknown; data?: unknown };
       if (candidate?.type === "tool") {

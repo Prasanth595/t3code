@@ -160,6 +160,9 @@ export interface AcpAdapterV2UserInputRequest {
 
 export interface AcpAdapterV2ExtensionContext {
   readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  /** The live T3 session identity, for extensions that bind private requests to this runtime. */
+  readonly threadId: ThreadId;
+  readonly activeSessionId: Effect.Effect<string | null>;
   readonly reportProviderRetry: (input: {
     readonly sessionId: string;
     readonly failure: OrchestrationV2ProviderFailure;
@@ -5495,6 +5498,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (flavor.registerExtensions !== undefined) {
             yield* flavor.registerExtensions({
               runtime: targetRuntime,
+              threadId: input.threadId,
+              activeSessionId: Ref.get(activeSessionId),
               reportProviderRetry: (notice) =>
                 runRuntimeCallbackAtGeneration(handlerGeneration, reportProviderRetry(notice)).pipe(
                   Effect.asVoid,

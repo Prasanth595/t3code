@@ -59,12 +59,14 @@ const makeHarness = (
   failVerification = false,
   settings = decodeSettings({ agentId: "test-agent" }),
   providerInstanceId = instanceId,
+  authRequest?: AcpSchema.CreateElicitationRequest,
 ) =>
   Effect.gen(function* () {
     const verify = yield* Deferred.make<void>();
     const changed: boolean[] = [];
     const closed: number[] = [];
     const authenticated: string[] = [];
+    const elicitationResponses: AcpSchema.CreateElicitationResponse[] = [];
     const started: number[] = [];
     let runtimes = 0;
     let version = "1.0.0";
@@ -109,17 +111,20 @@ const makeHarness = (
             authenticate: (methodId) =>
               Effect.gen(function* () {
                 authenticated.push(methodId);
-                if (elicitation)
-                  yield* elicitation(
-                    {
-                      mode: "url",
-                      url: "https://example.com/login",
-                      elicitationId: "consent",
-                      requestId: "login",
-                      message: "Sign in",
-                    },
-                    { requestId: "login", method: "elicitation/create" },
+                if (elicitation) {
+                  elicitationResponses.push(
+                    yield* elicitation(
+                      authRequest ?? {
+                        mode: "url",
+                        url: "https://example.com/login",
+                        elicitationId: "consent",
+                        requestId: "login",
+                        message: "Sign in",
+                      },
+                      { requestId: "login", method: "elicitation/create" },
+                    ),
                   );
+                }
               }),
             start: () =>
               Effect.gen(function* () {
@@ -196,6 +201,7 @@ const makeHarness = (
       changed,
       closed,
       authenticated,
+      elicitationResponses,
       started,
       phase,
       state,
@@ -230,6 +236,128 @@ it.effect("keeps local credentials separate from a matching registry agent ID", 
       owner: "provider",
       key: "acp:local:test-agent",
     });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("bridges ACP auth form fields through the private credential interaction", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(browserMethod, false, undefined, undefined, {
+      mode: "form",
+      requestId: "login-form",
+      message: "Enter your account details",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          email: { type: "string", title: "Email", format: "email" },
+          api_token: { type: "string", title: "API token" },
+        },
+        required: ["email", "api_token"],
+      },
+    });
+    const flow = yield* h.controller.start("owner", Effect.void, "browser");
+    const waiting = yield* h.phase("waiting");
+    assert.deepEqual(waiting.interaction, {
+      type: "credentials",
+      id: "acp-form-1",
+      fields: [
+        { name: "email", label: "Email (required)", secret: false },
+        { name: "api_token", label: "API token (required)", secret: true },
+      ],
+    });
+    const hidden = yield* h.controller
+      .subscribe("another-client")
+      .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+    assert.isNull(hidden.interaction);
+    yield* h.controller.respond!("owner", {
+      instanceId,
+      flowId: flow.flowId!,
+      interactionId: "acp-form-1",
+      response: {
+        type: "credentials",
+        values: { email: "user@example.com", api_token: "private-token", ignored: "drop-me" },
+      },
+    });
+    assert.deepEqual(h.elicitationResponses, [
+      { action: "accept", content: { email: "user@example.com", api_token: "private-token" } },
+    ]);
+    yield* h.phase("verifying");
+    yield* Deferred.succeed(h.verify, undefined);
+    yield* h.phase("succeeded");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("declines ACP auth forms with unsupported field types", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(browserMethod, false, undefined, undefined, {
+      mode: "form",
+      requestId: "unsupported-form",
+      message: "Enter the port",
+      requestedSchema: {
+        type: "object",
+        properties: { port: { type: "integer" } },
+      },
+    });
+    yield* h.controller.start("owner", Effect.void, "browser");
+    yield* h.phase("verifying");
+    assert.deepEqual(h.elicitationResponses, [{ action: "decline" }]);
+    yield* Deferred.succeed(h.verify, undefined);
+    yield* h.phase("succeeded");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("declines ACP auth form submissions with missing required values", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(browserMethod, false, undefined, undefined, {
+      mode: "form",
+      requestId: "missing-required-form",
+      message: "Enter your credentials",
+      requestedSchema: {
+        type: "object",
+        properties: {
+          username: { type: "string", title: "Username" },
+          password: { type: "string", title: "Password" },
+        },
+        required: ["username", "password"],
+      },
+    });
+    const flow = yield* h.controller.start("owner", Effect.void, "browser");
+    yield* h.phase("waiting");
+    yield* h.controller.respond!("owner", {
+      instanceId,
+      flowId: flow.flowId!,
+      interactionId: "acp-form-1",
+      response: { type: "credentials", values: { username: " ", password: "present" } },
+    });
+    yield* h.phase("verifying");
+    assert.deepEqual(h.elicitationResponses, [{ action: "decline" }]);
+    yield* Deferred.succeed(h.verify, undefined);
+    yield* h.phase("succeeded");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("declines accepted ACP auth form payloads over 256 KiB", () =>
+  Effect.gen(function* () {
+    const names = Array.from({ length: 16 }, (_, index) => `field_${index}`);
+    const properties = Object.fromEntries(names.map((name) => [name, { type: "string" as const }]));
+    const values = Object.fromEntries(names.map((name) => [name, "x".repeat(16_384)]));
+    const h = yield* makeHarness(browserMethod, false, undefined, undefined, {
+      mode: "form",
+      requestId: "oversized-form",
+      message: "Enter values",
+      requestedSchema: { type: "object", properties },
+    });
+    const flow = yield* h.controller.start("owner", Effect.void, "browser");
+    yield* h.phase("waiting");
+    yield* h.controller.respond!("owner", {
+      instanceId,
+      flowId: flow.flowId!,
+      interactionId: "acp-form-1",
+      response: { type: "credentials", values },
+    });
+    yield* h.phase("verifying");
+    assert.deepEqual(h.elicitationResponses, [{ action: "decline" }]);
+    yield* Deferred.succeed(h.verify, undefined);
+    yield* h.phase("succeeded");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

@@ -26,6 +26,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { registerSubpolarCredentialExtension } from "./subpolarCredentials.ts";
 import {
   normalizeAcpRegistryCommands,
   normalizeAcpRegistryLiveConfiguration,
@@ -62,6 +63,7 @@ export interface AcpRegistryAdapterV2Options {
   readonly instanceId: Parameters<typeof makeAcpAdapterV2>[0]["instanceId"];
   readonly settings: AcpRegistrySettings;
   readonly environment: NodeJS.ProcessEnv;
+  readonly host: ProviderHost.ProviderHost["Service"];
   readonly selfInvocation: SelfInvocation;
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly makeRuntime?: (
@@ -240,9 +242,25 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
         }),
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),
   };
+  const registerExistingExtensions = flavor.registerExtensions;
+  const configuredFlavor = options.settings.enableSubpolarCredentialBroker
+    ? {
+        ...flavor,
+        registerExtensions: (context: AcpAdapterV2ExtensionContext) =>
+          Effect.gen(function* () {
+            if (registerExistingExtensions) yield* registerExistingExtensions(context);
+            yield* registerSubpolarCredentialExtension({
+              host: options.host,
+              instanceId: options.instanceId,
+              providerIds: options.settings.subpolarCredentialProviderIds,
+              context,
+            });
+          }),
+      }
+    : flavor;
   return yield* makeAcpAdapterV2({
     instanceId: options.instanceId,
-    flavor,
+    flavor: configuredFlavor,
     selfInvocation: options.selfInvocation,
     // Devin runs commands through client terminals and has no ask mode over ACP to fall back on.
     ...(isDevin
@@ -280,11 +298,13 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
       const hostEnvironment = yield* HostProcess.Environment;
       const selfInvocation = yield* resolveSelfInvocation();
       const providerEventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
+      const host = yield* ProviderHost.ProviderHost;
       const makeNativeLogger = yield* makeAcpNativeLoggerFactory();
       return yield* makeAcpRegistryAdapterV2({
         instanceId: input.instanceId,
         settings: { ...input.config, enabled: input.enabled },
         environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
+        host,
         selfInvocation,
         nativeLogging: (threadId) =>
           makeNativeLogger({

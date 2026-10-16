@@ -54,6 +54,14 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "auto", clearWhenEmpty: "omit" },
       }),
     ),
+    enableSubpolarCredentialBroker: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
+    subpolarCredentialProviderIds: Schema.Array(TrimmedString).pipe(
+      Schema.withDecodingDefault(Effect.succeed([])),
+      Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
+    ),
     distribution: AcpRegistryDistributionPreference.pipe(
       Schema.withDecodingDefault(Effect.succeed("auto")),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),

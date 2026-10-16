@@ -43,6 +43,12 @@ nodeServicesIt("ACP native logging", (it) => {
         status: "failed",
         cause: Cause.fail(AcpErrors.AcpRequestError.internalError(secret, { token: secret })),
       });
+      yield* requestLogger({
+        method: "subpolar/credentials",
+        payload: { operation: "commitModify", credential: { type: "oauth", access: secret } },
+        result: { credential: { type: "oauth", access: secret } },
+        status: "failed",
+      });
       yield* protocolLogger({
         direction: "incoming",
         stage: "raw",
@@ -61,6 +67,7 @@ nodeServicesIt("ACP native logging", (it) => {
       const serialized = encodeUnknownJson(records);
       assert.notInclude(serialized, secret);
       assert.include(serialized, '"method":"session/prompt"');
+      assert.include(serialized, '"method":"subpolar/credentials"');
       assert.include(serialized, '"errorTag":"AcpRequestError"');
       assert.include(serialized, '"reasonCount":1');
       assert.include(serialized, '"valueType":"string"');

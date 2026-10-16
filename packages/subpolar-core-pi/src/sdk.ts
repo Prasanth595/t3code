@@ -10,6 +10,7 @@ export interface PiSdkModule {
   SessionManager: { inMemory(cwd?: string): { appendMessage(message: unknown): unknown } };
   SettingsManager: { inMemory(): unknown };
   DefaultResourceLoader: new (options: Record<string, unknown>) => { reload(): Promise<void> };
+  ModelRuntime?: { create(options?: Record<string, unknown>): Promise<unknown> };
   createAgentSession(options: Record<string, unknown>): Promise<{ session: {
     subscribe(listener: (event: unknown) => void): () => void;
     prompt(prompt: string): Promise<void>;
@@ -36,6 +37,7 @@ export interface PiSdkConfig {
   agentDir?: string;
   model?: unknown;
   modelRuntime?: unknown;
+  modelRuntimeFactory?: (sdk: PiSdkModule, sessionId: string) => Promise<unknown>;
 }
 
 export async function loadPiSdk(): Promise<PiSdkModule> {
@@ -60,6 +62,9 @@ export function createPiSdkExecutorFactory(load: () => Promise<PiSdkModule> = lo
       manager.appendMessage({ role: "custom", customType: `subpolar.${entry.role}`, content: typeof entry.content === "string" ? entry.content : JSON.stringify(entry.content), display: false, timestamp: Date.parse(entry.occurredAt ?? "") || Date.now() });
     }
     const settingsManager = sdk.SettingsManager.inMemory();
+    const modelRuntime = request.context.sessionId && config?.modelRuntimeFactory
+      ? await config.modelRuntimeFactory(sdk, request.context.sessionId)
+      : config?.modelRuntime;
     const resourceLoader = new sdk.DefaultResourceLoader({ cwd, agentDir, settingsManager, noContextFiles: true, noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true });
     await resourceLoader.reload();
     const definitions = request.toolDefinitions?.filter((tool) => tool.enabled) ?? [];
@@ -102,7 +107,7 @@ export function createPiSdkExecutorFactory(load: () => Promise<PiSdkModule> = lo
       cwd,
       agentDir,
       model: config?.model,
-      modelRuntime: config?.modelRuntime,
+      modelRuntime,
       sessionManager: manager,
       settingsManager,
       resourceLoader,
