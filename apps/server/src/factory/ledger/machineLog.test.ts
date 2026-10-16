@@ -9,7 +9,13 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { LedgerUnknownEventError, LedgerIoError } from "./errors.ts";
 import type { AppendIo } from "./appendFile.ts";
 import { MACHINE_EVENT_FIELDS, type MachineEvent } from "./events.ts";
-import { MachineLog, scanMachineLog, type MachineLogOptions } from "./machineLog.ts";
+import {
+  MachineLog,
+  scanMachineLog,
+  scanMachineLogBack,
+  type MachineEntry,
+  type MachineLogOptions,
+} from "./machineLog.ts";
 import { catchLedgerError, scripted, T0, ticking, useTempDirs } from "./testSupport.ts";
 
 const tempDir = useTempDirs();
@@ -660,5 +666,118 @@ describe("scan machine log", () => {
     const dataDir = tempDir();
     expect(NodeChildProcess.spawnSync("mkfifo", [logFile(dataDir)]).status).toBe(0);
     expect(catchLedgerError(() => scanMachineLog(dataDir))._tag).toBe("LedgerIoError");
+  });
+});
+
+describe("scan machine log back", () => {
+  const machineLine = (ms: number, event: string, note: string) =>
+    `{"ts":"2026-10-04T10:13:16.123Z","ms":${ms},"event":"${event}","data":{"note":"${note}"}}\n`;
+
+  /** Every line `scanMachineLogBack` visits, newest first, and the bytes it reports reading. */
+  const back = (dataDir: string, firstChunk?: number) => {
+    const seen: Array<MachineEntry> = [];
+    const bytes = scanMachineLogBack(
+      dataDir,
+      (entry) => {
+        seen.push(entry);
+        return "continue";
+      },
+      firstChunk,
+    );
+    return { seen, bytes };
+  };
+
+  it("gives the lines newest first, the opposite order of scanMachineLog", () => {
+    const dataDir = tempDir();
+    NodeFS.writeFileSync(
+      logFile(dataDir),
+      [10, 20, 30].map((ms) => machineLine(ms, "pass_started", `n${ms}`)).join(""),
+    );
+    const { seen, bytes } = back(dataDir);
+    expect(seen).toEqual(scanMachineLog(dataDir).reverse());
+    expect(bytes).toBe(NodeFS.statSync(logFile(dataDir)).size);
+  });
+
+  it("completes a line cut at a chunk edge from the next chunk, whatever the first chunk size", () => {
+    const dataDir = tempDir();
+    const lines = Array.from({ length: 40 }, (_, i) => machineLine(i, "pass_started", `n${i}`));
+    NodeFS.writeFileSync(logFile(dataDir), lines.join(""));
+    const forward = scanMachineLog(dataDir).reverse();
+    for (const chunk of [1, 7, 64, 101, 5000]) {
+      expect(back(dataDir, chunk).seen).toEqual(forward);
+    }
+  });
+
+  it("stops when the visitor says stop, and reads only the end of the file", () => {
+    const dataDir = tempDir();
+    const lines = Array.from({ length: 2000 }, (_, i) => machineLine(i, "pass_started", `n${i}`));
+    NodeFS.writeFileSync(logFile(dataDir), lines.join(""));
+    const seen: Array<number> = [];
+    const bytes = scanMachineLogBack(dataDir, (entry) => {
+      seen.push(entry.ms);
+      return seen.length === 3 ? "stop" : "continue";
+    });
+    expect(seen).toEqual([1999, 1998, 1997]);
+    expect(bytes).toBeLessThan(NodeFS.statSync(logFile(dataDir)).size / 2);
+  });
+
+  it("skips blank, unparsable and cut-off lines, and keeps a last line with no newline that parses", () => {
+    const dataDir = tempDir();
+    NodeFS.writeFileSync(
+      logFile(dataDir),
+      [
+        "\n\r\n",
+        machineLine(10, "pass_started", "a"),
+        "this is not json\n",
+        `{"ts":"x"}\n`,
+        machineLine(20, "pass_finished", "b"),
+        "\n\n",
+        machineLine(30, "error", "c").trimEnd(),
+      ].join(""),
+    );
+    expect(back(dataDir).seen.map((entry) => entry.ms)).toEqual([30, 20, 10]);
+
+    NodeFS.writeFileSync(
+      logFile(dataDir),
+      `${machineLine(10, "pass_started", "a")}${machineLine(40, "attention", "d").slice(0, 30)}`,
+    );
+    expect(back(dataDir).seen.map((entry) => entry.ms)).toEqual([10]);
+  });
+
+  it("skips a line that is not UTF-8", () => {
+    const dataDir = tempDir();
+    NodeFS.writeFileSync(
+      logFile(dataDir),
+      Buffer.concat([
+        Buffer.from(machineLine(10, "pass_started", "a")),
+        Buffer.from([0xff, 0xfe, 0x0a]),
+        Buffer.from(machineLine(20, "pass_started", "b")),
+      ]),
+    );
+    expect(back(dataDir).seen.map((entry) => entry.ms)).toEqual([20, 10]);
+  });
+
+  it("visits nothing for a missing or empty log", () => {
+    const dataDir = tempDir();
+    expect(back(dataDir)).toEqual({ seen: [], bytes: 0 });
+    expect(back(NodePath.join(dataDir, "no", "such", "dir"))).toEqual({ seen: [], bytes: 0 });
+    NodeFS.writeFileSync(logFile(dataDir), "");
+    expect(back(dataDir)).toEqual({ seen: [], bytes: 0 });
+  });
+
+  it("refuses a symlink, a directory and a pipe, as scanMachineLog does", () => {
+    const linked = tempDir();
+    NodeFS.writeFileSync(NodePath.join(linked, "real"), machineLine(1, "pass_started", "a"));
+    NodeFS.symlinkSync(NodePath.join(linked, "real"), logFile(linked));
+    const error = catchLedgerError(() => back(linked), LedgerIoError);
+    expect(error.path).toBe(logFile(linked));
+
+    const directory = tempDir();
+    NodeFS.mkdirSync(logFile(directory));
+    expect(catchLedgerError(() => back(directory))._tag).toBe("LedgerIoError");
+
+    const piped = tempDir();
+    expect(NodeChildProcess.spawnSync("mkfifo", [logFile(piped)]).status).toBe(0);
+    expect(catchLedgerError(() => back(piped))._tag).toBe("LedgerIoError");
   });
 });

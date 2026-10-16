@@ -8,7 +8,8 @@ import type { AttentionItem } from "./attention.ts";
 import { LedgerIoError } from "./ledger/errors.ts";
 import { formatTs } from "./ledger/time.ts";
 import { catchLedgerError, T0, useTempDirs } from "./ledger/testSupport.ts";
-import { buildStatus, type FactoryStatus, type StatusReport } from "./status.ts";
+import { scanMachineLog } from "./ledger/machineLog.ts";
+import { buildStatus, readMachineLog, type FactoryStatus, type StatusReport } from "./status.ts";
 
 /** 2026-10-05T10:13:16.123Z */
 const NOW = T0 + 86_400_000;
@@ -792,5 +793,150 @@ describe("buildStatus: attention", () => {
       ["config", "config", null, formatTs(ago(HOUR))],
       ["stuck:a/b#1", "stuck", "a/b", formatTs(T0)],
     ]);
+  });
+});
+
+describe("readMachineLog: only the end of the log", () => {
+  const DAY = 24 * HOUR;
+  const problemLine = (ms: number, event: "error" | "attention") =>
+    line(ms, event, {
+      run: "rawphp__softfac__1__1",
+      step: "pass",
+      kind: "x",
+      reason: "y",
+      message: "m",
+    });
+
+  /** The machine part of the report as one forward scan of the whole file gives it. */
+  const forward = (dir: string) => {
+    let lastPass: unknown = null;
+    let lastStart: number | null = null;
+    const problems: Array<unknown> = [];
+    for (const entry of scanMachineLog(dir)) {
+      if (entry.event === "pass_started") lastStart = entry.ms;
+      if (entry.event === "pass_finished" || entry.event === "preflight_failed") lastPass = entry;
+      if ((entry.event === "error" || entry.event === "attention") && entry.ms + DAY >= NOW) {
+        problems.push(entry);
+      }
+    }
+    return { lastPass, lastStart, problems };
+  };
+
+  /** The read, after checking it equals the forward scan. */
+  const sameAsForward = (dir: string) => {
+    const read = readMachineLog(dir, NOW);
+    const old = forward(dir);
+    expect(read.lastPass).toEqual(old.lastPass);
+    expect(read.lastStart).toEqual(old.lastStart);
+    expect(read.problems).toEqual(old.problems);
+    return read;
+  };
+
+  /** `count` lines of a machine that ran long ago, oldest first and all older than the window. */
+  const oldLines = (count: number) => {
+    const base = NOW - 10 * DAY;
+    return Array.from({ length: count }, (_, i) => {
+      const ms = base + i * 1000;
+      return i % 3 === 0
+        ? passStarted(ms)
+        : i % 3 === 1
+          ? problemLine(ms, "error")
+          : passFinished(ms);
+    });
+  };
+
+  it("a long old log is not read to the start and the report is the same", () => {
+    const dir = tempDir();
+    const lines = [
+      ...oldLines(40_000),
+      passStarted(NOW - 3000),
+      passFinished(NOW - 2000),
+      problemLine(NOW - 1500, "error"),
+      problemLine(NOW - 1000, "attention"),
+    ];
+    writeEvents(dir, lines);
+    const size = lines.join("").length;
+    expect(size).toBeGreaterThan(3 * 1024 * 1024);
+
+    const read = sameAsForward(dir);
+    expect(read.problems).toHaveLength(2);
+    expect(read.lastPass?.ms).toBe(NOW - 2000);
+    expect(read.lastStart).toBe(NOW - 3000);
+    expect(read.bytesRead).toBeLessThan(1024 * 1024);
+  });
+
+  it("stops at the first old line once it has a pass and a start", () => {
+    const dir = tempDir();
+    const lines = [...oldLines(30_000), passStarted(NOW - 2000), passFinished(NOW - 1000)];
+    writeEvents(dir, lines);
+    const read = sameAsForward(dir);
+    expect(read.bytesRead).toBeLessThan(lines.join("").length / 10);
+  });
+
+  it("a log with no pass lines is read to the start", () => {
+    const dir = tempDir();
+    const lines = [
+      ...Array.from({ length: 200 }, (_, i) => problemLine(NOW - DAY - 1000 + i, "error")),
+      problemLine(NOW - 1000, "attention"),
+    ];
+    writeEvents(dir, lines);
+    const read = sameAsForward(dir);
+    expect(read.bytesRead).toBe(lines.join("").length);
+    expect(read.lastPass).toBeNull();
+    expect(read.lastStart).toBeNull();
+  });
+
+  it("problems written before the last pass and start are still reported", () => {
+    const dir = tempDir();
+    writeEvents(dir, [
+      ...oldLines(3000),
+      problemLine(NOW - 5000, "error"),
+      problemLine(NOW - 4500, "attention"),
+      passStarted(NOW - 4000),
+      passFinished(NOW - 3000),
+    ]);
+    const read = sameAsForward(dir);
+    expect(read.problems.map((entry) => entry.event)).toEqual(["error", "attention"]);
+    expect(read.lastPass?.ms).toBe(NOW - 3000);
+    expect(read.lastStart).toBe(NOW - 4000);
+  });
+
+  it("a problem at exactly the window edge is reported", () => {
+    const dir = tempDir();
+    writeEvents(dir, [
+      problemLine(NOW - DAY - 1, "attention"),
+      problemLine(NOW - DAY, "error"),
+      passStarted(NOW - 2000),
+      passFinished(NOW - 1000),
+    ]);
+    const read = sameAsForward(dir);
+    expect(read.problems.map((entry) => entry.event)).toEqual(["error"]);
+  });
+
+  it("problems come back in file order", () => {
+    const dir = tempDir();
+    writeEvents(dir, [
+      passStarted(NOW - 4000),
+      passFinished(NOW - 3000),
+      problemLine(NOW - 2000, "error"),
+      problemLine(NOW - 2000, "attention"),
+      problemLine(NOW - 1000, "error"),
+    ]);
+    const read = sameAsForward(dir);
+    expect(read.problems.map((entry) => entry.event)).toEqual(["error", "attention", "error"]);
+  });
+
+  it("the report built from a long log equals the one a forward scan gives", () => {
+    const dir = tempDir();
+    writeEvents(dir, [
+      ...oldLines(20_000),
+      passStarted(NOW - 3000),
+      passFinished(NOW - 2000),
+      problemLine(NOW - 1000, "error"),
+    ]);
+    const status = report(dir);
+    expect(status.passes.at).toBe(formatTs(NOW - 2000));
+    expect(status.passes.result).toBe("ok");
+    expect(status.problems.map((problem) => problem.event)).toEqual(["error"]);
   });
 });
