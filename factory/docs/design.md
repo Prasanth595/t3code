@@ -49,7 +49,7 @@ This is an experiment. The Rust softfac keeps running and keeps building its rep
       GitHub issues, labels, PRs              <base>/factory/runs/*.jsonl
 ```
 
-One process, one binary, one LaunchAgent, one log. Agent sessions are ordinary T3 threads, so the T3 UI shows them next to a Factory page.
+One process, one binary, one log. One LaunchAgent runs the server; #60 adds a second, small one that rotates the log (see "Decisions since the draft"). Agent sessions are ordinary T3 threads, so the T3 UI shows them next to a Factory page.
 
 ## Code layout in the fork
 
@@ -79,11 +79,14 @@ factory/                            repo root: SEAMS, sync/build/install scripts
 
 `factory/SEAMS` lists them, and CI fails any change to an upstream file not on the list:
 
-1. `apps/server/src/server.ts`: one line adding `FactoryLayer` to `layerRuntimeCoreDependenciesBase`, and one adding the factory route layer to `layerMakeRoutes`.
-2. One nav link in the web sidebar.
-3. `apps/web/src/routeTree.gen.ts`: generated, so a merge regenerates it instead of resolving it by hand.
+1. `apps/server/src/server.ts`: one line adding `FactoryLayer` to `layerRuntimeCoreDependenciesBase` (#1), and one adding the factory route layer `FactoryRoutes` to `layerMakeRoutes` (#57).
+2. `.gitignore` (#3): `.worktrees/`, so `build.sh` counts a main checkout that holds local worktrees as clean.
+3. One nav link in the web sidebar (#28).
+4. `apps/web/src/routeTree.gen.ts` (#28): generated, so a merge regenerates it instead of resolving it by hand.
+5. `apps/web/src/components/settings/settingsSearch.ts` (#55): the `SettingsPath`, section label, search entry and scope map for the factory settings page.
+6. `apps/web/src/components/settings/SettingsSidebarNav.tsx` (#55): the icon for that page.
 
-Three entries. Nothing in `ws.ts`, `rpc.ts`, `packages/contracts` or `Migrations.ts`. Those are the files upstream churns most, and adding an RPC would touch five of them. The factory API is a separate HTTP route layer instead.
+Six entries, of which the first two are in `factory/SEAMS` today and the rest join it with the issue that adds each. Nothing in `ws.ts`, `rpc.ts`, `packages/contracts` or `Migrations.ts`. Those are the files upstream churns most, and adding an RPC would touch five of them. The factory API is a separate HTTP route layer instead.
 
 ### Boundary rules, checked by a test
 
@@ -97,15 +100,15 @@ When upstream changes an internal API, the break lands as a type error in `facto
 
 The behaviour is softfac's, as written down in `docs/lifecycle.md` and pinned by `src/runner/tests.rs`. What changes is what sits underneath it.
 
-| softfac today                                                                                | In the fork                                                                                                                            |
-| -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `Sessions` trait over HTTP and WebSocket, protocol header, bearer token, websocket ticket    | `factory/t3/sessions.ts` calls services in-process. No token, no ticket, no protocol version.                                          |
-| Poll every 60s for thread status                                                             | Still a 60s pass for GitHub, plus `EventSinkV2.stream` wakes a run as soon as its thread's run settles                                 |
-| Ledger copies thread id, branch, worktree path and run ordinals                              | The ledger records factory events. Thread facts are read from `ProjectionStoreV2` when needed.                                         |
-| `forward-wait`, `gate-sending` and similar steps survive a crash between "send" and "record" | Kept, but simpler: T3's command receipts dedupe a retried `softfac:<run>:…` command id in the same process                             |
-| Gate runs as a detached `softfac gate` child that outlives the daemon                        | Gate runs through `process.ts` inside the server. A server restart kills it, and the next pass re-runs the gate from a fresh checkout. |
-| `t3 install`, `rollback`, pairing, Open T3 deadline, two LaunchAgents                        | Gone. One binary, versioned as a whole.                                                                                                |
-| `status`, `runs list/show/stop`, menubar                                                     | The Factory page and `/api/factory/*`. A small CLI can come later if needed.                                                           |
+| softfac today                                                                                | In the fork                                                                                                                                             |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Sessions` trait over HTTP and WebSocket, protocol header, bearer token, websocket ticket    | `factory/t3/sessions.ts` calls services in-process. No token, no ticket, no protocol version.                                                           |
+| Poll every 60s for thread status                                                             | Still a 60s pass for GitHub, plus `EventSinkV2.stream` wakes a run as soon as its thread's run settles                                                  |
+| Ledger copies thread id, branch, worktree path and run ordinals                              | The ledger records factory events. Thread facts are read from `ProjectionStoreV2` when needed.                                                          |
+| `forward-wait`, `gate-sending` and similar steps survive a crash between "send" and "record" | Kept, but simpler: T3's command receipts dedupe a retried `softfac:<run>:…` command id in the same process                                              |
+| Gate runs as a detached `softfac gate` child that outlives the daemon                        | Gate runs through `process.ts` inside the server. A server restart kills it, and the next pass re-runs the gate from a fresh checkout.                  |
+| `t3 install`, `rollback`, pairing, Open T3 deadline, two LaunchAgents                        | One binary, versioned as a whole, installed by `install.sh` and rolled back by `rollback.sh`. One LaunchAgent, and a log-rotation one with #60 (below). |
+| `status`, `runs list/show/stop`, menubar                                                     | The Factory page and `/api/factory/*`. A small CLI can come later if needed.                                                                            |
 
 Kept exactly:
 
@@ -115,6 +118,15 @@ Kept exactly:
 
 Persistence: JSONL files under `<base>/factory/`, the same layout as `~/.local/share/softfac`. No changes to T3's SQLite and no migrations. If a later version wants factory events in T3's store, that is a separate decision.
 
+### Decisions since the draft
+
+- **Factory HTTP routes use T3's auth, with no RPC (#57).** `apps/server/src/factory/t3/http.ts` is a plain route layer merged into `layerMakeRoutes`, and `t3/auth.ts` authenticates each request through `EnvironmentAuth.authenticateHttpRequest` and checks scopes with `AuthHttp.requireEnvironmentScope`, so paired, relay and tunnel sessions sign in exactly as they do for T3's own HTTP API. Nothing is added to `ws.ts`, `rpc.ts` or `packages/contracts`; Decided 1 has the detail.
+- **Attention items and the macOS notification (#58).** An `Attention` service keeps the open items that need a person (ledger `attention` events, runs in `stuck` or `needs-info`, a config that fails to load, three pass errors in a row) in `<base>/factory/attention.json`, clears each when its condition clears, and posts one macOS notification per new item through `process.ts` running `osascript` with the text as argv. `notify: false` in the machine config keeps the list and turns the notification off.
+- **Install health check, auto-rollback and the hand-back runbook (#59).** After restarting the job, `install.sh` waits up to `T3FAC_HEALTH_WAIT` seconds (default 90) for the port to accept connections and for a `factory started` or `no factory config` log line written after the restart, and otherwise runs `rollback.sh` and exits 1. `factory/README.md` "Recovery" is the runbook for rolling back by hand, handing this repo back to the Rust factory and moving it back.
+- **A separate log-rotation LaunchAgent (#60, not built yet).** #60 adds `io.github.rawphp.t3fac.logrotate`, which runs `factory/scripts/rotate-log.sh` every 600 seconds and copytruncates `~/Library/Logs/t3fac/t3fac.log`, because a crash-looping server writes the most log and is the one that cannot rotate it. Once it lands, it replaces "one LaunchAgent" in Shape: the fork has two.
+- **Factory CI's `Lint` job, with the gate unchanged (#56).** `factory-ci.yml` has a `Lint` job beside `Check` that runs `vp check`, the command upstream's own Lint job runs. `check.sh`, and so the gate, do not run it.
+- **Remote and phone use through the fork's own served web, with no native mobile screen (#61, not built yet).** The Factory pages will be reached over the tailnet from the fork server's web, paired like any T3 browser, and work at phone widths. The T3 mobile app on phones is upstream's App Store build and never contains fork code, so there is no native factory screen.
+
 ## Scope of the experiment (v1)
 
 In:
@@ -122,8 +134,10 @@ In:
 - One machine (this Mac), one factory identity (the `rawphp` gh login), GitHub issues only.
 - Claim, start, building, result line, gate, gate retries, `pr-open` re-gating, feedback relaunch, interruptions, time limits, `needs-info` and `stuck`.
 - Factory page: runs, state, current step, last gate output, stop, pause claims.
+- Settings page: the machine config at Settings → Factory, with each watched repo's factory block read-only.
+- Attention list: what needs a person, on the Factory page and as a macOS notification.
 
-Out, until the experiment earns them: Linear, multiple identities, fleet API, self-update, menubar, retro step, `repo add` and `user add` wizards, `doctor`. Rust softfac keeps all of these.
+Out, until the experiment earns them: Linear, multiple identities, fleet API, self-update, menubar, retro step, `repo add` and `user add` wizards, `doctor`, a native mobile screen. Rust softfac keeps the rest; neither factory has a mobile screen.
 
 ## Running both factories side by side
 
@@ -132,14 +146,14 @@ The rule is the one softfac already has: one factory per repo.
 - The fork watches only repos that are removed from the Rust factory's `repos` list. Start with one low-stakes repo. Both factories use the same labels, assignee and comment markers, so sharing a repo would make them claim each other's issues.
 - Separate everything else:
 
-|              | Rust softfac                                        | Fork                                   |
-| ------------ | --------------------------------------------------- | -------------------------------------- |
-| T3 base dir  | `~/.config/softfac/t3`                              | `~/.config/t3fac`                      |
-| Port         | 3874                                                | 3876                                   |
-| LaunchAgent  | `io.github.rawphp.softfac`, `com.rawphp.softfac.t3` | `io.github.rawphp.t3fac`               |
-| Factory data | `~/.local/share/softfac`                            | `~/.config/t3fac/factory`              |
-| Repo clones  | `repos[].path`                                      | separate clones, never the same `path` |
-| Logs         | `~/Library/Logs/softfac`                            | `~/Library/Logs/t3fac`                 |
+|              | Rust softfac                                        | Fork                                                                      |
+| ------------ | --------------------------------------------------- | ------------------------------------------------------------------------- |
+| T3 base dir  | `~/.config/softfac/t3`                              | `~/.config/t3fac`                                                         |
+| Port         | 3874                                                | 3876                                                                      |
+| LaunchAgent  | `io.github.rawphp.softfac`, `com.rawphp.softfac.t3` | `io.github.rawphp.t3fac`, and `io.github.rawphp.t3fac.logrotate` with #60 |
+| Factory data | `~/.local/share/softfac`                            | `~/.config/t3fac/factory`                                                 |
+| Repo clones  | `repos[].path`                                      | separate clones, never the same `path`                                    |
+| Logs         | `~/Library/Logs/softfac`                            | `~/Library/Logs/t3fac`                                                    |
 
 `t3fac` is a working name.
 
@@ -194,7 +208,7 @@ Not built: npm packages, the desktop app, other platforms, notarisation. A secon
 
 ## Who builds the fork
 
-The Rust factory builds the fork until the fork's own factory can build its own repo. After that the fork builds itself. Issues `original-solutions/t3code-factory#1` to `#21` take it up to the handover (#21). The handover is a config switch a person makes: the repo leaves the Rust factory's `repos` list and enters the fork's. Issues #22 to #28 (forwarding, re-gating, feedback, interruptions, required checks, the API and the page) stay `factory:proposed` until that switch, and then the fork's factory builds them.
+The Rust factory builds the fork until the fork's own factory can build its own repo. After that the fork builds itself. Issues `original-solutions/t3code-factory#1` to `#21` take it up to the handover (#21). The handover is a config switch a person makes: the repo leaves the Rust factory's `repos` list and enters the fork's. Issues #22 to #28 (forwarding, re-gating, feedback, interruptions, required checks, the API and the page), #55 (the settings page) and #61 (phone and tailnet use) stay `factory:proposed` until that switch, and then the fork's factory builds them.
 
 To begin with, `original-solutions/t3code-factory` becomes one of the Rust factory's repos, with a `.dw/config.yml` factory block whose gate is the fork CI commands above. `.dw/` is a new path, so it is not a seam. The work goes in as issues in this order, each one testable on its own:
 
@@ -231,10 +245,10 @@ The fork replaces Rust softfac if its output is at least as good and the sync co
 ## Decided
 
 1. Routes added through `layerMakeRoutes` do not get T3's auth by themselves. `AuthHttp.layerAuthenticatedAuth` is an `HttpApiMiddleware` wired to `EnvironmentHttpApi` endpoints, and its middleware function is typed against HttpApi endpoint metadata, so it cannot wrap a plain `HttpRouter` route. What it does inside is one call, `EnvironmentAuth.authenticateHttpRequest`, and upstream's own plain OTLP trace proxy route (`authenticateRawRouteWithScope` in `apps/server/src/http.ts`) calls that same function and maps its failures with the helpers `auth/http.ts` exports. The factory does the same in `apps/server/src/factory/t3/auth.ts`: `withScope(scope, handler)` authenticates the request through `EnvironmentAuth.authenticateHttpRequest`, provides `EnvironmentAuthenticatedPrincipal`, and checks the scope with `AuthHttp.requireEnvironmentScope`. Paired, relay and tunnel sessions pass through the same code as for `EnvironmentHttpApi`; there is no factory token, no contract change and no RPC. The route layer is `apps/server/src/factory/t3/http.ts` (not `factory/http.ts` as the layout above sketches) because it reads T3's auth, and `server.ts` merges `FactoryRoutes` into `layerMakeRoutes` in one line. Not carried over: the DPoP `WWW-Authenticate` challenge header on a 401, which is private to `auth/http.ts`; upstream's plain routes omit it too. The Factory page will call `/api/factory/*` with the browser session cookie, as it calls T3's HTTP API.
+2. `yaml` is already a server dependency: `apps/server/package.json` lists it and `apps/server/src/factory/config.ts` imports it. It needs no seam, and `package.json` and the lockfile stay off the seam list.
 
 ## Open questions to settle in step 1 or 2
 
 2. Answered (#8): `ProcessRunner` spawns through Effect's Node spawner, which does put the child in its own process group (`detached: true` on POSIX) and sends the group `SIGTERM` when the effect is interrupted. It cannot do the rest: it always extends the parent environment (`extendEnv` is true whenever `env` is set), it reads stdout and stderr on separate pipes, and on timeout it drops the partial output and never escalates to `SIGKILL`. `apps/server/src/factory/process.ts` therefore uses `node:child_process` directly, outside `factory/t3/`, and needs no seam.
-3. Is a YAML parser already a server dependency? If not, adding one touches `package.json` and the lockfile, so they join the seam list.
-4. How does T3 handle a thread's worktree on archive? It leaves it on disk. `thread.archive` cancels the thread's queued runs, detaches its provider sessions, revokes its MCP credential, and closes its terminals and deletes their history (`terminal.cleanup`); the worktree stays. Storage cleanup (Settings → Storage, off by default) only considers active threads, so an archived thread's worktree is never a candidate; only "Delete worktrees with deleted threads" removes one, when the thread is deleted. So the factory removes the worktree itself with git after archiving, as softfac does: `FactorySessions.removeWorktree`, which keeps the branch.
-5. Is the installed 0.0.46 nightly already on orchestration v2? The Rust factory works against it with protocol 2, so probably yes. It only affects which upstream tag the first sync starts from.
+3. How does T3 handle a thread's worktree on archive? It leaves it on disk. `thread.archive` cancels the thread's queued runs, detaches its provider sessions, revokes its MCP credential, and closes its terminals and deletes their history (`terminal.cleanup`); the worktree stays. Storage cleanup (Settings → Storage, off by default) only considers active threads, so an archived thread's worktree is never a candidate; only "Delete worktrees with deleted threads" removes one, when the thread is deleted. So the factory removes the worktree itself with git after archiving, as softfac does: `FactorySessions.removeWorktree`, which keeps the branch.
+4. Is the installed 0.0.46 nightly already on orchestration v2? The Rust factory works against it with protocol 2, so probably yes. It only affects which upstream tag the first sync starts from.
