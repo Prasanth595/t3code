@@ -2,11 +2,23 @@ import { describe, expect, it } from "@effect/vitest";
 
 import {
   activityPayloadHash,
+  decodeStudioActivityState,
   canonicalActivityJson,
   StudioActivityPublisher,
   type ActivityProducerInput,
+  type ActivityAcknowledgement,
+  type StudioActivityState,
   type ActivityThreadRead,
 } from "./StudioActivityPublisher.ts";
+
+function ack(input: ActivityProducerInput): ActivityAcknowledgement {
+  return {
+    eventId: `evt_${input.stamp!.sequence}`,
+    verdict: "accept",
+    stamp: input.stamp!,
+    payloadHash: input.payloadHash!,
+  };
+}
 
 const NOW = "2026-10-12T00:00:00.000Z";
 const EPOCH = "epoch-f08-test";
@@ -74,14 +86,24 @@ function fixtureReads(): ActivityThreadRead[] {
 function setup(
   options: {
     online?: boolean;
-    send?: (input: ActivityProducerInput) => void | Promise<void>;
+    send?: (
+      input: ActivityProducerInput,
+    ) => ActivityAcknowledgement | Promise<ActivityAcknowledgement> | void;
   } = {},
 ) {
   const { online = true, send } = options;
   const sent: ActivityProducerInput[] = [];
-  const sink = { send: send ?? ((input: ActivityProducerInput) => void sent.push(input)) };
+  const sink = {
+    send:
+      send ??
+      ((input: ActivityProducerInput) => {
+        sent.push(input);
+        return ack(input);
+      }),
+  };
   const publisher = new StudioActivityPublisher({
     epoch: EPOCH,
+    retryBaseMs: 0,
     allowedProjectIds: [ALLOWED_PROJECT],
     allowedRoots: ["/work"],
     reads: { listActivityThreads: () => fixtureReads() },
@@ -161,7 +183,7 @@ describe("StudioActivityPublisher", () => {
     }
     // No transcript / message text marker passes through.
     expect(bytes).not.toContain("secret transcript body");
-    expect(publisher.pendingCount).toBe(1);
+    expect(publisher.pendingCount).toBe(0);
   });
 
   it("retry resends the original update identity (same stamp, same bytes)", async () => {
@@ -172,6 +194,7 @@ describe("StudioActivityPublisher", () => {
         calls += 1;
         seen.push(canonicalActivityJson(input));
         if (calls === 1) throw new Error("network down");
+        return ack(input);
       },
     });
     const first = await publisher.publishNow();
@@ -204,7 +227,11 @@ describe("StudioActivityPublisher", () => {
   });
 
   it("offline resume cannot overwrite a newer watermark; older pending is dropped, duplicates replay", async () => {
-    const { publisher } = setup();
+    const { publisher } = setup({
+      send: () => {
+        throw new Error("lost");
+      },
+    });
     await publisher.publishNow();
     expect(publisher.pendingCount).toBe(1);
     // Bridge accepted a NEWER stamp (sequence 5): the queued seq-1 is stale.
@@ -225,7 +252,7 @@ describe("StudioActivityPublisher", () => {
     expect(publisher.lastAckedStamp?.sequence).toBe(5);
     // Next publish continues the monotonic sequence past the watermark.
     const next = await publisher.publishNow();
-    expect(next.delivered).toBe(true);
+    expect(next.delivered).toBe(false);
     expect((next as { envelope: ActivityProducerInput }).envelope.stamp?.sequence).toBe(6);
     // Observing the same stamp with the same bytes replays as a duplicate.
     const accepted = (next as { envelope: ActivityProducerInput }).envelope;
@@ -265,5 +292,184 @@ describe("StudioActivityPublisher", () => {
     const result = await publisher.publishNow();
     expect(result.delivered).toBe(false);
     expect(sent).toHaveLength(0);
+  });
+});
+
+describe("observed acceptance and recovery", () => {
+  it("never calls a resolved void transport delivered", async () => {
+    const { publisher } = setup({ send: () => {} });
+    expect((await publisher.publishNow()).delivered).toBe(false);
+    expect(publisher.lastAckedStamp).toBeNull();
+    expect(publisher.pendingCount).toBe(1);
+  });
+
+  it("persists pending before send and resumes identical bytes after restart with backoff", async () => {
+    let persisted: StudioActivityState | null = null;
+    const stateStore = {
+      load: async () => structuredClone(persisted),
+      save: async (state: StudioActivityState) => {
+        persisted = structuredClone(state);
+      },
+    };
+    let clock = 1000;
+    const seen: string[] = [];
+    let fail = true;
+    const make = () =>
+      new StudioActivityPublisher({
+        epoch: EPOCH,
+        allowedProjectIds: [],
+        reads: { listActivityThreads: () => [] },
+        stateStore,
+        nowMs: () => clock,
+        sink: {
+          send: (input) => {
+            expect(persisted?.pending).toHaveLength(1);
+            seen.push(JSON.stringify(input));
+            if (fail) throw new Error("lost");
+            return ack(input);
+          },
+        },
+      });
+    const first = make();
+    expect((await first.publishNow()).delivered).toBe(false);
+    const resumed = make();
+    await resumed.initialize();
+    await resumed.retryPending();
+    expect(seen).toHaveLength(1);
+    clock += 1000;
+    fail = false;
+    await resumed.retryPending();
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toBe(seen[0]);
+    expect((persisted as StudioActivityState | null)?.pending).toHaveLength(0);
+    const third = make();
+    await third.initialize();
+    expect(third.lastAckedStamp?.sequence).toBe(1);
+  });
+
+  it("reconciles lost responses, duplicate and reordered replay without regressing the watermark", async () => {
+    let saved: StudioActivityState | null = null;
+    let cursor: string | null | undefined;
+    const seen: ActivityProducerInput[] = [];
+    const publisher = new StudioActivityPublisher({
+      epoch: EPOCH,
+      allowedProjectIds: [],
+      reads: { listActivityThreads: () => [] },
+      stateStore: {
+        load: async () => null,
+        save: async (state) => {
+          saved = structuredClone(state);
+        },
+      },
+      sink: {
+        send: (input) => {
+          seen.push(input);
+          throw new Error("response lost");
+        },
+        readEvents: async (after) => {
+          cursor = after;
+          const receipt = ack(seen[0]!);
+          return {
+            events: [
+              receipt,
+              receipt,
+              { ...receipt, eventId: "evt_older", stamp: { ...receipt.stamp, sequence: 0 } },
+            ],
+            cursor: "opaque-next",
+            has_more: false,
+            watermark: null,
+          };
+        },
+      },
+    });
+    await publisher.publishNow();
+    await publisher.recover();
+    expect(cursor).toBeNull();
+    expect(publisher.pendingCount).toBe(0);
+    expect(publisher.lastAckedStamp?.sequence).toBe(1);
+    expect((saved as StudioActivityState | null)?.cursor).toBe("opaque-next");
+    expect((saved as StudioActivityState | null)?.seenEventIds).toEqual(["evt_1", "evt_older"]);
+  });
+  it("does not reconcile a conflicting hash or a foreign producer/epoch", async () => {
+    const { publisher } = setup({
+      send: () => {
+        throw new Error("lost");
+      },
+    });
+    const pending = (await publisher.publishNow()).envelope;
+    const stamp = pending.stamp!;
+    expect(publisher.observeWatermark(stamp, "different-hash").verdict).toBe("reject_conflict");
+    expect(
+      publisher.observeWatermark(
+        { ...stamp, producer_id: "another-producer" },
+        pending.payloadHash!,
+      ).verdict,
+    ).toBe("reject_epoch_reset_required");
+    expect(
+      publisher.observeWatermark({ ...stamp, epoch: "another-epoch" }, pending.payloadHash!)
+        .verdict,
+    ).toBe("reject_epoch_reset_required");
+    expect(publisher.pendingCount).toBe(1);
+    expect(publisher.lastAckedStamp).toBeNull();
+  });
+
+  it("bounds the accepted snapshot to the bridge's 200-record contract and marks coverage partial", async () => {
+    const publisher = new StudioActivityPublisher({
+      epoch: EPOCH,
+      allowedProjectIds: [ALLOWED_PROJECT],
+      reads: {
+        listActivityThreads: () =>
+          Array.from({ length: 201 }, (_, index) => row({ threadId: `thread-${index}` })),
+      },
+      sink: { send: ack },
+      now: () => NOW,
+    });
+    const result = await publisher.publishNow();
+    expect(result.delivered).toBe(true);
+    expect(result.envelope.records).toHaveLength(200);
+    expect(result.envelope.partial).toBe(true);
+  });
+
+  it("restores a validated cursor and dedupes replay across restart", async () => {
+    let state: StudioActivityState | null = null;
+    let input: ActivityProducerInput | undefined;
+    const requested: Array<string | null> = [];
+    const make = () =>
+      new StudioActivityPublisher({
+        epoch: EPOCH,
+        allowedProjectIds: [],
+        reads: { listActivityThreads: () => [] },
+        stateStore: {
+          load: async () =>
+            state ? decodeStudioActivityState(JSON.parse(JSON.stringify(state))) : null,
+          save: async (value) => {
+            state = structuredClone(value);
+          },
+        },
+        sink: {
+          send: (value) => {
+            input = value;
+            throw new Error("lost");
+          },
+          readEvents: async (cursor) => {
+            requested.push(cursor);
+            return {
+              cursor: "persisted-next",
+              has_more: false,
+              events: [ack(input!)],
+              watermark: null,
+            };
+          },
+        },
+      });
+    const first = make();
+    await first.publishNow();
+    await first.recover();
+    const restarted = make();
+    await restarted.recover();
+    expect(requested).toEqual([null, "persisted-next"]);
+    expect(restarted.lastAckedStamp?.sequence).toBe(1);
+    expect(restarted.pendingCount).toBe(0);
+    expect((state as StudioActivityState | null)?.seenEventIds).toEqual(["evt_1"]);
   });
 });

@@ -1,49 +1,83 @@
-// StudioActivitySink.ts — HTTP sink for the studio activity publisher.
-//
-// POSTs the publisher envelope to `${baseUrl}/api/studio/producers` with
-// `Authorization: Bearer <token>`. Configuration comes only from the
-// environment (`NOFUN_STUDIO_BRIDGE_URL` / `NOFUN_STUDIO_BRIDGE_TOKEN`), read
-// once at startup. When either is missing the sink is a no-op that never
-// touches the network. Failures (network error, non-2xx, timeout) are
-// swallowed: the runtime must never block or crash on bridge delivery, and
-// there is no retry (the next publish supersedes with a fresh snapshot).
-//
-// Never reads keychain or files for credentials. Never logs the token.
-
-import type { StudioActivitySink } from "./StudioActivityPublisher.ts";
+// HTTP boundary for structural activity snapshots and owner-scoped list_events readback.
+import { z } from "zod";
+import {
+  canonicalActivityJson,
+  type ActivityAcknowledgement,
+  type StudioActivitySink,
+} from "./StudioActivityPublisher.ts";
 
 export const STUDIO_ACTIVITY_BRIDGE_URL_ENV = "NOFUN_STUDIO_BRIDGE_URL" as const;
 export const STUDIO_ACTIVITY_BRIDGE_TOKEN_ENV = "NOFUN_STUDIO_BRIDGE_TOKEN" as const;
 export const STUDIO_ACTIVITY_PRODUCERS_PATH = "/api/studio/producers" as const;
 export const STUDIO_ACTIVITY_SEND_TIMEOUT_MS = 5_000;
+const BODY_LIMIT = 256 * 1024;
+const EXCERPT_LIMIT = 1024;
 
 export interface StudioActivityBridgeConfig {
   readonly baseUrl: string;
   readonly token: string;
 }
-
 export type StudioActivityFetch = (url: string, init: RequestInit) => Promise<Response>;
 
-/** Both vars required; no default URL. Returns null when unconfigured. */
+export class StudioActivityTransportError extends Error {
+  readonly kind: "http" | "network" | "timeout" | "ack_invalid" | "body_too_large";
+  readonly status: number | null;
+  readonly bodyExcerpt: string;
+  constructor(
+    kind: "http" | "network" | "timeout" | "ack_invalid" | "body_too_large",
+    status: number | null = null,
+    bodyExcerpt = "",
+  ) {
+    super(`studio_activity_${kind}${status === null ? "" : `_${status}`}`);
+    this.kind = kind;
+    this.status = status;
+    this.bodyExcerpt = bodyExcerpt;
+  }
+}
+
+const stampSchema = z.object({
+  producer_id: z.string().min(1).max(200),
+  epoch: z.string().min(1).max(200),
+  sequence: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  emitted_at: z.iso.datetime({ offset: true }),
+});
+const receiptSchema = z.object({
+  eventId: z.string().min(1).max(200),
+  verdict: z.enum(["accept", "replay_duplicate"]),
+  stamp: stampSchema,
+  payloadHash: z.string().min(1).max(64),
+});
+const watermarkSchema = receiptSchema.omit({ verdict: true });
+const pageSchema = z.object({
+  cursor: z.string().max(4096).nullable(),
+  has_more: z.boolean(),
+  watermark: watermarkSchema.nullable(),
+  events: z
+    .array(
+      z.object({
+        eventId: z.string().min(1).max(200),
+        name: z.literal("studio.producer.accepted"),
+        data: z.object({
+          partition_id: z.literal("t3.activity"),
+          stamp: stampSchema,
+          payloadHash: z.string().min(1).max(64),
+        }),
+      }),
+    )
+    .max(100),
+});
+
 export function readStudioActivityBridgeConfig(
   env: Readonly<Record<string, string | undefined>>,
 ): StudioActivityBridgeConfig | null {
   const baseUrl = (env[STUDIO_ACTIVITY_BRIDGE_URL_ENV] ?? "").trim().replace(/\/+$/, "");
   const token = (env[STUDIO_ACTIVITY_BRIDGE_TOKEN_ENV] ?? "").trim();
-  if (baseUrl.length === 0 || token.length === 0) return null;
-  return { baseUrl, token };
+  return baseUrl && token ? { baseUrl, token } : null;
 }
-
 export function studioActivityProducersUrl(baseUrl: string): string {
   return `${baseUrl.replace(/\/+$/, "")}${STUDIO_ACTIVITY_PRODUCERS_PATH}`;
 }
 
-/**
- * POST the envelope once per send. Never rejects: network errors, non-2xx
- * responses and timeouts resolve silently. The envelope carries shell fields
- * only (the publisher guarantees that); the token travels solely in the
- * Authorization header, never in the body.
- */
 export function makeStudioActivityHttpSink(options: {
   readonly baseUrl: string;
   readonly token: string;
@@ -53,42 +87,151 @@ export function makeStudioActivityHttpSink(options: {
   const fetchFn = options.fetchFn ?? globalThis.fetch;
   const timeoutMs = options.timeoutMs ?? STUDIO_ACTIVITY_SEND_TIMEOUT_MS;
   const url = studioActivityProducersUrl(options.baseUrl);
-  const authorization = `Bearer ${options.token}`;
+  // An error excerpt is returned to the caller but never logged by this boundary.
+  const excerpt = (text: string) =>
+    text
+      .replaceAll(options.token, "[redacted]")
+      .split("")
+      .map((character) =>
+        character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127 ? " " : character,
+      )
+      .join("")
+      .slice(0, EXCERPT_LIMIT);
+
+  const request = async (
+    target: string,
+    init: RequestInit,
+  ): Promise<{ value: unknown; status: number; text: string }> => {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let activeReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let status: number | null = null;
+    let text = "";
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new StudioActivityTransportError("timeout", status, excerpt(text)));
+      }, timeoutMs);
+    });
+    try {
+      return await Promise.race([
+        deadline,
+        (async () => {
+          const response = await fetchFn(target, {
+            ...init,
+            headers: {
+              Authorization: `Bearer ${options.token}`,
+              "Content-Type": "application/json",
+            },
+            signal: controller.signal,
+          });
+          status = response.status;
+          const reader = response.body?.getReader();
+          activeReader = reader;
+          const decoder = new TextDecoder();
+          let bytes = 0;
+          try {
+            if (reader)
+              for (;;) {
+                const part = await reader.read();
+                if (part.done) break;
+                bytes += part.value.byteLength;
+                const limit = response.ok ? BODY_LIMIT : EXCERPT_LIMIT;
+                text += decoder.decode(
+                  part.value.subarray(0, Math.max(0, limit - (bytes - part.value.byteLength))),
+                  { stream: true },
+                );
+                if (bytes >= limit) {
+                  if (response.ok)
+                    throw new StudioActivityTransportError("body_too_large", status, excerpt(text));
+                  break;
+                }
+              }
+            text += decoder.decode();
+          } finally {
+            if (reader) void reader.cancel().catch(() => {});
+          }
+          if (!response.ok) throw new StudioActivityTransportError("http", status, excerpt(text));
+          let value: unknown;
+          try {
+            value = JSON.parse(text);
+          } catch {
+            throw new StudioActivityTransportError("ack_invalid", status, excerpt(text));
+          }
+          return { value, status, text };
+        })(),
+      ]);
+    } catch (error) {
+      if (error instanceof StudioActivityTransportError) throw error;
+      throw new StudioActivityTransportError(
+        controller.signal.aborted ? "timeout" : "network",
+        status,
+        excerpt(text),
+      );
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+      if (activeReader) void activeReader.cancel().catch(() => {});
+    }
+  };
   return {
     send: async (input) => {
-      try {
-        const response = await fetchFn(url, {
-          method: "POST",
-          headers: { Authorization: authorization, "Content-Type": "application/json" },
-          body: JSON.stringify(input),
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-        // No response payload is needed, including for non-2xx. Release the
-        // body so a stream of header-only responses cannot retain connections.
-        await response.body?.cancel();
-      } catch {
-        // Network error, abort/timeout, or a throwing fetch: swallowed.
-      }
+      const response = await request(url, { method: "POST", body: JSON.stringify(input) });
+      const parsed = receiptSchema.safeParse(response.value);
+      if (
+        !parsed.success ||
+        canonicalActivityJson(parsed.data.stamp) !== canonicalActivityJson(input.stamp) ||
+        parsed.data.payloadHash !== input.payloadHash
+      )
+        throw new StudioActivityTransportError(
+          "ack_invalid",
+          response.status,
+          excerpt(response.text),
+        );
+      return parsed.data;
+    },
+    readEvents: async (cursor, producerId) => {
+      const query = new URLSearchParams({
+        partition_id: "t3.activity",
+        producer_id: producerId,
+        limit: "100",
+      });
+      if (cursor !== null) query.set("cursor", cursor);
+      const response = await request(`${url}?${query}`, { method: "GET" });
+      const parsed = pageSchema.safeParse(response.value);
+      if (!parsed.success)
+        throw new StudioActivityTransportError(
+          "ack_invalid",
+          response.status,
+          excerpt(response.text),
+        );
+      const receipt = (watermark: z.infer<typeof watermarkSchema>): ActivityAcknowledgement => ({
+        ...watermark,
+        verdict: "accept",
+      });
+      return {
+        cursor: parsed.data.cursor,
+        has_more: parsed.data.has_more,
+        watermark: parsed.data.watermark ? receipt(parsed.data.watermark) : null,
+        events: parsed.data.events.map((event) =>
+          receipt({ eventId: event.eventId, ...event.data }),
+        ),
+      };
     },
   };
 }
 
-/** No-op sink for the unconfigured bridge: zero network calls. */
-export const STUDIO_ACTIVITY_NOOP_SINK: StudioActivitySink = {
-  send: () => {},
-};
-
-/** Configured HTTP sink, or the no-op sink when either env var is missing. */
+export const STUDIO_ACTIVITY_NOOP_SINK: StudioActivitySink = { send: () => {} };
 export function makeStudioActivitySink(options: {
   readonly config: StudioActivityBridgeConfig | null;
   readonly fetchFn?: StudioActivityFetch | undefined;
   readonly timeoutMs?: number | undefined;
 }): StudioActivitySink {
-  if (!options.config) return STUDIO_ACTIVITY_NOOP_SINK;
-  return makeStudioActivityHttpSink({
-    baseUrl: options.config.baseUrl,
-    token: options.config.token,
-    fetchFn: options.fetchFn,
-    timeoutMs: options.timeoutMs,
-  });
+  return options.config
+    ? makeStudioActivityHttpSink({
+        ...options.config,
+        fetchFn: options.fetchFn,
+        timeoutMs: options.timeoutMs,
+      })
+    : STUDIO_ACTIVITY_NOOP_SINK;
 }

@@ -22,6 +22,8 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
+import { StudioActivityPublisher, type StudioActivityState } from "./StudioActivityPublisher.ts";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as References from "effect/References";
@@ -165,7 +167,12 @@ const layerBridgeTest = (
     ProjectionStore.layer,
     EffectOutbox.layer,
     ThreadCommandExecutor.layer,
-    StudioActivityBridge.layerWithBridgeOptions(options).pipe(
+    StudioActivityBridge.layerWithBridgeOptions({
+      publishOnStart: false,
+      minIntervalMs: 0,
+      stateStore: { load: async () => null, save: async () => {} },
+      ...options,
+    }).pipe(
       Layer.provide(ProjectionStore.layer),
       Layer.provide(ProjectStore.layer),
       Layer.provide(RuntimeLayer.layerEventInfrastructure),
@@ -269,6 +276,8 @@ it.effect.each([
         ...scenario.env,
       },
       fetchFn: async (url, init) => {
+        if (init.method === "GET")
+          return Response.json({ events: [], cursor: null, has_more: false, watermark: null });
         const call = {
           url,
           authorization: new Headers(init.headers).get("Authorization"),
@@ -276,7 +285,14 @@ it.effect.each([
         };
         calls.push(call);
         posted.resolve(call);
-        return new Response("{}", { status: 200 });
+        return Response.json({
+          verdict: "accept",
+          eventId: "evt_test",
+          ...(() => {
+            const input = JSON.parse(String(init.body));
+            return { stamp: input.stamp, payloadHash: input.payloadHash };
+          })(),
+        });
       },
     });
     yield* Effect.gen(function* () {
@@ -346,6 +362,8 @@ it.effect("pending HTTP delivery does not block commands and coalesces activity"
         NOFUN_STUDIO_BRIDGE_TOKEN: "test-token",
       },
       fetchFn: async (url, init) => {
+        if (init.method === "GET")
+          return Response.json({ events: [], cursor: null, has_more: false, watermark: null });
         const call = {
           url,
           authorization: new Headers(init.headers).get("Authorization"),
@@ -361,7 +379,14 @@ it.effect("pending HTTP delivery does not block commands and coalesces activity"
           } else {
             nextPost.resolve(call);
           }
-          return new Response("{}", { status: 200 });
+          return Response.json({
+            verdict: "accept",
+            eventId: "evt_test",
+            ...(() => {
+              const input = JSON.parse(String(init.body));
+              return { stamp: input.stamp, payloadHash: input.payloadHash };
+            })(),
+          });
         } finally {
           active -= 1;
         }
@@ -415,7 +440,7 @@ it.effect.each([
           env,
           fetchFn: async () => {
             calls += 1;
-            return new Response("{}", { status: 200 });
+            return new Response("{}");
           },
         }),
       ),
@@ -442,12 +467,21 @@ it.effect("missing env token uses the trimmed macOS Keychain token with the defa
         layerBridgeTest({
           env: { USER: "bridge-user; shell syntax is literal" },
           fetchFn: async (url, init) => {
+            if (init.method === "GET")
+              return Response.json({ events: [], cursor: null, has_more: false, watermark: null });
             posted.resolve({
               url,
               authorization: new Headers(init.headers).get("Authorization"),
               bodyText: String(init.body),
             });
-            return new Response("{}", { status: 200 });
+            return Response.json({
+              verdict: "accept",
+              eventId: "evt_test",
+              ...(() => {
+                const input = JSON.parse(String(init.body));
+                return { stamp: input.stamp, payloadHash: input.payloadHash };
+              })(),
+            });
           },
         }),
       ),
@@ -520,5 +554,124 @@ it.effect("non-macOS startup never reads the Keychain", () =>
     );
     assert.equal(calls, 0);
     assert.equal(execFile.mock.calls.length, 0);
+  }),
+);
+
+it.effect(
+  "startup readback and idle retry recover a lost POST without another application event",
+  () =>
+    Effect.gen(function* () {
+      let saved: StudioActivityState | null = null;
+      let clock = 1000;
+      let posts = 0;
+      let reads = 0;
+      const firstAttempt = Promise.withResolvers<void>();
+      const savedAck = Promise.withResolvers<void>();
+      const failed = Promise.withResolvers<void>();
+      const layer = layerBridgeTest({
+        env: {
+          NOFUN_STUDIO_BRIDGE_URL: "http://bridge.test",
+          NOFUN_STUDIO_BRIDGE_TOKEN: "fixture",
+        },
+        publishOnStart: true,
+        minIntervalMs: 0,
+        idleIntervalMs: 1000,
+        retryTickMs: 100,
+        nowMs: () => clock,
+        stateStore: {
+          load: async () => structuredClone(saved),
+          save: async (state) => {
+            saved = structuredClone(state);
+            if (state.watermark) savedAck.resolve();
+            if (state.failures > 0) failed.resolve();
+          },
+        },
+        fetchFn: async (_url, init) => {
+          if (init.method === "GET") {
+            reads++;
+            return Response.json({ events: [], cursor: null, has_more: false, watermark: null });
+          }
+          posts++;
+          if (posts === 1) {
+            firstAttempt.resolve();
+            return new Response("busy", { status: 503 });
+          }
+          const input = JSON.parse(String(init.body));
+          return Response.json({
+            verdict: "replay_duplicate",
+            eventId: "evt_retried",
+            stamp: input.stamp,
+            payloadHash: input.payloadHash,
+          });
+        },
+      });
+      yield* Effect.gen(function* () {
+        yield* Effect.promise(() => firstAttempt.promise);
+        yield* Effect.promise(() => failed.promise);
+        clock = 3000;
+        yield* TestClock.adjust(1100);
+        yield* Effect.promise(() => savedAck.promise);
+        assert.equal(posts, 2);
+        assert.isAtLeast(reads, 2);
+        assert.lengthOf(saved!.pending, 0);
+        assert.equal(saved!.watermark?.eventId, "evt_retried");
+      }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect("startup retries the persisted envelope before allocating a fresh snapshot", () =>
+  Effect.gen(function* () {
+    let state: StudioActivityState | null = null;
+    const seed = new StudioActivityPublisher({
+      epoch: StudioActivityBridge.STUDIO_ACTIVITY_BRIDGE_EPOCH,
+      allowedProjectIds: [],
+      reads: { listActivityThreads: () => [] },
+      retryBaseMs: 0,
+      stateStore: {
+        load: async () => null,
+        save: async (value) => {
+          state = structuredClone(value);
+        },
+      },
+      sink: {
+        send: () => {
+          throw new Error("offline");
+        },
+      },
+    });
+    const pending = yield* Effect.promise(() => seed.publishNow());
+    const retried = Promise.withResolvers<string>();
+    yield* Effect.gen(function* () {
+      const bytes = yield* Effect.promise(() => retried.promise);
+      assert.equal(bytes, JSON.stringify(pending.envelope));
+    }).pipe(
+      Effect.provide(
+        layerBridgeTest({
+          env: {
+            NOFUN_STUDIO_BRIDGE_URL: "http://bridge.test",
+            NOFUN_STUDIO_BRIDGE_TOKEN: "fixture",
+          },
+          publishOnStart: true,
+          stateStore: {
+            load: async () => structuredClone(state),
+            save: async (value) => {
+              state = structuredClone(value);
+            },
+          },
+          fetchFn: async (_url, init) => {
+            if (init.method === "GET")
+              return Response.json({ events: [], cursor: null, has_more: false, watermark: null });
+            retried.resolve(String(init.body));
+            const input = JSON.parse(String(init.body));
+            return Response.json({
+              verdict: "accept",
+              eventId: `evt_${input.stamp.sequence}`,
+              stamp: input.stamp,
+              payloadHash: input.payloadHash,
+            });
+          },
+        }),
+      ),
+    );
   }),
 );
