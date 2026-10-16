@@ -3382,7 +3382,7 @@ describe("pr-open runs: instructor feedback", () => {
 
   it.effect("a feedback step that fails is an error of the run and the run is still gated", () =>
     Effect.gen(function* () {
-      const fake = reviewed(githubFailure() as BuildingError);
+      const fake = reviewed(new GitHubFailed({ args: ["pr", "view"], status: 1, stderr: "boom" }));
       fake.openHeads[`${REPO}#7`] = MOVED;
       const { report, lines } = yield* pass(fake, machine([REPO], 1));
       assert.equal(report.errors, 1);
@@ -3393,13 +3393,13 @@ describe("pr-open runs: instructor feedback", () => {
         `${lines}`,
       );
       assert.equal(fake.runErrors.length, 1);
-      assert.deepEqual([fake.runErrors[0]!.step, fake.runErrors[0]!.kind], ["forward", "github"]);
+      assert.deepEqual([fake.runErrors[0]!.step, fake.runErrors[0]!.kind], ["forward", "tracker"]);
     }),
   );
 
   it.effect("a feedback step that fails for a run that did not move starts no gate", () =>
     Effect.gen(function* () {
-      const fake = reviewed(githubFailure() as BuildingError);
+      const fake = reviewed(new GitHubFailed({ args: ["pr", "view"], status: 1, stderr: "boom" }));
       const { report, lines } = yield* pass(fake, machine([REPO], 1));
       assert.equal(report.errors, 1);
       assert.deepEqual(gated(fake), []);

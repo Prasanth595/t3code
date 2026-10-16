@@ -26,6 +26,7 @@ import type {
   LimitOutcome,
   WatchOutcome,
 } from "./runner/building.ts";
+import type { FeedbackError, FeedbackStep } from "./runner/feedback.ts";
 import { unchangedSince, type GateStepError, type LastPass } from "./runner/gating.ts";
 import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
@@ -122,6 +123,11 @@ export interface PassWorld {
    * never waits for a gate. The ledger has the result, and the next pass carries on from there.
    */
   readonly gate: (repo: Repo, run: RunId) => Effect.Effect<GateStart>;
+  /**
+   * The instructors' feedback on a `pr-open` run's pull request and issue, acted on at most once
+   * every ten minutes per run: `runner/feedback.ts`. A run it acts on is not gated this pass.
+   */
+  readonly feedback: (repo: Repo, run: RunId) => Effect.Effect<FeedbackStep, FeedbackError>;
   /**
    * What a `pr-open` run's last recorded pass ran against, when the pass can compare it with
    * GitHub before it starts the gate; null for a run the gate has more to do for:
@@ -266,6 +272,7 @@ export const errorKind = (error: StartError | BuildingError | GateStepError): Er
 const sameRepo = (a: string, b: string) => asciiLower(a) === asciiLower(b);
 
 const GATE_RUNNING = "gate running";
+const PULL_REQUEST_ENDED = "its pull request was merged or closed, the run is finished";
 /** The line of a building run whose gate this pass started. */
 const GATE_STARTED = "gate started in the background";
 /** The words for a gate that could not start: `max_concurrent_gates` are running. */
@@ -636,12 +643,61 @@ const prOpenRuns = (
         // A stop asked for while the run was building waits for its gate (see `workRuns`). Once
         // the gate passed it is dropped here, before a failed re-gate relaunches a session.
         yield* takeStopRequest(world, pass, info, notes);
-        if (!(yield* unchanged(world, repo, info.id, tips))) {
+        // Instructor feedback comes before all of that: a run it acted on is not gated this
+        // pass, whatever its head and its base did, because the gate runs when the new
+        // session's first run ends.
+        if (yield* actedOnFeedback(world, repo, info, notes, pass)) {
+          // Said.
+        } else if (!(yield* unchanged(world, repo, info.id, tips))) {
           yield* startGate(world, repo, info, notes);
         }
       }
       yield* pass.flush(notes, info.id);
     }
+  });
+
+/**
+ * Calls the feedback step for a `pr-open` run and says what it did. True when it did anything,
+ * which is when the run is not gated in this pass; false for a run with no new feedback, for which
+ * nothing was written and nothing is said. A step that fails is said, and then the run is treated
+ * as one with no feedback: a read that fails every pass must not keep a moved head or base from
+ * being gated, or a merged pull request from being ended. The step does not take a gate lock:
+ * gates run as fibers of this process and `gateRunning` was asked first.
+ */
+const actedOnFeedback = (
+  world: PassWorld,
+  repo: Repo,
+  info: RunInfo,
+  notes: Notes,
+  pass: Pass,
+): Effect.Effect<boolean> =>
+  Effect.gen(function* () {
+    const run = runIdToString(info.id);
+    const stepped = yield* Effect.result(world.feedback(repo, info.id));
+    if (stepped._tag === "Failure") {
+      pass.failed(notes, "feedback", "forward", stepped.failure);
+      return false;
+    }
+    const outcome = stepped.success;
+    switch (outcome.kind) {
+      case "none":
+        return false;
+      case "relaunched":
+        notes.parts.push(
+          `instructor feedback (${outcome.items} ${plural(outcome.items, "item")}) on PR https://github.com/${info.id.repo}/pull/${outcome.pr}: a new session was launched on its branch, the PR is a draft again`,
+        );
+        break;
+      case "stuck":
+        pass.stuck(notes, run);
+        break;
+      case "ended":
+        notes.parts.push(PULL_REQUEST_ENDED);
+        break;
+      case "abandoned":
+        yield* abandoned(pass, notes, run, []);
+        break;
+    }
+    return true;
   });
 
 /**
@@ -884,7 +940,7 @@ const advanceRun = (
         pass.stuck(notes, run);
         break;
       case "ended":
-        notes.parts.push("its pull request was merged or closed, the run is finished");
+        notes.parts.push(PULL_REQUEST_ENDED);
         break;
       case "abandoned":
         yield* abandoned(pass, notes, run, []);

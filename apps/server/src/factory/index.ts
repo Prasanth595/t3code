@@ -64,11 +64,11 @@ import {
   watch,
   type BuildingContext,
 } from "./runner/building.ts";
+import { feedback, type FeedbackContext } from "./runner/feedback.ts";
 import {
   gate as gateStep,
   lastPass,
   regate,
-  type GateContext,
   type GateStep,
   type GateStepError,
 } from "./runner/gating.ts";
@@ -320,7 +320,7 @@ export const liveWorld = (
     sessions,
     clock,
   });
-  const gateContext = (repo: Repo): GateContext => ({
+  const gateContext = (repo: Repo): FeedbackContext => ({
     ...buildingContext(repo),
     tracker: trackerFor(repo.watched),
     repoPath: repo.watched.path,
@@ -500,6 +500,7 @@ export const liveWorld = (
           Effect.mapError(asPassError("tracker")),
         ),
     gate: startGate,
+    feedback: (repo, run) => feedback(gateContext(repo), run),
     recordError,
     handPause: () => loadHandPause(dataDir),
     nowMs: clock,
