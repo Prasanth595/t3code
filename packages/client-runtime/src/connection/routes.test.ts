@@ -420,6 +420,12 @@ describe("SSH addresses", () => {
     },
   );
 
+  it("hides the known username even when SSH prints an unknown hostname", () => {
+    expect(redactSshAddresses("deploy@resolved.example.com: Permission denied", devbox)).toBe(
+      "•••@resolved.example.com: Permission denied",
+    );
+  });
+
   it("masks IP literals the target does not name", () => {
     // ssh resolves an alias to an address the client never saw.
     expect(
@@ -451,6 +457,12 @@ describe("SSH addresses", () => {
   });
 
   it.each([
+    "node.js",
+    "connect to host node.js",
+    "Could not resolve hostname unknown.example.com",
+    "Connection closed by unknown.example.com",
+    "other@unknown.example.com: Permission denied",
+    "other@buildbox: Permission denied",
     "12:34:56",
     "dead:beef:cafe",
     "::",

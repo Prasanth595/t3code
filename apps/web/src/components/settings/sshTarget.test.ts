@@ -15,25 +15,18 @@ describe("SSH display redaction", () => {
     expect(redactSshText(value)).toBe(expected);
   });
 
-  it.each([
-    ["deploy@actual.example.com: Permission denied", "•••@devbox: Permission denied"],
-    ["deploy@buildbox: Permission denied", "•••@buildbox: Permission denied"],
-    [
-      "Could not resolve hostname actual.example.com: Name not known",
-      "Could not resolve hostname devbox: Name not known",
-    ],
-    ["Connection to box.tail1234.ts.net port 22 closed", "Connection to devbox port 22 closed"],
-    ["node.js exited at 12:34:56 with std::vector", "node.js exited at 12:34:56 with std::vector"],
-    [
-      "Warning: Permanently added 'actual.example.com' (ED25519) to the list of known hosts.",
-      "Warning: Permanently added 'devbox' (ED25519) to the list of known hosts.",
-    ],
-    [
-      "Warning: the ED25519 host key for 'actual.example.com' differs from the key for the IP address '203.0.113.42'",
-      "Warning: the ED25519 host key for 'devbox' differs from the key for the IP address '•••'",
-    ],
-  ])("redacts resolved SSH details in %s", (message, expected) => {
-    expect(redactSshText(message, "devbox")).toBe(expected);
+  it("preserves unrelated error text", () => {
+    const message = "node.js exited at 12:34:56 with std::vector";
+    expect(redactSshText(message, "devbox")).toBe(message);
+  });
+
+  it("redacts the configured hostname in passive error text", () => {
+    expect(
+      redactSshText(
+        "Could not resolve hostname actual.example.com: Name not known",
+        "actual.example.com",
+      ),
+    ).toBe("Could not resolve hostname •••: Name not known");
   });
 
   it("uses the connection destination to redact passive error text", () => {

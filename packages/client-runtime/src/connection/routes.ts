@@ -385,15 +385,6 @@ export function redactSshAddresses(text: string, target: DesktopSshEnvironmentTa
   const withoutUsername = target.username ? text.split(`${target.username}@`).join("•••@") : text;
   return secrets
     .reduce((redacted, secret) => redacted.split(secret).join(replacement), withoutUsername)
-    .replace(
-      /(?:[\w.-]+|•••)@(\[[^\]\s]+\]|[\w.-]+)/gu,
-      (_authority, hostname: string) =>
-        `•••@${isSshNetworkAddress(hostname) ? replacement : hostname}`,
-    )
-    .replace(
-      /\b(host(?:name)?|connect(?:ion)? to|host key for|permanently added|(?:closed|reset) by)(\s+["']?\[?)([\w-]+(?:\.[\w-]+)*\.[a-z][\w-]*)/giu,
-      (_match, context: string, separator: string) => `${context}${separator}${replacement}`,
-    )
     .replace(IPV4_LITERAL, "•••")
     .replace(IPV6_LITERAL, "•••");
 }
