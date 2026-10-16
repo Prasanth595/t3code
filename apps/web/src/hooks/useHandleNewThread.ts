@@ -41,6 +41,7 @@ import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
 import { useClientSettings } from "./useSettings";
+import { useConnectedEnvironmentIds } from "../state/environments";
 import { useNewThreadProjectTarget } from "./useNewThreadProjectTarget";
 
 interface NewThreadWorkspaceOptions {
@@ -61,6 +62,7 @@ function pickExplicitWorkspaceOptions(options: NewThreadWorkspaceOptions | undef
 
 export function useNewThreadHandler() {
   const resolveProjectTarget = useNewThreadProjectTarget();
+  const connectedEnvironmentIds = useConnectedEnvironmentIds();
   const environmentServerConfigs = useAtomValue(environmentServerConfigsAtom);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
   const router = useRouter();
@@ -92,9 +94,18 @@ export function useNewThreadHandler() {
           project.environmentId === requestedProjectRef.environmentId &&
           project.id === requestedProjectRef.projectId,
       );
-      const preserveManualDraft =
+      const preserveOpenDraft =
         currentRouteTarget?.kind === "draft" &&
-        currentDraft?.environmentSelection === "manual" &&
+        currentDraft != null &&
+        (currentDraft.environmentSelection === "manual" ||
+          (connectedEnvironmentIds.includes(currentDraft.environmentId) &&
+            projects.some(
+              (project) =>
+                project.environmentId === currentDraft.environmentId &&
+                project.id === currentDraft.projectId &&
+                deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings) ===
+                  currentDraft.logicalProjectKey,
+            ))) &&
         requestedProject !== undefined &&
         currentDraft.logicalProjectKey ===
           deriveLogicalProjectKeyFromSettings(requestedProject, projectGroupingSettings) &&
@@ -105,12 +116,12 @@ export function useNewThreadHandler() {
         options?.branch === undefined &&
         options?.worktreePath === undefined;
       const target = resolveProjectTarget(
-        preserveManualDraft
+        preserveOpenDraft
           ? scopeProjectRef(currentDraft.environmentId, currentDraft.projectId)
           : requestedProjectRef,
         {
           manual:
-            preserveManualDraft ||
+            preserveOpenDraft ||
             options?.environmentSelection === "manual" ||
             options?.branch !== undefined ||
             options?.worktreePath !== undefined,
@@ -118,7 +129,9 @@ export function useNewThreadHandler() {
       );
       const projectRef = target.projectRef ?? requestedProjectRef;
       const environmentContext = {
-        environmentSelection: target.environmentSelection,
+        environmentSelection: preserveOpenDraft
+          ? (currentDraft.environmentSelection ?? "auto")
+          : target.environmentSelection,
         loadBalancedEnvironmentId: null,
       };
       const targetServerSettings =
@@ -432,6 +445,7 @@ export function useNewThreadHandler() {
       })();
     },
     [
+      connectedEnvironmentIds,
       environmentServerConfigs,
       getCurrentRouteTarget,
       projectGroupingSettings,
