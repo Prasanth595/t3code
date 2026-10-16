@@ -20,6 +20,7 @@ import { parseRunId, runPath, type RunId } from "../ledger/runId.ts";
 import { T0, useTempDirs } from "../ledger/testSupport.ts";
 import {
   SessionsError,
+  ThreadNotFoundError,
   type LaunchRequest,
   type Launched,
   type Model,
@@ -44,6 +45,7 @@ import {
 } from "./messages.ts";
 import {
   GateRunningError,
+  resume,
   start,
   type Sessions,
   type StartContext,
@@ -156,6 +158,7 @@ const fakeTracker = (script: {
 };
 
 const isSessionsError = Schema.is(SessionsError);
+const isThreadNotFound = Schema.is(ThreadNotFoundError);
 
 const MODEL: Model = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
 const LAUNCH_ID = "softfac:rawphp__softfac__7__1:launch";
@@ -172,7 +175,8 @@ const fakeSessions = (
     project?: string | null | SessionsError;
     launches?: Array<Launched | SessionsError>;
     archive?: Array<undefined | SessionsError>;
-    thread?: Thread;
+    thread?: Thread | ThreadNotFoundError;
+    removeWorktree?: SessionsError;
   },
 ) => {
   const calls: Array<string> = [];
@@ -208,9 +212,11 @@ const fakeSessions = (
     },
     thread: (threadId) => {
       calls.push(`thread ${threadId}`);
-      return Effect.succeed(
-        script.thread ?? { worktreePath: WORKTREE, branch: "t3code/abc", archived: false },
-      );
+      return isThreadNotFound(script.thread)
+        ? Effect.fail(script.thread)
+        : Effect.succeed(
+            script.thread ?? { worktreePath: WORKTREE, branch: "t3code/abc", archived: false },
+          );
     },
     archive: (threadId) => {
       calls.push(`archive ${threadId}`);
@@ -219,7 +225,7 @@ const fakeSessions = (
     },
     removeWorktree: (path) => {
       calls.push(`removeWorktree ${path}`);
-      return Effect.void;
+      return script.removeWorktree === undefined ? Effect.void : Effect.fail(script.removeWorktree);
     },
   };
   return { sessions, calls, launchRequests };
@@ -1177,6 +1183,125 @@ describe("start: a resume", () => {
         "thread thread-1",
         `removeWorktree ${WORKTREE}`,
       ]);
+    }),
+  );
+});
+
+describe("start: stopping a session that goes stuck", () => {
+  it.effect("a worktree that cannot be removed is written down and the run still goes stuck", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({ textChecks: ["changed"] });
+      const t3 = fakeSessions(dataDir, {
+        removeWorktree: new SessionsError({
+          operation: "remove-worktree",
+          cause: new Error("disk busy"),
+        }),
+      });
+      const outcome = yield* startIn(dataDir, tracker, t3.sessions);
+      assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason: TEXT_CHANGED });
+      assert.deepStrictEqual(calls.slice(4), stuckCalls(TEXT_CHANGED, "thread-1"));
+      assert.deepStrictEqual(entriesOf(dataDir), [
+        ...startedEvents().slice(0, 5),
+        {
+          event: "worktree_remove_failed",
+          data: { path: WORKTREE, error: "disk busy" },
+          cause: cause("worktree-remove-failed"),
+        },
+        ...stuckTail(TEXT_CHANGED, "text-changed-before-start"),
+      ]);
+    }),
+  );
+
+  it.effect("a thread T3 no longer knows is stopped at the worktree the ledger records", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedRun(dataDir, startedLines().slice(0, 5));
+      const { tracker } = fakeTracker({
+        issues: [detail("triage", [USER])],
+        textChecks: ["changed"],
+      });
+      const t3 = fakeSessions(dataDir, {
+        thread: new ThreadNotFoundError({ threadId: "thread-1" }),
+      });
+      const outcome = yield* resume(ctxFor(dataDir, tracker, t3.sessions), 7);
+      assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason: TEXT_CHANGED });
+      assert.deepStrictEqual(t3.calls, [
+        "archive thread-1",
+        "thread thread-1",
+        `removeWorktree ${WORKTREE}`,
+      ]);
+      assert.deepStrictEqual(entriesOf(dataDir).slice(5, 6), [
+        { event: "worktree_removed", data: { path: WORKTREE }, cause: cause("worktree-removed") },
+      ]);
+    }),
+  );
+});
+
+describe("resume", () => {
+  const resumeIn = (dataDir: string, tracker: Tracker, sessions?: Sessions) =>
+    resume(ctxFor(dataDir, tracker, sessions ?? fakeSessions(dataDir, {}).sessions), 7);
+
+  it.effect("goes on with a triage run of ours as start does", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedRun(dataDir, startedLines().slice(0, 3));
+      const { tracker } = fakeTracker({ issues: [detail("triage", [USER])] });
+      const outcome = yield* resumeIn(dataDir, tracker);
+      assert.deepStrictEqual(outcome, { kind: "started", run: run7, threadId: "thread-1" });
+      assert.deepStrictEqual(entriesOf(dataDir), startedEvents());
+    }),
+  );
+
+  it.effect("never claims an issue put back to ready: that is the claim step's", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedRun(dataDir, startedLines().slice(0, 3));
+      const { tracker, calls } = fakeTracker({ issues: [detail("ready")] });
+      const t3 = fakeSessions(dataDir, {});
+      const outcome = yield* resumeIn(dataDir, tracker, t3.sessions);
+      assert.strictEqual(outcome.kind, "skipped");
+      assert.deepStrictEqual(calls, ["issue 7"]);
+      assert.deepStrictEqual(t3.calls, []);
+      assert.deepStrictEqual(entriesOf(dataDir), startedEvents().slice(0, 3));
+      assert.strictEqual(NodeFS.existsSync(runPath(dataDir, { ...run7, attempt: 2 })), false);
+    }),
+  );
+
+  it.effect("finishes a stuck path cut short after its label moved", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const first = fakeTracker({ unassignFails: true });
+      const t3 = fakeSessions(dataDir, { project: null });
+      yield* Effect.flip(startIn(dataDir, first.tracker, t3.sessions));
+      // The label is `factory:stuck` and the factory is still assigned.
+      const { tracker, calls } = fakeTracker({ issues: [detail("stuck", [USER])] });
+      const outcome = yield* resumeIn(dataDir, tracker, t3.sessions);
+      assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason: NO_PROJECT });
+      // The comment went out the first time and is not repeated.
+      assert.deepStrictEqual(calls, ["issue 7", ...stuckCalls(LAUNCH_FAILED, null).slice(1)]);
+      assert.deepStrictEqual(entriesOf(dataDir), [
+        ...startedEvents().slice(0, 3),
+        ...stuckTail(NO_PROJECT, "launch-failed").slice(0, 1),
+        ...stuckTail(NO_PROJECT, "stuck-resumed").slice(1),
+      ]);
+    }),
+  );
+
+  it.effect("leaves a stuck issue alone when its run is finished, or it has none", () =>
+    Effect.gen(function* () {
+      const none = tempDir();
+      const noRun = fakeTracker({ issues: [detail("stuck", [USER])] });
+      assert.strictEqual((yield* resumeIn(none, noRun.tracker)).kind, "skipped");
+      assert.deepStrictEqual(noRun.calls, ["issue 7"]);
+      assert.strictEqual(NodeFS.existsSync(runPath(none, run7)), false);
+
+      const finished = tempDir();
+      olderRun(finished, 1, "stuck", true);
+      const done = fakeTracker({ issues: [detail("stuck", [USER])] });
+      assert.strictEqual((yield* resumeIn(finished, done.tracker)).kind, "skipped");
+      assert.deepStrictEqual(done.calls, ["issue 7"]);
+      assert.strictEqual(NodeFS.existsSync(runPath(finished, { ...run7, attempt: 2 })), false);
     }),
   );
 });

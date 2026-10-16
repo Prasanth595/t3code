@@ -1,11 +1,12 @@
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as TestClock from "effect/testing/TestClock";
 import { describe } from "vite-plus/test";
 
-import { runLoop } from "./loop.ts";
+import { PASS_TIMEOUT, runLoop } from "./loop.ts";
 import type { Report } from "./pass.ts";
 
 const report = (n: number): Report => ({ runs: n, claimed: 0, errors: 0, attention: 0 });
@@ -96,6 +97,43 @@ describe("the pass loop", () => {
         const next = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
         yield* TestClock.adjust("60 seconds");
         assert.deepStrictEqual(yield* Fiber.join(next), report(2));
+      }),
+    ),
+  );
+
+  it.effect("a pass that hangs is stopped at the pass timeout and the loop goes on", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const never = yield* Deferred.make<void>();
+        const { calls, onePass } = counting({ at: 1, on: never });
+        const loop = yield* runLoop(onePass, 60);
+        const first = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+        yield* TestClock.adjust(Duration.subtract(PASS_TIMEOUT, Duration.seconds(1)));
+        assert.strictEqual(calls.n, 1, "the hung pass is still running");
+        yield* TestClock.adjust("1 second");
+        assert.strictEqual(yield* Fiber.join(first), null);
+        const second = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+        yield* TestClock.adjust("60 seconds");
+        assert.deepStrictEqual(yield* Fiber.join(second), report(2));
+      }),
+    ),
+  );
+
+  it.effect("a long pass that finishes before the pass timeout keeps its report", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const on = yield* Deferred.make<void>();
+        const { calls, onePass } = counting({ at: 1, on });
+        const loop = yield* runLoop(onePass, 60);
+        const first = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+        yield* TestClock.adjust(Duration.subtract(PASS_TIMEOUT, Duration.seconds(1)));
+        yield* Deferred.succeed(on, undefined);
+        assert.deepStrictEqual(yield* Fiber.join(first), report(1));
+        // The timeout that would have fired is gone: the next pass comes on the poll alone.
+        yield* TestClock.adjust("59 seconds");
+        assert.strictEqual(calls.n, 1);
+        yield* TestClock.adjust("1 second");
+        assert.strictEqual(calls.n, 2);
       }),
     ),
   );

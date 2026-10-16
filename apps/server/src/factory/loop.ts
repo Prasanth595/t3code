@@ -2,7 +2,8 @@
  * The pass loop: one pass when the factory starts and one every `poll_seconds` after, with a
  * wake that starts the next pass now. Passes never overlap: one fiber runs them one after the
  * other, and a wake that arrives during a pass makes the next pass follow it at once, however
- * many wakes arrived.
+ * many wakes arrived. A pass that runs past `PASS_TIMEOUT` is stopped and logged, so one hung
+ * call cannot stop every later pass; the next pass goes on from the ledger.
  */
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -15,9 +16,15 @@ import type { Report } from "./pass.ts";
 export interface Loop {
   /** Starts the next pass now when none is running, or right after the one that is. */
   readonly wake: Effect.Effect<void>;
-  /** The report of the next pass to finish; null when that pass died. */
+  /** The report of the next pass to finish; null when that pass died or timed out. */
   readonly awaitPass: Effect.Effect<Report | null>;
 }
+
+/**
+ * Longer than any one call a pass makes is allowed (a `gh` call 60 seconds, a worktree removal
+ * 10 minutes), so only a pass that is hung is stopped.
+ */
+export const PASS_TIMEOUT = Duration.minutes(30);
 
 /** Runs `onePass` on the loop's schedule in a fiber of the scope. The first pass starts at once. */
 export const runLoop = (
@@ -31,6 +38,12 @@ export const runLoop = (
       for (;;) {
         yield* latch.close;
         const report = yield* onePass.pipe(
+          Effect.timeoutOption(PASS_TIMEOUT),
+          Effect.flatMap((done) =>
+            done._tag === "Some"
+              ? Effect.succeed(done.value)
+              : Effect.logError("factory pass timed out and was stopped").pipe(Effect.as(null)),
+          ),
           Effect.catchCause((cause) =>
             Effect.logError("factory pass failed", cause).pipe(Effect.as(null)),
           ),

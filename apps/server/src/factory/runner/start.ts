@@ -20,10 +20,10 @@
  * same id. The issue text is checked again once the session exists: a change stops the run and
  * archives the session.
  *
- * Calling `start` again resumes. An issue in `triage` whose only assignee is the factory's own
- * user is an interrupted start, and every step goes on from what the ledger records. A run with
- * no record of what approved it cannot be confirmed, so it fails closed and goes `stuck` (no
- * session was launched, as the record is written first).
+ * Calling `start` again resumes; `resume` does only that. An issue in `triage` whose only
+ * assignee is the factory's own user is an interrupted start, and every step goes on from what
+ * the ledger records. A run with no record of what approved it cannot be confirmed, so it fails
+ * closed and goes `stuck` (no session was launched, as the record is written first).
  */
 import * as NodeFS from "node:fs";
 
@@ -32,7 +32,7 @@ import * as Schema from "effect/Schema";
 
 import type { ProjectConfig } from "../config.ts";
 import { refusalReason, unapprovedComment, type Refusal } from "../domain/approval.ts";
-import { InvalidTransition, stateLabel, transition, type State } from "../domain/lifecycle.ts";
+import { InvalidTransition, stateLabel, transition } from "../domain/lifecycle.ts";
 import { gateLockFile } from "../gate.ts";
 import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
 import { makeCause, type Cause, type ClaimRepair, type Outcome } from "../ledger/events.ts";
@@ -51,8 +51,6 @@ import {
   TEXT_CHANGED,
   launchMessage,
   sessionMayExistNote,
-  statusBody,
-  stuckComment,
 } from "./messages.ts";
 import { APPROVAL_RECHECKED, LAUNCH_SENDING, readProgress, type Seen } from "./progress.ts";
 import { describe, finishBuilding, goStuck, type Progress } from "./run.ts";
@@ -147,16 +145,69 @@ export const start = (
     const detail = yield* ctx.tracker.issue(issue);
     // A closed issue is never claimed, whatever its label says. Issue #20 ports what softfac
     // does with its unfinished runs; until then they are left alone.
-    if (detail.closed) {
-      return { kind: "skipped", reason: `issue ${mention(issue)} is closed` };
-    }
-    const ours = isOurs(detail.assignees, ctx.trackerUser);
+    if (detail.closed) return closed(issue);
     if (detail.state === "ready" && detail.assignees.length === 0) {
       return yield* startFresh(ctx, issue, detail);
     }
     if (detail.state === "ready") return skipped(issue, detail.assignees);
-    if (detail.state === "triage" && ours) return yield* resumeStart(ctx, issue, detail);
+    return yield* goOn(ctx, issue, detail);
+  });
+
+/**
+ * `start` for a claim already made, which never makes one: what the pass calls for a run it
+ * knows of and for a `triage` issue of ours with no run. An issue someone put back to
+ * `factory:ready` is left to the claim step, which checks the pause, the limit and the blockers
+ * first.
+ */
+export const resume = (
+  ctx: StartContext,
+  issue: number,
+): Effect.Effect<StartOutcome, StartError, never> =>
+  Effect.gen(function* () {
+    const detail = yield* ctx.tracker.issue(issue);
+    if (detail.closed) return closed(issue);
+    if (detail.state === "ready") {
+      return { kind: "skipped", reason: `issue ${mention(issue)} is ready again, a new claim` };
+    }
+    return yield* goOn(ctx, issue, detail);
+  });
+
+const closed = (issue: number): StartOutcome => ({
+  kind: "skipped",
+  reason: `issue ${mention(issue)} is closed`,
+});
+
+/**
+ * Goes on from the ledger with an issue that is not `ready`: a `triage` issue of ours, or a
+ * `stuck` issue whose newest run gave up and was cut short before its summary line (the label
+ * moves before the release and the status comment, so a failure in between leaves the run
+ * unfinished in `triage`), which finishes the stuck path.
+ */
+const goOn = (
+  ctx: StartContext,
+  issue: number,
+  detail: IssueDetail,
+): Effect.Effect<StartOutcome, StartError> =>
+  Effect.gen(function* () {
+    if (detail.state === "triage" && isOurs(detail.assignees, ctx.trackerUser)) {
+      return yield* resumeStart(ctx, issue, detail);
+    }
+    if (detail.state === "stuck" && (yield* stuckCutShort(ctx, issue))) {
+      return yield* resumeStart(ctx, issue, detail);
+    }
     return { kind: "skipped", reason: `issue ${mention(issue)} is not labelled factory:ready` };
+  });
+
+/** Whether the issue's newest run is unfinished, still in `triage`, and its ledger says it went stuck. */
+const stuckCutShort = (ctx: StartContext, issue: number): Effect.Effect<boolean, LedgerError> =>
+  Effect.gen(function* () {
+    const next = nextAttempt(ctx.dataDir, ctx.repo, String(issue));
+    if (next === 1) return false;
+    const newest = newRunId(ctx.repo, String(issue), next - 1);
+    const seen = readProgress((yield* ledger(() => readRun(ctx.dataDir, newest))).entries);
+    return (
+      !seen.finished && seen.stuck !== null && (seen.state === null || seen.state === "triage")
+    );
   });
 
 const startFresh = (

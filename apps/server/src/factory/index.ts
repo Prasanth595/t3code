@@ -30,7 +30,14 @@ import { runPass, type PassError, type PassWorld, type Repo } from "./pass.ts";
 import * as Process from "./process.ts";
 import { FactoryProcess } from "./process.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
-import { start, utcSecond, type Sessions, type Tracker } from "./runner/start.ts";
+import {
+  resume,
+  start,
+  utcSecond,
+  type Sessions,
+  type StartContext,
+  type Tracker,
+} from "./runner/start.ts";
 import * as Paths from "./t3/paths.ts";
 import * as T3Sessions from "./t3/sessions.ts";
 import { bindProcess, makeGitHub, type GitHubError, type IssueSummary } from "./tracker/github.ts";
@@ -120,6 +127,19 @@ export const liveWorld = (
   const trackerFor = (watched: WatchedRepo): Tracker => bindProcess(githubFor(watched), process);
   const tracker = (effect: Effect.Effect<unknown, GitHubError, FactoryProcess>) =>
     withProcess(effect).pipe(Effect.mapError(asPassError("tracker")));
+  const startContext = (repo: Repo): StartContext => ({
+    repo: repo.watched.repo,
+    trackerUser: repo.trackerUser,
+    machine: host,
+    project: repo.project,
+    dataDir,
+    tracker: trackerFor(repo.watched),
+    repoPath: repo.watched.path,
+    ghConfigDir: machine.ghConfigDir,
+    model: { instanceId: machine.modelInstance, model: machine.model },
+    sessions,
+    clock,
+  });
   return {
     project: (watched) => withProcess(projectFromBase(githubFor(watched))),
     trackerUser: (watched) =>
@@ -166,23 +186,8 @@ export const liveWorld = (
       withProcess(githubFor(repo.watched).textBlockers(issue)).pipe(
         Effect.mapError(asPassError("tracker")),
       ),
-    start: (repo: Repo, issue: number) =>
-      start(
-        {
-          repo: repo.watched.repo,
-          trackerUser: repo.trackerUser,
-          machine: host,
-          project: repo.project,
-          dataDir,
-          tracker: trackerFor(repo.watched),
-          repoPath: repo.watched.path,
-          ghConfigDir: machine.ghConfigDir,
-          model: { instanceId: machine.modelInstance, model: machine.model },
-          sessions,
-          clock,
-        },
-        issue,
-      ),
+    start: (repo: Repo, issue: number) => start(startContext(repo), issue),
+    resume: (repo: Repo, issue: number) => resume(startContext(repo), issue),
     gateRunning: (run) => NodeFS.existsSync(gateLockFile(dataDir, run)),
     recordError: (run, step, kind, message) =>
       ledger(() => {

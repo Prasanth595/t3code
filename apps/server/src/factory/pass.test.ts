@@ -183,8 +183,17 @@ class Fake implements PassWorld {
   }
 
   start(repo: Repo, issue: number) {
+    return this.answerStart("start", repo, issue);
+  }
+
+  resume(repo: Repo, issue: number) {
+    return this.answerStart("resume", repo, issue);
+  }
+
+  /** Both calls share one script per issue; `calls` says which was made. */
+  private answerStart(call: "start" | "resume", repo: Repo, issue: number) {
     const key = `${repo.watched.repo}#${issue}`;
-    this.calls.push(`start ${key}`);
+    this.calls.push(`${call} ${key}`);
     const answer = this.starts[key]?.shift() ?? { kind: "skipped", reason: "scripted" };
     if (this.startLeavesRun.includes(issue)) {
       this.runs.push({
@@ -249,7 +258,9 @@ const pass = (
     return { report, lines };
   });
 
-const starts = (fake: Fake) => fake.calls.filter((c) => c.startsWith("start "));
+/** The `start` and `resume` calls, in order. */
+const starts = (fake: Fake) =>
+  fake.calls.filter((c) => c.startsWith("start ") || c.startsWith("resume "));
 const releases = (fake: Fake) => fake.calls.filter((c) => c.startsWith("release "));
 
 const runLine = (lines: ReadonlyArray<string>, prefix: string): string => {
@@ -638,26 +649,26 @@ describe("which repo gets a free slot", () => {
 // ---- runs that are confirmed and still in triage ----
 
 describe("runs that are confirmed and still in triage", () => {
-  it.effect("a confirmed triage run gets start on the next pass, and the line says so", () =>
+  it.effect("a confirmed triage run is resumed on the next pass, and the line says so", () =>
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(12, "triage");
       fake.pushStart(`${REPO}#12`, started(12));
       const { report, lines } = yield* pass(fake, machine([REPO], 3));
-      assert.deepEqual(starts(fake), [`start ${REPO}#12`]);
+      assert.deepEqual(starts(fake), [`resume ${REPO}#12`]);
       const line = runLine(lines, "rawphp/softfac#12 triage:");
       assert.ok(line.includes("session started, the issue is building"), line);
       assert.equal(report.claimed, 0);
     }),
   );
 
-  it.effect("a confirmed run with no state yet is started too", () =>
+  it.effect("a confirmed run with no state yet is resumed too", () =>
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runs.push({ id: rid(13), state: null, unreadable: false, confirmed: true });
       fake.pushStart(`${REPO}#13`, started(13));
       yield* pass(fake, machine([REPO], 3));
-      assert.deepEqual(starts(fake), [`start ${REPO}#13`]);
+      assert.deepEqual(starts(fake), [`resume ${REPO}#13`]);
     }),
   );
 
@@ -695,7 +706,7 @@ describe("runs that are confirmed and still in triage", () => {
       fake.pushStart(`${REPO}#12`, started(12));
       fake.pushStart(`${REPO}#3`, started(3));
       yield* pass(fake, machine([REPO], 5));
-      assert.deepEqual(starts(fake), [`start ${REPO}#12`, `start ${REPO}#3`]);
+      assert.deepEqual(starts(fake), [`resume ${REPO}#12`, `start ${REPO}#3`]);
     }),
   );
 
@@ -735,13 +746,13 @@ describe("runs that are confirmed and still in triage", () => {
 // ---- claims that have no run in the ledger ----
 
 describe("claims that have no run in the ledger", () => {
-  it.effect("a triage issue of ours with no run gets start, and is not a new claim", () =>
+  it.effect("a triage issue of ours with no run is resumed, and is not a new claim", () =>
     Effect.gen(function* () {
       const fake = new Fake();
       fake.triage[REPO] = [7];
       fake.pushStart(`${REPO}#7`, { kind: "stuck", run: rid(7), reason: "could not confirm" });
       const { report, lines } = yield* pass(fake, machine([REPO], 1));
-      assert.deepEqual(starts(fake), [`start ${REPO}#7`]);
+      assert.deepEqual(starts(fake), [`resume ${REPO}#7`]);
       const line = runLine(lines, "rawphp/softfac#7 ");
       assert.ok(line.startsWith("rawphp/softfac#7 triage: no run on record, stuck"), line);
       assert.ok(line.includes("rawphp__softfac__7__1"), line);
@@ -749,17 +760,17 @@ describe("claims that have no run in the ledger", () => {
     }),
   );
 
-  it.effect("a triage issue that has an unfinished run is started by the run step alone", () =>
+  it.effect("a triage issue that has an unfinished run is resumed by the run step alone", () =>
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(12, "triage");
       fake.triage[REPO] = [12];
       yield* pass(fake, machine([REPO], 3));
-      assert.deepEqual(starts(fake), [`start ${REPO}#12`]);
+      assert.deepEqual(starts(fake), [`resume ${REPO}#12`]);
     }),
   );
 
-  it.effect("a triage issue whose only run is not confirmed gets start again", () =>
+  it.effect("a triage issue whose only run is not confirmed is resumed again", () =>
     Effect.gen(function* () {
       // A stuck path that failed half way leaves a run with no approval behind; start finishes it.
       const fake = new Fake();
@@ -767,7 +778,7 @@ describe("claims that have no run in the ledger", () => {
       fake.triage[REPO] = [12];
       fake.pushStart(`${REPO}#12`, { kind: "stuck", run: rid(12), reason: "could not confirm" });
       const { lines } = yield* pass(fake, machine([REPO], 3));
-      assert.deepEqual(starts(fake), [`start ${REPO}#12`]);
+      assert.deepEqual(starts(fake), [`resume ${REPO}#12`]);
       assert.ok(runLine(lines, "rawphp/softfac#12 ").includes("stuck"), lines.join("\n"));
     }),
   );
@@ -783,17 +794,17 @@ describe("claims that have no run in the ledger", () => {
     }),
   );
 
-  it.effect("a triage issue with no run is started even when every slot is taken", () =>
+  it.effect("a triage issue with no run is resumed even when every slot is taken", () =>
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(40, BUILDING);
       fake.triage[REPO] = [7];
       yield* pass(fake, machine([REPO], 1));
-      assert.deepEqual(starts(fake), [`start ${REPO}#7`]);
+      assert.deepEqual(starts(fake), [`resume ${REPO}#7`]);
     }),
   );
 
-  it.effect("a triage issue is started before new issues are claimed", () =>
+  it.effect("a triage issue is resumed before new issues are claimed", () =>
     Effect.gen(function* () {
       const fake = new Fake();
       fake.triage[REPO] = [7];
@@ -801,7 +812,7 @@ describe("claims that have no run in the ledger", () => {
       fake.pushStart(`${REPO}#7`, started(7));
       fake.pushStart(`${REPO}#3`, started(3));
       yield* pass(fake, machine([REPO], 5));
-      assert.deepEqual(starts(fake), [`start ${REPO}#7`, `start ${REPO}#3`]);
+      assert.deepEqual(starts(fake), [`resume ${REPO}#7`, `start ${REPO}#3`]);
     }),
   );
 
@@ -827,7 +838,7 @@ describe("claims that have no run in the ledger", () => {
       fake.triage[REPO] = "error";
       fake.triage[OTHER] = [4];
       const { report, lines } = yield* pass(fake, machine([REPO, OTHER], 1));
-      assert.deepEqual(starts(fake), [`start ${OTHER}#4`]);
+      assert.deepEqual(starts(fake), [`resume ${OTHER}#4`]);
       assert.equal(report.errors, 1);
       assert.ok(
         lines.some((l) => l.startsWith("error: rawphp/softfac: cannot list the triage issues")),
@@ -1281,7 +1292,7 @@ describe("the hand pause", () => {
       fake.unassigned[REPO] = [{ issue: 8, state: "triage" }];
       pausedByHand(fake);
       yield* pass(fake, machine([REPO], 5));
-      assert.deepEqual(starts(fake), [`start ${REPO}#7`]);
+      assert.deepEqual(starts(fake), [`resume ${REPO}#7`]);
       assert.deepEqual(releases(fake), [`release ${REPO}#8 triage`]);
     }),
   );
@@ -1530,7 +1541,7 @@ describe("reading the ledger", () => {
         return listed(only);
       };
       const { report, lines } = yield* pass(fake, machine([REPO], 5));
-      assert.deepEqual(starts(fake), [`start ${REPO}#7`, `start ${REPO}#8`]);
+      assert.deepEqual(starts(fake), [`resume ${REPO}#7`, `resume ${REPO}#8`]);
       assert.equal(
         lines.filter((l) => l.startsWith("error: cannot read the run ledger")).length,
         1,

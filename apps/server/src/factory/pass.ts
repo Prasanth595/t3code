@@ -74,6 +74,8 @@ export interface PassWorld {
   ) => Effect.Effect<ReadonlyArray<Blocker>, PassError>;
   /** The claim: `runner/start.ts`. */
   readonly start: (repo: Repo, issue: number) => Effect.Effect<StartOutcome, StartError>;
+  /** The claim gone on with, never made: `resume` in `runner/start.ts`. */
+  readonly resume: (repo: Repo, issue: number) => Effect.Effect<StartOutcome, StartError>;
   /** Whether the run's gate is running now. */
   readonly gateRunning: (run: RunId) => boolean;
   /** Appends an `error` line to the run's own ledger. */
@@ -383,10 +385,11 @@ const runs = (world: PassWorld, pass: Pass): Effect.Effect<ReadonlyArray<RunInfo
   });
 
 /**
- * Calls `start` again for each confirmed run still in `triage` (or with no state yet): `start`
- * resumes it from its ledger, so a run cut short after the launch was sent is finished and its
- * session never runs on untracked. A run of a repo that is not loaded is left alone. The other
- * states are worked by later steps. It is not a new claim, so it is not counted as one.
+ * Calls `resume` for each confirmed run still in `triage` (or with no state yet), which goes on
+ * from its ledger, so a run cut short after the launch was sent is finished and its session
+ * never runs on untracked. A run of a repo that is not loaded is left alone. The other states
+ * are worked by later steps. It is not a new claim, so it is not counted as one, and an issue
+ * put back to `ready` is left to the claim step.
  */
 const workRuns = (
   world: PassWorld,
@@ -406,7 +409,7 @@ const workRuns = (
       const name = repo.watched.repo;
       const issue = Number(info.id.issue);
       const notes = pass.notes(`${name}${mention(issue)}`, info.state);
-      const outcome = yield* Effect.result(world.start(repo, issue));
+      const outcome = yield* Effect.result(world.resume(repo, issue));
       if (outcome._tag === "Failure") {
         if (outcome.failure._tag === "GateRunningError") notes.parts.push(GATE_RUNNING);
         else pass.failed(notes, "start", outcome.failure);
@@ -468,7 +471,7 @@ class Known {
 /**
  * Claims `start` began that left no run it can go on from: the issue is `factory:triage` and
  * assigned to the factory's login alone, and no unfinished run for it is confirmed (`RunInfo`).
- * `start` finishes such an issue (the design sends it to `stuck`), in the run it left when there
+ * `resume` finishes such an issue (the design sends it to `stuck`), in the run it left when there
  * is one, so a stuck path cut short is tried again on every pass. They are claims already made,
  * so the limit on new claims does not apply to them.
  */
@@ -495,7 +498,7 @@ const untrackedClaims = (
       for (const issue of listing.success.items) {
         if (known.of(name, issue).some((i) => i.unreadable || i.confirmed)) continue;
         const notes = pass.notes(`${name}${mention(issue)}`, "triage");
-        const run = yield* noteStart(world, pass, known, notes, repo, issue, {
+        const run = yield* noteStart(world, pass, known, notes, repo, issue, "resume", {
           claimed: (run) => `no run on record, claimed in run ${run}`,
           notTaken: "no run on record, not ours to resume",
           stuck: "no run on record",
@@ -576,10 +579,10 @@ interface StartWords {
 }
 
 /**
- * Calls `start` for the issue and puts what it did on `notes`: the run it names, when it made
- * one, is the run the notes' errors belong to. The issue's runs are read again into `known`
- * after the call. A refused claim is a `claim_skipped`; a claim counts only when the issue was
- * `ready`.
+ * Calls `call` (`start`, or `resume` for a claim already made) for the issue and puts what it
+ * did on `notes`: the run it names, when it made one, is the run the notes' errors belong to.
+ * The issue's runs are read again into `known` after the call. A refused claim is a
+ * `claim_skipped`; a claim counts only when the issue was `ready`.
  */
 const noteStart = (
   world: PassWorld,
@@ -588,12 +591,13 @@ const noteStart = (
   notes: Notes,
   repo: Repo,
   issue: number,
+  call: "start" | "resume",
   words: StartWords,
 ): Effect.Effect<RunId | null> =>
   Effect.gen(function* () {
     const name = repo.watched.repo;
     const before = newestRun(known.of(name, issue));
-    const outcome = yield* Effect.result(world.start(repo, issue));
+    const outcome = yield* Effect.result(world[call](repo, issue));
     if (outcome._tag === "Failure" && outcome.failure._tag === "GateRunningError") {
       // Nothing was called or written.
       notes.parts.push(GATE_RUNNING);
@@ -759,7 +763,7 @@ const claim = (
         });
         continue;
       }
-      const run = yield* noteStart(world, pass, known, notes, repo, issue, {
+      const run = yield* noteStart(world, pass, known, notes, repo, issue, "start", {
         claimed: (run) => `claimed, session started in run ${run}`,
         notTaken: "not claimed",
         stuck: "claimed, but the launch failed",
