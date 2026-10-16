@@ -12,7 +12,7 @@ import * as AuthHttp from "../../auth/http.ts";
  * middleware of its own HTTP API makes (`AuthHttp.layerAuthenticatedAuth`), so paired, relay and
  * tunnel sessions are accepted or refused exactly as there. That middleware is typed against
  * HttpApi endpoints and cannot wrap a plain router route, so this does what upstream's own plain
- * routes in `http.ts` do. The contract error classes render themselves, so a failing route
+ * OTLP proxy route does (`authenticateRawRouteWithScope` in `http.ts`). The contract error classes render themselves, so a failing route
  * answers 401, 403 or 500 JSON without a handler.
  */
 
