@@ -18,6 +18,7 @@ import { utcSecond } from "./runner/start.ts";
 import { MARKER } from "./tracker/github.ts";
 import { FactoryProcess, RunSpawnError, type RunInput, type RunResult } from "./process.ts";
 import * as Paths from "./t3/paths.ts";
+import * as Sessions from "./t3/sessions.ts";
 
 /** A process runner on a machine with no `gh`: every call fails to start. */
 const noGh = Layer.succeed(
@@ -26,6 +27,18 @@ const noGh = Layer.succeed(
     run: () => Effect.fail(new RunSpawnError({ shell: false, cause: new Error("gh not found") })),
   }),
 );
+
+/** A FactorySessions that finds no T3 project and dies on anything else. */
+const stubSessions = Sessions.FactorySessions.of({
+  findProject: () => Effect.succeed(null),
+  launch: () => Effect.die("not launched"),
+  status: () => Effect.die("no status"),
+  thread: () => Effect.die("no thread"),
+  send: () => Effect.die("not sent"),
+  archive: () => Effect.die("not archived"),
+  removeWorktree: () => Effect.die("not removed"),
+});
+const noSessions = Layer.succeed(Sessions.FactorySessions, stubSessions);
 
 const messageText = (message: unknown): string => {
   const first = Array.isArray(message) ? message[0] : message;
@@ -76,6 +89,7 @@ const logsFor = (
               }),
             ),
             Layer.provide(gh),
+            Layer.provide(noSessions),
           ),
         ),
       ).pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false })));
@@ -205,7 +219,7 @@ describe("liveWorld", () => {
   };
 
   const worldOf = (process: FactoryProcess["Service"]) =>
-    liveWorld(machine, "/factory-test/data", process, () => NOW, "mac-mini");
+    liveWorld(machine, "/factory-test/data", process, stubSessions, () => NOW, "mac-mini");
 
   const repo: Repo = {
     watched: machine.repos[0]!,

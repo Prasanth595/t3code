@@ -61,8 +61,9 @@ const githubFailure = (): StartError =>
   new GitHubFailed({ args: ["issue", "list"], status: 1, stderr: "boom" });
 
 const started = (issue: number, repo = REPO): StartOutcome => ({
-  kind: "claimed",
+  kind: "started",
   run: rid(issue, repo),
+  threadId: "thread-1",
 });
 
 type Answers<T> = Record<string, T | "error">;
@@ -192,7 +193,7 @@ class Fake implements PassWorld {
         confirmed: true,
       });
     }
-    if ("kind" in answer && answer.kind === "claimed") {
+    if ("kind" in answer && answer.kind === "started") {
       this.runs.push({ id: answer.run, state: "triage", unreadable: false, confirmed: true });
       return Effect.succeed(answer);
     }
@@ -337,7 +338,7 @@ describe("claiming new issues", () => {
       const { lines } = yield* pass(fake, machine([REPO], 1));
       assert.equal(
         runLine(lines, "rawphp/softfac#2 "),
-        "rawphp/softfac#2 ready: claimed in run rawphp__softfac__2__1",
+        "rawphp/softfac#2 ready: claimed, session started in run rawphp__softfac__2__1",
       );
     }),
   );
@@ -370,6 +371,7 @@ describe("claiming new issues", () => {
       assert.equal(report.claimed, 0);
       const line = runLine(lines, "rawphp/softfac#12 ");
       assert.ok(line.includes("stuck"), line);
+      assert.ok(line.includes("claimed, but the launch failed"), line);
       assert.ok(line.includes("rawphp__softfac__12__1"), line);
       assert.ok(!line.includes("secret detail"), line);
     }),
