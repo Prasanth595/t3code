@@ -25,6 +25,36 @@ const summary: DeviceHostSummary = {
 };
 
 describe("device host connection checks", () => {
+  it.each([
+    [
+      "203.0.113.42",
+      "connect to host 203.0.113.42 port 22: refused",
+      "connect to host ••• port 22: refused",
+    ],
+    [
+      "build.example.com",
+      "Could not resolve hostname build.example.com",
+      "Could not resolve hostname •••",
+    ],
+    ["devbox", "Could not resolve hostname devbox", "Could not resolve hostname devbox"],
+    [
+      "devbox",
+      "connect to host 2001:db8:: port 22: refused",
+      "connect to host ••• port 22: refused",
+    ],
+  ])("redacts failed probes for %s before reporting them", async (target, message, expected) => {
+    const results = new Map<string, DeviceHostCheck>();
+    await checkDeviceHostConnections(
+      targets.slice(0, 1),
+      { ...host, target },
+      async () => {
+        throw new Error(message);
+      },
+      (environmentId, result) => results.set(environmentId, result),
+    );
+    expect(results.get(ids[0]!)).toEqual({ status: "failed", error: expected });
+  });
+
   it("starts all connected environments and retains success, local, failure, and offline results", async () => {
     const calls: string[] = [];
     const pending = new Map<

@@ -373,7 +373,8 @@ export function sshTargetLabel(target: DesktopSshEnvironmentTarget): string {
 }
 
 const IPV4_LITERAL = /\b(?:\d{1,3}\.){3}\d{1,3}\b/gu;
-const IPV6_LITERAL = /\[?(?:[0-9a-f]{1,4})?(?::[0-9a-f]{0,4}){1,6}:[0-9a-f]{1,4}\]?/giu;
+const IPV6_LITERAL =
+  /(?<![\w:])\[?(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){0,6}::|(?:[0-9a-f]{1,4})?(?::[0-9a-f]{0,4}){1,6}:[0-9a-f]{1,4})\]?(?!\w|:[0-9a-f:])/giu;
 
 export function redactSshAddresses(text: string, target: DesktopSshEnvironmentTarget): string {
   const replacement = isSshNetworkAddress(target.alias) ? "•••" : target.alias;
@@ -385,7 +386,7 @@ export function redactSshAddresses(text: string, target: DesktopSshEnvironmentTa
   return secrets
     .reduce((redacted, secret) => redacted.split(secret).join(replacement), text)
     .replace(IPV4_LITERAL, "•••")
-    .replace(IPV6_LITERAL, "•••");
+    .replace(IPV6_LITERAL, (address) => (/^[a-f]+::[a-f]+$/iu.test(address) ? address : "•••"));
 }
 
 export function sshTargetKey(target: DesktopSshEnvironmentTarget): string {

@@ -5,6 +5,7 @@ import {
   SshDeviceHostConfig,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { redactSshAddresses } from "@t3tools/client-runtime/connection";
 
 export interface DeviceHostCheckTarget {
   environmentId: EnvironmentId;
@@ -60,7 +61,12 @@ export async function checkDeviceHostConnections(
       } catch (error) {
         report(target.environmentId, {
           status: "failed",
-          error: error instanceof Error ? error.message : String(error),
+          error: redactSshAddresses(error instanceof Error ? error.message : String(error), {
+            alias: host.target,
+            hostname: host.target,
+            username: null,
+            port: host.port ?? null,
+          }),
         });
       }
     }),
