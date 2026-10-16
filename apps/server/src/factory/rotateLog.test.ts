@@ -28,10 +28,15 @@ beforeEach(() => {
   file = NodePath.join(dir, "t3fac.log");
 });
 
-const rotate = (...args: Array<string>) => {
-  const result = NodeChildProcess.spawnSync("bash", [script, file, ...args], { encoding: "utf8" });
+const rotateWith = (env: NodeJS.ProcessEnv, ...args: Array<string>) => {
+  const result = NodeChildProcess.spawnSync("bash", [script, file, ...args], {
+    encoding: "utf8",
+    env,
+  });
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 };
+
+const rotate = (...args: Array<string>) => rotateWith(process.env, ...args);
 
 // A first line naming the run, then filler to reach `bytes`.
 const fill = (marker: string, bytes: number) => {
@@ -45,6 +50,13 @@ const siblings = () =>
     .sort();
 
 const sha = (buffer: Buffer) => NodeCrypto.createHash("sha256").update(buffer).digest("hex");
+
+// Every rotated file's name and content hash, to show a run changed none of them.
+const snapshot = () =>
+  siblings().map((name) => [
+    name,
+    sha(NodeFS.readFileSync(NodePath.join(NodePath.dirname(file), name))),
+  ]);
 
 describe("rotate-log.sh", () => {
   it("does nothing under the limit", () => {
@@ -107,6 +119,51 @@ describe("rotate-log.sh", () => {
     expect(siblings()).toEqual(["t3fac.log.1", "t3fac.log.2.gz"]);
     expect(NodeFS.readFileSync(`${file}.1`, "utf8").startsWith("run 7\n")).toBe(true);
     expect(NodeZlib.gunzipSync(NodeFS.readFileSync(`${file}.2.gz`)).toString()).toMatch(/^run 6\n/);
+  });
+
+  it.each([
+    ["exactly max_mb", 1 * MB, "1"],
+    ["an empty file with max_mb 0", 0, "0"],
+  ])("does nothing for %s", (_name, bytes, maxMb) => {
+    const content = Buffer.alloc(bytes, "x");
+    NodeFS.writeFileSync(file, content);
+    expect(rotate(maxMb)).toEqual({ status: 0, stdout: "", stderr: "" });
+    expect(NodeFS.readFileSync(file).equals(content)).toBe(true);
+    expect(siblings()).toEqual([]);
+  });
+
+  it("moves, deletes and truncates nothing when the copy fails", () => {
+    for (let run = 1; run <= 3; run++) {
+      NodeFS.writeFileSync(file, fill(`run ${run}`, 2 * MB));
+      expect(rotate("1").status).toBe(0);
+    }
+    const content = fill("run 4", 2 * MB);
+    NodeFS.writeFileSync(file, content);
+    const before = snapshot();
+
+    // A cp that leaves a partial copy and fails, as one on a full disk does.
+    const bin = NodeFS.mkdtempSync(NodePath.join(tmp, "bin-"));
+    NodeFS.writeFileSync(NodePath.join(bin, "cp"), '#!/bin/sh\necho partial > "$2"\nexit 1\n', {
+      mode: 0o755,
+    });
+    const result = rotateWith({ ...process.env, PATH: `${bin}:${process.env.PATH}` }, "1");
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toBe("");
+    expect(snapshot()).toEqual(before);
+    expect(NodeFS.readFileSync(file).equals(content)).toBe(true);
+  });
+
+  it("gzips an older copy an earlier run left uncompressed", () => {
+    NodeFS.writeFileSync(`${file}.1`, "copy 1\n");
+    NodeFS.writeFileSync(`${file}.2`, "copy 2, its gzip never ran\n");
+    NodeFS.writeFileSync(file, fill("run 3", 2 * MB));
+    expect(rotate("1").status).toBe(0);
+    expect(siblings()).toEqual(["t3fac.log.1", "t3fac.log.2.gz", "t3fac.log.3.gz"]);
+    expect(NodeZlib.gunzipSync(NodeFS.readFileSync(`${file}.2.gz`)).toString()).toBe("copy 1\n");
+    expect(NodeZlib.gunzipSync(NodeFS.readFileSync(`${file}.3.gz`)).toString()).toBe(
+      "copy 2, its gzip never ran\n",
+    );
   });
 
   it("exits 0 and creates nothing when the file is missing", () => {

@@ -49,7 +49,7 @@ This is an experiment. The Rust softfac keeps running and keeps building its rep
       GitHub issues, labels, PRs              <base>/factory/runs/*.jsonl
 ```
 
-One process, one binary, one LaunchAgent, one log. Agent sessions are ordinary T3 threads, so the T3 UI shows them next to a Factory page.
+One process, one binary, one LaunchAgent, one log. A second LaunchAgent, `io.github.rawphp.t3fac.logrotate`, only rotates that log on a timer, because a crash-looping server writes the most log and cannot rotate it itself. Agent sessions are ordinary T3 threads, so the T3 UI shows them next to a Factory page.
 
 ## Code layout in the fork
 
@@ -132,14 +132,14 @@ The rule is the one softfac already has: one factory per repo.
 - The fork watches only repos that are removed from the Rust factory's `repos` list. Start with one low-stakes repo. Both factories use the same labels, assignee and comment markers, so sharing a repo would make them claim each other's issues.
 - Separate everything else:
 
-|              | Rust softfac                                        | Fork                                   |
-| ------------ | --------------------------------------------------- | -------------------------------------- |
-| T3 base dir  | `~/.config/softfac/t3`                              | `~/.config/t3fac`                      |
-| Port         | 3874                                                | 3876                                   |
-| LaunchAgent  | `io.github.rawphp.softfac`, `com.rawphp.softfac.t3` | `io.github.rawphp.t3fac`               |
-| Factory data | `~/.local/share/softfac`                            | `~/.config/t3fac/factory`              |
-| Repo clones  | `repos[].path`                                      | separate clones, never the same `path` |
-| Logs         | `~/Library/Logs/softfac`                            | `~/Library/Logs/t3fac`                 |
+|              | Rust softfac                                        | Fork                                                         |
+| ------------ | --------------------------------------------------- | ------------------------------------------------------------ |
+| T3 base dir  | `~/.config/softfac/t3`                              | `~/.config/t3fac`                                            |
+| Port         | 3874                                                | 3876                                                         |
+| LaunchAgent  | `io.github.rawphp.softfac`, `com.rawphp.softfac.t3` | `io.github.rawphp.t3fac`, `io.github.rawphp.t3fac.logrotate` |
+| Factory data | `~/.local/share/softfac`                            | `~/.config/t3fac/factory`                                    |
+| Repo clones  | `repos[].path`                                      | separate clones, never the same `path`                       |
+| Logs         | `~/Library/Logs/softfac`                            | `~/Library/Logs/t3fac`                                       |
 
 `t3fac` is a working name.
 

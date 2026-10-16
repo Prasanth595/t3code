@@ -96,13 +96,14 @@ const makeArchive = (version: string, options: { binary?: boolean; label?: strin
 
 // A little launchd-like, one loaded flag and drain file per job label (the main job and the
 // logrotate job): bootout leaves the job loaded for two more `print` polls (or
-// LAUNCHCTL_BOOTOUT_DRAIN, main job only), and bootstrap fails with EIO while it is still loaded (or when
+// LAUNCHCTL_BOOTOUT_DRAIN for the main job, LAUNCHCTL_BOOTOUT_DRAIN_LOGROTATE for the other), and bootstrap fails with EIO while it is still loaded (or when
 // LAUNCHCTL_BOOTSTRAP_FAIL is set, main job only; LAUNCHCTL_BOOTSTRAP_FAIL_LOGROTATE fails the
 // logrotate job's bootstrap only). Only the main job's bootstrap writes "factory started" to the log when
 // LAUNCHCTL_HEALTHY (space-separated `current` targets) lists the version `current` points at
 // (LAUNCHCTL_HEALTHY_LINE writes another line instead, LAUNCHCTL_HEALTHY_DELAY writes it that many
 // seconds later, as a server still starting would); LAUNCHCTL_TRUNCATE_LOG empties the log first,
-// as a rotation would.
+// as a rotation would, and LAUNCHCTL_ROTATE_LOG copies the log to .1 and empties it right after
+// the line, as rotate-log.sh would.
 const setupSandbox = () => {
   tmp = NodeFS.realpathSync(NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3fac-install-")));
   home = NodePath.join(tmp, "home");
@@ -151,12 +152,13 @@ const setupSandbox = () => {
       '            (sleep "$LAUNCHCTL_HEALTHY_DELAY"; echo "$line" >> "$HOME/Library/Logs/t3fac/t3fac.log") > /dev/null 2>&1 &',
       "          else",
       '            echo "$line" >> "$HOME/Library/Logs/t3fac/t3fac.log"',
+      '            if [ -n "$LAUNCHCTL_ROTATE_LOG" ]; then cp "$HOME/Library/Logs/t3fac/t3fac.log" "$HOME/Library/Logs/t3fac/t3fac.log.1"; : > "$HOME/Library/Logs/t3fac/t3fac.log"; fi',
       "          fi",
       "        fi",
       "      done",
       "    fi ;;",
       "  bootout)",
-      '    if [ "$main" = 1 ]; then echo "${LAUNCHCTL_BOOTOUT_DRAIN:-2}" > "$drain"; else echo 2 > "$drain"; fi ;;',
+      '    if [ "$main" = 1 ]; then echo "${LAUNCHCTL_BOOTOUT_DRAIN:-2}" > "$drain"; else echo "${LAUNCHCTL_BOOTOUT_DRAIN_LOGROTATE:-2}" > "$drain"; fi ;;',
       "esac",
       "exit 0",
       "",
@@ -270,8 +272,12 @@ describe("install.sh and rollback.sh", () => {
   });
 
   it("boots the logrotate job out and back in on a second install, leaving the main restart alone", () => {
+    const installed = NodePath.join(root(), "rotate-log.sh");
+    const inode = NodeFS.statSync(installed).ino;
     const result = run("install.sh", archives[v2]!);
     expect(result.status).toBe(0);
+    // Replaced by rename, not rewritten in place: a rotation running now keeps the old file.
+    expect(NodeFS.statSync(installed).ino).not.toBe(inode);
     const rotate = logrotateCalls(result.calls);
     expect(rotate[0]).toBe(`print gui/${uid}/${logrotateLabel}`);
     expect(rotate[1]).toBe(`bootout gui/${uid}/${logrotateLabel}`);
@@ -397,6 +403,21 @@ describe("install.sh and rollback.sh when the logrotate job cannot be reloaded",
     expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v1}`);
     expect(NodeFS.existsSync(NodePath.join(root(), "previous"))).toBe(false);
     expect(result.stderr).toContain(warning);
+    expectRestartSequence(result.calls);
+  });
+
+  it("install.sh warns without bootstrapping the logrotate job when it never unloads", () => {
+    archives[v3] = makeArchive(v3);
+    const result = runWith(
+      { LAUNCHCTL_BOOTOUT_DRAIN_LOGROTATE: "1000", T3FAC_UNLOAD_WAIT: "1" },
+      "install.sh",
+      archives[v3]!,
+    );
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(`job ${logrotateLabel} is still loaded 1s after bootout`);
+    expect(result.stderr).toContain(warning);
+    expect(logrotateCalls(result.calls).some((c) => c.startsWith("bootstrap"))).toBe(false);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v3}`);
     expectRestartSequence(result.calls);
   });
 
@@ -648,6 +669,14 @@ describe("install.sh and rollback.sh health check", () => {
     installV1();
     seedLog("older log content\n".repeat(10));
     const result = runWith({ LAUNCHCTL_TRUNCATE_LOG: "1" }, "install.sh", archives[v2]!);
+    expect(result.status).toBe(0);
+    expect(link("current")).toBe(`versions/${v2}`);
+  });
+
+  it("counts a line the log rotation moved to .1 during the health wait", () => {
+    installV1();
+    seedLog("older log content\n".repeat(10));
+    const result = runWith({ LAUNCHCTL_ROTATE_LOG: "1" }, "install.sh", archives[v2]!);
     expect(result.status).toBe(0);
     expect(link("current")).toBe(`versions/${v2}`);
   });
