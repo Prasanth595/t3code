@@ -195,7 +195,8 @@ export const lastLineIsFinished = (path: string): boolean => {
   // Step back over blank lines to the last line that holds something.
   for (;;) {
     const lineEnd = end - 1;
-    const start = tail.lastIndexOf(NEWLINE, lineEnd - 1) + 1;
+    // A negative offset would count from the end of the buffer, so the first line has no earlier one.
+    const start = lineEnd === 0 ? 0 : tail.lastIndexOf(NEWLINE, lineEnd - 1) + 1;
     const line = tail.subarray(start, lineEnd);
     if (isBlankLine(line)) {
       if (start === 0) return false;
