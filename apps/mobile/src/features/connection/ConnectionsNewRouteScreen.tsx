@@ -24,6 +24,7 @@ import { AppText as Text, AppTextInput, type AppTextInputProps } from "../../com
 import { FrostedCutout } from "../../components/ui/FrostedCutout";
 import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
 import { useAddEnvironmentCloudflareAccess } from "./CloudflareAccessFields";
+import { useClientEnroll } from "./useClientEnroll";
 import {
   setPendingConnectionError,
   useRemoteConnections,
@@ -69,6 +70,7 @@ export function ConnectionsNewRouteScreen({
   // A good scan parks the camera so it can't re-read the code over later edits.
   const [scanComplete, setScanComplete] = useState(false);
   const attemptedAutoConnectRef = useRef<string | null>(null);
+  const enrollInvite = useClientEnroll(setIsSubmitting);
   const access = useAddEnvironmentCloudflareAccess({
     pairingUrl: buildPairingUrl(hostInput, codeInput),
     failure: pairingConnectionError,
@@ -137,6 +139,11 @@ export function ConnectionsNewRouteScreen({
       }
 
       setScannerLocked(true);
+      if (enrollInvite(data)) {
+        setScanComplete(true);
+        setScannerLocked(false);
+        return;
+      }
 
       try {
         const pairingUrl = extractPairingUrlFromQrPayload(data);
@@ -157,7 +164,7 @@ export function ConnectionsNewRouteScreen({
         }, 600);
       }
     },
-    [onChangeConnectionPairingUrl, scannerLocked],
+    [enrollInvite, onChangeConnectionPairingUrl, scannerLocked],
   );
 
   const connectAndClose = useCallback(
@@ -189,6 +196,7 @@ export function ConnectionsNewRouteScreen({
   );
 
   const handleSubmit = useCallback(async () => {
+    if (enrollInvite(hostInput)) return;
     const pairingUrl = buildPairingUrl(hostInput, codeInput);
     setIsSubmitting(true);
     const staged = await access.stage();
@@ -197,7 +205,7 @@ export function ConnectionsNewRouteScreen({
       return setPendingConnectionError(staged.error);
     }
     if (!(await connectAndClose(pairingUrl))) await staged.undo();
-  }, [access, codeInput, connectAndClose, hostInput]);
+  }, [access, codeInput, connectAndClose, enrollInvite, hostInput]);
 
   useEffect(() => {
     if (!shouldAutoConnect || attemptedAutoConnectRef.current === routePairingUrl) {

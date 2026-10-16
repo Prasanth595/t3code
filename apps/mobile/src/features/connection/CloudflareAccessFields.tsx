@@ -124,6 +124,29 @@ function useStageCloudflareAccessToken() {
   );
 }
 
+/**
+ * Saves `token` for `origin` and keeps its other headers. `undo` puts back the
+ * headers as they were, for a flow that fails after the save.
+ */
+export function useSaveCloudflareAccessToken() {
+  const store = useCloudflareAccessStore();
+  return useCallback(
+    async (
+      origin: string,
+      token: CloudflareAccessServiceToken,
+    ): Promise<{ readonly undo: () => Promise<void> } | { readonly error: string }> => {
+      const result = await store.update(origin, () => token);
+      if ("error" in result) return result;
+      return {
+        undo: async () => {
+          await store.write(origin, result.previous);
+        },
+      };
+    },
+    [store],
+  );
+}
+
 /** Client ID and Client Secret inputs. The secret stays masked. */
 function CloudflareAccessFields(props: {
   readonly form: CloudflareAccessForm;
