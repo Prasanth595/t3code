@@ -240,6 +240,27 @@ describe("listUnfinishedRuns: finished runs are skipped by their tail", () => {
     expect(listUnfinishedRuns(dataDir)).toEqual([]);
     expect(fullReads()).toContain(long);
   });
+
+  it("lists a run file of only blank lines as unfinished, as readRun reads it", () => {
+    const dataDir = tempDir();
+    writeRun(dataDir, rid(1), "\n");
+    writeRun(dataDir, rid(2), "\n\n");
+    writeRun(dataDir, rid(3), "\n\r\n");
+    const unfinished = { state: null, unreadable: false, confirmed: false, session: false };
+    expect(listUnfinishedRuns(dataDir)).toEqual([
+      { id: rid(1), ...unfinished },
+      { id: rid(2), ...unfinished },
+      { id: rid(3), ...unfinished },
+    ]);
+  });
+
+  it("lists a large run file whose whole tail is blank lines, with its state", () => {
+    const dataDir = tempDir();
+    writeRun(dataDir, rid(1), stateLine("building") + "\n".repeat(9000));
+    expect(listUnfinishedRuns(dataDir)).toEqual([
+      { id: rid(1), state: "building", unreadable: false, confirmed: false, session: false },
+    ]);
+  });
 });
 
 describe("holdsSlot", () => {
