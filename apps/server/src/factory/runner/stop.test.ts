@@ -10,7 +10,8 @@ import { makeCause, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { readRun } from "../ledger/read.ts";
 import { runPath, type RunId } from "../ledger/runId.ts";
-import { T0, useTempDirs } from "../ledger/testSupport.ts";
+import { LedgerNotFoundError } from "../ledger/errors.ts";
+import { T0, catchLedgerError, useTempDirs } from "../ledger/testSupport.ts";
 import { readProgress } from "./progress.ts";
 import {
   STOP_REQUESTS_DIR,
@@ -213,7 +214,7 @@ describe("requestStop", () => {
   });
 
   it("fails for a run with no ledger", () => {
-    assert.throws(() => requestStop(tempDir(), run10, () => T0), /not found|no such/i);
+    catchLedgerError(() => requestStop(tempDir(), run10, () => T0), LedgerNotFoundError);
   });
 });
 
