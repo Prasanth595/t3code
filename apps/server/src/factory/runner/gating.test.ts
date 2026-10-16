@@ -4,7 +4,7 @@
  * session's PR becomes ready, or it does not", "gate: a failed attempt goes back into the
  * session", "gate: the retries run out", "gate: every call can fail, and the gate is called
  * again", "gate: the base branch moves" and "gate: the decision that the gate passed is in the
- * ledger". Left out, for the issues that own them: required checks (#26), the re-gate of a
+ * ledger" and "gate: required CI checks". Left out, for the issues that own them: the re-gate of a
  * `pr-open` pull request and the legacy worktree sweep (#23), and the `.dw/config.yml` refusal of a
  * repo with `project_config` (the fork has none). The end of a run from #20 (a closed issue, a
  * stop by hand) is at the end of the file. The results comment's own tests are in `gate.test.ts`.
@@ -46,6 +46,8 @@ import {
   GitHubFailed,
   GitHubRateLimited,
   type Activity,
+  type CheckState,
+  type CheckStatus,
   type GitHubError,
   type IssueDetail,
   type PullRequest,
@@ -337,6 +339,9 @@ class FakeGh {
   markDraftFails = false;
   /** What the instructors did on the issue since the run began: what `forward` reads. */
   activity: Activity = { comments: [], bodyEdit: null, dropped: [] };
+  /** The states each read of the checks answers, in order; the last repeats, and with none every check passed. */
+  checkScript: Array<Array<CheckState>> = [];
+  checkReads = 0;
 
   /** Records the call, then applies `effect` unless the call fails before reaching GitHub. */
   run(call: string, effect: (world: World) => void): Effect.Effect<void, GitHubError> {
@@ -406,6 +411,34 @@ class FakeGh {
           if (this.readyByFails) return Effect.fail(ghFailure());
           if (this.readyByRateLimited) return Effect.fail(ghRateLimit());
           return Effect.succeed(this.readyBy);
+        }),
+      ),
+    checks: (sha, names) =>
+      this.run(`checks ${sha} ${names.join(",")}`, () => {}).pipe(
+        Effect.map((): Array<CheckStatus> => {
+          const read = this.checkReads;
+          this.checkReads += 1;
+          const states =
+            this.checkScript[read] ??
+            this.checkScript.at(-1) ??
+            names.map((): CheckState => "passed");
+          return names.map((name, i) => {
+            const state = states[i]!;
+            return {
+              name,
+              state,
+              conclusion: {
+                passed: "success",
+                failed: "failure",
+                pending: "in_progress",
+                missing: "",
+              }[state],
+              url:
+                state === "missing"
+                  ? null
+                  : `https://github.com/rawphp/softfac/actions/runs/1/job/${name}`,
+            };
+          });
         }),
       ),
     branchTip: (branch) =>
@@ -869,13 +902,14 @@ const failFirst = (rig: Rig, n: number) => {
     call < n ? failingLast(commands, 101, "boom\n") : passing(commands);
 };
 
-/** The gate's stuck flow: the outcome, the calls, the ledger, the comment and the stop first. */
-const assertGateStuck = (
+/** The gate's stuck flow: the outcome, the calls, the ledger, the comment and the stop first. `totalMs` is how long the run took from its first line to its last. */
+const assertGateStuckAfter = (
   rig: Rig,
   step: GateStep,
   before: ReadonlyArray<string>,
   texts: { publicReason: string; text?: string; recorded?: string },
   middle: ReadonlyArray<Line>,
+  totalMs: number,
 ) => {
   const recorded = texts.recorded ?? joined(texts.publicReason, texts.text);
   assert.deepStrictEqual(step, { kind: "stuck", reason: recorded });
@@ -895,7 +929,7 @@ const assertGateStuck = (
       event: "finished",
       data: {
         outcome: "stuck",
-        total_ms: 0,
+        total_ms: totalMs,
         gate_attempts: attempts,
         review_cycles: null,
         pr_url: null,
@@ -908,6 +942,14 @@ const assertGateStuck = (
   assert.ok(!rig.gh.world.prReady, "a stuck run leaves the PR a draft");
   assert.deepStrictEqual(rig.gh.world.assignees, []);
 };
+
+const assertGateStuck = (
+  rig: Rig,
+  step: GateStep,
+  before: ReadonlyArray<string>,
+  texts: { publicReason: string; text?: string; recorded?: string },
+  middle: ReadonlyArray<Line>,
+) => assertGateStuckAfter(rig, step, before, texts, middle, 0);
 
 const assertGateStuckOnPr = (rig: Rig, step: GateStep, publicReason: string) => {
   assertGateStuck(rig, step, ["pullRequest 12"], { publicReason, text: DONE_MESSAGE }, []);
@@ -2830,6 +2872,531 @@ describe("gate: the decision that the gate passed is in the ledger", () => {
         assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
         assert.strictEqual(rig.gh.world.state, "pr-open");
       }),
+  );
+});
+
+// ---- gate: required CI checks -------------------------------------------------------------------
+
+/** The commit the checks are read for is the one that was gated. */
+const checksRead = (pairs: ReadonlyArray<readonly [string, string]>): Line => ({
+  event: "checks_read",
+  data: { sha: HEAD, checks: pairs.map(([name, state]) => ({ name, state })) },
+});
+
+const checksCall = (names: ReadonlyArray<string>) => `checks ${HEAD} ${names.join(",")}`;
+
+/**
+ * What a gate attempt reads on GitHub when it passes and the project has required checks: the
+ * binding, the base tip, the pull request again after the commands, the base branch and the
+ * issue text again before the pass is recorded, and once more with the checks.
+ */
+const passingReads = (names: ReadonlyArray<string>) => [
+  "pullRequest 12",
+  "branchTip main",
+  "pullRequest 12",
+  "branchTip main",
+  UNCHANGED_READ,
+  "pullRequest 12",
+  checksCall(names),
+];
+
+const readyCalls = (attempt: number) => [
+  "markPrReady 12",
+  `prComment 12 ${resultsComment(attempt)}`,
+  "setState 10 pr-open",
+  `status 10 rawphp ${PR_OPEN_BODY}`,
+];
+
+const finishedWithResults = (middle: ReadonlyArray<Line>): Array<Line> => [
+  ...BASE_EVENTS,
+  ...middle,
+  worktreeRemoved,
+  RESULTS_POSTED,
+  // The run stays open while its pull request waits.
+  moved("building", "pr-open"),
+];
+
+const CHECK_FAILED_MESSAGE =
+  "The factory gate failed. A required check did not pass on commit 4f1c2d3. Fix the cause, commit, push, and reply when done. Do not weaken or skip the check.\n\nCheck: gate\nResult: failure\nDetails: https://github.com/rawphp/softfac/actions/runs/1/job/gate";
+
+const CHECKS_HEAD_MOVED_REASON =
+  "the pull request's head changed while the factory waited for the required checks";
+
+const OTHER_HEAD = "5a0c2d3e4a5b60718293a4b5c6d7e8f901234567";
+
+/** A gate-ready run whose project names `checks` as required. */
+const readyWithChecks = (checks: ReadonlyArray<string>) =>
+  Effect.map(readyForGate(), (rig) => {
+    rig.project = { ...rig.project, requiredChecks: checks };
+    return rig;
+  });
+
+const withLimits = (rig: Rig, limits: Partial<ProjectConfig["limits"]>) => {
+  rig.project = { ...rig.project, limits: { ...rig.project.limits, ...limits } };
+};
+
+/** The states each read of the checks answers, in order; the last repeats. */
+const scriptChecks = (rig: Rig, reads: ReadonlyArray<ReadonlyArray<CheckState>>) => {
+  rig.gh.checkScript = reads.map((read) => [...read]);
+};
+
+/** The clock as softfac's rig counts it: it starts at 1 000 ms, which is `T0` here. */
+const setNow = (rig: Rig, ms: number) => {
+  rig.clock.now = T0 + ms - 1_000;
+};
+
+const sendsOf = (rig: Rig) => rig.t3.calls.filter((c) => c.startsWith("send "));
+
+describe("gate: required CI checks", () => {
+  it.effect("a pass with required checks that have all passed marks the pr ready", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate", "lint"]);
+      scriptChecks(rig, [["passed", "passed"]]);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+      assert.deepStrictEqual(rig.gh.calls, [...passingReads(["gate", "lint"]), ...readyCalls(1)]);
+      assert.deepStrictEqual(
+        linesOf(rig),
+        finishedWithResults([
+          ...passingAttempt(1),
+          PASSED_STEP,
+          checksRead([
+            ["gate", "passed"],
+            ["lint", "passed"],
+          ]),
+        ]),
+      );
+      assert.ok(rig.gh.world.prReady);
+    }),
+  );
+
+  it.effect("a project with no required checks never reads them", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyForGate();
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+      assert.ok(!rig.gh.calls.some((c) => c.startsWith("checks ")));
+    }),
+  );
+
+  it.effect(
+    "a pass waits for checks that are pending or missing and reads them again on the same commit",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* readyWithChecks(["gate", "lint"]);
+        scriptChecks(rig, [
+          ["pending", "missing"],
+          ["passed", "pending"],
+          ["passed", "passed"],
+        ]);
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "checks-pending" });
+        assert.deepStrictEqual(rig.gh.calls, passingReads(["gate", "lint"]));
+        // Nothing is recorded for a read that decides nothing, and nothing is marked ready.
+        assert.deepStrictEqual(linesOf(rig), [...BASE_EVENTS, ...passingAttempt(1), PASSED_STEP]);
+        assert.ok(!rig.gh.world.prReady);
+        assert.strictEqual(rig.gh.world.state, "building");
+
+        // The next pass reads the checks only: no checkout, no commands, no session.
+        clearCalls(rig);
+        const bytes = bytesOf(rig);
+        assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "checks-pending" });
+        assert.deepStrictEqual(rig.gh.calls, ["pullRequest 12", checksCall(["gate", "lint"])]);
+        assert.deepStrictEqual(rig.ws.calls, []);
+        assert.deepStrictEqual(rig.t3.calls, []);
+        assert.strictEqual(bytesOf(rig), bytes);
+
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+        assert.deepStrictEqual(rig.gh.calls, [
+          "pullRequest 12",
+          checksCall(["gate", "lint"]),
+          ...readyCalls(1),
+        ]);
+        assert.deepStrictEqual(rig.ws.calls, []);
+        assert.deepStrictEqual(
+          linesOf(rig),
+          finishedWithResults([
+            ...passingAttempt(1),
+            PASSED_STEP,
+            checksRead([
+              ["gate", "passed"],
+              ["lint", "passed"],
+            ]),
+          ]),
+        );
+      }),
+  );
+
+  it.effect("a failed check goes back into the session and uses a gate attempt", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate"]);
+      scriptChecks(rig, [["failed"], ["passed"]]);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "sent-back", attempt: 1 });
+      assert.deepStrictEqual(rig.gh.calls, passingReads(["gate"]));
+      assert.deepStrictEqual(rig.t3.calls, [
+        "status thread-1",
+        "status thread-1",
+        sendCall(1, 1, CHECK_FAILED_MESSAGE),
+      ]);
+      assert.deepStrictEqual(linesOf(rig), [
+        ...BASE_EVENTS,
+        ...passingAttempt(1),
+        PASSED_STEP,
+        checksRead([["gate", "failed"]]),
+        sending(1, 1),
+        sentBack(1, 1),
+      ]);
+      assert.strictEqual(rig.gh.world.state, "building");
+      assert.ok(!rig.gh.world.prReady);
+
+      // The recorded pass is no longer one: until the session has run again nothing is gated.
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "not-ready" });
+      assert.deepStrictEqual(rig.gh.calls, []);
+      assert.deepStrictEqual(rig.ws.calls, []);
+
+      // A new run gates afresh, as attempt 2, and the new head's checks decide.
+      setRun(rig, "completed", 2);
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+      assert.deepStrictEqual(rig.gh.calls, [...passingReads(["gate"]), ...readyCalls(2)]);
+      assert.deepStrictEqual(rig.ws.calls, workspaceCalls(rig, 2));
+      assert.deepStrictEqual(
+        linesOf(rig),
+        finishedWithResults([
+          ...passingAttempt(1),
+          PASSED_STEP,
+          checksRead([["gate", "failed"]]),
+          sending(1, 1),
+          sentBack(1, 1),
+          ...passingAttempt(2),
+          PASSED_STEP,
+          checksRead([["gate", "passed"]]),
+        ]),
+      );
+    }),
+  );
+
+  it.effect(
+    "a failed check is reported even while another is pending and every failed one is named",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* readyWithChecks(["gate", "lint", "docs"]);
+        scriptChecks(rig, [["failed", "pending", "failed"]]);
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "sent-back", attempt: 1 });
+        const text = sendsOf(rig).at(-1)!;
+        assert.ok(
+          text.endsWith(
+            "Check: gate\nResult: failure\nDetails: https://github.com/rawphp/softfac/actions/runs/1/job/gate\n\nCheck: docs\nResult: failure\nDetails: https://github.com/rawphp/softfac/actions/runs/1/job/docs",
+          ),
+          text,
+        );
+        assert.ok(!text.includes("lint"), text);
+        assert.deepStrictEqual(
+          linesOf(rig).at(-3),
+          checksRead([
+            ["gate", "failed"],
+            ["lint", "pending"],
+            ["docs", "failed"],
+          ]),
+        );
+      }),
+  );
+
+  it.effect("a failed check on the last attempt is stuck like a failed command", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate"]);
+      withLimits(rig, { gateRetries: 0 });
+      scriptChecks(rig, [["failed"]]);
+      const step = yield* gateIn(rig);
+      const publicReason = "the required checks failed after 1 attempt";
+      assertGateStuck(
+        rig,
+        step,
+        passingReads(["gate"]),
+        {
+          publicReason,
+          text: CHECK_FAILED_MESSAGE,
+          recorded: joined(publicReason, CHECK_FAILED_MESSAGE),
+        },
+        [...passingAttempt(1), PASSED_STEP, checksRead([["gate", "failed"]])],
+      );
+      // Nothing is sent after the last attempt.
+      assert.deepStrictEqual(sendsOf(rig), []);
+    }),
+  );
+
+  it.effect("a failed check after the retries are used says how many attempts there were", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate"]);
+      withLimits(rig, { gateRetries: 1 });
+      scriptChecks(rig, [["failed"]]);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "sent-back", attempt: 1 });
+      setRun(rig, "completed", 2);
+      yield* advanceIn(rig);
+      const step = yield* gateIn(rig);
+      assert.ok(
+        step.kind === "stuck" &&
+          step.reason.startsWith("the required checks failed after 2 attempts\n\n"),
+        JSON.stringify(step),
+      );
+    }),
+  );
+
+  it.effect("checks that have not finished when the limit ends send the issue to stuck", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate", "lint"]);
+      withLimits(rig, { checksMinutes: 10 });
+      scriptChecks(rig, [["passed", "pending"]]);
+      setNow(rig, 1_000);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "checks-pending" });
+      // One millisecond short of the limit, counted from the gate's pass.
+      setNow(rig, 1_000 + 600_000 - 1);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "checks-pending" });
+
+      clearCalls(rig);
+      setNow(rig, 1_000 + 600_000);
+      const step = yield* gateIn(rig);
+      const publicReason = "the required checks did not finish within 10 minutes";
+      assertGateStuckAfter(
+        rig,
+        step,
+        ["pullRequest 12", checksCall(["gate", "lint"])],
+        { publicReason },
+        [
+          ...passingAttempt(1),
+          PASSED_STEP,
+          checksRead([
+            ["gate", "passed"],
+            ["lint", "pending"],
+          ]),
+        ],
+        600_000,
+      );
+    }),
+  );
+
+  it.effect("a check that never appeared when the limit ends has its own fixed reason", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate"]);
+      withLimits(rig, { checksMinutes: 2 });
+      scriptChecks(rig, [["missing"]]);
+      setNow(rig, 1_000);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "checks-pending" });
+      clearCalls(rig);
+      setNow(rig, 1_000 + 120_000);
+      const step = yield* gateIn(rig);
+      assertGateStuckAfter(
+        rig,
+        step,
+        ["pullRequest 12", checksCall(["gate"])],
+        { publicReason: "a required check was not reported within 2 minutes" },
+        [...passingAttempt(1), PASSED_STEP, checksRead([["gate", "missing"]])],
+        120_000,
+      );
+    }),
+  );
+
+  it.effect("checks that have passed when the limit ends still count", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate"]);
+      withLimits(rig, { checksMinutes: 1 });
+      scriptChecks(rig, [["pending"], ["passed"]]);
+      setNow(rig, 1_000);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "checks-pending" });
+      setNow(rig, 1_000 + 60_000 * 5);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+    }),
+  );
+
+  it.effect("a head that moved while the checks ran is stuck and nothing is marked ready", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate"]);
+      scriptChecks(rig, [["pending"]]);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "checks-pending" });
+      rig.gh.pr = { ...rig.gh.pr!, headSha: OTHER_HEAD };
+      clearCalls(rig);
+      const step = yield* gateIn(rig);
+      assertGateStuck(rig, step, ["pullRequest 12"], { publicReason: CHECKS_HEAD_MOVED_REASON }, [
+        ...passingAttempt(1),
+        PASSED_STEP,
+      ]);
+    }),
+  );
+
+  it.effect(
+    "a pull request that is no longer open is not marked ready and the checks are not read",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* readyWithChecks(["gate"]);
+        scriptChecks(rig, [["pending"]]);
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "checks-pending" });
+        rig.gh.pr = { ...rig.gh.pr!, open: false };
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+        assert.deepStrictEqual(rig.gh.calls, [
+          "pullRequest 12",
+          "setState 10 pr-open",
+          `status 10 rawphp ${PR_OPEN_BODY}`,
+        ]);
+        assert.ok(!rig.gh.world.prReady);
+      }),
+  );
+
+  it.effect(
+    "a pass whose checks were all read as passed does not read them again after a crash",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* readyWithChecks(["gate"]);
+        // The eighth call is `markPrReady`: the checks were read and recorded just before.
+        rig.gh.failAt = 7;
+        assert.strictEqual((yield* Effect.flip(gateIn(rig)))._tag, "GitHubFailed");
+        rig.gh.failAt = null;
+        clearCalls(rig);
+        // A different answer now must not matter: the decision is in the ledger.
+        scriptChecks(rig, [["failed"]]);
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+        assert.deepStrictEqual(rig.gh.calls, ["pullRequest 12", ...readyCalls(1)]);
+        assert.deepStrictEqual(
+          linesOf(rig),
+          finishedWithResults([
+            ...passingAttempt(1),
+            PASSED_STEP,
+            checksRead([["gate", "passed"]]),
+          ]),
+        );
+      }),
+  );
+
+  it.effect("a failure whose send reached the session is recorded even though the head moved", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate"]);
+      scriptChecks(rig, [["failed"]]);
+      // The send is made and its answer lost: the step is written, the send-back is not.
+      rig.t3.failAt = 2;
+      assert.strictEqual((yield* Effect.flip(gateIn(rig)))._tag, "FactorySessionsError");
+      const want: Array<Line> = [
+        ...BASE_EVENTS,
+        ...passingAttempt(1),
+        PASSED_STEP,
+        checksRead([["gate", "failed"]]),
+        sending(1, 1),
+      ];
+      assert.deepStrictEqual(linesOf(rig), want);
+
+      // The session ran again and pushed a fix.
+      rig.t3.failAt = null;
+      setRun(rig, "completed", 2);
+      rig.gh.pr = { ...rig.gh.pr!, headSha: OTHER_HEAD };
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "sent-back", attempt: 1 });
+      // Nothing was sent again, and the checks were not read for the old head.
+      assert.deepStrictEqual(rig.gh.calls, []);
+      assert.deepStrictEqual(rig.t3.calls, ["status thread-1"]);
+      assert.deepStrictEqual(linesOf(rig), [...want, sentBack(1, 1)]);
+      // And the new head is gated as attempt 2.
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+    }),
+  );
+
+  it.effect("a failed check waits while the session is still working and sends nothing", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate"]);
+      scriptChecks(rig, [["pending"], ["failed"]]);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "checks-pending" });
+      const bytes = bytesOf(rig);
+      // Someone started a run in the thread: the failure is not sent into the middle of it, and
+      // the step says the gate is not ready, not that the checks are pending.
+      setRun(rig, "running", 2);
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "not-ready" });
+      assert.deepStrictEqual(sendsOf(rig), []);
+      assert.strictEqual(bytesOf(rig), bytes);
+      assert.strictEqual(rig.gh.world.state, "building");
+    }),
+  );
+
+  it.effect("a failed check waits when the session has no run ordinal", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate"]);
+      scriptChecks(rig, [["pending"], ["failed"]]);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "checks-pending" });
+      const bytes = bytesOf(rig);
+      rig.t3.status = () => statusOf("completed", DONE_MESSAGE, { runOrdinal: null });
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "not-ready" });
+      assert.deepStrictEqual(sendsOf(rig), []);
+      assert.strictEqual(bytesOf(rig), bytes);
+    }),
+  );
+
+  it.effect(
+    "a failure that may not have reached the session is sent again under the same command id",
+    () =>
+      Effect.gen(function* () {
+        const rig = yield* readyWithChecks(["gate"]);
+        scriptChecks(rig, [["failed"]]);
+        rig.t3.failAt = 2;
+        assert.strictEqual((yield* Effect.flip(gateIn(rig)))._tag, "FactorySessionsError");
+        // The session has not run again since: the send is made again, with one `gate-sending`.
+        rig.t3.failAt = null;
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* gateIn(rig), { kind: "sent-back", attempt: 1 });
+        assert.deepStrictEqual(rig.t3.calls, [
+          "status thread-1",
+          "status thread-1",
+          sendCall(1, 1, CHECK_FAILED_MESSAGE),
+        ]);
+        const lines = linesOf(rig);
+        assert.strictEqual(
+          lines.filter((l) => JSON.stringify(l) === JSON.stringify(sending(1, 1))).length,
+          1,
+        );
+        assert.deepStrictEqual(lines.at(-1), sentBack(1, 1));
+      }),
+  );
+
+  it.effect("a session that is gone when a failure may have been sent is stuck", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate"]);
+      scriptChecks(rig, [["failed"]]);
+      rig.t3.failAt = 2;
+      assert.strictEqual((yield* Effect.flip(gateIn(rig)))._tag, "FactorySessionsError");
+      rig.t3.failAt = null;
+      rig.t3.status = () => new ThreadNotFoundError({ threadId: "thread-1" });
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "stuck", reason: THREAD_GONE });
+      assert.strictEqual(rig.gh.world.state, "stuck");
+    }),
+  );
+
+  it.effect("a session that is gone when a check has failed is stuck", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate"]);
+      scriptChecks(rig, [["pending"], ["failed"]]);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "checks-pending" });
+      rig.t3.status = () => new ThreadNotFoundError({ threadId: "thread-1" });
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "stuck", reason: THREAD_GONE });
+      assert.strictEqual(rig.gh.world.state, "stuck");
+    }),
+  );
+
+  it.effect("a failing read of the checks is an error that decides nothing", () =>
+    Effect.gen(function* () {
+      const rig = yield* readyWithChecks(["gate"]);
+      // The seventh call reads the checks (see `passingReads`).
+      rig.gh.failAt = 6;
+      assert.strictEqual((yield* Effect.flip(gateIn(rig)))._tag, "GitHubFailed");
+      // The pass is recorded, so the next call only reads the checks.
+      rig.gh.failAt = null;
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+      assert.deepStrictEqual(rig.ws.calls, []);
+      assert.deepStrictEqual(
+        linesOf(rig),
+        finishedWithResults([...passingAttempt(1), PASSED_STEP, checksRead([["gate", "passed"]])]),
+      );
+    }),
   );
 });
 
