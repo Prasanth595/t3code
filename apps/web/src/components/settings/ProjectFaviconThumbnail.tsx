@@ -27,7 +27,7 @@ export function ProjectFaviconThumbnail(props: {
   readonly path: string;
 }) {
   const [ref, inView] = useInView<HTMLSpanElement>();
-  const [failed, setFailed] = useState(false);
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const resource = useMemo(
     () =>
       inView ? ({ _tag: "draft-workspace-file", cwd: props.cwd, path: props.path } as const) : null,
@@ -38,13 +38,13 @@ export function ProjectFaviconThumbnail(props: {
 
   return (
     <span ref={ref} className="flex size-8 shrink-0 items-center justify-center">
-      {url && !failed ? (
+      {url && failedUrl !== url ? (
         <img
           alt=""
           className="max-h-8 max-w-8 rounded-sm object-contain"
           decoding="async"
           loading="lazy"
-          onError={() => setFailed(true)}
+          onError={() => setFailedUrl(url)}
           src={url}
         />
       ) : (
