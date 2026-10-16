@@ -142,7 +142,7 @@ export function markdownWithHtml(markdown: string): string {
 }
 
 // A delimiter row such as `|---|:--:|`, possibly inside a blockquote or list item.
-const TABLE_DELIMITER_ROW = /^[ \t>]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-*:?[ \t]*)*$/m;
+const TABLE_DELIMITER_ROW = /^[ \t>]*\|?[ \t]*:?-+:?[ \t]*(?:\|[ \t]*:?-*:?[ \t]*)*\r?$/m;
 
 /**
  * GFM lets a table interrupt a paragraph, but the native parser (md4c) only starts a table

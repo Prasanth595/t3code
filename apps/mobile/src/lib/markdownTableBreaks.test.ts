@@ -10,6 +10,13 @@ describe("tables right under a line of text", () => {
     );
   });
 
+  it("handles CRLF line endings", () => {
+    const crlf = table.replaceAll("\n", "\r\n");
+    expect(markdownWithTableBreaks(`Companies on file\r\n${crlf}`)).toBe(
+      `Companies on file\r\n\n${crlf}`,
+    );
+  });
+
   it("keeps the blank line inside a blockquote", () => {
     const quoted = table.replace(/^/gm, "> ");
     expect(markdownWithTableBreaks(`> Companies on file\n${quoted}`)).toBe(
