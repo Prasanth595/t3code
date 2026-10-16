@@ -11,9 +11,10 @@ import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
 
-/** A workspace file without a disposition is a preview and must be a previewable type.
-    `attachment` asks for a download instead: any regular file inside the workspace,
-    served with its own name and never rendered. */
+/** A file asset without a disposition is a preview and must be a previewable type.
+    `attachment` asks for a download instead: any regular file the route may serve
+    (inside the workspace, or any host path for `media-file`), served with its own
+    name and never rendered. */
 const WorkspaceFileDisposition = Schema.Literal("attachment");
 
 export const AssetResource = Schema.Union([
@@ -25,6 +26,7 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("media-file", {
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
+    disposition: Schema.optionalKey(WorkspaceFileDisposition),
   }),
   Schema.TaggedStruct("draft-workspace-file", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),

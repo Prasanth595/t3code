@@ -1091,6 +1091,53 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect.skipIf(!symlinksSupported)("downloads any host file outside the workspace", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const outside = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-host-download-" });
+      const filePath = path.join(outside, "plan.xlsx");
+      yield* fileSystem.writeFileString(filePath, "workbook");
+      const canonicalFile = yield* fileSystem.realPath(filePath);
+      const resource = {
+        _tag: "media-file" as const,
+        threadId: ThreadId.make("thread-1"),
+        path: filePath,
+      };
+
+      // Without a download disposition, a type the panel cannot preview stays refused.
+      expect(yield* issueAssetUrl({ resource }).pipe(Effect.flip)).toBeInstanceOf(
+        AssetPreviewTypeValidationError,
+      );
+
+      const result = yield* issueAssetUrl({ resource: { ...resource, disposition: "attachment" } });
+      const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+      const separator = suffix.indexOf("/");
+      const token = suffix.slice(0, separator);
+      const asset = yield* resolveAsset(token, suffix.slice(separator + 1));
+      expect(asset).toEqual({
+        kind: "file",
+        path: canonicalFile,
+        download: true,
+        fileName: "plan.xlsx",
+      });
+      if (asset?.kind !== "file") throw new Error("Expected a host download");
+      const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+      expect(response.headers.get("content-disposition")).toBe('attachment; filename="plan.xlsx"');
+      expect(response.headers.get("content-type")).toBe("application/octet-stream");
+      expect(yield* Effect.promise(() => response.text())).toBe("workbook");
+      // The capability names one file, never its siblings.
+      expect(yield* resolveAsset(token, "other.xlsx")).toBeNull();
+
+      // A file swapped for a symlink after minting stops resolving.
+      const elsewhere = path.join(outside, "elsewhere.xlsx");
+      yield* fileSystem.writeFileString(elsewhere, "other");
+      yield* fileSystem.remove(filePath);
+      yield* fileSystem.symlink(elsewhere, filePath);
+      expect(yield* resolveAsset(token, "plan.xlsx")).toBeNull();
+    }).pipe(Effect.provide(layerTest)),
+  );
+
   it.effect("signs MCP render intent only for inline HTML attachments", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

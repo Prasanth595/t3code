@@ -68,13 +68,23 @@ export function workspaceAssetResource(input: {
   return { _tag: input.kind, threadId: input.threadRef.threadId, path: input.absolutePath };
 }
 
-/** The same workspace file, served as a download under its own name. Any file type may download. */
+/** The same file, served as a download under its own name. Any file type may download. */
 export function workspaceFileDownloadResource(input: {
   readonly threadRef: ScopedThreadRef;
   readonly draft: boolean;
+  readonly hostFile: boolean;
   readonly workspaceRoot: string;
   readonly absolutePath: string;
 }): AssetResource {
+  // A file outside the workspace downloads through its absolute host path.
+  if (input.hostFile) {
+    return {
+      _tag: "media-file",
+      threadId: input.threadRef.threadId,
+      path: input.absolutePath,
+      disposition: "attachment",
+    };
+  }
   return input.draft
     ? {
         _tag: "draft-workspace-file",

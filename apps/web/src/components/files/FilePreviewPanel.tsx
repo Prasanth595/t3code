@@ -385,6 +385,7 @@ function WorkspaceFileDownloadAction(props: {
   readonly environmentId: EnvironmentId;
   readonly threadRef: ScopedThreadRef;
   readonly draft: boolean;
+  readonly hostFile: boolean;
   readonly absolutePath: string;
   readonly workspaceRoot: string;
 }) {
@@ -393,10 +394,11 @@ function WorkspaceFileDownloadAction(props: {
       workspaceFileDownloadResource({
         threadRef: props.threadRef,
         draft: props.draft,
+        hostFile: props.hostFile,
         workspaceRoot: props.workspaceRoot,
         absolutePath: props.absolutePath,
       }),
-    [props.threadRef, props.draft, props.workspaceRoot, props.absolutePath],
+    [props.threadRef, props.draft, props.hostFile, props.workspaceRoot, props.absolutePath],
   );
   // Mint per click: a cached URL may have expired while the panel stayed open.
   const prepareDownload = useAssetUrlRefresh(props.environmentId, resource);
@@ -1379,12 +1381,13 @@ export default function FilePreviewPanel({
               <Globe2 className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
-          {previewPath !== null && !isHostFile && absolutePath ? (
+          {previewPath !== null && absolutePath ? (
             <WorkspaceFileDownloadAction
               key={absolutePath}
               environmentId={environmentId}
               threadRef={threadRef}
               draft={draft}
+              hostFile={isHostFile}
               absolutePath={absolutePath}
               workspaceRoot={cwd}
             />
