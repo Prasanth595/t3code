@@ -37,12 +37,10 @@ if [[ $rebuild == 1 || ! -f $archive ]]; then
     exit 1
   }
 else
-  echo "deploy: reusing $archive (--rebuild to build it again)"
+  # build.sh prints the archive path when it builds; say the same here.
+  echo "deploy: reusing $root/$archive (--rebuild to build it again)"
 fi
 
-if [[ $build_only == 1 ]]; then
-  echo "$root/$archive"
-  exit 0
-fi
+[[ $build_only == 0 ]] || exit 0
 
 factory/scripts/install.sh "$archive"
