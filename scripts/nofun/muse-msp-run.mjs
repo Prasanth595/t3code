@@ -295,7 +295,9 @@ export async function runMsp({ executable, argv, env, expectedLogin, emit }) {
         if (typeof p.viewCursor === "string" && p.viewCursor) {
           // One retained source range can project several different events.
           // Replaying a notification is duplicate; another event at that cursor is not.
-          const key = `${message.method}:${p.viewCursor}:${p.itemId ?? p.item?.itemId ?? ""}`;
+          const key = NodeCrypto.createHash("sha256")
+            .update(JSON.stringify([message.method, p]))
+            .digest("hex");
           if (seenCursors.has(key)) return;
           seenCursors.add(key);
         }
