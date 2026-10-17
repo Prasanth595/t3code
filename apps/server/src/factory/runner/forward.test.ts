@@ -40,6 +40,7 @@ import {
   type IssueDetail,
 } from "../tracker/github.ts";
 import { advance, forward, type BuildingContext, type ForwardOutcome } from "./building.ts";
+import { interruptible } from "./testSupport.ts";
 import { readProgress } from "./progress.ts";
 import { applyActions, progressFrom } from "./run.ts";
 
@@ -153,6 +154,8 @@ const statusOf = (
   archived: false,
   run,
   runOrdinal: run === null ? null : 1,
+  runStartedAt: null,
+  runCompletedAt: null,
   lastAssistantMessage: message,
   ...over,
 });
@@ -364,7 +367,7 @@ const rigFor = (
 };
 
 const forwardIn = (rig: Rig) => forward(rig.ctx, rig.run);
-const advanceIn = (rig: Rig) => advance(rig.ctx, rig.run);
+const advanceIn = (rig: Rig) => advance(interruptible(rig.ctx), rig.run);
 
 const outcome = (comments: number, bodyEdit: boolean): ForwardOutcome => ({
   comments,

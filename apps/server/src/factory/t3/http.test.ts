@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthEnvironmentMaintainScope,
   type AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -38,7 +39,8 @@ import { stopRequestPath } from "../runner/stop.ts";
 import type { FactoryStatus } from "../status.ts";
 import { saveMachineConfig } from "../settings.ts";
 import { route } from "./auth.ts";
-import { CONFIG_PATH, FactoryRoutes, STATUS_PATH } from "./http.ts";
+import * as ServerExitService from "./exit.ts";
+import { CONFIG_PATH, FactoryRoutes, RESTART_PATH, STATUS_PATH } from "./http.ts";
 import { FactoryPaths } from "./paths.ts";
 
 const TEST_ROUTE_PATH = "/api/factory/test/settings";
@@ -134,8 +136,23 @@ type Call = (
 interface Tokens {
   readonly read: string;
   readonly operate: string;
+  readonly maintain: string;
   readonly settingsWrite: string;
 }
+
+/** Counts the calls to the exit the restart route makes; `done` settles on the first. */
+interface Exits {
+  count: number;
+  readonly done: Promise<void>;
+}
+
+const makeExits = (): Exits & { readonly settle: () => void } => {
+  let settle = () => {};
+  const done = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  return { count: 0, done, settle };
+};
 
 interface World {
   readonly status?: FactoryStatus;
@@ -167,12 +184,22 @@ const worldContext = (
   world: World,
   dir: string,
   wakes: Calls,
+  exits: ReturnType<typeof makeExits>,
 ) => {
   const reload = Effect.sync(() => {
     wakes.reloads += 1;
   });
   const repoConfigs = Effect.succeed(world.readings ?? new Map<string, RepoConfigReading>());
   return Context.make(EnvironmentAuth.EnvironmentAuth, auth).pipe(
+    Context.add(
+      ServerExitService.ServerExit,
+      ServerExitService.make(
+        Effect.sync(() => {
+          exits.count += 1;
+          exits.settle();
+        }),
+      ),
+    ),
     Context.add(
       FactoryLoop,
       FactoryLoop.of({
@@ -209,14 +236,20 @@ const serving = <A>(
   world: World,
   use: (
     call: Call,
-    context: { readonly tokens: Tokens; readonly dir: string; readonly wakes: Calls },
+    context: {
+      readonly tokens: Tokens;
+      readonly dir: string;
+      readonly wakes: Calls;
+      readonly exits: Exits;
+    },
   ) => Promise<A>,
 ) =>
   Effect.gen(function* () {
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
     const dir = world.dir ?? tempDir("factory");
     const wakes = { count: 0, reloads: 0 };
-    const context = worldContext(auth, world, dir, wakes);
+    const exits = makeExits();
+    const context = worldContext(auth, world, dir, wakes, exits);
     // Issued on the live clock: the handler checks expiry on it, not on the test clock.
     const issue = (scope: AuthEnvironmentScope) =>
       auth.issueSession({ scopes: [scope] }).pipe(
@@ -226,6 +259,7 @@ const serving = <A>(
     const tokens: Tokens = {
       read: yield* issue(AuthOrchestrationReadScope),
       operate: yield* issue(AuthOrchestrationOperateScope),
+      maintain: yield* issue(AuthEnvironmentMaintainScope),
       settingsWrite: yield* issue(AuthSettingsWriteScope),
     };
     return yield* Effect.acquireUseRelease(
@@ -244,7 +278,7 @@ const serving = <A>(
                 }),
                 context,
               ),
-            { tokens, dir, wakes },
+            { tokens, dir, wakes, exits },
           ),
         ),
       ({ dispose }) => Effect.promise(dispose),
@@ -268,6 +302,7 @@ const FACTORY_ROUTES = [
   ["POST", "/api/factory/claims/resume"],
   ["GET", "/api/factory/config"],
   ["PUT", "/api/factory/config"],
+  ["POST", "/api/factory/restart"],
 ] as const;
 
 describe("every factory route", () => {
@@ -311,13 +346,14 @@ describe("every factory route", () => {
   );
 
   it.effect("a POST needs orchestration:operate, and a session with only read is refused", () =>
-    serving({}, async (call, { tokens, wakes, dir }) => {
+    serving({}, async (call, { tokens, wakes, dir, exits }) => {
       seed(dir, run10, BUILDING);
       const bytes = ledgerBytes(dir);
       for (const path of [
         `/api/factory/runs/${ID}/stop`,
         "/api/factory/claims/pause",
         "/api/factory/claims/resume",
+        "/api/factory/restart",
       ]) {
         const response = await call("POST", path, tokens.read);
         assert.strictEqual(response.status, 403, path);
@@ -325,6 +361,7 @@ describe("every factory route", () => {
       }
       assert.strictEqual(ledgerBytes(dir), bytes);
       assert.strictEqual(wakes.count, 0);
+      assert.strictEqual(exits.count, 0);
       assert.isFalse(NodeFS.existsSync(NodePath.join(dir, "claims-paused")));
     }),
   );
@@ -422,6 +459,54 @@ describe("the scope a route requires", () => {
     serving({}, async (call, { tokens }) => {
       const response = await call("GET", TEST_ROUTE_PATH, tokens.settingsWrite);
       assert.strictEqual(response.status, 204);
+    }),
+  );
+
+  it.effect("the restart route answers 401 without a session, and exits nothing", () =>
+    serving({}, async (call, { exits }) => {
+      const response = await call("POST", RESTART_PATH);
+      assert.strictEqual(response.status, 401);
+      assert.strictEqual((await json(response)).code, "auth_invalid");
+      assert.strictEqual(exits.count, 0);
+    }),
+  );
+
+  it.effect("the restart route answers 403 to a session without maintain, and exits nothing", () =>
+    serving({}, async (call, { tokens, exits }) => {
+      for (const token of [tokens.read, tokens.operate, tokens.settingsWrite]) {
+        const response = await call("POST", RESTART_PATH, token);
+        assert.strictEqual(response.status, 403);
+        assert.strictEqual((await json(response)).code, "insufficient_scope");
+      }
+      assert.strictEqual(exits.count, 0);
+    }),
+  );
+});
+
+describe("POST /api/factory/restart", () => {
+  it("is served at the path the issue names", () => {
+    assert.strictEqual(RESTART_PATH, "/api/factory/restart");
+  });
+
+  it.effect("answers 202 before the exit, exits exactly once, and refuses a second request", () =>
+    serving({}, async (call, { tokens, exits }) => {
+      const response = await call("POST", RESTART_PATH, tokens.maintain);
+      assert.strictEqual(response.status, 202);
+      const body = await json(response);
+      assert.strictEqual(body.restarting, true);
+      assert.isTrue(typeof body.message === "string" && body.message.length > 0);
+      assert.strictEqual(exits.count, 0, "the response is produced before the exit");
+
+      const again = await call("POST", RESTART_PATH, tokens.maintain);
+      assert.strictEqual(again.status, 409);
+      assert.strictEqual((await json(again)).code, "restart_pending");
+
+      await exits.done;
+      assert.strictEqual(exits.count, 1);
+
+      const late = await call("POST", RESTART_PATH, tokens.maintain);
+      assert.strictEqual(late.status, 409);
+      assert.strictEqual(exits.count, 1, "a pending restart never exits twice");
     }),
   );
 });
@@ -816,6 +901,7 @@ describe("an auth failure inside T3", () => {
         {},
         tempDir("factory"),
         { count: 0, reloads: 0 },
+        makeExits(),
       );
       const layer = failingRoute.pipe(Layer.provideMerge(layerRoutes));
       const response = yield* Effect.acquireUseRelease(

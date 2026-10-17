@@ -17,7 +17,7 @@ import {
 import { LedgerUnknownEventError, LedgerIoError, errnoCode, isLedgerError } from "./errors.ts";
 import { MACHINE_EVENT_FIELDS, buildData, issueKeyJson, type MachineEvent } from "./events.ts";
 import { NEWLINE } from "./limits.ts";
-import { decodeLine, isBlankLine, lineHead, scanLinesBack } from "./read.ts";
+import { decodeLine, field, isBlankLine, lineHead, scanLinesBack } from "./read.ts";
 import { formatTs } from "./time.ts";
 
 /** The file in the data dir that takes the events that belong to no run. */
@@ -221,3 +221,84 @@ export const scanMachineLogBack = (
       firstChunk,
     ),
   );
+
+/**
+ * The entries of the machine log at or after `sinceMs`, oldest first: `scanMachineLogBack` read
+ * until the first entry older than `sinceMs`, so the months before it are never decoded. A missing
+ * log is an empty one. `firstChunk` is passed on, for a test of the chunking.
+ */
+export const machineLogSince = (
+  dataDir: string,
+  sinceMs: number,
+  firstChunk?: number,
+): Array<MachineEntry> => {
+  const newestFirst: Array<MachineEntry> = [];
+  scanMachineLogBack(
+    dataDir,
+    (entry) => {
+      if (entry.ms < sinceMs) return "stop";
+      newestFirst.push(entry);
+      return "continue";
+    },
+    firstChunk,
+  );
+  return newestFirst.reverse();
+};
+
+/** How long T3 trouble in the machine log counts as the cause of a session ending badly: ten minutes, fixed. */
+const T3_TROUBLE_WINDOW_MS = 10 * 60 * 1000;
+
+/**
+ * The newest sign of T3 trouble in the machine log at or after `nowMs` minus ten minutes: a
+ * `preflight_failed` whose check is `t3` (its `why`), or an `error` whose kind is `t3` (its
+ * `message`). Only the machine log is read, never a run's ledger, and only its tail
+ * (`machineLogSince`). Null for none, and for a log that does not exist yet. A restart of the
+ * server is not trouble here: its `server_started` line is read by `serverStartsSince`, and
+ * `interrupted` weighs it against the run's own times (`Evidence`).
+ */
+export const t3TroubleSince = (dataDir: string, nowMs: number): string | null => {
+  let newest: { readonly ms: number; readonly text: string } | null = null;
+  for (const entry of machineLogSince(dataDir, nowMs - T3_TROUBLE_WINDOW_MS)) {
+    const text =
+      entry.event === "preflight_failed" && field(entry.data, "check") === "t3"
+        ? field(entry.data, "why")
+        : entry.event === "error" && field(entry.data, "kind") === "t3"
+          ? field(entry.data, "message")
+          : undefined;
+    if (typeof text === "string" && (newest === null || entry.ms >= newest.ms)) {
+      newest = { ms: entry.ms, text };
+    }
+  }
+  return newest === null ? null : newest.text;
+};
+
+/**
+ * The `started_at` of every `server_started` line at or after `sinceMs`, oldest first: when this
+ * server, and the ones before it, started. A line whose `started_at` is not a number is skipped.
+ * Only the log's tail is read (`machineLogSince`); a missing log has none.
+ */
+export const serverStartsSince = (dataDir: string, sinceMs: number): Array<number> =>
+  serverTimesSince(dataDir, sinceMs, "server_started", "started_at");
+
+/**
+ * The `stopping_at` of every `server_stopping` line at or after `sinceMs`, oldest first: when a
+ * server began shutting down, which is about when its shutdown marked the running turns
+ * `cancelled`. Read as `serverStartsSince` reads the starts.
+ */
+export const serverStopsSince = (dataDir: string, sinceMs: number): Array<number> =>
+  serverTimesSince(dataDir, sinceMs, "server_stopping", "stopping_at");
+
+const serverTimesSince = (
+  dataDir: string,
+  sinceMs: number,
+  event: "server_started" | "server_stopping",
+  key: "started_at" | "stopping_at",
+): Array<number> => {
+  const times: Array<number> = [];
+  for (const entry of machineLogSince(dataDir, sinceMs)) {
+    if (entry.event !== event) continue;
+    const at = field(entry.data, key);
+    if (typeof at === "number") times.push(at);
+  }
+  return times;
+};

@@ -24,12 +24,20 @@
  *   `stop-run.sh` does, and wakes the loop. The pass archives the thread and removes the worktree.
  * - `POST /api/factory/claims/pause` and `.../resume`: `claims pause` and `claims resume`.
  *
- * Each handler decodes its input, calls one function (`control.ts`, `status.ts`, the ledger reads)
- * and maps the result to a status and a body. A run id is parsed before anything is read, so no
- * id reaches the file system as a path. A ledger error or a failed read or write answers 500
- * `factory_error`, mapped once for every route by `factoryRoute`.
+ * Restart needs `environment:maintain`, the scope T3 gives its own process control
+ * (`server.signalProcess`, `server.updateServer`), so an MCP client holding only operate cannot
+ * end the server:
+ * - `POST /api/factory/restart`: `ServerExit.request` (`exit.ts`); answers 202, then the service
+ *   logs `factory restart requested` and ends the process; under the LaunchAgent, launchd starts
+ *   it again. A second request while one is pending answers 409 `restart_pending`.
+ *
+ * Each handler decodes its input, calls one function (`control.ts`, `status.ts`, `exit.ts`, the
+ * ledger reads) and maps the result to a status and a body. A run id is parsed before anything is
+ * read, so no id reaches the file system as a path. A ledger error or a failed read or write
+ * answers 500 `factory_error`, mapped once for every route by `factoryRoute`.
  */
 import {
+  AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
@@ -52,6 +60,7 @@ import { runIdToString } from "../ledger/runId.ts";
 import { readMachineConfigReport } from "../settings.ts";
 import { buildStatus } from "../status.ts";
 import { route } from "./auth.ts";
+import { ServerExit } from "./exit.ts";
 import { FactoryPaths } from "./paths.ts";
 
 export const STATUS_PATH = "/api/factory/status";
@@ -61,6 +70,11 @@ export const STOP_PATH = "/api/factory/runs/:id/stop";
 export const PAUSE_PATH = "/api/factory/claims/pause";
 export const RESUME_PATH = "/api/factory/claims/resume";
 export const CONFIG_PATH = "/api/factory/config";
+export const RESTART_PATH = "/api/factory/restart";
+
+/** What the restart's 202 tells the caller to expect. */
+export const RESTART_MESSAGE =
+  "the server is exiting; when it runs as the LaunchAgent, launchd starts it again in about 10 seconds";
 
 const respond = (body: unknown, status = 200) => HttpServerResponse.jsonUnsafe(body, { status });
 
@@ -266,6 +280,21 @@ const saveConfigRoute = factoryRoute(
   }),
 );
 
+const restartRoute = factoryRoute(
+  "POST",
+  RESTART_PATH,
+  AuthEnvironmentMaintainScope,
+  Effect.gen(function* () {
+    const { request } = yield* ServerExit;
+    switch (yield* request) {
+      case "started":
+        return respond({ restarting: true, message: RESTART_MESSAGE }, 202);
+      case "pending":
+        return respond({ code: "restart_pending", message: "a restart is already under way" }, 409);
+    }
+  }),
+);
+
 /** The factory's HTTP routes. server.ts merges this into `layerMakeRoutes`. */
 export const FactoryRoutes = Layer.mergeAll(
   statusRoute,
@@ -276,4 +305,5 @@ export const FactoryRoutes = Layer.mergeAll(
   resumeRoute,
   configRoute,
   saveConfigRoute,
+  restartRoute,
 );
