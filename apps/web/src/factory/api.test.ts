@@ -1,9 +1,34 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vite-plus/test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vite-plus/test";
 
-import { __setFactoryTimeoutForTests, FactoryApiError, factoryApi } from "./api";
+import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 
-// The real HTTP layer with only the wire stubbed: the page's calls go through `fetch` as the
-// browser's would, against the window's own origin.
+import {
+  __setFactoryConnectionForTests,
+  __setFactoryTimeoutForTests,
+  FactoryApiError,
+  factoryApi,
+} from "./api";
+
+// Only the wire is stubbed: the calls go through `fetch` against the connected environment's HTTP
+// base, never the window's own origin (kept at 127.0.0.1:3773 here to prove it).
+const WINDOW_ORIGIN = "http://127.0.0.1:3773";
+const cookieConnection = (httpBaseUrl = WINDOW_ORIGIN) =>
+  ({ httpBaseUrl, httpAuthorization: null }) as unknown as PreparedConnection;
+const REMOTE_BASE = "https://personal-mac.tail1234.ts.net:3876";
+const bearerConnection = {
+  httpBaseUrl: `${REMOTE_BASE}/`,
+  httpAuthorization: { _tag: "Bearer", token: "tok-1" },
+} as unknown as PreparedConnection;
+
 const fetchMock = vi.fn<typeof fetch>();
 
 beforeAll(() => {
@@ -11,7 +36,7 @@ beforeAll(() => {
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     value: {
-      location: { href: "http://127.0.0.1:3773/factory", origin: "http://127.0.0.1:3773" },
+      location: { href: `${WINDOW_ORIGIN}/factory`, origin: WINDOW_ORIGIN },
     },
   });
 });
@@ -21,9 +46,14 @@ afterAll(() => {
   vi.unstubAllGlobals();
 });
 
+beforeEach(() => {
+  __setFactoryConnectionForTests(cookieConnection());
+});
+
 afterEach(() => {
   fetchMock.mockReset();
   __setFactoryTimeoutForTests();
+  __setFactoryConnectionForTests();
 });
 
 const answer = (status: number, body: string, contentType = "application/json") =>
@@ -111,5 +141,58 @@ describe("factoryApi over HTTP", () => {
     __setFactoryTimeoutForTests(1000);
     answer(200, '{"state":"idle"}');
     expect(await factoryApi.status()).toEqual({ state: "idle" });
+  });
+});
+
+describe("factoryApi on the connected environment", () => {
+  it("sends to a remote environment's base with its bearer token and no cookies", async () => {
+    __setFactoryConnectionForTests(bearerConnection);
+    answer(200, '{"state":"idle"}');
+    await factoryApi.status();
+    const [target, init] = fetchMock.mock.calls.at(-1)!;
+    expect(String(target)).toBe(`${REMOTE_BASE}/api/factory/status`);
+    expect(new URL(String(target)).origin).not.toBe(WINDOW_ORIGIN);
+    expect(sent().headers.get("authorization")).toBe("Bearer tok-1");
+    expect(init?.credentials).toBe("omit");
+  });
+
+  it("sends a cookie session's request with credentials and no authorization header", async () => {
+    __setFactoryConnectionForTests(cookieConnection("https://other-host.test:4000"));
+    answer(200, '{"state":"idle"}');
+    await factoryApi.status();
+    const [target, init] = fetchMock.mock.calls.at(-1)!;
+    expect(String(target)).toBe("https://other-host.test:4000/api/factory/status");
+    expect(init?.credentials).toBe("include");
+    expect(sent().headers.get("authorization")).toBeNull();
+  });
+
+  it("fails without sending over a relay (DPoP) connection", async () => {
+    __setFactoryConnectionForTests({
+      httpBaseUrl: REMOTE_BASE,
+      httpAuthorization: { _tag: "Dpop" },
+    } as unknown as PreparedConnection);
+    const error = await failure(factoryApi.status());
+    expect(error.status).toBe(0);
+    expect(error.message).toBe("The factory is not available over a relay connection yet.");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("waits for a connection that appears after the call started", async () => {
+    __setFactoryConnectionForTests(null);
+    answer(200, '{"state":"idle"}');
+    const pending = factoryApi.status();
+    await Promise.resolve();
+    expect(fetchMock).not.toHaveBeenCalled();
+    __setFactoryConnectionForTests(bearerConnection);
+    expect(await pending).toEqual({ state: "idle" });
+    expect(String(fetchMock.mock.calls.at(-1)![0])).toBe(`${REMOTE_BASE}/api/factory/status`);
+  });
+
+  it("fails with no_connection when none appears within the time", async () => {
+    __setFactoryTimeoutForTests(20);
+    __setFactoryConnectionForTests(null);
+    const error = await failure(factoryApi.status());
+    expect([error.status, error.code]).toEqual([0, "no_connection"]);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
