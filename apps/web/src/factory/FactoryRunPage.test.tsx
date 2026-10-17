@@ -186,6 +186,21 @@ describe("FactoryRunPage", () => {
     expect(refresh).toHaveBeenCalled();
   });
 
+  it("disables Stop while a stop request is in flight, and enables it again after", async () => {
+    let resolve!: (value: Awaited<ReturnType<FactoryApi["stopRun"]>>) => void;
+    const stopRun = vi.fn(
+      () => new Promise<Awaited<ReturnType<FactoryApi["stopRun"]>>>((r) => (resolve = r)),
+    );
+    __setFactoryApiForTests(api({ stopRun }));
+    const page = await mount();
+    await act(async () => void page.button("Stop")!.props.onClick());
+    expect(page.button("Stop")!.props.disabled).toBe(true);
+    await act(async () =>
+      resolve({ stopped: "o__r__1__1", already: false, message: "stop requested" }),
+    );
+    expect(page.button("Stop")!.props.disabled).toBeFalsy();
+  });
+
   it("shows the message of a run that is not building", async () => {
     __setFactoryApiForTests(
       api({

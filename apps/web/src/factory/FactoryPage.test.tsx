@@ -286,6 +286,50 @@ describe("FactoryPage", () => {
     expect(page.text()).toContain("claims resumed");
   });
 
+  it("disables Pause claims while the call is pending", async () => {
+    state.status = resource({ data: statusData() });
+    let resolve!: (value: {
+      paused: true;
+      already: boolean;
+      since: string;
+      message: string;
+    }) => void;
+    const pauseClaims = vi.fn(
+      () =>
+        new Promise<{ paused: true; already: boolean; since: string; message: string }>(
+          (r) => (resolve = r),
+        ),
+    );
+    __setFactoryApiForTests(api({ pauseClaims }));
+    const page = await render(createElement(FactoryPage));
+    expect(page.button("Pause claims")!.props.disabled).toBeFalsy();
+    await act(async () => void page.button("Pause claims")!.props.onClick());
+    expect(page.button("Pause claims")!.props.disabled).toBe(true);
+    await act(async () =>
+      resolve({ paused: true, already: false, since: "2026-10-17T12:00:00.000Z", message: "ok" }),
+    );
+    expect(page.button("Pause claims")!.props.disabled).toBeFalsy();
+  });
+
+  it("disables Resume claims while the call is pending", async () => {
+    state.status = resource({
+      data: statusData({
+        paused_by_hand: { since: "2026-10-17T11:00:00.000Z", for_ms: 3_600_000 },
+      }),
+    });
+    let resolve!: (value: { paused: false; already: boolean; message: string }) => void;
+    const resumeClaims = vi.fn(
+      () => new Promise<{ paused: false; already: boolean; message: string }>((r) => (resolve = r)),
+    );
+    __setFactoryApiForTests(api({ resumeClaims }));
+    const page = await render(createElement(FactoryPage));
+    expect(page.button("Resume claims")!.props.disabled).toBeFalsy();
+    await act(async () => void page.button("Resume claims")!.props.onClick());
+    expect(page.button("Resume claims")!.props.disabled).toBe(true);
+    await act(async () => resolve({ paused: false, already: false, message: "ok" }));
+    expect(page.button("Resume claims")!.props.disabled).toBeFalsy();
+  });
+
   it("shows the message of a control call that fails", async () => {
     __setFactoryApiForTests(
       api({

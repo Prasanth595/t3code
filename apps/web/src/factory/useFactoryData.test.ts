@@ -199,8 +199,12 @@ describe("useFactoryRuns and useFactoryRun", () => {
 describe("answers that arrive out of order", () => {
   const deferred = <T>() => {
     let resolve!: (value: T) => void;
-    const promise = new Promise<T>((r) => (resolve = r));
-    return { promise, resolve };
+    let reject!: (error: Error) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
   };
 
   it("keeps the newer runs answer when an older request lands last", async () => {
@@ -227,6 +231,36 @@ describe("answers that arrive out of order", () => {
     await act(async () => result.current.refresh());
     await act(async () => newer.resolve(status(1)));
     await act(async () => older.resolve(status(5)));
+    expect(result.current.data?.attention).toHaveLength(1);
+  });
+
+  it("drops a runs request that fails after a newer one succeeded", async () => {
+    const older = deferred<{ runs: [] }>();
+    const newer = deferred<{ runs: [] }>();
+    const calls = [older, newer];
+    __setFactoryApiForTests(
+      api({ runs: vi.fn(() => calls.shift()!.promise) as unknown as FactoryApi["runs"] }),
+    );
+    const runs = await mount(useFactoryRuns);
+    await act(async () => runs.current.refresh());
+    await act(async () => newer.resolve({ runs: [] }));
+    await act(async () => older.reject(new Error("late failure")));
+    expect(runs.current.status).toBe("ready");
+    expect(runs.current.error).toBeNull();
+    expect(runs.current.data?.runs).toEqual([]);
+  });
+
+  it("drops a status request that fails after a newer one succeeded", async () => {
+    const older = deferred<ReturnType<typeof status>>();
+    const newer = deferred<ReturnType<typeof status>>();
+    const calls = [older, newer];
+    __setFactoryApiForTests(api({ status: vi.fn(() => calls.shift()!.promise) }));
+    const result = await mount(useFactoryStatus);
+    await act(async () => result.current.refresh());
+    await act(async () => newer.resolve(status(1)));
+    await act(async () => older.reject(new Error("late failure")));
+    expect(result.current.status).toBe("ready");
+    expect(result.current.error).toBeNull();
     expect(result.current.data?.attention).toHaveLength(1);
   });
 });
