@@ -10,7 +10,7 @@ import {
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
 } from "@t3tools/shared/threadPullRequests";
-import { DEFAULT_SERVER_SETTINGS, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommonActions,
@@ -88,10 +88,11 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       ),
     [selectedThread?.pullRequests, supportsLinkedPrSnapshots],
   );
-  const { pullRequestCreationEnabled } = resolveProjectSettings(
-    selectedEnvironmentRuntime?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
-    selectedThread?.projectId ?? null,
-  ).settings;
+  const settings = selectedEnvironmentRuntime?.serverConfig?.settings;
+  const pullRequestCreationEnabled = settings
+    ? resolveProjectSettings(settings, selectedThread?.projectId ?? null).settings
+        .pullRequestCreationEnabled === true
+    : false;
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const { canWriteSourceControl, canChangeThreadBranch } = gitActions;

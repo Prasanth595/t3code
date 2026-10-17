@@ -5,7 +5,6 @@ import { createNativeHeaderMenu } from "../../components/ui/nativeHeaderMenu.ios
 import type { AppBarMenu } from "../../components/ui/AppBar.types";
 import {
   AuthSourceControlWriteScope,
-  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   type GitRunStackedActionResult,
   type ProjectScript,
@@ -130,10 +129,11 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     environmentId: EnvironmentId.make(String(environmentId)),
     threadId: ThreadId.make(String(threadId)),
   });
-  const { pullRequestCreationEnabled } = resolveProjectSettings(
-    environment?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
-    thread?.projectId ?? null,
-  ).settings;
+  const settings = environment?.serverConfig?.settings;
+  const pullRequestCreationEnabled = settings
+    ? resolveProjectSettings(settings, thread?.projectId ?? null).settings
+        .pullRequestCreationEnabled === true
+    : false;
   const { gitStatus, gitOperationLabel, onPull, onRunAction } = props;
 
   const currentBranchLabel = gitStatus?.refName ?? props.currentBranch ?? "Detached HEAD";

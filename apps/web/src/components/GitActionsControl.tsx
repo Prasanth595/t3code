@@ -5,7 +5,6 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
-  DEFAULT_SERVER_SETTINGS,
   SourceControlProviderKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -1138,11 +1137,12 @@ export default function GitActionsControl({
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
   const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
-  const projectSettings = resolveProjectSettings(
-    serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
-    activeServerThread?.projectId ?? activeDraftThread?.projectId ?? null,
-  ).settings;
-  const { pullRequestCreationEnabled } = projectSettings;
+  const pullRequestCreationEnabled = serverConfig?.settings
+    ? resolveProjectSettings(
+        serverConfig.settings,
+        activeServerThread?.projectId ?? activeDraftThread?.projectId ?? null,
+      ).settings.pullRequestCreationEnabled === true
+    : false;
 
   const allFiles = gitStatusForActions?.workingTree.files ?? [];
   const selectedFiles = allFiles.filter((f) => !excludedFiles.has(f.path));
@@ -1284,13 +1284,19 @@ export default function GitActionsControl({
       )
         return;
       // Retained toast callbacks must use current settings for their original project.
-      const canRunAction = (candidate: GitStackedAction) =>
-        (candidate !== "create_pr" && candidate !== "commit_push_pr") ||
-        resolveProjectSettings(
-          appAtomRegistry.get(serverEnvironment.configValueAtom(activeEnvironmentId))?.settings ??
-            DEFAULT_SERVER_SETTINGS,
-          activeServerThread?.projectId ?? activeDraftThread?.projectId ?? null,
-        ).settings.pullRequestCreationEnabled;
+      const canRunAction = (candidate: GitStackedAction) => {
+        if (candidate !== "create_pr" && candidate !== "commit_push_pr") return true;
+        const currentSettings = appAtomRegistry.get(
+          serverEnvironment.configValueAtom(activeEnvironmentId),
+        )?.settings;
+        return (
+          currentSettings !== undefined &&
+          resolveProjectSettings(
+            currentSettings,
+            activeServerThread?.projectId ?? activeDraftThread?.projectId ?? null,
+          ).settings.pullRequestCreationEnabled === true
+        );
+      };
       if (!canRunAction(action)) return;
       const actionStatus = statusOverride ?? gitStatusForActions;
       const actionBranch = actionStatus?.refName ?? null;

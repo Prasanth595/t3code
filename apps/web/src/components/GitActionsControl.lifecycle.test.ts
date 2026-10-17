@@ -315,6 +315,45 @@ describe("PR creation in result notifications", () => {
     },
   );
 
+  it.each(["create_pr", "commit_push_pr"] as const)(
+    "blocks a retained %s action while current settings are unavailable",
+    async (kind) => {
+      state.toastCta = { kind: "run_action", label: "Create PR", action: { kind } };
+      const renderer = await renderActions("first", "/first");
+      await clickQuickAction(renderer);
+      const toast = state.toasts.find((toast) => toast.actionProps)!;
+      expect(toast).toBeDefined();
+      state.settings = undefined;
+      const previousActionCount = state.actions.length;
+      await act(async () => toast.actionProps!.onClick());
+      expect(state.actions).toHaveLength(previousActionCount);
+    },
+  );
+
+  it("omits PR quick actions and notification actions until settings load", async () => {
+    state.settings = undefined;
+    const renderer = await renderActions("first", "/first");
+    await clickQuickAction(renderer);
+    expect(state.actions.map(({ input }) => input.action)).toEqual(["commit_push"]);
+    expect(state.toasts.at(-1)?.actionProps).toBeUndefined();
+    state.settings = { ...DEFAULT_SERVER_SETTINGS };
+    await act(async () => {
+      renderer.update(createElement(MemoGitActionsControl, props("first", "/first")));
+    });
+    await clickQuickAction(renderer);
+    expect(state.actions.at(-1)?.input.action).toBe("commit_push_pr");
+  });
+
+  it("omits a PR notification if settings disappear while an action runs", async () => {
+    state.afterAction = () => {
+      state.settings = undefined;
+    };
+    const renderer = await renderActions("first", "/first");
+    await clickQuickAction(renderer);
+    expect(state.toasts.at(-1)?.type).toBe("success");
+    expect(state.toasts.at(-1)?.actionProps).toBeUndefined();
+  });
+
   it("uses the originating project's enabled override for a retained action", async () => {
     state.settings = {
       ...DEFAULT_SERVER_SETTINGS,
@@ -339,31 +378,43 @@ describe("PR creation in result notifications", () => {
     });
   });
 
-  it("keeps Push notification actions when PR creation is disabled", async () => {
-    state.settings = { ...DEFAULT_SERVER_SETTINGS, pullRequestCreationEnabled: false };
-    state.toastCta = { kind: "run_action", label: "Push", action: { kind: "push" } };
-    const renderer = await renderActions("first", "/first");
-    await clickQuickAction(renderer);
-    const toast = state.toasts.find((toast) => toast.actionProps)!;
-    expect(toast).toBeDefined();
-    await act(async () => {
-      toast.actionProps!.onClick();
-    });
-    expect(state.actions.map(({ input }) => input.action)).toEqual(["commit_push", "push"]);
-  });
+  it.each(["disabled", "unavailable"])(
+    "keeps Push notification actions with settings %s",
+    async (mode) => {
+      state.settings =
+        mode === "disabled"
+          ? { ...DEFAULT_SERVER_SETTINGS, pullRequestCreationEnabled: false }
+          : undefined;
+      state.toastCta = { kind: "run_action", label: "Push", action: { kind: "push" } };
+      const renderer = await renderActions("first", "/first");
+      await clickQuickAction(renderer);
+      const toast = state.toasts.find((toast) => toast.actionProps)!;
+      expect(toast).toBeDefined();
+      await act(async () => {
+        toast.actionProps!.onClick();
+      });
+      expect(state.actions.map(({ input }) => input.action)).toEqual(["commit_push", "push"]);
+    },
+  );
 
-  it("keeps links to existing PRs when PR creation is disabled", async () => {
-    state.settings = { ...DEFAULT_SERVER_SETTINGS, pullRequestCreationEnabled: false };
-    const url = "https://example.com/pull/1";
-    state.toastCta = { kind: "open_pr", label: "View PR", url };
-    const renderer = await renderActions("first", "/first");
-    await clickQuickAction(renderer);
-    const toast = state.toasts.find((toast) => toast.actionProps)!;
-    expect(toast).toBeDefined();
-    await act(async () => {
-      toast.actionProps!.onClick();
-    });
-    expect(state.openedPrs).toEqual([url]);
-    expect(state.actions).toHaveLength(1);
-  });
+  it.each(["disabled", "unavailable"])(
+    "keeps links to existing PRs with settings %s",
+    async (mode) => {
+      state.settings =
+        mode === "disabled"
+          ? { ...DEFAULT_SERVER_SETTINGS, pullRequestCreationEnabled: false }
+          : undefined;
+      const url = "https://example.com/pull/1";
+      state.toastCta = { kind: "open_pr", label: "View PR", url };
+      const renderer = await renderActions("first", "/first");
+      await clickQuickAction(renderer);
+      const toast = state.toasts.find((toast) => toast.actionProps)!;
+      expect(toast).toBeDefined();
+      await act(async () => {
+        toast.actionProps!.onClick();
+      });
+      expect(state.openedPrs).toEqual([url]);
+      expect(state.actions).toHaveLength(1);
+    },
+  );
 });
