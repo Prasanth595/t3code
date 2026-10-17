@@ -1,6 +1,5 @@
 import {
   AuthAccessWriteScope,
-  AuthAdministrativeScopes,
   type AuthEnvironmentScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -92,10 +91,10 @@ const callWrites = (client: Effect.Success<ReturnType<typeof makeClient>>) =>
   ]);
 
 describe("plugin RPC scopes", () => {
-  it.effect("lets a standard pairing read the catalogue but not change what runs", () =>
+  it.effect("lets a read-only pairing read the catalogue but not change what runs", () =>
     Effect.gen(function* () {
       const handled: Array<string> = [];
-      const client = yield* makeClient(AuthStandardClientScopes, handled);
+      const client = yield* makeClient([AuthOrchestrationReadScope], handled);
 
       expect(yield* client[WS_METHODS.pluginsList]({})).toEqual({ installations: [] });
       expect(
@@ -114,10 +113,10 @@ describe("plugin RPC scopes", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("lets an administrative pairing manage plugins", () =>
+  it.effect("lets a standard pairing manage plugins", () =>
     Effect.gen(function* () {
       const handled: Array<string> = [];
-      const client = yield* makeClient(AuthAdministrativeScopes, handled);
+      const client = yield* makeClient(AuthStandardClientScopes, handled);
 
       const failures = yield* callWrites(client);
       for (const failure of failures) expect(failure._tag).toBe("PluginCatalogError");
