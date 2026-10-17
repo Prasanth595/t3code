@@ -2097,6 +2097,31 @@ describe("reloading the machine config", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("reading watchedRepos for the settings page leaves the status as the pass set it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { process, entered, release } = holdingProcess();
+        const projects = yield* Ref.make<ReadonlyArray<WatchedProject>>([A_B]);
+        const { loop } = yield* started(
+          VALID,
+          process,
+          quietEvents,
+          {},
+          watching(Ref.get(projects)),
+        );
+        // The pass under way listed a/b; it is held at its first call.
+        yield* Deferred.await(entered);
+        yield* Ref.set(projects, [A_B, C_D]);
+        assert.deepStrictEqual(yield* loop.watchedRepos, [A_B, C_D]);
+        assert.deepStrictEqual(loop.status, {
+          state: "running",
+          settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+        });
+        yield* Deferred.succeed(release, undefined);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("two reloads at once from idle make one loop and one wake stream", () =>
     Effect.scoped(
       Effect.gen(function* () {
