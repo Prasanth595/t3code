@@ -66,7 +66,7 @@ export interface FactoryRunDetail {
 }
 
 export interface FactoryStopResult {
-  readonly stopped: boolean;
+  readonly stopped: string;
   readonly already: boolean;
   readonly message: string;
 }

@@ -173,7 +173,7 @@ describe("FactoryRunPage", () => {
     const refresh = vi.fn();
     state.run = resource({ data: detail(), refresh });
     const stopRun = vi.fn(async () => ({
-      stopped: true,
+      stopped: "o__r__1__1",
       already: false,
       message: "stop requested: the issue goes to factory:stuck",
     }));
