@@ -35,17 +35,6 @@ case "${1:-}" in
     export T3CODE_ANDROID_PACKAGE="${T3CODE_ANDROID_PACKAGE:-com.yardenzamir.t3code}"
     export EXPO_NO_GIT_STATUS=1
     export CI=1
-    # expo-widgets 58.0.18 imports io.github.jakex7.peek.*, but the peek 0.3.2 libraries
-    # it depends on ship io.github.expo.peek.*, so its Android code does not compile.
-    # perl -i writes new files, so the shared pnpm store copies stay untouched.
-    # Remove this once expo-widgets imports the new package (it then finds nothing).
-    widgets="$(node -p 'require("path").dirname(require.resolve("expo-widgets/package.json"))')"
-    stale="$(grep -rl 'io\.github\.jakex7\.peek' "$widgets/android/src" || true)"
-    if [[ -n "$stale" ]]; then
-      echo "Rewriting the peek package name in expo-widgets:"
-      echo "$stale"
-      echo "$stale" | xargs perl -pi -e 's/io\.github\.jakex7\.peek/io.github.expo.peek/g'
-    fi
     vp exec expo prebuild --clean --platform android --no-install
     (cd android && ./gradlew app:assembleRelease -PreactNativeArchitectures=arm64-v8a --no-daemon)
     # The Expo template signs release builds with the debug key; `sign` replaces it.
