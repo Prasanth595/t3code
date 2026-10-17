@@ -571,14 +571,10 @@ export const runPass = (
   });
 
 /**
- * The project config and tracker login of every watched repo. A repo whose config cannot be
- * loaded is reported and its issues are left alone; so is one whose tracker login cannot be read,
- * and one that two T3 projects name (`ambiguousRepos`).
- */
-/**
  * Clears the item of a stuck run whose issue GitHub has closed: a person is done with it, or its
  * pull request merged and closed it. Only stuck items of the repos loaded this pass are asked
- * about, one issue read each; an item whose issue cannot be read stays, with an error line.
+ * about, one issue read each. An item whose issue cannot be read stays, with a line that is not
+ * an error: an issue that can never be read again (deleted, transferred) must not fail every pass.
  */
 const closedStuck = (
   world: PassWorld,
@@ -593,12 +589,9 @@ const closedStuck = (
       if (loaded === undefined || loaded.kind !== "ready") continue;
       const closed = yield* Effect.result(world.issueClosed(loaded.repo, issue));
       if (closed._tag === "Failure") {
-        yield* pass.fail(
-          null,
-          passError(
-            closed.failure.kind,
-            `${name}${mention(issue)}: cannot read whether the issue is closed: `,
-            closed.failure.message,
+        pass.line(
+          plain(
+            `${name}${mention(issue)}: cannot read whether the issue is closed: ${closed.failure.message}`,
           ),
         );
       } else if (closed.success) {
@@ -607,6 +600,11 @@ const closedStuck = (
     }
   });
 
+/**
+ * The project config and tracker login of every watched repo. A repo whose config cannot be
+ * loaded is reported and its issues are left alone; so is one whose tracker login cannot be read,
+ * and one that two T3 projects name (`ambiguousRepos`).
+ */
 const loadRepos = (
   world: PassWorld,
   watchedRepos: ReadonlyArray<WatchedRepo>,
