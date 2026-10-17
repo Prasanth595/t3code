@@ -618,6 +618,11 @@ function headBranchProbe(
   );
 }
 
+/** A URL's host as `new URL` reads it: lowercased, any non-default port kept, `:443` dropped. */
+function urlHost(url: string): string | null {
+  return URL.canParse(url) ? new URL(url).host : null;
+}
+
 function appendUnique(values: string[], next: string | null | undefined): void {
   const trimmed = next?.trim() ?? "";
   if (trimmed.length === 0 || values.includes(trimmed)) {
@@ -1376,23 +1381,33 @@ export const make = Effect.gen(function* () {
   const readConfigValueNullable = (cwd: string, key: string) =>
     gitCore.readConfigValue(cwd, key).pipe(Effect.orElseSucceed(() => null));
 
-  // Whether the GitHub provider creates PRs in the only remote, `remoteUrlKey`. It picks GH_REPO
-  // when that parses, else the `OWNER/REPO` that `gh repo set-default` recorded (gh-resolved), else
-  // the only remote itself, as for gh-resolved `base`.
+  // Whether the GitHub provider creates PRs in the only remote. It picks GH_REPO when that
+  // parses, else the `OWNER/REPO` that `gh repo set-default` recorded (gh-resolved), else the
+  // only remote itself, as for gh-resolved `base`. The remote's host is the one the provider's
+  // context gets from the remote URL, so an HTTPS remote keeps a non-default port.
   const targetsOnlyRemote = Effect.fn("targetsOnlyRemote")(function* (
     cwd: string,
     remoteName: string,
-    remoteUrlKey: string | null,
+    remote: { readonly remoteUrl: string | null; readonly repositoryNameWithOwner: string | null },
   ) {
-    const host = remoteUrlKey?.split("/")[0] ?? "";
-    const fromEnvironment = parseGitHubRepositorySelector(environment.GH_REPO ?? "", host);
+    const baseUrl =
+      remote.remoteUrl === null
+        ? undefined
+        : detectSourceControlProviderFromGitRemoteUrl(remote.remoteUrl)?.baseUrl;
+    const host = baseUrl === undefined ? null : urlHost(baseUrl);
+    const repository = remote.repositoryNameWithOwner?.toLowerCase();
+    const fromEnvironment = parseGitHubRepositorySelector(environment.GH_REPO ?? "", host ?? "");
     if (fromEnvironment !== null) {
       const { host: targetHost, owner, name } = fromEnvironment;
-      return `${targetHost}/${owner}/${name}`.toLowerCase() === remoteUrlKey;
+      return (
+        host !== null &&
+        urlHost(`https://${targetHost}`) === host &&
+        `${owner}/${name}`.toLowerCase() === repository
+      );
     }
     const mark = yield* readConfigValueNullable(cwd, `remote.${remoteName}.gh-resolved`);
     const [owner, name, ...rest] = (mark ?? "base").toLowerCase().split("/");
-    return !owner || !name || rest.length > 0 || `${host}/${owner}/${name}` === remoteUrlKey;
+    return !owner || !name || rest.length > 0 || `${owner}/${name}` === repository;
   });
 
   const resolveHostingProvider = Effect.fn("resolveHostingProvider")(function* (
@@ -1424,6 +1439,7 @@ export const make = Effect.gen(function* () {
   ) {
     if (!remoteName) {
       return {
+        remoteUrl: null,
         remoteUrlKey: null,
         repositoryNameWithOwner: null,
         ownerLogin: null,
@@ -1447,6 +1463,7 @@ export const make = Effect.gen(function* () {
       repositoryNameWithOwner = parseRepositoryNameWithOwnerFromRemoteUrl(remoteUrl, provider);
     }
     return {
+      remoteUrl,
       remoteUrlKey: remoteUrl ? normalizeGitRemoteUrl(remoteUrl) : null,
       repositoryNameWithOwner,
       ownerLogin: parseRepositoryOwnerLogin(repositoryNameWithOwner),
@@ -1505,7 +1522,7 @@ export const make = Effect.gen(function* () {
           ),
           Effect.orElseSucceed(() => 0),
         )) === 1 &&
-      (yield* targetsOnlyRemote(cwd, remoteName, remoteRepository.remoteUrlKey));
+      (yield* targetsOnlyRemote(cwd, remoteName, remoteRepository));
     const isForeignRemote = remoteName !== null && remoteName !== "origin" && !isOnlyRemote;
 
     const isCrossRepository =

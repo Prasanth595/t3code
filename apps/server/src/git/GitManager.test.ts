@@ -4472,11 +4472,18 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
   );
 
   it.effect.each([
-    { ghRepo: null },
-    { ghRepo: "https://github.com/pingdotgg/codething-mvp?tab=readme#readme" },
+    { remoteUrl: "git@github.com:pingdotgg/codething-mvp.git", ghRepo: null },
+    {
+      remoteUrl: "git@github.com:pingdotgg/codething-mvp.git",
+      ghRepo: "https://github.com/pingdotgg/codething-mvp?tab=readme#readme",
+    },
+    {
+      remoteUrl: "https://github.example.com:8443/pingdotgg/codething-mvp.git",
+      ghRepo: "https://github.example.com:8443/pingdotgg/codething-mvp",
+    },
   ] as const)(
-    "reuses the open same-repository PR when the only remote is not named origin (GH_REPO $ghRepo)",
-    ({ ghRepo }) =>
+    "reuses the open same-repository PR when the only remote is not named origin (remote $remoteUrl, GH_REPO $ghRepo)",
+    ({ remoteUrl, ghRepo }) =>
       Effect.gen(function* () {
         const repoDir = yield* makeTempDir("t3code-git-manager-");
         yield* initRepo(repoDir);
@@ -4484,12 +4491,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const remoteDir = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "fork", remoteDir]);
         yield* runGit(repoDir, ["push", "-u", "fork", "dev"]);
-        yield* configureVisibleRemoteUrlWithLocalRewrite(
-          repoDir,
-          "fork",
-          "git@github.com:pingdotgg/codething-mvp.git",
-          remoteDir,
-        );
+        yield* configureVisibleRemoteUrlWithLocalRewrite(repoDir, "fork", remoteUrl, remoteDir);
         NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
 
         const { manager, ghCalls } = yield* makeManager({
@@ -4596,6 +4598,61 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         if (ghResolved !== null) {
           yield* runGit(repoDir, ["config", "remote.fork.gh-resolved", ghResolved]);
         }
+        NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+
+        const { manager, ghCalls } = yield* makeManager({ environment: { GH_REPO: ghRepo } });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        });
+
+        expect(result.pr.status).toBe("created");
+        expect(
+          ghCalls.some((call) => call.startsWith("pr create ") && call.includes(`--head ${head} `)),
+        ).toBe(true);
+      }),
+    12_000,
+  );
+
+  it.effect.each([
+    {
+      remoteUrl: "https://github.example.com:8443/contributor/demo.git",
+      ghRepo: "https://github.example.com:9443/contributor/demo",
+      head: "contributor:dev",
+    },
+    {
+      remoteUrl: "https://github.example.com:8443/contributor/demo.git",
+      ghRepo: "github.example.com/contributor/demo",
+      head: "contributor:dev",
+    },
+    {
+      remoteUrl: "https://github.example.com:8443/contributor/demo.git",
+      ghRepo: "github.example.com:8443/contributor/demo",
+      head: "dev",
+    },
+    {
+      remoteUrl: "https://github.example.com/contributor/demo.git",
+      ghRepo: "github.example.com:443/contributor/demo",
+      head: "dev",
+    },
+    // An SSH port is not part of the host the provider uses.
+    {
+      remoteUrl: "ssh://git@github.example.com:2222/contributor/demo.git",
+      ghRepo: "github.example.com/contributor/demo",
+      head: "dev",
+    },
+  ] as const)(
+    "creates the PR with head $head when the only remote is $remoteUrl and GH_REPO is $ghRepo",
+    ({ remoteUrl, ghRepo, head }) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "dev"]);
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+        yield* runGit(repoDir, ["push", "-u", "fork", "dev"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(repoDir, "fork", remoteUrl, forkDir);
         NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
 
         const { manager, ghCalls } = yield* makeManager({ environment: { GH_REPO: ghRepo } });
