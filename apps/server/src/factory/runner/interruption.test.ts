@@ -447,7 +447,11 @@ const rigFor = (
     commentOnPr: notHere,
   };
   const sessions: InterruptContext["sessions"] = {
-    findProject: () => Effect.succeed("proj-1"),
+    findProject: () =>
+      Effect.succeed({
+        id: "proj-1",
+        model: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+      }),
     launch: (request) => {
       t3.push(`launch ${request.commandId}`);
       launches.push(request);

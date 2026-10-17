@@ -666,8 +666,6 @@ describe("liveWorld", () => {
     pollSeconds: 60,
     maxConcurrentRuns: 1,
     maxConcurrentGates: 1,
-    modelInstance: "claudeAgent",
-    model: "claude-sonnet-5-5",
     notify: true,
     repos: [{ repo: REPO, path: "/p" }],
   };
@@ -1248,8 +1246,6 @@ describe("the gate in the background", () => {
     pollSeconds: 60,
     maxConcurrentRuns: 1,
     maxConcurrentGates: 1,
-    modelInstance: "claudeAgent",
-    model: "claude-sonnet-5-5",
     notify: true,
     repos: [{ repo: REPO, path: "/p" }],
   } satisfies MachineConfig;

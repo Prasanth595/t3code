@@ -27,5 +27,4 @@ export const interruptible = (ctx: BuildingContext): InterruptContext => ({
   },
   repoPath: "/work/softfac",
   ghConfigDir: "/gh/rawphp",
-  model: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
 });

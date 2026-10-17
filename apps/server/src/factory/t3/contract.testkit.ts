@@ -5,7 +5,13 @@
  * standing in for the provider.
  */
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EventId, ProjectId, type Project, type ThreadId } from "@t3tools/contracts";
+import {
+  EventId,
+  ProjectId,
+  ProviderInstanceId,
+  type Project,
+  type ThreadId,
+} from "@t3tools/contracts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
   decodeProviderReplayNdjson,
@@ -53,6 +59,11 @@ export const SIMPLE_PROMPT = "Respond with the following text: fixture simple ok
 
 export const projectId = ProjectId.make("project:factory-contract");
 export const createdAt = "2026-10-15T00:00:00.000Z";
+/** The T3 settings default model of the kit's server: what a factory session runs on, as the kit's project names none. */
+export const SETTINGS_MODEL = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  model: "claude-sonnet-4-6",
+};
 
 export const TERMINAL_RUN_STATUSES: ReadonlySet<Sessions.RunStatus> = new Set([
   "completed",
@@ -155,7 +166,9 @@ export const layerRuntime = (input: {
         ClaudeOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript),
         { databaseLayer: layerDatabase },
       );
-      const layerServerSettings = ServerSettings.layerTest();
+      const layerServerSettings = ServerSettings.layerTest({
+        defaultModelSelection: SETTINGS_MODEL,
+      });
       const layerReceipts = CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase));
       const layerThreadManagement = ThreadManagement.layer.pipe(
         Layer.provide(layerOrchestrator),
@@ -216,7 +229,9 @@ export const layerRuntime = (input: {
       );
       return Layer.mergeAll(
         Sessions.layer.pipe(
-          Layer.provide(Layer.mergeAll(layerLaunch, layerStores, layerThreadManagement)),
+          Layer.provide(
+            Layer.mergeAll(layerLaunch, layerStores, layerThreadManagement, layerServerSettings),
+          ),
         ),
         // Reads the same event sink the orchestrator writes to.
         Events.layer.pipe(Layer.provide(layerOrchestrator)),

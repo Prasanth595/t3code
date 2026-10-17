@@ -22,6 +22,7 @@ import { T0, useTempDirs } from "../ledger/testSupport.ts";
 import {
   SessionsError,
   ThreadNotFoundError,
+  type FactoryProject,
   type LaunchRequest,
   type Launched,
   type Model,
@@ -39,6 +40,8 @@ import {
   CANNOT_CONFIRM,
   CUT_SHORT_COMMENT,
   LAUNCH_FAILED,
+  NO_DEFAULT_MODEL,
+  NO_PROJECT,
   TEXT_CHANGED,
   launchMessage,
   sessionMayExistNote,
@@ -202,6 +205,7 @@ const isSessionsError = Schema.is(SessionsError);
 const isThreadNotFound = Schema.is(ThreadNotFoundError);
 
 const MODEL: Model = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+const PROJECT: FactoryProject = { id: "proj-1", model: MODEL };
 const LAUNCH_ID = "softfac:rawphp__softfac__7__1:launch";
 const WORKTREE = "/t3/wt";
 
@@ -213,7 +217,7 @@ const WORKTREE = "/t3/wt";
 const fakeSessions = (
   dataDir: string,
   script: {
-    project?: string | null | SessionsError;
+    project?: FactoryProject | null | SessionsError;
     launches?: Array<Launched | SessionsError>;
     archive?: Array<undefined | SessionsError>;
     thread?: Thread | ThreadNotFoundError;
@@ -233,7 +237,7 @@ const fakeSessions = (
   const sessions: Sessions = {
     findProject: (root) => {
       calls.push(`findProject ${root}`);
-      return result(script.project === undefined ? "proj-1" : script.project, "proj-1");
+      return result(script.project === undefined ? PROJECT : script.project, PROJECT);
     },
     launch: (request) => {
       calls.push(`launch ${request.commandId}`);
@@ -291,7 +295,6 @@ const ctxFor = (
   tracker,
   repoPath: "/work/softfac",
   ghConfigDir: "/gh/rawphp",
-  model: MODEL,
   sessions,
   clock: () => T0,
   ...extra,
@@ -449,13 +452,13 @@ describe("start: a fresh ready issue", () => {
     }),
   );
 
-  it.effect("records the model the launch call sent", () =>
+  it.effect("launches on the project's model and records it", () =>
     Effect.gen(function* () {
       const dataDir = tempDir();
       const { tracker } = fakeTracker({});
-      const t3 = fakeSessions(dataDir, {});
       const model = { instanceId: "codex", model: "gpt-5.5" };
-      yield* startIn(dataDir, tracker, t3.sessions, { model });
+      const t3 = fakeSessions(dataDir, { project: { id: "proj-1", model } });
+      yield* startIn(dataDir, tracker, t3.sessions);
       assert.deepStrictEqual(t3.launchRequests[0]!.model, model);
       assert.deepStrictEqual(entriesOf(dataDir)[4]!.data, {
         thread_id: "thread-1",
@@ -951,7 +954,6 @@ describe("start: older runs of the issue", () => {
   );
 });
 
-const NO_PROJECT = "no T3 project for this repo on this machine";
 const REFUSED = "Thread launch failed during resolve-project.";
 const sessionsError = (operation: "archive" | "find-project" | "launch", message: string) =>
   new SessionsError({ operation, cause: new Error(message) });
@@ -974,6 +976,28 @@ describe("start: the launch", () => {
       assert.deepStrictEqual(entriesOf(dataDir), [
         ...startedEvents().slice(0, 3),
         ...stuckTail(NO_PROJECT, "launch-failed"),
+      ]);
+    }),
+  );
+
+  // The project is found but names no model, and neither do T3's settings: the same path as no
+  // project, so the person reads the fix in the ledger and the issue goes stuck without a launch.
+  it.effect("a project with no default model goes stuck before any launch is sent", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker, calls } = fakeTracker({});
+      const t3 = fakeSessions(dataDir, { project: { id: "proj-1", model: null } });
+      const outcome = yield* startIn(dataDir, tracker, t3.sessions);
+      assert.strictEqual(
+        NO_DEFAULT_MODEL,
+        "no default model: set one on the T3 project or in Settings",
+      );
+      assert.deepStrictEqual(outcome, { kind: "stuck", run: run7, reason: NO_DEFAULT_MODEL });
+      assert.deepStrictEqual(calls.slice(3), stuckCalls(LAUNCH_FAILED, null));
+      assert.deepStrictEqual(t3.calls, ["findProject /work/softfac"]);
+      assert.deepStrictEqual(entriesOf(dataDir), [
+        ...startedEvents().slice(0, 3),
+        ...stuckTail(NO_DEFAULT_MODEL, "launch-failed"),
       ]);
     }),
   );
