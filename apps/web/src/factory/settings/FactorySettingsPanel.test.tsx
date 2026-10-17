@@ -4,6 +4,7 @@ import {
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import type { ReactNode } from "react";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -36,15 +37,15 @@ vi.mock("../../components/ui/button", () => ({ Button: "button" }));
 vi.mock("../../components/settings/settingsLayout", async () => {
   const { createElement } = await import("react");
   return {
-    SettingsPageContainer: (props: { children: unknown }) =>
+    SettingsPageContainer: (props: { children: ReactNode }) =>
       createElement("div", null, props.children),
-    SettingsSection: (props: { title: string; children: unknown }) =>
+    SettingsSection: (props: { title: string; children: ReactNode }) =>
       createElement("section", null, createElement("h2", null, props.title), props.children),
     SettingsRow: (props: {
       title: string;
-      description?: unknown;
-      control?: unknown;
-      children?: unknown;
+      description?: ReactNode;
+      control?: ReactNode;
+      children?: ReactNode;
     }) =>
       createElement(
         "div",
