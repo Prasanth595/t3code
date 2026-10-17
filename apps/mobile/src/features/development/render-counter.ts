@@ -1,4 +1,4 @@
-// Dev-only render counter driven by `scripts/mobile-measure-renders.ts` through the
+// Dev-only render counter driven by `scripts/measure-renders.mts` through the
 // Hermes inspector. It wraps the DevTools hook's commit callback, so it must load
 // before React renders anything; see `render-counter-entry.ts`.
 //
@@ -29,15 +29,13 @@ interface DevToolsHook {
 interface RenderCounterState {
   on: boolean;
   commits: number;
-  regionRoots: Map<string, string>;
-  /** Keyed by region and component, since a name like `View` renders in every region. */
   counts: Map<string, number>;
   causes: Map<string, number>;
 }
 export interface RenderCounterReport {
   readonly commits: number;
   readonly totalRenders: number;
-  readonly components: ReadonlyArray<{ name: string; region: string; renders: number }>;
+  readonly components: ReadonlyArray<{ key: string; count: number }>;
   readonly causes: ReadonlyArray<{ key: string; count: number }>;
 }
 
@@ -115,19 +113,18 @@ function install(state: RenderCounterState) {
   hook.__t3RenderCounter = true;
   const original = hook.onCommitFiberRoot.bind(hook);
 
-  const visit = (fiber: Fiber | null, parentName: string, region: string) => {
+  const visit = (fiber: Fiber | null, parentName: string) => {
     let node = fiber;
     while (node) {
       const alternate = node.alternate;
       const name = COMPONENT_TAGS.has(node.tag) ? nameOf(node) : null;
-      const nodeRegion = (name && state.regionRoots.get(name)) || region;
       const rendered = name !== null && (node.flags & PERFORMED_WORK) === PERFORMED_WORK;
       if (rendered) {
-        increment(state.counts, `${nodeRegion}\u0000${name}`);
+        increment(state.counts, name);
         increment(state.causes, `${name} ${causeOf(node, parentName)}`);
       }
       const skipped = alternate !== null && node.child === alternate.child && !rendered;
-      if (node.child && !skipped) visit(node.child, rendered ? name : parentName, nodeRegion);
+      if (node.child && !skipped) visit(node.child, rendered ? name : parentName);
       node = node.sibling;
     }
   };
@@ -135,19 +132,16 @@ function install(state: RenderCounterState) {
   hook.onCommitFiberRoot = (id, root, ...rest) => {
     if (state.on) {
       state.commits += 1;
-      visit(root.current.child, "root", "other");
+      visit(root.current.child, "root");
     }
     return original(id, root, ...rest);
   };
 }
 
-const state: RenderCounterState = {
-  on: false,
-  commits: 0,
-  regionRoots: new Map(),
-  counts: new Map(),
-  causes: new Map(),
-};
+const state: RenderCounterState = { on: false, commits: 0, counts: new Map(), causes: new Map() };
+
+const sorted = (map: Map<string, number>) =>
+  [...map].map(([key, count]) => ({ key, count })).sort((a, b) => b.count - a.count);
 
 install(state);
 
@@ -158,9 +152,7 @@ Object.assign(globalThis, {
     void Linking.openURL(url);
     return true;
   },
-  /** `regionRoots` maps a component name to the region its subtree belongs to. */
-  __t3RenderCounterStart(regionRoots: Record<string, string> = {}) {
-    state.regionRoots = new Map(Object.entries(regionRoots));
+  __t3RenderCounterStart() {
     state.commits = 0;
     state.counts = new Map();
     state.causes = new Map();
@@ -169,19 +161,12 @@ Object.assign(globalThis, {
   },
   __t3RenderCounterStop(): RenderCounterReport {
     state.on = false;
-    const components = [...state.counts]
-      .map(([key, renders]) => {
-        const [region = "other", name = key] = key.split("\u0000");
-        return { name, region, renders };
-      })
-      .sort((a, b) => b.renders - a.renders);
+    const components = sorted(state.counts);
     return {
       commits: state.commits,
-      totalRenders: components.reduce((total, entry) => total + entry.renders, 0),
+      totalRenders: components.reduce((total, entry) => total + entry.count, 0),
       components,
-      causes: [...state.causes]
-        .map(([key, count]) => ({ key, count }))
-        .sort((a, b) => b.count - a.count),
+      causes: sorted(state.causes),
     };
   },
 });

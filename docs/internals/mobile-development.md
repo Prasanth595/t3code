@@ -47,8 +47,8 @@ renders that never happened, because bailed-out fibers keep flags from older com
 [`measure-renders.mts`](../../apps/mobile/scripts/measure-renders.mts) drives a measurement from
 outside the app. It evaluates the counter's globals through Metro's Hermes inspector proxy, which
 works the same for iOS simulators and Android emulators and needs no taps, `simctl`, or `adb`. It
-starts a real provider turn through the server, opens the thread with an app link, and records a
-window mid-stream. Expo drops inspector sockets whose `Origin` is not the URL Metro advertises, so
+starts a real provider turn through the server, opens the thread with an app link, records a window
+mid-stream, and prints the median renders, commits, top components and top causes. Expo drops inspector sockets whose `Origin` is not the URL Metro advertises, so
 pass that URL (the LAN address with `--lan`) as `--metro`.
 
 ```bash

@@ -33,9 +33,7 @@ import { Socket } from "effect/socket";
 const RenderReport = Schema.Struct({
   commits: Schema.Number,
   totalRenders: Schema.Number,
-  components: Schema.Array(
-    Schema.Struct({ name: Schema.String, region: Schema.String, renders: Schema.Number }),
-  ),
+  components: Schema.Array(Schema.Struct({ key: Schema.String, count: Schema.Number })),
   causes: Schema.Array(Schema.Struct({ key: Schema.String, count: Schema.Number })),
 });
 type RenderReport = typeof RenderReport.Type;
@@ -59,13 +57,6 @@ class MeasureError extends Schema.TaggedError<MeasureError>()("MeasureError", {
   message: Schema.String,
 }) {}
 
-// The component name that roots each region; everything else counts as "other".
-const REGION_ROOTS = {
-  ThreadFeed: "feed",
-  ThreadComposer: "composer",
-  ThreadHeader: "header",
-};
-const REGIONS = ["feed", "composer", "header", "other"] as const;
 const STREAM_PROMPT =
   "Think it through step by step, then write a 3000-word essay on the history of typesetting in plain paragraphs with a few headings. Do not use any tools.";
 
@@ -192,7 +183,7 @@ const streamingItem = (projection: OrchestrationV2ThreadProjection) =>
     (item) => (item.type === "assistant_message" || item.type === "reasoning") && item.streaming,
   );
 
-/** Scenario `stream-reply`: an open thread streams a long reply while the composer is idle. */
+/** An open thread streams a long reply while the composer is idle. */
 const measureStreamReply = Effect.fn("measure.streamReply")(function* (
   options: Options,
   run: number,
@@ -246,7 +237,7 @@ const measureStreamReply = Effect.fn("measure.streamReply")(function* (
   );
   if (Option.isNone(streaming))
     return yield* new MeasureError({ message: `Run ${run}: the reply never started streaming.` });
-  yield* evaluate(`__t3RenderCounterStart(${encodeJson(REGION_ROOTS)})`);
+  yield* evaluate("__t3RenderCounterStart()");
   yield* Effect.sleep(`${options.windowSeconds} seconds`);
   const report = yield* decodeReport(yield* evaluate("JSON.stringify(__t3RenderCounterStop())"));
   // React commits on every streamed delta, so an empty window means the app is not on the thread.
@@ -258,67 +249,49 @@ const measureStreamReply = Effect.fn("measure.streamReply")(function* (
   return { report, stillStreaming: streamingItem(after) !== undefined };
 }, Effect.scoped);
 
-const formatTable = (reports: ReadonlyArray<RenderReport>) => {
-  const lines: string[] = [];
-  const regionTotal = (report: RenderReport, region: string) =>
-    report.components
-      .filter((entry) => entry.region === region)
-      .reduce((total, entry) => total + entry.renders, 0);
-  lines.push(`Median of ${reports.length} runs.`, "", "| Region | Renders |", "|---|---:|");
-  for (const region of REGIONS)
-    lines.push(`| ${region} | ${median(reports.map((report) => regionTotal(report, region)))} |`);
-  lines.push(`| **total** | **${median(reports.map((report) => report.totalRenders))}** |`);
-  lines.push(`| commits | ${median(reports.map((report) => report.commits))} |`);
-  // Provider pace sets how many commits land in the window; per-commit cost is comparable across runs.
-  lines.push(
-    `| renders per commit | ${median(reports.map((report) => Math.round(report.totalRenders / Math.max(report.commits, 1))))} |`,
-  );
-
-  const componentKeys = new Map<string, { name: string; region: string }>();
-  for (const report of reports)
-    for (const entry of report.components)
-      componentKeys.set(`${entry.region}/${entry.name}`, {
-        name: entry.name,
-        region: entry.region,
-      });
-  const componentRows = [...componentKeys.values()]
-    .map(({ name, region }) => ({
-      name,
-      region,
-      renders: median(
-        reports.map(
-          (report) =>
-            report.components.find((entry) => entry.name === name && entry.region === region)
-              ?.renders ?? 0,
-        ),
-      ),
-    }))
-    .filter((entry) => entry.renders > 0)
-    .sort((a, b) => b.renders - a.renders)
-    .slice(0, 25);
-  lines.push("", "| Component | Region | Renders |", "|---|---|---:|");
-  for (const row of componentRows) lines.push(`| ${row.name} | ${row.region} | ${row.renders} |`);
-
-  const causes = new Set(reports.flatMap((report) => report.causes.map((entry) => entry.key)));
-  const causeRows = [...causes]
+const medianTable = (
+  title: string,
+  reports: ReadonlyArray<RenderReport>,
+  pick: (report: RenderReport) => RenderReport["causes"],
+  limit: number,
+) => {
+  const keys = new Set(reports.flatMap((report) => pick(report).map((entry) => entry.key)));
+  const rows = [...keys]
     .map((key) => ({
       key,
-      count: median(
-        reports.map((report) => report.causes.find((entry) => entry.key === key)?.count ?? 0),
-      ),
+      count: median(reports.map((report) => pick(report).find((e) => e.key === key)?.count ?? 0)),
     }))
-    .filter((entry) => entry.count > 0)
+    .filter((row) => row.count > 0)
     .sort((a, b) => b.count - a.count)
-    .slice(0, 15);
-  lines.push("", "| Top causes | Count |", "|---|---:|");
-  for (const row of causeRows) lines.push(`| \`${row.key}\` | ${row.count} |`);
-  return lines.join("\n");
+    .slice(0, limit);
+  return [
+    `| ${title} | Renders |`,
+    "|---|---:|",
+    ...rows.map((r) => `| \`${r.key}\` | ${r.count} |`),
+  ];
+};
+
+const formatTable = (reports: ReadonlyArray<RenderReport>) => {
+  const totals = (pick: (report: RenderReport) => number) => median(reports.map(pick));
+  return [
+    `Median of ${reports.length} runs.`,
+    "",
+    "| | |",
+    "|---|---:|",
+    `| renders | ${totals((r) => r.totalRenders)} |`,
+    `| commits | ${totals((r) => r.commits)} |`,
+    // Provider pace sets how many commits land in the window; per-commit cost compares across runs.
+    `| renders per commit | ${totals((r) => Math.round(r.totalRenders / Math.max(r.commits, 1)))} |`,
+    "",
+    ...medianTable("Component", reports, (r) => r.components, 20),
+    "",
+    ...medianTable("Cause", reports, (r) => r.causes, 15),
+  ].join("\n");
 };
 
 const command = Command.make(
   "measure-renders",
   {
-    scenario: Flag.Literals("scenario", ["stream-reply"]).pipe(Flag.withDefault("stream-reply")),
     server: Flag.String("server").pipe(
       Flag.withDescription("T3 server origin the app is paired with."),
     ),
@@ -334,7 +307,6 @@ const command = Command.make(
     projectRoot: Flag.String("project-root").pipe(
       Flag.withDescription("Scratch directory for the measurement project; created if missing."),
     ),
-    json: Flag.String("json").pipe(Flag.optional),
   },
   Effect.fn("measure.main")(function* (flags) {
     const options: Options = { ...flags, windowSeconds: flags.window };
@@ -348,8 +320,6 @@ const command = Command.make(
       // Let the interrupted turn settle so the next run starts from a quiet app.
       yield* Effect.sleep("3 seconds");
     }
-    if (Option.isSome(flags.json))
-      yield* (yield* FileSystem.FileSystem).writeFileString(flags.json.value, encodeJson(reports));
     yield* Console.log(formatTable(reports));
   }),
 );
