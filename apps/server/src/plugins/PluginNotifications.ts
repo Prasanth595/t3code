@@ -96,7 +96,7 @@ export class PluginNotifications extends Context.Service<
 export const make = Effect.fn("PluginNotifications.make")(function* () {
   const supervisor = yield* PluginSupervisor.PluginSupervisor;
   const crypto = yield* Crypto.Crypto;
-  const epoch = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
+  const epoch = yield* crypto.randomUUIDv4().pipe(Effect.orDie);
   // Every frame is the whole set, so a slow subscriber only skips intermediate ones.
   const changes = yield* PubSub.sliding<PluginNotificationFrame>(1);
   // Orders issue, removal and each subscriber's first frame against one another.
