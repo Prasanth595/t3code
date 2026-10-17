@@ -96,8 +96,14 @@ export const leaveStopRequest = (
   if (seen.state !== "building") return { outcome: "not-building", seen };
   const path = stopRequestPath(dataDir, run);
   if (seen.stopRequested || NodeFS.existsSync(path)) return { outcome: "already-requested", seen };
+  const dir = NodePath.dirname(path);
   try {
-    NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+    NodeFS.mkdirSync(dir, { recursive: true });
+  } catch (error) {
+    // Its own catch: the EEXIST of a file where the directory belongs is not a request.
+    throw new LedgerIoError({ path: dir, cause: error });
+  }
+  try {
     // `wx`: a request left by a call racing this one is that call's, and this one is `already`.
     NodeFS.writeFileSync(path, "operator\n", { flag: "wx" });
   } catch (error) {

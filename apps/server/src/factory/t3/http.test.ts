@@ -666,6 +666,17 @@ describe("POST /api/factory/runs/:id/stop", () => {
     }),
   );
 
+  it.effect("answers 500 factory_error and wakes nothing when the request cannot be written", () =>
+    serving({}, async (call, { tokens, dir, wakes }) => {
+      seed(dir, run10, BUILDING);
+      NodeFS.writeFileSync(NodePath.join(dir, "stop-requests"), "");
+      const response = await stop(call, tokens.operate);
+      assert.strictEqual(response.status, 500);
+      assert.strictEqual((await json(response)).code, "factory_error");
+      assert.strictEqual(wakes.count, 0);
+    }),
+  );
+
   it.effect("answers 404 for an unknown run and 400 for a bad id", () =>
     serving({}, async (call, { tokens, wakes }) => {
       const unknown = await stop(call, tokens.operate);

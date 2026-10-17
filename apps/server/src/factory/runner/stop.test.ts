@@ -10,7 +10,7 @@ import { makeCause, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { readRun } from "../ledger/read.ts";
 import { runPath, type RunId } from "../ledger/runId.ts";
-import { LedgerNotFoundError } from "../ledger/errors.ts";
+import { LedgerIoError, LedgerNotFoundError } from "../ledger/errors.ts";
 import { T0, catchLedgerError, useTempDirs } from "../ledger/testSupport.ts";
 import { readProgress } from "./progress.ts";
 import {
@@ -271,6 +271,28 @@ describe("leaveStopRequest", () => {
     const dataDir = tempDir();
     catchLedgerError(() => leaveStopRequest(dataDir, run10), LedgerNotFoundError);
     assert.strictEqual(NodeFS.existsSync(stopRequestPath(dataDir, run10)), false);
+  });
+
+  it("is already-requested when a request appears between the check and the write, and keeps it", () => {
+    const dataDir = tempDir();
+    seed(dataDir, BUILDING);
+    // A dangling symlink is missing to the existence check, but the exclusive write meets it.
+    const path = stopRequestPath(dataDir, run10);
+    NodeFS.mkdirSync(NodePath.dirname(path), { recursive: true });
+    NodeFS.symlinkSync(NodePath.join(dataDir, "nowhere"), path);
+    assert.strictEqual(leaveStopRequest(dataDir, run10).outcome, "already-requested");
+    assert.strictEqual(NodeFS.readlinkSync(path), NodePath.join(dataDir, "nowhere"));
+    assert.strictEqual(NodeFS.existsSync(NodePath.join(dataDir, "nowhere")), false);
+  });
+
+  it("fails with LedgerIoError when the request cannot be written, and writes no ledger line", () => {
+    const dataDir = tempDir();
+    seed(dataDir, BUILDING);
+    const bytes = bytesOf(dataDir);
+    // A file where the requests directory belongs: the request cannot be made under it.
+    NodeFS.writeFileSync(NodePath.join(dataDir, STOP_REQUESTS_DIR), "");
+    catchLedgerError(() => leaveStopRequest(dataDir, run10), LedgerIoError);
+    assert.strictEqual(bytesOf(dataDir), bytes);
   });
 
   it.effect("leaves a request the pass takes into the ledger", () =>
