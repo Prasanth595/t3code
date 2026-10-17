@@ -1,4 +1,5 @@
 import { act, type ReactElement } from "react";
+import { onTestFinished } from "vite-plus/test";
 import {
   create,
   type ReactTestInstance,
@@ -71,10 +72,12 @@ export const render = (element: ReactElement) => renderAt(1280, element);
 
 /**
  * Renders `element` in a viewport `widthPx` wide and returns the renderer with helpers to read it.
- * The viewport stays until `unmount` or the next render, since a later update still asks it.
+ * The viewport stays until `unmount`, the next render, or the end of the test, since a later
+ * update still asks it.
  */
 export async function renderAt(widthPx: number, element: ReactElement) {
   const restore = viewport(widthPx);
+  onTestFinished(restore);
   let renderer!: ReactTestRenderer;
   await act(async () => {
     renderer = create(element);
