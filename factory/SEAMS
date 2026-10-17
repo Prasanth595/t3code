@@ -2,6 +2,8 @@
 apps/desktop/src/app/DesktopApp.ts
 apps/desktop/src/app/DesktopAppIdentity.test.ts
 apps/desktop/src/app/DesktopClerk.test.ts
+apps/desktop/src/app/DesktopCliCommand.test.ts
+apps/desktop/src/app/DesktopCliShim.ts
 apps/desktop/src/app/DesktopEarlyElectronStartup.test.ts
 apps/desktop/src/app/DesktopEnvironment.test.ts
 apps/desktop/src/app/DesktopEnvironment.ts
@@ -18,6 +20,8 @@ apps/desktop/src/electron/ElectronProtocol.test.ts
 apps/desktop/src/electron/ElectronProtocol.ts
 apps/server/src/cloud/bootService.test.ts
 apps/server/src/cloud/bootService.ts
+apps/server/src/httpCors.test.ts
+apps/server/src/httpCors.ts
 apps/server/src/server.ts
 apps/web/src/components/settings/SettingsSidebarNav.tsx
 apps/web/src/components/settings/settingsSearch.ts
@@ -25,8 +29,13 @@ apps/web/src/components/sidebar/SidebarChrome.tsx
 apps/web/src/components/sidebar/mainAppLocation.test.ts
 apps/web/src/components/sidebar/mainAppLocation.ts
 apps/web/src/routeTree.gen.ts
+packages/shared/src/codexAuthHandoff.test.ts
+packages/shared/src/codexAuthHandoff.ts
+packages/shared/src/promptLinks.test.ts
+packages/shared/src/promptLinks.ts
 packages/shared/src/providerAuthReturnUrl.test.ts
 packages/shared/src/providerAuthReturnUrl.ts
+packages/shared/tsconfig.json
 scripts/build-desktop-artifact.test.ts
 scripts/build-desktop-artifact.ts
 scripts/lib/fork-identity.ts

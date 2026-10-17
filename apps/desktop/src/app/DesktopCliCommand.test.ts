@@ -157,6 +157,35 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("leaves upstream T3 Code's launcher link alone", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      // Upstream's launcher carries its own marker, which is not this app's.
+      const upstream = path.join(home, "upstream-t3");
+      yield* fs.writeFileString(
+        upstream,
+        "#!/bin/sh\n# Written by T3 Code: runs the desktop app's bundled t3 CLI.\n",
+      );
+      const link = path.join(home, ".local", "bin", "t3");
+      yield* fs.makeDirectory(path.dirname(link), { recursive: true });
+      yield* fs.symlink(upstream, link);
+      const command = yield* commandIn({ home });
+      expect((yield* command.state).installedPath).toBeNull();
+      const error = yield* Effect.flip(command.install);
+      expect(error.message).toContain("Another t3 command is already installed");
+      yield* command.uninstall;
+      expect(yield* fs.readLink(link)).toBe(upstream);
+    }).pipe(Effect.scoped),
+  );
+
+  it("marks the launcher with the fork product name", () => {
+    expect(DesktopCliShim.MARKER).toBe(
+      "Written by T3 Code Factory: runs the desktop app's bundled t3 CLI.",
+    );
+  });
+
   it.effect("does not read a large binary another t3 links to", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
