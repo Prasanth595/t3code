@@ -374,6 +374,28 @@ describe("open question delivery", () => {
     expect(acknowledgeSnapShot).toHaveBeenCalledExactlyOnceWith(capture.id);
   });
 
+  it("keeps a capture pinned before any question off a question that opens during the read", async () => {
+    vi.stubGlobal("window", { localStorage: storage, dispatchEvent: vi.fn() });
+    const pins = new Map();
+    const resolveTarget = () => resolveSnapShotAttachmentTarget(pins, capture.id, threadRef);
+    // The drain pins a capture it never saw requested before reading it.
+    expect(resolveTarget()).toEqual(threadRef);
+    let untrack = () => {};
+    const { bridge, acknowledgeSnapShot } = makeBridge(async () => {
+      untrack = trackOpenQuestionAttachmentDraft(threadRef, request);
+      return capture;
+    });
+    try {
+      await deliverSnapShot(bridge, capture, resolveTarget);
+      const store = useComposerDraftStore.getState();
+      expect(store.getComposerDraft(first)?.images ?? []).toHaveLength(0);
+      expect(store.getComposerDraft(threadRef)?.images.map(({ id }) => id)).toEqual([capture.id]);
+      expect(acknowledgeSnapShot).toHaveBeenCalledExactlyOnceWith(capture.id);
+    } finally {
+      untrack();
+    }
+  });
+
   it("refuses a capture once the request's other questions hold the shared limit", async () => {
     vi.stubGlobal("window", { localStorage: storage, dispatchEvent: vi.fn() });
     useComposerDraftStore.getState().addImages(

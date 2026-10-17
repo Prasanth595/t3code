@@ -351,6 +351,9 @@ export function SnapShotCoordinator() {
           }
 
           try {
+            // A capture this coordinator never saw requested (a reload, a blurred window) is
+            // pinned here, before the read, so a question that opens meanwhile cannot claim it.
+            resolveSnapShotAttachmentTarget(questionPinsRef.current, item.id, target);
             await deliverSnapShot(bridge, item, () =>
               resolveSnapShotAttachmentTarget(questionPinsRef.current, item.id, target),
             );

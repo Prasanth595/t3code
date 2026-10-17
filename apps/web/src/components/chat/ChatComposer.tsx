@@ -2004,7 +2004,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress?.activeQuestion?.allowCustomAnswer !== false &&
     !activePendingIsResponding;
   const questionRequest = pendingUserInputs[0];
-  useEffect(() => {
+  // A layout effect, so the registry changes in the same commit as the question's UI: a capture
+  // resolved between the paint and a passive effect would otherwise see the old question state.
+  useLayoutEffect(() => {
     if (!questionAttachmentTarget || !questionRequest || !questionTakesSnapShots) return;
     return trackOpenQuestionAttachmentDraft(routeThreadRef, {
       draftId: questionAttachmentTarget,
