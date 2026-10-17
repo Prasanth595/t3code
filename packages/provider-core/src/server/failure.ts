@@ -17,7 +17,6 @@ import * as IdAllocator from "./IdAllocator.ts";
 import type { ProviderAdapterFailureReason } from "./ProviderAdapter.ts";
 import * as Schema from "effect/Schema";
 
-/** Raised when portable history does not fit the target provider's context window. */
 export class ContextHandoffBudgetError extends Schema.TaggedError<ContextHandoffBudgetError>()(
   "ContextHandoffBudgetError",
   {},
@@ -58,11 +57,6 @@ const PROVIDER_FAILURE_REASONS: Record<ProviderAdapterFailureReason, string> = {
   attachment_unreadable: "an attachment could not be read",
 };
 
-/**
- * Translate known categories without exposing arbitrary provider defect text.
- * A category names its reason only from the typed `reason` of a protocol error
- * beneath it; adapter `detail` and every other provider text stay in the logs.
- */
 function causeMessage(cause: unknown): string | undefined {
   const seen = new Set<unknown>();
   let category: (typeof PROVIDER_FAILURE_CATEGORIES)[string];
@@ -151,7 +145,6 @@ function replaceUnsafeControlCharacters(value: string): string {
   return sanitized.join("");
 }
 
-/** Removes common credential forms before provider text crosses a transport boundary. */
 function redactProviderFailureText(value: string): string {
   return replaceUnsafeControlCharacters(value)
     .replace(/\bhttps?:\/\/[^\s<>"']+/giu, redactUrl)
