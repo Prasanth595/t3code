@@ -26,6 +26,13 @@ function orderKey(subagent: Subagent): number {
   return DateTime.toEpochMillis(subagent.startedAt ?? subagent.updatedAt);
 }
 
+/**
+ * The agents behind the thread's agents pill and sheet: every agent of the active run (or, once
+ * the thread is idle, of the run the most recently updated agent belongs to), plus any agent
+ * still working from another run. A background agent outlives the turn that launched it, and the
+ * Waiting strip counts it, so the pill has to count it and the sheet has to reach it too. Agents
+ * of rolled-back runs stay out, as they do from the strip.
+ */
 export function deriveThreadTurnSubagents(
   projection: Pick<Projection, "runs" | "subagents">,
 ): ThreadTurnSubagents | null {
@@ -37,8 +44,16 @@ export function deriveThreadTurnSubagents(
       : latest,
   );
   const runId = activeRun?.id ?? latestUpdated.runId;
+  const rolledBackRunIds = new Set(
+    projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
+  );
   const subagents = copySorted(
-    projection.subagents.filter((subagent) => subagent.runId === runId),
+    projection.subagents.filter(
+      (subagent) =>
+        subagent.runId === runId ||
+        (isActiveSubagentStatus(subagent.status) &&
+          (subagent.runId === null || !rolledBackRunIds.has(subagent.runId))),
+    ),
     (left, right) => orderKey(left) - orderKey(right) || left.id.localeCompare(right.id),
   );
   if (subagents.length === 0) return null;
