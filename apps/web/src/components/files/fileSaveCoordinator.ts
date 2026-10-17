@@ -1,5 +1,8 @@
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 
+// Avoid unbounded retry traffic after a closed editor loses write access or its filesystem stays unavailable.
+const MAX_CLOSE_RETRIES = 3;
+
 export interface FileSaveCoordinatorOptions<A, E> {
   readonly debounceMs: number;
   readonly canPersist?: () => boolean;
@@ -20,6 +23,7 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
   private saving = false;
   private disposed = false;
   private closeRetryPending = false;
+  private closeRetryFailures = 0;
 
   constructor(private readonly options: FileSaveCoordinatorOptions<A, E>) {}
 
@@ -80,12 +84,20 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
     this.saving = false;
     if (revision === this.latestRevision) {
       if (confirmed) {
+        this.closeRetryFailures = 0;
         this.options.onPendingChange(false);
-      } else if (!succeeded && this.disposed) {
-        // Closing the editor must not discard an edit whose final save failed.
-        // Retry after the normal debounce; a successful write stops the retry.
+      } else if (
+        !succeeded &&
+        this.disposed &&
+        this.closeRetryFailures < MAX_CLOSE_RETRIES &&
+        this.options.canPersist?.() !== false
+      ) {
+        // A permanent failure must not leave a disposed editor retrying forever.
+        // Keep the unsaved draft pending after the bounded retry budget expires.
         this.closeRetryPending = true;
-        this.schedule(this.options.debounceMs);
+        const retryDelay = this.options.debounceMs * 2 ** this.closeRetryFailures;
+        this.closeRetryFailures += 1;
+        this.schedule(retryDelay);
       }
       return;
     }

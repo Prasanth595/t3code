@@ -238,7 +238,9 @@ describe("FileSaveCoordinator", () => {
     expect(persist).toHaveBeenCalledTimes(2);
     expect(persist).toHaveBeenLastCalledWith("only");
 
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(persist).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
     expect(persist).toHaveBeenCalledTimes(3);
     expect(onConfirmed).toHaveBeenCalledWith("only");
     expect(onPendingChange.mock.calls.at(-1)).toEqual([false]);
@@ -294,6 +296,60 @@ describe("FileSaveCoordinator", () => {
 
     expect(shouldRetryAfterClose).toHaveBeenCalledWith("old");
     expect(persist).toHaveBeenCalledExactlyOnceWith("old");
+  });
+
+  it("caps close-time retries with backoff and preserves an unsaved draft", async () => {
+    vi.useFakeTimers();
+    const onPendingChange = vi.fn();
+    const persist = vi
+      .fn()
+      .mockResolvedValue(AsyncResult.failure(Cause.fail(new Error("write unavailable"))));
+    const coordinator = new FileSaveCoordinator({
+      debounceMs: 500,
+      persist,
+      onPendingChange,
+      onConfirmed: vi.fn(),
+    });
+
+    coordinator.change("unsaved");
+    coordinator.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(persist).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(persist).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(persist).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(persist).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(persist).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(persist).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(persist).toHaveBeenCalledTimes(4);
+    expect(onPendingChange).toHaveBeenLastCalledWith(true);
+  });
+
+  it("stops retrying if write permission was revoked after the failure", async () => {
+    vi.useFakeTimers();
+    let canWrite = true;
+    const persist = vi.fn().mockImplementation(async () => {
+      canWrite = false;
+      return AsyncResult.failure(Cause.fail(new Error("write forbidden")));
+    });
+    const coordinator = new FileSaveCoordinator({
+      debounceMs: 500,
+      canPersist: () => canWrite,
+      persist,
+      onPendingChange: vi.fn(),
+      onConfirmed: vi.fn(),
+    });
+
+    coordinator.change("unsaved");
+    coordinator.dispose();
+    await vi.runAllTimersAsync();
+    expect(persist).toHaveBeenCalledOnce();
   });
 
   it("ignores editor changes emitted after disposal", async () => {
