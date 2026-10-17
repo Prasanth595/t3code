@@ -9,7 +9,12 @@ import * as Schema from "effect/Schema";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ManagedProjectFolders from "../../project/ManagedProjectFolders.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
-import { hasFactoryBlock, PROJECT_CONFIG_PATH, type WatchedProject } from "../config.ts";
+import {
+  hasFactoryBlock,
+  PROJECT_CONFIG_PATH,
+  type WatchedListing,
+  type WatchedProject,
+} from "../config.ts";
 
 /**
  * The repos the factory watches, read from this environment's T3 projects: an active project
@@ -36,7 +41,7 @@ export class FactoryWatchedRepos extends Context.Service<
   FactoryWatchedRepos,
   {
     /** The watched projects in the order T3 lists them, read afresh on every call. */
-    readonly list: Effect.Effect<ReadonlyArray<WatchedProject>, WatchedReposError>;
+    readonly list: Effect.Effect<WatchedListing, WatchedReposError>;
   }
 >()("t3/factory/t3/watchedRepos/FactoryWatchedRepos") {}
 
@@ -53,22 +58,37 @@ export const make = Effect.gen(function* () {
       .pipe(Effect.mapError((cause) => new WatchedReposError({ cause })));
     const scratch = yield* folders.scratchRoot;
     const scratchRoot = Option.map(scratch, (root) => path.resolve(root));
-    const watched: Array<WatchedProject> = [];
+    const repos: Array<WatchedProject> = [];
+    const unresolved: Array<string> = [];
     for (const row of rows) {
       if (Option.isSome(scratchRoot) && path.resolve(row.workspaceRoot) === scratchRoot.value) {
         continue;
       }
-      const text = yield* fs
-        .readFileString(path.join(row.workspaceRoot, PROJECT_CONFIG_PATH))
-        .pipe(Effect.option);
+      // No file is "not opted in". Any other failure (EACCES, EIO, a timeout) is a read that did
+      // not finish, which is not the same as the project leaving the list.
+      const text = yield* fs.readFileString(path.join(row.workspaceRoot, PROJECT_CONFIG_PATH)).pipe(
+        Effect.asSome,
+        Effect.catch((cause) =>
+          cause.reason._tag === "NotFound"
+            ? Effect.succeed(Option.none<string>())
+            : Effect.sync(() => void unresolved.push(row.workspaceRoot)).pipe(
+                Effect.as(Option.none<string>()),
+              ),
+        ),
+      );
       if (Option.isNone(text) || !hasFactoryBlock(text.value)) continue;
       const identity = yield* identities.resolve(row.workspaceRoot);
-      if (identity === null || identity.provider !== "github") continue;
+      if (identity === null) {
+        // Git failed or timed out, and T3 caches the null for a minute.
+        unresolved.push(row.workspaceRoot);
+        continue;
+      }
+      if (identity.provider !== "github") continue;
       const { owner, name } = identity;
       if (owner === undefined || name === undefined) continue;
-      watched.push({ repo: `${owner}/${name}`, path: row.workspaceRoot, title: row.title });
+      repos.push({ repo: `${owner}/${name}`, path: row.workspaceRoot, title: row.title });
     }
-    return watched;
+    return { repos, unresolved } satisfies WatchedListing;
   });
 
   return FactoryWatchedRepos.of({ list });

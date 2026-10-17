@@ -89,6 +89,14 @@ export interface WatchedProject extends WatchedRepo {
   readonly title: string;
 }
 
+/** What the reader found: the watched projects, and the opted-in checkouts it could not identify this time. */
+export interface WatchedListing {
+  /** The projects that opted in and resolved to a GitHub `owner/name`, in T3's order. A repo two projects name appears once per project. */
+  readonly repos: ReadonlyArray<WatchedProject>;
+  /** Workspace roots of projects whose `.dw/config.yml` could not be read for a reason other than its absence, or that opted in but whose checkout T3 could not identify (a null identity). They are skipped; the list may be short. */
+  readonly unresolved: ReadonlyArray<string>;
+}
+
 export interface MachineConfig {
   readonly ghConfigDir: string;
   readonly pollSeconds: number;

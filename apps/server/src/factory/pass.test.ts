@@ -14,7 +14,7 @@ import {
   timeLimitOnlyProjectConfig,
   type MachineConfig,
   type ProjectConfig,
-  type WatchedRepo,
+  type WatchedProject,
 } from "./config.ts";
 import type { State } from "./domain/lifecycle.ts";
 import { LedgerIoError } from "./ledger/errors.ts";
@@ -77,8 +77,8 @@ const machine = (max: number): MachineConfig => ({
 });
 
 /** What the T3 projects list as watched, for the repos a test names. */
-const watchedOf = (repos: ReadonlyArray<string>): Array<WatchedRepo> =>
-  repos.map((repo) => ({ repo, path: `/p/${repo.replace("/", "-")}` }));
+const watchedOf = (repos: ReadonlyArray<string>): Array<WatchedProject> =>
+  repos.map((repo) => ({ repo, path: `/p/${repo.replace("/", "-")}`, title: repo }));
 
 const project = (): ProjectConfig => ({
   ...timeLimitOnlyProjectConfig(),
@@ -170,7 +170,7 @@ class Fake implements PassWorld {
   /** The head of each open pull request per `"<repo>#<pr>"`: `HEAD` unless scripted; `null` is one that ended, `"error"` a read that fails. */
   openHeads: Record<string, string | null | "error"> = {};
   /** The repos the T3 projects list as watched; set per pass by `pass`. */
-  watched: Array<WatchedRepo> = [];
+  watched: Array<WatchedProject> = [];
   /** Workspace roots the reader could not identify this pass; they are not in `watched`. */
   unresolved: Array<string> = [];
   /** Listing the watched repos fails, as the project store being down does. */

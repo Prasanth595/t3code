@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 
 import type { Attention, NewItem } from "./attention.ts";
 import type { HandPause } from "./claims.ts";
-import type { MachineConfig, ProjectConfig, WatchedRepo } from "./config.ts";
+import type { MachineConfig, ProjectConfig, WatchedListing, WatchedRepo } from "./config.ts";
 import { stateLabel, type State } from "./domain/lifecycle.ts";
 import type { LedgerError } from "./ledger/errors.ts";
 import type { CauseStep, ErrorKind, MachineEvent } from "./ledger/events.ts";
@@ -68,9 +68,9 @@ export interface ClaimScanResult {
 export interface PassWorld {
   /**
    * The repos to watch, read anew at the start of each pass: the environment's T3 projects whose
-   * checkout opts in.
+   * checkout opts in, and the opted-in checkouts the reader could not identify this time.
    */
-  readonly watchedRepos: Effect.Effect<ReadonlyArray<WatchedRepo>, PassError>;
+  readonly watchedRepos: Effect.Effect<WatchedListing, PassError>;
   /** The repo's project config, from `.dw/config.yml` at the tip of its default branch. */
   readonly project: (repo: WatchedRepo) => Effect.Effect<ProjectConfig, PassError>;
   /** The login the repo's tracker knows the factory by. */
@@ -513,12 +513,21 @@ export const runPass = (
       // an unread list has not left it.
       yield* pass.fail(null, passError(listed.failure.kind, "", listed.failure.message));
     }
-    const watched = listed._tag === "Success" ? listed.success : [];
-    // A repo that left the list has nothing the factory still needs a person for.
+    const listing = listed._tag === "Success" ? listed.success : { repos: [], unresolved: [] };
+    const watched = listing.repos;
+    // A repo that left the list has nothing the factory still needs a person for. A short list
+    // does not say a repo left: a project that could not be identified may be one of its owners,
+    // and a `stuck` or `needs-info` item is raised once and never again.
     if (listed._tag === "Success") {
-      yield* world.attention.clear(
-        (item) => item.repo !== null && !watched.some((r) => sameRepo(r.repo, item.repo!)),
-      );
+      if (listing.unresolved.length === 0) {
+        yield* world.attention.clear(
+          (item) => item.repo !== null && !watched.some((r) => sameRepo(r.repo, item.repo!)),
+        );
+      } else {
+        pass.line(
+          `watched: ${listing.unresolved.length} opted-in project(s) could not be identified this pass (${listing.unresolved.map(plain).join(", ")}); no attention item is cleared`,
+        );
+      }
     }
     const repos = yield* loadRepos(world, watched, pass);
     // Without the ledger there is no telling how many runs are active, so nothing is claimed.

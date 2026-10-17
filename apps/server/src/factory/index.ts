@@ -744,9 +744,9 @@ const startFactory = (options: RuntimeOptions) =>
     const readings = new Map<string, RepoConfigReading>();
     // The repos the pass's last listing named, for the status; a pass lists them anew before it works.
     const listWatched = watched.list.pipe(
-      Effect.tap((list) =>
+      Effect.tap((listing) =>
         Effect.sync(() => {
-          const repos = list.map((entry) => entry.repo);
+          const repos = listing.repos.map((entry) => entry.repo);
           state.watched = repos;
           if (state.status.state === "running") {
             state.status = { ...state.status, settings: { ...state.status.settings, repos } };
@@ -883,6 +883,7 @@ const startFactory = (options: RuntimeOptions) =>
     // make two loops, and a save cut short after the write leaves the loop on the old config.
     // The settings page reads the list untapped: only the pass writes `state.watched` and the status.
     const watchedRepos = watched.list.pipe(
+      Effect.map((listing) => listing.repos),
       Effect.catch((error) => Effect.logWarning(error.message).pipe(Effect.as([]))),
     );
     const lock = yield* Semaphore.make(1);
