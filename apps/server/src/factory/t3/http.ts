@@ -12,6 +12,9 @@
  * - `POST /api/factory/runs/:id/stop`: `runs stop`; leaves a stop request for the next pass, as
  *   `stop-run.sh` does, and wakes the loop. The pass archives the thread and removes the worktree.
  * - `POST /api/factory/claims/pause` and `.../resume`: `claims pause` and `claims resume`.
+ * - `POST /api/factory/restart`: answers 202, then logs `factory restart requested` and ends the
+ *   process through `ServerExit` (`exit.ts`); under the LaunchAgent, launchd starts it again. A
+ *   second request while one is pending answers 409 `restart_pending`.
  *
  * Each handler decodes its input, calls one function (`control.ts`, `status.ts`, the ledger reads)
  * and maps the result to a status and a body. A run id is parsed before anything is read, so no
@@ -23,6 +26,7 @@ import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import { HttpServerResponse } from "effect/http";
 import * as HttpRouter from "effect/http/HttpRouter";
 
@@ -35,6 +39,7 @@ import { listRuns, type RunSummary } from "../ledger/listRuns.ts";
 import { runIdToString } from "../ledger/runId.ts";
 import { buildStatus } from "../status.ts";
 import { route } from "./auth.ts";
+import { ServerExit } from "./exit.ts";
 import { FactoryPaths } from "./paths.ts";
 
 export const STATUS_PATH = "/api/factory/status";
@@ -43,6 +48,18 @@ export const RUN_PATH = "/api/factory/runs/:id";
 export const STOP_PATH = "/api/factory/runs/:id/stop";
 export const PAUSE_PATH = "/api/factory/claims/pause";
 export const RESUME_PATH = "/api/factory/claims/resume";
+export const RESTART_PATH = "/api/factory/restart";
+
+/** What the restart's 202 tells the caller to expect. */
+export const RESTART_MESSAGE =
+  "the server is exiting; when it runs as the LaunchAgent, launchd starts it again in about 10 seconds";
+
+/**
+ * How long the 202 gets to leave the socket before the shutdown starts. Written before the
+ * process begins to close, so the caller always receives the response; the restart itself takes
+ * launchd about 10 seconds either way.
+ */
+const RESTART_GRACE = "500 millis";
 
 const respond = (body: unknown, status = 200) => HttpServerResponse.jsonUnsafe(body, { status });
 
@@ -212,6 +229,37 @@ const resumeRoute = factoryRoute(
   }),
 );
 
+/**
+ * The restart. The response is returned first; a detached fiber then waits out the grace, logs the
+ * line that tells a requested restart from a crash in the launchd log, and exits. `pending` is
+ * made with the route, once per server, and never reset: this process is on its way out.
+ */
+const restartRoute = Layer.unwrap(
+  Effect.map(Ref.make(false), (pending) =>
+    factoryRoute(
+      "POST",
+      RESTART_PATH,
+      AuthOrchestrationOperateScope,
+      Effect.gen(function* () {
+        if (yield* Ref.getAndSet(pending, true)) {
+          return respond(
+            { code: "restart_pending", message: "a restart is already under way" },
+            409,
+          );
+        }
+        const { exit } = yield* ServerExit;
+        yield* Effect.forkDetach(
+          Effect.sleep(RESTART_GRACE).pipe(
+            Effect.andThen(Effect.logInfo("factory restart requested")),
+            Effect.andThen(exit),
+          ),
+        );
+        return respond({ restarting: true, message: RESTART_MESSAGE }, 202);
+      }),
+    ),
+  ),
+);
+
 /** The factory's HTTP routes. server.ts merges this into `layerMakeRoutes`. */
 export const FactoryRoutes = Layer.mergeAll(
   statusRoute,
@@ -220,4 +268,5 @@ export const FactoryRoutes = Layer.mergeAll(
   stopRoute,
   pauseRoute,
   resumeRoute,
+  restartRoute,
 );
