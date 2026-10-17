@@ -107,9 +107,9 @@ vi.mock(import("./PullRequestSummaryTab"), async (original) => ({
         Fix check
       </button>
       <div data-testid="nested-scroller" className="h-40 overflow-y-auto">
-        <div style={{ height: 2000 }} />
+        <div className="h-[2000px]" />
       </div>
-      <div style={{ height: 3000 }} />
+      <div className="h-[3000px]" />
     </div>
   )) as never,
 }));
@@ -141,7 +141,7 @@ vi.mock(import("./PullRequestCodeTab"), async (original) => ({
       >
         Add to agent
       </button>
-      <div style={{ height: 3000 }} />
+      <div className="h-[3000px]" />
     </div>
   )) as never,
 }));
@@ -220,9 +220,7 @@ const roots: Root[] = [];
 
 function render(props: Partial<ComponentProps<typeof PullRequestDetailPanel>> = {}) {
   const container = document.createElement("div");
-  container.style.height = "700px";
-  container.style.width = "900px";
-  container.style.display = "flex";
+  container.className = "flex h-[700px] w-[900px]";
   document.body.append(container);
   const root = createRoot(container);
   roots.push(root);
