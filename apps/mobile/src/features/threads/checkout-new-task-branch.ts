@@ -10,7 +10,7 @@ import type {
   VcsSwitchRefInput,
   VcsSwitchRefResult,
 } from "@t3tools/contracts";
-import { deriveLocalBranchNameCandidatesFromRemoteRef } from "@t3tools/shared/git";
+import { deriveLocalBranchNameFromRemoteRef } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 
@@ -49,34 +49,30 @@ export async function checkoutNewTaskBranch<E>(input: {
   // A thread's remembered location and the cached picker list can both be out
   // of date, and a remote ref never carries its local branch's worktree. Git
   // refuses to check out a branch another worktree holds, so reuse that one.
-  const localNames = input.branch.isRemote
-    ? deriveLocalBranchNameCandidatesFromRemoteRef(input.branch.name, input.branch.remoteName)
-    : [input.branch.name];
-  for (const localName of localNames) {
-    // The query is a substring match, so the exact branch can sit past the
-    // first page in a repository with many similarly named branches.
-    let cursor: number | undefined;
-    for (;;) {
-      const refs = await input.readRefs({
-        environmentId: input.project.environmentId,
-        input: {
-          cwd: input.project.workspaceRoot,
-          // The contract caps queries; a prefix still matches, and the exact
-          // name is compared below.
-          query: localName.slice(0, VCS_REF_QUERY_MAX_LENGTH),
-          refKind: "local",
-          ...(cursor === undefined ? { refresh: true } : { cursor }),
-        },
-      });
-      if (refs._tag === "Failure") return AsyncResult.failure(refs.cause);
-      const local = refs.value.refs.find((ref) => ref.name === localName);
-      if (local) {
-        if (local.current || local.worktreePath) return AsyncResult.success(local);
-        break;
-      }
-      if (refs.value.nextCursor === null) break;
-      cursor = refs.value.nextCursor;
+  const localName = localBranchName(input.branch);
+  // The query is a substring match, so the exact branch can sit past the
+  // first page in a repository with many similarly named branches.
+  let cursor: number | undefined;
+  for (;;) {
+    const refs = await input.readRefs({
+      environmentId: input.project.environmentId,
+      input: {
+        cwd: input.project.workspaceRoot,
+        // The contract caps queries; a prefix still matches, and the exact
+        // name is compared below.
+        query: localName.slice(0, VCS_REF_QUERY_MAX_LENGTH),
+        refKind: "local",
+        ...(cursor === undefined ? { refresh: true } : { cursor }),
+      },
+    });
+    if (refs._tag === "Failure") return AsyncResult.failure(refs.cause);
+    const local = refs.value.refs.find((ref) => ref.name === localName);
+    if (local) {
+      if (local.current || local.worktreePath) return AsyncResult.success(local);
+      break;
     }
+    if (refs.value.nextCursor === null) break;
+    cursor = refs.value.nextCursor;
   }
 
   const result = await input.switchRef({
@@ -89,4 +85,14 @@ export async function checkoutNewTaskBranch<E>(input: {
     isRemote: false,
     name: value.refName ?? input.branch.name,
   }));
+}
+
+// Remote names may contain slashes, so the ref's own remote name is the only
+// reliable prefix; the first-slash split is for refs that do not carry one.
+function localBranchName(branch: VcsRef): string {
+  if (!branch.isRemote) return branch.name;
+  const prefix = branch.remoteName ? `${branch.remoteName}/` : null;
+  return prefix && branch.name.startsWith(prefix)
+    ? branch.name.slice(prefix.length)
+    : deriveLocalBranchNameFromRemoteRef(branch.name);
 }

@@ -255,4 +255,28 @@ describe("new-task branch checkout", () => {
     if (result._tag !== "Success") throw new Error("Long branch selection failed");
     expect(result.value.worktreePath).toBe(await NodeFSP.realpath(worktreePath));
   });
+
+  it("strips a remote name that contains a slash before looking up the branch", async () => {
+    await git("branch", "upstream/feature/a");
+    const decoyPath = NodePath.join(directory, "decoy");
+    await git("worktree", "add", decoyPath, "upstream/feature/a");
+    const worktreePath = NodePath.join(directory, "worktree");
+    await git("worktree", "add", worktreePath, "feature/a");
+    const result = await checkoutNewTaskBranch({
+      branch: {
+        ...branch,
+        name: "team/upstream/feature/a",
+        isRemote: true,
+        remoteName: "team/upstream",
+      },
+      project: { environmentId, workspaceRoot: cwd },
+      workspaceMode: "local",
+      readRefs,
+      switchRef: refuseSwitch,
+    });
+    expect(result._tag).toBe("Success");
+    if (result._tag !== "Success") throw new Error("Remote worktree selection failed");
+    expect(result.value.name).toBe("feature/a");
+    expect(result.value.worktreePath).toBe(await NodeFSP.realpath(worktreePath));
+  });
 });
