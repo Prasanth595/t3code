@@ -79,6 +79,8 @@ import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as MissionPeerConfiguredReceiver from "./orchestration-v2/MissionPeerConfiguredReceiver.ts";
+import * as MissionPeerConfiguredClient from "./orchestration-v2/MissionPeerConfiguredClient.ts";
+import * as MissionPeerConfiguration from "./orchestration-v2/MissionPeerConfiguration.ts";
 import * as AgentAwarenessRelay from "./relay/AgentAwarenessRelay.ts";
 import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import * as ServerSettings from "./serverSettings.ts";
@@ -653,6 +655,7 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
 );
 
 const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
+  Layer.provideMerge(MissionPeerConfiguration.layer),
   // Misc.
   Layer.provideMerge(layerBackground),
   Layer.provideMerge(layerResourceDiagnostics),
@@ -707,7 +710,11 @@ const layerMakeRoutes = Layer.mergeAll(
     // Mission tools read the same registry, environment, projections, and SQL
     // as the rest of the server; their NoFun policy comes from the owner's
     // local policy file (see MissionMcpRuntime), never from a default.
-    Layer.provide(MissionMcpRuntime.layerCombined),
+    Layer.provide(
+      MissionMcpRuntime.layerCombined.pipe(
+        Layer.provide(MissionPeerConfiguredClient.layer.pipe(Layer.provide(ProcessRunner.layer))),
+      ),
+    ),
     // Both the runtime and the optional policy-only toolkit fallback read projections.
     Layer.provide(ProjectionStoreV2.layer),
   ),
