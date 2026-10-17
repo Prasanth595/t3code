@@ -43,10 +43,9 @@ const { fileURLToPath } = NodeURL;
 // (nofun-skills scripts/muse-worker.sh). Verified against Muse Code model/list
 // 2026-10-17: Contributor mode is a setting, not part of these model IDs.
 const MODELS = [
-  { value: "muse-spark-1.3", name: "Muse Spark 1.3" },
-  { value: "muse-spark-1.2", name: "Muse Spark 1.2" },
-  { value: "muse-wonder-1.0", name: "Muse Wonder" },
-  { value: "muse-wonder-full-1.0", name: "Muse Wonder Full" },
+  { value: "muse-spark-1.3", name: "Muse Spark 1.3 Contributor" },
+  { value: "muse-wonder-1.0", name: "Muse Wonder Contributor" },
+  { value: "muse-wonder-full-1.0", name: "Muse Wonder Full Contributor" },
 ];
 const PROFILES = [
   { value: "muse-review", name: "Review (read-only)", description: "No writes, no shell." },

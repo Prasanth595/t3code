@@ -89,12 +89,7 @@ const { homedir } = NodeOS;
 const { createInterface } = NodeReadline;
 const { fileURLToPath } = NodeURL;
 
-const models = new Set([
-  "muse-spark-1.3",
-  "muse-spark-1.2",
-  "muse-wonder-1.0",
-  "muse-wonder-full-1.0",
-]);
+const models = new Set(["muse-spark-1.3", "muse-wonder-1.0", "muse-wonder-full-1.0"]);
 const failure = () => new Error("Muse native useful-run protocol failed.");
 // MSP commands require UUIDv7; randomUUID() produces v4.
 function commandId() {
@@ -137,7 +132,10 @@ export function sanitizeUsage(value, now = Date.now()) {
 function options(argv) {
   if (argv[0] !== "exec" || !argv.includes("--disable-approval") || !argv.includes("--json"))
     throw failure();
-  const result = { serve: ["serve", "--provider", "meta", "--no-session-log"], effort: "high" };
+  const result = {
+    serve: ["serve", "--provider", "meta", "--no-session-log", "--contributor-mode", "on"],
+    effort: "high",
+  };
   const flags = new Set([
     "--json",
     "--disable-approval",
@@ -155,6 +153,9 @@ function options(argv) {
     const value = argv[++i];
     if (!value) throw failure();
     switch (name) {
+      case "--contributor-mode":
+        if (value !== "on") throw failure();
+        break;
       case "--model":
         result.model = value;
         break;

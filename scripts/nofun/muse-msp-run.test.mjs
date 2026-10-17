@@ -124,17 +124,13 @@ test("useful work uses initialized, account identity, pinned model and no-shell 
 });
 
 test("catalog model IDs reach session/start unchanged; suffix variants refuse before host startup", async () => {
-  for (const model of [
-    "muse-spark-1.3",
-    "muse-spark-1.2",
-    "muse-wonder-1.0",
-    "muse-wonder-full-1.0",
-  ]) {
+  for (const model of ["muse-spark-1.3", "muse-wonder-1.0", "muse-wonder-full-1.0"]) {
     const { result, calls } = await fixture({ extraArgs: ["--model", model] });
     assert.equal(result, 0);
     assert.equal(calls.find((call) => call.method === "session/start").params.modelId, model);
   }
   for (const model of [
+    "muse-spark-1.2",
     "muse-spark-1.3-contributor",
     "muse-wonder-1.0-contributor",
     "muse-wonder-full-1.0-contributor",
@@ -142,6 +138,25 @@ test("catalog model IDs reach session/start unchanged; suffix variants refuse be
     const { result, calls } = await fixture({ extraArgs: ["--model", model] });
     assert.notEqual(result, 0);
     assert.equal(calls.length, 0);
+  }
+});
+
+test("Contributor mode is forced at host launch and off refuses before startup", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "msp-launch-"));
+  try {
+    const launch = join(dir, "launch.json");
+    const { result } = await fixture({
+      MSP_LAUNCH: launch,
+      extraArgs: ["--contributor-mode", "on"],
+    });
+    assert.equal(result, 0);
+    const args = JSON.parse(readFileSync(launch, "utf8")).argv;
+    assert.equal(args[args.indexOf("--contributor-mode") + 1], "on");
+    const refused = await fixture({ extraArgs: ["--contributor-mode", "off"] });
+    assert.equal(refused.result, 1);
+    assert.deepEqual(refused.calls, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 

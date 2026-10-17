@@ -810,10 +810,9 @@ describe("bridge process", () => {
     );
     assert.deepEqual(options, { model: "muse-spark-1.3", profile: "muse-review" });
     assert.deepEqual(created.result.configOptions.find((option) => option.id === "model").options, [
-      { value: "muse-spark-1.3", name: "Muse Spark 1.3" },
-      { value: "muse-spark-1.2", name: "Muse Spark 1.2" },
-      { value: "muse-wonder-1.0", name: "Muse Wonder" },
-      { value: "muse-wonder-full-1.0", name: "Muse Wonder Full" },
+      { value: "muse-spark-1.3", name: "Muse Spark 1.3 Contributor" },
+      { value: "muse-wonder-1.0", name: "Muse Wonder Contributor" },
+      { value: "muse-wonder-full-1.0", name: "Muse Wonder Full Contributor" },
     ]);
     await bridge.close();
   });
