@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
 import {
+  __resetFactoryStoresForTests,
   useFactoryAttentionCount,
   useFactoryRun,
   useFactoryRuns,
@@ -70,6 +71,7 @@ beforeEach(() => {
 afterEach(() => {
   unmountAll();
   __setFactoryApiForTests();
+  __resetFactoryStoresForTests();
   vi.useRealTimers();
 });
 
@@ -127,6 +129,38 @@ describe("useFactoryStatus", () => {
       errors.mock.calls.filter(([message]) => !String(message).includes("deprecated")),
     ).toEqual([]);
     errors.mockRestore();
+  });
+});
+
+describe("useFactoryStatus shared by several readers", () => {
+  it("polls once for two readers, on mount and on every tick", async () => {
+    const fetchStatus = vi.fn(async () => status(0));
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    await mount(useFactoryStatus);
+    await mount(useFactoryStatus);
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
+    await settle(30_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows a refresh from one reader to the other", async () => {
+    let attention = 0;
+    __setFactoryApiForTests(api({ status: async () => status(attention) }));
+    const page = await mount(useFactoryStatus);
+    const badge = await mount(useFactoryAttentionCount);
+    expect(badge.current).toBe(0);
+    attention = 2;
+    await act(async () => page.current.refresh());
+    expect(badge.current).toBe(2);
+  });
+
+  it("clears its timer once both readers are gone", async () => {
+    __setFactoryApiForTests(api({}));
+    await mount(useFactoryStatus);
+    await mount(useFactoryStatus);
+    expect(vi.getTimerCount()).toBe(1);
+    unmountAll();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });
 
