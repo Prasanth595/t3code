@@ -744,8 +744,8 @@ export function BranchToolbarBranchSelector({
           ? WORKTREE_CHANGE_BLOCKED_MESSAGE
           : null
       }
-      // A row's disabled state depends on the run status and the current worktree.
-      extraData={`${serverSession?.status ?? ""}:${serverSession?.activeRunId ?? ""}:${activeWorktreePath ?? ""}`}
+      // Row availability depends on the run, current worktree, and each ref's worktree.
+      extraData={`${serverSession?.status ?? ""}:${serverSession?.activeRunId ?? ""}:${activeWorktreePath ?? ""}:${refs.map((ref) => `${ref.name}:${ref.worktreePath ?? ""}`).join("|")}`}
       renderItem={renderPickerItem}
       getItemType={(item) =>
         item === checkoutPullRequestItemValue

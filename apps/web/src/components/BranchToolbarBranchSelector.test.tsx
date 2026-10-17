@@ -8,13 +8,14 @@ import {
   RunId,
   type VcsRef,
 } from "@t3tools/contracts";
-import { act, createRef, type ReactNode } from "react";
+import { act, createRef, type ComponentProps } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   worktreePath: null as string | null,
   started: true,
+  refs: null as VcsRef[] | null,
   latestWorktreePath: undefined as string | null | undefined,
   latestStarted: undefined as boolean | undefined,
   updateMetadata: vi.fn().mockResolvedValue({ _tag: "Success" }),
@@ -90,7 +91,7 @@ vi.mock("../state/query", () => ({
 }));
 vi.mock("../state/queries", () => ({
   usePaginatedBranches: () => ({
-    refs: [mainRef, topicBaseRef],
+    refs: state.refs ?? [mainRef, topicBaseRef],
     data: { nextCursor: null, totalCount: 2 },
     refresh: vi.fn(),
     isPending: false,
@@ -110,15 +111,14 @@ vi.mock("./ThreadStatusIndicators", () => ({
   useLinkedThreadPullRequest: () => null,
 }));
 // jsdom has no layout measurements for the virtualized list.
-vi.mock("@legendapp/list/react", () => ({
-  LegendList: ({
-    data,
-    renderItem,
-  }: {
-    data: string[];
-    renderItem: (row: { item: string; index: number }) => ReactNode;
-  }) => data.map((item, index) => <div key={item}>{renderItem({ item, index })}</div>),
-}));
+vi.mock("@legendapp/list/react", async (importOriginal) => {
+  const { LegendList } = await importOriginal<typeof import("@legendapp/list/react")>();
+  return {
+    LegendList: (props: ComponentProps<typeof LegendList<string>>) => (
+      <LegendList {...props} estimatedListSize={{ width: 300, height: 224 }} />
+    ),
+  };
+});
 
 import {
   BranchToolbarBranchSelector,
@@ -126,11 +126,14 @@ import {
 } from "./BranchToolbarBranchSelector";
 
 it.each(["toolbar", "panel"] as const)(
-  "keeps the main checkout selectable in %s with a running server thread and retained worktree draft",
+  "refreshes branch rows in %s when the thread or a ref changes worktrees",
   async (displayMode) => {
     vi.clearAllMocks();
     state.worktreePath = "/repo/worktree";
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 300, 224),
+    );
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
@@ -158,6 +161,12 @@ it.each(["toolbar", "panel"] as const)(
       expect(main?.textContent).toContain("main");
       expect(main?.getAttribute("aria-disabled")).not.toBe("true");
       expect(document.body.textContent).not.toContain("Stop the current turn to switch worktrees.");
+      state.refs = [{ ...mainRef, worktreePath: "/repo/another-worktree" }, topicBaseRef];
+      await act(async () => renderSelector());
+      expect(main?.getAttribute("aria-disabled")).toBe("true");
+      state.refs = null;
+      await act(async () => renderSelector());
+      expect(main?.getAttribute("aria-disabled")).not.toBe("true");
       await act(async () => main?.click());
       expect(state.updateMetadata).toHaveBeenCalledWith({
         environmentId: "local",
@@ -169,6 +178,8 @@ it.each(["toolbar", "panel"] as const)(
       container.remove();
       state.worktreePath = null;
       vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+      state.refs = null;
     }
   },
 );
@@ -185,6 +196,9 @@ it.each([
   state.started = false;
   state.worktreePath = null;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue(
+    new DOMRect(0, 0, 300, 224),
+  );
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
@@ -230,5 +244,7 @@ it.each([
     state.latestStarted = undefined;
     state.latestWorktreePath = undefined;
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    state.refs = null;
   }
 });
