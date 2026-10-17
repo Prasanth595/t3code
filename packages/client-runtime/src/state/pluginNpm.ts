@@ -61,6 +61,8 @@ export function createPluginNpmEnvironmentAtoms<R, E>(
     packages: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:plugins:npm:packages",
       tag: WS_METHODS.pluginsNpmList,
+      // Provenance uses each post-step response as a receipt, including an unchanged list.
+      structuralSharing: false,
       execute: () => listPluginNpmPackages,
     }),
     add: command("environment-data:plugins:npm:add", WS_METHODS.pluginsNpmAdd),
