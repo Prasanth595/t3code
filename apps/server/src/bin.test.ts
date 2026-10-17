@@ -1,6 +1,7 @@
+import * as NodeURL from "node:url";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
-import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
@@ -40,8 +41,7 @@ NodeModule.registerHooks({
 });
 `;
 
-// Not on Windows, where `URL.pathname` (`/C:/...`) is not a path Node can run.
-describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("bin.ts", () => {
+describe("bin.ts", () => {
   it.effect.each([
     { command: "acp-mcp-call", loaded: ["mcp/AcpMcpStdioBridge.ts guarded"] },
     { command: "--version", loaded: ["cli/consoleStdin.ts guarded", "binCli.ts guarded"] },
@@ -53,7 +53,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("bin.ts", () =>
           "--experimental-strip-types",
           "--import",
           `data:text/javascript,${encodeURIComponent(PRELOAD)}`,
-          new URL("./bin.ts", import.meta.url).pathname,
+          NodeURL.fileURLToPath(new URL("./bin.ts", import.meta.url)),
           command,
         ]),
       );
