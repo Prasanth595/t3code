@@ -5,7 +5,7 @@
  */
 
 import { isState, type State } from "../domain/lifecycle.ts";
-import type { Entry } from "../ledger/read.ts";
+import { dataField, type Entry } from "../ledger/read.ts";
 import { runIdToString, type RunId } from "../ledger/runId.ts";
 import { isCommitId } from "../text.ts";
 
@@ -202,9 +202,6 @@ export const GATE_PASSED = "gate-passed";
 /** The ledger step that says the gate results are on the pull request. */
 export const GATE_RESULTS_POSTED = "gate-results-posted";
 
-const field = (data: unknown, key: string): unknown =>
-  typeof data === "object" && data !== null ? (data as Record<string, unknown>)[key] : undefined;
-
 /** `text` when it is a number without a sign or leading zero that is a safe integer. */
 const canonical = (text: string): number | null =>
   /^(?:0|[1-9][0-9]*)$/.test(text) && Number.isSafeInteger(Number(text)) ? Number(text) : null;
@@ -305,14 +302,14 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     switch (entry.event) {
       case "claimed": {
         if (!claimed) {
-          const user = field(entry.data, "github_user");
+          const user = dataField(entry.data, "github_user");
           githubUser = typeof user === "string" ? user : null;
         }
         claimed = true;
         break;
       }
       case "step_changed": {
-        const step = field(entry.data, "step");
+        const step = dataField(entry.data, "step");
         if (typeof step !== "string") break;
         if (approvedAt === null && step.startsWith("approved ")) {
           approvedAt = step.slice("approved ".length);
@@ -373,7 +370,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         break;
       }
       case "state_changed": {
-        const to = field(entry.data, "to");
+        const to = dataField(entry.data, "to");
         if (workingSince !== null) workedMs += Math.max(0, entry.ms - workingSince);
         workingSince = null;
         // A pull request that was ready and comes back to building starts a new stint: the build
@@ -395,14 +392,14 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         break;
       }
       case "session_launched": {
-        const id = field(entry.data, "thread_id");
+        const id = dataField(entry.data, "thread_id");
         if (typeof id === "string") threadId = id;
-        const path = field(entry.data, "worktree");
+        const path = dataField(entry.data, "worktree");
         worktree = typeof path === "string" ? path : null;
         worktreeDone = false;
         launchedSinceSending = true;
-        const from = field(entry.data, "resumed_from");
-        const fromBranch = field(from, "branch");
+        const from = dataField(entry.data, "resumed_from");
+        const fromBranch = dataField(from, "branch");
         resumedFrom = typeof fromBranch === "string" ? fromBranch : null;
         // A new session has run numbers of its own, one reminder, and no stop by hand yet.
         waitingAfter = null;
@@ -418,7 +415,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         worktreeDone = true;
         break;
       case "stuck": {
-        const reason = field(entry.data, "reason");
+        const reason = dataField(entry.data, "reason");
         stuck = typeof reason === "string" ? reason : "";
         break;
       }
@@ -426,7 +423,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         stopRequested = true;
         break;
       case "comment_forwarded": {
-        const id = field(entry.data, "comment_id");
+        const id = dataField(entry.data, "comment_id");
         if (typeof id === "string") forwarded.add(id);
         break;
       }
@@ -434,8 +431,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         questionsPosted = true;
         break;
       case "pr_opened": {
-        const pr = field(entry.data, "pr");
-        const url = field(entry.data, "url");
+        const pr = dataField(entry.data, "pr");
+        const url = dataField(entry.data, "url");
         if (typeof pr === "number" && typeof url === "string") {
           opened.push(pr);
           lastPr = { pr, url };
@@ -447,13 +444,13 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         readyOutside = true;
         break;
       case "session_paused": {
-        const ordinal = field(entry.data, "run_ordinal");
+        const ordinal = dataField(entry.data, "run_ordinal");
         paused = { runOrdinal: typeof ordinal === "number" ? ordinal : null };
         break;
       }
       case "gate_checkout": {
-        const attempt = number(field(entry.data, "attempt"));
-        const baseSha = field(entry.data, "base_sha");
+        const attempt = number(dataField(entry.data, "attempt"));
+        const baseSha = dataField(entry.data, "base_sha");
         if (attempt === null) break;
         // A new run of commands begins at its checkout: the attempt is open again.
         passedAttempts.delete(attempt);
@@ -462,10 +459,10 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         break;
       }
       case "gate_command": {
-        const attempt = number(field(entry.data, "attempt"));
-        const command = field(entry.data, "command");
-        const exitCode = number(field(entry.data, "exit_code"));
-        const durationMs = number(field(entry.data, "duration_ms"));
+        const attempt = number(dataField(entry.data, "attempt"));
+        const command = dataField(entry.data, "command");
+        const exitCode = number(dataField(entry.data, "exit_code"));
+        const durationMs = number(dataField(entry.data, "duration_ms"));
         if (attempt === null) break;
         commandAttempts.add(attempt);
         if (!waitIsForward) waitingAfter = null;
@@ -475,8 +472,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         break;
       }
       case "gate_sent_back": {
-        const attempt = number(field(entry.data, "attempt"));
-        const ordinal = number(field(entry.data, "run_ordinal"));
+        const attempt = number(dataField(entry.data, "attempt"));
+        const ordinal = number(dataField(entry.data, "run_ordinal"));
         if (attempt !== null) {
           sentBackAttempts.add(attempt);
           passedAttempts.delete(attempt);
@@ -491,9 +488,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         break;
       }
       case "gate_regate": {
-        const sha = field(entry.data, "sha");
-        const baseSha = field(entry.data, "base_sha");
-        const previous = field(entry.data, "previous_base_sha");
+        const sha = dataField(entry.data, "sha");
+        const baseSha = dataField(entry.data, "base_sha");
+        const previous = dataField(entry.data, "previous_base_sha");
         // The pass this re-gate replaces is still the one on record here.
         regateMoved = movedSince(
           pass?.sha ?? "",
@@ -508,9 +505,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         break;
       }
       case "regate_relaunching": {
-        const attempt = number(field(entry.data, "attempt"));
-        const branch = field(entry.data, "branch");
-        const message = field(entry.data, "message");
+        const attempt = number(dataField(entry.data, "attempt"));
+        const branch = dataField(entry.data, "branch");
+        const message = dataField(entry.data, "message");
         if (attempt === null || typeof branch !== "string" || typeof message !== "string") break;
         // Its own `gate-sending <attempt> 0`: the new thread has no run yet.
         sending = { attempt, runOrdinal: 0 };
@@ -521,16 +518,16 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
       // No `gate-sending`: it is no gate attempt, and no re-gate. Read only so that a feedback
       // relaunch that is decided and not committed is never gated meanwhile.
       case "feedback_relaunching": {
-        const n = number(field(entry.data, "n"));
-        const branch = field(entry.data, "branch");
-        const message = field(entry.data, "message");
+        const n = number(dataField(entry.data, "n"));
+        const branch = dataField(entry.data, "branch");
+        const message = dataField(entry.data, "message");
         if (n === null || typeof branch !== "string" || typeof message !== "string") break;
         launchedSinceSending = false;
         relaunch = { fixes: { kind: "feedback", n }, branch, message };
         break;
       }
       case "gate_cleanup_failed": {
-        const dir = field(entry.data, "dir");
+        const dir = dataField(entry.data, "dir");
         if (typeof dir === "string") cleanupFailed.add(dir);
         break;
       }

@@ -11,6 +11,7 @@
 import type { AttentionItem } from "./attention.ts";
 import { loadHandPause } from "./claims.ts";
 import { scanMachineLogBack, type MachineEntry } from "./ledger/machineLog.ts";
+import { dataText } from "./ledger/read.ts";
 import {
   holdsSlot,
   readRuns,
@@ -110,25 +111,16 @@ const STALE_POLLS = 3;
 
 const recent = (ms: number, nowMs: number) => ms + RECENT_WINDOW_MS >= nowMs;
 
-const field = (data: unknown, key: string): unknown =>
-  typeof data === "object" && data !== null ? (data as Record<string, unknown>)[key] : undefined;
-
-/** The string at `key` of an entry's data, or null when it is not a string. */
-const text = (data: unknown, key: string): string | null => {
-  const value = field(data, key);
-  return typeof value === "string" ? value : null;
-};
-
 type Problem = StatusReport["problems"][number] & { readonly ms: number };
 
 const machineProblem = (entry: MachineEntry): Problem => ({
   at: formatTs(entry.ms),
   event: entry.event === "error" ? "error" : "attention",
-  run: text(entry.data, "run"),
-  step: text(entry.data, "step"),
-  kind: text(entry.data, "kind"),
-  reason: text(entry.data, "reason"),
-  message: text(entry.data, "message"),
+  run: dataText(entry.data, "run"),
+  step: dataText(entry.data, "step"),
+  kind: dataText(entry.data, "kind"),
+  reason: dataText(entry.data, "reason"),
+  message: dataText(entry.data, "message"),
   ms: entry.ms,
 });
 
@@ -204,7 +196,9 @@ const passesOf = (
     at: formatTs(last.ms),
     ago_ms: ago,
     result: ok ? "ok" : "preflight_failed",
-    reason: ok ? null : `${text(last.data, "check") ?? ""}: ${text(last.data, "why") ?? ""}`,
+    reason: ok
+      ? null
+      : `${dataText(last.data, "check") ?? ""}: ${dataText(last.data, "why") ?? ""}`,
     poll_seconds: pollSeconds,
     running,
     running_for_ms: runningForMs,
@@ -266,10 +260,10 @@ export const buildStatus = (input: {
         at: formatTs(entry.ms),
         event: "error",
         run: runIdToString(read.summary.id),
-        step: text(entry.data, "step"),
-        kind: text(entry.data, "kind"),
+        step: dataText(entry.data, "step"),
+        kind: dataText(entry.data, "kind"),
         reason: null,
-        message: text(entry.data, "message"),
+        message: dataText(entry.data, "message"),
         ms: entry.ms,
       });
     }

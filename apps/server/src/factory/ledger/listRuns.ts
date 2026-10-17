@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import { type State } from "../domain/lifecycle.ts";
 import { readProgress, type Seen } from "../runner/progress.ts";
 import { errnoCode, LedgerIoError, LedgerNotFoundError } from "./errors.ts";
-import { lastLineIsFinished, readRun, type RunRecord } from "./read.ts";
+import { dataText, lastLineIsFinished, readRun, type RunRecord } from "./read.ts";
 import { asciiLower, RUNS_DIR, runIdFromFileName, runPath, type RunId } from "./runId.ts";
 
 /**
@@ -198,12 +198,6 @@ export interface RunRead {
   readonly seen: Seen | null;
 }
 
-const text = (data: unknown, key: string): string | null => {
-  const value =
-    typeof data === "object" && data !== null ? (data as Record<string, unknown>)[key] : undefined;
-  return typeof value === "string" ? value : null;
-};
-
 /** The summary of a run: its progress, plus what the progress does not carry. */
 const summarise = (run: Scanned): RunSummary => {
   const { id, record, seen } = run;
@@ -226,7 +220,7 @@ const summarise = (run: Scanned): RunSummary => {
     startedTs: record.entries[0]?.ts ?? null,
     lastEvent: record.entries.at(-1)?.event ?? null,
     state: seen.state,
-    prUrl: (end === undefined ? null : text(end.data, "pr_url")) ?? seen.lastPr?.url ?? null,
+    prUrl: (end === undefined ? null : dataText(end.data, "pr_url")) ?? seen.lastPr?.url ?? null,
     finished: seen.finished,
     totalMs: typeof total === "number" ? total : null,
     unreadable: false,

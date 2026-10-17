@@ -39,6 +39,16 @@ const CARRIAGE_RETURN = 0x0d;
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
+/** The value at `key` of an entry's data; undefined when the data is not an object. */
+export const dataField = (data: unknown, key: string): unknown =>
+  typeof data === "object" && data !== null ? (data as Record<string, unknown>)[key] : undefined;
+
+/** The string at `key` of an entry's data, or null when it is not a string. */
+export const dataText = (data: unknown, key: string): string | null => {
+  const value = dataField(data, key);
+  return typeof value === "string" ? value : null;
+};
+
 /**
  * An empty line: nothing, or just the `\r` of a CRLF ending. The repair after a failed write
  * leaves one, and nothing was lost, so it is neither an entry nor damage.

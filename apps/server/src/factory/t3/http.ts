@@ -17,7 +17,7 @@
  * Each handler decodes its input, calls one function (`control.ts`, `status.ts`, the ledger reads)
  * and maps the result to a status and a body. A run id is parsed before anything is read, so no
  * id reaches the file system as a path. A ledger error or a failed read or write answers 500
- * `factory_error`.
+ * `factory_error`, mapped once for every route by `factoryRoute`.
  */
 import { AuthOrchestrationOperateScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -70,6 +70,15 @@ const failure = (error: LedgerError | FactoryFileError) => {
   );
 };
 
+/** A route of the factory: `route`, with every ledger or file failure answered by `failure`. */
+const factoryRoute = <R>(
+  method: "GET" | "POST",
+  path: `/${string}`,
+  scope: Parameters<typeof route>[2],
+  handler: Effect.Effect<HttpServerResponse.HttpServerResponse, LedgerError | FactoryFileError, R>,
+) =>
+  route(method, path, scope, handler.pipe(Effect.catch((error) => Effect.succeed(failure(error)))));
+
 const invalidRunId = (message: string) => respond({ code: "invalid_run_id", message }, 400);
 const runNotFound = (id: string) =>
   respond({ code: "run_not_found", id, message: `no run ${id}` }, 404);
@@ -87,7 +96,7 @@ const statusWord = (run: RunSummary) =>
 /** The `:id` of the route, as text: `control.ts` parses it before anything is read. */
 const idParam = Effect.map(HttpRouter.params, ({ id }) => id ?? "");
 
-const statusRoute = route(
+const statusRoute = factoryRoute(
   "GET",
   STATUS_PATH,
   AuthOrchestrationReadScope,
@@ -110,10 +119,10 @@ const statusRoute = route(
       }),
     );
     return respond(report);
-  }).pipe(Effect.catch((error) => Effect.succeed(failure(error)))),
+  }),
 );
 
-const runsRoute = route(
+const runsRoute = factoryRoute(
   "GET",
   RUNS_PATH,
   AuthOrchestrationReadScope,
@@ -137,10 +146,10 @@ const runsRoute = route(
         unreadable: run.unreadable,
       })),
     });
-  }).pipe(Effect.catch((error) => Effect.succeed(failure(error)))),
+  }),
 );
 
-const runRoute = route(
+const runRoute = factoryRoute(
   "GET",
   RUN_PATH,
   AuthOrchestrationReadScope,
@@ -161,10 +170,10 @@ const runRoute = route(
       case "not-found":
         return runNotFound(shown.id);
     }
-  }).pipe(Effect.catch((error) => Effect.succeed(failure(error)))),
+  }),
 );
 
-const stopRoute = route(
+const stopRoute = factoryRoute(
   "POST",
   STOP_PATH,
   AuthOrchestrationOperateScope,
@@ -184,10 +193,10 @@ const stopRoute = route(
       case "invalid":
         return invalidRunId(stopped.message);
     }
-  }).pipe(Effect.catch((error) => Effect.succeed(failure(error)))),
+  }),
 );
 
-const pauseRoute = route(
+const pauseRoute = factoryRoute(
   "POST",
   PAUSE_PATH,
   AuthOrchestrationOperateScope,
@@ -195,17 +204,17 @@ const pauseRoute = route(
     const { factoryDir } = yield* FactoryPaths;
     const nowMs = yield* Clock.currentTimeMillis;
     return respond(yield* guarded(() => pauseClaimsNow(factoryDir, nowMs)));
-  }).pipe(Effect.catch((error) => Effect.succeed(failure(error)))),
+  }),
 );
 
-const resumeRoute = route(
+const resumeRoute = factoryRoute(
   "POST",
   RESUME_PATH,
   AuthOrchestrationOperateScope,
   Effect.gen(function* () {
     const { factoryDir } = yield* FactoryPaths;
     return respond(yield* guarded(() => resumeClaimsNow(factoryDir)));
-  }).pipe(Effect.catch((error) => Effect.succeed(failure(error)))),
+  }),
 );
 
 /** The factory's HTTP routes. server.ts merges this into `layerMakeRoutes`. */
