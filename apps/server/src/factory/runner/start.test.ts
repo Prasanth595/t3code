@@ -1958,6 +1958,45 @@ describe("start: the resume after a time limit", () => {
     }),
   );
 
+  it.effect("is an error that leaves the issue in triage when the issue text cannot be read", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seedStuckRun(dataDir, "time-limit", { launched: "t3code/abc", recorded: "t3code/abc" });
+      const script: { issues: Array<IssueDetail>; editedSince: boolean | GitHubError } = {
+        issues: [detail("ready"), detail("triage", [USER])],
+        editedSince: ghFailure(),
+      };
+      const { tracker, calls } = fakeTracker(script);
+      const t3 = fakeSessions(dataDir, {});
+      const error = yield* Effect.flip(startIn(dataDir, tracker, t3.sessions));
+      assert.strictEqual(error._tag, "GitHubFailed");
+      // The text read is the one lookup made; nothing is launched and no decision is written.
+      assert.deepStrictEqual(lookups(calls), [`textEditedSince 7 ${LABELED}`]);
+      assert.deepStrictEqual(
+        t3.calls.filter((c) => c.startsWith("launch ")),
+        [],
+      );
+      assert.ok(!calls.includes("setState 7 building"), calls.join("\n"));
+      assert.deepStrictEqual(
+        entriesOf(dataDir, run7n(2)).filter(
+          (e) =>
+            e.event === "step_changed" &&
+            String((e.data as { step: string }).step).startsWith("launch-sending"),
+        ),
+        [],
+      );
+      assert.ok(
+        !stepsOf(dataDir, run7n(2)).includes("session_launched"),
+        stepsOf(dataDir, run7n(2)).join(","),
+      );
+      // The next pass picks the run up again, and resumes once GitHub answers.
+      script.editedSince = false;
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assert.strictEqual(t3.launchRequests.at(-1)!.baseRef, "t3code/abc");
+      assert.strictEqual(t3.launchRequests.at(-1)!.startFromOrigin, true);
+    }),
+  );
+
   it.effect("is not made when the earlier run stopped for another reason", () =>
     Effect.gen(function* () {
       const dataDir = tempDir();
