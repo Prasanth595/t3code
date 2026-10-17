@@ -24,7 +24,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Settings and theme sync:** a setting with a shared value syncs to every machine. A change with "All environments" in T3 Settings sets the shared value. Custom themes (the `themes/` folder) and `defaultTheme` sync too.
 - **Settings > Machines:** join or leave the map with a code, and see the machines that this machine can reach.
 - **Desktop app on the map:** the desktop app adds each reachable machine as an environment and applies the shared client settings.
-- **Zoom and pan:** the map has no edges. Cards stay where they drop, and the map zooms, pans and fits all cards, also on phones and small windows.
+- **Zoom and pan:** the map has no edges. Cards stay where they drop, and the map zooms, pans and fits all cards, also on phones and small windows. "Auto layout" places every card so the map reads well, as one change with Undo.
 - **Approved clients:** a new browser waits in the Clients view until the owner approves it with a fresh MFA. Each client gets a card and a level per machine.
 - **Client access:** each machine decides which browsers get in through Cloudflare Access. `off` keeps the owner login. `observe` gives a browser of an approved client the level of its arrow, at most `standard`. `enforce` lets in only browsers of approved clients; other browsers wait for approval (`clientAccess`).
 - **Owner-only access changes:** only the owner changes `clientAccess` and `machineMap`, in the portal with the passkey step or in the desktop app of the machine. Agents cannot change them.

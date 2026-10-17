@@ -46,6 +46,7 @@ import {
 import { ClientIcon, ClockIcon, KindIcon } from "./icons.tsx";
 import {
   anyInView,
+  autoLayout,
   fitView,
   offsetPoint,
   pairPath,
@@ -57,6 +58,8 @@ import {
   zoomAt,
   clampZoom,
   type Box,
+  type LayoutCard,
+  type LayoutLink,
   type MapViewport,
   type Point,
 } from "./layout.ts";
@@ -67,6 +70,13 @@ import { CardMeters } from "./resources.tsx";
 import { RouteLink } from "./StickerLink.tsx";
 
 const clamp = (value: number, low: number, high: number) => Math.min(high, Math.max(low, value));
+/** MM-1121: room on each side of the pair card of a line, in map pixels. */
+const LINK_ROOM = 40;
+/**
+ * MM-1121: "Auto layout" keeps a card that would move less than this. The overlap pass nudges
+ * cards a little, so without it a second click would make a new revision of tiny moves.
+ */
+const STILL_PIXELS = 20;
 /** Pointer moves under this many pixels are a tap, not a drag. */
 const TAP_PIXELS = 5;
 /** MM-1110: holding a finger this long on empty map opens the add menu. */
@@ -228,6 +238,12 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   /** False until the user zooms or pans, so the first "Fit" follows cards that grow (MM-1118). */
   const userMoved = useRef(false);
   const fittedFor = useRef("");
+  /**
+   * MM-1121: after "Auto layout", the revision that holds the new places. "Fit" runs once at it.
+   * Each click makes a new object, so two clicks in one draft each fit.
+   */
+  const [fitAt, setFitAt] = useState<{ readonly revision: number } | null>(null);
+  const fittedAt = useRef(fitAt);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [sizes, setSizes] = useState<Record<string, Size>>({});
   const drag = useRef<Drag | null>(null);
@@ -639,6 +655,12 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
   const measured =
     machines.length + clients.length + map.notes.length === 0 || Object.keys(sizes).length > 0;
   useLayoutEffect(() => {
+    if (fitAt && fitAt !== fittedAt.current && map.revision >= fitAt.revision) {
+      fittedAt.current = fitAt;
+      userMoved.current = true;
+      view.current = fitted();
+      keepView();
+    }
     if (size.width > 0 && measured) {
       const boxes = cardBoxes();
       // Card area changes when a card grows, never on a drop.
@@ -660,6 +682,96 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
     }
     applyView();
   });
+
+  /**
+   * MM-1121 "Auto layout": places every machine, client and note with `autoLayout` and returns
+   * each placed pair card to its automatic spot on its line. It is one map change, so Undo in the
+   * notice or in History puts every card back. The layout keeps room for each pair card in the
+   * middle of its line; a client line has no card, so it is shorter.
+   */
+  const arrange = () => {
+    const sizeOf = (key: string, fallback: Size): Size => sizes[key] ?? fallback;
+    const nodeSize = (m: MachineRecord) => sizeOf(`node:${m.id}`, estimate.node);
+    const cards: Array<LayoutCard> = [
+      ...machines.map((m, i) => ({
+        id: `machine:${m.id}`,
+        ...(nodes[i] ?? nodeBox(m, toPixels(position(m)))),
+      })),
+      ...clients.map((c, i) => ({
+        id: `client:${c.id}`,
+        ...(clientBoxes[i] ?? clientBox(c, toPixels(clientPlace(c)))),
+      })),
+      // A pair card rides in the middle of its line, so the layout keeps that spot free.
+      ...pairs.map(([a, b], i) => ({
+        id: `pair:${pairKey(a, b)}`,
+        between: [`machine:${a.id}`, `machine:${b.id}`] as const,
+        ...(shown.spots[i] ?? { x: 0, y: 0 }),
+        ...sizeOf(`pair:${pairKey(a, b)}`, estimate.pair),
+      })),
+    ];
+    const links: Array<LayoutLink> = [
+      ...pairs.map(([a, b]) => ({
+        a: `machine:${a.id}`,
+        b: `machine:${b.id}`,
+        length:
+          (nodeSize(a).w + nodeSize(b).w) / 2 +
+          sizeOf(`pair:${pairKey(a, b)}`, estimate.pair).w +
+          LINK_ROOM * 2,
+      })),
+      ...clientLines.map(({ client, machine }) => ({
+        a: `client:${client.id}`,
+        b: `machine:${machine.id}`,
+        length:
+          (sizeOf(`client:${client.id}`, estimate.node).w + nodeSize(machine).w) / 2 +
+          LINK_ROOM * 2,
+      })),
+    ];
+    const placed = autoLayout(
+      cards,
+      links,
+      noteBoxes,
+      { x: MAP_FRAME.width / 2, y: MAP_FRAME.height / 2 },
+      size.width / size.height,
+    );
+    const placeAt = (i: number) => toPosition(placed.cards[i] ?? { x: 0, y: 0 });
+    const still = (a: MapPosition, b: MapPosition) =>
+      Math.hypot(a.x - b.x, a.y - b.y) < STILL_PIXELS;
+    const changes: Array<MapChange> = [
+      ...machines.flatMap((machine, i): Array<MapChange> => {
+        const next = placeAt(i);
+        return still(next, machine.position)
+          ? []
+          : [{ _tag: "putMachine", machine: { ...machine, position: next } }];
+      }),
+      ...clients.flatMap((client, i): Array<MapChange> => {
+        const next = placeAt(machines.length + i);
+        return still(next, client.position)
+          ? []
+          : [{ _tag: "putClient", client: { ...client, position: next } }];
+      }),
+      ...map.notes.flatMap((note, i): Array<MapChange> => {
+        const next = toPosition(placed.notes[i] ?? note.position);
+        return still(next, note.position)
+          ? []
+          : [{ _tag: "putNote", note: { ...note, position: next } }];
+      }),
+      ...pairs.flatMap(([a, b]): Array<MapChange> =>
+        pairOffset(map, a.id, b.id) === null
+          ? []
+          : [{ _tag: "placePair", a: a.id, b: b.id, offset: null }],
+      ),
+    ];
+    if (changes.length === 0) {
+      fit();
+      keepView();
+      return;
+    }
+    // A held draft shows its places at once, with the same revision.
+    void portal.submit("Auto layout", changes).then((outcome) => {
+      if (outcome._tag === "applied") setFitAt({ revision: outcome.revision });
+      else if (outcome._tag === "held") setFitAt({ revision: map.revision });
+    });
+  };
 
   /** Saves a waiting view at once: on unmount and when the page hides (MM-1118). */
   const flushView = () => {
@@ -1504,8 +1616,8 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
             )}
           </div>
         )}
-        {/* MM-1116: zoom in, zoom out and fit, in a corner over the map. */}
-        <div className="map-zoom" role="group" aria-label="Zoom">
+        {/* MM-1116, MM-1121: zoom in, zoom out, fit and auto layout, in a corner over the map. */}
+        <div className="map-zoom" role="group" aria-label="Zoom and layout">
           <button
             type="button"
             className="btn small"
@@ -1542,6 +1654,18 @@ export function MapView({ map, readOnly }: { map: MachineMapDocument; readOnly: 
           >
             Fit
           </button>
+          {!readOnly && (
+            <button
+              type="button"
+              className="btn small"
+              aria-label="Auto layout"
+              disabled={machines.length + clients.length + map.notes.length === 0}
+              data-tip="Place every card so the map reads well. Undo puts them back."
+              onClick={arrange}
+            >
+              {compact ? "Auto" : "Auto layout"}
+            </button>
+          )}
         </div>
       </div>
     </div>

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   anyInView,
+  autoLayout,
   fitView,
   MAX_ZOOM,
   offsetPoint,
@@ -14,6 +15,7 @@ import {
   toScreenPoint,
   zoomAt,
   type Box,
+  type LayoutCard,
   type Point,
 } from "./layout.ts";
 
@@ -180,5 +182,49 @@ describe("pairCurve (MM-1108)", () => {
 
   it("keeps an automatic card on a straight line", () => {
     expect(pairPath(a, b, null)).toBe("M100,100L700,100");
+  });
+});
+
+describe("autoLayout (MM-1121)", () => {
+  // Five machines on top of each other, and a client: a hub with three spokes, one free machine.
+  const cards: Array<LayoutCard> = ["hub", "a", "b", "c", "free", "client"].map((id) => ({
+    id,
+    ...card(500, 300),
+  }));
+  const links = ["a", "b", "c", "client"].map((id) => ({ a: "hub", b: id, length: 400 }));
+  const notes = [{ x: 500, y: 300, w: 190, h: 80 }];
+  const center = { x: 700, y: 350 };
+  const sized = (points: ReadonlyArray<Point>): Array<Box> =>
+    points.map((p, i) => ({ ...p, w: cards[i]?.w ?? 0, h: cards[i]?.h ?? 0 }));
+  const distance = (points: ReadonlyArray<Point>, i: number, j: number) => {
+    const a = points[i];
+    const b = points[j];
+    return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : Number.NaN;
+  };
+
+  it("leaves no card on another card or a note", () => {
+    const out = autoLayout(cards, links, notes, center, 2);
+    expect(
+      anyOverlap([...sized(out.cards), ...out.notes.map((p) => ({ ...p, w: 190, h: 80 }))]),
+    ).toBe(false);
+  });
+
+  it("keeps linked cards closer than cards with no link", () => {
+    const out = autoLayout(cards, links, notes, center, 2);
+    const linked = Math.max(...[1, 2, 3, 5].map((i) => distance(out.cards, 0, i)));
+    expect(linked).toBeLessThan(distance(out.cards, 0, 4));
+  });
+
+  it("keeps a map that it laid out before", () => {
+    const first = autoLayout(cards, links, notes, center, 2);
+    const again = autoLayout(
+      sized(first.cards).map((box, i) => ({ ...box, id: cards[i]?.id ?? "" })),
+      links,
+      notes,
+      center,
+      2,
+    );
+    for (const [i, p] of again.cards.entries())
+      expect(distance([p, ...first.cards], 0, i + 1)).toBeLessThan(1);
   });
 });
