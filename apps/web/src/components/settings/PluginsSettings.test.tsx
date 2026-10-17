@@ -1,36 +1,16 @@
-import type { ReactElement } from "react";
+// @vitest-environment jsdom
+
+import { act, type ReactElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import { EnvironmentId, type PluginInstallation, PluginInstallationId } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { EnvironmentPresentation } from "../../state/environments";
-import { visitElements } from "../../test/reactElementTree";
-import { reactHookHarness as hooks } from "../../test/reactHookHarness";
 
 const add = vi.hoisted(() => vi.fn());
 const consent = vi.hoisted(() => vi.fn());
 const enable = vi.hoisted(() => vi.fn());
 
-vi.mock("react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react")>();
-  const { reactHookHarness } = await import("../../test/reactHookHarness");
-  return {
-    ...actual,
-    useCallback: reactHookHarness.useCallback,
-    // The atom registry, used only to settle an npm step; these renders never run one.
-    useContext: () => null,
-    useEffect: () => undefined,
-    useId: () => "plugin-directory",
-    // Runs on each render, as React's commit would before any later event.
-    useLayoutEffect: (effect: () => void) => void effect(),
-    useMemo: reactHookHarness.useMemo,
-    useRef: reactHookHarness.useRef,
-    useState: reactHookHarness.useState,
-  };
-});
-vi.mock("react/compiler-runtime", async () => {
-  const { reactHookHarness } = await import("../../test/reactHookHarness");
-  return { c: reactHookHarness.useMemoCache };
-});
 vi.mock("../../state/plugins", () => ({
   pluginEnvironment: {
     add: "add",
@@ -58,46 +38,81 @@ const environment = {
   entry: { target: { _tag: "RemoteConnectionTarget" } },
 } as unknown as EnvironmentPresentation;
 
-function renderDialog(canManage: boolean): ReactElement<Record<string, unknown>> {
-  hooks.beginRender();
-  return AddPluginDialog({
-    environment,
-    canManage,
-    status: null,
-    notice: canManage ? null : "Managing plugins needs administrative access.",
-    onClose: () => undefined,
-    onAdded: () => undefined,
-  }) as ReactElement<Record<string, unknown>>;
+let root: Root;
+let container: HTMLDivElement;
+
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
+  vi.stubGlobal("matchMedia", () => ({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  Element.prototype.getAnimations ??= () => [];
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+});
+afterEach(async () => {
+  await act(async () => root.unmount());
+  container.remove();
+  vi.unstubAllGlobals();
+});
+
+async function render(element: ReactElement) {
+  await act(async () => root.render(element));
+}
+function button(text: string) {
+  const found = [...document.querySelectorAll("button")].find(
+    (candidate) => candidate.textContent?.trim() === text,
+  );
+  if (!found) throw new Error(`No button ${text}`);
+  return found;
+}
+async function renderDialog(canManage: boolean) {
+  await render(
+    <AddPluginDialog
+      environment={environment}
+      canManage={canManage}
+      status={null}
+      notice={canManage ? null : "Managing plugins needs administrative access."}
+      onClose={() => undefined}
+      onAdded={() => undefined}
+    />,
+  );
 }
 
-function find(tree: ReactElement, match: (props: Record<string, unknown>) => boolean) {
-  const element = visitElements(tree, (candidate) => match(candidate.props));
-  if (!element) throw new Error("Element not found");
-  return element.props;
-}
-
-const isInput = (props: Record<string, unknown>) => props.id === "plugin-directory";
-const isForm = (props: Record<string, unknown>) => typeof props.onSubmit === "function";
-const isAddButton = (props: Record<string, unknown>) => props.children === "Add and review";
-
-/** Types a directory, then submits by keyboard (the form) or by the Add button. */
+/** Enters a directory through the input and submits through the live DOM. */
 async function typeAndSubmit(canManageAtSubmit: boolean, via: "keyboard" | "button") {
-  const opened = renderDialog(true);
-  (find(opened, isInput).onChange as (event: { target: { value: string } }) => void)({
-    target: { value: " /srv/plugins/notifier " },
+  await renderDialog(true);
+  const input = document.querySelector("input")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      input,
+      " /srv/plugins/notifier ",
+    );
+    input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  const current = renderDialog(canManageAtSubmit);
-  if (via === "keyboard")
-    (find(current, isForm).onSubmit as (event: { preventDefault: () => void }) => void)({
-      preventDefault: () => undefined,
-    });
-  else (find(current, isAddButton).onClick as () => void)();
-  await Promise.resolve();
+  await renderDialog(canManageAtSubmit);
+  await act(async () => {
+    if (via === "keyboard")
+      document
+        .querySelector("form")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    else button("Add and review").click();
+  });
 }
 
 describe("AddPluginDialog", () => {
   beforeEach(() => {
-    hooks.reset();
     add.mockReset().mockReturnValue(new Promise(() => undefined));
   });
 
@@ -136,52 +151,42 @@ describe("PluginReviewDialog", () => {
       enabled: false,
     }) as unknown as PluginInstallation;
   const CHECKING = "Checking access…";
-  const renderReview = (installation: PluginInstallation, canManage = true) => {
-    hooks.beginRender();
-    return PluginReviewDialog({
-      environment,
-      detail: { _tag: "found", installation },
-      canManage,
-      status: canManage ? null : CHECKING,
-      notice: null,
-      npm: null,
-      onRetry: () => undefined,
-      onClose: () => undefined,
-    }) as ReactElement;
-  };
-  const isCheckbox = (props: Record<string, unknown>) =>
-    typeof props.onCheckedChange === "function";
-  const isApprove = (props: Record<string, unknown>) => props.children === "Approve and enable";
+  const renderReview = (installation: PluginInstallation, canManage = true) =>
+    render(
+      <PluginReviewDialog
+        environment={environment}
+        detail={{ _tag: "found", installation }}
+        canManage={canManage}
+        status={canManage ? null : CHECKING}
+        notice={null}
+        npm={null}
+        onRetry={() => undefined}
+        onClose={() => undefined}
+      />,
+    );
   const success = { _tag: "Success", value: { installation: reviewed(DIGEST_A) } };
 
   beforeEach(() => {
-    hooks.reset();
     enable.mockReset().mockResolvedValue(success);
   });
 
   /** Acknowledges the files on screen, approves, and holds the consent reply. */
-  function approveHoldingConsent() {
+  async function approveHoldingConsent() {
     let release: (value: unknown) => void = () => undefined;
     consent.mockReset().mockReturnValue(
       new Promise((resolve) => {
         release = resolve;
       }),
     );
-    (find(renderReview(reviewed(DIGEST_A)), isCheckbox).onCheckedChange as (c: boolean) => void)(
-      true,
-    );
-    (find(renderReview(reviewed(DIGEST_A)), isApprove).onClick as () => void)();
+    await renderReview(reviewed(DIGEST_A));
+    await act(async () => (document.querySelector("[role=checkbox]") as HTMLElement).click());
+    await act(async () => button("Approve and enable").click());
     return (value: unknown) => release(value);
   }
-  const drain = async () => {
-    for (let index = 0; index < 5; index += 1) await Promise.resolve();
-  };
-
   it("enables the reviewed files once consent succeeds", async () => {
-    const release = approveHoldingConsent();
-    renderReview(reviewed(DIGEST_A));
-    release(success);
-    await drain();
+    const release = await approveHoldingConsent();
+    await renderReview(reviewed(DIGEST_A));
+    await act(async () => release(success));
     expect(consent).toHaveBeenCalledWith({
       environmentId: environment.environmentId,
       input: { installationId: "installation-1", digest: DIGEST_A },
@@ -190,11 +195,10 @@ describe("PluginReviewDialog", () => {
   });
 
   it("never enables when the files change while consent is in flight", async () => {
-    const release = approveHoldingConsent();
+    const release = await approveHoldingConsent();
     // A snapshot reports new bytes for the same installation; access stays granted.
-    renderReview(reviewed(DIGEST_B));
-    release(success);
-    await drain();
+    await renderReview(reviewed(DIGEST_B));
+    await act(async () => release(success));
     expect(consent).toHaveBeenCalledTimes(1);
     expect(enable).not.toHaveBeenCalled();
   });

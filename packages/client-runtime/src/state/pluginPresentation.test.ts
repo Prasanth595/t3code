@@ -1,5 +1,5 @@
 import {
-  AuthAdministrativeScopes,
+  AuthOrchestrationReadScope,
   type AuthSessionState,
   AuthStandardClientScopes,
   type PluginInstallation,
@@ -342,9 +342,8 @@ describe("pluginSettingsReadOnly", () => {
     });
 
   it("lets only a session with access:write save plugin settings", () => {
-    expect(pluginSettingsReadOnly(settled(AuthAdministrativeScopes))).toBe(false);
-    // A standard pairing has no access:write and cannot request it.
-    expect(pluginSettingsReadOnly(settled(AuthStandardClientScopes))).toBe(true);
+    expect(pluginSettingsReadOnly(settled(AuthStandardClientScopes))).toBe(false);
+    expect(pluginSettingsReadOnly(settled([AuthOrchestrationReadScope]))).toBe(true);
   });
 
   it("stays read-only while the session is checked again or cannot be read", () => {
@@ -355,7 +354,7 @@ describe("pluginSettingsReadOnly", () => {
       expect(
         pluginSettingsReadOnly(
           resolvePluginManageAccess({
-            session: { authenticated: true, scopes: [...AuthAdministrativeScopes] },
+            session: { authenticated: true, scopes: [...AuthStandardClientScopes] },
             ...read,
           }),
         ),

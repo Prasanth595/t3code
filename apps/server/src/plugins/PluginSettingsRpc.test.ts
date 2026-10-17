@@ -1,6 +1,5 @@
 import {
   AuthAccessWriteScope,
-  AuthAdministrativeScopes,
   type AuthEnvironmentScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -60,10 +59,10 @@ const makeClient = (scopes: ReadonlyArray<AuthEnvironmentScope>, handled: Array<
 const update = { installationId, changes: [{ key: "token", value: "fixture-secret" }] };
 
 describe("plugin settings RPC scopes", () => {
-  it.effect("lets a standard pairing read values but not save them", () =>
+  it.effect("lets a read-only pairing read values but not save them", () =>
     Effect.gen(function* () {
       const handled: Array<string> = [];
-      const client = yield* makeClient(AuthStandardClientScopes, handled);
+      const client = yield* makeClient([AuthOrchestrationReadScope], handled);
 
       expect(
         yield* client[WS_METHODS.pluginsSettingsSubscribe]({ installationId }).pipe(
@@ -82,10 +81,10 @@ describe("plugin settings RPC scopes", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("lets an administrative pairing save values", () =>
+  it.effect("lets a standard pairing save values", () =>
     Effect.gen(function* () {
       const handled: Array<string> = [];
-      const client = yield* makeClient(AuthAdministrativeScopes, handled);
+      const client = yield* makeClient(AuthStandardClientScopes, handled);
 
       expect(yield* client[WS_METHODS.pluginsSettingsUpdate](update)).toEqual(values);
       expect(handled).toEqual([WS_METHODS.pluginsSettingsUpdate]);
