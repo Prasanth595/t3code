@@ -614,6 +614,18 @@ describe("FactoryPage dismissing attention items", () => {
     expect(page.text()).not.toContain("Needs attention");
   });
 
+  it("keeps Pause claims disabled when a dismiss finishes while the pause is pending", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
+    const pauseClaims = vi.fn(() => new Promise<never>(() => {}));
+    const dismissAttention = vi.fn(async () => ({ dismissed: [ATTENTION.id] }));
+    __setFactoryApiForTests(api({ pauseClaims, dismissAttention }));
+    const page = await render(createElement(FactoryPage));
+    await act(async () => void page.button("Pause claims")!.props.onClick());
+    await act(async () => dismissIn(itemOf(page, ATTENTION.message)!).props.onClick());
+    expect(dismissAttention).toHaveBeenCalled();
+    expect(page.button("Pause claims")!.props.disabled).toBe(true);
+  });
+
   it("has no Dismiss all when nothing needs attention", async () => {
     const page = await render(createElement(FactoryPage));
     expect(page.button("Dismiss all")).toBeUndefined();

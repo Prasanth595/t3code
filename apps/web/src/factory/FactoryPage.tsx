@@ -68,18 +68,18 @@ export function FactoryPage() {
         return next;
       });
     change(true);
-    void control(async () => {
-      try {
-        await factoryApi.dismissAttention(
-          environmentId,
-          items.map((item) => item.id),
-        );
-        return {};
-      } catch (error) {
+    // Not through `control`: a dismiss that ends must not clear the busy flag of a pause or
+    // resume still in flight.
+    factoryApi
+      .dismissAttention(
+        environmentId,
+        items.map((item) => item.id),
+      )
+      .catch((error: unknown) => {
         change(false);
-        throw error;
-      }
-    });
+        setNote(messageOf(error));
+      })
+      .finally(() => status.refresh());
   };
 
   let body;
