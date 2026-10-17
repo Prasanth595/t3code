@@ -7790,3 +7790,47 @@ it.effect("expands only files the change request changes, across every slice of 
     assert.deepStrictEqual(read, ["src/old.ts->src/new.ts", "gone.md->gone.md"]);
   }),
 );
+
+it.effect("checks expanded files against a diff too large to cache without fetching it again", () =>
+  Effect.gen(function* () {
+    let diffReads = 0;
+    const filler = `+${"x".repeat(300 * 1024)}`;
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "t3code", workspaceRoot: "/a", repository: "pingdotgg/t3code" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          getDiff: () =>
+            Effect.sync(() => {
+              diffReads += 1;
+              return {
+                patch: ["a.ts", "b.ts"]
+                  .flatMap((name) => [
+                    `diff --git a/${name} b/${name}`,
+                    `--- a/${name}`,
+                    `+++ b/${name}`,
+                    "@@ -0,0 +1 @@",
+                    filler,
+                  ])
+                  .join("\n"),
+                truncated: false,
+                nextCursor: null,
+              };
+            }),
+          getDiffFileContents: () => Effect.succeed({ oldContents: "old", newContents: "new" }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "pingdotgg/t3code", number: 1 };
+    for (const name of ["a.ts", "b.ts"]) {
+      yield* service.diffFileContents({
+        ...ref,
+        changeType: "change",
+        oldPath: name,
+        newPath: name,
+      });
+    }
+    assert.strictEqual(diffReads, 1);
+  }),
+);

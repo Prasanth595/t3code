@@ -3249,32 +3249,71 @@ export const make = Effect.gen(function* () {
         );
       });
 
-  const cachedDiff = credentialCached(diff);
+  /**
+   * The file names in each diff slice, keyed as the slice is. Names stay small when a patch is too
+   * large to cache, so expanding a file in a large change request does not fetch its diff again.
+   */
+  const diffFiles = (() => {
+    const held = new Map<
+      string,
+      {
+        readonly at: number;
+        readonly files: ReadonlySet<string>;
+        readonly nextCursor: string | null;
+      }
+    >();
+    const ttlMs = Duration.toMillis(DIFF_CACHE_TTL);
+    const fileKey = (oldPath: string, newPath: string) => JSON.stringify([oldPath, newPath]);
+    const sliceKey = (input: PullRequestDiffInput) =>
+      JSON.stringify([refCacheKey(input), input.cursor ?? null, input.commit ?? null]);
+    const read = (input: PullRequestDiffInput) =>
+      Effect.gen(function* () {
+        const key = sliceKey(input);
+        const now = yield* Clock.currentTimeMillis;
+        const cached = held.get(key);
+        if (cached !== undefined && now - cached.at <= ttlMs) return cached;
+        const slice = yield* diff(input);
+        const entry = {
+          at: now,
+          files: new Set(
+            parseDiffFilePaths(slice.patch).map((file) =>
+              fileKey(file.oldPath ?? file.newPath ?? "", file.newPath ?? file.oldPath ?? ""),
+            ),
+          ),
+          nextCursor: slice.nextCursor,
+        };
+        held.delete(key);
+        if (held.size >= DIFF_CACHE_CAPACITY) {
+          const oldest = held.keys().next().value;
+          if (oldest !== undefined) held.delete(oldest);
+        }
+        held.set(key, entry);
+        return entry;
+      });
+    return { read: credentialCached(read), fileKey };
+  })();
   /**
    * Whether the change request, or the one commit asked for, changes this file under these names.
-   * Walks the same cached slices the reader was shown, so the file being expanded is already held.
+   * Walks the same slices the reader was shown, reading only their file names once held.
    */
   const changesFile = (input: PullRequestDiffFileContentsInput) => {
-    const named = (patch: string) =>
-      parseDiffFilePaths(patch).some(
-        (file) =>
-          (file.oldPath ?? file.newPath) === input.oldPath &&
-          (file.newPath ?? file.oldPath) === input.newPath,
-      );
+    const wanted = diffFiles.fileKey(input.oldPath, input.newPath);
     const walk = (cursor: string | undefined): Effect.Effect<boolean, PullRequestError> =>
-      cachedDiff({
-        ...input,
-        ...(cursor === undefined ? {} : { cursor }),
-        ...(input.commit === undefined ? {} : { commit: input.commit }),
-      }).pipe(
-        Effect.flatMap((slice) =>
-          named(slice.patch)
-            ? Effect.succeed(true)
-            : slice.nextCursor === null
-              ? Effect.succeed(false)
-              : walk(slice.nextCursor),
-        ),
-      );
+      diffFiles
+        .read({
+          ...input,
+          ...(cursor === undefined ? {} : { cursor }),
+          ...(input.commit === undefined ? {} : { commit: input.commit }),
+        })
+        .pipe(
+          Effect.flatMap((slice) =>
+            slice.files.has(wanted)
+              ? Effect.succeed(true)
+              : slice.nextCursor === null
+                ? Effect.succeed(false)
+                : walk(slice.nextCursor),
+          ),
+        );
     return walk(undefined);
   };
   // Only the files the change request itself changes: these are read with the project's own
