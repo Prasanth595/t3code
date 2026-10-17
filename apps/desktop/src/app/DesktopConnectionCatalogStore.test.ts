@@ -2,8 +2,10 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
 import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
@@ -51,25 +53,26 @@ function layerSafeStorageFor(available: boolean, failDecrypt: Ref.Ref<boolean> |
   } satisfies ElectronSafeStorage.ElectronSafeStorage["Service"]);
 }
 
-const layerPreviousSafeStorageIdentity = Layer.succeed(
-  DesktopSafeStorageIdentity.DesktopSafeStorageIdentity,
-  {
+const layerPreviousSafeStorageIdentity = (previousKeyLookup: Effect.Effect<void>) =>
+  Layer.succeed(DesktopSafeStorageIdentity.DesktopSafeStorageIdentity, {
     decryptWithPreviousName: (value) => {
       const decoded = textDecoder.decode(value);
-      return Effect.succeed(
-        decoded.startsWith("previous:")
-          ? Option.some(decoded.slice("previous:".length))
-          : Option.none(),
+      return previousKeyLookup.pipe(
+        Effect.as(
+          decoded.startsWith("previous:")
+            ? Option.some(decoded.slice("previous:".length))
+            : Option.none(),
+        ),
       );
     },
-  } satisfies DesktopSafeStorageIdentity.DesktopSafeStorageIdentity["Service"],
-);
+  } satisfies DesktopSafeStorageIdentity.DesktopSafeStorageIdentity["Service"]);
 
 function layerFor(
   baseDir: string,
   encryptionAvailable = true,
   failDecrypt: Ref.Ref<boolean> | null = null,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
+  previousKeyLookup: Effect.Effect<void> = Effect.void,
 ) {
   const layerEnvironment = DesktopEnvironment.layer({
     dirname: "/repo/apps/desktop/src",
@@ -90,7 +93,7 @@ function layerFor(
   const layerDependencies = Layer.mergeAll(
     layerEnvironment,
     layerSafeStorage,
-    layerPreviousSafeStorageIdentity,
+    layerPreviousSafeStorageIdentity(previousKeyLookup),
     NodeServices.layer,
     fileSystemLayer,
   );
@@ -487,6 +490,35 @@ describe("DesktopConnectionCatalogStore", () => {
         assert.equal(textDecoder.decode(encrypted), `encrypted:${catalog}`);
       }),
     ),
+  );
+
+  it.effect("keeps a catalog saved while the previous key was being read", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-desktop-connection-catalog-test-",
+      });
+      const lookupStarted = yield* Deferred.make<void>();
+      const lookupReleased = yield* Deferred.make<void>();
+      const previousKeyLookup = Deferred.succeed(lookupStarted, undefined).pipe(
+        Effect.andThen(Deferred.await(lookupReleased)),
+      );
+      const previous = '{"schemaVersion":1,"targets":[]}';
+      const newer = '{"schemaVersion":1,"targets":[{"newer":true}]}';
+
+      yield* Effect.gen(function* () {
+        const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
+        yield* writeEncryptedCatalog(`previous:${previous}`);
+
+        const recovery = yield* store.get.pipe(Effect.forkChild);
+        yield* Deferred.await(lookupStarted);
+        assert.isTrue(yield* store.set(newer));
+        yield* Deferred.succeed(lookupReleased, undefined);
+
+        assert.deepStrictEqual(yield* Fiber.join(recovery), Option.some(previous));
+        assert.deepStrictEqual(yield* store.get, Option.some(newer));
+      }).pipe(Effect.provide(layerFor(baseDir, true, null, NodeServices.layer, previousKeyLookup)));
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("keeps the catalog when the previous name yields no catalog", () =>
