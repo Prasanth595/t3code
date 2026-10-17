@@ -88,6 +88,18 @@ describe("repeatStillFrame", () => {
     }),
   );
 
+  it.effect("stops tracking a part whose headers exceed the header budget", () =>
+    Effect.gen(function* () {
+      const { send, finish } = yield* viewer;
+      const padded = Buffer.from(
+        `--frame\r\nX-Padding: ${"a".repeat(32 * 1024)}\r\nContent-Length: 4\r\n\r\nbody\r\n`,
+      );
+      yield* send(padded);
+      yield* TestClock.adjust(STILL_FRAME_DELAY);
+      expect(yield* finish).toBe(String(padded));
+    }),
+  );
+
   it.effect("passes through bodies without the hub's part framing", () =>
     Effect.gen(function* () {
       const { send, finish } = yield* viewer;

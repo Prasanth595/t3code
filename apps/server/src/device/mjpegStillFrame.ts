@@ -50,6 +50,10 @@ const partTracker = () => {
           size += rest.length;
           break;
         }
+        if (headerEnd > MAX_HEADER_BYTES) {
+          recognized = false;
+          break;
+        }
         const headers = head.subarray(0, headerEnd).toString("latin1");
         const length = /^content-length:\s*(\d+)\s*$/im.exec(headers)?.[1];
         if (!headers.startsWith("--") || length === undefined || Number(length) > MAX_PART_BYTES) {
