@@ -53,7 +53,10 @@ interface Store {
  * tick joins a read in flight, so ticks never pile up behind a slow server; a refresh a reader
  * asked for starts a new read whose answer supersedes the one in flight, so what the reader sees
  * after a control always comes from after it. With the last reader gone the store is dropped, so
- * the next reader starts at loading and an answer still in flight is thrown away.
+ * the next reader starts at loading and an answer still in flight is thrown away. The drop waits a
+ * microtask: when a subscription's deps change, React tears down every old subscription before it
+ * builds the new ones in one flush, and a store dropped in between would lose its data and its
+ * readers' reads to a refetch.
  */
 const stores = new Map<string, Store>();
 
@@ -130,7 +133,9 @@ const subscribe = (
   added.listeners.add(listener);
   return () => {
     added.listeners.delete(listener);
-    if (added.listeners.size === 0 && stores.get(key) === added) stores.delete(key);
+    queueMicrotask(() => {
+      if (added.listeners.size === 0 && stores.get(key) === added) stores.delete(key);
+    });
   };
 };
 
@@ -195,6 +200,20 @@ export const useFactoryRun = (
 ): FactoryResource<FactoryRunDetail> =>
   useFactoryResource<FactoryRunDetail>(environmentId, `run:${id}`);
 
+/** The first candidate that runs; null while an earlier one has not answered; else the primary. */
+export function pickFactoryEnvironment(
+  candidates: ReadonlyArray<EnvironmentId>,
+  primary: EnvironmentId | null,
+  statusOf: (id: EnvironmentId) => Loaded<FactoryStatus>,
+): EnvironmentId | null {
+  for (const id of candidates) {
+    const { status, data } = statusOf(id);
+    if (data?.state === "running") return id;
+    if (status === "loading") return null;
+  }
+  return primary;
+}
+
 /**
  * The environment whose factory the pages show: the first connected environment whose status says
  * `running`, the primary first; with none running, the primary, whose status then says why it is
@@ -206,13 +225,9 @@ export const useFactoryRun = (
 export function useFactoryEnvironmentId(): EnvironmentId | null {
   const primary = usePrimaryEnvironmentId();
   const connected = useConnectedEnvironmentIds();
-  // The catalog may hand over a new array with the same contents; key on the contents instead.
-  const contents = (
-    primary === null ? connected : [primary, ...connected.filter((id) => id !== primary)]
-  ).join("\n");
   const candidates = useMemo(
-    () => (contents === "" ? [] : (contents.split("\n") as Array<EnvironmentId>)),
-    [contents],
+    () => (primary === null ? connected : [primary, ...connected.filter((id) => id !== primary)]),
+    [primary, connected],
   );
   const state = useSyncExternalStore(
     useCallback(
@@ -222,14 +237,15 @@ export function useFactoryEnvironmentId(): EnvironmentId | null {
       },
       [candidates],
     ),
-    useCallback(() => {
-      for (const id of candidates) {
-        const { status, data } = snapshot(keyOf(id, "status"));
-        if ((data as FactoryStatus | null)?.state === "running") return id;
-        if (status === "loading") return null;
-      }
-      return primary;
-    }, [candidates, primary]),
+    useCallback(
+      () =>
+        pickFactoryEnvironment(
+          candidates,
+          primary,
+          (id) => snapshot(keyOf(id, "status")) as Loaded<FactoryStatus>,
+        ),
+      [candidates, primary],
+    ),
   );
   const tickAll = useCallback(
     () => candidates.forEach((id) => tick(keyOf(id, "status"))),
