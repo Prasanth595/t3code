@@ -633,6 +633,33 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.equal(managed.serviceTier, undefined);
     }),
   );
+
+  it.effect("leaves an unset effort to the model's default when T3 adds a collaboration mode", () =>
+    Effect.gen(function* () {
+      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+        nativeThreadId: "native-default-effort",
+        codexInput: [{ type: "text", text: "test" }],
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: null,
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5.4",
+        },
+        hasT3Mcp: true,
+      });
+
+      assert.equal(params.effort, undefined);
+      assert.equal(params.collaborationMode?.settings.model, "gpt-5.4");
+      assert.notProperty(params.collaborationMode?.settings, "reasoning_effort");
+      assert.notInclude(
+        String(params.additionalContext?.t3_code_runtime?.value),
+        "reasoning effort",
+      );
+    }),
+  );
 });
 
 describe("CodexAdapterV2 process spawning", () => {
