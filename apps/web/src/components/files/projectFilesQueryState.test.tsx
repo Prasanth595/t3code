@@ -558,6 +558,54 @@ describe("project query refresh", () => {
     }
   });
 
+  it.each([
+    { failure: "operation_failed", isFile: true, isNotFile: false },
+    { failure: "path_not_file", isFile: false, isNotFile: true },
+  ] as const)(
+    "after a good read, a refresh failing with $failure reports isFile $isFile and keeps the contents",
+    async ({ failure, isFile, isNotFile }) => {
+      let reads = 0;
+      const readAtom = Atom.make(
+        Effect.suspend(() =>
+          ++reads === 1
+            ? Effect.succeed(file("# readme"))
+            : Effect.fail(
+                new ProjectReadFileError({
+                  cwd: "/repo",
+                  relativePath: "src/preview.ts",
+                  failure,
+                }),
+              ),
+        ),
+      );
+      const registry = AtomRegistry.make();
+      const unmount = registry.mount(readAtom);
+      projectMocks.readFile.mockReturnValue(readAtom);
+      projectMocks.optimisticFile.mockReturnValue(Atom.make(null));
+      atomHooks.registry = registry;
+
+      try {
+        await flushEffects();
+        reactHooks.beginRender();
+        expect(useProjectFileQuery(environmentId, "/repo", "src/preview.ts").isFile).toBe(true);
+
+        registry.refresh(readAtom);
+        await flushEffects();
+        reactHooks.beginRender();
+        const query = useProjectFileQuery(environmentId, "/repo", "src/preview.ts");
+        expect(reads).toBe(2);
+        expect(query.readError?.failure).toBe(failure);
+        expect(query.data?.contents).toBe("# readme");
+        expect(query.isFile).toBe(isFile);
+        expect(query.isNotFile).toBe(isNotFile);
+      } finally {
+        unmount();
+        registry.dispose();
+        atomHooks.registry = null;
+      }
+    },
+  );
+
   it("retains decoded read failure context for the connected environment", async () => {
     const error = decodeReadError({
       _tag: "ProjectReadFileError",
