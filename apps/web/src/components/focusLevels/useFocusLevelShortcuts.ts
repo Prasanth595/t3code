@@ -4,6 +4,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { isElectron } from "../../env";
+import { getClientSettings } from "../../hooks/useSettings";
 import { resolveShortcutCommand } from "../../keybindings";
 import { isEditableFocused } from "../../lib/editableFocus";
 import { isPreviewFocused } from "../../lib/previewFocus";
@@ -139,7 +140,7 @@ export function useFocusLevelShortcuts() {
       event.preventDefault();
       event.stopPropagation();
     };
-    const stopWatching = watchFocusLevelChanges();
+    const stopWatching = watchFocusLevelChanges(() => getClientSettings().focusLevelHighlight);
     const onCapture = dispatch("capture");
     const onBubble = dispatch("bubble");
     window.addEventListener("keydown", onCapture, true);

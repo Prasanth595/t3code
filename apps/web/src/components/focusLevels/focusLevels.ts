@@ -2,8 +2,8 @@
  * Fork: focus levels. The composer, timeline, right panel and sidebar are areas of the screen
  * that keyboard focus moves between. The DOM is the only state: the level is the area that
  * holds `document.activeElement`, found through markers that the areas already render.
+ * `keybindings.ts` imports this module, so it imports nothing from the app.
  */
-import { getClientSettings } from "../../hooks/useSettings";
 
 export type FocusLevel = "composer" | "timeline" | "rightPanel" | "sidebar";
 
@@ -52,12 +52,6 @@ export function focusLevelContext(target?: EventTarget | null) {
     rightPanelFocus: level === "rightPanel",
     sidebarFocus: level === "sidebar",
   };
-}
-
-export function timelineScroller(): HTMLElement | null {
-  return (
-    focusLevelElement("timeline")?.querySelector<HTMLElement>(TIMELINE_SCROLLER_SELECTOR) ?? null
-  );
 }
 
 function focusTarget(level: FocusLevel): HTMLElement | null {
@@ -120,7 +114,7 @@ export function focusLevelSideways(from: FocusLevel, direction: "left" | "right"
  * The highlight: one outline fade on the area that takes focus. It runs once per change, so it
  * does not repaint while the user works.
  */
-export function watchFocusLevelChanges(): () => void {
+export function watchFocusLevelChanges(highlightEnabled: () => boolean): () => void {
   let previous = focusLevelOf(document.activeElement);
   const onFocusIn = (event: FocusEvent) => {
     const level = focusLevelOf(event.target);
@@ -129,7 +123,7 @@ export function watchFocusLevelChanges(): () => void {
       return;
     }
     previous = level;
-    if (!getClientSettings().focusLevelHighlight) return;
+    if (!highlightEnabled()) return;
     const element = focusLevelElement(level);
     if (!element) return;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
