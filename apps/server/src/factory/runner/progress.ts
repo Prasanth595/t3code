@@ -138,8 +138,10 @@ export interface Seen {
   readonly idleForwardWait: number | null;
   /**
    * `idleForwardWait` when the ledger proves T3 refused every send under it: each send has its
-   * own `forward-wait <k>` line, and each was followed by a `comment-refused` or
-   * `body-edit-refused` step before the next. No run was started, so `forward` cancels it.
+   * own `forward-wait <k>` line naming the send's T3 command id in its cause, and a
+   * `comment-refused` or `body-edit-refused` step names the same id. T3 keeps one result per
+   * command id, so the refusal of a resend is the outcome of a send whose own was lost. No run was
+   * started, so `forward` cancels it.
    */
   readonly refusedForwardWait: number | null;
   /** The id of every comment a `comment-dropped <id>` step names: the issue was told it was not forwarded. */
@@ -286,9 +288,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let waitIsForward = false;
   let lastWait: number | null = null;
   let idleForwardWait: number | null = null;
-  // The newest send under the idle marker has no outcome yet; an earlier one never got one.
-  let idleSendOpen = false;
-  let idleSendLost = false;
+  // The command ids sent under the idle marker with no outcome yet; null once a marker names none.
+  let idleOpen: Set<string> | null = null;
   let lastWaitBefore: number | null = null;
   const forwarded = new Set<string>();
   const bodyEdits = new Set<string>();
@@ -349,20 +350,23 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           awaitRun(remindingRun, true);
         }
         const forwardRun = stepNumber(step, FORWARD_WAIT);
+        const command = entry.cause?.command;
         if (forwardRun !== null) {
           // The same idle marker again is the next send under it.
-          if (idleForwardWait === forwardRun) {
-            if (idleSendOpen) idleSendLost = true;
-          } else {
+          if (idleForwardWait !== forwardRun) {
             lastWaitBefore = lastWait;
             idleForwardWait = forwardRun;
-            idleSendLost = false;
+            idleOpen = new Set();
           }
-          idleSendOpen = true;
+          if (typeof command === "string") idleOpen?.add(command);
+          else idleOpen = null;
           awaitRun(forwardRun, true);
         }
-        if (step.startsWith(`${COMMENT_REFUSED} `) || step.startsWith(`${BODY_EDIT_REFUSED} `)) {
-          idleSendOpen = false;
+        if (
+          typeof command === "string" &&
+          (step.startsWith(`${COMMENT_REFUSED} `) || step.startsWith(`${BODY_EDIT_REFUSED} `))
+        ) {
+          idleOpen?.delete(command);
         }
         const cancelledRun = stepNumber(step, FORWARD_WAIT_CANCELLED);
         if (cancelledRun !== null && idleForwardWait === cancelledRun) {
@@ -610,7 +614,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     lastWait,
     idleForwardWait,
     refusedForwardWait:
-      idleForwardWait !== null && !idleSendOpen && !idleSendLost ? idleForwardWait : null,
+      idleForwardWait !== null && idleOpen !== null && idleOpen.size === 0 ? idleForwardWait : null,
     forwarded,
     bodyEdits,
     dropped,

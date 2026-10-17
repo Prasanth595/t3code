@@ -407,35 +407,91 @@ describe("readProgress: a cancelled forward wait", () => {
   });
 
   it("an idle marker is proven refused only when every send under it has a refused line", () => {
-    const proven = (...steps: ReadonlyArray<string>) =>
-      readProgress(steps.map((text, i) => step(i + 1, text))).refusedForwardWait;
+    // Each line as `forward` writes it: the step, and the T3 command id of the send in its cause.
+    const sending = (text: string, command: string | null): Entry => ({
+      ...step(1, text),
+      cause: command === null ? null : { step: "forward", reason: "seed", command },
+    });
+    const A = "softfac:rawphp/softfac#10:comment:7";
+    const B = "softfac:rawphp/softfac#10:body:x";
+    const proven = (...entries: ReadonlyArray<Entry>) => readProgress(entries).refusedForwardWait;
     // The one send under it has no outcome yet: it may have gone in.
-    assert.strictEqual(proven("forward-wait 2"), null);
-    assert.strictEqual(proven("forward-wait 2", "comment-refused 7"), 2);
-    assert.strictEqual(proven("forward-wait 2", "body-edit-refused x"), 2);
+    assert.strictEqual(proven(sending("forward-wait 2", A)), null);
+    assert.strictEqual(proven(sending("forward-wait 2", A), sending("comment-refused 7", A)), 2);
+    assert.strictEqual(proven(sending("forward-wait 2", B), sending("body-edit-refused x", B)), 2);
     // Each further send writes the marker again before it goes out.
-    assert.strictEqual(proven("forward-wait 2", "comment-refused 7", "forward-wait 2"), null);
     assert.strictEqual(
-      proven("forward-wait 2", "comment-refused 7", "forward-wait 2", "body-edit-refused x"),
+      proven(
+        sending("forward-wait 2", A),
+        sending("comment-refused 7", A),
+        sending("forward-wait 2", B),
+      ),
+      null,
+    );
+    assert.strictEqual(
+      proven(
+        sending("forward-wait 2", A),
+        sending("comment-refused 7", A),
+        sending("forward-wait 2", B),
+        sending("body-edit-refused x", B),
+      ),
       2,
     );
-    // A send with no outcome before the next marker stays unknown, whatever follows.
-    assert.strictEqual(proven("forward-wait 2", "forward-wait 2", "comment-refused 8"), null);
+    // A send with no outcome stays open until a refusal names its command id: T3 keeps one result
+    // per command id, so refusing the resend proves the lost send never went in.
+    assert.strictEqual(
+      proven(
+        sending("forward-wait 2", A),
+        sending("forward-wait 2", B),
+        sending("body-edit-refused x", B),
+      ),
+      null,
+    );
+    assert.strictEqual(
+      proven(
+        sending("forward-wait 2", A),
+        sending("forward-wait 2", A),
+        sending("comment-refused 7", A),
+      ),
+      2,
+    );
+    assert.strictEqual(proven(sending("forward-wait 2", A), sending("comment-refused 7", B)), null);
+    // A marker that names no send (an older build's) or a refusal that names none proves nothing.
+    assert.strictEqual(
+      proven(sending("forward-wait 2", null), sending("comment-refused 7", A)),
+      null,
+    );
+    assert.strictEqual(
+      proven(
+        sending("forward-wait 2", null),
+        sending("forward-wait 2", A),
+        sending("comment-refused 7", A),
+      ),
+      null,
+    );
+    assert.strictEqual(
+      proven(sending("forward-wait 2", A), sending("comment-refused 7", null)),
+      null,
+    );
     // A drop notice is not an outcome of a send.
-    assert.strictEqual(proven("forward-wait 2", "comment-dropped 7"), null);
+    assert.strictEqual(proven(sending("forward-wait 2", A), sending("comment-dropped 7", A)), null);
     assert.strictEqual(
-      readProgress([
-        step(1, "forward-wait 2"),
+      proven(
+        sending("forward-wait 2", A),
         line(2, "comment_forwarded", { comment_id: "5" }),
-        step(3, "comment-refused 7"),
-      ]).refusedForwardWait,
+        sending("comment-refused 7", A),
+      ),
       null,
     );
     assert.strictEqual(
-      proven("forward-wait 2", "comment-refused 7", "forward-wait-cancelled 2"),
+      proven(
+        sending("forward-wait 2", A),
+        sending("comment-refused 7", A),
+        step(3, "forward-wait-cancelled 2"),
+      ),
       null,
     );
-    assert.strictEqual(proven("comment-refused 7"), null);
+    assert.strictEqual(proven(sending("comment-refused 7", A)), null);
   });
 
   it("a cancel after markers written again restores the wait from before the first", () => {

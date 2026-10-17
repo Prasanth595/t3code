@@ -941,11 +941,13 @@ const tellIssue = (
  * something to send.
  *
  * Until a send under the marker goes in, each further send writes the marker again before it, and
- * a refusal is recorded at once (`comment-refused <id>`, `body-edit-refused <edited_at>`). The
- * ledger then proves a marker started no run when every send under it has its refusal
- * (`Seen.refusedForwardWait`); a marker that a crashed call left so is cancelled at the start of
- * the next call, with or without anything to send. A send with no recorded outcome may have gone
- * in, so its marker keeps waiting.
+ * a refusal is recorded at once (`comment-refused <id>`, `body-edit-refused <edited_at>`). Both
+ * lines name the send's T3 command id in their cause. The ledger then proves a marker started no
+ * run when a refusal names every send under it (`Seen.refusedForwardWait`). T3 keeps one result
+ * per command id, so the refusal of a resend also answers for a send whose outcome was lost to a
+ * crash or a transport failure. A marker that a crashed call left proven is cancelled at the start
+ * of the next call, with or without anything to send. A send no refusal names may have gone in,
+ * so its marker keeps waiting.
  *
  * The read also lists the instructors' comments it could not forward (`Activity.dropped`). After
  * the sends, each one the ledger has no `comment-dropped <id>` step for, and that was not
@@ -1038,28 +1040,28 @@ export const forward = (
         marker !== null && (seen.lastWait !== marker || seen.idleForwardWait === marker)
           ? marker
           : null;
-      // An earlier call's marker with a send whose outcome the ledger lacks: it may have started a run.
-      const inheritedOpen = seen.idleForwardWait === idleAt && seen.refusedForwardWait !== idleAt;
       const opened = yield* out.open;
       const at = progressFrom("forward", seen, "building");
       const runName = runIdToString(run);
       const refused: Array<Notice> = [];
       let sent = 0;
       let editSent = false;
-      // While the session is idle and nothing this call sent went in (the edit is the last send),
-      // each send goes under its own
-      // `forward-wait` line and a refusal is recorded at once, so the ledger proves which sends
-      // started no run (`Seen.refusedForwardWait`), even after a crash.
-      const stepWhileIdle = (step: string, reason: string) =>
+      // While the session is idle and nothing this call sent has gone in, each send goes under its
+      // own `forward-wait` line and a refusal is recorded at once, both naming the send's command
+      // id, so the ledger proves which sends started no run (`Seen.refusedForwardWait`), even
+      // after a crash.
+      const stepWhileIdle = (step: string, reason: string, commandId: string) =>
         idleAt !== null && sent === 0
-          ? append(out, { event: "step_changed", data: { step } }, "forward", reason)
+          ? append(out, { event: "step_changed", data: { step } }, "forward", reason, {
+              command: commandId,
+            })
           : Effect.void;
-      const markSend = () => stepWhileIdle(`${FORWARD_WAIT} ${idleAt}`, "forward-waiting");
       for (const comment of comments) {
         const { actions } = yield* Effect.fromResult(
           transition("building", { kind: "instructor-commented", commentId: comment.id }),
         );
-        yield* markSend();
+        const commandId = `softfac:${runName}:comment:${comment.id}`;
+        yield* stepWhileIdle(`${FORWARD_WAIT} ${idleAt}`, "forward-waiting", commandId);
         const result = yield* applyActions(
           ctx,
           issue,
@@ -1069,7 +1071,7 @@ export const forward = (
           makeCause("forward", "comment-forwarded"),
           {
             forward: {
-              commandId: `softfac:${runName}:comment:${comment.id}`,
+              commandId,
               text: commentMessage(ctx.repo, issue, comment.author, comment.body),
             },
           },
@@ -1079,7 +1081,7 @@ export const forward = (
         );
         if (result === "sent") sent += 1;
         else {
-          yield* stepWhileIdle(`${COMMENT_REFUSED} ${comment.id}`, "comment-refused");
+          yield* stepWhileIdle(`${COMMENT_REFUSED} ${comment.id}`, "comment-refused", commandId);
           refused.push(dropNotice(ctx, issue, { id: comment.id, reason: "refused" }));
         }
       }
@@ -1088,7 +1090,8 @@ export const forward = (
         const { actions } = yield* Effect.fromResult(
           transition("building", { kind: "body-edited" }),
         );
-        yield* markSend();
+        const commandId = `softfac:${runName}:body:${bodyEdit.editedAt}`;
+        yield* stepWhileIdle(`${FORWARD_WAIT} ${idleAt}`, "forward-waiting", commandId);
         const result = yield* applyActions(
           ctx,
           issue,
@@ -1098,7 +1101,7 @@ export const forward = (
           makeCause("forward", "body-edit-forwarded"),
           {
             forward: {
-              commandId: `softfac:${runName}:body:${bodyEdit.editedAt}`,
+              commandId,
               text: bodyEditMessage(ctx.repo, issue, bodyEdit.editor, bodyEdit.body),
               step: `${BODY_EDIT_FORWARDED} ${bodyEdit.editedAt}`,
             },
@@ -1109,14 +1112,22 @@ export const forward = (
         );
         if (result === "sent") editSent = true;
         else {
-          yield* stepWhileIdle(`${BODY_EDIT_REFUSED} ${bodyEdit.editedAt}`, "body-edit-refused");
+          yield* stepWhileIdle(
+            `${BODY_EDIT_REFUSED} ${bodyEdit.editedAt}`,
+            "body-edit-refused",
+            commandId,
+          );
           refused.push(refusedEditNotice(bodyEdit.editedAt));
         }
       }
-      // A marker whose every message T3 refused waits for a run nothing started. Cancelled before the
-      // issue is told, so a failed comment call leaves no wait behind.
-      if (idleAt !== null && sent === 0 && !editSent && !inheritedOpen) {
-        yield* cancelForwardWait(out, idleAt);
+      // A marker the ledger now proves T3 refused every send under, an earlier call's included,
+      // waits for a run nothing started. Cancelled before the issue is told, so a failed comment
+      // call leaves no wait behind.
+      if (idleAt !== null) {
+        const after = readProgress((yield* ledger(() => readRun(ctx.dataDir, run))).entries);
+        if (after.refusedForwardWait !== null) {
+          yield* cancelForwardWait(out, after.refusedForwardWait);
+        }
       }
       // Last: telling the issue must not hold back what the session needs.
       yield* tellIssue(ctx, out, issue, [
