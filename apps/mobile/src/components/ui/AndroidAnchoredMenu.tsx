@@ -37,6 +37,8 @@ export type AndroidAnchoredMenuProps = {
   readonly actions: readonly MenuAction[];
   readonly title?: string;
   readonly onPressAction?: MenuComponentProps["onPressAction"];
+  readonly onOpenMenu?: () => void;
+  readonly onCloseMenu?: () => void;
   readonly className?: string;
   readonly style?: StyleProp<ViewStyle>;
   readonly children: ReactNode | ((open: () => void) => ReactNode);
@@ -54,18 +56,21 @@ export function AndroidAnchoredMenu(props: AndroidAnchoredMenuProps) {
 
   const keyboardVisible = useKeyboardState((state) => state.isVisible);
   const keyboardHeight = useKeyboardState((state) => state.height);
+  const { onOpenMenu, onCloseMenu } = props;
   const close = useCallback(() => {
     setAnchor(null);
     setPath([]);
     setOverlay(null);
     setRootHeight(null);
-  }, []);
+    onCloseMenu?.();
+  }, [onCloseMenu]);
 
   const open = useCallback(() => {
+    onOpenMenu?.();
     anchorRef.current?.measureInWindow((x, y, width, height) => {
       setAnchor({ x, y, width, height, keyboardWasVisible: keyboardVisible });
     });
-  }, [keyboardVisible]);
+  }, [keyboardVisible, onOpenMenu]);
 
   const measureOverlay = useCallback(() => {
     overlayRef.current?.measureInWindow((x, y, width, height) => {

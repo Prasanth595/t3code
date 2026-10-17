@@ -17,6 +17,8 @@ export function Menu(props: MenuProps) {
         title={props.title}
         style={props.style}
         onPressAction={props.onPressAction}
+        onOpenMenu={props.onOpenMenu}
+        onCloseMenu={props.onCloseMenu}
       >
         {(open) =>
           cloneElement(child, {
@@ -36,6 +38,8 @@ export function Menu(props: MenuProps) {
       title={props.title}
       style={props.style}
       onPressAction={props.onPressAction}
+      onOpenMenu={props.onOpenMenu}
+      onCloseMenu={props.onCloseMenu}
     >
       {props.children}
     </AndroidAnchoredMenu>

@@ -578,16 +578,26 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const handleSettle = useCallback(() => onSettleThread(thread), [onSettleThread, thread]);
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuGeneration, setMenuGeneration] = useState(0);
   // A recycled cell reassigns this mounted row to a different thread without
   // remounting it, and the render closure stops running while list equality
   // says the item is unchanged — so any row-local UI state must be dismissed
-  // when the identity under it changes.
+  // when the identity under it changes. An open menu would otherwise show and
+  // act on the new thread; neither platform's menu can be closed from JS, so
+  // it is remounted.
   const rowIdentity = `${thread.environmentId}:${thread.id}`;
   const [boundIdentity, setBoundIdentity] = useState(rowIdentity);
   if (boundIdentity !== rowIdentity) {
     setBoundIdentity(rowIdentity);
     setCustomSnoozeOpen(false);
+    if (menuOpen) {
+      setMenuOpen(false);
+      setMenuGeneration((generation) => generation + 1);
+    }
   }
+  const handleMenuOpen = useCallback(() => setMenuOpen(true), []);
+  const handleMenuClose = useCallback(() => setMenuOpen(false), []);
   const handleSnooze = useCallback(
     (snoozedUntil: string) => onSnoozeThread(thread, snoozedUntil),
     [onSnoozeThread, thread],
@@ -1225,6 +1235,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       >
         {(close) => (
           <Menu
+            key={menuGeneration}
             actions={[
               ...(thread.branch
                 ? [
@@ -1247,6 +1258,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                       : cardMenuActions),
             ]}
             onPressAction={handleMenuAction}
+            onOpenMenu={handleMenuOpen}
+            onCloseMenu={handleMenuClose}
             shouldOpenOnLongPress
           >
             {rowContent(close)}
