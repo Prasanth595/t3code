@@ -8,14 +8,24 @@ export interface ParsedRunId {
   readonly attempt: number;
 }
 
-/** `<owner>__<repo>__<issue>__<attempt>`; null for anything else. The repo may hold `__`. */
+/**
+ * `<owner>__<repo>__<issue>__<attempt>`; null for anything else. Read the way the server reads it:
+ * the owner ends at the first `__`, the attempt and issue come from the right, and the rest is the
+ * repo, which may hold `__`.
+ */
 export function parseRunId(id: string): ParsedRunId | null {
-  const parts = id.split("__");
-  if (parts.length < 4) return null;
-  const attemptText = parts[parts.length - 1]!;
-  const issue = parts[parts.length - 2]!;
-  const owner = parts[0]!;
-  const repo = parts.slice(1, -2).join("__");
+  const first = id.indexOf("__");
+  if (first === -1) return null;
+  const owner = id.slice(0, first);
+  const afterOwner = id.slice(first + 2);
+  const lastA = afterOwner.lastIndexOf("__");
+  if (lastA === -1) return null;
+  const attemptText = afterOwner.slice(lastA + 2);
+  const beforeAttempt = afterOwner.slice(0, lastA);
+  const lastB = beforeAttempt.lastIndexOf("__");
+  if (lastB === -1) return null;
+  const repo = beforeAttempt.slice(0, lastB);
+  const issue = beforeAttempt.slice(lastB + 2);
   if (!/^[0-9]+$/.test(attemptText) || !owner || !repo || !issue) return null;
   return { owner, repo, issue, attempt: Number(attemptText) };
 }
