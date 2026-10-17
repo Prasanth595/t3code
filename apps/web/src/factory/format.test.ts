@@ -41,6 +41,15 @@ describe("parseRunId", () => {
     });
   });
 
+  it("reads a repo that ends in an underscore the way the server does", () => {
+    expect(parseRunId("o__a___12__1")).toEqual({
+      owner: "o",
+      repo: "a_",
+      issue: "12",
+      attempt: 1,
+    });
+  });
+
   it("takes a Linear identifier as the issue", () => {
     expect(parseRunId("acme__app__ENG-42__2")?.issue).toBe("ENG-42");
   });
