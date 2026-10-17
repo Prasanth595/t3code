@@ -79,7 +79,7 @@ tool, which refuses skills reserved for manual invocation.
 ## Task lists
 
 Claude 5 models track their work with Claude Code's task tools, which are off by
-default. To have Claude keep a task list and show it in T3 Code, add
+default. To have Claude keep a task list and show it in T3 Code's web and desktop apps, add
 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` under **Variables** in the Claude instance's
 **Environment** section in **Settings > Providers**.
 
