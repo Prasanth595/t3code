@@ -177,8 +177,7 @@ function SidebarProvider({
   );
 }
 
-/** The rail's width restore and drag refresh key on this value. */
-function useResolvedSidebarResizable({
+function resolveSidebarResizable({
   collapsible,
   isMobile,
   resizable,
@@ -187,7 +186,6 @@ function useResolvedSidebarResizable({
   isMobile: boolean;
   resizable: boolean | SidebarResizableOptions;
 }): SidebarResolvedResizableOptions | null {
-  "use memo";
   if (isMobile || collapsible === "none" || !resizable) {
     return null;
   }
@@ -235,7 +233,7 @@ function Sidebar({
     sidebar.toggleAttribute("inert", offcanvasCollapsed);
   }, [offcanvasCollapsed]);
 
-  const resolvedResizable = useResolvedSidebarResizable({ collapsible, isMobile, resizable });
+  const resolvedResizable = resolveSidebarResizable({ collapsible, isMobile, resizable });
   const instanceContextValue: SidebarInstanceContextProps = { side, resizable: resolvedResizable };
 
   if (collapsible === "none") {
