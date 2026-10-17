@@ -3241,15 +3241,23 @@ describe("attention items", () => {
       }),
   );
 
-  it.effect("a stuck item whose issue cannot be read stays, and the pass says so", () =>
-    Effect.gen(function* () {
-      const fake = new Fake();
-      fake.closedIssues[`${REPO}#41`] = "error";
-      fake.items = [open({ id: "stuck", kind: "stuck", issue: 41, run: runIdToString(rid(41)) })];
-      const { report } = yield* pass(fake, [REPO], 5);
-      assert.deepEqual(ids(fake), ["stuck"]);
-      assert.equal(report.errors, 1);
-    }),
+  it.effect(
+    "a stuck item whose issue cannot be read stays, said in a line that is not an error",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.closedIssues[`${REPO}#41`] = "error";
+        fake.items = [open({ id: "stuck", kind: "stuck", issue: 41, run: runIdToString(rid(41)) })];
+        const { report, lines } = yield* pass(fake, [REPO], 5);
+        assert.deepEqual(ids(fake), ["stuck"]);
+        // An issue that can never be read again (deleted, transferred) must not fail every pass.
+        assert.equal(report.errors, 0);
+        assert.deepEqual(errorEvents(fake), []);
+        assert.deepEqual(
+          lines.filter((l) => l.includes("cannot read whether the issue is closed")),
+          [`${REPO}#41: cannot read whether the issue is closed: ${trackerFailure().message}`],
+        );
+      }),
   );
 
   it.effect("no item is cleared at the pass end when the ledger cannot be read", () =>

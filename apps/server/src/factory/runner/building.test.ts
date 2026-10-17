@@ -772,6 +772,22 @@ describe("advance: done", () => {
     }),
   );
 
+  it.effect(
+    "with no branch recorded for the thread binds the branch checked out in its worktree",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor();
+        setStatus(rig, "completed", DONE_MESSAGE, { branch: null });
+        rig.world.checkedOut = "t3/2e8db933";
+        rig.world.pr = { ...defaultPr(), headRef: "t3/2e8db933" };
+        assert.deepStrictEqual(yield* advanceIn(rig), {
+          kind: "ready-for-gate",
+          pr: 12,
+          prUrl: URL12,
+        });
+      }),
+  );
+
   it.effect("with the thread's own branch does not ask git", () =>
     Effect.gen(function* () {
       const rig = rigFor();
