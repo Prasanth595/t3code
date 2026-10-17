@@ -117,7 +117,8 @@ export interface Seen {
   /**
    * The session is working until a run newer than this ordinal has ended: the reminder's, a
    * forward's or a gate send-back's wait marker. Never goes down. A send-back's marker is dropped
-   * by the next `gate_command`, which shows the gate ran; a forward's only by a newer ended run.
+   * by the next `gate_command`, which shows the gate ran; a forward's only by a newer ended run,
+   * or by `forward-wait-cancelled` when nothing it covered went in.
    */
   readonly waitingAfter: number | null;
   /**
@@ -128,8 +129,22 @@ export interface Seen {
   readonly lastWait: number | null;
   /** The id of every comment a `comment_forwarded` line names: it is in the session. */
   readonly forwarded: ReadonlySet<string>;
-  /** The time of every `body-edit-forwarded <edited_at>` step: that edit of the body is in the session. */
+  /** The time of every `body-edit-forwarded` or `body-edit-dropped` step: that edit is in the session, or the issue was told it was not sent. */
   readonly bodyEdits: ReadonlySet<string>;
+  /**
+   * The ordinal in the newest `forward-wait` step that no `comment_forwarded` line or
+   * `body-edit-forwarded` step follows and that was not cancelled: nothing sent under it is known
+   * to have gone in.
+   */
+  readonly idleForwardWait: number | null;
+  /**
+   * `idleForwardWait` when the ledger proves T3 refused every send under it: each send has its
+   * own `forward-wait <k>` line naming the send's T3 command id in its cause, and a
+   * `comment-refused` or `body-edit-refused` step names the same id. T3 keeps one result per
+   * command id, so the refusal of a resend is the outcome of a send whose own was lost. No run was
+   * started, so `forward` cancels it.
+   */
+  readonly refusedForwardWait: number | null;
   /** The id of every comment a `comment-dropped <id>` step names: the issue was told it was not forwarded. */
   readonly dropped: ReadonlySet<string>;
   /** The newest `session_paused` line: a person stopped the session's run in T3, and this is its ordinal. */
@@ -205,6 +220,14 @@ export const RESULT_LINE_REMINDING = "result-line-reminding";
 export const RESULT_LINE_REMINDED = "result-line-reminded";
 /** The ledger step that waits for a run newer than `k` (a forwarded comment); read here for the steps that write it. */
 export const FORWARD_WAIT = "forward-wait";
+/** The ledger step written when every message sent under a `forward-wait <k>` was refused by T3, so no run was started and the wait is over: `forward-wait-cancelled <k>`. */
+export const FORWARD_WAIT_CANCELLED = "forward-wait-cancelled";
+/** The ledger step written as soon as T3 refused a comment sent under an idle `forward-wait`: `comment-refused <id>`. */
+export const COMMENT_REFUSED = "comment-refused";
+/** The ledger step written as soon as T3 refused a body edit sent under an idle `forward-wait`: `body-edit-refused <edited_at>`. */
+export const BODY_EDIT_REFUSED = "body-edit-refused";
+/** The ledger step written once the issue was told that T3 refused an edit of the body: `body-edit-dropped <edited_at>`; the edit counts as handled. */
+export const BODY_EDIT_DROPPED = "body-edit-dropped";
 /** The ledger step written once an edit of the issue body is in the session: `body-edit-forwarded <edited_at>`. */
 export const BODY_EDIT_FORWARDED = "body-edit-forwarded";
 /** The ledger step written once the issue was told that an instructor's comment was not forwarded: `comment-dropped <id>`. */
@@ -280,6 +303,10 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let waitingAfter: number | null = null;
   let waitIsForward = false;
   let lastWait: number | null = null;
+  let idleForwardWait: number | null = null;
+  // The command ids sent under the idle marker with no outcome yet; null once a marker names none.
+  let idleOpen: Set<string> | null = null;
+  let lastWaitBefore: number | null = null;
   const forwarded = new Set<string>();
   const bodyEdits = new Set<string>();
   const dropped = new Set<string>();
@@ -341,9 +368,39 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           awaitRun(remindingRun, true);
         }
         const forwardRun = stepNumber(step, FORWARD_WAIT);
-        if (forwardRun !== null) awaitRun(forwardRun, true);
+        const command = entry.cause?.command;
+        if (forwardRun !== null) {
+          // The same idle marker again is the next send under it.
+          if (idleForwardWait !== forwardRun) {
+            lastWaitBefore = lastWait;
+            idleForwardWait = forwardRun;
+            idleOpen = new Set();
+          }
+          if (typeof command === "string") idleOpen?.add(command);
+          else idleOpen = null;
+          awaitRun(forwardRun, true);
+        }
+        if (
+          typeof command === "string" &&
+          (step.startsWith(`${COMMENT_REFUSED} `) || step.startsWith(`${BODY_EDIT_REFUSED} `))
+        ) {
+          idleOpen?.delete(command);
+        }
+        const cancelledRun = stepNumber(step, FORWARD_WAIT_CANCELLED);
+        if (cancelledRun !== null && idleForwardWait === cancelledRun) {
+          if (waitIsForward && waitingAfter === cancelledRun) {
+            waitingAfter = null;
+            waitIsForward = false;
+          }
+          lastWait = lastWaitBefore;
+          idleForwardWait = null;
+        }
         if (step.startsWith(`${BODY_EDIT_FORWARDED} `)) {
           bodyEdits.add(step.slice(BODY_EDIT_FORWARDED.length + 1));
+          idleForwardWait = null;
+        }
+        if (step.startsWith(`${BODY_EDIT_DROPPED} `)) {
+          bodyEdits.add(step.slice(BODY_EDIT_DROPPED.length + 1));
         }
         const droppedId = commentDroppedId(step);
         if (droppedId !== null) dropped.add(droppedId);
@@ -421,6 +478,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         waitingAfter = null;
         waitIsForward = false;
         lastWait = null;
+        idleForwardWait = null;
+        lastWaitBefore = null;
         reminding = null;
         reminded = false;
         paused = null;
@@ -441,6 +500,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
       case "comment_forwarded": {
         const id = field(entry.data, "comment_id");
         if (typeof id === "string") forwarded.add(id);
+        idleForwardWait = null;
         break;
       }
       case "questions_posted":
@@ -594,6 +654,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     reminded,
     waitingAfter,
     lastWait,
+    idleForwardWait,
+    refusedForwardWait:
+      idleForwardWait !== null && idleOpen !== null && idleOpen.size === 0 ? idleForwardWait : null,
     forwarded,
     bodyEdits,
     dropped,
