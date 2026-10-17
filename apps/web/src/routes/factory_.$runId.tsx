@@ -2,7 +2,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 
 import { FactoryRunPage } from "../factory/FactoryRunPage";
 
-export const Route = createFileRoute("/factory/$runId")({
+export const Route = createFileRoute("/factory_/$runId")({
   beforeLoad: async ({ context }) => {
     if (
       context.authGateState.status !== "authenticated" &&

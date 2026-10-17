@@ -8,14 +8,13 @@ const tree = readFileSync(new URL("../routeTree.gen.ts", import.meta.url), "utf8
 
 describe("factory routes", () => {
   it("hangs the run route off the root route, not the runs list", () => {
-    const update = /const FactoryRunIdRoute = FactoryRunIdRouteImport\.update\(\{[\s\S]*?\}\)/.exec(
-      tree,
-    );
+    const update =
+      /const FactoryRunIdRoute = FactoryRunIdRouteImport\.update\(\{[\s\S]*?as any\)/.exec(tree);
     expect(update?.[0]).toContain("getParentRoute: () => rootRouteImport");
     expect(tree).not.toContain("FactoryRouteChildren");
   });
 
   it("keeps /factory/$runId as the run route's full path", () => {
-    expect(tree).toMatch(/'\/factory\/\$runId': \{[^}]*fullPath: '\/factory\/\$runId'/);
+    expect(tree).toMatch(/'\/factory_\/\$runId': \{[^}]*fullPath: '\/factory\/\$runId'/);
   });
 });
