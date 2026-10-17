@@ -260,3 +260,16 @@ describe("FactoryRunPage lists at 375 px", () => {
     await page.unmount();
   });
 });
+
+describe.each([
+  [639, true],
+  [640, false],
+])("FactoryRunPage at the 640 px breakpoint, %i px", (width, narrow) => {
+  it(narrow ? "lists just below 640" : "keeps the tables from 640", async () => {
+    const page = await renderAt(width, createElement(FactoryRunPage, { runId: RUN_ID }));
+    expect(page.all("table")).toHaveLength(narrow ? 0 : 2);
+    const lists = page.all("ul").filter((ul) => ul.props["data-layout"] === "list");
+    expect(lists).toHaveLength(narrow ? 2 : 0);
+    await page.unmount();
+  });
+});

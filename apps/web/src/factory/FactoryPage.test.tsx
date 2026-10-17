@@ -514,3 +514,17 @@ describe("FactoryPage run cards at 375 px", () => {
     await empty.unmount();
   });
 });
+
+describe.each([
+  [639, true],
+  [640, false],
+])("FactoryPage at the 640 px breakpoint, %i px", (width, narrow) => {
+  it(narrow ? "lists cards just below 640" : "lists the table from 640", async () => {
+    state.runs = resource({ data: { runs: [runRow()] } });
+    const page = await renderAt(width, createElement(FactoryPage));
+    expect(page.all("table")).toHaveLength(narrow ? 0 : 1);
+    const cards = page.all("ul").filter((ul) => ul.props["data-layout"] === "cards");
+    expect(cards).toHaveLength(narrow ? 1 : 0);
+    await page.unmount();
+  });
+});
