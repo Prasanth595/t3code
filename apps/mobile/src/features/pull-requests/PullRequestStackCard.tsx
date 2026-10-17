@@ -2,7 +2,7 @@ import { StackActions, useNavigation } from "@react-navigation/native";
 import { useState } from "react";
 import { Platform, View } from "react-native";
 import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { PullRequestCardGroup, PullRequestCardRow } from "./PullRequestControls";
 import { pullRequestStatus } from "./pullRequestStatus";
 import type { PullRequestParams } from "./usePullRequestDiff";
@@ -54,7 +54,7 @@ export function PullRequestStackCard(props: {
               isDraft: layer.isDraft === true,
             });
             return (
-              <View key={layer.number} className={selected ? "bg-subtle-strong" : undefined}>
+              <View key={layer.number} className={selected ? "bg-thread-selected" : undefined}>
                 <PullRequestCardRow
                   title={layer.title ?? layer.headBranch}
                   icon={status.icon}
