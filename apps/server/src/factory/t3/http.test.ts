@@ -837,6 +837,15 @@ repos:
   - repo: rawphp/softfac
     path: /softfac
 `;
+  const DEFAULTS = {
+    gh_config_dir: "",
+    poll_seconds: 60,
+    max_concurrent_runs: 1,
+    max_concurrent_gates: 2,
+    model_instance: "claudeAgent",
+    model: "",
+    repos: [],
+  };
   const configFile = (dir: string) => NodePath.join(dir, "config.yml");
   const fileText = (dir: string) => NodeFS.readFileSync(configFile(dir), "utf8");
   const VALID_BODY = {
@@ -866,6 +875,7 @@ repos:
           model: "claude-sonnet-5-5",
           repos: [{ repo: "rawphp/softfac", path: "/softfac" }],
         },
+        defaults: DEFAULTS,
         errors: [],
         repos: [{ repo: "rawphp/softfac", path: "/softfac", factory: null, errors: null }],
       });
@@ -877,15 +887,8 @@ repos:
       const body = await json(await call("GET", CONFIG_PATH, tokens.read));
       assert.strictEqual(body.exists, false);
       assert.strictEqual(body.file, configFile(dir));
-      assert.deepStrictEqual(body.config, {
-        gh_config_dir: "",
-        poll_seconds: 60,
-        max_concurrent_runs: 1,
-        max_concurrent_gates: 2,
-        model_instance: "claudeAgent",
-        model: "",
-        repos: [],
-      });
+      assert.deepStrictEqual(body.config, DEFAULTS);
+      assert.deepStrictEqual(body.defaults, DEFAULTS);
       assert.deepStrictEqual(body.errors, []);
     }),
   );
@@ -896,6 +899,12 @@ repos:
       const body = await json(await call("GET", CONFIG_PATH, tokens.read));
       assert.strictEqual(body.exists, true);
       assert.strictEqual(body.config, null);
+      assert.deepStrictEqual(body.draft, {
+        gh_config_dir: "/gh",
+        poll_seconds: 60,
+        max_concurrent_runs: 1,
+        repos: [{ repo: "rawphp/softfac", path: "/softfac" }],
+      });
       assert.deepStrictEqual(body.errors, [
         { file: configFile(dir), field: "model", message: "is missing" },
       ]);

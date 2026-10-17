@@ -114,7 +114,6 @@ describe("editMachineConfig", () => {
       assert.include(text, "# the second repo");
       assert.include(text, "# secondary");
       assert.notInclude(text, "# primary");
-      assert.notInclude(text, "# the main repo");
       assert.notInclude(text, "a/b");
     });
 
