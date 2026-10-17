@@ -1540,6 +1540,87 @@ describe("a relaunch finds the branch", () => {
   );
 });
 
+// ---- a run with no recorded approval -----------------------------------------------------------------
+
+/** `STARTED` without its `approved` step: a ledger an older build wrote, or one whose first line was lost. */
+const UNAPPROVED: ReadonlyArray<RunEvent> = STARTED.filter(
+  (line) =>
+    !(
+      line.event === "step_changed" &&
+      String((line.data as { step: string }).step).startsWith("approved ")
+    ),
+);
+
+describe("interrupted: a run with no recorded approval", () => {
+  it.effect(
+    "whose thread is gone after a T3 outage goes stuck as thread-gone, not relaunched",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor(UNAPPROVED);
+        threadGone(rig);
+        assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* decide(rig, afterOutage()), {
+          kind: "stuck",
+          reason: THREAD_GONE,
+        });
+        assert.deepStrictEqual(rig.gh, stuckCalls(THREAD_GONE));
+        // No relaunch line, no next attempt, no launch: the new attempt could not confirm the text.
+        assert.deepStrictEqual(linesOf(rig), [
+          ...UNAPPROVED,
+          worktreeRemoved("/t3/wt"),
+          { event: "stuck", data: { reason: THREAD_GONE } },
+          moved("building", "stuck"),
+          FINISHED,
+        ]);
+        assert.deepStrictEqual(rig.launches, []);
+        assert.ok(!NodeFS.existsSync(runPath(rig.dataDir, run10b)));
+      }),
+  );
+
+  it.effect("found gone by its resume send goes stuck as thread-gone too", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(UNAPPROVED);
+      yield* failedAndSaid(rig);
+      rig.world.sendNotFound = true;
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* decide(rig, afterOutage()), {
+        kind: "stuck",
+        reason: THREAD_GONE,
+      });
+      assert.deepStrictEqual(rig.gh, stuckCalls(THREAD_GONE));
+      const lines = linesOf(rig);
+      // The resume the send cut short stays; no relaunch line follows it.
+      assert.deepStrictEqual(
+        lines.filter((line) => line.event === "session_interrupted"),
+        [resumeLine(1, 1, T3_ERROR, 1)],
+      );
+      assert.deepStrictEqual(lines.slice(-3), [
+        { event: "stuck", data: { reason: THREAD_GONE } },
+        moved("building", "stuck"),
+        FINISHED,
+      ]);
+      assert.deepStrictEqual(rig.launches, []);
+      assert.ok(!NodeFS.existsSync(runPath(rig.dataDir, run10b)));
+    }),
+  );
+
+  it.effect(
+    "with a relaunch line in its ledger is an error for advance, with nothing written",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor([...UNAPPROVED, relaunchLine(1, "t3code/abc")]);
+        const before = bytesOf(rig);
+        const error = yield* Effect.flip(advanceIn(rig));
+        assert.strictEqual(error._tag, "RelaunchUnsupportedError");
+        assert.strictEqual(bytesOf(rig), before);
+        assert.deepStrictEqual(rig.gh, []);
+        assert.deepStrictEqual(rig.launches, []);
+        assert.ok(!NodeFS.existsSync(runPath(rig.dataDir, run10b)));
+      }),
+  );
+});
+
 // ---- a stop by hand ------------------------------------------------------------------------------------
 
 describe("interrupted: a stop by hand", () => {
