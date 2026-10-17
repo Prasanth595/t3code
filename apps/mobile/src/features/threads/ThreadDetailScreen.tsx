@@ -69,6 +69,7 @@ import {
   useWindowDimensions,
   View,
   type GestureResponderEvent,
+  type LayoutChangeEvent,
   type ViewInstance,
 } from "react-native";
 import {
@@ -316,6 +317,8 @@ function useStreamingHaptics(threadId: ThreadId, feed: ReadonlyArray<ThreadFeedE
     void Haptics.selectionAsync();
   }, [threadId, feed]);
 }
+
+const USAGE_LIMITS_PANEL_BOTTOM_GAP = 12;
 
 const USER_INPUT_TOGGLE_TIMING = {
   duration: USER_INPUT_TOGGLE_DURATION_MS,
@@ -627,13 +630,33 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       setLastKnownKeyboardHeight(liveKeyboardHeight);
     }
   }, [lastKnownKeyboardHeight, liveKeyboardHeight]);
+  const reservedKeyboardHeight =
+    lastKnownKeyboardHeight > 0 ? lastKnownKeyboardHeight : ESTIMATED_KEYBOARD_HEIGHT;
   const pendingUserInputMaxHeight = derivePendingUserInputMaxHeight({
     windowHeight,
-    keyboardHeight:
-      lastKnownKeyboardHeight > 0 ? lastKnownKeyboardHeight : ESTIMATED_KEYBOARD_HEIGHT,
+    keyboardHeight: reservedKeyboardHeight,
     navigationHeaderHeight,
     composerOverlapHeight: composerBottomInset,
   });
+  // Android lays the screen out below its opaque header and reports a zero
+  // header height, so the window height overstates the room by the header.
+  const [screenHeight, setScreenHeight] = useState<number | null>(null);
+  const handleScreenLayout = useCallback((event: LayoutChangeEvent) => {
+    setScreenHeight(event.nativeEvent.layout.height);
+  }, []);
+  const screenAreaHeight = screenHeight ?? windowHeight;
+  // The usage panel stacks above the composer instead of replacing it, so it
+  // must also clear the composer and its own bottom padding, or its top row
+  // (with the close button) ends up behind the header.
+  const usageLimitsMaxHeight = Math.min(
+    Math.round(screenAreaHeight * 0.4),
+    derivePendingUserInputMaxHeight({
+      windowHeight: screenAreaHeight,
+      keyboardHeight: reservedKeyboardHeight,
+      navigationHeaderHeight,
+      composerOverlapHeight: composerOverlapHeight + USAGE_LIMITS_PANEL_BOTTOM_GAP,
+    }),
+  );
   const estimatedOverlayHeight = composerOverlapHeight;
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
@@ -1041,7 +1064,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   }, []);
 
   return (
-    <View className="flex-1">
+    <View className="flex-1" onLayout={handleScreenLayout}>
       {!usesNativeWorkspaceColumns ? <NativeLayoutObserver onChange={setScreenMetrics} /> : null}
       {showContent ? (
         <View
@@ -1232,13 +1255,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   ) : null}
                   {usageLimitsReport && activeUserInputRequestId === null ? (
                     <Animated.View
-                      className="shrink-0 px-4 pb-3"
+                      className="shrink-0 px-4"
+                      style={{ paddingBottom: USAGE_LIMITS_PANEL_BOTTOM_GAP }}
                       entering={FadeInDown.duration(220)}
                       exiting={FadeOut.duration(140)}
                     >
                       <ComposerUsageLimits
                         report={usageLimitsReport}
                         environmentId={props.environmentId}
+                        maxHeight={usageLimitsMaxHeight}
                         onClose={dismissUsageLimits}
                       />
                     </Animated.View>
