@@ -53,11 +53,18 @@ Look at `environment` for `PATH` and `GH_CONFIG_DIR`, then check that each progr
 PATH='<the PATH from launchctl>' command -v vp claude git gh
 ```
 
-The template ends the `PATH` with `~/.local/share/vite-plus/bin`, where `vp` is. On this Mac `claude` is not on the template's `PATH`: it is in Herd's nvm bin directory (`dirname "$(command -v claude)"` in a login shell, a path with a node version in it), which is why the Rust factory's `~/.config/softfac/t3-serve.sh` searches for it. If `claude` does not resolve, T3 reports ``Claude Agent CLI (`claude`) was not found on PATH`` and every launch fails. Add that directory to the `PATH` string in the template `factory/launchd/io.github.rawphp.t3fac.plist`, commit it (the next `build.sh` needs a clean tree), and run `factory/scripts/install.sh` on the archive again: `install.sh` writes the installed plist from the template, so a change made only in `~/Library/LaunchAgents` is lost on the next install or rollback. The directory changes when Herd's node does.
+The template's `PATH` ends with `~/.local/share/vite-plus/bin`, where `vp` is, and names no other tool. Everything else the repos on this machine provision and gate with (Herd's `php` and `composer`, `cargo`, a `claude` that is not on that `PATH`) goes in `~/.config/t3fac/env`, which the job sources before it starts the server:
+
+```sh
+PATH="$PATH:$HOME/.cargo/bin:$HOME/Library/Application Support/Herd/bin"
+export PATH
+```
+
+The file is machine-side and never committed, so a directory that changes when Herd's node does is changed there. `launchctl kickstart -k gui/$(id -u)/io.github.rawphp.t3fac` applies it; no reinstall. If `claude` does not resolve, T3 reports ``Claude Agent CLI (`claude`) was not found on PATH`` and every launch fails.
 
 ### The model proxy
 
-The Rust factory's T3 server (`~/.config/softfac/t3-serve.sh`) also sets `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`, so its sessions' model calls go through a proxy. The fork's server sets neither and uses the machine's own Claude login. To use the proxy, those two variables would have to go into the plist template's `EnvironmentVariables`, and the template is committed to the repo, so the token must not be written there. Decide how the fork gets it before relying on the proxy.
+The Rust factory's T3 server (`~/.config/softfac/t3-serve.sh`) also set `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`, so its sessions' model calls went through a proxy. The fork's server sets neither and uses the machine's own Claude login. To use the proxy, export both in `~/.config/t3fac/env`; the token stays out of the repo.
 
 ## 2. Make the separate clone and its T3 project
 
