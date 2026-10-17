@@ -15,6 +15,8 @@ export const STILL_FRAME_DELAY = Duration.millis(100);
 
 const HEADER_END = Buffer.from("\r\n\r\n");
 const MAX_HEADER_BYTES = 16 * 1024;
+// Simulator frames are far smaller; a larger claim stops tracking instead of retaining it.
+const MAX_PART_BYTES = 16 * 1024 * 1024;
 
 type Part = Arr.NonEmptyReadonlyArray<Uint8Array>;
 
@@ -50,7 +52,7 @@ const partTracker = () => {
         }
         const headers = head.subarray(0, headerEnd).toString("latin1");
         const length = /^content-length:\s*(\d+)\s*$/im.exec(headers)?.[1];
-        if (!headers.startsWith("--") || length === undefined) {
+        if (!headers.startsWith("--") || length === undefined || Number(length) > MAX_PART_BYTES) {
           recognized = false;
           break;
         }
