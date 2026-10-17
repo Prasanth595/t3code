@@ -297,7 +297,8 @@ const make = Effect.gen(function* () {
 
   // MM-402: apply the server settings of a desired state
 
-  const applyServerSettings = (values: SettingValues) =>
+  /** `previous`: the server settings of the desired state before; at start, `values` itself. */
+  const applyServerSettings = (values: SettingValues, previous: SettingValues | null) =>
     Effect.gen(function* () {
       const current = yield* reportedServerSettings(yield* settings.getSettings);
       const changed: Record<string, unknown> = {};
@@ -332,6 +333,7 @@ const make = Effect.gen(function* () {
       yield* applyKeybindingSettings({
         keybindingsPath: config.keybindingsConfigPath,
         values,
+        previous,
         current,
       });
       if (Object.keys(changed).length > 0) {
@@ -449,7 +451,7 @@ const make = Effect.gen(function* () {
           );
         }),
       );
-      yield* applyServerSettings(desired.settings.server);
+      yield* applyServerSettings(desired.settings.server, before?.settings.server ?? null);
       // Client settings reach the desktop app through the client stream (MM-403).
     });
 
@@ -1342,7 +1344,8 @@ const make = Effect.gen(function* () {
   // builds before the HTTP routes serve, so this runs first.
   const atStart = yield* state.snapshot;
   if (atStart.enabled && atStart.saved.desired !== null) {
-    yield* applyServerSettings(atStart.saved.desired.settings.server).pipe(
+    const saved = atStart.saved.desired.settings.server;
+    yield* applyServerSettings(saved, saved).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("Machine map could not apply the saved desired state.", {
           cause: Cause.pretty(cause),

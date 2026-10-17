@@ -3,11 +3,19 @@
  * A change saved for all environments becomes the shared value of the map, so offline and new
  * machines get it too. A row shows a marker when the map syncs its value.
  */
-import type { EnvironmentId, KEYBINDINGS_SETTING_KEY, ServerSettings } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  KEYBINDINGS_SETTING_KEY,
+  type ServerSettings,
+} from "@t3tools/contracts";
 import { RefreshCwIcon } from "lucide-react";
 
 import type { planScopedSettingsPatch } from "../components/settings/scopedSettings";
-import { useOptionalSettingsScope } from "../components/settings/SettingsScopeContext";
+import {
+  useOptionalSettingsScope,
+  useSettingsScope,
+} from "../components/settings/SettingsScopeContext";
+import { toastManager } from "../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../components/ui/tooltip";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { shareMachineMapSettings, useMachineMapState } from "../state/machineMap";
@@ -88,10 +96,34 @@ export function useShareToMachineMap() {
  */
 export function useShareServerSettingsToMachineMap() {
   const share = useAtomCommand(shareMachineMapSettings, { reportFailure: false });
-  return (
-    environmentId: EnvironmentId,
-    keys: readonly (keyof ServerSettings | typeof KEYBINDINGS_SETTING_KEY)[],
-  ) => queueShare(share, environmentId, keys, {});
+  return (environmentId: EnvironmentId, keys: readonly (keyof ServerSettings)[]) =>
+    queueShare(share, environmentId, keys, {});
+}
+
+/**
+ * MM-414: call after a keybinding save or remove succeeds. With "All environments" selected, the
+ * file of the primary environment becomes the shared `keybindings` value.
+ */
+export function useShareKeybindingsToMachineMap() {
+  const { scope, environment, targets } = useSettingsScope();
+  const environmentId = scope.kind === "all" ? (environment?.environmentId ?? null) : null;
+  const { state } = useMachineMapState(environmentId);
+  const share = useAtomCommand(shareMachineMapSettings, { reportFailure: false });
+  return () => {
+    if (environmentId === null || state === null || state.connection.status === "off") return;
+    const syncOn = targets.find((target) => target.environmentId === environmentId)?.settings
+      .keybindingSync;
+    // The server reports no `keybindings` with the sync off, so the share would send nothing.
+    if (syncOn !== true) {
+      toastManager.add({
+        type: "info",
+        title: "Keybindings not shared",
+        description: "Turn on Sync keybindings to share them through the machine map.",
+      });
+      return;
+    }
+    queueShare(share, environmentId, [KEYBINDINGS_SETTING_KEY], {});
+  };
 }
 
 /** MM-412: a small marker beside a settings row whose value the machine map syncs. */

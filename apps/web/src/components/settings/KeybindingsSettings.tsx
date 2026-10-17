@@ -23,8 +23,6 @@ import {
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
-  type EnvironmentId,
-  KEYBINDINGS_SETTING_KEY,
   type KeybindingCommand,
   type KeybindingWhenNode,
   type ServerRemoveKeybindingInput,
@@ -43,7 +41,7 @@ import { cn } from "../../lib/utils";
 import { serverEnvironment } from "../../state/server";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { KeybindingSyncSettingsRow } from "./KeybindingSyncSettingsRow";
-import { useShareServerSettingsToMachineMap } from "../../machineMap/shareSettings";
+import { useShareKeybindingsToMachineMap } from "../../machineMap/shareSettings";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -1289,12 +1287,8 @@ function useKeybindingCatalog() {
 }
 
 export function KeybindingsSettingsPanel() {
-  const { environment: primaryEnvironment, connectedEnvironments, scope } = useSettingsScope();
-  // Fork: a change for all environments becomes the shared value of the machine map (MM-411).
-  const shareToMachineMap = useShareServerSettingsToMachineMap();
-  const shareIfAllEnvironments = (environmentId: EnvironmentId) => {
-    if (scope.kind === "all") shareToMachineMap(environmentId, [KEYBINDINGS_SETTING_KEY]);
-  };
+  const { environment: primaryEnvironment, connectedEnvironments } = useSettingsScope();
+  const shareKeybindings = useShareKeybindingsToMachineMap();
   const canOpenKeybindingsFile = useEnvironmentScope(
     primaryEnvironment?.environmentId ?? null,
     AuthOrchestrationOperateScope,
@@ -1379,7 +1373,7 @@ export function KeybindingsSettingsPanel() {
       const failed = results.find((result) => result._tag === "Failure");
       if (!failed) {
         setIsAddingBinding(false);
-        shareIfAllEnvironments(primaryEnvironment.environmentId);
+        shareKeybindings();
         return;
       }
       if (!isAtomCommandInterrupted(failed)) {
@@ -1413,7 +1407,7 @@ export function KeybindingsSettingsPanel() {
       );
       setSavingCommand(null);
       const result = results.find((entry) => entry._tag === "Failure") ?? results[0];
-      if (result?._tag === "Success") shareIfAllEnvironments(primaryEnvironment.environmentId);
+      if (result?._tag === "Success") shareKeybindings();
       if (result?._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         toastManager.add({

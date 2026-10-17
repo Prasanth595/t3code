@@ -2,7 +2,6 @@
 
 Customize shortcuts in **Settings → Keybindings** on web and desktop. That page
 also lists the command IDs and defaults available in your version.
-With the machine map, turn on **Sync keybindings** at the bottom of that page to share keybindings with your other machines.
 
 ## Composer controls
 

@@ -640,17 +640,43 @@ it.layer(NodeServices.layer)("MachineMap", (it) => {
             command: "commandPalette.toggle",
           });
 
+          // A revision with the same shared value does not write: the local save stays.
+          yield* send({
+            _tag: "desired",
+            state: desiredState({
+              revision: 2,
+              server: { keybindingSync: true, keybindings: shared, branchNamePrefix: "yz" },
+            }),
+          });
+          yield* nextOf(portal.received, "applied");
+          expect(yield* readRules).toContainEqual({
+            key: "mod+l",
+            command: "commandPalette.toggle",
+          });
+
           // With the sync off, the file stays as it is.
           const before = yield* readRules;
           yield* send({
             _tag: "desired",
             state: desiredState({
-              revision: 2,
+              revision: 3,
               server: { keybindingSync: false, keybindings: shared },
             }),
           });
           yield* nextOf(portal.received, "applied");
           expect(yield* readRules).toEqual(before);
+
+          // A file that is not a JSON array stays for a fix by hand.
+          yield* fs.writeFileString(keybindingsConfigPath, "[{ broken");
+          yield* send({
+            _tag: "desired",
+            state: desiredState({
+              revision: 4,
+              server: { keybindingSync: true, keybindings: [shared[0]] },
+            }),
+          });
+          yield* nextOf(portal.received, "applied");
+          expect(yield* fs.readFileString(keybindingsConfigPath)).toBe("[{ broken");
         }).pipe(Effect.provide(layerMachineMap({ portalUrl: portal.url, ran })));
       }),
     ),

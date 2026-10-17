@@ -81,6 +81,10 @@ vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) => command,
 }));
 
+vi.mock("../../machineMap/shareSettings", () => ({
+  useShareKeybindingsToMachineMap: () => () => {},
+}));
+
 vi.mock("../../editorPreferences", () => ({
   useOpenInPreferredEditor: (environmentId: EnvironmentId) => (path: string) =>
     state.openEditor({ environmentId, path }),
