@@ -47,6 +47,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { decodeGitHubPullRequestListJson } from "@t3tools/source-control-github/server/gitHubPullRequests";
 import * as GitHubChangeRequestTemplate from "@t3tools/source-control-github/server/gitHubChangeRequestTemplate";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as GitLabCli from "@t3tools/source-control-gitlab/server/GitLabCli";
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
@@ -718,6 +719,7 @@ function makeManager(input?: {
   setupScriptRunner?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"];
   gitConfigReads?: string[];
   gitCommands?: string[];
+  environment?: NodeJS.ProcessEnv;
   gitSpawnGate?: {
     readonly matches: (args: ReadonlyArray<string>) => boolean;
     readonly reached: Deferred.Deferred<void>;
@@ -845,6 +847,7 @@ function makeManager(input?: {
       yield* input.seed.pipe(Effect.provideContext(stores), Effect.orDie);
     }
     const manager = yield* GitManager.make.pipe(
+      Effect.provideService(HostProcess.Environment, input?.environment ?? {}),
       Effect.provide(layerManager),
       Effect.provideContext(stores),
     );
@@ -4551,6 +4554,42 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           ghCalls.some(
             (call) => call.startsWith("pr create ") && call.includes("--head contributor:dev"),
           ),
+        ).toBe(true);
+      }),
+    12_000,
+  );
+
+  it.effect.each([
+    { ghRepo: "acme/demo", head: "contributor:dev" },
+    { ghRepo: "github.com/Contributor/demo", head: "dev" },
+  ] as const)(
+    "creates the PR with head $head when GH_REPO is $ghRepo and the only remote is contributor/demo",
+    ({ ghRepo, head }) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3code-git-manager-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, ["checkout", "-b", "dev"]);
+        const forkDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
+        yield* runGit(repoDir, ["push", "-u", "fork", "dev"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "fork",
+          "https://github.com/contributor/demo.git",
+          forkDir,
+        );
+        NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
+
+        const { manager, ghCalls } = yield* makeManager({ environment: { GH_REPO: ghRepo } });
+
+        const result = yield* runStackedAction(manager, {
+          cwd: repoDir,
+          action: "commit_push_pr",
+        });
+
+        expect(result.pr.status).toBe("created");
+        expect(
+          ghCalls.some((call) => call.startsWith("pr create ") && call.includes(`--head ${head} `)),
         ).toBe(true);
       }),
     12_000,

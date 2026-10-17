@@ -62,6 +62,7 @@ import {
   type ChangeRequestTerminology,
 } from "@t3tools/shared/sourceControl";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeyOf,
@@ -616,6 +617,20 @@ function headBranchProbe(
   );
 }
 
+/**
+ * Whether gh's target, from GH_REPO (`[HOST/]OWNER/REPO` or a URL) or a gh-resolved value, is
+ * `repositoryNameWithOwner`. gh-resolved `base` names the remote itself.
+ */
+function isGhTargetRepository(target: string, repositoryNameWithOwner: string | null): boolean {
+  if (target === "base") return true;
+  const ownerAndName = target
+    .replace(/\.git$/iu, "")
+    .split("/")
+    .filter(Boolean)
+    .slice(-2);
+  return ownerAndName.join("/").toLowerCase() === repositoryNameWithOwner?.toLowerCase();
+}
+
 function appendUnique(values: string[], next: string | null | undefined): void {
   const trimmed = next?.trim() ?? "";
   if (trimmed.length === 0 || values.includes(trimmed)) {
@@ -703,6 +718,7 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const environment = yield* HostProcess.Environment;
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
   const serverSettingsService = yield* ServerSettings.ServerSettingsService;
@@ -1463,9 +1479,9 @@ export const make = Effect.gen(function* () {
       remoteName,
     );
 
-    // With no origin to compare against, the only remote is the repository gh targets,
-    // so a branch on it is not a fork. With several remotes, or when `gh repo set-default`
-    // points gh at another repository (gh-resolved), it may still be a fork.
+    // With no origin to compare against, the only remote is the repository gh targets
+    // unless GH_REPO or `gh repo set-default` (gh-resolved) names another, so a branch on it
+    // is not a fork. With several remotes, or with that other target, it may still be a fork.
     const isOnlyRemote =
       remoteName !== null &&
       remoteName !== "origin" &&
@@ -1483,8 +1499,11 @@ export const make = Effect.gen(function* () {
           ),
           Effect.orElseSucceed(() => 0),
         )) === 1 &&
-      ((yield* readConfigValueNullable(cwd, `remote.${remoteName}.gh-resolved`)) ?? "base") ===
-        "base";
+      isGhTargetRepository(
+        environment.GH_REPO?.trim() ||
+          ((yield* readConfigValueNullable(cwd, `remote.${remoteName}.gh-resolved`)) ?? "base"),
+        remoteRepository.repositoryNameWithOwner,
+      );
     const isForeignRemote = remoteName !== null && remoteName !== "origin" && !isOnlyRemote;
 
     const isCrossRepository =
