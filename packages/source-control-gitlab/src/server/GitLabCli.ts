@@ -497,7 +497,7 @@ export const make = Effect.gen(function* () {
       executeMergeRequest({
         cwd: input.cwd,
         reference: input.reference,
-        args: ["mr", "view", input.reference, "--output", "json"],
+        args: ["mr", "view", "--output", "json", "--", input.reference],
       }).pipe(
         Effect.map((result) => result.stdout.trim()),
         Effect.flatMap((raw) =>
@@ -653,7 +653,7 @@ export const make = Effect.gen(function* () {
       executeMergeRequest({
         cwd: input.cwd,
         reference: input.reference,
-        args: ["mr", "checkout", input.reference],
+        args: ["mr", "checkout", "--", input.reference],
       }).pipe(Effect.asVoid),
   });
 });

@@ -79,7 +79,7 @@ layer("GitLabCli.layer", (it) => {
         expect.objectContaining({
           command: "glab",
           cwd: "/repo",
-          args: ["mr", "view", "42", "--output", "json"],
+          args: ["mr", "view", "--output", "json", "--", "42"],
         }),
       );
     }),
@@ -297,7 +297,7 @@ layer("GitLabCli.layer", (it) => {
         expect.objectContaining({
           command: "glab",
           cwd: "/repo",
-          args: ["mr", "checkout", "42"],
+          args: ["mr", "checkout", "--", "42"],
         }),
       );
     }),
