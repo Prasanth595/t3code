@@ -12,8 +12,13 @@ export interface ConfigError {
   readonly message: string;
 }
 
+/** A watched T3 project with what the factory last read of its project config. */
 export interface RepoBlock {
+  /** The T3 project's title. */
+  readonly title: string;
+  /** `owner/name` of the project's GitHub repository. */
   readonly repo: string;
+  /** The project's workspace root. */
   readonly path: string;
   readonly factory: {
     readonly instructors: ReadonlyArray<string>;
@@ -33,19 +38,19 @@ export interface RepoBlock {
   readonly errors: ReadonlyArray<ConfigError> | null;
 }
 
-/** The five keys the form edits, under the YAML field names. The model is picked in T3, not here. */
+/**
+ * The four keys the form edits, under the YAML field names. The model is picked in T3, not here,
+ * and so are the repos: the factory watches the T3 projects that opt in.
+ */
 export interface MachineConfigValues {
   readonly gh_config_dir: string;
   readonly poll_seconds: number | null;
   readonly max_concurrent_runs: number | null;
   readonly max_concurrent_gates: number | null;
-  readonly repos: ReadonlyArray<{ readonly repo: string; readonly path: string }>;
 }
 
 /** The file's values read leniently when it does not load: any key may be missing or oddly typed. */
-export type MachineConfigDraft = Partial<Omit<MachineConfigValues, "repos">> & {
-  readonly repos?: ReadonlyArray<{ readonly repo?: string; readonly path?: string }>;
-};
+export type MachineConfigDraft = Partial<MachineConfigValues>;
 
 export interface MachineConfigReport {
   readonly file: string;
@@ -56,14 +61,18 @@ export interface MachineConfigReport {
     readonly poll_seconds: number;
     readonly max_concurrent_runs: number;
     readonly max_concurrent_gates: number;
-    readonly repos: ReadonlyArray<{ readonly repo: string; readonly path: string }>;
   } | null;
   /** What an empty form holds; the server owns these so the page never copies them. */
   readonly defaults: MachineConfigValues;
   /** Present when the file exists but does not load: its values, to edit instead of retype. */
   readonly draft?: MachineConfigDraft;
   readonly errors: ReadonlyArray<ConfigError>;
+  /** The watched T3 projects, whatever the file holds. */
   readonly repos: ReadonlyArray<RepoBlock>;
+  /** Workspace roots of projects the factory could not settle on its last read: neither watched nor gone. */
+  readonly unresolved: ReadonlyArray<string>;
+  /** Why the T3 projects could not be listed, else null; `repos` and `unresolved` are then empty. */
+  readonly watch_error: string | null;
 }
 
 export type FactoryConfigResult =

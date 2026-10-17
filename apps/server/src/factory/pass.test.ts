@@ -10,7 +10,12 @@ import { describe } from "vite-plus/test";
 
 import type { Attention, AttentionItem } from "./attention.ts";
 import type { HandPause } from "./claims.ts";
-import { timeLimitOnlyProjectConfig, type MachineConfig, type ProjectConfig } from "./config.ts";
+import {
+  timeLimitOnlyProjectConfig,
+  type MachineConfig,
+  type ProjectConfig,
+  type WatchedProject,
+} from "./config.ts";
 import type { State } from "./domain/lifecycle.ts";
 import { LedgerIoError } from "./ledger/errors.ts";
 import type { CauseStep, ErrorKind, MachineEvent } from "./ledger/events.ts";
@@ -63,14 +68,17 @@ const MOVED = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
 
 const rid = (issue: number, repo = REPO): RunId => newRunId(repo, String(issue), 1);
 
-const machine = (repos: ReadonlyArray<string>, max: number): MachineConfig => ({
+const machine = (max: number): MachineConfig => ({
   ghConfigDir: "/gh/rawphp",
   pollSeconds: 60,
   maxConcurrentRuns: max,
   maxConcurrentGates: 2,
   notify: true,
-  repos: repos.map((repo) => ({ repo, path: `/p/${repo.replace("/", "-")}` })),
 });
+
+/** What the T3 projects list as watched, for the repos a test names. */
+const watchedOf = (repos: ReadonlyArray<string>): Array<WatchedProject> =>
+  repos.map((repo) => ({ repo, path: `/p/${repo.replace("/", "-")}`, title: repo }));
 
 const project = (): ProjectConfig => ({
   ...timeLimitOnlyProjectConfig(),
@@ -161,6 +169,16 @@ class Fake implements PassWorld {
   baseTips: Record<string, string | "error"> = {};
   /** The head of each open pull request per `"<repo>#<pr>"`: `HEAD` unless scripted; `null` is one that ended, `"error"` a read that fails. */
   openHeads: Record<string, string | null | "error"> = {};
+  /** The repos the T3 projects list as watched; set per pass by `pass`. */
+  watched: Array<WatchedProject> = [];
+  /** The repos whose every T3 project was deleted since the reader watched them. */
+  departed: Array<string> = [];
+  /** Workspace roots the reader could not settle this pass; they are not in `watched`. */
+  unresolved: Array<string> = [];
+  /** Listing the watched repos fails, as the project store being down does. */
+  watchedFails = false;
+  /** The repos `project` was called for, in order. */
+  projected: Array<string> = [];
   now = T0;
   calls: Array<string> = [];
   events: Array<MachineEvent> = [];
@@ -195,8 +213,23 @@ class Fake implements PassWorld {
     (this.starts[key] ??= []).push(answer);
   }
 
+  watchedRepos = Effect.suspend(() => {
+    this.calls.push("watched");
+    return this.watchedFails
+      ? Effect.fail<PassError>({
+          kind: "t3",
+          message: "cannot list the T3 projects: project store down",
+        })
+      : Effect.succeed({
+          repos: this.watched,
+          departed: this.departed,
+          unresolved: this.unresolved,
+        });
+  });
+
   project(watched: { repo: string }) {
     this.calls.push("project");
+    this.projected.push(watched.repo);
     const found = this.projects[watched.repo];
     if (typeof found === "string") {
       return Effect.fail<PassError>({ kind: "config", message: found });
@@ -523,15 +556,19 @@ class Fake implements PassWorld {
   }
 }
 
+/** One pass over the T3 projects that list `repos` as watched, with `max` run slots. */
 const pass = (
   fake: Fake,
-  config: MachineConfig,
-): Effect.Effect<{ report: Report; lines: Array<string> }> =>
-  Effect.gen(function* () {
+  repos: ReadonlyArray<string>,
+  max: number,
+): Effect.Effect<{ report: Report; lines: Array<string> }> => {
+  fake.watched = watchedOf(repos);
+  return Effect.gen(function* () {
     const lines: Array<string> = [];
-    const report = yield* runPass(fake, config, (line) => lines.push(line));
+    const report = yield* runPass(fake, machine(max), (line) => lines.push(line));
     return { report, lines };
   });
+};
 
 /** The `start` and `resume` calls, in order. */
 const starts = (fake: Fake) =>
@@ -565,7 +602,7 @@ describe("claiming new issues", () => {
       // By number, not by text: 10 comes after 9.
       fake.ready[REPO] = [10, 9, 3, 5];
       for (const issue of [3, 5, 9, 10]) fake.pushStart(`${REPO}#${issue}`, started(issue));
-      const { report } = yield* pass(fake, machine([REPO], 5));
+      const { report } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(starts(fake), [
         `start ${REPO}#3`,
         `start ${REPO}#5`,
@@ -581,7 +618,7 @@ describe("claiming new issues", () => {
       const fake = new Fake();
       fake.ready[REPO] = [1, 2, 3];
       for (const issue of [1, 2, 3]) fake.pushStart(`${REPO}#${issue}`, started(issue));
-      yield* pass(fake, machine([REPO], 2));
+      yield* pass(fake, [REPO], 2);
       assert.deepEqual(starts(fake), [`start ${REPO}#1`, `start ${REPO}#2`]);
     }),
   );
@@ -591,7 +628,7 @@ describe("claiming new issues", () => {
       const fake = new Fake();
       fake.runIn(40, BUILDING);
       fake.ready[REPO] = [1];
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       assert.deepEqual(starts(fake), []);
     }),
   );
@@ -609,7 +646,7 @@ describe("claiming new issues", () => {
       });
       fake.ready[REPO] = [1];
       fake.pushStart(`${REPO}#1`, started(1));
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
     }),
   );
@@ -619,7 +656,7 @@ describe("claiming new issues", () => {
       const fake = new Fake();
       fake.runIn(8, BUILDING, OTHER);
       fake.ready[REPO] = [1];
-      yield* pass(fake, machine([REPO, OTHER], 1));
+      yield* pass(fake, [REPO, OTHER], 1);
       assert.deepEqual(starts(fake), []);
     }),
   );
@@ -630,7 +667,7 @@ describe("claiming new issues", () => {
       fake.ready[REPO] = [1, 2];
       // Issue 1 gets the default skipped.
       fake.pushStart(`${REPO}#2`, started(2));
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(starts(fake).length, 2);
       assert.equal(report.claimed, 1);
       assert.equal(runLine(lines, "rawphp/softfac#1 "), "rawphp/softfac#1 ready: not claimed");
@@ -642,7 +679,7 @@ describe("claiming new issues", () => {
       const fake = new Fake();
       fake.ready[REPO] = [2];
       fake.pushStart(`${REPO}#2`, started(2));
-      const { lines } = yield* pass(fake, machine([REPO], 1));
+      const { lines } = yield* pass(fake, [REPO], 1);
       assert.equal(
         runLine(lines, "rawphp/softfac#2 "),
         "rawphp/softfac#2 ready: claimed, session started in run rawphp__softfac__2__1",
@@ -656,7 +693,7 @@ describe("claiming new issues", () => {
       fake.ready[REPO] = [1, 2];
       fake.pushStart(`${REPO}#1`, githubFailure());
       fake.pushStart(`${REPO}#2`, started(2));
-      const { report, lines } = yield* pass(fake, machine([REPO], 5));
+      const { report, lines } = yield* pass(fake, [REPO], 5);
       assert.equal(starts(fake).length, 2);
       assert.deepEqual([report.errors, report.claimed], [1, 1]);
       assert.ok(
@@ -674,7 +711,7 @@ describe("claiming new issues", () => {
       const fake = new Fake();
       fake.ready[REPO] = [12];
       fake.pushStart(`${REPO}#12`, { kind: "stuck", run: rid(12), reason: "secret detail" });
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(report.claimed, 0);
       const line = runLine(lines, "rawphp/softfac#12 ");
       assert.ok(line.includes("stuck"), line);
@@ -690,7 +727,7 @@ describe("claiming new issues", () => {
       fake.ready[REPO] = "error";
       fake.ready[OTHER] = [4];
       fake.pushStart(`${OTHER}#4`, started(4, OTHER));
-      const { report, lines } = yield* pass(fake, machine([REPO, OTHER], 3));
+      const { report, lines } = yield* pass(fake, [REPO, OTHER], 3);
       assert.deepEqual(starts(fake), [`start ${OTHER}#4`]);
       assert.equal(report.errors, 1);
       assert.ok(
@@ -707,7 +744,7 @@ describe("claiming new issues", () => {
       fake.ready[REPO] = [1];
       fake.readyCut = [REPO];
       fake.pushStart(`${REPO}#1`, started(1));
-      const { lines } = yield* pass(fake, machine([REPO], 5));
+      const { lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(
         lines.filter((l) => l.includes("more than")),
         ["rawphp/softfac: more than 200 open factory:ready issues, so the oldest were not read"],
@@ -726,7 +763,7 @@ describe("claiming new issues", () => {
         fake.ready[REPO] = [1];
         fake.ready[OTHER] = [4];
         fake.pushStart(`${OTHER}#4`, started(4, OTHER));
-        const { report } = yield* pass(fake, machine([REPO, OTHER], 3));
+        const { report } = yield* pass(fake, [REPO, OTHER], 3);
         assert.equal(report.errors, 1);
         assert.deepEqual(starts(fake), [`start ${OTHER}#4`]);
         const errors = errorEvents(fake);
@@ -747,7 +784,7 @@ describe("claiming new issues", () => {
       fake.ready[REPO] = [1];
       fake.ready[OTHER] = [4];
       fake.pushStart(`${OTHER}#4`, started(4, OTHER));
-      const { report, lines } = yield* pass(fake, machine([REPO, OTHER], 3));
+      const { report, lines } = yield* pass(fake, [REPO, OTHER], 3);
       assert.equal(report.errors, 1);
       assert.ok(
         lines.some(
@@ -771,13 +808,52 @@ describe("claiming new issues", () => {
     }),
   );
 
+  it.effect(
+    "a repo two T3 projects name is watched from neither: one error line, one event, the rest go on",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        // The same repo in a different case, from two checkouts, and a third repo of its own.
+        fake.watched = [
+          { repo: REPO, path: "/p/one", title: "One" },
+          { repo: OTHER, path: "/p/other", title: "Other" },
+          { repo: REPO.toUpperCase(), path: "/p/two", title: "Two" },
+        ];
+        fake.ready[REPO] = [1];
+        fake.ready[OTHER] = [4];
+        fake.pushStart(`${REPO}#1`, started(1));
+        fake.pushStart(`${OTHER}#4`, started(4, OTHER));
+        const lines: Array<string> = [];
+        const report = yield* runPass(fake, machine(5), (line) => lines.push(line));
+        const said = lines.filter((l) => l.startsWith("error: "));
+        assert.equal(report.errors, 1);
+        assert.deepEqual(said, [
+          `error: ${REPO}: 2 T3 projects have this repo as their origin (/p/one, /p/two); the factory watches none of them`,
+        ]);
+        const skipped = fake.events.filter((e) => e.event === "repo_skipped");
+        assert.deepEqual(skipped, [
+          {
+            event: "repo_skipped",
+            data: {
+              repo: REPO,
+              reason: "ambiguous-project",
+              message: `${REPO}: 2 T3 projects have this repo as their origin (/p/one, /p/two); the factory watches none of them`,
+            },
+          },
+        ]);
+        // Neither checkout was loaded or claimed from; the other repo was.
+        assert.deepEqual(fake.projected, [OTHER]);
+        assert.deepEqual(starts(fake), [`start ${OTHER}#4`]);
+      }),
+  );
+
   it.effect("a ledger that cannot be listed is an error and nothing is claimed", () =>
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runsError = true;
       fake.ready[REPO] = [1];
       fake.pushStart(`${REPO}#1`, started(1));
-      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      const { report, lines } = yield* pass(fake, [REPO], 3);
       assert.deepEqual(starts(fake), []);
       assert.equal(report.errors, 1);
       assert.ok(
@@ -801,7 +877,7 @@ describe("claiming new issues", () => {
       });
       fake.ready[REPO] = [1];
       fake.pushStart(`${REPO}#1`, started(1));
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.deepEqual(starts(fake), []);
       assert.equal(report.runs, 1);
       assert.equal(report.errors, 1);
@@ -827,7 +903,7 @@ describe("a ready issue whose older run is gating", () => {
       fake.gateLocks = [runIdToString(rid(14))];
       fake.ready[REPO] = [14, 15];
       fake.blockers[`${REPO}#14`] = blockerList([[REPO, 13]]);
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.deepEqual(starts(fake), []);
       assert.equal(
         runLine(lines, "rawphp/softfac#14 ready"),
@@ -850,7 +926,7 @@ describe("a ready issue whose older run is gating", () => {
       const fake = new Fake();
       fake.ready[REPO] = [14];
       fake.pushStart(`${REPO}#14`, new GateRunningError({ run: rid(14) }));
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(runLine(lines, "rawphp/softfac#14 "), "rawphp/softfac#14 ready: gate running");
       assert.equal(report.errors, 0);
     }),
@@ -866,7 +942,7 @@ describe("which repo gets a free slot", () => {
       fake.ready[OTHER] = [7];
       for (const issue of [1, 2, 3]) fake.pushStart(`${REPO}#${issue}`, started(issue));
       fake.pushStart(`${OTHER}#7`, started(7, OTHER));
-      yield* pass(fake, machine([REPO, OTHER], 6));
+      yield* pass(fake, [REPO, OTHER], 6);
       assert.deepEqual(starts(fake), [`start ${OTHER}#7`]);
     }),
   );
@@ -884,7 +960,7 @@ describe("which repo gets a free slot", () => {
       ] as const) {
         fake.pushStart(`${repo}#${issue}`, started(issue, repo));
       }
-      yield* pass(fake, machine([REPO, OTHER], 2));
+      yield* pass(fake, [REPO, OTHER], 2);
       assert.deepEqual(starts(fake), [`start ${REPO}#1`, `start ${OTHER}#3`]);
     }),
   );
@@ -903,7 +979,7 @@ describe("which repo gets a free slot", () => {
       ] as const) {
         fake.pushStart(`${repo}#${issue}`, started(issue, repo));
       }
-      yield* pass(fake, machine([REPO, OTHER], 3));
+      yield* pass(fake, [REPO, OTHER], 3);
       assert.deepEqual(starts(fake), [`start ${REPO}#1`, `start ${OTHER}#4`, `start ${REPO}#2`]);
     }),
   );
@@ -920,7 +996,7 @@ describe("which repo gets a free slot", () => {
         fake.blockers[`${OTHER}#4`] = blockerList([[OTHER, 3]]);
         fake.pushStart(`${REPO}#1`, started(1));
         fake.pushStart(`${OTHER}#5`, started(5, OTHER));
-        yield* pass(fake, machine([REPO, OTHER], 3));
+        yield* pass(fake, [REPO, OTHER], 3);
         assert.deepEqual(starts(fake), [`start ${OTHER}#5`, `start ${REPO}#1`]);
       }),
   );
@@ -937,7 +1013,7 @@ describe("which repo gets a free slot", () => {
       fake.ready[REPO] = [1];
       fake.pushStart(`${other}#7`, started(7, other));
       fake.pushStart(`${REPO}#1`, started(1));
-      yield* pass(fake, machine([other, REPO], 4));
+      yield* pass(fake, [other, REPO], 4);
       assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
     }),
   );
@@ -949,7 +1025,7 @@ describe("runs that are confirmed and still in triage", () => {
       const fake = new Fake();
       fake.runIn(12, "triage");
       fake.pushStart(`${REPO}#12`, started(12));
-      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      const { report, lines } = yield* pass(fake, [REPO], 3);
       assert.deepEqual(starts(fake), [`resume ${REPO}#12`]);
       const line = runLine(lines, "rawphp/softfac#12 triage:");
       assert.ok(line.includes("session started, the issue is building"), line);
@@ -969,7 +1045,7 @@ describe("runs that are confirmed and still in triage", () => {
         prReported: false,
       });
       fake.pushStart(`${REPO}#13`, started(13));
-      yield* pass(fake, machine([REPO], 3));
+      yield* pass(fake, [REPO], 3);
       assert.deepEqual(starts(fake), [`resume ${REPO}#13`]);
     }),
   );
@@ -979,7 +1055,7 @@ describe("runs that are confirmed and still in triage", () => {
       const fake = new Fake();
       fake.runIn(12, "triage");
       fake.pushStart(`${REPO}#12`, githubFailure());
-      const { report } = yield* pass(fake, machine([REPO], 3));
+      const { report } = yield* pass(fake, [REPO], 3);
       assert.equal(report.errors, 1);
       assert.equal(fake.runErrors.length, 1);
       assert.deepEqual(fake.runErrors[0]!.run, rid(12));
@@ -992,7 +1068,7 @@ describe("runs that are confirmed and still in triage", () => {
       const fake = new Fake();
       fake.runIn(12, "triage");
       fake.pushStart(`${REPO}#12`, { kind: "stuck", run: rid(12), reason: "secret detail" });
-      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const { lines } = yield* pass(fake, [REPO], 3);
       const line = runLine(lines, "rawphp/softfac#12 ");
       assert.ok(line.includes("stuck"), line);
       assert.ok(line.includes("rawphp__softfac__12__1"), line);
@@ -1007,7 +1083,7 @@ describe("runs that are confirmed and still in triage", () => {
       fake.ready[REPO] = [3];
       fake.pushStart(`${REPO}#12`, started(12));
       fake.pushStart(`${REPO}#3`, started(3));
-      yield* pass(fake, machine([REPO], 5));
+      yield* pass(fake, [REPO], 5);
       assert.deepEqual(starts(fake), [`resume ${REPO}#12`, `start ${REPO}#3`]);
     }),
   );
@@ -1020,7 +1096,7 @@ describe("runs that are confirmed and still in triage", () => {
         fake.runIn(12, "triage");
         fake.ready[REPO] = [12];
         fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "ready again", moved: "ready" });
-        const { report, lines } = yield* pass(fake, machine([REPO], 1));
+        const { report, lines } = yield* pass(fake, [REPO], 1);
         // The claim finishes the old run, which left nothing running, before it claims.
         assert.deepEqual(starts(fake), [`resume ${REPO}#12`, `start ${REPO}#12`]);
         assert.ok(runLine(lines, "rawphp/softfac#12 triage:").includes("left to the claim step"));
@@ -1035,7 +1111,7 @@ describe("runs that are confirmed and still in triage", () => {
       fake.runIn(12, "triage");
       fake.ready[REPO] = [12];
       fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "ready again", moved: "ready" });
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       assert.deepEqual(starts(fake), [`resume ${REPO}#12`]);
       assert.deepEqual(
         fake.events.filter((e) => e.event === "claim_skipped").map((e) => e.data),
@@ -1051,7 +1127,7 @@ describe("runs that are confirmed and still in triage", () => {
       fake.ready[REPO] = [12, 13];
       fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "ready again", moved: "ready" });
       fake.pushStart(`${REPO}#12`, started(12));
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       assert.deepEqual(starts(fake), [`resume ${REPO}#12`, `start ${REPO}#12`]);
       assert.deepEqual(
         fake.events.filter((e) => e.event === "claim_skipped").map((e) => e.data),
@@ -1066,7 +1142,7 @@ describe("runs that are confirmed and still in triage", () => {
       fake.runIn(12, "triage", REPO, true);
       fake.ready[REPO] = [12];
       fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "ready again", moved: "ready" });
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       // A second session would run past the limit, so the claim waits.
       assert.deepEqual(starts(fake), [`resume ${REPO}#12`]);
       assert.equal(report.attention, 1);
@@ -1091,7 +1167,7 @@ describe("runs that are confirmed and still in triage", () => {
       fake.runIn(12, "triage", REPO, true);
       fake.ready[REPO] = [12];
       fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "ready again", moved: "ready" });
-      const { report } = yield* pass(fake, machine([REPO], 2));
+      const { report } = yield* pass(fake, [REPO], 2);
       assert.deepEqual(starts(fake), [`resume ${REPO}#12`]);
       assert.equal(report.attention, 0);
     }),
@@ -1102,7 +1178,7 @@ describe("runs that are confirmed and still in triage", () => {
       const fake = new Fake();
       fake.runIn(40, BUILDING);
       fake.ready[REPO] = [3];
-      const { report } = yield* pass(fake, machine([REPO], 1));
+      const { report } = yield* pass(fake, [REPO], 1);
       assert.deepEqual(starts(fake), []);
       assert.equal(report.attention, 0);
     }),
@@ -1114,7 +1190,7 @@ describe("runs that are confirmed and still in triage", () => {
       fake.runIn(12, "triage");
       fake.ready[REPO] = [12];
       fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "ready again", moved: "ready" });
-      const { report } = yield* pass(fake, machine([REPO], 2));
+      const { report } = yield* pass(fake, [REPO], 2);
       assert.deepEqual(starts(fake), [`resume ${REPO}#12`, `start ${REPO}#12`]);
       assert.equal(report.attention, 0);
     }),
@@ -1125,7 +1201,7 @@ describe("runs that are confirmed and still in triage", () => {
       const fake = new Fake();
       fake.runIn(12, "triage");
       fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "issue #12 is assigned to bob" });
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(report.attention, 1);
       const line = runLine(lines, "ATTENTION: rawphp/softfac#12 ");
       assert.ok(
@@ -1155,7 +1231,7 @@ describe("runs that are confirmed and still in triage", () => {
         reason: "issue #12 is closed",
         moved: "closed",
       });
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(report.attention, 1);
       const line = runLine(lines, "ATTENTION: rawphp/softfac#12 ");
       assert.ok(
@@ -1169,7 +1245,7 @@ describe("runs that are confirmed and still in triage", () => {
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(40, BUILDING, REPO, true);
-      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const { lines } = yield* pass(fake, [REPO], 3);
       const calls = fake.calls.filter((c) =>
         /^(time_limit|watch|forward|advance|start|resume|gate) /.test(c),
       );
@@ -1203,7 +1279,7 @@ describe("runs that are confirmed and still in triage", () => {
           prReported: false,
         });
       }
-      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const { lines } = yield* pass(fake, [REPO], 3);
       const calls = fake.calls.filter((c) =>
         /^(time_limit|watch|forward|advance|start|resume|gate) /.test(c),
       );
@@ -1218,7 +1294,7 @@ describe("runs that are confirmed and still in triage", () => {
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(12, "triage", "acme/other");
-      const { report } = yield* pass(fake, machine([REPO], 3));
+      const { report } = yield* pass(fake, [REPO], 3);
       assert.deepEqual(starts(fake), []);
       assert.equal(report.errors, 0);
     }),
@@ -1232,7 +1308,7 @@ describe("runs that are confirmed and still in triage", () => {
         `${REPO}#12`,
         new SessionsError({ operation: "find-project", cause: new Error("down") }),
       );
-      yield* pass(fake, machine([REPO], 3));
+      yield* pass(fake, [REPO], 3);
       assert.equal(fake.runErrors[0]!.kind, "t3");
     }),
   );
@@ -1244,7 +1320,7 @@ describe("claims that have no run in the ledger", () => {
       const fake = new Fake();
       fake.triage[REPO] = [7];
       fake.pushStart(`${REPO}#7`, { kind: "stuck", run: rid(7), reason: "could not confirm" });
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.deepEqual(starts(fake), [`resume ${REPO}#7`]);
       const line = runLine(lines, "rawphp/softfac#7 ");
       assert.ok(line.startsWith("rawphp/softfac#7 triage: no run on record, stuck"), line);
@@ -1258,7 +1334,7 @@ describe("claims that have no run in the ledger", () => {
       const fake = new Fake();
       fake.runIn(12, "triage");
       fake.triage[REPO] = [12];
-      yield* pass(fake, machine([REPO], 3));
+      yield* pass(fake, [REPO], 3);
       assert.deepEqual(starts(fake), [`resume ${REPO}#12`]);
     }),
   );
@@ -1277,7 +1353,7 @@ describe("claims that have no run in the ledger", () => {
       });
       fake.triage[REPO] = [12];
       fake.pushStart(`${REPO}#12`, { kind: "stuck", run: rid(12), reason: "could not confirm" });
-      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const { lines } = yield* pass(fake, [REPO], 3);
       assert.deepEqual(starts(fake), [`resume ${REPO}#12`]);
       assert.ok(runLine(lines, "rawphp/softfac#12 ").includes("stuck"), lines.join("\n"));
     }),
@@ -1296,7 +1372,7 @@ describe("claims that have no run in the ledger", () => {
       });
       fake.ready[REPO] = [3];
       fake.pushStart(`${REPO}#3`, started(3));
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       assert.deepEqual(starts(fake), [`start ${REPO}#3`]);
     }),
   );
@@ -1306,7 +1382,7 @@ describe("claims that have no run in the ledger", () => {
       const fake = new Fake();
       fake.runIn(40, BUILDING);
       fake.triage[REPO] = [7];
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       assert.deepEqual(starts(fake), [`resume ${REPO}#7`]);
     }),
   );
@@ -1318,7 +1394,7 @@ describe("claims that have no run in the ledger", () => {
       fake.ready[REPO] = [3];
       fake.pushStart(`${REPO}#7`, started(7));
       fake.pushStart(`${REPO}#3`, started(3));
-      yield* pass(fake, machine([REPO], 5));
+      yield* pass(fake, [REPO], 5);
       assert.deepEqual(starts(fake), [`resume ${REPO}#7`, `start ${REPO}#3`]);
     }),
   );
@@ -1328,7 +1404,7 @@ describe("claims that have no run in the ledger", () => {
       const fake = new Fake();
       fake.triage[REPO] = [7, 8];
       fake.pushStart(`${REPO}#8`, githubFailure());
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(starts(fake).length, 2);
       assert.ok(runLine(lines, "rawphp/softfac#7 ").includes("not ours to resume"));
       assert.ok(
@@ -1344,7 +1420,7 @@ describe("claims that have no run in the ledger", () => {
       const fake = new Fake();
       fake.triage[REPO] = "error";
       fake.triage[OTHER] = [4];
-      const { report, lines } = yield* pass(fake, machine([REPO, OTHER], 1));
+      const { report, lines } = yield* pass(fake, [REPO, OTHER], 1);
       assert.deepEqual(starts(fake), [`resume ${OTHER}#4`]);
       assert.equal(report.errors, 1);
       assert.ok(
@@ -1359,7 +1435,7 @@ describe("claims that have no run in the ledger", () => {
       const fake = new Fake();
       fake.triage[REPO] = [7];
       fake.triageCut = [REPO];
-      const { lines } = yield* pass(fake, machine([REPO], 1));
+      const { lines } = yield* pass(fake, [REPO], 1);
       assert.deepEqual(
         lines.filter((l) => l.includes("more than")),
         ["rawphp/softfac: more than 200 open factory:triage issues, so the oldest were not read"],
@@ -1372,7 +1448,7 @@ describe("claims that have no run in the ledger", () => {
       const fake = new Fake();
       fake.projects[REPO] = "bad";
       fake.triage[REPO] = [7];
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       assert.deepEqual(starts(fake), []);
     }),
   );
@@ -1391,7 +1467,7 @@ describe("claims with no run and no assignee", () => {
         { issue: 7, state: "triage" },
         { issue: 8, state: "building" },
       ];
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(report.errors, 0);
       assert.deepEqual(releases(fake), [`release ${REPO}#7 triage`, `release ${REPO}#8 building`]);
       assert.equal(
@@ -1417,7 +1493,7 @@ describe("claims with no run and no assignee", () => {
         { issue: 7, state: "triage" },
         { issue: 8, state: "building" },
       ];
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       assert.deepEqual(releases(fake), [`release ${REPO}#8 building`]);
       assert.deepEqual(
         fake.events.filter((e) => e.event === "claim_repaired"),
@@ -1431,7 +1507,7 @@ describe("claims with no run and no assignee", () => {
       const fake = new Fake();
       fake.runIn(7, "triage");
       fake.runIn(8, "triage", OTHER);
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       assert.ok(fake.calls.includes(`unassigned ${REPO} known=7`), fake.calls.join("\n"));
     }),
   );
@@ -1443,7 +1519,7 @@ describe("claims with no run and no assignee", () => {
         const fake = new Fake();
         fake.unreadHistory[REPO] = [{ issue: 5, message: "boom" }];
         fake.unassigned[REPO] = [{ issue: 7, state: "triage" }];
-        const { report, lines } = yield* pass(fake, machine([REPO], 1));
+        const { report, lines } = yield* pass(fake, [REPO], 1);
         assert.equal(report.errors, 1);
         const errors = lines.filter((l) => l.startsWith("error: "));
         assert.equal(errors.length, 1, lines.join("\n"));
@@ -1461,7 +1537,7 @@ describe("claims with no run and no assignee", () => {
       const fake = new Fake();
       fake.projects[REPO] = "bad";
       fake.unassigned[REPO] = [{ issue: 7, state: "triage" }];
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       assert.deepEqual(releases(fake), []);
     }),
   );
@@ -1471,7 +1547,7 @@ describe("claims with no run and no assignee", () => {
       const fake = new Fake();
       fake.unassigned[REPO] = "error";
       fake.unassigned[OTHER] = [{ issue: 4, state: "triage" }];
-      const { report, lines } = yield* pass(fake, machine([REPO, OTHER], 1));
+      const { report, lines } = yield* pass(fake, [REPO, OTHER], 1);
       assert.equal(report.errors, 1);
       assert.deepEqual(releases(fake), [`release ${OTHER}#4 triage`]);
       const errors = lines.filter((l) => l.startsWith("error: "));
@@ -1491,7 +1567,7 @@ describe("claims with no run and no assignee", () => {
         { issue: 7, state: "triage" },
         { issue: 8, state: "triage" },
       ];
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(report.errors, 2);
       assert.equal(releases(fake).length, 2, "the pass goes on to the next");
       assert.ok(
@@ -1509,7 +1585,7 @@ describe("issues blocked by an open issue", () => {
       const fake = new Fake();
       fake.ready[REPO] = [14];
       fake.blockers[`${REPO}#14`] = blockerList([[REPO, 13]]);
-      const { report, lines } = yield* pass(fake, machine([REPO], 5));
+      const { report, lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(starts(fake), []);
       assert.ok(lines.includes("rawphp/softfac#14 ready: blocked by #13"), lines.join("\n"));
       assert.deepEqual([report.claimed, report.errors], [0, 0]);
@@ -1528,7 +1604,7 @@ describe("issues blocked by an open issue", () => {
         ["acme/widgets", 7],
         ["RawPHP/Softfac", 9],
       ]);
-      const { lines } = yield* pass(fake, machine([REPO], 5));
+      const { lines } = yield* pass(fake, [REPO], 5);
       assert.ok(
         lines.includes("rawphp/softfac#14 ready: blocked by #13, acme/widgets#7, #9"),
         lines.join("\n"),
@@ -1542,7 +1618,7 @@ describe("issues blocked by an open issue", () => {
       fake.ready[REPO] = [14, 15];
       fake.blockers[`${REPO}#14`] = blockerList([[REPO, 13]]);
       fake.pushStart(`${REPO}#15`, started(15));
-      const { report } = yield* pass(fake, machine([REPO], 1));
+      const { report } = yield* pass(fake, [REPO], 1);
       assert.deepEqual(starts(fake), [`start ${REPO}#15`]);
       assert.equal(report.claimed, 1);
     }),
@@ -1554,7 +1630,7 @@ describe("issues blocked by an open issue", () => {
       fake.runIn(40, BUILDING);
       fake.ready[REPO] = [14, 15];
       fake.blockers[`${REPO}#14`] = blockerList([[REPO, 13]]);
-      const { lines } = yield* pass(fake, machine([REPO], 1));
+      const { lines } = yield* pass(fake, [REPO], 1);
       assert.ok(
         lines.includes("limit reached: 2 ready issues were not claimed, max_concurrent_runs is 1"),
         lines.join("\n"),
@@ -1576,7 +1652,7 @@ describe("issues blocked by an open issue", () => {
       fake.ready[REPO] = [14, 15, 16];
       fake.blockers[`${REPO}#14`] = blockerList([[REPO, 13]]);
       fake.pushStart(`${REPO}#15`, started(15));
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       assert.deepEqual(
         fake.calls.filter((c) => c.startsWith("blockers ")),
         [`blockers ${REPO}#14`, `blockers ${REPO}#15`],
@@ -1591,7 +1667,7 @@ describe("issues blocked by an open issue", () => {
       fake.ready[REPO] = [14, 15];
       fake.blockers[`${REPO}#14`] = "error";
       fake.pushStart(`${REPO}#15`, started(15));
-      const { report, lines } = yield* pass(fake, machine([REPO], 5));
+      const { report, lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(starts(fake), [`start ${REPO}#15`]);
       assert.equal(report.errors, 1);
       assert.ok(
@@ -1614,7 +1690,7 @@ describe("issues blocked by an open issue", () => {
       fake.blockers[`${REPO}#7`] = blockerList([[REPO, 13]]);
       fake.depends[`${REPO}#14`] = blockerList([[REPO, 13]]);
       fake.depends[`${REPO}#7`] = blockerList([[REPO, 13]]);
-      yield* pass(fake, machine([REPO], 5));
+      yield* pass(fake, [REPO], 5);
       assert.ok(!fake.calls.some((c) => c.startsWith("blockers")), fake.calls.join("\n"));
       assert.equal(
         fake.calls.filter((c) => c.startsWith("depends")).length,
@@ -1631,7 +1707,7 @@ describe("issues whose Depends on text names an open issue", () => {
       const fake = new Fake();
       fake.ready[REPO] = [14];
       fake.depends[`${REPO}#14`] = blockerList([[REPO, 13]]);
-      const { report, lines } = yield* pass(fake, machine([REPO], 5));
+      const { report, lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(starts(fake), []);
       assert.ok(
         lines.includes(`rawphp/softfac#14 ready: blocked by #13${FROM_TEXT}`),
@@ -1651,7 +1727,7 @@ describe("issues whose Depends on text names an open issue", () => {
           [REPO, 13],
           ["acme/widgets", 7],
         ]);
-        const { lines } = yield* pass(fake, machine([REPO], 5));
+        const { lines } = yield* pass(fake, [REPO], 5);
         assert.ok(
           lines.includes(
             `rawphp/softfac#14 ready: blocked by #13${FROM_TEXT}, acme/widgets#7${FROM_TEXT}`,
@@ -1667,7 +1743,7 @@ describe("issues whose Depends on text names an open issue", () => {
       fake.ready[REPO] = [14];
       fake.depends[`${REPO}#14`] = [];
       fake.pushStart(`${REPO}#14`, started(14));
-      const { report } = yield* pass(fake, machine([REPO], 5));
+      const { report } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(starts(fake), [`start ${REPO}#14`]);
       assert.equal(report.claimed, 1);
     }),
@@ -1679,7 +1755,7 @@ describe("issues whose Depends on text names an open issue", () => {
       fake.ready[REPO] = [14];
       fake.blockers[`${REPO}#14`] = blockerList([[REPO, 13]]);
       fake.depends[`${REPO}#14`] = blockerList([[REPO, 12]]);
-      yield* pass(fake, machine([REPO], 5));
+      yield* pass(fake, [REPO], 5);
       assert.equal(fake.calls.filter((c) => c.startsWith("depends")).length, 0);
     }),
   );
@@ -1690,7 +1766,7 @@ describe("issues whose Depends on text names an open issue", () => {
       fake.ready[REPO] = [14, 15];
       fake.depends[`${REPO}#14`] = "error";
       fake.pushStart(`${REPO}#15`, started(15));
-      const { report, lines } = yield* pass(fake, machine([REPO], 5));
+      const { report, lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(starts(fake), [`start ${REPO}#15`]);
       assert.equal(report.errors, 1);
       assert.ok(
@@ -1708,7 +1784,7 @@ describe("issues whose Depends on text names an open issue", () => {
       const fake = new Fake();
       fake.ready[REPO] = [14];
       fake.depends[`${REPO}#14`] = blockerList([[REPO, 13]]);
-      yield* pass(fake, machine([REPO], 5));
+      yield* pass(fake, [REPO], 5);
       assert.ok(
         fake.events.some((e) => JSON.stringify(e) === JSON.stringify(claimSkipped(14, "blocked"))),
       );
@@ -1724,7 +1800,7 @@ describe("the limit, said out loud", () => {
       const fake = new Fake();
       fake.runIn(40, BUILDING);
       fake.ready[REPO] = [1, 2];
-      const { lines } = yield* pass(fake, machine([REPO], 1));
+      const { lines } = yield* pass(fake, [REPO], 1);
       assert.ok(
         lines.includes("limit reached: 2 ready issues were not claimed, max_concurrent_runs is 1"),
         lines.join("\n"),
@@ -1739,7 +1815,7 @@ describe("the limit, said out loud", () => {
       fake.ready[REPO] = [1, 2, 3];
       fake.ready[OTHER] = [4];
       fake.pushStart(`${REPO}#1`, started(1));
-      const { lines } = yield* pass(fake, machine([REPO, OTHER], 1));
+      const { lines } = yield* pass(fake, [REPO, OTHER], 1);
       assert.ok(
         lines.includes("limit reached: 3 ready issues were not claimed, max_concurrent_runs is 1"),
         lines.join("\n"),
@@ -1753,7 +1829,7 @@ describe("the limit, said out loud", () => {
       fake.ready[REPO] = [1, 2, 3];
       // 1 is skipped (the default), 2 is claimed, 3 is left.
       fake.pushStart(`${REPO}#2`, started(2));
-      const { lines } = yield* pass(fake, machine([REPO], 1));
+      const { lines } = yield* pass(fake, [REPO], 1);
       assert.ok(lines.includes(LIMIT_1), lines.join("\n"));
     }),
   );
@@ -1762,7 +1838,7 @@ describe("the limit, said out loud", () => {
     Effect.gen(function* () {
       const fake = new Fake();
       fake.ready[REPO] = [1, 2];
-      const { lines } = yield* pass(fake, machine([REPO], 5));
+      const { lines } = yield* pass(fake, [REPO], 5);
       assert.ok(!lines.some((l) => l.startsWith("limit reached")), lines.join("\n"));
     }),
   );
@@ -1788,7 +1864,7 @@ describe("the hand pause", () => {
       fake.ready[REPO] = [1, 2];
       fake.ready[OTHER] = [4];
       pausedByHand(fake);
-      const { report, lines } = yield* pass(fake, machine([REPO, OTHER], 5));
+      const { report, lines } = yield* pass(fake, [REPO, OTHER], 5);
       assert.deepEqual(starts(fake), []);
       assert.ok(!fake.calls.some((c) => c.startsWith("blockers")), fake.calls.join("\n"));
       assert.deepEqual(handLines(lines), [HAND_PAUSE_LINE]);
@@ -1806,7 +1882,7 @@ describe("the hand pause", () => {
     Effect.gen(function* () {
       const fake = new Fake();
       pausedByHand(fake);
-      const { lines } = yield* pass(fake, machine([REPO], 5));
+      const { lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(handLines(lines), [HAND_PAUSE_LINE]);
       assert.equal(claimSkippedEvents(fake).length, 1);
     }),
@@ -1818,7 +1894,7 @@ describe("the hand pause", () => {
       fake.triage[REPO] = [7];
       fake.unassigned[REPO] = [{ issue: 8, state: "triage" }];
       pausedByHand(fake);
-      yield* pass(fake, machine([REPO], 5));
+      yield* pass(fake, [REPO], 5);
       assert.deepEqual(starts(fake), [`resume ${REPO}#7`]);
       assert.deepEqual(releases(fake), [`release ${REPO}#8 triage`]);
     }),
@@ -1831,7 +1907,7 @@ describe("the hand pause", () => {
         const fake = new Fake();
         fake.ready[REPO] = [1];
         fake.pushStart(`${REPO}#1`, started(1));
-        const { report, lines } = yield* pass(fake, machine([REPO], 5));
+        const { report, lines } = yield* pass(fake, [REPO], 5);
         assert.equal(starts(fake).length, 1, fake.calls.join("\n"));
         assert.deepEqual(handLines(lines), []);
         assert.deepEqual(claimSkippedEvents(fake), []);
@@ -1853,7 +1929,7 @@ describe("what the pass records", () => {
         session: false,
         prReported: false,
       });
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.deepEqual(fake.events[0], { event: "pass_started", data: {} });
       assert.deepEqual(fake.events.at(-1), {
         event: "pass_finished",
@@ -1875,7 +1951,7 @@ describe("what the pass records", () => {
       fake.runIn(12, BUILDING);
       fake.ready[REPO] = [1];
       fake.pushStart(`${REPO}#1`, started(1));
-      const { lines } = yield* pass(fake, machine([REPO], 5));
+      const { lines } = yield* pass(fake, [REPO], 5);
       assert.equal(lines.at(-1), "pass done: 1 runs, 1 claimed, 0 errors, 0 need attention");
     }),
   );
@@ -1885,7 +1961,7 @@ describe("what the pass records", () => {
       const fake = new Fake();
       fake.runIn(12, BUILDING);
       fake.ready[REPO] = [5, 6];
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       assert.deepEqual(
         fake.events.filter((e) => e.event === "claim_skipped"),
         [claimSkipped(5, "limit"), claimSkipped(6, "limit")],
@@ -1901,7 +1977,7 @@ describe("what the pass records", () => {
         kind: "refused",
         reason: "issue #5 was not approved: factory:ready was not applied by an instructor",
       });
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(report.claimed, 0);
       assert.deepEqual(
         fake.events.filter((e) => e.event === "claim_skipped"),
@@ -1918,7 +1994,7 @@ describe("what the pass records", () => {
     Effect.gen(function* () {
       const fake = new Fake();
       fake.ready[REPO] = [5];
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       assert.ok(!fake.events.some((e) => e.event === "claim_skipped"));
     }),
   );
@@ -1929,7 +2005,7 @@ describe("what the pass records", () => {
       fake.machineLogFails = true;
       fake.runIn(12, BUILDING);
       fake.ready[REPO] = [5, 6];
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(
         lines.filter((l) => l.startsWith("error: machine log:")).length,
         1,
@@ -1948,7 +2024,7 @@ describe("what the pass records", () => {
         fake.ready[REPO] = [1];
         fake.startLeavesRun = [1];
         fake.pushStart(`${REPO}#1`, githubFailure());
-        const { report } = yield* pass(fake, machine([REPO], 1));
+        const { report } = yield* pass(fake, [REPO], 1);
         assert.equal(report.errors, 1);
         assert.deepEqual(
           fake.runErrors.map((e) => [runIdToString(e.run), e.step, e.kind]),
@@ -1966,7 +2042,7 @@ describe("what the pass records", () => {
         const fake = new Fake();
         fake.ready[REPO] = [1];
         fake.pushStart(`${REPO}#1`, githubFailure());
-        yield* pass(fake, machine([REPO], 1));
+        yield* pass(fake, [REPO], 1);
         assert.deepEqual(fake.runErrors, []);
         const [error] = errorEvents(fake);
         assert.ok(error !== undefined);
@@ -1982,7 +2058,7 @@ describe("what the pass records", () => {
       fake.triage[REPO] = [1];
       fake.ready[REPO] = [2];
       fake.pushStart(`${REPO}#2`, githubFailure());
-      yield* pass(fake, machine([REPO], 5));
+      yield* pass(fake, [REPO], 5);
       assert.deepEqual(fake.runErrors, []);
       assert.equal(errorEvents(fake).length, 1);
       assert.equal((errorEvents(fake)[0]!.data as { run?: string }).run, undefined);
@@ -1998,7 +2074,7 @@ describe("what the pass records", () => {
         fake.startLeavesRun = [1];
         fake.runErrorFails = true;
         fake.pushStart(`${REPO}#1`, githubFailure());
-        yield* pass(fake, machine([REPO], 1));
+        yield* pass(fake, [REPO], 1);
         const [error] = errorEvents(fake);
         assert.ok(error !== undefined);
         assert.equal((error.data as { run?: string }).run, "rawphp__softfac__1__1");
@@ -2014,7 +2090,7 @@ describe("what the pass records", () => {
         `${REPO}#1`,
         new LedgerIoError({ path: "/data/runs/x.jsonl", cause: new Error("disk full") }),
       );
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       const [error] = errorEvents(fake);
       assert.ok(error !== undefined);
       const data = error.data as { step: string; kind: string; message: string; run?: string };
@@ -2037,7 +2113,7 @@ describe("reading the ledger", () => {
         fake.pushStart(`${REPO}#1`, started(1));
         fake.pushStart(`${REPO}#2`, started(2));
         fake.pushStart(`${REPO}#3`, started(3));
-        yield* pass(fake, machine([REPO], 5));
+        yield* pass(fake, [REPO], 5);
         assert.deepEqual(
           fake.calls.filter((c) => c.startsWith("runs")),
           ["runs", `runs ${REPO}#7`, `runs ${REPO}#1`, `runs ${REPO}#2`, `runs ${REPO}#3`],
@@ -2051,7 +2127,7 @@ describe("reading the ledger", () => {
       fake.ready[REPO] = [1, 2];
       fake.pushStart(`${REPO}#1`, started(1));
       fake.pushStart(`${REPO}#2`, started(2));
-      const { lines } = yield* pass(fake, machine([REPO], 1));
+      const { lines } = yield* pass(fake, [REPO], 1);
       assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
       assert.ok(
         lines.includes("limit reached: 1 ready issue was not claimed, max_concurrent_runs is 1"),
@@ -2070,7 +2146,7 @@ describe("reading the ledger", () => {
         if (only !== undefined) fake.runsError = true;
         return listed(only);
       };
-      const { report, lines } = yield* pass(fake, machine([REPO], 5));
+      const { report, lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(starts(fake), [`resume ${REPO}#7`, `resume ${REPO}#8`]);
       assert.equal(
         lines.filter((l) => l.startsWith("error: cannot read the run ledger")).length,
@@ -2088,7 +2164,7 @@ describe("text that is printed", () => {
       const evil = "rawphp/evil\u001b[31m";
       const fake = new Fake();
       fake.ready[evil] = "error";
-      const { lines } = yield* pass(fake, machine([evil], 1));
+      const { lines } = yield* pass(fake, [evil], 1);
       const line = runLine(lines, "error: rawphp/evil");
       assert.ok(!line.includes("\u001b"), JSON.stringify(line));
     }),
@@ -2109,7 +2185,7 @@ describe("following a building run", () => {
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(12, "triage");
-      yield* pass(fake, machine([REPO], 3));
+      yield* pass(fake, [REPO], 3);
       assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#12`, `resume ${REPO}#12`]);
     }),
   );
@@ -2119,7 +2195,7 @@ describe("following a building run", () => {
       const fake = new Fake();
       fake.runIn(12, "triage");
       fake.timeLimits[`${REPO}#12`] = [stopped()];
-      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const { lines } = yield* pass(fake, [REPO], 3);
       assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#12`]);
       assert.equal(
         runLine(lines, `${REPO}#12 `),
@@ -2146,7 +2222,7 @@ describe("following a building run", () => {
         fake.advances[`${REPO}#40`] = [
           { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
         ];
-        const { lines } = yield* pass(fake, machine([REPO], 3));
+        const { lines } = yield* pass(fake, [REPO], 3);
         assert.deepEqual(callsOf(fake), [
           `time_limit ${REPO}#40`,
           `watch ${REPO}#40`,
@@ -2173,7 +2249,7 @@ describe("following a building run", () => {
         prReported: true,
       });
       fake.advances[`${REPO}#40`] = [{ kind: "needs-info" }];
-      yield* pass(fake, machine([REPO], 3));
+      yield* pass(fake, [REPO], 3);
       assert.deepEqual(callsOf(fake), [
         `time_limit ${REPO}#40`,
         `watch ${REPO}#40`,
@@ -2198,7 +2274,7 @@ describe("following a building run", () => {
         { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
       ];
       fake.gateStarts[`${REPO}#40`] = { kind: "queued", running: 2, max: 2 };
-      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const { lines } = yield* pass(fake, [REPO], 3);
       assert.equal(
         runLine(lines, `${REPO}#40 `),
         `${REPO}#40 building: session finished, gate queued: 2 gates running, max_concurrent_gates is 2`,
@@ -2213,7 +2289,7 @@ describe("following a building run", () => {
       fake.advances[`${REPO}#40`] = [
         { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
       ];
-      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const { lines } = yield* pass(fake, [REPO], 3);
       assert.deepEqual(callsOf(fake), [
         `time_limit ${REPO}#40`,
         `watch ${REPO}#40`,
@@ -2233,7 +2309,7 @@ describe("following a building run", () => {
       const fake = new Fake();
       fake.runIn(40, BUILDING, REPO, true);
       fake.timeLimits[`${REPO}#40`] = [stopped()];
-      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const { lines } = yield* pass(fake, [REPO], 3);
       assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#40`]);
       assert.include(runLine(lines, `${REPO}#40 `), "stuck, the reason is in the ledger of run");
     }),
@@ -2244,7 +2320,7 @@ describe("following a building run", () => {
       const fake = new Fake();
       fake.runIn(40, BUILDING, REPO, true);
       fake.watches[`${REPO}#40`] = [stopped()];
-      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const { lines } = yield* pass(fake, [REPO], 3);
       assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#40`, `watch ${REPO}#40`]);
       assert.include(runLine(lines, `${REPO}#40 `), "stuck, the reason is in the ledger of run");
     }),
@@ -2257,7 +2333,7 @@ describe("following a building run", () => {
   });
   const forwardLine = (fake: Fake) =>
     Effect.gen(function* () {
-      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const { lines } = yield* pass(fake, [REPO], 3);
       return runLine(lines, `${REPO}#40 `);
     });
   const building = () => {
@@ -2339,7 +2415,7 @@ describe("following a building run", () => {
           const fake = building();
           if (pending) fake.pendingSends = [runIdToString(fake.runs[0]!.id)];
           fake.advances[`${REPO}#40`] = [{ kind }];
-          yield* pass(fake, machine([REPO], 3));
+          yield* pass(fake, [REPO], 3);
           assert.equal(
             callsOf(fake).includes(`gate ${REPO}#40`),
             pending,
@@ -2371,7 +2447,7 @@ describe("following a building run", () => {
         const fake = building();
         fake.pendingSends = [runIdToString(fake.runs[0]!.id)];
         fake.advances[`${REPO}#40`] = [outcome];
-        yield* pass(fake, machine([REPO], 3));
+        yield* pass(fake, [REPO], 3);
         assert.ok(!callsOf(fake).includes(`gate ${REPO}#40`), kind);
       }
     }),
@@ -2384,7 +2460,7 @@ describe("following a building run", () => {
         const fake = building();
         fake.pendingSendFails = true;
         fake.advances[`${REPO}#40`] = [{ kind: "running" }];
-        const { report } = yield* pass(fake, machine([REPO], 3));
+        const { report } = yield* pass(fake, [REPO], 3);
         assert.equal(report.errors, 1);
         assert.ok(!callsOf(fake).includes(`gate ${REPO}#40`));
       }),
@@ -2401,7 +2477,7 @@ describe("following a building run", () => {
         fake.advances[`${REPO}#40`] = [
           { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
         ];
-        const { report, lines } = yield* pass(fake, machine([REPO], 3));
+        const { report, lines } = yield* pass(fake, [REPO], 3);
         assert.equal(report.errors, 1);
         assert.deepEqual(callsOf(fake), [
           `time_limit ${REPO}#40`,
@@ -2424,7 +2500,7 @@ describe("following a building run", () => {
     Effect.gen(function* () {
       const fake = building();
       fake.forwards[`${REPO}#40`] = [{ comments: 0, bodyEdit: false, skipped: "abandoned" }];
-      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      const { report, lines } = yield* pass(fake, [REPO], 3);
       assert.equal(
         runLine(lines, `${REPO}#40 `),
         `${REPO}#40 building: the issue is closed, the run is closed`,
@@ -2447,7 +2523,7 @@ describe("following a building run", () => {
       fake.advances[`${REPO}#40`] = [
         { kind: "ready-for-gate", pr: 3, prUrl: "https://github.com/rawphp/softfac/pull/3" },
       ];
-      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      const { report, lines } = yield* pass(fake, [REPO], 3);
       assert.equal(report.errors, 1);
       assert.equal(fake.runErrors.length, 1);
       assert.equal(fake.runErrors[0]?.step, "forward");
@@ -2512,7 +2588,7 @@ describe("following a building run", () => {
         const fake = new Fake();
         fake.runIn(40, BUILDING, REPO, true);
         fake.advances[`${REPO}#40`] = [outcome];
-        const { lines } = yield* pass(fake, machine([REPO], 3));
+        const { lines } = yield* pass(fake, [REPO], 3);
         assert.equal(runLine(lines, `${REPO}#40 `), `${REPO}#40 building: ${words}`);
       }
     }),
@@ -2528,7 +2604,7 @@ describe("following a building run", () => {
       const fake = new Fake();
       fake.runIn(40, BUILDING, REPO, true);
       fake[script][`${REPO}#40`] = [error];
-      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      const { report, lines } = yield* pass(fake, [REPO], 3);
       assert.equal(report.errors, 1);
       assert.ok(
         lines.some((l) => l.startsWith("error: ")),
@@ -2596,7 +2672,7 @@ describe("following a building run", () => {
       fake.advances[`${REPO}#40`] = [{ kind: "stuck", reason: "r" }];
       fake.ready[REPO] = [7];
       fake.pushStart(`${REPO}#7`, started(7));
-      const { report } = yield* pass(fake, machine([REPO], 1));
+      const { report } = yield* pass(fake, [REPO], 1);
       assert.deepEqual(starts(fake), [`start ${REPO}#7`]);
       assert.equal(report.claimed, 1);
     }),
@@ -2607,7 +2683,7 @@ describe("following a building run", () => {
       const fake = new Fake();
       fake.runIn(42, "needs-info", REPO, true);
       fake.advances[`${REPO}#42`] = [{ kind: "needs-info" }];
-      const { lines } = yield* pass(fake, machine([REPO], 5));
+      const { lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#42`, `advance ${REPO}#42`]);
       assert.equal(
         runLine(lines, `${REPO}#42 `),
@@ -2621,7 +2697,7 @@ describe("following a building run", () => {
       const fake = new Fake();
       fake.runIn(43, "stuck", REPO, true);
       fake.advances[`${REPO}#43`] = [{ kind: "stuck", reason: "r" }];
-      const { lines } = yield* pass(fake, machine([REPO], 5));
+      const { lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(callsOf(fake), [`time_limit ${REPO}#43`, `advance ${REPO}#43`]);
       assert.equal(
         runLine(lines, `${REPO}#43 `),
@@ -2637,7 +2713,7 @@ describe("following a building run", () => {
       fake.advances[`${REPO}#42`] = [
         new SessionsError({ operation: "archive", cause: new Error("x") }),
       ];
-      const { report } = yield* pass(fake, machine([REPO], 5));
+      const { report } = yield* pass(fake, [REPO], 5);
       assert.equal(report.errors, 1);
       assert.equal(fake.runErrors[0]?.step, "advance");
     }),
@@ -2648,7 +2724,7 @@ describe("following a building run", () => {
       const fake = new Fake();
       fake.runIn(40, BUILDING, REPO, true);
       fake.advances[`${REPO}#40`] = [{ kind: "abandoned" }];
-      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      const { report, lines } = yield* pass(fake, [REPO], 3);
       assert.equal(
         runLine(lines, `${REPO}#40 `),
         `${REPO}#40 building: the issue is closed, the run is closed`,
@@ -2670,7 +2746,7 @@ describe("following a building run", () => {
       const fake = new Fake();
       fake.runIn(12, "triage");
       fake.pushStart(`${REPO}#12`, { kind: "abandoned", mayHaveSession: [rid(12)] });
-      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      const { report, lines } = yield* pass(fake, [REPO], 3);
       const run = runIdToString(rid(12));
       assert.equal(
         runLine(lines, `${REPO}#12 `),
@@ -2699,7 +2775,7 @@ describe("following a building run", () => {
       const fake = new Fake();
       fake.runIn(12, "triage");
       fake.pushStart(`${REPO}#12`, { kind: "abandoned", mayHaveSession: [] });
-      const { report } = yield* pass(fake, machine([REPO], 3));
+      const { report } = yield* pass(fake, [REPO], 3);
       assert.equal(report.attention, 1);
     }),
   );
@@ -2724,7 +2800,7 @@ describe("following a building run", () => {
           });
           fake[listing][REPO] = [12];
           fake.pushStart(`${REPO}#12`, { kind: "abandoned", mayHaveSession: [rid(12)] });
-          const { report, lines } = yield* pass(fake, machine([REPO], 3));
+          const { report, lines } = yield* pass(fake, [REPO], 3);
           const run = runIdToString(rid(12));
           assert.deepEqual(starts(fake), [`${call} ${REPO}#12`], listing);
           assert.equal(
@@ -2766,7 +2842,7 @@ describe("following a building run", () => {
         mayHaveSession: [rid(12)],
         error: githubFailure(),
       });
-      const { report, lines } = yield* pass(fake, machine([REPO], 3));
+      const { report, lines } = yield* pass(fake, [REPO], 3);
       const older = runIdToString(rid(12));
       assert.ok(
         lines.some((l) => l.includes(`a session may exist for ${older}`)),
@@ -2786,7 +2862,7 @@ describe("following a building run", () => {
       const fake = new Fake();
       fake.runIn(40, BUILDING, REPO, true);
       fake.stopRequests[`${REPO}#40`] = "recorded";
-      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const { lines } = yield* pass(fake, [REPO], 3);
       assert.deepEqual(
         fake.calls.filter((c) => /^(stop_request|time_limit|watch|advance) /.test(c)),
         [
@@ -2809,7 +2885,7 @@ describe("following a building run", () => {
         const fake = new Fake();
         fake.runIn(40, BUILDING, REPO, true);
         fake.stopRequests[`${REPO}#40`] = answer;
-        const { lines } = yield* pass(fake, machine([REPO], 3));
+        const { lines } = yield* pass(fake, [REPO], 3);
         assert.equal(
           runLine(lines, `${REPO}#40 `),
           `${REPO}#40 building: session still running`,
@@ -2825,7 +2901,7 @@ describe("following a building run", () => {
       fake.runIn(40, BUILDING, REPO, true);
       fake.gateLocks = [runIdToString(rid(40))];
       fake.stopRequests[`${REPO}#40`] = "recorded";
-      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const { lines } = yield* pass(fake, [REPO], 3);
       assert.ok(!fake.calls.includes(`stop_request ${REPO}#40`), fake.calls.join("\n"));
       assert.equal(runLine(lines, `${REPO}#40 `), `${REPO}#40 building: gate running`);
     }),
@@ -2836,7 +2912,7 @@ describe("following a building run", () => {
       const fake = new Fake();
       fake.runIn(40, BUILDING, REPO, true);
       fake.stopRequests[`${REPO}#40`] = "not-building";
-      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const { lines } = yield* pass(fake, [REPO], 3);
       assert.equal(
         runLine(lines, `${REPO}#40 `),
         `${REPO}#40 building: stop request dropped: the run is not building, session still running`,
@@ -2854,7 +2930,7 @@ describe("following a building run", () => {
           path: "/data/stop-requests/x",
           cause: new Error("denied"),
         });
-        const { report, lines } = yield* pass(fake, machine([REPO], 3));
+        const { report, lines } = yield* pass(fake, [REPO], 3);
         assert.equal(report.errors, 1);
         assert.ok(
           lines.some((l) => l.startsWith(`error: ${REPO}#40 stop request: `)),
@@ -2873,7 +2949,7 @@ describe("following a building run", () => {
       fake.advances[`${REPO}#42`] = [{ kind: "needs-info" }];
       fake.ready[REPO] = [7];
       fake.pushStart(`${REPO}#7`, started(7));
-      const { report } = yield* pass(fake, machine([REPO], 1));
+      const { report } = yield* pass(fake, [REPO], 1);
       assert.deepEqual(starts(fake), [`start ${REPO}#7`]);
       assert.equal(report.claimed, 1);
     }),
@@ -2884,7 +2960,7 @@ describe("following a building run", () => {
       const fake = new Fake();
       fake.runIn(40, BUILDING, REPO, true);
       fake.gateLocks = [runIdToString(rid(40))];
-      const { lines } = yield* pass(fake, machine([REPO], 3));
+      const { lines } = yield* pass(fake, [REPO], 3);
       assert.deepEqual(callsOf(fake), []);
       assert.equal(runLine(lines, `${REPO}#40 `), `${REPO}#40 building: gate running`);
     }),
@@ -2894,7 +2970,7 @@ describe("following a building run", () => {
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(40, BUILDING, "acme/other", true);
-      yield* pass(fake, machine([REPO], 3));
+      yield* pass(fake, [REPO], 3);
       assert.deepEqual(callsOf(fake), []);
     }),
   );
@@ -2919,7 +2995,7 @@ describe("attention items", () => {
       const fake = new Fake();
       fake.runIn(40, BUILDING, REPO, true);
       fake.advances[`${REPO}#40`] = [{ kind: "stuck", reason: "r" }];
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       assert.deepEqual(
         fake.items.map(({ firstSeenMs: _, ...item }) => item),
         [
@@ -2941,7 +3017,7 @@ describe("attention items", () => {
       const fake = new Fake();
       fake.runIn(42, "needs-info", REPO, true);
       fake.advances[`${REPO}#42`] = [{ kind: "needs-info" }];
-      yield* pass(fake, machine([REPO], 5));
+      yield* pass(fake, [REPO], 5);
       const run = runIdToString(rid(42));
       assert.deepEqual(
         fake.items.map(({ firstSeenMs: _, ...item }) => item),
@@ -2965,7 +3041,7 @@ describe("attention items", () => {
       fake.runIn(12, "triage", REPO, true);
       fake.ready[REPO] = [12];
       fake.pushStart(`${REPO}#12`, { kind: "skipped", reason: "ready again", moved: "ready" });
-      const { lines } = yield* pass(fake, machine([REPO], 1));
+      const { lines } = yield* pass(fake, [REPO], 1);
       const line = runLine(lines, "ATTENTION: ");
       const run = runIdToString(rid(12));
       assert.deepEqual(
@@ -2997,7 +3073,7 @@ describe("attention items", () => {
         ];
         fake.ready[REPO] = [12];
         fake.pushStart(`${REPO}#12`, { kind: "stuck", run: newRun, reason: "launch failed" });
-        yield* pass(fake, machine([REPO], 1));
+        yield* pass(fake, [REPO], 1);
         assert.deepEqual(ids(fake), ["other", `run:${runIdToString(newRun)}:stuck`]);
       }),
   );
@@ -3016,24 +3092,103 @@ describe("attention items", () => {
       ];
       fake.ready[REPO] = [12];
       fake.pushStart(`${REPO}#12`, started(12));
-      yield* pass(fake, machine([REPO, OTHER], 5));
+      yield* pass(fake, [REPO, OTHER], 5);
       assert.deepEqual(ids(fake), ["other", "elsewhere"]);
     }),
   );
 
   it.effect(
-    "an item of a repo that left the config is cleared at the pass start, a machine item stays",
+    "an item of a repo whose T3 project was deleted is cleared at the pass start, a machine item stays",
     () =>
       Effect.gen(function* () {
         const fake = new Fake();
+        fake.departed = ["rawphp/gone"];
         fake.items = [
           open({ id: "gone", repo: "rawphp/gone" }),
           open({ id: "kept", repo: REPO, issue: 99 }),
           open({ id: "machine", kind: "config", repo: null, issue: null }),
         ];
-        yield* pass(fake, machine([REPO], 5));
+        yield* pass(fake, [REPO], 5);
         assert.deepEqual(ids(fake), ["kept", "machine"]);
       }),
+  );
+
+  it.effect(
+    "an item of a repo that is not watched but has not departed is kept: only a deleted project clears",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.departed = ["RawPHP/Gone"];
+        fake.items = [
+          open({ id: "gone", kind: "stuck", repo: "rawphp/gone" }),
+          open({ id: "paused", kind: "stuck", repo: "rawphp/paused" }),
+          open({ id: "kept", repo: REPO, issue: 99 }),
+        ];
+        yield* pass(fake, [REPO], 5);
+        assert.deepEqual(ids(fake), ["paused", "kept"]);
+        // The paused repo is not worked, only kept.
+        assert.deepEqual(fake.projected, [REPO]);
+      }),
+  );
+
+  it.effect(
+    "a project the reader could not settle is one plain line, and a departed repo is still cleared",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.unresolved = ["/p/a", "/p/b"];
+        fake.departed = ["rawphp/gone"];
+        fake.items = [
+          open({ id: "gone", kind: "stuck", repo: "rawphp/gone" }),
+          open({ id: "paused", kind: "stuck", repo: "rawphp/paused" }),
+          open({ id: "machine", kind: "config", repo: null, issue: null }),
+        ];
+        const { report, lines } = yield* pass(fake, [REPO], 5);
+        assert.deepEqual(ids(fake), ["paused", "machine"]);
+        assert.deepEqual(
+          lines.filter((l) => l.startsWith("watched:")),
+          ["watched: 2 project(s) could not be settled this pass (/p/a, /p/b)"],
+        );
+        // A line, not an error: the pass reports none and the machine log has no event for it.
+        assert.equal(report.errors, 0);
+        assert.deepEqual(errorEvents(fake), []);
+        // The repos that were listed are still worked.
+        assert.deepEqual(fake.projected, [REPO]);
+      }),
+  );
+
+  it.effect("a reader that fails is one error line: no repo is worked, no item is cleared", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.watchedFails = true;
+      fake.ready[REPO] = [1];
+      fake.items = [open({ id: "gone", repo: "rawphp/gone" })];
+      const { lines } = yield* pass(fake, [REPO], 5);
+      assert.deepEqual(ids(fake), ["gone"]);
+      assert.deepEqual(starts(fake), []);
+      assert.notInclude(fake.calls, "project");
+      assert.deepEqual(
+        errorEvents(fake).map((e) => (e.data as { kind: ErrorKind; message: string }).message),
+        ["cannot list the T3 projects: project store down"],
+      );
+      assert.strictEqual(
+        lines.filter((l) => l.includes("cannot list the T3 projects: project store down")).length,
+        1,
+      );
+    }),
+  );
+
+  it.effect("the watched list is read at the start of every pass", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      yield* pass(fake, [REPO], 5);
+      assert.deepEqual(fake.projected, [REPO]);
+      // A project added in T3 between the passes is worked on the next one, with no restart.
+      yield* pass(fake, [REPO, OTHER], 5);
+      assert.deepEqual(fake.projected, [REPO, REPO, OTHER]);
+      assert.strictEqual(fake.calls.filter((c) => c === "watched").length, 2);
+      assert.strictEqual(fake.calls.indexOf("watched") < fake.calls.indexOf("project"), true);
+    }),
   );
 
   it.effect(
@@ -3048,7 +3203,7 @@ describe("attention items", () => {
           open({ id: "stuck", kind: "stuck", issue: 41, run: runIdToString(rid(41)) }),
           open({ id: "needs-info", kind: "needs-info", issue: 41, run: runIdToString(rid(41)) }),
         ];
-        yield* pass(fake, machine([REPO], 5));
+        yield* pass(fake, [REPO], 5);
         assert.deepEqual(ids(fake), ["live", "stuck", "needs-info"]);
       }),
   );
@@ -3058,7 +3213,7 @@ describe("attention items", () => {
       const fake = new Fake();
       fake.runsError = true;
       fake.items = [open({ id: "a", kind: "attention", run: RUN_40 })];
-      yield* pass(fake, machine([REPO], 5));
+      yield* pass(fake, [REPO], 5);
       assert.deepEqual(ids(fake), ["a"]);
     }),
   );
@@ -3095,7 +3250,7 @@ describe("sessions that ended badly", () => {
       fake.runIn(12, BUILDING, REPO, true);
       fake.t3Trouble_ = T3_ERROR;
       fake.advances[`${REPO}#12`] = [badEnd("failed")];
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(report.errors, 0);
       assert.deepEqual(decisions(fake), [
         `advance ${REPO}#12`,
@@ -3123,7 +3278,7 @@ describe("sessions that ended badly", () => {
         const fake = new Fake();
         fake.runIn(12, BUILDING, REPO, true);
         fake.advances[`${REPO}#12`] = [t3Failure()];
-        const { report, lines } = yield* pass(fake, machine([REPO], 1));
+        const { report, lines } = yield* pass(fake, [REPO], 1);
         assert.equal(report.errors, 1);
         assert.ok(
           lines.some((l) => l.startsWith("error: rawphp/softfac#12 advance: ")),
@@ -3154,7 +3309,7 @@ describe("sessions that ended badly", () => {
         const fake = new Fake();
         fake.runIn(12, BUILDING, REPO, true);
         fake.advances[`${REPO}#12`] = [new SessionsError({ operation, cause: "timed out" })];
-        yield* pass(fake, machine([REPO], 1));
+        yield* pass(fake, [REPO], 1);
         assert.deepEqual(recordedErrorKinds(fake), ["t3"], operation);
         assert.deepEqual(
           errorEvents(fake).map((e) => (e.data as { run: string }).run),
@@ -3170,7 +3325,7 @@ describe("sessions that ended badly", () => {
       const fake = new Fake();
       fake.runIn(12, BUILDING, REPO, true);
       fake.advances[`${REPO}#12`] = [githubFailure()];
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       assert.deepEqual(
         fake.runErrors.map((e) => e.kind),
         ["tracker"],
@@ -3187,7 +3342,7 @@ describe("sessions that ended badly", () => {
         fake.ready[REPO] = [1];
         if (paused) fake.pause = { sinceMs: T0 - 2 * 60 * 60 * 1000 };
         fake.advances[`${REPO}#12`] = [t3Failure()];
-        const { report } = yield* pass(fake, machine([REPO], 1));
+        const { report } = yield* pass(fake, [REPO], 1);
         assert.equal(report.errors, 1, `paused=${paused}`);
         assert.deepEqual(starts(fake), [], `paused=${paused}`);
         assert.deepEqual(
@@ -3210,12 +3365,12 @@ describe("sessions that ended badly", () => {
         fake.machineLogDir = passTempDir();
         fake.runIn(12, BUILDING, REPO, true);
         fake.advances[`${REPO}#12`] = [t3Failure(), badEnd("cancelled")];
-        const first = yield* pass(fake, machine([REPO], 1));
+        const first = yield* pass(fake, [REPO], 1);
         assert.equal(first.report.errors, 1);
         assert.ok(!fake.calls.includes("t3_trouble"));
         fake.calls.length = 0;
         fake.now = T0 + 60_000;
-        const second = yield* pass(fake, machine([REPO], 1));
+        const second = yield* pass(fake, [REPO], 1);
         assert.equal(second.report.errors, 0);
         assert.deepEqual(decisions(fake), [
           `advance ${REPO}#12`,
@@ -3245,7 +3400,7 @@ describe("sessions that ended badly", () => {
         fake.runIn(12, BUILDING, REPO, true);
         fake.advances[`${REPO}#12`] = [badEnd("cancelled")];
         fake.events.length = 0;
-        const { report } = yield* pass(fake, machine([REPO], 1));
+        const { report } = yield* pass(fake, [REPO], 1);
         assert.equal(report.errors, 0);
         assert.deepEqual(errorEvents(fake), []);
         assert.deepEqual(decisions(fake), [
@@ -3272,7 +3427,7 @@ describe("sessions that ended badly", () => {
       fake.interrupts[`${REPO}#12`] = [
         { kind: "stuck", reason: "the session run ended as cancelled" },
       ];
-      const first = yield* pass(fake, machine([REPO], 1));
+      const first = yield* pass(fake, [REPO], 1);
       assert.equal(first.report.errors, 1, label);
       // The run's ledger has it as t3, and the machine log has nothing: it is not T3 trouble.
       assert.deepEqual(
@@ -3283,7 +3438,7 @@ describe("sessions that ended badly", () => {
       assert.deepEqual(errorEvents(fake), [], label);
       fake.calls.length = 0;
       fake.now = T0 + 60_000;
-      yield* pass(fake, machine([REPO], 1));
+      yield* pass(fake, [REPO], 1);
       assert.deepEqual(
         decisions(fake),
         [`advance ${REPO}#12`, "t3_trouble", `interrupted ${T3_LINE} t3=none ended=1`],
@@ -3321,7 +3476,7 @@ describe("sessions that ended badly", () => {
       const fake = new Fake();
       fake.runIn(12, BUILDING, REPO, true);
       fake.advances[`${REPO}#12`] = [badEnd("failed")];
-      const { lines } = yield* pass(fake, machine([REPO], 1));
+      const { lines } = yield* pass(fake, [REPO], 1);
       assert.equal(
         lines.filter((l) => l.startsWith("rawphp/softfac#12")).length,
         1,
@@ -3335,7 +3490,7 @@ describe("sessions that ended badly", () => {
       const fake = twoRuns();
       fake.advances[`${REPO}#12`] = [badEnd("failed")];
       fake.advances[`${REPO}#13`] = [badEnd("cancelled")];
-      const { report } = yield* pass(fake, machine([REPO], 2));
+      const { report } = yield* pass(fake, [REPO], 2);
       assert.equal(report.errors, 0);
       // Every run has been advanced before the log is read, once, and each is decided with the
       // number of sessions that ended badly.
@@ -3353,7 +3508,7 @@ describe("sessions that ended badly", () => {
     Effect.gen(function* () {
       const fake = new Fake();
       fake.runIn(12, BUILDING, REPO, true);
-      const { report } = yield* pass(fake, machine([REPO], 1));
+      const { report } = yield* pass(fake, [REPO], 1);
       assert.equal(report.errors, 0);
       assert.ok(!fake.calls.includes("t3_trouble"));
       assert.ok(!fake.calls.some((c) => c.startsWith("interrupted ")));
@@ -3366,7 +3521,7 @@ describe("sessions that ended badly", () => {
       fake.runIn(12, BUILDING, REPO, true);
       fake.t3Trouble_ = { error: "cannot read events.jsonl" };
       fake.advances[`${REPO}#12`] = [badEnd("failed")];
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(report.errors, 1);
       assert.ok(
         lines.some((l) => l.startsWith("error: ") && l.includes("cannot read events.jsonl")),
@@ -3384,7 +3539,7 @@ describe("sessions that ended badly", () => {
       fake.t3Trouble_ = { error: "cannot read events.jsonl" };
       fake.advances[`${REPO}#12`] = [badEnd("failed")];
       fake.advances[`${REPO}#13`] = [badEnd("failed")];
-      const { report, lines } = yield* pass(fake, machine([REPO], 2));
+      const { report, lines } = yield* pass(fake, [REPO], 2);
       assert.equal(report.errors, 1);
       assert.ok(
         lines.some((l) => l.includes("cannot read events.jsonl")),
@@ -3407,7 +3562,7 @@ describe("sessions that ended badly", () => {
       fake.interrupts[`${REPO}#12`] = [
         { kind: "stuck", reason: "the session run ended as failed" },
       ];
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(report.errors, 0);
       assert.equal(
         lineFor(lines, 12),
@@ -3433,7 +3588,7 @@ describe("sessions that ended badly", () => {
           start: { kind: "started", run: next, threadId: "thread-2" },
         },
       ];
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(report.errors, 0);
       assert.equal(
         lineFor(lines, 12),
@@ -3456,7 +3611,7 @@ describe("sessions that ended badly", () => {
           start: { kind: "stuck", run: next, reason: "the factory could not launch a session" },
         },
       ];
-      const { lines } = yield* pass(fake, machine([REPO], 1));
+      const { lines } = yield* pass(fake, [REPO], 1);
       const line = lineFor(lines, 12);
       assert.ok(line.includes("relaunched (1 of 2)"), line);
       assert.ok(
@@ -3479,7 +3634,7 @@ describe("sessions that ended badly", () => {
           start: { kind: "skipped", reason: "scripted" },
         },
       ];
-      const { lines } = yield* pass(fake, machine([REPO], 1));
+      const { lines } = yield* pass(fake, [REPO], 1);
       assert.equal(
         lineFor(lines, 12),
         "rawphp/softfac#12 building: the T3 thread is gone; interrupted, relaunching (2 of 2), the new attempt starts on the next pass",
@@ -3503,7 +3658,7 @@ describe("sessions that ended badly", () => {
             start: { kind: "abandoned", mayHaveSession: [next] },
           },
         ];
-        const { report, lines } = yield* pass(fake, machine([REPO], 1));
+        const { report, lines } = yield* pass(fake, [REPO], 1);
         assert.equal(report.errors, 0);
         assert.equal(
           lineFor(lines, 12),
@@ -3538,7 +3693,7 @@ describe("sessions that ended badly", () => {
           start: { kind: "refused", reason: "the issue is not approved" },
         },
       ];
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(report.errors, 0);
       assert.equal(report.attention, 0);
       assert.equal(
@@ -3560,7 +3715,7 @@ describe("sessions that ended badly", () => {
           start: { kind: "abandoned", mayHaveSession: [next], error },
         },
       ];
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(
         lineFor(lines, 12),
         "rawphp/softfac#12 building: the T3 thread is gone; interrupted, relaunching, the issue is closed, the run is closed",
@@ -3593,7 +3748,7 @@ describe("sessions that ended badly", () => {
       fake.runIn(12, BUILDING, REPO, true);
       fake.advances[`${REPO}#12`] = [badEnd("failed")];
       fake.interrupts[`${REPO}#12`] = [{ kind: "unchanged", why: "its thread has a newer run" }];
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(report.errors, 0);
       assert.equal(
         lineFor(lines, 12),
@@ -3612,7 +3767,7 @@ describe("sessions that ended badly", () => {
         fake.interrupts[`${REPO}#12`] = [
           new SessionsError({ operation: "send", cause: "timeout" }),
         ];
-        const { report, lines } = yield* pass(fake, machine([REPO], 2));
+        const { report, lines } = yield* pass(fake, [REPO], 2);
         assert.equal(report.errors, 1);
         assert.ok(
           lines.some((l) => l.startsWith("error: rawphp/softfac#12 interrupted: ")),
@@ -3635,7 +3790,7 @@ describe("sessions that ended badly", () => {
       fake.advances[`${REPO}#12`] = [
         { kind: "relaunched", start: { kind: "started", run: next, threadId: "thread-2" } },
       ];
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(report.errors, 0);
       assert.equal(
         lineFor(lines, 12),
@@ -3652,7 +3807,7 @@ describe("sessions that ended badly", () => {
       fake.runIn(12, BUILDING, REPO, true);
       fake.t3Trouble_ = T3_ERROR;
       fake.advances[`${REPO}#12`] = [{ kind: "paused" }];
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(report.errors, 0);
       assert.deepEqual(decisions(fake), [`advance ${REPO}#12`]);
       assert.equal(
@@ -3674,7 +3829,7 @@ describe("pr-open runs: gated again only when something moved", () => {
     Effect.gen(function* () {
       const fake = new Fake();
       pr(fake, 41);
-      const { lines, report } = yield* pass(fake, machine([REPO], 5));
+      const { lines, report } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(gated(fake), []);
       assert.deepEqual(lineOf(lines, 41), []);
       assert.equal(report.errors, 0);
@@ -3690,7 +3845,7 @@ describe("pr-open runs: gated again only when something moved", () => {
     Effect.gen(function* () {
       const fake = new Fake();
       pr(fake, 41);
-      yield* pass(fake, machine([REPO], 5));
+      yield* pass(fake, [REPO], 5);
       assert.deepEqual(
         fake.calls.filter((c) => /^(time_limit|watch|forward|advance|start|resume) /.test(c)),
         [],
@@ -3706,7 +3861,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       pr(fake, 41);
       fake.baseTips[REPO] = MOVED;
       fake.stopRequests[`${REPO}#41`] = "not-building";
-      const { lines } = yield* pass(fake, machine([REPO], 5));
+      const { lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(
         fake.calls.filter((c) => /^(stop_request|last_pass|gate) /.test(c)),
         [`stop_request ${REPO}#41`, `last_pass ${REPO}#41`, `gate ${REPO}#41`],
@@ -3723,7 +3878,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       pr(fake, 41);
       fake.gateLocks = [runIdToString(rid(41))];
       fake.stopRequests[`${REPO}#41`] = "not-building";
-      yield* pass(fake, machine([REPO], 5));
+      yield* pass(fake, [REPO], 5);
       assert.ok(!fake.calls.includes(`stop_request ${REPO}#41`), fake.calls.join("\n"));
     }),
   );
@@ -3733,7 +3888,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       const fake = new Fake();
       pr(fake, 41);
       fake.openHeads[`${REPO}#12`] = PUSHED;
-      const { lines } = yield* pass(fake, machine([REPO], 5));
+      const { lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(gated(fake), [`gate ${REPO}#41`]);
       assert.deepEqual(lineOf(lines, 41), [`${REPO}#41 pr-open: gate started in the background`]);
     }),
@@ -3744,7 +3899,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       const fake = new Fake();
       pr(fake, 41);
       fake.baseTips[REPO] = MOVED;
-      yield* pass(fake, machine([REPO], 5));
+      yield* pass(fake, [REPO], 5);
       assert.deepEqual(gated(fake), [`gate ${REPO}#41`]);
     }),
   );
@@ -3755,7 +3910,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       pr(fake, 41);
       fake.openHeads[`${REPO}#12`] = HEAD.toUpperCase();
       fake.baseTips[REPO] = BASE.toUpperCase();
-      yield* pass(fake, machine([REPO], 5));
+      yield* pass(fake, [REPO], 5);
       assert.deepEqual(gated(fake), []);
     }),
   );
@@ -3765,7 +3920,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       const fake = new Fake();
       pr(fake, 41);
       fake.openHeads[`${REPO}#12`] = null;
-      yield* pass(fake, machine([REPO], 5));
+      yield* pass(fake, [REPO], 5);
       assert.deepEqual(gated(fake), [`gate ${REPO}#41`]);
     }),
   );
@@ -3775,7 +3930,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       const fake = new Fake();
       pr(fake, 41);
       fake.lastPasses[`${REPO}#41`] = null;
-      yield* pass(fake, machine([REPO], 5));
+      yield* pass(fake, [REPO], 5);
       assert.deepEqual(gated(fake), [`gate ${REPO}#41`]);
       // Nothing is read from GitHub for a run the gate will look at anyway.
       assert.deepEqual(reads(fake, "base_tip"), []);
@@ -3788,7 +3943,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       const fake = new Fake();
       pr(fake, 41);
       fake.lastPasses[`${REPO}#41`] = "error";
-      yield* pass(fake, machine([REPO], 5));
+      yield* pass(fake, [REPO], 5);
       assert.deepEqual(gated(fake), [`gate ${REPO}#41`]);
     }),
   );
@@ -3801,7 +3956,7 @@ describe("pr-open runs: gated again only when something moved", () => {
         pr(fake, 41);
         pr(fake, 42);
         fake.baseTips[REPO] = "error";
-        const { report } = yield* pass(fake, machine([REPO], 5));
+        const { report } = yield* pass(fake, [REPO], 5);
         assert.deepEqual(gated(fake), [`gate ${REPO}#41`, `gate ${REPO}#42`]);
         assert.equal(reads(fake, "base_tip").length, 1);
         assert.deepEqual(reads(fake, "open_head"), []);
@@ -3818,7 +3973,7 @@ describe("pr-open runs: gated again only when something moved", () => {
         pr(fake, 41);
         pr(fake, 42);
         fake.openHeads[`${REPO}#12`] = "error";
-        yield* pass(fake, machine([REPO], 5));
+        yield* pass(fake, [REPO], 5);
         assert.deepEqual(gated(fake), [`gate ${REPO}#41`, `gate ${REPO}#42`]);
         assert.equal(reads(fake, "base_tip").length, 1);
         assert.equal(reads(fake, "open_head").length, 1);
@@ -3831,7 +3986,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       pr(fake, 41);
       pr(fake, 42);
       pr(fake, 43, OTHER);
-      yield* pass(fake, machine([REPO, OTHER], 5));
+      yield* pass(fake, [REPO, OTHER], 5);
       assert.deepEqual(reads(fake, "base_tip"), [`base_tip ${REPO}`, `base_tip ${OTHER}`]);
       assert.deepEqual(gated(fake), []);
     }),
@@ -3842,7 +3997,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       const fake = new Fake();
       pr(fake, 41);
       fake.gateLocks.push(runIdToString(rid(41)));
-      const { lines } = yield* pass(fake, machine([REPO], 5));
+      const { lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(lineOf(lines, 41), [`${REPO}#41 pr-open: gate running`]);
       assert.deepEqual(gated(fake), []);
       assert.deepEqual(reads(fake, "last_pass"), []);
@@ -3855,7 +4010,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       pr(fake, 41);
       fake.baseTips[REPO] = MOVED;
       fake.gateStarts[`${REPO}#41`] = { kind: "queued", running: 2, max: 2 };
-      const { lines } = yield* pass(fake, machine([REPO], 5));
+      const { lines } = yield* pass(fake, [REPO], 5);
       assert.deepEqual(lineOf(lines, 41), [
         `${REPO}#41 pr-open: gate queued: 2 gates running, max_concurrent_gates is 2`,
       ]);
@@ -3868,7 +4023,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       pr(fake, 41, OTHER);
       fake.projects[OTHER] = "bad config";
       fake.baseTips[OTHER] = MOVED;
-      yield* pass(fake, machine([REPO, OTHER], 5));
+      yield* pass(fake, [REPO, OTHER], 5);
       assert.deepEqual(gated(fake), []);
       assert.deepEqual(reads(fake, "last_pass"), []);
     }),
@@ -3881,7 +4036,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       fake.baseTips[REPO] = MOVED;
       fake.ready[REPO] = [1];
       fake.pushStart(`${REPO}#1`, started(1));
-      const { report } = yield* pass(fake, machine([REPO], 1));
+      const { report } = yield* pass(fake, [REPO], 1);
       assert.equal(report.claimed, 1);
       assert.deepEqual(gated(fake), [`gate ${REPO}#41`]);
     }),
@@ -3897,7 +4052,7 @@ describe("pr-open runs: gated again only when something moved", () => {
       fake.baseTips[REPO] = MOVED;
       fake.ready[REPO] = [1];
       fake.pushStart(`${REPO}#1`, started(1));
-      yield* pass(fake, machine([REPO], 2));
+      yield* pass(fake, [REPO], 2);
       const order = fake.calls.filter((c) => /^(advance|start|gate) /.test(c));
       assert.deepEqual(order, [`advance ${REPO}#40`, `start ${REPO}#1`, `gate ${REPO}#41`]);
     }),
@@ -3933,7 +4088,7 @@ describe("pr-open runs: instructor feedback", () => {
         // session's first run ends.
         fake.openHeads[`${REPO}#7`] = MOVED;
         fake.baseTips[REPO] = MOVED;
-        const { report, lines } = yield* pass(fake, machine([REPO], 1));
+        const { report, lines } = yield* pass(fake, [REPO], 1);
         assert.equal(report.errors, 0);
         assert.deepEqual(gated(fake), []);
         assert.deepEqual(lineOf(lines), [
@@ -3950,7 +4105,7 @@ describe("pr-open runs: instructor feedback", () => {
 
   it.effect("one item of feedback says item and not items", () =>
     Effect.gen(function* () {
-      const { lines } = yield* pass(reviewed(relaunched(1)), machine([REPO], 1));
+      const { lines } = yield* pass(reviewed(relaunched(1)), [REPO], 1);
       assert.ok(
         runLine(lines, `${REPO}#12`).includes("instructor feedback (1 item) on PR"),
         `${lines}`,
@@ -3964,7 +4119,7 @@ describe("pr-open runs: instructor feedback", () => {
       Effect.gen(function* () {
         const fake = new Fake();
         quiet(fake);
-        const { report, lines } = yield* pass(fake, machine([REPO], 1));
+        const { report, lines } = yield* pass(fake, [REPO], 1);
         assert.equal(report.errors, 0);
         assert.deepEqual(fake.feedbacks, [RUN12]);
         assert.deepEqual(gated(fake), []);
@@ -3977,7 +4132,7 @@ describe("pr-open runs: instructor feedback", () => {
       const fake = new Fake();
       quiet(fake);
       fake.openHeads[`${REPO}#7`] = MOVED;
-      const { lines } = yield* pass(fake, machine([REPO], 1));
+      const { lines } = yield* pass(fake, [REPO], 1);
       assert.deepEqual(gated(fake), [`gate ${REPO}#12`]);
       assert.deepEqual(lineOf(lines), [`${LINE12}gate started in the background`]);
     }),
@@ -3988,7 +4143,7 @@ describe("pr-open runs: instructor feedback", () => {
       const fake = new Fake();
       quiet(fake);
       fake.gateLocks.push(RUN12);
-      const { lines } = yield* pass(fake, machine([REPO], 1));
+      const { lines } = yield* pass(fake, [REPO], 1);
       assert.deepEqual(fake.feedbacks, []);
       assert.deepEqual(lineOf(lines), [`${LINE12}gate running`]);
     }),
@@ -4012,7 +4167,7 @@ describe("pr-open runs: instructor feedback", () => {
         ] as const) {
           const fake = reviewed(step);
           fake.openHeads[`${REPO}#7`] = MOVED;
-          const { report, lines } = yield* pass(fake, machine([REPO], 1));
+          const { report, lines } = yield* pass(fake, [REPO], 1);
           assert.equal(report.errors, 0, says);
           assert.deepEqual(gated(fake), [], says);
           assert.ok(runLine(lines, `${REPO}#12`).includes(says), `${says}: ${lines}`);
@@ -4024,7 +4179,7 @@ describe("pr-open runs: instructor feedback", () => {
     Effect.gen(function* () {
       const fake = reviewed(new GitHubFailed({ args: ["pr", "view"], status: 1, stderr: "boom" }));
       fake.openHeads[`${REPO}#7`] = MOVED;
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(report.errors, 1);
       // The head moved: the failure does not hold the gate back.
       assert.deepEqual(gated(fake), [`gate ${REPO}#12`]);
@@ -4040,7 +4195,7 @@ describe("pr-open runs: instructor feedback", () => {
   it.effect("a feedback step that fails for a run that did not move starts no gate", () =>
     Effect.gen(function* () {
       const fake = reviewed(new GitHubFailed({ args: ["pr", "view"], status: 1, stderr: "boom" }));
-      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      const { report, lines } = yield* pass(fake, [REPO], 1);
       assert.equal(report.errors, 1);
       assert.deepEqual(gated(fake), []);
       assert.ok(lines[0]!.startsWith(`error: ${REPO}#12 feedback:`), `${lines}`);

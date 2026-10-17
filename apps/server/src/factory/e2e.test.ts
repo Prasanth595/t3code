@@ -430,6 +430,14 @@ const scenario = (spec: Spec) =>
         path.join(remotes, OWNER, `${NAME}.git`),
       ]);
 
+      // The clone is the T3 project the factory watches: it opts in with a factory block in its
+      // `.dw/config.yml`, and T3 reads `owner/name` from its `origin` (never fetched; the gate
+      // fetches `gateRemoteBase`). The file stays untracked, so the checkout the gate fetches is
+      // the clone's commits as they were.
+      yield* Contract.git(repo, ["remote", "add", "origin", `https://github.com/${REPO}.git`]);
+      yield* fs.makeDirectory(path.join(repo, ".dw"));
+      yield* fs.writeFileString(path.join(repo, ".dw", "config.yml"), "factory:\n  base: main\n");
+
       const gateCommand = spec.gateCommand(path.join(base, "gated"));
       const projectConfig = json({
         factory: {
@@ -449,9 +457,6 @@ const scenario = (spec: Spec) =>
           "poll_seconds: 10",
           "max_concurrent_runs: 1",
           "notify: false",
-          "repos:",
-          `  - repo: ${REPO}`,
-          `    path: ${repo}`,
           "",
         ].join("\n"),
       );
@@ -488,20 +493,22 @@ const scenario = (spec: Spec) =>
           });
         }),
       ).pipe(Layer.provide(Process.layer));
+      const paths = Layer.succeed(Paths.FactoryPaths, {
+        baseDir: base,
+        worktreesDir,
+        factoryDir,
+        machineConfigPath,
+      });
       const factory = factoryRuntime({
         restartDelay: "100 millis",
         gateRemoteBase: `file://${remotes}`,
       }).pipe(
         Layer.provide(
           Layer.mergeAll(
-            Layer.succeed(Paths.FactoryPaths, {
-              baseDir: base,
-              worktreesDir,
-              factoryDir,
-              machineConfigPath,
-            }),
+            paths,
             fakeProcess,
             Gate.layer.pipe(Layer.provide(fakeProcess)),
+            Contract.layerWatchedRepos.pipe(Layer.provide(paths)),
           ),
         ),
       );
@@ -538,10 +545,12 @@ const scenario = (spec: Spec) =>
             Effect.provide(Logger.layer([capture], { mergeWithExisting: false })),
           );
           const loop = Context.get(built, FactoryLoop);
-          assert.deepStrictEqual(loop.status, {
-            state: "running",
-            settings: { pollSeconds: 10, maxConcurrentRuns: 1, repos: [REPO] },
-          });
+          // The first pass has not listed T3's projects yet, or has only just.
+          assert.strictEqual(loop.status.state, "running");
+          if (loop.status.state === "running") {
+            assert.strictEqual(loop.status.settings.pollSeconds, 10);
+            assert.strictEqual(loop.status.settings.maxConcurrentRuns, 1);
+          }
 
           // No wake of our own: the thread's run settling and a finished gate wake the loop, as
           // they do in the server, so the loop is never faster than that. Waiting only on the
@@ -566,6 +575,12 @@ const scenario = (spec: Spec) =>
                 : JSON.stringify(yield* Effect.result(sessionsEarly.status(early)));
             assert.fail(`the loop did not finish\nthread: ${threadNow}\n${diagnosis(entries)}`);
           }
+
+          // What the passes listed is the clone, read from T3's projects.
+          assert.deepStrictEqual(loop.status, {
+            state: "running",
+            settings: { pollSeconds: 10, maxConcurrentRuns: 1, repos: [REPO] },
+          });
 
           const sessions = yield* Sessions.FactorySessions;
           const launched = entries.find((entry) => entry.event === "session_launched");

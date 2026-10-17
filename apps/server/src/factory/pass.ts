@@ -1,5 +1,6 @@
 /**
- * One pass of the factory: the project config and tracker login of every watched repo, every
+ * One pass of the factory: the watched repos (T3's projects that opt in), the project config and
+ * tracker login of each, every
  * unfinished run, the claims that have no run, then new issues. Ported from softfac's `tick.rs`
  * (`run_keeping`, `load_repos`, `runs`, `untracked_claims`, `unassigned_claims` and `claim`) up
  * to the claim; the steps that follow a run (issues #16 to #20) and the dry run are not here.
@@ -12,7 +13,14 @@ import * as Effect from "effect/Effect";
 
 import type { Attention, NewItem } from "./attention.ts";
 import type { HandPause } from "./claims.ts";
-import type { MachineConfig, ProjectConfig, WatchedRepo } from "./config.ts";
+import {
+  ambiguousMessage,
+  ambiguousRepos,
+  type MachineConfig,
+  type ProjectConfig,
+  type WatchedListing,
+  type WatchedRepo,
+} from "./config.ts";
 import { stateLabel, type State } from "./domain/lifecycle.ts";
 import type { LedgerError } from "./ledger/errors.ts";
 import type { CauseStep, ErrorKind, MachineEvent } from "./ledger/events.ts";
@@ -65,6 +73,11 @@ export interface ClaimScanResult {
 
 /** Everything a pass reads and writes. */
 export interface PassWorld {
+  /**
+   * The repos to watch, read anew at the start of each pass: the environment's T3 projects whose
+   * checkout opts in, and the opted-in checkouts the reader could not identify this time.
+   */
+  readonly watchedRepos: Effect.Effect<WatchedListing, PassError>;
   /** The repo's project config, from `.dw/config.yml` at the tip of its default branch. */
   readonly project: (repo: WatchedRepo) => Effect.Effect<ProjectConfig, PassError>;
   /** The login the repo's tracker knows the factory by. */
@@ -501,11 +514,29 @@ export const runPass = (
   Effect.gen(function* () {
     const pass = new Pass(world, out);
     yield* pass.record({ event: "pass_started", data: {} });
-    // A repo that left the config has nothing the factory still needs a person for.
-    yield* world.attention.clear(
-      (item) => item.repo !== null && !machine.repos.some((r) => sameRepo(r.repo, item.repo!)),
-    );
-    const repos = yield* loadRepos(world, machine, pass);
+    const listed = yield* Effect.result(world.watchedRepos);
+    if (listed._tag === "Failure") {
+      // Without the list nothing is worked, and nothing is cleared: a repo that is missing from
+      // an unread list has not left it.
+      yield* pass.fail(null, passError(listed.failure.kind, "", listed.failure.message));
+    }
+    const listing =
+      listed._tag === "Success" ? listed.success : { repos: [], departed: [], unresolved: [] };
+    const watched = listing.repos;
+    // A repo whose T3 project was deleted has nothing the factory still needs a person for. Only
+    // the reader's `departed` says so: a repo whose project stays (a branch without the opt-in,
+    // an unreadable checkout) keeps its items, since `stuck` and `needs-info` are raised once.
+    if (listed._tag === "Success") {
+      yield* world.attention.clear(
+        (item) => item.repo !== null && listing.departed.some((repo) => sameRepo(repo, item.repo!)),
+      );
+      if (listing.unresolved.length > 0) {
+        pass.line(
+          `watched: ${listing.unresolved.length} project(s) could not be settled this pass (${listing.unresolved.map(plain).join(", ")})`,
+        );
+      }
+    }
+    const repos = yield* loadRepos(world, watched, pass);
     // Without the ledger there is no telling how many runs are active, so nothing is claimed.
     const infos = yield* runs(world, pass);
     if (infos !== null) {
@@ -538,16 +569,39 @@ export const runPass = (
 
 /**
  * The project config and tracker login of every watched repo. A repo whose config cannot be
- * loaded is reported and its issues are left alone; so is one whose tracker login cannot be read.
+ * loaded is reported and its issues are left alone; so is one whose tracker login cannot be read,
+ * and one that two T3 projects name (`ambiguousRepos`).
  */
 const loadRepos = (
   world: PassWorld,
-  machine: MachineConfig,
+  watchedRepos: ReadonlyArray<WatchedRepo>,
   pass: Pass,
 ): Effect.Effect<Array<Loaded>> =>
   Effect.gen(function* () {
     const repos: Array<Loaded> = [];
-    for (const watched of machine.repos) {
+    const ambiguous = ambiguousRepos(watchedRepos);
+    const said = new Set<string>();
+    for (const watched of watchedRepos) {
+      const key = asciiLower(watched.repo);
+      const paths = ambiguous.get(key);
+      if (paths !== undefined) {
+        // Said once per repo, not per project: the repo is skipped whole.
+        if (!said.has(key)) {
+          said.add(key);
+          const message = `${watched.repo}: ${ambiguousMessage(paths)}`;
+          pass.error(plain(message));
+          yield* pass.record({
+            event: "repo_skipped",
+            data: {
+              repo: watched.repo,
+              reason: "ambiguous-project",
+              message: prepareText(message),
+            },
+          });
+          repos.push({ kind: "broken", name: watched.repo });
+        }
+        continue;
+      }
       const project = yield* Effect.result(world.project(watched));
       if (project._tag === "Failure") {
         const message = project.failure.message;
@@ -1469,7 +1523,7 @@ const count = (known: Known, queues: ReadonlyArray<Queue>): number => {
 /**
  * Claims `factory:ready` issues with `start` while fewer than `max_concurrent_runs` runs are
  * active on the machine. Each claim goes to the repo with the fewest runs holding a slot among
- * the repos that still have a ready issue to try, the one listed first in the machine config on
+ * the repos that still have a ready issue to try, the one listed first by T3 on
  * a tie, and the runs are counted again after every claim, so free slots spread across the
  * repos. Within a repo the issues go by number, which is the order they were opened in.
  */

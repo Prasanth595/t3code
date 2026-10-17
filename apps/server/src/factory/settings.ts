@@ -1,7 +1,8 @@
 /**
- * The machine config as the settings page edits it: a report of the file and what the loop last
- * read of each repo's project config, and an edit that changes only the keys the form sends, so
- * the comments and the keys it does not know (`notify`) stay as written. The edited text is
+ * The machine config as the settings page edits it: a report of the file, the watched projects
+ * and what the loop last read of each one's project config, and an edit that changes only the
+ * keys the form sends, so the comments and the keys it does not know (`notify`, a retired
+ * `repos`) stay as written. The edited text is
  * checked with `parseMachineConfig`, the rules the factory itself loads the file by.
  */
 import * as Data from "effect/Data";
@@ -10,19 +11,25 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import type * as Path from "effect/Path";
 import * as Result from "effect/Result";
-import { isMap, isScalar, isSeq, parseDocument, YAMLMap } from "yaml";
+import { isMap, isScalar, parseDocument, YAMLMap } from "yaml";
 
 import {
+  ambiguousMessage,
+  ambiguousRepos,
   DEFAULT_MAX_CONCURRENT_GATES,
   DEFAULT_POLL_SECONDS,
   loadMachineConfig,
   parseMachineConfig,
+  PROJECT_CONFIG_PATH,
   RETIRED_MACHINE_KEYS,
   type ConfigError,
   type MachineConfig,
   type ProjectConfig,
   type RepoConfigReading,
+  type WatchedListing,
 } from "./config.ts";
+import { asciiLower } from "./ledger/runId.ts";
+import type { WatchedReposError } from "./t3/watchedRepos.ts";
 import { writeFileAtomically } from "./t3/files.ts";
 
 /** A project config as the report shows it: the YAML field names. */
@@ -48,13 +55,10 @@ export interface MachineConfigFields {
   readonly poll_seconds: number;
   readonly max_concurrent_runs: number;
   readonly max_concurrent_gates: number;
-  readonly repos: ReadonlyArray<{ readonly repo: string; readonly path: string }>;
 }
 
-/** `MachineConfigFields` as a file that does not load holds them: any may be missing, and a repo may lack a part. */
-export type MachineConfigDraft = Partial<Omit<MachineConfigFields, "repos">> & {
-  readonly repos?: ReadonlyArray<{ readonly repo?: string; readonly path?: string }>;
-};
+/** `MachineConfigFields` as a file that does not load holds them: any may be missing. */
+export type MachineConfigDraft = Partial<MachineConfigFields>;
 
 /**
  * The report of the machine config file.
@@ -64,8 +68,8 @@ export type MachineConfigDraft = Partial<Omit<MachineConfigFields, "repos">> & {
  * - `draft`: present when the file exists and does not load. The values the file holds, read
  *   without validation so the form can show them and the person can fix one field instead of
  *   retyping the file. A top-level key of the form with a string value is copied as it is, a
- *   number as a number, `repos` as the items that are mappings (each with `repo` and `path` only
- *   when strings), and anything else is left out. A file that is not YAML has an empty draft.
+ *   number as a number, and anything else is left out. A file that is not YAML has an empty
+ *   draft.
  *   Values may be the wrong type for their field: the `errors` say which.
  */
 export interface MachineConfigReport {
@@ -75,13 +79,18 @@ export interface MachineConfigReport {
   readonly defaults: MachineConfigFields;
   readonly draft?: MachineConfigDraft;
   readonly errors: ReadonlyArray<ConfigError>;
-  /** One per repo of the loaded config, with what the loop last read of its project config. */
+  /** One per watched T3 project, with what the loop last read of its project config. */
   readonly repos: ReadonlyArray<{
     readonly repo: string;
     readonly path: string;
+    readonly title: string;
     readonly factory: ProjectBlock | null;
     readonly errors: ReadonlyArray<ConfigError> | null;
   }>;
+  /** Workspace roots of projects the reader could not settle this time (`WatchedListing.unresolved`). */
+  readonly unresolved: ReadonlyArray<string>;
+  /** Why the T3 projects could not be listed at all, else null; `repos` and `unresolved` are then empty. */
+  readonly watch_error: string | null;
 }
 
 const EDITABLE_KEYS = [
@@ -92,13 +101,12 @@ const EDITABLE_KEYS = [
 ] as const;
 
 /**
- * The keys an edit keeps: the form's, `repos`, `notify` (a hand edit), and the retired model keys.
- * Those two stay so that a rollback to a version that still requires them loads the file; a key
- * that is not here is dropped by an edit.
+ * The keys an edit keeps: the form's, `notify` (a hand edit), and the retired keys (the model
+ * keys and `repos`). Those stay so that a rollback to a version that still requires them loads
+ * the file; a key that is not here is dropped by an edit.
  */
 const KNOWN_KEYS: ReadonlySet<string> = new Set([
   ...EDITABLE_KEYS,
-  "repos",
   "notify",
   ...RETIRED_MACHINE_KEYS,
 ]);
@@ -111,7 +119,6 @@ const defaults = (): MachineConfigFields => ({
   poll_seconds: DEFAULT_POLL_SECONDS,
   max_concurrent_runs: FORM_MAX_CONCURRENT_RUNS,
   max_concurrent_gates: DEFAULT_MAX_CONCURRENT_GATES,
-  repos: [],
 });
 
 const fieldsOf = (machine: MachineConfig): MachineConfigFields => ({
@@ -119,7 +126,6 @@ const fieldsOf = (machine: MachineConfig): MachineConfigFields => ({
   poll_seconds: machine.pollSeconds,
   max_concurrent_runs: machine.maxConcurrentRuns,
   max_concurrent_gates: machine.maxConcurrentGates,
-  repos: machine.repos.map(({ repo, path }) => ({ repo, path })),
 });
 
 const projectBlock = (project: ProjectConfig): ProjectBlock => ({
@@ -156,27 +162,56 @@ const draftOf = (text: string): MachineConfigDraft => {
     const value = scalarOf(root[key]);
     if (value !== undefined) draft[key] = value;
   }
-  const repos = root["repos"];
-  if (Array.isArray(repos)) {
-    draft["repos"] = repos.filter(isJsonObject).map((item) => {
-      const out: Record<string, string> = {};
-      for (const field of REPO_FIELDS) {
-        const value = item[field];
-        if (typeof value === "string") out[field] = value;
-      }
-      return out;
-    });
-  }
   return draft;
 };
 
-/** The report of the machine config file, joined with the loop's last reading of each repo. */
+/** The watched part of the report: every block, or why there is none, so an empty page is never a lie. */
+const watchedReport = (
+  watched: Result.Result<WatchedListing, WatchedReposError>,
+  readings: ReadonlyMap<string, RepoConfigReading>,
+): Pick<MachineConfigReport, "repos" | "unresolved" | "watch_error"> => {
+  if (Result.isFailure(watched)) {
+    return { repos: [], unresolved: [], watch_error: watched.failure.message };
+  }
+  const ambiguous = ambiguousRepos(watched.success.repos);
+  const repos = watched.success.repos.map(({ repo, path, title }) => {
+    const paths = ambiguous.get(asciiLower(repo));
+    if (paths !== undefined) {
+      // The pass loaded neither checkout, so there is no reading to show.
+      return {
+        repo,
+        path,
+        title,
+        factory: null,
+        errors: [{ file: PROJECT_CONFIG_PATH, message: ambiguousMessage(paths) }],
+      };
+    }
+    const reading = readings.get(repo);
+    return {
+      repo,
+      path,
+      title,
+      factory: reading?.kind === "ok" ? projectBlock(reading.project) : null,
+      errors: reading?.kind === "errors" ? reading.errors : null,
+    };
+  });
+  return { repos, unresolved: watched.success.unresolved, watch_error: null };
+};
+
+/**
+ * The report of the machine config file, with the watched projects joined to the loop's last
+ * reading of each one's project config. What is watched does not depend on the machine file, so
+ * every report lists it, and a listing the reader could not make is reported as such rather
+ * than as no project watched.
+ */
 export const readMachineConfigReport = (
   file: string,
+  watched: Result.Result<WatchedListing, WatchedReposError>,
   readings: ReadonlyMap<string, RepoConfigReading>,
 ): Effect.Effect<MachineConfigReport, never, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
+    const repos = watchedReport(watched, readings);
     const loaded = yield* Effect.result(loadMachineConfig(file));
     if (Result.isFailure(loaded)) {
       const text = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
@@ -187,7 +222,7 @@ export const readMachineConfigReport = (
         defaults: defaults(),
         draft: draftOf(text),
         errors: loaded.failure.errors,
-        repos: [],
+        ...repos,
       } satisfies MachineConfigReport;
     }
     if (Option.isNone(loaded.success)) {
@@ -197,7 +232,7 @@ export const readMachineConfigReport = (
         config: defaults(),
         defaults: defaults(),
         errors: [],
-        repos: [],
+        ...repos,
       } satisfies MachineConfigReport;
     }
     const machine = loaded.success.value.config;
@@ -207,15 +242,7 @@ export const readMachineConfigReport = (
       config: fieldsOf(machine),
       defaults: defaults(),
       errors: [],
-      repos: machine.repos.map(({ repo, path }) => {
-        const reading = readings.get(repo);
-        return {
-          repo,
-          path,
-          factory: reading?.kind === "ok" ? projectBlock(reading.project) : null,
-          errors: reading?.kind === "errors" ? reading.errors : null,
-        };
-      }),
+      ...repos,
     } satisfies MachineConfigReport;
   });
 
@@ -223,55 +250,10 @@ export const readMachineConfigReport = (
 export const isJsonObject = (body: unknown): body is Readonly<Record<string, unknown>> =>
   typeof body === "object" && body !== null && !Array.isArray(body);
 
-const REPO_FIELDS = ["repo", "path"] as const;
-
-/**
- * Sets `repos`: a body item takes the node the file already has for that `repo`, with its
- * comments, and its `repo` and `path` are replaced as the body has them; any other item is a new
- * node. A node no item matched is dropped, and the sequence is in the body's order. An item that
- * is not an object goes in as it is, for the parser to report.
- */
-const setRepos = (doc: ReturnType<typeof parseDocument>, root: YAMLMap, value: unknown) => {
-  const existing = root.get("repos", true);
-  if (!Array.isArray(value)) {
-    root.set("repos", value);
-    return;
-  }
-  const unmatched = isSeq(existing) ? [...existing.items] : [];
-  const nodes = value.map((item): unknown => {
-    const at = isJsonObject(item)
-      ? unmatched.findIndex((node) => isMap(node) && node.get("repo") === item["repo"])
-      : -1;
-    if (at < 0 || !isJsonObject(item)) return doc.createNode(repoItem(item));
-    const node = unmatched.splice(at, 1)[0] as YAMLMap;
-    // A key the factory does not know (a typo) would keep the file invalid for good.
-    node.items = node.items.filter((pair) => {
-      const key = isScalar(pair.key) ? pair.key.value : pair.key;
-      return typeof key === "string" && (REPO_FIELDS as ReadonlyArray<string>).includes(key);
-    });
-    for (const field of REPO_FIELDS) {
-      if (Object.hasOwn(item, field)) node.set(field, item[field]);
-      else node.delete(field);
-    }
-    return node;
-  });
-  if (isSeq(existing)) existing.items = nodes as typeof existing.items;
-  else root.set("repos", nodes);
-};
-
-const repoItem = (item: unknown): unknown => {
-  if (!isJsonObject(item)) return item;
-  const out: Record<string, unknown> = {};
-  for (const field of REPO_FIELDS) {
-    if (Object.hasOwn(item, field)) out[field] = item[field];
-  }
-  return out;
-};
-
 /**
  * The machine config text with the body's keys applied, or the errors `parseMachineConfig` finds
- * in it. Keys the body does not have, and every comment, stay as they were; a key the factory
- * does not know is dropped, and a file that is not YAML is started again.
+ * in it. Keys the body does not have (and a `repos` key it has: the form no longer sends one),
+ * and every comment, stay as they were; a key the factory does not know is dropped, and a file that is not YAML is started again.
  */
 export const editMachineConfig = (
   existingText: string | null,
@@ -291,7 +273,6 @@ export const editMachineConfig = (
   for (const key of EDITABLE_KEYS) {
     if (Object.hasOwn(body, key)) root.set(key, body[key]);
   }
-  if (Object.hasOwn(body, "repos")) setRepos(doc, root, body["repos"]);
   const text = doc.toString();
   const parsed = parseMachineConfig(text, file);
   return Result.isSuccess(parsed) ? Result.succeed(text) : Result.fail(parsed.failure);
@@ -318,6 +299,7 @@ export const saveMachineConfig = (
   loop: {
     readonly reload: Effect.Effect<void>;
     readonly repoConfigs: Effect.Effect<ReadonlyMap<string, RepoConfigReading>>;
+    readonly watchedRepos: Effect.Effect<WatchedListing, WatchedReposError>;
   },
 ): Effect.Effect<SaveResult, SaveError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
@@ -334,6 +316,10 @@ export const saveMachineConfig = (
     if (Result.isFailure(edited)) return { kind: "invalid", errors: edited.failure } as const;
     yield* writeFileAtomically(file, edited.success);
     yield* loop.reload;
-    const report = yield* readMachineConfigReport(file, yield* loop.repoConfigs);
+    const report = yield* readMachineConfigReport(
+      file,
+      yield* Effect.result(loop.watchedRepos),
+      yield* loop.repoConfigs,
+    );
     return { kind: "ok", report } as const;
   }).pipe(Effect.mapError((cause) => new SaveError({ cause })));

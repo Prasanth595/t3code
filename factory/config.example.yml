@@ -1,4 +1,4 @@
-# The fork's machine config for this Mac: what the factory watches and how it runs.
+# The fork's machine config for this Mac: how the factory runs.
 # Copy this file to ~/.config/t3fac/factory/config.yml once the repo has left the Rust
 # factory's config, then restart the t3fac server (see factory/docs/handover.md). The
 # server reads it at start. No path here is expanded, so there is no `~`: write each
@@ -36,10 +36,13 @@ max_concurrent_gates: 1
 # Factory page and turns the notification off.
 notify: true
 
-# The repos to watch. `path` is a clone of its own, never the one the Rust factory uses,
-# and it must also be added as a project on this server with exactly this path: the factory
-# finds a repo's T3 project by its workspace root. Take a repo out of the Rust factory's
-# repos list before adding it here: one factory per repo.
-repos:
-  - repo: original-solutions/t3code-factory
-    path: /Users/tomkaczocha/EA/projects/t3code-factory-fac
+# There is no `repos` key (retired by #106). The factory watches the T3 projects of this
+# server whose checkout has a .dw/config.yml with a `factory` block. To add a repo, add its
+# clone as a project on this server once (the sidebar, or `t3 project add <path>`). The clone
+# is one of its own, never the one the Rust factory uses. A clone with an `upstream` remote is
+# not watched, since T3 names it by that remote. Take a repo out of the Rust factory's
+# repos list before adding it here: one factory per repo. A `repos` key left in this file
+# loads with a warning and a save from /settings/factory keeps it, but a file copied from this
+# example has none, and a version from before #106 requires a non-empty one: add a `repos`
+# list (`repo: owner/name` and `path: <clone>` per watched repo) before rolling back to such
+# a version, and delete it once no such rollback is possible.

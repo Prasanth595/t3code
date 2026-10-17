@@ -83,7 +83,7 @@ factory/scripts/rollback.sh
 
 It points `current` at `previous`, restarts the job, removes `previous` and runs the same health check on the restored version. It exits 1 with `rollback to <previous> from <current> failed its health check` when that check fails too. When there is no `previous`, install an older archive from `release/` with `factory/scripts/install.sh <archive>`.
 
-A version from before #93 requires `model_instance` and `model` in `~/.config/t3fac/factory/config.yml`. The current version does not read them: it warns about them and keeps them through a save from `/settings/factory`, but never adds them, so a file copied from `factory/config.example.yml` or first written by the settings page has neither. Before rolling back to such a version, check the file has both keys and add them if not, or the restored server fails its health check with `model: is missing`. Delete them once no rollback to such a version is possible.
+A version from before #93 requires `model_instance` and `model` in `~/.config/t3fac/factory/config.yml`, and a version from before #106 requires a non-empty `repos` list as well. The current version does not read any of them: it warns about them and keeps them through a save from `/settings/factory`, but never adds them, so a file copied from `factory/config.example.yml` or first written by the settings page has none. Before rolling back to such a version, check the file has the keys that version needs and add them if not (`repos` takes `repo` and `path` per watched repo, the clone's path), or the restored server fails its health check with `model: is missing` or `repos: is missing`. Delete them once no rollback to such a version is possible.
 
 ### Handing the repo over and back
 
@@ -102,7 +102,7 @@ The Factory pages work on a phone. They run in the fork's own web, so open the f
 
    It maps the server to Tailscale HTTPS and prints a pairing link such as `https://<machine>.<tailnet>.ts.net/pair#token=...`. Treat the link as a password.
 
-3. Open the link in the phone's browser, which signs it in. Then open `/factory` on that same origin. The machine config is at `/settings/factory`. It names no model: each issue's session runs on the T3 project's default model, falling back to the default model in T3's own Settings, so the model is picked once, in T3.
+3. Open the link in the phone's browser, which signs it in. Then open `/factory` on that same origin. The machine config is at `/settings/factory`. It lists no repos: a repo is watched when its clone is a T3 project on this server and the checkout has a `.dw/config.yml` with a `factory` block, and the page shows each watched project read-only. It names no model: each issue's session runs on the T3 project's default model, falling back to the default model in T3's own Settings, so the model is picked once, in T3.
 4. Add it to the home screen: in iOS Safari, Share, then Add to Home Screen; in Android Chrome, the menu, then Add to home screen.
 
 The pages use the paired session, so there is no factory token to set. Pause, resume and stop need the `orchestration:operate` scope that a normal pairing carries. A connection through T3 Connect (the relay) does not reach the Factory pages yet; pair directly as above.

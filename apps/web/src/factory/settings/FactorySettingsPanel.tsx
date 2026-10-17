@@ -10,14 +10,6 @@ import {
 } from "../../components/settings/settingsLayout";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
-import {
-  Select,
-  SelectItem,
-  SelectPopup,
-  SelectTrigger,
-  SelectValue,
-} from "../../components/ui/select";
-import { useProjects } from "~/state/entities";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import {
   fetchFactoryConfig,
@@ -34,7 +26,6 @@ interface FormState {
   readonly poll_seconds: string;
   readonly max_concurrent_runs: string;
   readonly max_concurrent_gates: string;
-  readonly repos: ReadonlyArray<{ readonly repo: string; readonly path: string }>;
 }
 
 const EMPTY_FORM: FormState = {
@@ -42,7 +33,6 @@ const EMPTY_FORM: FormState = {
   poll_seconds: "",
   max_concurrent_runs: "",
   max_concurrent_gates: "",
-  repos: [],
 };
 
 const text = (value: unknown) => (value === undefined || value === null ? "" : String(value));
@@ -55,7 +45,6 @@ const formOf = (report: MachineConfigReport): FormState => {
     poll_seconds: text(source.poll_seconds),
     max_concurrent_runs: text(source.max_concurrent_runs),
     max_concurrent_gates: text(source.max_concurrent_gates),
-    repos: (source.repos ?? []).map((row) => ({ repo: text(row.repo), path: text(row.path) })),
   };
 };
 
@@ -66,7 +55,6 @@ const valuesOf = (form: FormState): MachineConfigValues => ({
   poll_seconds: toNumber(form.poll_seconds),
   max_concurrent_runs: toNumber(form.max_concurrent_runs),
   max_concurrent_gates: toNumber(form.max_concurrent_gates),
-  repos: form.repos.map(({ repo, path }) => ({ repo, path })),
 });
 
 type Load =
@@ -76,7 +64,7 @@ type Load =
 
 type SaveStatus = "idle" | "saving" | "saved";
 
-/** `repos[2].path` and `poll_seconds` are the field names the server reports; the wrapper's key. */
+/** `poll_seconds` is a field name the server reports; the wrapper's key. */
 const fieldKey = (error: ConfigError) => error.field?.replace(/\s/g, "");
 
 function FieldErrors({
@@ -95,43 +83,27 @@ function FieldErrors({
     ));
 }
 
-/** A machine config field is a fixed width; a repo row's field shares the row's width with its sibling. */
+/** A machine config field is a fixed width. */
 function Field({
   name,
   errors,
   children,
-  grow = false,
 }: {
   readonly name: string;
   readonly errors: ReadonlyArray<ConfigError>;
   readonly children: React.ReactNode;
-  readonly grow?: boolean;
 }) {
   return (
-    <div
-      data-field={name}
-      className={`flex w-full min-w-0 flex-col gap-1 ${grow ? "sm:flex-1 sm:basis-0" : "sm:w-144"}`}
-    >
+    <div data-field={name} className="flex w-full min-w-0 flex-col gap-1 sm:w-144">
       {children}
       <FieldErrors name={name} errors={errors} />
     </div>
   );
 }
 
-/** A saved path that no T3 project on the environment has as its root. */
-const unknownPath = (path: string, projects: ReadonlyArray<{ readonly workspaceRoot: string }>) =>
-  path !== "" && !projects.some((project) => project.workspaceRoot === path);
-
-/** A repo's inputs and Remove stack on a phone and sit in a row from `sm`. */
-const REPO_ROW =
-  "flex flex-col items-stretch gap-2 px-3 py-2 sm:flex-row sm:flex-wrap sm:items-start sm:px-4";
-
 export function FactorySettingsPanel() {
   const { environment } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
-  const projects = useProjects().filter(
-    (project) => project.environmentId === environmentId && !project.isScratch,
-  );
   const prepared = Option.getOrNull(usePreparedConnection(environmentId));
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
 
@@ -183,21 +155,8 @@ export function FactorySettingsPanel() {
     setForm(change);
     setSaveStatus("idle");
   };
-  const setText =
-    (key: Exclude<keyof FormState, "repos">) => (event: { target: { value: string } }) =>
-      edit((current) => ({ ...current, [key]: event.target.value }));
-  const editRepo = (index: number, key: "repo" | "path", value: string) =>
-    edit((current) => ({
-      ...current,
-      repos: current.repos.map((row, i) => (i === index ? { ...row, [key]: value } : row)),
-    }));
-  const setRepo = (index: number, key: "repo" | "path") => (event: { target: { value: string } }) =>
-    editRepo(index, key, event.target.value);
-  // Removing or adding a row moves every index after it, so field errors by index no longer line up.
-  const reshapeRepos = (change: (repos: FormState["repos"]) => FormState["repos"]) => {
-    edit((current) => ({ ...current, repos: change(current.repos) }));
-    setErrors((current) => current.filter((error) => !error.field?.startsWith("repos")));
-  };
+  const setText = (key: keyof FormState) => (event: { target: { value: string } }) =>
+    edit((current) => ({ ...current, [key]: event.target.value }));
 
   const save = async () => {
     const connection = preparedRef.current;
@@ -262,7 +221,6 @@ export function FactorySettingsPanel() {
     "poll_seconds",
     "max_concurrent_runs",
     "max_concurrent_gates",
-    ...form.repos.flatMap((_, index) => [`repos[${index}].repo`, `repos[${index}].path`]),
   ]);
   const topErrors = errors.filter((error) => !inputNames.has(fieldKey(error) ?? ""));
   const saving = saveStatus === "saving";
@@ -356,81 +314,6 @@ export function FactorySettingsPanel() {
         />
       </SettingsSection>
 
-      <SettingsSection
-        title="Repos"
-        headerAction={
-          <Button
-            size="xs"
-            variant="outline"
-            onClick={() => reshapeRepos((repos) => [...repos, { repo: "", path: "" }])}
-          >
-            Add repo
-          </Button>
-        }
-      >
-        {form.repos.map((row, index) => (
-          // Rows have no identity beyond their position, which is also how the server names them.
-          // eslint-disable-next-line react/no-array-index-key
-          <div key={index} className={REPO_ROW}>
-            <Field name={`repos[${index}].repo`} errors={errors} grow>
-              <Input
-                size="touch"
-                placeholder="owner/name"
-                aria-label={`Repository ${index + 1}`}
-                value={row.repo}
-                onChange={setRepo(index, "repo")}
-              />
-            </Field>
-            <Field name={`repos[${index}].path`} errors={errors} grow>
-              <Select
-                value={row.path === "" ? null : row.path}
-                onValueChange={(value) => editRepo(index, "path", value ?? "")}
-              >
-                <SelectTrigger aria-label={`Project ${index + 1}`}>
-                  <SelectValue>
-                    {(value: string | null) =>
-                      value === null
-                        ? "Choose a project"
-                        : (projects.find((project) => project.workspaceRoot === value)?.title ??
-                          `${value} (not a T3 project)`)
-                    }
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup>
-                  {projects.map((project) => (
-                    <SelectItem key={project.id} value={project.workspaceRoot}>
-                      {project.title}{" "}
-                      <span className="text-muted-foreground">{project.workspaceRoot}</span>
-                    </SelectItem>
-                  ))}
-                  {unknownPath(row.path, projects) ? (
-                    <SelectItem value={row.path} disabled>
-                      {row.path} (not a T3 project)
-                    </SelectItem>
-                  ) : null}
-                </SelectPopup>
-              </Select>
-              {unknownPath(row.path, projects) ? (
-                <p className="text-xs text-muted-foreground">
-                  Not a T3 project on this environment, so the factory cannot launch there.
-                </p>
-              ) : null}
-            </Field>
-            <Button
-              size="xs"
-              variant="ghost-destructive"
-              aria-label={`Remove repo ${index + 1}`}
-              onClick={() => reshapeRepos((repos) => repos.filter((_, i) => i !== index))}
-            >
-              Remove
-            </Button>
-          </div>
-        ))}
-        {form.repos.length === 0 ? (
-          <p className="px-3 py-2 text-xs text-muted-foreground sm:px-4">No repos are watched.</p>
-        ) : null}
-      </SettingsSection>
-
       <div className="flex items-center gap-3 px-3 sm:px-4">
         <Button size="sm" disabled={!canWrite || saving} onClick={() => void save()}>
           Save
@@ -442,7 +325,11 @@ export function FactorySettingsPanel() {
         ) : null}
       </div>
 
-      <WatchedRepos repos={report.repos} />
+      <WatchedRepos
+        repos={report.repos}
+        unresolved={report.unresolved}
+        watchError={report.watch_error}
+      />
     </SettingsPageContainer>
   );
 }

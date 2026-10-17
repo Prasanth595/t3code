@@ -5,6 +5,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { parse } from "yaml";
 
+import { asciiLower } from "./ledger/runId.ts";
+
 export const ConfigErrorSchema = Schema.Struct({
   file: Schema.String,
   field: Schema.optionalKey(Schema.String),
@@ -84,6 +86,47 @@ export interface WatchedRepo {
   readonly path: string;
 }
 
+/** A watched repo with the title of the T3 project it comes from, for the settings page. */
+export interface WatchedProject extends WatchedRepo {
+  readonly title: string;
+}
+
+/**
+ * The repos that two or more watched projects name, by the repo folded with `asciiLower`, each
+ * with the paths of its projects in order. A repo like that is watched from none of them: the
+ * factory cannot tell which checkout is its own. The pass and the settings report both ask here.
+ */
+export const ambiguousRepos = (
+  watched: ReadonlyArray<WatchedRepo>,
+): ReadonlyMap<string, ReadonlyArray<string>> => {
+  const byRepo = new Map<string, Array<string>>();
+  for (const { repo, path } of watched) {
+    const key = asciiLower(repo);
+    const paths = byRepo.get(key);
+    if (paths === undefined) byRepo.set(key, [path]);
+    else paths.push(path);
+  }
+  return new Map([...byRepo].filter(([, paths]) => paths.length > 1));
+};
+
+/** The one sentence the pass and the settings report say about a repo in `ambiguousRepos`. */
+export const ambiguousMessage = (paths: ReadonlyArray<string>): string =>
+  `${paths.length} T3 projects have this repo as their origin (${paths.join(", ")}); the factory watches none of them`;
+
+/** What the reader found: the watched projects, the repos that departed, and the checkouts it could not settle this time. */
+export interface WatchedListing {
+  /** The projects that opted in and resolved to a GitHub `owner/name`, in T3's order. A repo two projects name appears once per project. */
+  readonly repos: ReadonlyArray<WatchedProject>;
+  /**
+   * Repos, folded with `asciiLower`, that the factory watched before and watches no more, every
+   * T3 project they were watched from having been deleted since. Only these have left: a repo
+   * whose project stays (a branch without the opt-in, an unreadable checkout) is not here.
+   */
+  readonly departed: ReadonlyArray<string>;
+  /** Workspace roots of projects the reader could not settle: a `.dw/config.yml` that could not be read for a reason other than its absence, or that does not parse, an opted-in checkout T3 could not name (a null identity, or a GitHub one with no owner or name), or a git that could not run. They are skipped; the list may be short. */
+  readonly unresolved: ReadonlyArray<string>;
+}
+
 export interface MachineConfig {
   readonly ghConfigDir: string;
   readonly pollSeconds: number;
@@ -98,7 +141,6 @@ export interface MachineConfig {
   readonly maxConcurrentGates: number;
   /** Whether a new attention item posts a macOS notification. The list is kept either way. */
   readonly notify: boolean;
-  readonly repos: ReadonlyArray<WatchedRepo>;
 }
 
 type Mapping = Record<string, unknown>;
@@ -374,58 +416,33 @@ const MACHINE_KEYS = [
   "max_concurrent_runs",
   "max_concurrent_gates",
   "notify",
-  "repos",
 ] as const;
 
 /**
- * Keys the factory read before #93 and reads no more: the model comes from the T3 project's
- * default, then the T3 settings default. A file written before the change still loads, with a
- * warning per key, so the factory that builds the upgrade keeps running, and a save from the
+ * Keys the factory read before and reads no more. #93 retired the model keys: the model comes
+ * from the T3 project's default, then the T3 settings default. #106 retired `repos`: the factory
+ * watches the T3 projects of its environment. A file written before the change still loads, with
+ * a warning per key, so the factory that builds the upgrade keeps running, and a save from the
  * settings page keeps them (`settings.ts`) so a rollback to a version that requires them still
- * loads. Remove both from the file by hand once no rollback past #93 is possible.
+ * loads. Remove them from the file by hand once no rollback is possible.
  */
-export const RETIRED_MACHINE_KEYS = ["model_instance", "model"] as const;
+export const RETIRED_MACHINE_KEYS = ["model_instance", "model", "repos"] as const;
 
-const RETIRED_KEY_MESSAGE =
-  "is no longer used: the model comes from the T3 project's default model, then the T3 settings default";
-
-const REPO_KEYS = ["repo", "path"] as const;
-
-const reposFrom = (c: Checker, root: Mapping): ReadonlyArray<WatchedRepo> | undefined => {
-  const value = c.child(root, "", "repos");
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) {
-    c.err("repos", "must be a list");
-    return undefined;
-  }
-  if (value.length === 0) {
-    c.err("repos", "must not be empty");
-    return undefined;
-  }
-  const out: Array<WatchedRepo> = [];
-  let ok = true;
-  value.forEach((item, i) => {
-    const at = `repos[${i}]`;
-    const entry = c.mapping(item, at);
-    const repo = c.nonEmptyString(c.child(entry, at, "repo"), `${at}.repo`);
-    const path = c.nonEmptyString(c.child(entry, at, "path"), `${at}.path`);
-    if (repo === undefined || path === undefined) ok = false;
-    else out.push({ repo, path });
-  });
-  return ok ? out : undefined;
+const RETIRED_KEY_MESSAGES: Record<(typeof RETIRED_MACHINE_KEYS)[number], string> = {
+  model_instance:
+    "is no longer used: the model comes from the T3 project's default model, then the T3 settings default",
+  model:
+    "is no longer used: the model comes from the T3 project's default model, then the T3 settings default",
+  repos:
+    "is no longer used: the factory watches the T3 projects of this environment whose checkout has a .dw/config.yml with a factory block",
 };
 
-/** Unknown keys at any depth, after the known-field errors. Wrong-typed values are skipped. */
+/** Unknown keys at the top level, after the known-field errors; a retired key is a warning. */
 const checkUnknownKeys = (c: Checker, root: Mapping) => {
   for (const key of RETIRED_MACHINE_KEYS) {
-    if (Object.hasOwn(root, key)) c.warn(key, RETIRED_KEY_MESSAGE);
+    if (Object.hasOwn(root, key)) c.warn(key, RETIRED_KEY_MESSAGES[key]);
   }
   c.unknownKeys(root, [...MACHINE_KEYS, ...RETIRED_MACHINE_KEYS], "");
-  const repos = root["repos"];
-  if (!Array.isArray(repos)) return;
-  repos.forEach((item, i) => {
-    if (isMapping(item)) c.unknownKeys(item, REPO_KEYS, `repos[${i}].`);
-  });
 };
 
 const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
@@ -444,7 +461,6 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     1,
   );
   const notify = c.optionalBoolean(root, "", "notify", true);
-  const repos = reposFrom(c, root);
   checkUnknownKeys(c, root);
 
   if (
@@ -452,8 +468,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     pollSeconds === undefined ||
     maxConcurrentRuns === undefined ||
     maxConcurrentGates === undefined ||
-    notify === undefined ||
-    repos === undefined
+    notify === undefined
   ) {
     return undefined;
   }
@@ -463,7 +478,6 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     maxConcurrentRuns,
     maxConcurrentGates,
     notify,
-    repos,
   };
 };
 
@@ -475,6 +489,23 @@ export const parseProjectConfig = (
   const parsed = c.root(text);
   if (Result.isFailure(parsed)) return Result.fail(parsed.failure);
   return c.finish(projectFrom(c, parsed.success));
+};
+
+/**
+ * Whether a checkout's `.dw/config.yml` opts the repo into the factory: `"yes"` when the root is a
+ * mapping and its `factory` is a mapping, `"no"` when it parses but is not, and `"unparsed"` when
+ * the text is not YAML at all (a merge conflict, a half-saved file), which is a read that did not
+ * finish rather than an answer. It does not validate the block: `world.project` reads and
+ * validates the GitHub copy, and a block that does not load shows up as that repo's config errors.
+ */
+export const factoryOptIn = (text: string): "yes" | "no" | "unparsed" => {
+  let value: unknown;
+  try {
+    value = parse(text, { intAsBigInt: true });
+  } catch {
+    return "unparsed";
+  }
+  return isMapping(value) && isMapping(value["factory"]) ? "yes" : "no";
 };
 
 export const parseMachineConfig = (

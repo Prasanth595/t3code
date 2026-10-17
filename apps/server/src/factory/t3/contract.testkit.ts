@@ -40,6 +40,7 @@ import * as ManagedProjectFolders from "../../project/ManagedProjectFolders.ts";
 import * as ProjectCloneTracker from "../../project/ProjectCloneTracker.ts";
 import * as ProjectService from "../../project/ProjectService.ts";
 import * as ProjectSetupScriptRunner from "../../project/ProjectSetupScriptRunner.ts";
+import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "../../project/WorktreeSetupTracker.ts";
 import * as ProviderRegistryMock from "../../provider/testUtils/providerRegistryMock.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -49,6 +50,7 @@ import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
 import * as Events from "./events.ts";
 import * as Sessions from "./sessions.ts";
+import * as WatchedRepos from "./watchedRepos.ts";
 
 export const SIMPLE_TRANSCRIPT = new URL(
   "../../orchestration-v2/testkit/fixtures/simple/claude_transcript.ndjson",
@@ -211,6 +213,7 @@ export const layerRuntime = (input: {
         ProviderRegistryMock.layer(),
         Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
           namedProjectsRoot: path.join(input.worktreesDir, "..", "projects"),
+          scratchRoot: Effect.succeedNone,
           folderForThread: () => Effect.succeedNone,
         }),
       );
@@ -272,4 +275,19 @@ export const layerGit = GitVcsDriver.layer.pipe(
   Layer.provide(VcsProcess.layer),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-factory-contract-config-" })),
   Layer.provide(NodeServices.layer),
+);
+
+/**
+ * The reader of the watched repos over the kit's project store and the real repository identity
+ * resolver (it runs git on the project's checkout). Needs `ProjectStoreV2`, from `layerRuntime`,
+ * and NodeServices from the caller; the kit has no scratch project.
+ */
+export const layerWatchedRepos = WatchedRepos.layer.pipe(
+  Layer.provide(RepositoryIdentityResolver.layer),
+  Layer.provide(
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      namedProjectsRoot: "/unused",
+      scratchRoot: Effect.succeedNone,
+    }),
+  ),
 );
