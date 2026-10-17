@@ -305,6 +305,7 @@ import {
 } from "./chat/composerProviderState";
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { isPreviewFocused } from "../lib/previewFocus";
+import { approvalShortcutCommands } from "./focusLevels/approvalShortcuts";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
@@ -1263,7 +1264,7 @@ export default function ChatView(props: ChatViewProps) {
   const [restingComposerControlsVisible, setRestingComposerControlsVisible] = useState(false);
   const citeAssistantText = (
     citation: AssistantCitation,
-    sourceAnchor: AssistantCitationSourceAnchor,
+    sourceAnchor: AssistantCitationSourceAnchor | null,
   ) => {
     const inserted = composerRef.current?.citeAssistantText(citation, sourceAnchor) ?? false;
     if (!inserted) {
@@ -5603,6 +5604,7 @@ export default function ChatView(props: ChatViewProps) {
     composerFocus: document.activeElement?.getAttribute("data-testid") === "composer-editor",
     draftThreadRoute: routeKind === "draft",
     turnRunning: phase === "running",
+    approvalPending: activePendingApproval !== null,
     isWeb: !isElectron,
     isDesktop: isElectron,
   });
@@ -5757,6 +5759,11 @@ export default function ChatView(props: ChatViewProps) {
         if (!canInterruptRunningThread) return false;
         if (!event.repeat) void onInterruptStable();
       },
+      ...approvalShortcutCommands({
+        approval: activePendingApproval,
+        respondingRequestIds,
+        respond: onRespondToApprovalStable,
+      }),
     },
     fallback: (command) => {
       const scriptId = projectScriptIdFromCommand(command);
