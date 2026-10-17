@@ -33,6 +33,20 @@ export interface CommandLine {
   readonly durationMs: number;
 }
 
+/** A `session_interrupted` line as `readProgress` keeps it. */
+export interface Interruption {
+  /** How many interruptions the run has been through, this one included. */
+  readonly resumes: number;
+  /** The thread could not be resumed: the next attempt is started instead. */
+  readonly relaunch: boolean;
+  /** The ordinal of the run that ended, for a resume. */
+  readonly runOrdinal: number | null;
+  /** The line's branch: the thread's for a resume, where the next attempt resumes from for a relaunch; null when it names none. */
+  readonly branch: string | null;
+  /** The `interruption-sent <resumes>` step for this resume is in the ledger. */
+  readonly sent: boolean;
+}
+
 /** What a re-gate found moved since the last recorded pass, for the run's line. */
 export type Moved = "base" | "head" | "both" | "unknown";
 
@@ -87,12 +101,20 @@ export interface Seen {
   readonly githubUser: string | null;
   /** The moment in the first `approved <time>` step: when an instructor applied the label the run was approved on. */
   readonly approvedAt: string | null;
+  /** The instructor on that step's cause (`actor`), who applied the label; null when the line names none. */
+  readonly approvedBy: string | null;
   /** From the last `state_changed`; null before any. */
   readonly state: State | null;
   /** The `session_launched` line's thread. */
   readonly threadId: string | null;
   /** The `launch-sending` step: a launch call was about to be sent, so a session may exist. */
   readonly launchSent: boolean;
+  /**
+   * The branch in a `launch-sending resumed-from <branch>` step: the decision to resume, made
+   * before the first launch call. Null for a plain `launch-sending` or none. A launch sent again
+   * reads it and never asks GitHub again.
+   */
+  readonly launchResumedFrom: string | null;
   /** The `approval-rechecked` step: the issue text was checked again after the launch. */
   readonly rechecked: boolean;
   /** The `session_launched` line's worktree path. */
@@ -151,6 +173,10 @@ export interface Seen {
   readonly dropped: ReadonlySet<string>;
   /** The newest `session_paused` line: a person stopped the session's run in T3, and this is its ordinal. */
   readonly paused: { readonly runOrdinal: number | null } | null;
+  /** The newest `session_interrupted` line, until a new session is launched: the decision to resume or to relaunch. */
+  readonly interruption: Interruption | null;
+  /** The newest branch a `session_launched` or `session_interrupted` line names: where the run's work is. */
+  readonly lastBranch: string | null;
   /** Milliseconds spent in `triage` and `building` in stints that have ended. */
   readonly workedMs: number;
   /** When the stint that is running began; null when the run is not working. */
@@ -206,7 +232,19 @@ export interface Seen {
    * and pushes to this one, so a pull request from it is the session's.
    */
   readonly resumedFrom: string | null;
+  /** The run on that `resumed_from`: this run's own id for a re-gate's session, the earlier attempt's for a resume from its branch. */
+  readonly resumedFromRun: string | null;
 }
+
+/**
+ * The pull request's branch when the run's session was launched to fix a failed re-gate of this
+ * same run (its `session_launched` line's `resumed_from` names the run itself): that session works
+ * on a branch of T3's own and pushes to the pull request's, so that is where its work is. Null for
+ * a first launch, and for a session resumed from an earlier attempt's branch, whose work is on
+ * T3's branch.
+ */
+export const regateBranch = (seen: Seen, run: RunId): string | null =>
+  seen.resumedFromRun === runIdToString(run) ? seen.resumedFrom : null;
 
 /** A relaunch that was decided and whose session the ledger does not name: the launch may have reached T3. */
 export const pendingRelaunch = (seen: Seen): Relaunch | null =>
@@ -214,12 +252,16 @@ export const pendingRelaunch = (seen: Seen): Relaunch | null =>
 
 /** The ledger step that says a launch call is about to be sent. */
 export const LAUNCH_SENDING = "launch-sending";
+/** The start of the `launch-sending` step of a launch that resumes from an earlier run's branch: `launch-sending resumed-from <branch>`. */
+export const LAUNCH_SENDING_RESUMED = `${LAUNCH_SENDING} resumed-from `;
 /** The ledger step that says the issue text was checked again after the launch. */
 export const APPROVAL_RECHECKED = "approval-rechecked";
 /** The ledger step written before the reminder is sent: `result-line-reminding <k>`, `k` the ordinal of the run that ended. */
 export const RESULT_LINE_REMINDING = "result-line-reminding";
 /** The ledger step written after the reminder was sent. */
 export const RESULT_LINE_REMINDED = "result-line-reminded";
+/** The ledger step written once the resume of a `session_interrupted` line was sent: `interruption-sent <resumes>`. */
+export const INTERRUPTION_SENT = "interruption-sent";
 /** The ledger step that waits for a run newer than `k` (a forwarded comment); read here for the steps that write it. */
 export const FORWARD_WAIT = "forward-wait";
 /** The ledger step written when every message sent under a `forward-wait <k>` was refused by T3, so no run was started and the wait is over: `forward-wait-cancelled <k>`. */
@@ -281,13 +323,20 @@ export const parseGatePassed = (
   return n === null || n === 0 ? null : { sha: sha.toLowerCase(), count: n };
 };
 
+const sentInterruption = (interruption: Interruption): Interruption => ({
+  ...interruption,
+  sent: true,
+});
+
 export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let claimed = false;
   let githubUser: string | null = null;
   let approvedAt: string | null = null;
+  let approvedBy: string | null = null;
   let state: State | null = null;
   let threadId: string | null = null;
   let launchSent = false;
+  let launchResumedFrom: string | null = null;
   let rechecked = false;
   let worktree: string | null = null;
   let worktreeDone = false;
@@ -311,6 +360,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   const bodyEdits = new Set<string>();
   const dropped = new Set<string>();
   let paused: Seen["paused"] = null;
+  let interruption: Interruption | null = null;
+  let lastBranch: string | null = null;
   let workedMs = 0;
   let workingSince: number | null = entries[0]?.ms ?? null;
   const commandAttempts = new Set<number>();
@@ -334,6 +385,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let relaunch: Relaunch | null = null;
   let launchedSinceSending = false;
   let resumedFrom: string | null = null;
+  let resumedFromRun: string | null = null;
   // A wait marker names run `k`: the awaited ordinal never goes down.
   const awaitRun = (k: number, forward: boolean) => {
     if (waitingAfter === null || k >= waitingAfter) {
@@ -358,6 +410,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (typeof step !== "string") break;
         if (approvedAt === null && step.startsWith("approved ")) {
           approvedAt = step.slice("approved ".length);
+          const actor = entry.cause?.actor;
+          approvedBy = typeof actor === "string" && actor !== "" ? actor : null;
         }
         if (step === APPROVAL_RECHECKED) rechecked = true;
         if (step === RESULT_LINE_REMINDED) reminded = true;
@@ -400,6 +454,15 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           lastWait = lastWaitBefore;
           idleForwardWait = null;
         }
+        const sentRun = stepNumber(step, INTERRUPTION_SENT);
+        if (
+          sentRun !== null &&
+          interruption !== null &&
+          !interruption.relaunch &&
+          interruption.resumes === sentRun
+        ) {
+          interruption = sentInterruption(interruption);
+        }
         if (step.startsWith(`${BODY_EDIT_FORWARDED} `)) {
           bodyEdits.add(step.slice(BODY_EDIT_FORWARDED.length + 1));
           idleForwardWait = null;
@@ -409,8 +472,12 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         }
         const droppedId = commentDroppedId(step);
         if (droppedId !== null) dropped.add(droppedId);
-        if (step === LAUNCH_SENDING || step.startsWith(`${LAUNCH_SENDING} resumed-from `)) {
+        if (step === LAUNCH_SENDING) {
           launchSent = true;
+          launchResumedFrom = null;
+        } else if (step.startsWith(LAUNCH_SENDING_RESUMED)) {
+          launchSent = true;
+          launchResumedFrom = step.slice(LAUNCH_SENDING_RESUMED.length);
         }
         const gateSending = parseGateSending(step);
         if (gateSending !== null) {
@@ -479,6 +546,12 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         const from = dataField(entry.data, "resumed_from");
         const fromBranch = dataField(from, "branch");
         resumedFrom = typeof fromBranch === "string" ? fromBranch : null;
+        const fromRun = dataField(from, "run");
+        resumedFromRun = typeof fromRun === "string" ? fromRun : null;
+        const launchedBranch = dataField(entry.data, "branch");
+        if (typeof launchedBranch === "string") lastBranch = launchedBranch;
+        // A resume owed to the old thread is not owed to this one.
+        if (interruption !== null) interruption = sentInterruption(interruption);
         // A new session has run numbers of its own, one reminder, and no stop by hand yet.
         waitingAfter = null;
         waitIsForward = false;
@@ -524,6 +597,25 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
       case "pr_ready_outside":
         readyOutside = true;
         break;
+      case "session_interrupted": {
+        const resumes = number(dataField(entry.data, "resumes"));
+        const ordinal = number(dataField(entry.data, "run_ordinal"));
+        const branch = dataField(entry.data, "branch");
+        if (typeof branch === "string") lastBranch = branch;
+        if (resumes === null) break;
+        const relaunch = dataField(entry.data, "relaunch") === true;
+        interruption = {
+          resumes,
+          relaunch,
+          runOrdinal: ordinal,
+          branch: typeof branch === "string" ? branch : null,
+          sent: false,
+        };
+        // The resume starts a new run: the session is working until one newer than the run that
+        // ended has ended. Like a forward's, only a newer run drops the wait.
+        if (!relaunch && ordinal !== null) awaitRun(ordinal, true);
+        break;
+      }
       case "session_paused": {
         const ordinal = dataField(entry.data, "run_ordinal");
         paused = { runOrdinal: typeof ordinal === "number" ? ordinal : null };
@@ -643,9 +735,11 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     claimed,
     githubUser,
     approvedAt,
+    approvedBy,
     state,
     threadId,
     launchSent,
+    launchResumedFrom,
     rechecked,
     worktree,
     worktreeDone,
@@ -667,6 +761,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     bodyEdits,
     dropped,
     paused,
+    interruption,
+    lastBranch,
     workedMs,
     workingSince,
     commandAttempts,
@@ -687,6 +783,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     relaunch,
     launchedSinceSending,
     resumedFrom,
+    resumedFromRun,
   };
 };
 

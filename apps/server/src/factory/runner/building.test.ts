@@ -47,6 +47,7 @@ import {
   type AdvanceOutcome,
   type BuildingContext,
 } from "./building.ts";
+import { interruptible } from "./testSupport.ts";
 
 const tempDir = useTempDirs();
 
@@ -211,6 +212,8 @@ const statusOf = (
   archived: false,
   run,
   runOrdinal: run === null ? null : 1,
+  runStartedAt: null,
+  runCompletedAt: null,
   lastAssistantMessage: message,
   ...over,
 });
@@ -462,7 +465,7 @@ const rigFor = (
   return { dataDir, run: run10, world, gh, reads, t3, order, clock, ctx };
 };
 
-const advanceIn = (rig: Rig) => advance(rig.ctx, rig.run);
+const advanceIn = (rig: Rig) => advance(interruptible(rig.ctx), rig.run);
 
 /** GitHub says the run's issue is closed, by `by` when it names someone. */
 const closeIssue = (rig: Rig, by: string | null | GitHubError = null) => {
@@ -907,6 +910,57 @@ describe("advance: done", () => {
   );
 });
 
+/** The started run of a session that continued the branch `t3code/old` of the run before it. */
+const RESUMED: ReadonlyArray<RunEvent> = STARTED.map((event) =>
+  event.event === "session_launched"
+    ? {
+        event: "session_launched",
+        data: {
+          ...event.data,
+          resumed_from: { run: "rawphp__softfac__10__1", branch: "t3code/old" },
+        },
+      }
+    : event,
+);
+
+describe("advance: a resumed run's pull request", () => {
+  it.effect("is accepted from the branch the run resumed from", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(RESUMED);
+      rig.world.pr = { ...defaultPr(), headRef: "t3code/old" };
+      assert.deepStrictEqual(yield* advanceIn(rig), {
+        kind: "ready-for-gate",
+        pr: 12,
+        prUrl: URL12,
+      });
+      assert.deepStrictEqual(linesOf(rig), [...RESUMED, PR_OPENED]);
+    }),
+  );
+
+  it.effect("is still accepted from the run's own branch", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(RESUMED);
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+      assert.deepStrictEqual(linesOf(rig), [...RESUMED, PR_OPENED]);
+    }),
+  );
+
+  it.effect("is refused from a third branch", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(RESUMED);
+      rig.world.pr = { ...defaultPr(), headRef: "someone/else" };
+      const outcome = yield* advanceIn(rig);
+      assert.ok(
+        outcome.kind === "stuck" &&
+          outcome.reason.startsWith(
+            "the session reported PR #12 but its branch someone/else is not this session's branch",
+          ),
+        JSON.stringify(outcome),
+      );
+    }),
+  );
+});
+
 describe("advance: questions", () => {
   it.effect("posts them, releases the issue and ends the run", () =>
     Effect.gen(function* () {
@@ -942,10 +996,9 @@ describe("advance: questions", () => {
       const rig = rigFor();
       const message = "Why?\nFACTORY-STOP: needs-info";
       setStatus(rig, "failed", message);
-      assertStuck(rig, yield* advanceIn(rig), {
-        publicReason: "the session run ended as failed",
-        text: message,
-      });
+      // The pass decides about a run that ended badly (`interruption.test.ts`): nothing is written.
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "ended-badly", what: "failed" });
+      assert.deepStrictEqual(rig.gh, []);
     }),
   );
 
@@ -1273,19 +1326,21 @@ describe("advance: stuck", () => {
 
   it.effect("when the run ended badly, with its status and no reminder", () =>
     Effect.gen(function* () {
-      const ended = ["failed", "cancelled", "rolled_back"] as const;
-      for (const status of ended) {
-        const rig = rigFor();
-        setStatus(rig, status, "it crashed");
-        assertStuck(rig, yield* advanceIn(rig), {
-          publicReason: `the session run ended as ${status}`,
-          text: "it crashed",
-        });
-        assert.deepStrictEqual(stuckCauses(rig), Array(3).fill("advance session-ended-badly"));
-      }
+      // A rolled back run is a stop with no second look; a failed or cancelled one is left to
+      // the pass's decision (`interruption.test.ts`).
       const rig = rigFor();
-      setStatus(rig, "failed", null);
-      assertStuck(rig, yield* advanceIn(rig), { publicReason: "the session run ended as failed" });
+      setStatus(rig, "rolled_back", "it crashed");
+      assertStuck(rig, yield* advanceIn(rig), {
+        publicReason: "the session run ended as rolled_back",
+        text: "it crashed",
+      });
+      assert.deepStrictEqual(stuckCauses(rig), Array(3).fill("advance session-ended-badly"));
+      for (const status of ["failed", "cancelled"] as const) {
+        const other = rigFor();
+        setStatus(other, status, "it crashed");
+        assert.deepStrictEqual(yield* advanceIn(other), { kind: "ended-badly", what: status });
+        assert.deepStrictEqual(other.gh, []);
+      }
     }),
   );
 
@@ -1297,11 +1352,13 @@ describe("advance: stuck", () => {
         setStatus(rig, status, "no marker");
         const outcome = yield* advanceIn(rig);
         // A run that ended on its own with no result line is reminded; one a person stopped is
-        // paused; one that ended badly is stuck at once.
+        // paused; one that ended badly is the pass's to decide, except a rolled back one, which
+        // is stuck at once.
         if (status === "completed") assert.deepStrictEqual(outcome, { kind: "reminded" }, status);
         else if (status === "interrupted")
           assert.deepStrictEqual(outcome, { kind: "paused" }, status);
-        else assert.strictEqual(outcome.kind, "stuck", status);
+        else if (status === "rolled_back") assert.strictEqual(outcome.kind, "stuck", status);
+        else assert.deepStrictEqual(outcome, { kind: "ended-badly", what: status }, status);
       }
     }),
   );
@@ -1310,8 +1367,11 @@ describe("advance: stuck", () => {
     Effect.gen(function* () {
       const rig = rigFor();
       rig.world.status = new ThreadNotFoundError({ threadId: "thread-1" });
-      assertStuck(rig, yield* advanceIn(rig), { publicReason: THREAD_GONE });
-      assert.deepStrictEqual(stuckCauses(rig), Array(3).fill("advance thread-gone"));
+      // The pass decides about it (`interruption.test.ts`): nothing is written.
+      const before = bytesOf(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "ended-badly", what: "thread-gone" });
+      assert.deepStrictEqual(rig.gh, []);
+      assert.strictEqual(bytesOf(rig), before);
     }),
   );
 
@@ -1319,7 +1379,8 @@ describe("advance: stuck", () => {
     Effect.gen(function* () {
       const rig = rigFor();
       setStatus(rig, "completed", DONE_MESSAGE, { archived: true });
-      assertStuck(rig, yield* advanceIn(rig), { publicReason: THREAD_GONE });
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "ended-badly", what: "thread-gone" });
+      assert.deepStrictEqual(rig.gh, []);
     }),
   );
 
@@ -1397,7 +1458,7 @@ describe("advance: refused before anything is read", () => {
   it.effect("on a run with no file", () =>
     Effect.gen(function* () {
       const rig = rigFor();
-      const error = yield* Effect.flip(advance(rig.ctx, { ...run10, attempt: 2 }));
+      const error = yield* Effect.flip(advance(interruptible(rig.ctx), { ...run10, attempt: 2 }));
       assert.strictEqual(error._tag, "LedgerNotFoundError");
     }),
   );
@@ -1406,7 +1467,7 @@ describe("advance: refused before anything is read", () => {
     Effect.gen(function* () {
       const rig = rigFor();
       const other: RunId = { repo: "someone/else", issue: "10", attempt: 1 };
-      const error = yield* Effect.flip(advance(rig.ctx, other));
+      const error = yield* Effect.flip(advance(interruptible(rig.ctx), other));
       assert.strictEqual(error._tag, "WrongRepoError");
       assert.strictEqual(error.message, "run someone__else__10__1 is not a run of rawphp/softfac");
       assert.deepStrictEqual(rig.gh, []);
@@ -1418,7 +1479,10 @@ describe("advance: refused before anything is read", () => {
     Effect.gen(function* () {
       const rig = rigFor();
       setStatus(rig, "running", null);
-      const outcome = yield* advance({ ...rig.ctx, repo: "RawPHP/SoftFac" }, rig.run);
+      const outcome = yield* advance(
+        interruptible({ ...rig.ctx, repo: "RawPHP/SoftFac" }),
+        rig.run,
+      );
       assert.deepStrictEqual(outcome, { kind: "running" });
     }),
   );
@@ -1578,7 +1642,11 @@ describe("advance: the result-line reminder", () => {
       for (const status of ["failed", "cancelled", "rolled_back"] as const) {
         const rig = rigFor();
         setStatus(rig, status, WORKING_MESSAGE);
-        assert.strictEqual((yield* advanceIn(rig)).kind, "stuck", status);
+        assert.strictEqual(
+          (yield* advanceIn(rig)).kind,
+          status === "rolled_back" ? "stuck" : "ended-badly",
+          status,
+        );
         assert.deepStrictEqual(sends(rig), [], status);
       }
     }),

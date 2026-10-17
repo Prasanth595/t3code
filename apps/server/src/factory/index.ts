@@ -6,6 +6,7 @@ import * as NodeOS from "node:os";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
@@ -36,7 +37,12 @@ import { Ledger } from "./ledger/ledger.ts";
 import { listUnfinishedRuns } from "./ledger/listRuns.ts";
 import { readRun } from "./ledger/read.ts";
 import { runIdToString, type RunId } from "./ledger/runId.ts";
-import { MachineLog } from "./ledger/machineLog.ts";
+import {
+  MachineLog,
+  serverStartsSince,
+  serverStopsSince,
+  t3TroubleSince,
+} from "./ledger/machineLog.ts";
 import { runLoop, type Loop } from "./loop.ts";
 import {
   GATE_PASSED_LINE,
@@ -61,9 +67,11 @@ import {
   advance,
   forward,
   gateSendPending,
+  interrupted,
   timeLimit,
   watch,
   type BuildingContext,
+  type InterruptContext,
 } from "./runner/building.ts";
 import {
   gate as gateStep,
@@ -271,6 +279,16 @@ export const gateDecided = (step: GateStep | null): boolean =>
     step.kind === "abandoned");
 
 /** The pass over this machine: GitHub through `gh`, the ledger under `dataDir`, the wall clock. */
+/**
+ * When this server's process started, as epoch milliseconds: what the `server_started` line
+ * records at boot, for `interrupted` to compare a run's times with. A restart of the server is
+ * what cuts a running session off.
+ */
+export const serverStartedMs = (): number => Math.round(performance.timeOrigin);
+
+/** How far back `t3Starts` reads server starts: a day, longer than any run's time limit. */
+const SERVER_STARTS_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export const liveWorld = (
   machine: MachineConfig,
   dataDir: string,
@@ -316,6 +334,16 @@ export const liveWorld = (
     tracker: trackerFor(repo.watched),
     sessions,
     clock,
+  });
+  // The steps of a building run that can also start the next attempt: `advance` finishes a
+  // relaunch, `interrupted` decides one. The tracker and the sessions are the same for both.
+  const interruptContext = (repo: Repo): InterruptContext => ({
+    ...buildingContext(repo),
+    repoPath: repo.watched.path,
+    ghConfigDir: machine.ghConfigDir,
+    model: { instanceId: machine.modelInstance, model: machine.model },
+    tracker: trackerFor(repo.watched),
+    sessions,
   });
   const gateContext = (repo: Repo): GateContext => ({
     ...buildingContext(repo),
@@ -476,7 +504,11 @@ export const liveWorld = (
     timeLimit: (repo, run) => timeLimit(buildingContext(repo), run),
     watch: (repo, run) => watch(buildingContext(repo), run),
     forward: (repo, run) => forward(buildingContext(repo), run),
-    advance: (repo, run) => advance(buildingContext(repo), run),
+    advance: (repo, run) => advance(interruptContext(repo), run),
+    t3Trouble: () => ledger(() => t3TroubleSince(dataDir, clock())),
+    t3Starts: () => ledger(() => serverStartsSince(dataDir, clock() - SERVER_STARTS_WINDOW_MS)),
+    t3Stops: () => ledger(() => serverStopsSince(dataDir, clock() - SERVER_STARTS_WINDOW_MS)),
+    interrupted: (repo, run, evidence) => interrupted(interruptContext(repo), run, evidence),
     gateRunning: (run) =>
       gating.has(runIdToString(run)) || NodeFS.existsSync(gateLockFile(dataDir, run)),
     hasPendingGateSend: (run) =>
@@ -658,6 +690,28 @@ const startFactory = (options: RuntimeOptions) =>
         scope: yield* Effect.scope,
       },
       options.gateRemoteBase,
+    );
+    // This start, for `interrupted` to weigh a session that ended badly against: a restart cut it
+    // off if it was running then. A log that cannot take the line costs that evidence, not the boot.
+    yield* world
+      .record({ event: "server_started", data: { started_at: serverStartedMs() } })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("cannot record the server start in the machine log", cause),
+        ),
+      );
+    // And the stop, as this scope closes: the server's shutdown marks every running turn
+    // `cancelled` about then, so a run that ended between this line and the next start was cut
+    // off by the restart, however long the server stays down.
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* () {
+        const stoppingAt = yield* Clock.currentTimeMillis;
+        yield* world.record({ event: "server_stopping", data: { stopping_at: stoppingAt } });
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("cannot record the server stop in the machine log", cause),
+        ),
+      ),
     );
     // The threads of the unfinished runs, read at start and after every pass: a pass is what
     // launches and finishes sessions, so between passes the set does not change.
