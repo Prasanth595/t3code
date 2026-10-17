@@ -11,6 +11,7 @@ import { ReactNodeViewRenderer, NodeViewWrapper, type NodeViewProps } from "@tip
 import StarterKit from "@tiptap/starter-kit";
 import { type Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
+import { isHistoryTransaction } from "@tiptap/pm/history";
 import {
   type EditorState,
   NodeSelection,
@@ -759,6 +760,15 @@ const ComposerMarkersExtension = Extension.create({
 
 type TiptapEditor = NonNullable<ReturnType<typeof useEditor>>;
 
+function replaceSkillChips(
+  editor: TiptapEditor,
+  replacements: ReturnType<typeof skillChipReplacements>,
+): void {
+  const transaction = editor.state.tr.setMeta("addToHistory", false);
+  for (const { from, to, node } of replacements) transaction.replaceWith(from, to, node);
+  editor.view.dispatch(transaction);
+}
+
 export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
   const { onChange: onPromptChange } = props;
   const [selection, setSelection] = useState<{
@@ -1419,7 +1429,17 @@ function ComposerPromptEditorTiptapInner(
           return true;
         },
       },
-      onUpdate: ({ editor: updated }) => {
+      onUpdate: ({ editor: updated, transaction }) => {
+        // Undo can restore a chip for a skill the current provider no longer offers.
+        if (!literalText && isHistoryTransaction(transaction)) {
+          const stale = skillChipReplacements(updated.state.doc, skillLabelFor).filter(
+            ({ node }) => node.isText,
+          );
+          if (stale.length > 0) {
+            replaceSkillChips(updated, stale);
+            return;
+          }
+        }
         handleEditorChange(updated);
       },
       onSelectionUpdate: ({ editor: updated }) => {
@@ -1597,10 +1617,7 @@ function ComposerPromptEditorTiptapInner(
     const replacements = skillChipReplacements(editor.state.doc, (name) =>
       composerSkillMeta(skills, name),
     );
-    if (replacements.length === 0) return;
-    const transaction = editor.state.tr.setMeta("addToHistory", false);
-    for (const { from, to, node } of replacements) transaction.replaceWith(from, to, node);
-    editor.view.dispatch(transaction);
+    if (replacements.length > 0) replaceSkillChips(editor, replacements);
   }, [editor, literalText, skills]);
 
   const focusAt = (nextCursor: number, exactExpandedCursor?: number) => {
