@@ -482,18 +482,20 @@ export const parseProjectConfig = (
 };
 
 /**
- * Whether a checkout's `.dw/config.yml` opts the repo into the factory: the root is a mapping and
- * its `factory` is a mapping. It does not validate the block: `world.project` reads and validates
- * the GitHub copy, and a block that does not load shows up as that repo's config errors.
+ * Whether a checkout's `.dw/config.yml` opts the repo into the factory: `"yes"` when the root is a
+ * mapping and its `factory` is a mapping, `"no"` when it parses but is not, and `"unparsed"` when
+ * the text is not YAML at all (a merge conflict, a half-saved file), which is a read that did not
+ * finish rather than an answer. It does not validate the block: `world.project` reads and
+ * validates the GitHub copy, and a block that does not load shows up as that repo's config errors.
  */
-export const hasFactoryBlock = (text: string): boolean => {
+export const factoryOptIn = (text: string): "yes" | "no" | "unparsed" => {
   let value: unknown;
   try {
     value = parse(text, { intAsBigInt: true });
   } catch {
-    return false;
+    return "unparsed";
   }
-  return isMapping(value) && isMapping(value["factory"]);
+  return isMapping(value) && isMapping(value["factory"]) ? "yes" : "no";
 };
 
 export const parseMachineConfig = (

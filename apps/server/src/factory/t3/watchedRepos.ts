@@ -10,7 +10,7 @@ import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ManagedProjectFolders from "../../project/ManagedProjectFolders.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import {
-  hasFactoryBlock,
+  factoryOptIn,
   PROJECT_CONFIG_PATH,
   type WatchedListing,
   type WatchedProject,
@@ -25,8 +25,8 @@ import {
  * project that did not opt in, are left out without a word: no error, no attention item.
  *
  * What the reader could not settle is reported in `unresolved`, not dropped: a config file that
- * could not be read for a reason other than its absence, and an opted-in checkout T3 could not
- * identify (git failed or timed out). The pass keeps its attention items while there are any.
+ * could not be read for a reason other than its absence, a config file that does not parse, and
+ * an opted-in checkout T3 could not identify (git failed or timed out). The pass keeps its attention items while there are any.
  *
  * The config file is read before the repository identity, so git is not run for the projects
  * that are not factory repos. The file is read from the checkout on disk; the loop still reads
@@ -83,7 +83,14 @@ export const make = Effect.gen(function* () {
               ),
         ),
       );
-      if (Option.isNone(text) || !hasFactoryBlock(text.value)) continue;
+      if (Option.isNone(text)) continue;
+      const optIn = factoryOptIn(text.value);
+      if (optIn === "unparsed") {
+        // A conflicted or half-saved file is a read that did not finish, not a project that left.
+        unresolved.push(row.workspaceRoot);
+        continue;
+      }
+      if (optIn === "no") continue;
       const identity = yield* identities.resolve(row.workspaceRoot);
       if (identity === null) {
         // Git failed or timed out, and T3 caches the null for a minute.
