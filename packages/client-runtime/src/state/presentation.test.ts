@@ -76,7 +76,9 @@ describe("environment summary subscriptions", () => {
       for (let i = 0; i < 20; i++) {
         const next = config(false, `/workspace-${i}`);
         h.registry.set(h.configs(FIRST), next);
-        expect(h.registry.get(h.full.presentationsAtom).get(FIRST)?.serverConfig).toBe(next);
+        expect(h.registry.get(h.full.presentationsAtom).get(FIRST)?.serverConfig?.cwd).toBe(
+          next.cwd,
+        );
         expect(h.registry.get(h.environmentIdsAtom)).toBe(initialIds);
         expect(h.registry.get(h.identitiesAtom)).toBe(initialLabels);
         h.registry.get(h.environmentsAtom);
@@ -103,6 +105,38 @@ describe("environment summary subscriptions", () => {
       expect(h.registry.get(h.environmentsAtom)[0]?.environmentLabel).toBe("Renamed");
       expect(counts.labels).toBe(1);
       expect(counts.ids).toBe(0);
+    } finally {
+      stops.forEach((stop) => stop());
+      h.registry.dispose();
+    }
+  });
+
+  it("keeps presentations identical when only provider statuses change", () => {
+    const h = harness();
+    const pushes = { presentations: 0, providers: 0 };
+    const stops = [
+      h.registry.subscribe(h.full.presentationsAtom, () => pushes.presentations++),
+      h.registry.subscribe(h.full.providersByEnvironmentAtom, () => pushes.providers++),
+    ];
+    try {
+      const base = config();
+      h.registry.set(h.configs(FIRST), { ...base, providers: [] } as ServerConfig);
+      const presentations = h.registry.get(h.full.presentationsAtom);
+      const before = { ...pushes };
+      const providers = [{ instanceId: "codex" }] as unknown as ServerConfig["providers"];
+      h.registry.set(h.configs(FIRST), { ...base, providers } as ServerConfig);
+
+      expect(h.registry.get(h.full.presentationsAtom)).toBe(presentations);
+      expect(h.registry.get(h.full.providersByEnvironmentAtom).get(FIRST)).toBe(providers);
+      expect(
+        h.registry.get(h.full.presentationsWithProvidersAtom).get(FIRST)?.serverConfig,
+      ).toEqual({ ...base, providers });
+      expect(pushes.presentations).toBe(before.presentations);
+      expect(pushes.providers).toBe(before.providers + 1);
+
+      h.registry.set(h.configs(FIRST), { ...base, cwd: "/moved", providers } as ServerConfig);
+      expect(h.registry.get(h.full.presentationsAtom).get(FIRST)?.serverConfig?.cwd).toBe("/moved");
+      expect(h.registry.get(h.full.providersByEnvironmentAtom).get(FIRST)).toBe(providers);
     } finally {
       stops.forEach((stop) => stop());
       h.registry.dispose();
