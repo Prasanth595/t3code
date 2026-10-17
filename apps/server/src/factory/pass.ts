@@ -123,7 +123,7 @@ export interface PassWorld {
   readonly t3Trouble: () => Effect.Effect<string | null, LedgerError>;
   /** The server starts recorded in the machine log in the last day (`server_started`), oldest first: the rest of the evidence `interrupted` gets. */
   readonly t3Starts: () => Effect.Effect<ReadonlyArray<number>, LedgerError>;
-  /** The server stops recorded in the machine log in the last day (`server_stopping`), oldest first. */
+  /** The `server_stopping` each start of the last day follows, whatever its age, oldest first. */
   readonly t3Stops: () => Effect.Effect<ReadonlyArray<number>, LedgerError>;
   /** Decides about a session `advance` said ended badly, with the pass's evidence: `interrupted`. */
   readonly interrupted: (
