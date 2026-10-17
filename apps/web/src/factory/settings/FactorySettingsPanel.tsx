@@ -112,6 +112,10 @@ function Field({
   );
 }
 
+/** A repo's inputs and Remove stack on a phone and sit in a row from `sm`. */
+const REPO_ROW =
+  "flex flex-col items-stretch gap-2 px-3 py-2 sm:flex-row sm:flex-wrap sm:items-start sm:px-4";
+
 export function FactorySettingsPanel() {
   const { environment } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
@@ -226,7 +230,7 @@ export function FactorySettingsPanel() {
   if (load.status === "error") {
     return (
       <SettingsPageContainer>
-        <div className="flex items-center gap-3 px-3 text-sm sm:px-4">
+        <div className="flex flex-wrap items-center gap-3 px-3 text-sm sm:px-4">
           <p role="alert" className="text-destructive-foreground">
             {load.message}
           </p>
@@ -256,8 +260,9 @@ export function FactorySettingsPanel() {
     <SettingsPageContainer>
       <div className="flex flex-col gap-2 px-3 text-sm sm:px-4">
         {!report.exists ? (
-          <p className="text-muted-foreground">
-            {`No config file exists at ${report.file}. Saving creates it.`}
+          <p className="min-w-0 text-muted-foreground">
+            No config file exists at <code className="break-all">{report.file}</code>. Saving
+            creates it.
           </p>
         ) : null}
         {!canWrite ? (
@@ -286,7 +291,7 @@ export function FactorySettingsPanel() {
           control={
             <Field name="gh_config_dir" errors={errors}>
               <Input
-                size="sm"
+                size="touch"
                 font="mono"
                 aria-label="GitHub config directory"
                 value={form.gh_config_dir}
@@ -301,7 +306,7 @@ export function FactorySettingsPanel() {
           control={
             <Field name="poll_seconds" errors={errors}>
               <Input
-                size="sm"
+                size="touch"
                 type="number"
                 aria-label="Poll seconds"
                 value={form.poll_seconds}
@@ -315,7 +320,7 @@ export function FactorySettingsPanel() {
           control={
             <Field name="max_concurrent_runs" errors={errors}>
               <Input
-                size="sm"
+                size="touch"
                 type="number"
                 aria-label="Max concurrent runs"
                 value={form.max_concurrent_runs}
@@ -329,7 +334,7 @@ export function FactorySettingsPanel() {
           control={
             <Field name="max_concurrent_gates" errors={errors}>
               <Input
-                size="sm"
+                size="touch"
                 type="number"
                 aria-label="Max concurrent gates"
                 value={form.max_concurrent_gates}
@@ -343,7 +348,7 @@ export function FactorySettingsPanel() {
           control={
             <Field name="model_instance" errors={errors}>
               <Input
-                size="sm"
+                size="touch"
                 aria-label="Model instance"
                 value={form.model_instance}
                 onChange={setText("model_instance")}
@@ -355,7 +360,12 @@ export function FactorySettingsPanel() {
           title="Model"
           control={
             <Field name="model" errors={errors}>
-              <Input size="sm" aria-label="Model" value={form.model} onChange={setText("model")} />
+              <Input
+                size="touch"
+                aria-label="Model"
+                value={form.model}
+                onChange={setText("model")}
+              />
             </Field>
           }
         />
@@ -376,10 +386,10 @@ export function FactorySettingsPanel() {
         {form.repos.map((row, index) => (
           // Rows have no identity beyond their position, which is also how the server names them.
           // eslint-disable-next-line react/no-array-index-key
-          <div key={index} className="flex flex-wrap items-start gap-2 px-3 py-2 sm:px-4">
+          <div key={index} className={REPO_ROW}>
             <Field name={`repos[${index}].repo`} errors={errors}>
               <Input
-                size="sm"
+                size="touch"
                 placeholder="owner/name"
                 aria-label={`Repository ${index + 1}`}
                 value={row.repo}
@@ -388,7 +398,7 @@ export function FactorySettingsPanel() {
             </Field>
             <Field name={`repos[${index}].path`} errors={errors}>
               <Input
-                size="sm"
+                size="touch"
                 font="mono"
                 placeholder="/path/to/checkout"
                 aria-label={`Path ${index + 1}`}

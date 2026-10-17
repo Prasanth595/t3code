@@ -18,20 +18,22 @@ export function AttentionList({
       <ul className="flex flex-col gap-2">
         {items.map((item) => (
           <li
-            className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border bg-card px-3 py-2 text-sm"
+            className="flex flex-col gap-1 rounded-lg border bg-card px-3 py-2 text-sm"
             key={item.id}
           >
-            <Badge variant="warning">{item.kind}</Badge>
-            {item.repo ? (
-              <span className="font-mono text-xs">
-                {item.repo}
-                {item.issue !== null ? `#${item.issue}` : null}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <Badge variant="warning">{item.kind}</Badge>
+              {item.repo ? (
+                <span className="min-w-0 break-all font-mono text-xs">
+                  {item.repo}
+                  {item.issue !== null ? `#${item.issue}` : null}
+                </span>
+              ) : null}
+              <span className="ml-auto text-xs text-muted-foreground">
+                {formatAge(Date.parse(item.first_seen), nowMs)}
               </span>
-            ) : null}
-            <span className="min-w-0 flex-1">{item.message}</span>
-            <span className="text-xs text-muted-foreground">
-              {formatAge(Date.parse(item.first_seen), nowMs)}
-            </span>
+            </div>
+            <p className="w-full break-words">{item.message}</p>
           </li>
         ))}
       </ul>

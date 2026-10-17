@@ -52,6 +52,7 @@ export function FactoryPage() {
   } else {
     body = (
       <>
+        <AttentionList items={report.attention} nowMs={nowMs} />
         {stale ? (
           <Alert variant="error">
             <AlertDescription>Could not refresh: {messageOf(stale.error)}</AlertDescription>
@@ -69,7 +70,16 @@ export function FactoryPage() {
             </AlertDescription>
           </Alert>
         ) : null}
-        <AttentionList items={report.attention} nowMs={nowMs} />
+        {paused ? (
+          <p className="text-sm text-muted-foreground">
+            Claims paused since {formatAge(Date.parse(paused.since), nowMs)}
+          </p>
+        ) : null}
+        {note ? (
+          <p className="break-words text-sm text-muted-foreground" role="status">
+            {note}
+          </p>
+        ) : null}
         <RunsTable
           nowMs={nowMs}
           onShowAll={() => setAllRuns(true)}
@@ -85,39 +95,19 @@ export function FactoryPage() {
     <FactoryFrame
       header={
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <h1 className="text-sm font-medium">Factory</h1>
+          <h1 className="min-w-0 truncate text-sm font-medium">Factory</h1>
           {report ? (
-            <div className="ml-auto flex items-center gap-3">
-              {note ? (
-                <span className="truncate text-xs text-muted-foreground" role="status">
-                  {note}
-                </span>
-              ) : null}
-              {paused ? (
-                <>
-                  <span className="text-xs text-muted-foreground">
-                    paused since {formatAge(Date.parse(paused.since), nowMs)}
-                  </span>
-                  <Button
-                    disabled={busy}
-                    onClick={() => void control(() => factoryApi.resumeClaims())}
-                    size="sm"
-                    variant="outline"
-                  >
-                    Resume claims
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  disabled={busy}
-                  onClick={() => void control(() => factoryApi.pauseClaims())}
-                  size="sm"
-                  variant="outline"
-                >
-                  Pause claims
-                </Button>
-              )}
-            </div>
+            <Button
+              className="ml-auto shrink-0"
+              disabled={busy}
+              onClick={() =>
+                void control(() => (paused ? factoryApi.resumeClaims() : factoryApi.pauseClaims()))
+              }
+              size="sm"
+              variant="outline"
+            >
+              {paused ? "Resume claims" : "Pause claims"}
+            </Button>
           ) : null}
         </div>
       }

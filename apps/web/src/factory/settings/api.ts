@@ -1,12 +1,10 @@
 /**
- * The factory's machine config over HTTP: `GET` and `PUT /api/factory/config`. The factory API is
- * not part of the typed environment HTTP API (that is the point of the seam, see
- * factory/docs/design.md), so this is a plain `fetch` that carries the connection's credential
- * itself: the session cookie when there is no bearer token, `Authorization: Bearer` when there is.
- * A relay (DPoP) connection needs a signed proof per request, which the shared helper only issues
- * for the typed API groups, so it is reported as unsupported rather than sent unauthenticated.
+ * The factory's machine config over HTTP: `GET` and `PUT /api/factory/config`, sent on the given
+ * connection by the factory's shared request helper (see `../http.ts`).
  */
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
+
+import { factoryRequest, failureMessage, parseJson } from "../http";
 
 export interface ConfigError {
   readonly file: string;
@@ -78,6 +76,8 @@ export type FactoryConfigResult =
   | { readonly kind: "forbidden" }
   | { readonly kind: "error"; readonly message: string };
 
+const isObject = (value: unknown): value is object => typeof value === "object" && value !== null;
+
 const CONFIG_PATH = "/api/factory/config";
 
 const request = async (
@@ -85,46 +85,23 @@ const request = async (
   method: "GET" | "PUT",
   body?: MachineConfigValues,
 ): Promise<FactoryConfigResult> => {
-  const authorization = prepared.httpAuthorization;
-  if (authorization?._tag === "Dpop") {
-    return {
-      kind: "error",
-      message: "The factory settings are not available over a relay connection yet.",
-    };
-  }
   try {
-    const response = await fetch(`${prepared.httpBaseUrl.replace(/\/+$/, "")}${CONFIG_PATH}`, {
-      method,
-      // A cookie session sends no header; a bearer token must not also send cookies.
-      credentials: authorization === null ? "include" : "omit",
-      headers: {
-        accept: "application/json",
-        ...(authorization === null ? {} : { authorization: `Bearer ${authorization.token}` }),
-        ...(body === undefined ? {} : { "content-type": "application/json" }),
-      },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    });
+    const response = await factoryRequest(prepared, { method, path: CONFIG_PATH, body });
+    const parsed = parseJson(response.text);
     if (response.status === 403) return { kind: "forbidden" };
-    if (response.status === 422) {
-      const parsed = (await response.json()) as { errors?: ReadonlyArray<ConfigError> };
-      return { kind: "invalid", errors: parsed.errors ?? [] };
+    if (response.status < 200 || response.status >= 300) {
+      if (response.status === 422 && isObject(parsed)) {
+        const errors = (parsed as { errors?: ReadonlyArray<ConfigError> }).errors;
+        return { kind: "invalid", errors: errors ?? [] };
+      }
+      return { kind: "error", message: failureMessage(response.status, parsed) };
     }
-    if (!response.ok) {
-      return { kind: "error", message: await failureMessage(response) };
+    if (!isObject(parsed)) {
+      return { kind: "error", message: "The factory's answer was not JSON." };
     }
-    return { kind: "ok", report: (await response.json()) as MachineConfigReport };
+    return { kind: "ok", report: parsed as unknown as MachineConfigReport };
   } catch (cause) {
     return { kind: "error", message: cause instanceof Error ? cause.message : String(cause) };
-  }
-};
-
-const failureMessage = async (response: Response) => {
-  const fallback = `The factory answered ${response.status}.`;
-  try {
-    const parsed = (await response.json()) as { message?: unknown };
-    return typeof parsed.message === "string" ? parsed.message : fallback;
-  } catch {
-    return fallback;
   }
 };
 

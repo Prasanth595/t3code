@@ -4,10 +4,11 @@ import {
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { viewport } from "../testing";
 import type { FactoryConfigResult, MachineConfigReport } from "./api";
 
 const mocks = vi.hoisted(() => ({
@@ -33,14 +34,27 @@ vi.mock("./api", () => ({
   saveFactoryConfig: mocks.saveFactoryConfig,
 }));
 vi.mock("../../components/ui/input", () => ({ Input: "input" }));
-vi.mock("../../components/ui/button", () => ({ Button: "button" }));
+vi.mock("../../components/ui/button", async () => {
+  const { cloneElement } = await import("react");
+  return {
+    Button: "button",
+    InlineButton: ({ render, children }: { render: ReactElement; children?: ReactNode }) =>
+      cloneElement(render, undefined, children),
+  };
+});
 vi.mock("../../components/settings/settingsLayout", async () => {
   const { createElement } = await import("react");
   return {
     SettingsPageContainer: (props: { children: ReactNode }) =>
       createElement("div", null, props.children),
-    SettingsSection: (props: { title: string; children: ReactNode }) =>
-      createElement("section", null, createElement("h2", null, props.title), props.children),
+    SettingsSection: (props: { title: string; headerAction?: ReactNode; children: ReactNode }) =>
+      createElement(
+        "section",
+        null,
+        createElement("h2", null, props.title),
+        props.headerAction,
+        props.children,
+      ),
     SettingsRow: (props: {
       title: string;
       description?: ReactNode;
@@ -194,7 +208,8 @@ describe("FactorySettingsPanel", () => {
     mocks.saveFactoryConfig.mockResolvedValue(ok(report({ exists: true })));
     const root = await open();
 
-    expect(textOf(root)).toContain(`No config file exists at ${FILE}`);
+    expect(textOf(root)).toContain("No config file exists at");
+    expect(textOf(root)).toContain(FILE);
     expect(input(root, "Poll seconds").props.value).toBe("60");
     expect(input(root, "Model instance").props.value).toBe("claudeAgent");
 
@@ -380,5 +395,43 @@ describe("FactorySettingsPanel", () => {
 
     expect(button(root, "Save").props.disabled).toBe(true);
     expect(textOf(root)).toContain("read-only");
+  });
+  describe.each([375, 1280])("at %i px", (width) => {
+    it("lets a long config path break instead of overflowing", async () => {
+      const restore = viewport(width);
+      try {
+        const long = `/Users/someone/${"deeply/".repeat(12)}.t3/factory/config.yml`;
+        mocks.fetchFactoryConfig.mockResolvedValue(ok(report({ exists: false, file: long })));
+        const root = await open();
+        const holder = root.findAll(
+          (node) => typeof node.type === "string" && node.children.includes(long),
+        );
+        expect(holder).toHaveLength(1);
+        expect(String(holder[0]!.props.className)).toContain("break-all");
+      } finally {
+        restore();
+      }
+    });
+
+    it("asks for touch-sized inputs, with Save present", async () => {
+      const restore = viewport(width);
+      try {
+        mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
+        const root = await open();
+        const inputs = root.findAll((node) => node.type === "input");
+        // Six machine fields, then a repo and a path for each of the two repos.
+        expect(inputs).toHaveLength(10);
+        expect(inputs.map((node) => node.props.size)).toEqual(inputs.map(() => "touch"));
+        const buttons = root.findAll((node) => node.type === "button");
+        expect(buttons.map((node) => textOf(node).trim())).toEqual([
+          "Add repo",
+          "Remove",
+          "Remove",
+          "Save",
+        ]);
+      } finally {
+        restore();
+      }
+    });
   });
 });

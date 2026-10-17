@@ -1,8 +1,9 @@
 import { Link } from "@tanstack/react-router";
 import { useMemo } from "react";
 
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { Badge } from "~/components/ui/badge";
-import { Button } from "~/components/ui/button";
+import { Button, InlineButton } from "~/components/ui/button";
 import { Empty, EmptyHeader, EmptyTitle } from "~/components/ui/empty";
 import {
   Table,
@@ -15,6 +16,7 @@ import {
 
 import type { FactoryRunRow } from "./api";
 import { formatAge, labelForState, parseRunId, stateBadgeVariant } from "./format";
+import { TouchLink } from "./TouchLink";
 
 const startedMs = (run: FactoryRunRow) =>
   run.started_ts ? Date.parse(run.started_ts) : Number.NaN;
@@ -33,6 +35,85 @@ const prLabel = (url: string) => {
   return match ? `#${match[1]}` : "PR";
 };
 
+/** The issue of a run id: `#20` linked to GitHub when numeric, else the bare text. */
+const issueRef = (parsed: NonNullable<ReturnType<typeof parseRunId>>) =>
+  /^[0-9]+$/.test(parsed.issue)
+    ? {
+        text: `#${parsed.issue}`,
+        href: `https://github.com/${parsed.owner}/${parsed.repo}/issues/${parsed.issue}`,
+      }
+    : { text: parsed.issue, href: null };
+
+/** The pull request of a run: linked only for a github.com URL, else the URL as text. */
+const prRef = (url: string | null | undefined) => {
+  if (!url) return null;
+  return url.startsWith("https://github.com/")
+    ? { text: prLabel(url), href: url }
+    : { text: url, href: null };
+};
+
+const stateBadge = (run: FactoryRunRow) =>
+  run.unreadable ? (
+    <Badge variant="error">unreadable</Badge>
+  ) : (
+    <Badge variant={stateBadgeVariant(run.state)}>{labelForState(run.state)}</Badge>
+  );
+
+/** A reference that is a link when it has a target, else plain text; `touch` on the phone cards. */
+function Ref({
+  text,
+  href,
+  touch = false,
+}: {
+  text: string;
+  href: string | null;
+  touch?: boolean;
+}) {
+  if (href === null) return <span className="min-w-0 break-all">{text}</span>;
+  const anchor = <a href={href} rel="noreferrer" target="_blank" />;
+  return touch ? (
+    <TouchLink render={anchor}>{text}</TouchLink>
+  ) : (
+    <InlineButton render={anchor}>{text}</InlineButton>
+  );
+}
+
+/**
+ * One run for a phone: a link to the run that is the card's main tap target, and below it, outside
+ * that link so no anchor nests in another, the links to the issue and the pull request.
+ */
+function RunCard({ run, nowMs }: { run: FactoryRunRow; nowMs: number }) {
+  const parsed = parseRunId(run.id);
+  const issue = parsed ? issueRef(parsed) : null;
+  const pr = prRef(run.pr_url);
+  return (
+    <li className="flex flex-col rounded-lg border bg-card text-sm">
+      <Link
+        className="flex min-h-11 flex-col gap-1 px-3 py-2"
+        params={{ runId: run.id }}
+        to="/factory/$runId"
+      >
+        <span className="flex items-start justify-between gap-2">
+          <span className="min-w-0 break-words font-medium">
+            {parsed ? `${parsed.owner}/${parsed.repo}` : run.id}
+          </span>
+          {stateBadge(run)}
+        </span>
+        <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+          <span className="min-w-0 break-words">{run.step ?? run.last_event ?? "—"}</span>
+          <span>{formatAge(startedMs(run), nowMs)}</span>
+        </span>
+      </Link>
+      {issue || pr ? (
+        <span className="flex flex-wrap items-center gap-x-4 px-3 text-xs text-muted-foreground">
+          {issue ? <Ref {...issue} touch /> : null}
+          {pr ? <Ref {...pr} touch /> : null}
+        </span>
+      ) : null}
+    </li>
+  );
+}
+
 /**
  * The runs the server listed: by default every unfinished run and the finished ones of the last
  * week (`partial`), kept fresh by the poll, or every run the factory ever made, read once.
@@ -50,6 +131,7 @@ export function RunsTable({
   onShowAll: () => void;
   onShowRecent: () => void;
 }) {
+  const cards = useMediaQuery("max-sm");
   const sorted = useMemo(() => [...runs].sort(newestFirst), [runs]);
   const showAll = partial ? (
     <Button onClick={onShowAll} size="sm" variant="ghost">
@@ -73,6 +155,18 @@ export function RunsTable({
       </Empty>
     );
   }
+  if (cards) {
+    return (
+      <>
+        <ul className="flex flex-col gap-2" data-layout="cards">
+          {sorted.map((run) => (
+            <RunCard key={run.id} nowMs={nowMs} run={run} />
+          ))}
+        </ul>
+        {showAll}
+      </>
+    );
+  }
   return (
     <>
       <Table>
@@ -90,50 +184,16 @@ export function RunsTable({
         <TableBody>
           {sorted.map((run) => {
             const parsed = parseRunId(run.id);
+            const issue = parsed ? issueRef(parsed) : null;
+            const pr = prRef(run.pr_url);
             return (
               <TableRow key={run.id}>
                 <TableCell>{parsed ? `${parsed.owner}/${parsed.repo}` : "—"}</TableCell>
-                <TableCell>
-                  {parsed ? (
-                    /^[0-9]+$/.test(parsed.issue) ? (
-                      <a
-                        className="underline-offset-2 hover:underline"
-                        href={`https://github.com/${parsed.owner}/${parsed.repo}/issues/${parsed.issue}`}
-                        rel="noreferrer"
-                        target="_blank"
-                      >
-                        #{parsed.issue}
-                      </a>
-                    ) : (
-                      parsed.issue
-                    )
-                  ) : (
-                    "—"
-                  )}
-                </TableCell>
-                <TableCell>
-                  {run.unreadable ? (
-                    <Badge variant="error">unreadable</Badge>
-                  ) : (
-                    <Badge variant={stateBadgeVariant(run.state)}>{labelForState(run.state)}</Badge>
-                  )}
-                </TableCell>
+                <TableCell>{issue ? <Ref {...issue} /> : "—"}</TableCell>
+                <TableCell>{stateBadge(run)}</TableCell>
                 <TableCell>{run.step ?? run.last_event ?? "—"}</TableCell>
                 <TableCell>{formatAge(startedMs(run), nowMs)}</TableCell>
-                <TableCell>
-                  {run.pr_url?.startsWith("https://github.com/") ? (
-                    <a
-                      className="underline-offset-2 hover:underline"
-                      href={run.pr_url}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      {prLabel(run.pr_url)}
-                    </a>
-                  ) : (
-                    run.pr_url || "—"
-                  )}
-                </TableCell>
+                <TableCell>{pr ? <Ref {...pr} /> : "—"}</TableCell>
                 <TableCell>
                   <Link
                     className="font-mono text-xs underline-offset-2 hover:underline"

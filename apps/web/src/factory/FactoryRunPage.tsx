@@ -2,6 +2,7 @@ import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -27,6 +28,7 @@ import {
   stateBadgeVariant,
   threadIdOf,
 } from "./format";
+import { TouchLink } from "./TouchLink";
 import { useFactoryRun } from "./useFactoryData";
 
 /** Pairs each item with a key unique within the list, though two rows may read the same. */
@@ -41,13 +43,32 @@ function keyed<T>(items: ReadonlyArray<T>, base: (item: T) => string): Array<[st
 }
 
 function GateOutput({ entries }: { entries: ReadonlyArray<FactoryEntry> }) {
+  const stacked = useMediaQuery("max-sm");
   const gate = lastGateOutput(entries);
   const empty = gate.commands.length === 0 && gate.message === null && gate.stuckReason === null;
   return (
     <section className="flex flex-col gap-2">
       <h2 className="text-sm font-medium">Last gate output</h2>
       {empty ? <p className="text-sm text-muted-foreground">No gate has run</p> : null}
-      {gate.commands.length > 0 ? (
+      {gate.commands.length > 0 && stacked ? (
+        <ul className="flex flex-col gap-2" data-layout="list">
+          {keyed(gate.commands, (command) => command.command).map(([key, command]) => (
+            <li
+              className="flex flex-col gap-1 rounded-lg border bg-card px-3 py-2 text-sm"
+              key={key}
+            >
+              <span className="break-all font-mono text-xs">{command.command}</span>
+              <span className="flex items-center gap-3 text-xs text-muted-foreground">
+                <Badge variant={command.exit_code === 0 ? "success" : "error"}>
+                  {command.exit_code}
+                </Badge>
+                <span>{command.duration_ms} ms</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {gate.commands.length > 0 && !stacked ? (
         <Table>
           <TableHeader>
             <TableRow>
@@ -95,11 +116,29 @@ function Ledger({
   truncated: boolean;
   skipped: number;
 }) {
+  const stacked = useMediaQuery("max-sm");
   return (
     <section className="flex flex-col gap-2">
       <h2 className="text-sm font-medium">Ledger</h2>
       {entries.length === 0 ? (
         <p className="text-sm text-muted-foreground">No ledger entries</p>
+      ) : stacked ? (
+        <ul className="flex flex-col gap-2" data-layout="list">
+          {keyed(entries, (entry) => `${entry.ts} ${entry.event}`).map(([key, entry]) => (
+            <li
+              className="flex flex-col gap-0.5 rounded-lg border bg-card px-3 py-2 text-sm"
+              key={key}
+            >
+              <span className="flex flex-wrap items-baseline justify-between gap-x-3">
+                <span className="min-w-0 break-words font-medium">{entry.event}</span>
+                <span className="font-mono text-xs text-muted-foreground">{entry.ts}</span>
+              </span>
+              <span className="line-clamp-2 break-all font-mono text-xs">
+                {JSON.stringify(entry.data)}
+              </span>
+            </li>
+          ))}
+        </ul>
       ) : (
         <Table>
           <TableHeader>
@@ -181,15 +220,13 @@ export function FactoryRunPage({ runId }: { runId: string }) {
       <>
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
           <Badge variant={stateBadgeVariant(state)}>{labelForState(state)}</Badge>
-          <span className="text-muted-foreground">Step: {step ?? "—"}</span>
+          <span className="min-w-0 break-words text-muted-foreground">Step: {step ?? "—"}</span>
           {threadId ? (
-            <Link
-              className="underline-offset-2 hover:underline"
-              params={{ environmentId, threadId }}
-              to="/$environmentId/$threadId"
+            <TouchLink
+              render={<Link params={{ environmentId, threadId }} to="/$environmentId/$threadId" />}
             >
               Thread
-            </Link>
+            </TouchLink>
           ) : (
             <span className="text-muted-foreground">no thread yet</span>
           )}
@@ -204,7 +241,7 @@ export function FactoryRunPage({ runId }: { runId: string }) {
           </Button>
         </div>
         {note ? (
-          <p className="text-sm text-muted-foreground" role="status">
+          <p className="break-words text-sm text-muted-foreground" role="status">
             {note}
           </p>
         ) : null}
@@ -218,9 +255,9 @@ export function FactoryRunPage({ runId }: { runId: string }) {
     <FactoryFrame
       header={
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <Link className="text-sm text-muted-foreground hover:text-foreground" to="/factory">
+          <TouchLink render={<Link to="/factory" />} tone="muted">
             Back
-          </Link>
+          </TouchLink>
           <h1 className="min-w-0 truncate font-mono text-sm font-medium">{runId}</h1>
         </div>
       }

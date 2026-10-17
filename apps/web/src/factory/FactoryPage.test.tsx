@@ -1,9 +1,10 @@
 import { createElement, act, type ReactNode } from "react";
+import type { ReactTestInstance } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
 import type { FactoryResource } from "./useFactoryData";
-import { render } from "./testing";
+import { render, renderAt } from "./testing";
 
 const NOW = Date.parse("2026-10-17T12:00:00.000Z");
 
@@ -371,5 +372,177 @@ describe("FactoryPage", () => {
     const page = await render(createElement(FactoryPage));
     await act(async () => page.button("Pause claims")!.props.onClick());
     expect(page.text()).toContain("Missing permission orchestration:operate");
+  });
+});
+
+const ATTENTION = {
+  id: "stuck:20",
+  kind: "stuck",
+  repo: "original-solutions/t3code-factory",
+  issue: 20,
+  run: RUN_ID,
+  message: "run ended stuck: the gate failed",
+  first_seen: "2026-10-17T11:00:00.000Z",
+};
+
+describe.each([375, 1280])("FactoryPage at %i px", (width) => {
+  const narrow = width < 640;
+  const populate = () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
+    state.runs = resource({
+      status: "error",
+      error: new Error("fetch failed"),
+      data: {
+        runs: [runRow(), runRow({ id: "acme__old__3__1", started_ts: "2026-10-16T12:00:00.000Z" })],
+      },
+    });
+  };
+
+  it(narrow ? "lists the runs as cards, not a table" : "lists the runs in a table", async () => {
+    populate();
+    const page = await renderAt(width, createElement(FactoryPage));
+    expect(page.all("table")).toHaveLength(narrow ? 0 : 1);
+    const cards = page.all("ul").filter((ul) => ul.props["data-layout"] === "cards");
+    expect(cards).toHaveLength(narrow ? 1 : 0);
+    await page.unmount();
+  });
+
+  it("puts the attention items above the runs", async () => {
+    populate();
+    const page = await renderAt(width, createElement(FactoryPage));
+    const text = page.text();
+    expect(text.indexOf("run ended stuck")).toBeGreaterThan(-1);
+    expect(text.indexOf("run ended stuck")).toBeLessThan(text.indexOf("launch-sending"));
+    expect(text.indexOf("Could not refresh")).toBeGreaterThan(text.indexOf("run ended stuck"));
+    expect(text.indexOf("Could not refresh")).toBeLessThan(text.indexOf("launch-sending"));
+    await page.unmount();
+  });
+
+  it("shows a control's answer in the body, below the attention items", async () => {
+    populate();
+    __setFactoryApiForTests(
+      api({
+        pauseClaims: async () => ({
+          paused: true as const,
+          already: false,
+          since: "2026-10-17T12:00:00.000Z",
+          message: "claims paused",
+        }),
+      }),
+    );
+    const page = await renderAt(width, createElement(FactoryPage));
+    await act(async () => page.button("Pause claims")!.props.onClick());
+    const text = page.text();
+    expect(text.indexOf("claims paused")).toBeGreaterThan(text.indexOf("run ended stuck"));
+    expect(text.indexOf("claims paused")).toBeLessThan(text.indexOf("launch-sending"));
+    await page.unmount();
+  });
+});
+
+describe("FactoryPage attention items at 375 px", () => {
+  it("puts the message on its own full-width line after the badge, repo and age", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
+    state.runs = resource({ data: { runs: [runRow()] } });
+    const page = await renderAt(375, createElement(FactoryPage));
+    const section = page
+      .all("section")
+      .find((node) => node.props["aria-label"] === "Needs attention")!;
+    const item = section.findAllByType("li" as never)[0]!;
+    const message = item.findAll(
+      (node) => typeof node.type === "string" && node.children.includes(ATTENTION.message),
+    )[0]!;
+    expect(message.type).toBe("p");
+    expect(String(message.props.className)).toContain("w-full");
+    expect(String(message.props.className)).not.toContain("flex-1");
+    const textOf = (node: ReactTestInstance | string): string =>
+      typeof node === "string" ? node : node.children.map(textOf).join(" ");
+    const full = textOf(item);
+    const order = ["stuck", ATTENTION.repo, "1h", ATTENTION.message].map((part) =>
+      full.indexOf(part),
+    );
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    await page.unmount();
+  });
+});
+
+describe("FactoryPage run cards at 375 px", () => {
+  it("shows each run's repo, issue, state, step, age and pull request, and links to the run", async () => {
+    state.runs = resource({ data: { runs: [runRow()] } });
+    const page = await renderAt(375, createElement(FactoryPage));
+    const link = page
+      .all("a")
+      .find(
+        (a) => a.props["data-to"] === "/factory/$runId" && a.props["data-params"].includes(RUN_ID),
+      );
+    expect(link).toBeDefined();
+    const text = link!
+      .findAll(() => true)
+      .flatMap((n) => n.children.filter((c) => typeof c === "string"))
+      .join(" ");
+    for (const part of ["original-solutions/t3code-factory", "building", "launch-sending", "2h"]) {
+      expect(text).toContain(part);
+    }
+    // A card is one link: nothing inside it is another link.
+    expect(link!.findAllByType("a" as never)).toHaveLength(1);
+    await page.unmount();
+  });
+
+  it("links the issue and the pull request outside the card's own link", async () => {
+    state.runs = resource({ data: { runs: [runRow()] } });
+    const page = await renderAt(375, createElement(FactoryPage));
+    const hrefs = page
+      .all("a")
+      .filter((a) => typeof a.props.href === "string")
+      .map((a) => a.props.href);
+    expect(hrefs).toEqual([
+      "https://github.com/original-solutions/t3code-factory/issues/20",
+      PR_URL,
+    ]);
+    const card = page.all("a").find((a) => a.props["data-to"] === "/factory/$runId")!;
+    expect(card.findAllByType("a" as never)).toHaveLength(1);
+    await page.unmount();
+  });
+
+  it("leaves a non-GitHub pull request URL as text on the card", async () => {
+    state.runs = resource({ data: { runs: [runRow({ pr_url: "https://example.com/pr/1" })] } });
+    const page = await renderAt(375, createElement(FactoryPage));
+    expect(page.all("a").map((a) => a.props.href)).not.toContain("https://example.com/pr/1");
+    expect(page.text()).toContain("https://example.com/pr/1");
+    await page.unmount();
+  });
+
+  it("keeps the newest first, the empty state and the Show all runs control", async () => {
+    state.runs = resource({
+      data: {
+        runs: [runRow({ id: "acme__old__3__1", started_ts: "2026-10-16T12:00:00.000Z" }), runRow()],
+      },
+    });
+    const page = await renderAt(375, createElement(FactoryPage));
+    const text = page.text();
+    expect(text.indexOf("original-solutions/t3code-factory")).toBeLessThan(
+      text.indexOf("acme/old"),
+    );
+    expect(page.button("Show all runs")).toBeDefined();
+    await page.unmount();
+    state.runs = resource({ data: { runs: [] } });
+    const empty = await renderAt(375, createElement(FactoryPage));
+    expect(empty.text()).toContain("No runs in the last week");
+    expect(empty.button("Show all runs")).toBeDefined();
+    await empty.unmount();
+  });
+});
+
+describe.each([
+  [639, true],
+  [640, false],
+])("FactoryPage at the 640 px breakpoint, %i px", (width, narrow) => {
+  it(narrow ? "lists cards just below 640" : "lists the table from 640", async () => {
+    state.runs = resource({ data: { runs: [runRow()] } });
+    const page = await renderAt(width, createElement(FactoryPage));
+    expect(page.all("table")).toHaveLength(narrow ? 0 : 1);
+    const cards = page.all("ul").filter((ul) => ul.props["data-layout"] === "cards");
+    expect(cards).toHaveLength(narrow ? 1 : 0);
+    await page.unmount();
   });
 });

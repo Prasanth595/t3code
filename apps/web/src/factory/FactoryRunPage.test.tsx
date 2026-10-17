@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
 import type { FactoryResource } from "./useFactoryData";
-import { render } from "./testing";
+import { render, renderAt } from "./testing";
 
 const state = vi.hoisted(() => ({ run: null as unknown, environmentId: "env-1" as string | null }));
 
@@ -221,5 +221,46 @@ describe("FactoryRunPage", () => {
     expect((await mount()).button("Stop")!.props.disabled).toBe(true);
     state.run = resource({ data: detail([...BUILDING, entry("finished", { outcome: "stuck" })]) });
     expect((await mount()).button("Stop")!.props.disabled).toBe(true);
+  });
+});
+
+describe.each([375, 1280])("FactoryRunPage at %i px", (width) => {
+  const narrow = width < 640;
+  const mountAt = () => renderAt(width, createElement(FactoryRunPage, { runId: RUN_ID }));
+
+  it(narrow ? "lists the gate commands and ledger, not tables" : "keeps the tables", async () => {
+    const page = await mountAt();
+    expect(page.all("table")).toHaveLength(narrow ? 0 : 2);
+    const lists = page.all("ul").filter((ul) => ul.props["data-layout"] === "list");
+    expect(lists).toHaveLength(narrow ? 2 : 0);
+    const text = page.text();
+    for (const part of ["pnpm lint", "pnpm test", "412", "26311", "session_launched", "thread-9"]) {
+      expect(text).toContain(part);
+    }
+    await page.unmount();
+  });
+});
+
+describe("FactoryRunPage lists at 375 px", () => {
+  it("makes a list item of each gate command and each ledger entry", async () => {
+    const page = await renderAt(375, createElement(FactoryRunPage, { runId: RUN_ID }));
+    const items = page.all("li");
+    // 2 gate commands, then one item per ledger entry.
+    expect(items).toHaveLength(2 + BUILDING.length);
+    expect(items[0]!.findAll(() => true).length).toBeGreaterThan(1);
+    await page.unmount();
+  });
+});
+
+describe.each([
+  [639, true],
+  [640, false],
+])("FactoryRunPage at the 640 px breakpoint, %i px", (width, narrow) => {
+  it(narrow ? "lists just below 640" : "keeps the tables from 640", async () => {
+    const page = await renderAt(width, createElement(FactoryRunPage, { runId: RUN_ID }));
+    expect(page.all("table")).toHaveLength(narrow ? 0 : 2);
+    const lists = page.all("ul").filter((ul) => ul.props["data-layout"] === "list");
+    expect(lists).toHaveLength(narrow ? 2 : 0);
+    await page.unmount();
   });
 });
