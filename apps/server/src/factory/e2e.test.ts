@@ -52,8 +52,6 @@ const LOGIN = "rawphp";
 const INSTRUCTOR = "tomkaczocha";
 const READY_AT = "2026-10-16T00:00:00Z";
 
-// ---- the fake GitHub -----------------------------------------------------------------------
-
 const utcNow = () => `${new Date().toISOString().slice(0, 19)}Z`;
 const json = (value: unknown) => JSON.stringify(value);
 
@@ -356,8 +354,6 @@ const makeGitHub = (input: { readonly baseSha: string; readonly projectConfig: s
   };
 };
 
-// ---- the provider's transcript -------------------------------------------------------------
-
 /**
  * A recorded replay transcript with the prompts the factory will send and the replies the model
  * will give written in. The replay matches every outbound frame strictly, so a prompt that
@@ -397,8 +393,6 @@ const replayNdjson = (
 };
 
 const reply = (text: string) => `${text}\nFACTORY-DONE: ${PR_URL}`;
-
-// ---- one issue through the loop ------------------------------------------------------------
 
 interface Spec {
   readonly fixture: URL;
@@ -618,8 +612,6 @@ const describe = (entry: Entry): string => {
       return entry.event;
   }
 };
-
-// ---- what softfac writes, in its order -----------------------------------------------------
 
 /** lifecycle.md "From ready to building", then the session's pull request (runner/start.test.ts STARTED). */
 const STARTED_AND_PR_OPENED = [

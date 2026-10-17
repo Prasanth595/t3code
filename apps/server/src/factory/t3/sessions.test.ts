@@ -33,8 +33,6 @@ import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import * as Sessions from "./sessions.ts";
 
-// ---- status: the run, its message and the thread fields, read from a projection ----
-
 const thread = (
   branch: string | null = null,
   worktreePath: string | null = null,
@@ -251,8 +249,6 @@ describe("threadStatusOf", () => {
     assert.strictEqual(statusOf([], [], thread()).archived, false);
   });
 });
-
-// ---- the service over T3's stores ----
 
 const projectId = ProjectId.make("project:factory-sessions-test");
 const threadId = ThreadId.make("thread:project:factory-sessions-test:1");
@@ -700,8 +696,6 @@ describe("FactorySessions.status and thread", () => {
   );
 });
 
-// ---- send ----
-
 class DispatchRejected extends Schema.TaggedError<DispatchRejected>()("DispatchRejected", {
   message: Schema.String,
 }) {}
@@ -842,8 +836,6 @@ describe("FactorySessions.send", () => {
     }),
   );
 });
-
-// ---- archive ----
 
 const archiveCommand = (command: Command) => {
   assert.strictEqual(command.type, "thread.archive");
@@ -1036,8 +1028,6 @@ describe("FactorySessions.archive", () => {
     }),
   );
 });
-
-// ---- removeWorktree ----
 
 interface GitCall {
   readonly cwd: string;

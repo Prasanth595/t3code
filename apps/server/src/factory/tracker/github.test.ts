@@ -40,8 +40,6 @@ import {
   makeGitHub,
 } from "./github.ts";
 
-// ---- the fake FactoryProcess: records every call, answers from a queue ----
-
 type Answer =
   | { readonly kind: "result"; readonly result: Partial<RunResult> }
   | { readonly kind: "spawn" };
@@ -100,8 +98,6 @@ const setup = (...answers: ReadonlyArray<Answer>) => {
       Effect.flip(effect).pipe(Effect.provide(layer)),
   };
 };
-
-// ---- recorded gh output ----
 
 const BASE_SHA = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
 
@@ -172,8 +168,6 @@ const issueViewCall = [
 const issueJson = (labels: ReadonlyArray<string>, assignees: ReadonlyArray<string>, body: string) =>
   `{"assignees":[${assignees.map((n) => `{"login":"${n}"}`).join(",")}],"author":null,"body":${body},"labels":[${labels.map((n) => `{"name":"${n}"}`).join(",")}],"number":10,"state":"OPEN","title":"Build step"}`;
 
-// ---- every call goes through gh with the same settings ----
-
 it.effect("runs gh with the config dir, a 60 s limit and separate stderr on every call", () =>
   Effect.gen(function* () {
     const t = setup(reply("[]"), reply("[]"), reply(ISSUE_VIEW), reply(""));
@@ -192,8 +186,6 @@ it.effect("runs gh with the config dir, a 60 s limit and separate stderr on ever
     }
   }),
 );
-
-// ---- branchTip ----
 
 it.effect("branchTip reads the full commit id of the branch with the exact call", () =>
   Effect.gen(function* () {
@@ -260,8 +252,6 @@ it.effect("branchTip of a branch that is not there is the gh failure", () =>
   }),
 );
 
-// ---- defaultBranch ----
-
 it.effect("defaultBranch reads the repo from the API with the exact call", () =>
   Effect.gen(function* () {
     const t = setup(
@@ -289,8 +279,6 @@ it.effect("defaultBranch refuses an answer without one", () =>
     }
   }),
 );
-
-// ---- fileAt ----
 
 it.effect("fileAt reads a file at a commit with the exact call and decodes it", () =>
   Effect.gen(function* () {
@@ -411,8 +399,6 @@ it.effect("fileAt of a file that is not there is the gh failure", () =>
     assert.strictEqual(error._tag, "GitHubFailed");
   }),
 );
-
-// ---- labelNames, createLabel, ensureLabels ----
 
 /** Literal copies of softfac's lifecycle.rs table, so drift in either module is caught. */
 const LABEL_TABLE = [
@@ -593,8 +579,6 @@ it.effect(
     }),
 );
 
-// ---- baseConfig ----
-
 it.effect("baseConfig reads the branch, its tip and the config file at that tip", () =>
   Effect.gen(function* () {
     const t = setup(
@@ -636,8 +620,6 @@ it.effect("baseConfig passes on a missing file and any other failure", () =>
     assert.strictEqual(first.calls().length, 1);
   }),
 );
-
-// ---- listIssues ----
 
 it.effect("listIssues with none", () =>
   Effect.gen(function* () {
@@ -708,8 +690,6 @@ it.effect("listIssues at the limit returns them all and says nothing", () =>
     assert.strictEqual(issues.items.length, 200);
   }),
 );
-
-// ---- issue ----
 
 it.effect("issue reads the real shape with the exact call", () =>
   Effect.gen(function* () {
@@ -826,8 +806,6 @@ it.effect("issue uses the number it is given", () =>
   }),
 );
 
-// ---- setState ----
-
 it.effect("setState from one wrong label", () =>
   Effect.gen(function* () {
     const t = setup(reply(labelsReply(["factory:ready"])), reply(""));
@@ -920,8 +898,6 @@ it.effect("setState surfaces a failing edit", () =>
   }),
 );
 
-// ---- assign, unassign ----
-
 it.effect("unassign removes the user", () =>
   Effect.gen(function* () {
     const t = setup(reply(""));
@@ -943,8 +919,6 @@ it.effect("assign adds the user and a failure is an error", () =>
     );
   }),
 );
-
-// ---- error typing ----
 
 it.effect("a non-zero exit carries args, status and stderr", () =>
   Effect.gen(function* () {
@@ -1070,8 +1044,6 @@ it.effect("output past the cap is an error, never a truncation", () =>
   }),
 );
 
-// ---- rate limit ----
-
 it.effect("only the rate limit is read as a rate limit", () =>
   Effect.gen(function* () {
     for (const stderr of [
@@ -1101,8 +1073,6 @@ it.effect("a success that mentions the rate limit is not an error", () =>
     assert.deepStrictEqual(issues, { items: [], cut: false });
   }),
 );
-
-// ---- postComment ----
 
 it.effect("postComment appends the marker", () =>
   Effect.gen(function* () {
@@ -1148,8 +1118,6 @@ it.effect("postComment errors carry the status and stderr", () =>
     assert.include(error.message, "issue is locked");
   }),
 );
-
-// ---- upsertStatusComment ----
 
 it.effect("the status comment is created when absent", () =>
   Effect.gen(function* () {
@@ -1312,8 +1280,6 @@ it.effect("the status comment surfaces a failing patch", () =>
   }),
 );
 
-// ---- error text ----
-
 it.effect("error text hides comment bodies but the error keeps them", () =>
   Effect.gen(function* () {
     // "hello\nworld" + "\n\n" + the 16-byte marker = 29 bytes.
@@ -1361,8 +1327,6 @@ it("error text escapes newlines in other arguments", () => {
     "cannot start `gh --body`: nope",
   );
 });
-
-// ---- pullRequest ----
 
 const HEAD_SHA = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
 const PR_VIEW =
@@ -1542,8 +1506,6 @@ it.effect("issue and pullRequest calls use the number they are given", () =>
   }),
 );
 
-// ---- markPrReady, markPrDraft, commentOnPr ----
-
 const readyCall = ["pr", "ready", "9", "--repo", REPO];
 const undoCall = [...readyCall, "--undo"];
 
@@ -1693,8 +1655,6 @@ it.effect("commentOnPr appends the marker", () =>
   }),
 );
 
-// ---- compare ----
-
 const compareCall = (range: string) => [
   "api",
   `repos/rawphp/softfac/compare/${range}?per_page=1`,
@@ -1779,8 +1739,6 @@ it.effect("compare encodes a branch and refuses a ref that could leave the compa
     }
   }),
 );
-
-// ---- checks ----
 
 const run = (name: string, status: string, conclusion: string | null) => ({
   id: 1,
@@ -2024,8 +1982,6 @@ it.effect("checks that gh cannot read is the gh failure", () =>
   }),
 );
 
-// ---- blockers: ported from softfac's github.rs ----
-
 const blockedByCall = (issue: string) => [
   "api",
   `repos/rawphp/softfac/issues/${issue}/dependencies/blocked_by`,
@@ -2130,8 +2086,6 @@ it.effect("an open blocker whose repo is unknown is an error, not a guess", () =
   }),
 );
 
-// ---- text blockers ----
-
 const bodyCall = (issue: string) => ["issue", "view", issue, "--repo", REPO, "--json", "body"];
 const restCall = (repo: string, issue: string) => ["api", `repos/${repo}/issues/${issue}`];
 const bodyReply = (body: string) => JSON.stringify({ body });
@@ -2235,8 +2189,6 @@ it.effect("a body that cannot be read is an error", () =>
     assert.strictEqual((yield* oops.err(oops.github.textBlockers(14)))._tag, "GitHubParse");
   }),
 );
-
-// ---- approval: ported from softfac's github.rs ----
 
 /** When the instructor applied `factory:ready` in most of the approval tests. */
 const LABELED = "2026-10-04T10:00:00Z";
@@ -2857,7 +2809,6 @@ it.effect("a malformed timestamp is a parse error", () =>
         ],
       );
       assert.isTrue(yield* isApprovalParseError(inLast), `last edit at ${at}`);
-      // In a rename.
       const inRename = eventsReply(
         [readyOn(LABELED, "tom"), renameEvent(at, "tom")],
         null,
@@ -2883,8 +2834,6 @@ it.effect("approval failures from gh are errors with the call", () =>
     );
   }),
 );
-
-// ---- approval: titles, same second, long histories, non-human actors ----
 
 /** `n` instructor renames after the label, oldest first, one second apart. */
 const renamesAfterLabel = (n: number): Array<TimelineNode> =>
@@ -3187,8 +3136,6 @@ it.effect("approval for a repo that is not owner/name makes no call", () =>
   }),
 );
 
-// ---- text check ----
-
 const textCheckOf = (answer: string, since: string, who: ReadonlyArray<string>) =>
   Effect.gen(function* () {
     const t = setup(reply(answer));
@@ -3391,8 +3338,6 @@ it.effect("text check errors are typed", () =>
   }),
 );
 
-// ---- text edited since ----
-
 const editedSinceOf = (answer: string, since: string) =>
   Effect.gen(function* () {
     const t = setup(reply(answer));
@@ -3470,8 +3415,6 @@ it.effect("text edited since refuses a moment that is not a GitHub timestamp", (
   }),
 );
 
-// ---- the GitHub tracker delegates (from softfac's runner tests) ----
-
 it.effect(
   "approval sends one graphql call for the issue and uses the instructors it is given",
   () =>
@@ -3544,8 +3487,6 @@ it.effect("text check sends one graphql call per check and uses the instructors 
     }
   }),
 );
-
-// ---- the claim, its repair reads, and the login (issue #15) ----
 
 const BEFORE = "2026-10-08T02:00:00Z";
 
@@ -4075,8 +4016,6 @@ it.effect(
     }),
 );
 
-// ---- who marked a pull request ready (from softfac's github tests) ----
-
 const readyByReply = (nodes: string) =>
   `{"data":{"repository":{"pullRequest":{"timelineItems":{"nodes":[${nodes}]}}}}}`;
 
@@ -4120,8 +4059,6 @@ it.effect("readyBy refuses an answer it cannot read", () =>
   }),
 );
 
-// ---- who closed an issue ----
-
 const closedByReply = (nodes: string) =>
   `{"data":{"repository":{"issue":{"timelineItems":{"nodes":[${nodes}]}}}}}`;
 
@@ -4164,8 +4101,6 @@ it.effect("closedBy refuses an answer it cannot read", () =>
     }
   }),
 );
-
-// ---- activity during a build (forwarding, from softfac's github.rs) ----
 
 const dropOf = (id: string, reason: DropReason): Dropped => ({ id, reason });
 const argsOf = (error: GitHubError): ReadonlyArray<string> => ("args" in error ? error.args : []);
@@ -5076,8 +5011,6 @@ it.effect("activity with a malformed since is a parse error without calling gh",
   }),
 );
 
-// ---- instructor feedback on a pull request (from softfac's github.rs) ----
-
 describe("pr feedback", () => {
   type Json = Record<string, unknown>;
 
@@ -5179,8 +5112,6 @@ describe("pr feedback", () => {
   const readFeedback = (answer: string) => readWith(setup(reply(answer)));
   const feedbackIds = (items: ReadonlyArray<Feedback>) => items.map((f) => f.id);
 
-  // ---- the call and the queries ----
-
   it.effect("asks for the reviews and conversation comments with one call", () =>
     Effect.gen(function* () {
       const t = setup(reply(feedbackReply([], [])));
@@ -5267,8 +5198,6 @@ describe("pr feedback", () => {
     assert.strictEqual(REVIEW_PAGE_LIMIT, 20);
     assert.isTrue(REVIEWS_BEFORE_QUERY.includes("reviews(last: 50, before: $before)"));
   });
-
-  // ---- what counts ----
 
   it.effect(
     "an instructor review is feedback with its inline comments and their path and line",
@@ -5525,8 +5454,6 @@ describe("pr feedback", () => {
     }),
   );
 
-  // ---- since and floor ----
-
   it.effect("a since that is not GitHub's form is refused before gh runs", () =>
     Effect.gen(function* () {
       for (const since of ["", "2026-10-04", "2026-10-04 10:30:00", "2026-10-04T10:30:00.5Z"]) {
@@ -5573,8 +5500,6 @@ describe("pr feedback", () => {
       }
     }),
   );
-
-  // ---- paging back through the reviews ----
 
   /** 50 reviews by a stranger at 11:00 to 11:49 on the day of `FB_SINCE`; the first at 09:00 with `olderFirst`. */
   const fiftyReviews = (olderFirst: boolean): Array<Json> =>
@@ -5832,8 +5757,6 @@ describe("pr feedback", () => {
       }),
   );
 
-  // ---- text that was edited ----
-
   const EDITED_AT = "2026-10-04T11:05:00Z";
   const editHistory = (total: number, shown: ReadonlyArray<readonly [string, string]>): Json => ({
     totalCount: total,
@@ -5960,8 +5883,6 @@ describe("pr feedback", () => {
     }),
   );
 
-  // ---- inline comments that were edited ----
-
   it.effect(
     "an inline comment edited by a stranger is dropped and the rest of the review stays",
     () =>
@@ -6067,7 +5988,6 @@ describe("pr feedback", () => {
           { editedAt: "2026-10-04T11:00:00Z", editor: second },
         ],
       });
-      // The last editor is the bot.
       const lastEditorIsABot = {
         id: "PRRC_abc",
         lastEditedAt: EDITED_AT,
