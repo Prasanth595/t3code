@@ -462,14 +462,7 @@ describe("FactoryPage run cards at 375 px", () => {
       .findAll(() => true)
       .flatMap((n) => n.children.filter((c) => typeof c === "string"))
       .join(" ");
-    for (const part of [
-      "original-solutions/t3code-factory",
-      "#20",
-      "building",
-      "launch-sending",
-      "2h",
-      "#30",
-    ]) {
+    for (const part of ["original-solutions/t3code-factory", "building", "launch-sending", "2h"]) {
       expect(text).toContain(part);
     }
     // A card is one link: nothing inside it is another link.

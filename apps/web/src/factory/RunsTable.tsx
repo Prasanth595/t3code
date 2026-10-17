@@ -34,6 +34,23 @@ const prLabel = (url: string) => {
   return match ? `#${match[1]}` : "PR";
 };
 
+/** The issue of a run id: `#20` linked to GitHub when numeric, else the bare text. */
+const issueRef = (parsed: NonNullable<ReturnType<typeof parseRunId>>) =>
+  /^[0-9]+$/.test(parsed.issue)
+    ? {
+        text: `#${parsed.issue}`,
+        href: `https://github.com/${parsed.owner}/${parsed.repo}/issues/${parsed.issue}`,
+      }
+    : { text: parsed.issue, href: null };
+
+/** The pull request of a run: linked only for a github.com URL, else the URL as text. */
+const prRef = (url: string | null | undefined) => {
+  if (!url) return null;
+  return url.startsWith("https://github.com/")
+    ? { text: prLabel(url), href: url }
+    : { text: url, href: null };
+};
+
 const stateBadge = (run: FactoryRunRow) =>
   run.unreadable ? (
     <Badge variant="error">unreadable</Badge>
@@ -41,18 +58,42 @@ const stateBadge = (run: FactoryRunRow) =>
     <Badge variant={stateBadgeVariant(run.state)}>{labelForState(run.state)}</Badge>
   );
 
-/** One run for a phone: a single link to the run, so the whole card is the tap target. */
+/** The table's version of `Ref`: a plain link, no tap-target sizing. */
+function TableRef({ text, href }: { text: string; href: string | null }) {
+  return href === null ? (
+    <>{text}</>
+  ) : (
+    <a className="underline-offset-2 hover:underline" href={href} rel="noreferrer" target="_blank">
+      {text}
+    </a>
+  );
+}
+
+const REF_LINK = "inline-flex min-h-11 items-center underline-offset-2 hover:underline";
+
+/** A reference that is a link when it has a target, else plain text. */
+function Ref({ text, href }: { text: string; href: string | null }) {
+  return href === null ? (
+    <span className="min-w-0 break-all">{text}</span>
+  ) : (
+    <a className={REF_LINK} href={href} rel="noreferrer" target="_blank">
+      {text}
+    </a>
+  );
+}
+
+/**
+ * One run for a phone: a link to the run that is the card's main tap target, and below it, outside
+ * that link so no anchor nests in another, the links to the issue and the pull request.
+ */
 function RunCard({ run, nowMs }: { run: FactoryRunRow; nowMs: number }) {
   const parsed = parseRunId(run.id);
-  const pr = run.pr_url
-    ? run.pr_url.startsWith("https://github.com/")
-      ? prLabel(run.pr_url)
-      : run.pr_url
-    : null;
+  const issue = parsed ? issueRef(parsed) : null;
+  const pr = prRef(run.pr_url);
   return (
-    <li>
+    <li className="flex flex-col rounded-lg border bg-card text-sm">
       <Link
-        className="flex min-h-11 flex-col gap-1 rounded-lg border bg-card px-3 py-2 text-sm"
+        className="flex min-h-11 flex-col gap-1 px-3 py-2"
         params={{ runId: run.id }}
         to="/factory/$runId"
       >
@@ -63,14 +104,16 @@ function RunCard({ run, nowMs }: { run: FactoryRunRow; nowMs: number }) {
           {stateBadge(run)}
         </span>
         <span className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-          {parsed ? (
-            <span>{/^[0-9]+$/.test(parsed.issue) ? `#${parsed.issue}` : parsed.issue}</span>
-          ) : null}
           <span className="min-w-0 break-words">{run.step ?? run.last_event ?? "—"}</span>
           <span>{formatAge(startedMs(run), nowMs)}</span>
-          {pr ? <span className="min-w-0 break-all">{pr}</span> : null}
         </span>
       </Link>
+      {issue || pr ? (
+        <span className="flex flex-wrap items-center gap-x-4 px-3 text-xs text-muted-foreground">
+          {issue ? <Ref {...issue} /> : null}
+          {pr ? <Ref {...pr} /> : null}
+        </span>
+      ) : null}
     </li>
   );
 }
@@ -145,44 +188,16 @@ export function RunsTable({
         <TableBody>
           {sorted.map((run) => {
             const parsed = parseRunId(run.id);
+            const issue = parsed ? issueRef(parsed) : null;
+            const pr = prRef(run.pr_url);
             return (
               <TableRow key={run.id}>
                 <TableCell>{parsed ? `${parsed.owner}/${parsed.repo}` : "—"}</TableCell>
-                <TableCell>
-                  {parsed ? (
-                    /^[0-9]+$/.test(parsed.issue) ? (
-                      <a
-                        className="underline-offset-2 hover:underline"
-                        href={`https://github.com/${parsed.owner}/${parsed.repo}/issues/${parsed.issue}`}
-                        rel="noreferrer"
-                        target="_blank"
-                      >
-                        #{parsed.issue}
-                      </a>
-                    ) : (
-                      parsed.issue
-                    )
-                  ) : (
-                    "—"
-                  )}
-                </TableCell>
+                <TableCell>{issue ? <TableRef {...issue} /> : "—"}</TableCell>
                 <TableCell>{stateBadge(run)}</TableCell>
                 <TableCell>{run.step ?? run.last_event ?? "—"}</TableCell>
                 <TableCell>{formatAge(startedMs(run), nowMs)}</TableCell>
-                <TableCell>
-                  {run.pr_url?.startsWith("https://github.com/") ? (
-                    <a
-                      className="underline-offset-2 hover:underline"
-                      href={run.pr_url}
-                      rel="noreferrer"
-                      target="_blank"
-                    >
-                      {prLabel(run.pr_url)}
-                    </a>
-                  ) : (
-                    run.pr_url || "—"
-                  )}
-                </TableCell>
+                <TableCell>{pr ? <TableRef {...pr} /> : "—"}</TableCell>
                 <TableCell>
                   <Link
                     className="font-mono text-xs underline-offset-2 hover:underline"
