@@ -4,15 +4,6 @@ import { act, createElement, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-vi.mock(import("~/hooks/useSettings"), async (original) => ({
-  ...(await original()),
-  useEnvironmentIdentificationMode: () => "none",
-}));
-vi.mock(import("../SidebarStageBackdrop"), async (original) => ({
-  ...(await original()),
-  useSidebarStageBackdropVariant: () => null,
-}));
-
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 
 describe("ComposerPrimaryActions stop pending state", () => {
