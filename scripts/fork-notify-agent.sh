@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Posts a failed fork workflow run to the repair agent webhook (a T3 scheduled task).
 # Called by the notify_agent job of fork-ci.yml, fork-release.yml and fork-sync.yml. See docs/fork.md.
-# Env: WEBHOOK_URL, COMPACT_WEBHOOK_URL (optional), CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET,
-# GH_TOKEN, NEEDS_JSON (the workflow's toJSON(needs)), plus the default GITHUB_* variables.
+# Env: WEBHOOK_URL, CF_ACCESS_CLIENT_ID, CF_ACCESS_CLIENT_SECRET, GH_TOKEN, NEEDS_JSON
+# (the workflow's toJSON(needs)), plus the default GITHUB_* variables.
 set -euo pipefail
 
 if [[ -z "${WEBHOOK_URL:-}" ]]; then
@@ -50,19 +50,11 @@ payload="$(jq -n \
     run_url: $run_url, run_id: $run_id, jobs: ($needs | map_values(.result))}')"
 echo "$payload"
 # The webhook server can restart, which takes minutes. So retry once a minute for 15 minutes.
-# The notify jobs have timeout-minutes: 40 to cover both calls, each up to 15 minutes plus the last attempt (up to 120 s).
-post() {
-  curl --fail-with-body --silent --show-error \
-    --retry 15 --retry-delay 60 --retry-max-time 900 --max-time 120 --retry-all-errors \
-    -X POST "$1" \
-    -H "content-type: application/json" \
-    -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
-    -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
-    --data-binary "$payload"
-}
-# The repair task posts into one long-lived thread. The compaction task posts "/compact" into
-# the same thread, so its turn runs before the repair turn.
-if [[ -n "${COMPACT_WEBHOOK_URL:-}" ]]; then
-  post "$COMPACT_WEBHOOK_URL" || echo "The compaction call failed. The repair call still runs."
-fi
-post "$WEBHOOK_URL"
+# The notify jobs have timeout-minutes: 20 to cover the last attempt (up to 120 s).
+curl --fail-with-body --silent --show-error \
+  --retry 15 --retry-delay 60 --retry-max-time 900 --max-time 120 --retry-all-errors \
+  -X POST "$WEBHOOK_URL" \
+  -H "content-type: application/json" \
+  -H "CF-Access-Client-Id: $CF_ACCESS_CLIENT_ID" \
+  -H "CF-Access-Client-Secret: $CF_ACCESS_CLIENT_SECRET" \
+  --data-binary "$payload"

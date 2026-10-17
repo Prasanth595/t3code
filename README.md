@@ -45,7 +45,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Changelog:** a timeline of fork releases and commits, also in the update popover for the offered update, the pending upstream commits, a "Start Fork Sync" button and an "Ask agent" menu (`forkChangelogEnabled`, on by default).
 - **Fork Sync:** a daily workflow merges upstream main into fork main. It never rewrites main.
 - **Fork CI:** runs on each push to main and on each pull request to main. Branch protection requires the one check "Fork CI result".
-- **Repair agent:** a failed Fork Sync or Fork Release run, or a failed Fork CI run on main, calls the webhook task "Fork repair" on the VPS. The repair agent works in one long-lived thread that compacts its context before each repair. A pull request never calls it.
+- **Repair agent:** a failed Fork Sync or Fork Release run, or a failed Fork CI run on main, calls the webhook task "Fork repair" on the VPS. The repair agent works in one long-lived thread and compacts its context after each repair. A pull request never calls it.
 
 **Agents**
 
