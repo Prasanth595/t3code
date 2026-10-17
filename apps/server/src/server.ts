@@ -1,3 +1,4 @@
+import * as AdmissionHttp from "./orchestration-v2/AdmissionHttp.ts";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Clock from "effect/Clock";
 import * as Random from "effect/Random";
@@ -689,6 +690,7 @@ const layerMakeRoutes = Layer.mergeAll(
       Layer.provide(WebhookRoute.layer.pipe(Layer.provide(RelayDeliveryProof.layer))),
       Layer.provide(AuthHttp.layerAuthenticatedAuth),
     ),
+    AdmissionHttp.layer,
     ServerHttp.layerOtlpTracesProxyRoute,
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,

@@ -1,3 +1,4 @@
+import { admissionCommand } from "./cli/admission.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -74,6 +75,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       appCommand,
       pairCommand,
       authCommand,
+      admissionCommand,
       browserCommand,
       projectCommand,
       serviceCommand,
@@ -96,12 +98,14 @@ export const cli = makeCli();
 export function runCli(peerEntrypoint?: PeerBootstrapInputs["entrypoint"]) {
   Command.run(cli, { version: packageJson.version }).pipe(
     Effect.scoped,
-    Effect.provide(Layer.mergeAll(
-      layerCliRuntime,
-      peerEntrypoint === undefined
-        ? Layer.empty
-        : Layer.succeed(MissionPeerEntrypoint, peerEntrypoint),
-    )),
+    Effect.provide(
+      Layer.mergeAll(
+        layerCliRuntime,
+        peerEntrypoint === undefined
+          ? Layer.empty
+          : Layer.succeed(MissionPeerEntrypoint, peerEntrypoint),
+      ),
+    ),
     NodeRuntime.runMain,
   );
 }

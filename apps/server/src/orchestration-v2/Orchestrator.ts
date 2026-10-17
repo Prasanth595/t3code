@@ -1,3 +1,4 @@
+import * as Admission from "./Admission.ts";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
@@ -253,6 +254,8 @@ export function canReplayCommandReceipt(
 }
 
 export const OrchestratorV2Error = Schema.Union([
+  Admission.AdmissionDrainingError,
+  Admission.AdmissionStorageError,
   OrchestratorDispatchError,
   OrchestratorCommandRejectedError,
   OrchestratorProjectionError,
@@ -787,6 +790,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectionStore = yield* ProjectionStoreV2;
   const effectOutbox = yield* EffectOutbox.EffectOutboxV2;
+  const admission = yield* Admission.Admission;
+  const withAdmissionFence = admission.withFence;
+  const admissionDraining = admission.isDraining;
+  const ensureAdmissionOpen = admission.ensureOpen;
   const nextTurnItemOrdinal = (
     projection: Pick<OrchestrationV2ThreadProjection, "thread"> &
       Partial<Pick<OrchestrationV2ThreadProjection, "turnItems">>,
@@ -1255,6 +1262,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const startNextQueuedRun = (threadId: ThreadId, options?: { readonly failedRunId?: RunId }) =>
     Effect.gen(function* () {
+      if (yield* admissionDraining) return;
       // Every terminal run checks the queue. Only a deliverable queued run
       // needs the transcript for provider handoff and legacy import context.
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
@@ -1865,8 +1873,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     for (const threadId of threadIds) {
       const resumedThread = yield* Effect.gen(function* () {
         if (!(yield* projectionStore.canStartQueuedRun(threadId))) return false;
-        yield* threadDispatch.withLock(threadId, startNextQueuedRun(threadId));
-        return true;
+        return yield* withAdmissionFence(
+          Effect.gen(function* () {
+            if (yield* admissionDraining) return false;
+            yield* threadDispatch.withLock(threadId, startNextQueuedRun(threadId));
+            return true;
+          }),
+        );
       }).pipe(
         Effect.catch((cause) =>
           Effect.logWarning("Failed to resume queued V2 run after recovery", {
@@ -10509,8 +10522,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: command.type,
         cause: "Retro requires a sole sealed ThreadManagement preparation.",
       });
-    if (options?.preparedRetroDispatch !== undefined)
+    if (options?.preparedRetroDispatch !== undefined) {
+      yield* ensureAdmissionOpen;
       return yield* dispatchRetroAnalysis(command, options.preparedRetroDispatch);
+    }
     if (
       options?.missionAdmissionRequest !== undefined ||
       (options?.missionContext !== undefined && options?.missionAdmission === undefined)
@@ -10675,6 +10690,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       } satisfies OrchestratorV2DispatchResult;
     }
 
+    if (
+      command.type === "message.dispatch" ||
+      command.type === "delegated_task.request" ||
+      command.type === "prepared-run.retry" ||
+      command.type === "queued-message.promote-to-steer" ||
+      command.type === "thread.fork" ||
+      command.type === "thread.merge_back"
+    )
+      yield* ensureAdmissionOpen;
+
     const plan = yield* dispatchOnce(command).pipe(
       Effect.flatMap((planned) =>
         // A settle that finds the provider already ended everything, or a
@@ -10767,6 +10792,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return { sequence: resultSequence, storedEvents: [] } satisfies OrchestratorV2DispatchResult;
     }
     const acceptedAt = plan.events.at(-1)?.occurredAt ?? (yield* DateTime.now);
+    // Preparing runs already own admission and count as running. Let their
+    // existing workspace preparation finish rather than deadlocking drain.
+    if (
+      command.type !== "prepared-run.release" &&
+      plan.effects.some(
+        (effect) =>
+          effect.request.type === "provider-turn.start" ||
+          effect.request.type === "provider-turn.restart",
+      )
+    )
+      yield* ensureAdmissionOpen;
+
     const committed = yield* eventSink
       .commitCommand({
         commandId: command.commandId,
@@ -10828,7 +10865,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     command: OrchestrationV2ServerCommand,
     options?: OrchestratorDispatchOptions,
   ) =>
-    threadDispatch.withLock(commandThreadId(command), dispatchWithReceiptEffect(command, options));
+    withAdmissionFence(
+      threadDispatch.withLock(
+        commandThreadId(command),
+        dispatchWithReceiptEffect(command, options),
+      ),
+    );
 
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
@@ -10849,13 +10891,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           finalizeDelegatedCompletionDelivery(threadId, stored.event.payload.id),
         );
       }
-      yield* threadDispatch.withLock(
-        threadId,
-        startNextQueuedRun(
+      yield* withAdmissionFence(
+        threadDispatch.withLock(
           threadId,
-          stored.event.type === "run.updated" && stored.event.payload.status === "failed"
-            ? { failedRunId: stored.event.payload.id }
-            : undefined,
+          startNextQueuedRun(
+            threadId,
+            stored.event.type === "run.updated" && stored.event.payload.status === "failed"
+              ? { failedRunId: stored.event.payload.id }
+              : undefined,
+          ),
         ),
       );
     }).pipe(
@@ -11126,6 +11170,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 export const layer: Layer.Layer<
   OrchestratorV2,
   never,
+  | Admission.Admission
   | CheckpointServiceV2
   | FileSystem.FileSystem
   | Path.Path

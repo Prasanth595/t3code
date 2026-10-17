@@ -1,3 +1,5 @@
+import * as AdmissionControl from "./AdmissionControl.ts";
+import * as Admission from "./Admission.ts";
 import * as MissionWorkerResults from "./MissionWorkerResults.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -207,6 +209,7 @@ const layerMissionWorkerResults = MissionWorkerResults.layer.pipe(
 const layerOrchestratorProvided = Orchestrator.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      Admission.layer,
       layerCheckpointServiceProvided,
       CommandPolicy.layer,
       layerMissionWorkerResults,
@@ -313,6 +316,7 @@ const layerEffectWorkerProvided = EffectWorker.layer.pipe(
 const layerProviderRuntimeRecoveryProvided = ProviderRuntimeRecoveryService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
+      Admission.layer,
       layerEffectWorkerProvided,
       layerStores,
       layerEventSinkProvided,
@@ -322,7 +326,13 @@ const layerProviderRuntimeRecoveryProvided = ProviderRuntimeRecoveryService.laye
   ),
 );
 
+const layerAdmissionControlProvided = AdmissionControl.layer.pipe(
+  Layer.provide(Layer.mergeAll(Admission.layer, layerOrchestratorProvided)),
+);
+
 export const layer = Layer.mergeAll(
+  Admission.layer,
+  layerAdmissionControlProvided,
   layerOrchestratorProvided,
   layerThreadManagementProvided,
   layerEffectWorkerProvided,

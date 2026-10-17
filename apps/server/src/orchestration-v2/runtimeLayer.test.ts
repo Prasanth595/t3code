@@ -1,3 +1,5 @@
+import * as AdmissionControl from "./AdmissionControl.ts";
+import * as Admission from "./Admission.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -5,6 +7,7 @@ import { assert, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
   type ApplicationStoredEvent,
+  type OrchestrationV2ServerCommand,
   CheckpointId,
   CheckpointRef,
   CommandId,
@@ -39,6 +42,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
@@ -281,24 +285,28 @@ const moveProject = (projectId: ProjectId, workspaceRoot: string, updatedAt: str
     }),
   );
 
-const layerTest = Layer.mergeAll(
-  RuntimeLayer.layer,
-  RuntimeLayer.layerEventSink,
-  ProjectStore.layer,
-  ProjectionStore.layer,
-  EffectOutbox.layer,
-  ThreadCommandExecutor.layer,
-).pipe(
-  Layer.provide(McpSessionRegistryTestkit.layer),
-  Layer.provide(SqlitePersistence.layerMemory),
-  Layer.provide(layerCheckpointStoreTest),
-  Layer.provide(layerServerConfig),
-  Layer.provide(ServerSettings.layerTest()),
-  Layer.provide(layerTestProviderInstanceRegistry),
-  Layer.provide(layerGitWorkflowTest),
-  Layer.provide(layerProjectServiceTest),
-  Layer.provide(layerPlatformTest),
-);
+const makeTestLayer = (
+  database: typeof SqlitePersistence.layerMemory = SqlitePersistence.layerMemory,
+) =>
+  Layer.mergeAll(
+    RuntimeLayer.layer,
+    RuntimeLayer.layerEventSink,
+    ProjectStore.layer,
+    ProjectionStore.layer,
+    EffectOutbox.layer,
+    ThreadCommandExecutor.layer,
+  ).pipe(
+    Layer.provide(McpSessionRegistryTestkit.layer),
+    Layer.provideMerge(database),
+    Layer.provide(layerCheckpointStoreTest),
+    Layer.provide(layerServerConfig),
+    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(layerTestProviderInstanceRegistry),
+    Layer.provide(layerGitWorkflowTest),
+    Layer.provide(layerProjectServiceTest),
+    Layer.provide(layerPlatformTest),
+  );
+const layerTest = makeTestLayer();
 
 const layerLegacyImportTest = RuntimeLayer.layer.pipe(
   Layer.provide(McpSessionRegistryTestkit.layer),
@@ -5638,5 +5646,273 @@ it.layer(layerManagerRuntimeTest)("P3 manager runtime composition", (it) => {
           ["stopped"],
         );
       }),
+  );
+});
+
+it.layer(layerTest)("server admission drain", (it) => {
+  it.effect("fences dispatch and delegated starts without poisoning receipts, then resumes", () =>
+    Effect.gen(function* () {
+      const gate = yield* Admission.Admission;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("admission-drain");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("admission-create"),
+        threadId,
+        projectId: ProjectId.make("admission-project"),
+        title: "Admission",
+        createdBy: "user",
+        creationSource: "web",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const command = {
+        type: "message.dispatch" as const,
+        commandId: CommandId.make("admission-message"),
+        threadId,
+        messageId: MessageId.make("admission-message"),
+        text: "Work",
+        attachments: [],
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        dispatchMode: { type: "start_immediately" as const },
+      };
+      assert.deepEqual(yield* gate.drain, { draining: true, running: 0, queued: 0 });
+      const refused = yield* orchestrator.dispatch(command).pipe(Effect.flip);
+      assert.equal(refused._tag, "AdmissionDrainingError");
+      assert.include(refused.message, "ADMISSION_DRAINING");
+      assert.deepEqual(
+        yield* sql`SELECT command_id FROM orchestration_command_receipts
+        WHERE command_id = ${command.commandId}`,
+        [],
+      );
+      const delegated = yield* orchestrator
+        .dispatch({
+          type: "delegated_task.request",
+          commandId: CommandId.make("admission-delegate"),
+          parentThreadId: threadId,
+        } as OrchestrationV2ServerCommand)
+        .pipe(Effect.flip);
+      assert.equal(delegated._tag, "AdmissionDrainingError");
+      yield* gate.resume;
+      yield* orchestrator.dispatch(command);
+      assert.equal((yield* gate.status).running, 1);
+      yield* gate.drain;
+      // Replaying an already accepted command remains idempotent during drain.
+      yield* orchestrator.dispatch(command);
+      assert.equal((yield* gate.status).running, 1);
+      yield* gate.resume;
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+
+  it.effect("lets existing work reach zero and preserves queued turns across gate restart", () =>
+    Effect.gen(function* () {
+      const gate = yield* Admission.Admission;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = ThreadId.make("admission-queued");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("admission-queued-create"),
+        threadId,
+        projectId: ProjectId.make("admission-project"),
+        title: "Queued admission",
+        createdBy: "user",
+        creationSource: "web",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      for (const id of ["first", "queued"]) {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`admission-${id}`),
+          threadId,
+          messageId: MessageId.make(`admission-${id}`),
+          text: id,
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+          dispatchMode: { type: "queue_after_active" },
+        });
+      }
+      assert.deepEqual(yield* gate.drain, { draining: true, running: 1, queued: 1 });
+      const before = yield* orchestrator.getThreadProjection(threadId);
+      const first = before.runs[0]!;
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        commandId: CommandId.make("admission-finish"),
+        events: [
+          {
+            id: EventId.make("admission-finish"),
+            type: "run.updated",
+            threadId,
+            runId: first.id,
+            occurredAt: now,
+            payload: { ...first, status: "completed", completedAt: now },
+          },
+        ],
+      });
+      // Explicitly run the queue sweep; no sleep or event-loop polling proves the fence.
+      yield* orchestrator.resumeQueuedRuns;
+      assert.deepEqual(yield* gate.status, { draining: true, running: 0, queued: 1 });
+      const queuedId = before.runs[1]!.id;
+      // Reconstruct the service over the same durable DB, as startup does.
+      const restarted = yield* Effect.gen(function* () {
+        const next = yield* Admission.Admission;
+        return yield* next.status;
+      }).pipe(
+        Effect.provide(Layer.fresh(Admission.layer)),
+        Effect.provideService(SqlClient.SqlClient, sql),
+      );
+      assert.deepEqual(restarted, { draining: false, running: 0, queued: 1 });
+      yield* orchestrator.resumeQueuedRuns;
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(after.runs.find((run) => run.id === queuedId)?.status, "starting");
+      assert.equal(
+        after.messages.find((message) => message.id === "admission-queued")?.text,
+        "queued",
+      );
+      assert.equal(after.runs.length, 2);
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
+  );
+});
+
+it.effect("reopens the database after drain with queued message intact and admission open", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-admission-restart-" });
+    const database = SqlitePersistence.layerFromPath(`${directory}/state.sqlite`).pipe(
+      Layer.provide(NodeServices.layer),
+      Layer.orDie,
+    );
+    const threadId = ThreadId.make("admission-disk-restart");
+    const queuedId = yield* Effect.scoped(
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const admission = yield* Admission.Admission;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("admission-disk-create"),
+          threadId,
+          projectId: ProjectId.make("admission-project"),
+          title: "Durable queue",
+          createdBy: "user",
+          creationSource: "web",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        for (const id of ["disk-first", "disk-queued"])
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(id),
+            threadId,
+            messageId: MessageId.make(id),
+            text: id,
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+            dispatchMode: { type: "queue_after_active" },
+          });
+        yield* admission.drain;
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const first = projection.runs[0]!;
+        const now = yield* DateTime.now;
+        yield* (yield* EventSink.EventSinkV2).write({
+          commandId: CommandId.make("admission-disk-finish"),
+          events: [
+            {
+              id: EventId.make("admission-disk-finish"),
+              type: "run.updated",
+              threadId,
+              runId: first.id,
+              occurredAt: now,
+              payload: { ...first, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        assert.deepEqual(yield* admission.status, { draining: true, running: 0, queued: 1 });
+        return projection.runs[1]!.id;
+      }).pipe(Effect.provide(Layer.fresh(makeTestLayer(database)))),
+    );
+
+    // The first scoped runtime and SQLite connection are closed before opening the second.
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const admission = yield* Admission.Admission;
+        const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+        assert.deepEqual(yield* admission.status, { draining: false, running: 0, queued: 1 });
+        yield* recovery.reconcile("startup");
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(before.runs.find((run) => run.id === queuedId)?.status, "queued");
+        const control = yield* AdmissionControl.AdmissionControl;
+        const resumed = yield* control.resume;
+        assert.deepEqual(resumed, { draining: false, running: 1, queued: 0 });
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          after.messages.find((message) => message.id === "disk-queued")?.text,
+          "disk-queued",
+        );
+        assert.equal(after.runs.find((run) => run.id === queuedId)?.status, "starting");
+        assert.equal(after.runs.length, 2);
+      }).pipe(Effect.provide(Layer.fresh(makeTestLayer(database)))),
+    );
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+);
+
+it.layer(layerTest)("admitted preparation during drain", (it) => {
+  it.effect("lets an already admitted preparation release while new work stays fenced", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const admission = yield* Admission.Admission;
+      const threadId = ThreadId.make("admission-prepared");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("admission-prepared-create"),
+        threadId,
+        projectId: ProjectId.make("admission-project"),
+        title: "Admitted preparation",
+        createdBy: "user",
+        creationSource: "web",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("admission-prepared-message"),
+        threadId,
+        messageId: MessageId.make("admission-prepared-message"),
+        text: "Work",
+        attachments: [],
+        createdBy: "user",
+        creationSource: "web",
+        dispatchMode: { type: "defer_start" },
+      });
+      const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+      assert.deepEqual(yield* admission.drain, { draining: true, running: 1, queued: 0 });
+      yield* orchestrator.dispatch({
+        type: "prepared-run.release",
+        commandId: CommandId.make("admission-prepared-release"),
+        threadId,
+        runId: run.id,
+      });
+      assert.equal((yield* orchestrator.getThreadProjection(threadId)).runs[0]!.status, "starting");
+      assert.deepEqual(yield* admission.status, { draining: true, running: 1, queued: 0 });
+      yield* admission.resume;
+    }).pipe(Effect.provide(Layer.fresh(layerTest))),
   );
 });
