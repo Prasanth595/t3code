@@ -4,21 +4,33 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as AcpErrors from "effect-acp/errors";
 
-import { registerSubpolarCredentialExtension } from "./subpolarCredentials.ts";
+import { registerSubpolarCredentialExtension, setPiCredential } from "./subpolarCredentials.ts";
 
 const credential = { type: "oauth", access: "secret-canary-access", refresh: "secret-canary-refresh", expires: 123 };
 
-function makeHarness(activeSessionId = "worker-session", threadId = "thread-a", instanceId = `broker-test-${randomUUID()}`) {
-  let bytes: Uint8Array | undefined;
-  let handler: ((request: unknown) => Effect.Effect<unknown, unknown>) | undefined;
-  const host = {
-    credentials: () => Effect.succeed({
-      binding: { owner: "t3" as const, key: "fixed-instance-binding" },
-      get: Effect.sync(() => bytes ? Option.some(bytes) : Option.none()),
-      set: (value: Uint8Array) => Effect.sync(() => { bytes = value; }),
-      remove: Effect.sync(() => { bytes = undefined; }),
-    }),
+function makeCredentialHost() {
+  const records = new Map<string, Uint8Array>();
+  return {
+    records,
+    credentials: (namespace: string, instanceId: string) => {
+      const key = `${namespace}\0${instanceId}`;
+      return Effect.succeed({
+        binding: { owner: "t3" as const, key },
+        get: Effect.sync(() => records.has(key) ? Option.some(records.get(key)!) : Option.none()),
+        set: (value: Uint8Array) => Effect.sync(() => { records.set(key, value); }),
+        remove: Effect.sync(() => { records.delete(key); }),
+      });
+    },
   };
+}
+
+function makeHarness(
+  activeSessionId = "worker-session",
+  threadId = "thread-a",
+  instanceId = `broker-test-${randomUUID()}`,
+  host = makeCredentialHost(),
+) {
+  let handler: ((request: unknown) => Effect.Effect<unknown, unknown>) | undefined;
   const context = {
     threadId,
     activeSessionId: Effect.succeed(activeSessionId),
@@ -40,7 +52,10 @@ function makeHarness(activeSessionId = "worker-session", threadId = "thread-a", 
       if (!handler) throw new Error("Extension handler was not registered");
       return Effect.runPromise(handler(request));
     },
-    stored: () => bytes ? JSON.parse(new TextDecoder().decode(bytes)) : undefined,
+    stored: () => {
+      const bytes = host.records.get(`subpolar-pi\0${instanceId}`);
+      return bytes ? JSON.parse(new TextDecoder().decode(bytes)) : undefined;
+    },
   };
 }
 
@@ -101,4 +116,19 @@ it("does not accept caller-selected storage bindings or include secrets in broke
   assert.instanceOf(error, AcpErrors.AcpRequestError);
   assert.notInclude((error as Error).message, "secret-canary");
   assert.notInclude(JSON.stringify(error), "secret-canary");
+});
+
+it("keeps seeded Pi credentials isolated per ACP provider instance", async () => {
+  const host = makeCredentialHost();
+  const instanceA = `broker-instance-a-${randomUUID()}`;
+  const instanceB = `broker-instance-b-${randomUUID()}`;
+  const harnessA = makeHarness("worker-a", "thread-a", instanceA, host);
+  const harnessB = makeHarness("worker-b", "thread-b", instanceB, host);
+
+  await Effect.runPromise(setPiCredential({ host: host as never, instanceId: instanceA, providerId: "openai", credential }));
+
+  assert.deepEqual(await harnessA.invoke({ sessionId: "worker-a", operation: "read", providerId: "openai" }), { credential });
+  assert.deepEqual(await harnessB.invoke({ sessionId: "worker-b", operation: "read", providerId: "openai" }), { credential: undefined });
+  assert.isTrue(host.records.has(`subpolar-pi\0${instanceA}`));
+  assert.isFalse(host.records.has(`subpolar-pi\0${instanceB}`));
 });
