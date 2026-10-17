@@ -16,6 +16,8 @@ import { AsyncResult } from "effect/reactivity";
 
 import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 
+const VCS_REF_QUERY_MAX_LENGTH = 256;
+
 export async function checkoutNewTaskBranch<E>(input: {
   readonly branch: VcsRef;
   readonly project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot"> | null;
@@ -59,7 +61,9 @@ export async function checkoutNewTaskBranch<E>(input: {
         environmentId: input.project.environmentId,
         input: {
           cwd: input.project.workspaceRoot,
-          query: localName,
+          // The contract caps queries; a prefix still matches, and the exact
+          // name is compared below.
+          query: localName.slice(0, VCS_REF_QUERY_MAX_LENGTH),
           refKind: "local",
           ...(cursor === undefined ? { refresh: true } : { cursor }),
         },

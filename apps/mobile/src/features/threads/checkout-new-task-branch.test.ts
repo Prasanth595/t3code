@@ -235,4 +235,24 @@ describe("new-task branch checkout", () => {
     if (result._tag !== "Success") throw new Error("Paged worktree selection failed");
     expect(result.value.worktreePath).toBe(await NodeFSP.realpath(worktreePath));
   });
+
+  it("looks up a branch whose name is longer than the ref query limit", async () => {
+    const longName = `feature/${"a".repeat(120)}/${"b".repeat(150)}`;
+    await git("branch", longName);
+    const worktreePath = NodePath.join(directory, "worktree");
+    await git("worktree", "add", worktreePath, longName);
+    const result = await checkoutNewTaskBranch({
+      branch: { ...branch, name: longName },
+      project: { environmentId, workspaceRoot: cwd },
+      workspaceMode: "local",
+      readRefs: (request) => {
+        expect(request.input.query?.length).toBeLessThanOrEqual(256);
+        return readRefs(request);
+      },
+      switchRef: refuseSwitch,
+    });
+    expect(result._tag).toBe("Success");
+    if (result._tag !== "Success") throw new Error("Long branch selection failed");
+    expect(result.value.worktreePath).toBe(await NodeFSP.realpath(worktreePath));
+  });
 });
