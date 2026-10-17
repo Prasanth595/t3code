@@ -259,16 +259,22 @@ const formatTable = (reports: ReadonlyArray<RenderReport>) => {
   lines.push(`| **total** | **${median(reports.map((report) => report.totalRenders))}** |`);
   lines.push(`| commits | ${median(reports.map((report) => report.commits))} |`);
 
-  const components = new Map<string, string>();
+  const componentKeys = new Map<string, { name: string; region: string }>();
   for (const report of reports)
-    for (const entry of report.components) components.set(entry.name, entry.region);
-  const componentRows = [...components]
-    .map(([name, region]) => ({
+    for (const entry of report.components)
+      componentKeys.set(`${entry.region}/${entry.name}`, {
+        name: entry.name,
+        region: entry.region,
+      });
+  const componentRows = [...componentKeys.values()]
+    .map(({ name, region }) => ({
       name,
       region,
       renders: median(
         reports.map(
-          (report) => report.components.find((entry) => entry.name === name)?.renders ?? 0,
+          (report) =>
+            report.components.find((entry) => entry.name === name && entry.region === region)
+              ?.renders ?? 0,
         ),
       ),
     }))

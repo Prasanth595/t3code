@@ -30,8 +30,8 @@ interface RenderCounterState {
   on: boolean;
   commits: number;
   regionRoots: Map<string, string>;
+  /** Keyed by region and component, since a name like `View` renders in every region. */
   counts: Map<string, number>;
-  regions: Map<string, string>;
   causes: Map<string, number>;
 }
 export interface RenderCounterReport {
@@ -123,8 +123,7 @@ function install(state: RenderCounterState) {
       const nodeRegion = (name && state.regionRoots.get(name)) || region;
       const rendered = name !== null && (node.flags & PERFORMED_WORK) === PERFORMED_WORK;
       if (rendered) {
-        increment(state.counts, name);
-        if (!state.regions.has(name)) state.regions.set(name, nodeRegion);
+        increment(state.counts, `${nodeRegion}\u0000${name}`);
         increment(state.causes, `${name} ${causeOf(node, parentName)}`);
       }
       const skipped = alternate !== null && node.child === alternate.child && !rendered;
@@ -147,7 +146,6 @@ const state: RenderCounterState = {
   commits: 0,
   regionRoots: new Map(),
   counts: new Map(),
-  regions: new Map(),
   causes: new Map(),
 };
 
@@ -165,7 +163,6 @@ Object.assign(globalThis, {
     state.regionRoots = new Map(Object.entries(regionRoots));
     state.commits = 0;
     state.counts = new Map();
-    state.regions = new Map();
     state.causes = new Map();
     state.on = true;
     return true;
@@ -173,7 +170,10 @@ Object.assign(globalThis, {
   __t3RenderCounterStop(): RenderCounterReport {
     state.on = false;
     const components = [...state.counts]
-      .map(([name, renders]) => ({ name, region: state.regions.get(name) ?? "other", renders }))
+      .map(([key, renders]) => {
+        const [region = "other", name = key] = key.split("\u0000");
+        return { name, region, renders };
+      })
       .sort((a, b) => b.renders - a.renders);
     return {
       commits: state.commits,
