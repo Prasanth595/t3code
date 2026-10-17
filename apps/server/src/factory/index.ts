@@ -77,6 +77,7 @@ import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { isOurs, newestSays, resume, start, utcSecond, type StartContext } from "./runner/start.ts";
 import { takeStopRequest } from "./runner/stop.ts";
 import * as Events from "./t3/events.ts";
+import * as ServerExitService from "./t3/exit.ts";
 import * as Paths from "./t3/paths.ts";
 import * as T3Sessions from "./t3/sessions.ts";
 import {
@@ -702,6 +703,7 @@ export const FactoryRuntime = factoryRuntime();
 /** The factory's root layer. server.ts merges it into the runtime; nothing else imports it. */
 export const FactoryLayer = FactoryRuntime.pipe(
   Layer.provideMerge(Paths.layer),
+  Layer.provideMerge(ServerExitService.layer),
   Layer.provide(Gate.layer),
   Layer.provide(Process.layer),
   Layer.provide(T3Sessions.layerLive),
