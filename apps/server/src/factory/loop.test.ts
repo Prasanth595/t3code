@@ -84,6 +84,35 @@ describe("the pass loop", () => {
     ),
   );
 
+  it.effect("passRunning is true while a pass runs and false between passes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const on = yield* Deferred.make<void>();
+        const { onePass } = counting({ at: 1, on });
+        const loop = yield* runLoop(onePass, 60);
+        assert.isTrue(yield* loop.passRunning);
+        const first = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+        yield* Deferred.succeed(on, undefined);
+        yield* Fiber.join(first);
+        yield* Effect.yieldNow;
+        assert.isFalse(yield* loop.passRunning, "idle until the poll");
+        yield* TestClock.adjust("60 seconds");
+        yield* Effect.yieldNow;
+        assert.isFalse(yield* loop.passRunning, "the second pass finished at once");
+      }),
+    ),
+  );
+
+  it.effect("passRunning is false again after a pass that died", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const loop = yield* runLoop(Effect.die(new Error("boom")), 60);
+        yield* Effect.yieldNow;
+        assert.isFalse(yield* loop.passRunning);
+      }),
+    ),
+  );
+
   it.effect("a pass that dies is logged and the loop goes on", () =>
     Effect.scoped(
       Effect.gen(function* () {

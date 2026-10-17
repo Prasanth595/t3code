@@ -4,19 +4,26 @@
  * that the run is building and leaves a file named for it in `<dataDir>/stop-requests/`. The pass
  * takes that file into the run's ledger as a `stop_requested` line (`takeStopRequest`), which is
  * what `advance` and the gate read: the ledger stays the one record, and only the server writes
- * it. The run goes `stuck` on the same pass.
+ * it. The run goes `stuck` on the same pass. The HTTP API leaves the same file
+ * (`leaveStopRequest`), so a stop asked for while the gate has the run waits for the gate's result
+ * there too.
  */
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import * as Effect from "effect/Effect";
 
-import { LedgerIoError, ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
+import {
+  errnoCode,
+  LedgerIoError,
+  ledgerCall as ledger,
+  type LedgerError,
+} from "../ledger/errors.ts";
 import { makeCause } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { readRun } from "../ledger/read.ts";
 import { runIdToString, type RunId } from "../ledger/runId.ts";
-import { readProgress } from "./progress.ts";
+import { readProgress, type Seen } from "./progress.ts";
 
 /** The directory of the data dir that holds the requests, one file per run. */
 export const STOP_REQUESTS_DIR = "stop-requests";
@@ -39,6 +46,95 @@ export type StopRequestOutcome =
   | "not-building";
 
 /**
+ * Records a stop by hand for `run`, as `takeStopRequest` does with a request it found: reads the
+ * run's ledger and, when the run is building and no stop was asked for, appends the
+ * `stop_requested` line. Throws the ledger's errors (`LedgerNotFoundError` for a run with no
+ * file); a caller runs it through `ledgerCall`. `none` is not an outcome here: the caller asked.
+ * `seen` is the progress the decision was made from.
+ */
+export const requestStop = (
+  dataDir: string,
+  run: RunId,
+  clock: () => number,
+): { readonly outcome: Exclude<StopRequestOutcome, "none">; readonly seen: Seen } => {
+  const seen = readProgress(readRun(dataDir, run).entries);
+  if (seen.finished) return { outcome: "finished", seen };
+  if (seen.stopRequested) return { outcome: "already-requested", seen };
+  if (seen.state !== "building") return { outcome: "not-building", seen };
+  const out = Ledger.open(dataDir, run, { clock });
+  try {
+    out.append(
+      { event: "stop_requested", data: { by: "operator" } },
+      makeCause("operator", "stop-requested"),
+    );
+  } finally {
+    out.close();
+  }
+  return { outcome: "recorded", seen };
+};
+
+/**
+ * Asks for `run` to be stopped by hand, as the API does: leaves the request `stop-run.sh` leaves,
+ * for the pass to take, and never writes the ledger. The pass takes it only when the gate does not
+ * have the run, and drops it once the gate passed, so the gate's own result decides the state
+ * first. `finished` and `not-building` are refusals (the state is checked before the stop line, so
+ * a stale line on a run that left `building` is refused, not `already-requested`);
+ * `already-requested` is a request already waiting, or the line already in the ledger. Throws the
+ * ledger's errors (`LedgerNotFoundError` for a run with no file), and `LedgerIoError` when the
+ * request cannot be written. `seen` is the progress the decision was made from, so a refusal can
+ * say why without reading the ledger again.
+ */
+export const leaveStopRequest = (
+  dataDir: string,
+  run: RunId,
+): {
+  readonly outcome: Exclude<StopRequestOutcome, "none">;
+  readonly seen: Seen;
+} => {
+  const seen = readProgress(readRun(dataDir, run).entries);
+  if (seen.finished) return { outcome: "finished", seen };
+  if (seen.state !== "building") return { outcome: "not-building", seen };
+  const path = stopRequestPath(dataDir, run);
+  if (seen.stopRequested || NodeFS.existsSync(path)) return { outcome: "already-requested", seen };
+  const dir = NodePath.dirname(path);
+  try {
+    NodeFS.mkdirSync(dir, { recursive: true });
+  } catch (error) {
+    // Its own catch: the EEXIST of a file where the directory belongs is not a request.
+    throw new LedgerIoError({ path: dir, cause: error });
+  }
+  try {
+    // `wx`: a request left by a call racing this one is that call's, and this one is `already`.
+    NodeFS.writeFileSync(path, "operator\n", { flag: "wx" });
+  } catch (error) {
+    if (errnoCode(error) === "EEXIST") return { outcome: "already-requested", seen };
+    throw new LedgerIoError({ path, cause: error });
+  }
+  return { outcome: "recorded", seen };
+};
+
+/**
+ * Why a stop by hand is refused for a run that is not building, in the words of
+ * `factory/scripts/stop-run.sh`: `seen` is the run's progress, and the tail says how the run ends
+ * instead.
+ */
+export const notBuildingMessage = (id: string, seen: Seen): string => {
+  const why = seen.finished
+    ? "it is finished"
+    : seen.state === null
+      ? "it has no state yet"
+      : `its state is ${seen.state}`;
+  const tail = seen.finished
+    ? ""
+    : seen.state === null || seen.state === "triage" || seen.state === "needs-info"
+      ? " To end it, close its issue."
+      : seen.state === "pr-open"
+        ? " It ends when its pull request is merged or closed."
+        : "";
+  return `run ${id} is not building: ${why}. Only a building run is stopped this way.${tail}`;
+};
+
+/**
  * Takes the stop request for `run`, if there is one. The file is removed after the ledger line is
  * written, so a crash between the two leaves the file and the line, and the next pass finds the
  * line and only removes the file. A run that is finished, or no longer building, gets no line. A ledger that cannot be
@@ -52,7 +148,6 @@ export const takeStopRequest = (
   ledger((): StopRequestOutcome => {
     const path = stopRequestPath(dataDir, run);
     if (!NodeFS.existsSync(path)) return "none";
-    const seen = readProgress(readRun(dataDir, run).entries);
     const drop = (outcome: StopRequestOutcome): StopRequestOutcome => {
       try {
         NodeFS.rmSync(path, { force: true });
@@ -61,17 +156,5 @@ export const takeStopRequest = (
       }
       return outcome;
     };
-    if (seen.finished) return drop("finished");
-    if (seen.stopRequested) return drop("already-requested");
-    if (seen.state !== "building") return drop("not-building");
-    const out = Ledger.open(dataDir, run, { clock });
-    try {
-      out.append(
-        { event: "stop_requested", data: { by: "operator" } },
-        makeCause("operator", "stop-requested"),
-      );
-    } finally {
-      out.close();
-    }
-    return drop("recorded");
+    return drop(requestStop(dataDir, run, clock).outcome);
   });
