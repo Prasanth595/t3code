@@ -112,6 +112,10 @@ function Field({
   );
 }
 
+/** A repo's inputs and Remove stack on a phone and sit in a row from `sm`. */
+const REPO_ROW =
+  "flex flex-col items-stretch gap-2 px-3 py-2 sm:flex-row sm:flex-wrap sm:items-start sm:px-4";
+
 export function FactorySettingsPanel() {
   const { environment } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
@@ -381,10 +385,7 @@ export function FactorySettingsPanel() {
         {form.repos.map((row, index) => (
           // Rows have no identity beyond their position, which is also how the server names them.
           // eslint-disable-next-line react/no-array-index-key
-          <div
-            key={index}
-            className="flex flex-col items-stretch gap-2 px-3 py-2 sm:flex-row sm:flex-wrap sm:items-start sm:px-4"
-          >
+          <div key={index} className={REPO_ROW}>
             <Field name={`repos[${index}].repo`} errors={errors}>
               <Input
                 size="touch"
