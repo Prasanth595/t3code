@@ -1,7 +1,7 @@
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { act, Suspense } from "react";
-import { create } from "react-test-renderer";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const loaded = vi.hoisted(() => ({
   diff: 0,
@@ -49,11 +49,25 @@ const host: PanelHost = {
   sendAnnotation: () => undefined,
 };
 
+let root: Root;
+let container: HTMLDivElement;
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+});
+afterEach(async () => {
+  await act(() => root.unmount());
+  container.remove();
+  vi.unstubAllGlobals();
+});
+
 describe("bundled side panels", () => {
   it("loads only the selected panel body and lends it the host", async () => {
     expect(loaded).toMatchObject({ diff: 0, preview: 0, terminal: 0, device: 0 });
     await act(async () => {
-      create(
+      root.render(
         <PanelHostContext value={host}>
           <Suspense fallback={null}>
             <RegisteredSidePanel id="preview" tabId="tab-1" />
@@ -74,7 +88,7 @@ describe("bundled side panels", () => {
       activeTerminalId: "term-1",
     };
     await act(async () => {
-      create(
+      root.render(
         <PanelHostContext value={host}>
           <Suspense fallback={null}>
             <RegisteredSidePanel

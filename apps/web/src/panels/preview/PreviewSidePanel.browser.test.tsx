@@ -10,7 +10,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { act, useEffect, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 // Drives the registered Preview through the real RegisteredSidePanel ->
@@ -193,13 +193,17 @@ const annotation: PreviewAnnotationPayload = {
 };
 
 describe("registered Preview side panel", () => {
-  let renderer: ReactTestRenderer | null = null;
+  let root: Root;
+  let container: HTMLDivElement;
 
   // The registry loads the body lazily; warm the module so a render settles in one act.
   beforeAll(() => import("./PreviewSidePanel"));
 
   beforeEach(() => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
     mocks.pickElement.mockReset();
     mocks.cancelPickElement.mockClear();
     mocks.addPreviewAnnotation.mockClear();
@@ -210,15 +214,14 @@ describe("registered Preview side panel", () => {
   });
 
   afterEach(async () => {
-    await act(async () => renderer?.unmount());
-    renderer = null;
+    await act(() => root.unmount());
+    container.remove();
     vi.unstubAllGlobals();
   });
 
   async function render(host: PanelHost) {
     await act(async () => {
-      if (renderer) renderer.update(panel(host));
-      else renderer = create(panel(host));
+      root.render(panel(host));
     });
   }
 

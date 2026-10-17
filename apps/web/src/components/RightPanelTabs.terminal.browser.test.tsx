@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { act } from "react";
@@ -28,8 +26,6 @@ beforeEach(() => {
       disconnect() {}
     },
   );
-  // jsdom lacks the Web Animations API that the tab bar's scroll area waits on.
-  Element.prototype.getAnimations ??= () => [];
   useRightPanelStore.setState({ byThreadKey: {} });
   container = document.createElement("div");
   document.body.append(container);
