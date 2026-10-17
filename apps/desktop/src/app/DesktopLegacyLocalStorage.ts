@@ -9,11 +9,12 @@ import * as Ref from "effect/Ref";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import { readChromiumLocalStorage } from "./chromiumLocalStorage.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { FORK_LEGACY_APP_DATA_FOLDERS } from "../../../../scripts/lib/fork-identity.ts";
 
 /**
  * Carries the renderer's localStorage (prompt stash, unsent drafts, layout,
  * theme) over from the V1 desktop profile, which V2 replaced with its own
- * `t3code-v2` profile. The V1 profile is only read, never opened by Chromium,
+ * profile. The V1 profile is only read, never opened by Chromium,
  * so this works while V1 is still running.
  *
  * `load` runs before the window opens; the preload takes the items once,
@@ -31,8 +32,8 @@ export class DesktopLegacyLocalStorage extends Context.Service<
 >()("@t3tools/desktop/app/DesktopLegacyLocalStorage") {}
 
 const MARKER_FILE_NAME = "v1-local-storage-imported";
-// V1 used "T3 Code (Alpha)" when that folder existed and "t3code" otherwise.
-const V1_PROFILE_NAMES = ["T3 Code (Alpha)", "t3code"];
+// The fork has no V1 profile, so nothing is found and the marker is written.
+const V1_PROFILE_NAMES = FORK_LEGACY_APP_DATA_FOLDERS;
 
 const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
