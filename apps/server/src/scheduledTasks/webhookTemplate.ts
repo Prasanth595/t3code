@@ -24,7 +24,7 @@ export interface RenderedWebhookPrompt {
 }
 
 const CREDENTIAL_NAME =
-  /^(authorization|proxy-authorization|cookie|set-cookie)$|token|secret|signature|key|password|auth/i;
+  /^(authorization|proxy-authorization|cookie|set-cookie|x-t3-relay-.*)$|token|secret|signature|key|password|auth|credential|hmac|jwt|assertion/i;
 const REDACTED = "[redacted]";
 
 export function redactHeaders(headers: Readonly<Record<string, string>>): Record<string, string> {
@@ -62,11 +62,12 @@ const PLACEHOLDER = /\{\{([^{}]*)\}\}/g;
  * Codex and Pi), `@` file, agent and plugin mentions (after punctuation or
  * letters in some CLIs), a `/name` command word mid-text, and `t3-context:`
  * links. A word joiner goes after every currency sign and `@`, after a `/`
- * that starts a single-segment word, and inside the `t3-context` scheme.
+ * that starts a single-segment word, and inside the `t3-context` scheme and
+ * any `webhook-data` name, so a value can't forge a frame tag.
  * Checked against Claude Code 2.1.296, Codex 0.162.1, Pi 1.2.0 and dsh
  * 0.2.0-rc.2; other agents may parse more.
  */
-const MENTION = /[\p{Sc}@]|(?<=^|\s)\/(?=[^\s/]+(?:\s|$))|t3-context(?=:)/giu;
+const MENTION = /[\p{Sc}@]|(?<=^|\s)\/(?=[^\s/]+(?:\s|$))|t3-context(?=:)|webhook(?=-data)/giu;
 
 function parseBody(request: WebhookRequest): unknown {
   const contentType = (request.headers["content-type"] ?? "").toLowerCase();
@@ -92,7 +93,7 @@ function lookup(root: unknown, segments: ReadonlyArray<string>): unknown {
   return current;
 }
 
-function stringify(value: unknown): string {
+function stringify(value: unknown): string | undefined {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return JSON.stringify(value, null, 2);
@@ -127,10 +128,11 @@ export function renderWebhookPrompt(
         return segments.length === 0 ? formatWebhookRequest(request) : undefined;
       case "body":
         return segments.length === 0 ? request.bodyText : lookup(parsedBody(), segments);
-      case "headers":
-        return segments.length === 0
-          ? redactHeaders(request.headers)
-          : request.headers[segments.join(".").toLowerCase()];
+      case "headers": {
+        if (segments.length === 0) return redactHeaders(request.headers);
+        const name = segments.join(".").toLowerCase();
+        return Object.hasOwn(request.headers, name) ? request.headers[name] : undefined;
+      }
       case "query": {
         if (segments.length === 0) {
           return Object.fromEntries(new URLSearchParams(redactQuery(request.query)));
@@ -147,11 +149,11 @@ export function renderWebhookPrompt(
   const prompt = template.replace(PLACEHOLDER, (_match, rawExpression: string) => {
     const expression = rawExpression.trim();
     const value = resolve(expression);
-    if (value === undefined || value === null) {
+    const text = value === undefined || value === null ? undefined : stringify(value);
+    if (text === undefined) {
       if (!missing.includes(expression)) missing.push(expression);
       return "";
     }
-    const text = stringify(value);
     // An empty value carries no request data, so it needs no frame or note.
     if (text === "") return "";
     framed = true;
