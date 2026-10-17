@@ -67,6 +67,24 @@ It points `current` at `previous`, restarts the job, removes `previous` and runs
 
 [docs/handover.md](docs/handover.md) is the runbook for switching this repo from the Rust factory to the fork's factory, and for handing it back and moving it back.
 
+## Remote
+
+The Factory pages work on a phone. They run in the fork's own web, so open the fork server from the phone and sign in like any T3 browser. The T3 mobile app from the App Store is upstream's build and has no Factory screen.
+
+1. Join the Mac and the phone to the same tailnet.
+2. On the Mac, pair with the fork's binary and base dir (the LaunchAgent already serves on port 3876):
+
+   ```sh
+   ~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac --tailscale
+   ```
+
+   It maps the server to Tailscale HTTPS and prints a pairing link such as `https://<machine>.<tailnet>.ts.net/pair#token=...`. Treat the link as a password.
+
+3. Open the link in the phone's browser, which signs it in. Then open `/factory` on that same origin. The machine config is at `/settings/factory`.
+4. Add it to the home screen: in iOS Safari, Share, then Add to Home Screen; in Android Chrome, the menu, then Add to home screen.
+
+The pages use the paired session, so there is no factory token to set. Pause, resume and stop need the `orchestration:operate` scope that a normal pairing carries. A connection through T3 Connect (the relay) does not reach the Factory pages yet; pair directly as above.
+
 ## Stopping a run by hand
 
 ```sh
