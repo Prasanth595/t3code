@@ -17,7 +17,16 @@ const mocks = vi.hoisted(() => ({
   prepared: { httpBaseUrl: "http://t3.test", httpAuthorization: null },
   fetchFactoryConfig: vi.fn(),
   saveFactoryConfig: vi.fn(),
+  projects: [] as ReadonlyArray<{
+    environmentId: string;
+    id: string;
+    title: string;
+    workspaceRoot: string;
+    isScratch?: boolean;
+  }>,
 }));
+
+vi.mock("~/state/entities", () => ({ useProjects: () => mocks.projects }));
 
 vi.mock("~/state/session", () => ({
   useEnvironmentScope: (_id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
@@ -34,6 +43,19 @@ vi.mock("./api", () => ({
   saveFactoryConfig: mocks.saveFactoryConfig,
 }));
 vi.mock("../../components/ui/input", () => ({ Input: "input" }));
+vi.mock("../../components/ui/select", async () => {
+  const { createContext, createElement, useContext } = await import("react");
+  const Value = createContext<unknown>(null);
+  return {
+    Select: (props: { value: unknown; children?: ReactNode }) =>
+      createElement(Value.Provider, { value: props.value }, createElement("select", props)),
+    SelectItem: "option",
+    SelectPopup: "div",
+    SelectTrigger: "select-trigger",
+    SelectValue: (props: { children: (value: unknown) => ReactNode }) =>
+      createElement("span", null, props.children(useContext(Value))),
+  };
+});
 vi.mock("../../components/ui/button", async () => {
   const { cloneElement } = await import("react");
   return {
@@ -136,6 +158,19 @@ const populated = report({
   ],
 });
 
+const PROJECTS = [
+  { environmentId: "env-1", id: "p1", title: "Alpha", workspaceRoot: "/work/alpha" },
+  { environmentId: "env-1", id: "p2", title: "Beta", workspaceRoot: "/work/beta" },
+  {
+    environmentId: "env-1",
+    id: "p3",
+    title: "Scratch",
+    workspaceRoot: "/tmp/scratch",
+    isScratch: true,
+  },
+  { environmentId: "env-2", id: "p4", title: "Elsewhere", workspaceRoot: "/work/elsewhere" },
+];
+
 const ok = (value: MachineConfigReport): FactoryConfigResult => ({ kind: "ok", report: value });
 
 const textOf = (node: ReactTestInstance | ReactTestRenderer["root"]): string =>
@@ -147,6 +182,7 @@ describe("FactorySettingsPanel", () => {
   beforeEach(() => {
     mocks.canWrite = true;
     mocks.environmentId = "env-1";
+    mocks.projects = PROJECTS;
     mocks.fetchFactoryConfig.mockReset();
     mocks.saveFactoryConfig.mockReset();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -186,6 +222,16 @@ describe("FactorySettingsPanel", () => {
   const click = async (node: ReactTestInstance) => {
     await act(async () => node.props.onClick());
   };
+  const projectSelect = (root: ReactTestInstance, index: number) => {
+    const found = root.findAll((node) => node.type === "select");
+    expect(found.length, `project select ${index + 1}`).toBeGreaterThan(index);
+    return found[index]!;
+  };
+  /** What the closed select shows: the SelectValue text alone, never the option list. */
+  const triggerText = (root: ReactTestInstance, index: number) =>
+    textOf(
+      projectSelect(root, index).findAll((node) => String(node.type) === "select-trigger")[0]!,
+    ).trim();
   const field = (root: ReactTestInstance, name: string) =>
     root.findAll((node) => node.type === "div" && node.props["data-field"] === name)[0];
 
@@ -310,7 +356,7 @@ describe("FactorySettingsPanel", () => {
     expect(input(root, "Poll seconds").props.value).toBe("45");
     expect(input(root, "Max concurrent runs").props.value).toBe("1");
     expect(input(root, "Repository 1").props.value).toBe("acme/alpha");
-    expect(input(root, "Path 2").props.value).toBe("");
+    expect(projectSelect(root, 1).props.value).toBeNull();
     expect(textOf(field(root, "max_concurrent_gates")!)).toContain("must be an integer");
 
     await type(input(root, "Max concurrent gates"), "3");
@@ -360,7 +406,7 @@ describe("FactorySettingsPanel", () => {
     expect(input(root, "Poll seconds").props.value).toBe("45");
     expect(input(root, "Max concurrent runs").props.value).toBe("3");
     expect(input(root, "Repository 1").props.value).toBe("acme/alpha");
-    expect(input(root, "Path 2").props.value).toBe("/work/beta");
+    expect(projectSelect(root, 1).props.value).toBe("/work/beta");
 
     const text = textOf(root);
     expect(text).toContain("tom");
@@ -410,6 +456,133 @@ describe("FactorySettingsPanel", () => {
     expect(button(root, "Save").props.disabled).toBe(true);
     expect(textOf(root)).toContain("read-only");
   });
+  it("lists only this environment's projects, with name and workspace root", async () => {
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
+    const root = await open();
+
+    const options = projectSelect(root, 0).findAll((node) => node.type === "option");
+    expect(options.map((node) => node.props.value)).toEqual(["/work/alpha", "/work/beta"]);
+    expect(textOf(options[0]!)).toContain("Alpha");
+    expect(textOf(options[0]!)).toContain("/work/alpha");
+    expect(textOf(options[1]!)).toContain("Beta");
+    expect(textOf(root)).not.toContain("Scratch");
+    expect(textOf(root)).not.toContain("Elsewhere");
+  });
+
+  it("writes the chosen project's workspace root into the row and saves it as path", async () => {
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
+    mocks.saveFactoryConfig.mockResolvedValue(ok(populated));
+    const root = await open();
+
+    expect(triggerText(root, 0)).toBe("Alpha");
+    await act(async () => projectSelect(root, 0).props.onValueChange("/work/beta"));
+    expect(projectSelect(root, 0).props.value).toBe("/work/beta");
+    expect(triggerText(root, 0)).toBe("Beta");
+
+    await click(button(root, "Save"));
+
+    expect(mocks.saveFactoryConfig).toHaveBeenCalledWith(mocks.prepared, {
+      gh_config_dir: "/home/t3/gh",
+      poll_seconds: 45,
+      max_concurrent_runs: 3,
+      max_concurrent_gates: 2,
+      repos: [
+        { repo: "acme/alpha", path: "/work/beta" },
+        { repo: "acme/beta", path: "/work/beta" },
+      ],
+    });
+  });
+
+  it("keeps a saved path that matches no project, marks it, and saves it unchanged", async () => {
+    const orphaned = report({
+      config: {
+        ...defaultsConfig,
+        repos: [{ repo: "acme/alpha", path: "/gone/away" }],
+      },
+    });
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(orphaned));
+    mocks.saveFactoryConfig.mockResolvedValue(ok(orphaned));
+    const root = await open();
+
+    expect(triggerText(root, 0)).toBe("/gone/away (not a T3 project)");
+    expect(textOf(field(root, "repos[0].path")!)).toContain("Not a T3 project on this environment");
+    expect(projectSelect(root, 0).props.value).toBe("/gone/away");
+    const unknown = projectSelect(root, 0)
+      .findAll((node) => node.type === "option")
+      .find((node) => node.props.value === "/gone/away");
+    expect(unknown?.props.disabled).toBe(true);
+
+    await click(button(root, "Save"));
+
+    expect(mocks.saveFactoryConfig).toHaveBeenCalledWith(mocks.prepared, {
+      ...SAVED_KEYS,
+      repos: [{ repo: "acme/alpha", path: "/gone/away" }],
+    });
+  });
+
+  it("does not mark a path that matches a project", async () => {
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
+    const root = await open();
+
+    expect(triggerText(root, 0)).toBe("Alpha");
+    expect(triggerText(root, 1)).toBe("Beta");
+    expect(textOf(root)).not.toContain("not a T3 project");
+    expect(textOf(root)).not.toContain("Not a T3 project on this environment");
+  });
+
+  it("starts a new row with no project chosen and saves an empty path", async () => {
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(report()));
+    mocks.saveFactoryConfig.mockResolvedValue(ok(report()));
+    const root = await open();
+
+    await click(button(root, "Add repo"));
+
+    expect(projectSelect(root, 0).props.value).toBeNull();
+    expect(triggerText(root, 0)).toBe("Choose a project");
+    expect(textOf(root)).not.toContain("not a T3 project");
+
+    await click(button(root, "Save"));
+
+    expect(mocks.saveFactoryConfig).toHaveBeenCalledWith(mocks.prepared, {
+      ...SAVED_KEYS,
+      repos: [{ repo: "", path: "" }],
+    });
+  });
+
+  it("shows a path error under the project select of the row it names", async () => {
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
+    mocks.saveFactoryConfig.mockResolvedValue({
+      kind: "invalid",
+      errors: [{ file: FILE, field: "repos[1].path", message: "path must be absolute" }],
+    });
+    const root = await open();
+
+    await click(button(root, "Save"));
+
+    const second = field(root, "repos[1].path")!;
+    expect(second.findAll((node) => node.type === "select")).toHaveLength(1);
+    expect(textOf(second)).toContain("path must be absolute");
+    expect(textOf(field(root, "repos[0].path")!)).not.toContain("path must be absolute");
+  });
+
+  it("gives machine config fields twice the old width and splits a repo row 50/50", async () => {
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
+    const root = await open();
+
+    for (const name of ["gh_config_dir", "poll_seconds"]) {
+      const className = String(field(root, name)!.props.className);
+      expect(className).toContain("sm:w-144");
+      expect(className).not.toContain("sm:w-72");
+      expect(className).toContain("min-w-0");
+    }
+    for (const name of ["repos[0].repo", "repos[0].path"]) {
+      const className = String(field(root, name)!.props.className);
+      expect(className).toContain("sm:flex-1");
+      expect(className).toContain("min-w-0");
+      expect(className).not.toContain("sm:w-72");
+    }
+  });
+
   describe.each([375, 1280])("at %i px", (width) => {
     it("lets a long config path break instead of overflowing", async () => {
       const restore = viewport(width);
@@ -433,8 +606,8 @@ describe("FactorySettingsPanel", () => {
         mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
         const root = await open();
         const inputs = root.findAll((node) => node.type === "input");
-        // Four machine fields, then a repo and a path for each of the two repos.
-        expect(inputs).toHaveLength(8);
+        // Four machine fields, then a repo for each of the two repos; the path is a select.
+        expect(inputs).toHaveLength(6);
         expect(inputs.map((node) => node.props.size)).toEqual(inputs.map(() => "touch"));
         const buttons = root.findAll((node) => node.type === "button");
         expect(buttons.map((node) => textOf(node).trim())).toEqual([

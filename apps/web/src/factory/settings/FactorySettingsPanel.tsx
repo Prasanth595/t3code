@@ -10,6 +10,14 @@ import {
 } from "../../components/settings/settingsLayout";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select";
+import { useProjects } from "~/state/entities";
 import { useEnvironmentScope, usePreparedConnection } from "~/state/session";
 import {
   fetchFactoryConfig,
@@ -87,22 +95,32 @@ function FieldErrors({
     ));
 }
 
+/** A machine config field is a fixed width; a repo row's field shares the row's width with its sibling. */
 function Field({
   name,
   errors,
   children,
+  grow = false,
 }: {
   readonly name: string;
   readonly errors: ReadonlyArray<ConfigError>;
   readonly children: React.ReactNode;
+  readonly grow?: boolean;
 }) {
   return (
-    <div data-field={name} className="flex w-full min-w-0 flex-col gap-1 sm:w-72">
+    <div
+      data-field={name}
+      className={`flex w-full min-w-0 flex-col gap-1 ${grow ? "sm:flex-1 sm:basis-0" : "sm:w-144"}`}
+    >
       {children}
       <FieldErrors name={name} errors={errors} />
     </div>
   );
 }
+
+/** A saved path that no T3 project on the environment has as its root. */
+const unknownPath = (path: string, projects: ReadonlyArray<{ readonly workspaceRoot: string }>) =>
+  path !== "" && !projects.some((project) => project.workspaceRoot === path);
 
 /** A repo's inputs and Remove stack on a phone and sit in a row from `sm`. */
 const REPO_ROW =
@@ -111,6 +129,9 @@ const REPO_ROW =
 export function FactorySettingsPanel() {
   const { environment } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
+  const projects = useProjects().filter(
+    (project) => project.environmentId === environmentId && !project.isScratch,
+  );
   const prepared = Option.getOrNull(usePreparedConnection(environmentId));
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
 
@@ -165,13 +186,13 @@ export function FactorySettingsPanel() {
   const setText =
     (key: Exclude<keyof FormState, "repos">) => (event: { target: { value: string } }) =>
       edit((current) => ({ ...current, [key]: event.target.value }));
-  const setRepo = (index: number, key: "repo" | "path") => (event: { target: { value: string } }) =>
+  const editRepo = (index: number, key: "repo" | "path", value: string) =>
     edit((current) => ({
       ...current,
-      repos: current.repos.map((row, i) =>
-        i === index ? { ...row, [key]: event.target.value } : row,
-      ),
+      repos: current.repos.map((row, i) => (i === index ? { ...row, [key]: value } : row)),
     }));
+  const setRepo = (index: number, key: "repo" | "path") => (event: { target: { value: string } }) =>
+    editRepo(index, key, event.target.value);
   // Removing or adding a row moves every index after it, so field errors by index no longer line up.
   const reshapeRepos = (change: (repos: FormState["repos"]) => FormState["repos"]) => {
     edit((current) => ({ ...current, repos: change(current.repos) }));
@@ -351,7 +372,7 @@ export function FactorySettingsPanel() {
           // Rows have no identity beyond their position, which is also how the server names them.
           // eslint-disable-next-line react/no-array-index-key
           <div key={index} className={REPO_ROW}>
-            <Field name={`repos[${index}].repo`} errors={errors}>
+            <Field name={`repos[${index}].repo`} errors={errors} grow>
               <Input
                 size="touch"
                 placeholder="owner/name"
@@ -360,15 +381,40 @@ export function FactorySettingsPanel() {
                 onChange={setRepo(index, "repo")}
               />
             </Field>
-            <Field name={`repos[${index}].path`} errors={errors}>
-              <Input
-                size="touch"
-                font="mono"
-                placeholder="/path/to/checkout"
-                aria-label={`Path ${index + 1}`}
-                value={row.path}
-                onChange={setRepo(index, "path")}
-              />
+            <Field name={`repos[${index}].path`} errors={errors} grow>
+              <Select
+                value={row.path === "" ? null : row.path}
+                onValueChange={(value) => editRepo(index, "path", value ?? "")}
+              >
+                <SelectTrigger aria-label={`Project ${index + 1}`}>
+                  <SelectValue>
+                    {(value: string | null) =>
+                      value === null
+                        ? "Choose a project"
+                        : (projects.find((project) => project.workspaceRoot === value)?.title ??
+                          `${value} (not a T3 project)`)
+                    }
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup>
+                  {projects.map((project) => (
+                    <SelectItem key={project.id} value={project.workspaceRoot}>
+                      {project.title}{" "}
+                      <span className="text-muted-foreground">{project.workspaceRoot}</span>
+                    </SelectItem>
+                  ))}
+                  {unknownPath(row.path, projects) ? (
+                    <SelectItem value={row.path} disabled>
+                      {row.path} (not a T3 project)
+                    </SelectItem>
+                  ) : null}
+                </SelectPopup>
+              </Select>
+              {unknownPath(row.path, projects) ? (
+                <p className="text-xs text-muted-foreground">
+                  Not a T3 project on this environment, so the factory cannot launch there.
+                </p>
+              ) : null}
             </Field>
             <Button
               size="xs"
