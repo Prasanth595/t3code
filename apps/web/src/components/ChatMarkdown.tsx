@@ -164,7 +164,7 @@ import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
   chatMarkdownClipboardPayload,
-  serializeTableElementToCsv,
+  serializeTableElementToDelimited,
   serializeTableElementToMarkdown,
 } from "../markdown-clipboard";
 import {
@@ -349,10 +349,12 @@ const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
 const MAX_HIGHLIGHT_CACHE_MEMORY_BYTES = 50 * 1024 * 1024;
 
+type TableCopyFormat = "markdown" | "tsv" | "csv";
+
 interface MarkdownActionFailureContext {
   readonly operation: string;
   readonly target?: string;
-  readonly format?: "markdown" | "csv";
+  readonly format?: TableCopyFormat;
   readonly language?: string;
   readonly fenceTitle?: string;
   readonly copyTarget?: string;
@@ -575,7 +577,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
     setExpanded((value) => !value);
   }
 
-  const handleCopy = useCallback((format: "markdown" | "csv") => {
+  const handleCopy = useCallback((format: TableCopyFormat) => {
     const table = containerRef.current?.querySelector("table");
     if (!table || typeof navigator === "undefined" || navigator.clipboard == null) {
       return;
@@ -583,7 +585,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
     const text =
       format === "markdown"
         ? serializeTableElementToMarkdown(table)
-        : serializeTableElementToCsv(table);
+        : serializeTableElementToDelimited(table, format);
     void navigator.clipboard
       .writeText(text)
       .then(() => {
@@ -662,6 +664,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
           </Tooltip>
           <MenuPopup align="end">
             <MenuItem onClick={() => handleCopy("markdown")}>Copy as Markdown</MenuItem>
+            <MenuItem onClick={() => handleCopy("tsv")}>Copy as TSV</MenuItem>
             <MenuItem onClick={() => handleCopy("csv")}>Copy as CSV</MenuItem>
           </MenuPopup>
         </Menu>
