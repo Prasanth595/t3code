@@ -161,7 +161,7 @@ export function ConnectionsNewRouteScreen({
   );
 
   const connectAndClose = useCallback(
-    async (pairingUrl: string, replaceWithHome: boolean): Promise<boolean> => {
+    async (pairingUrl: string): Promise<boolean> => {
       setIsSubmitting(true);
       onChangeConnectionPairingUrl(pairingUrl);
       try {
@@ -172,7 +172,9 @@ export function ConnectionsNewRouteScreen({
             : Haptics.NotificationFeedbackType.Error,
         );
         if (AsyncResult.isSuccess(result)) {
-          if (replaceWithHome || !navigation.canGoBack()) {
+          // Return to whatever opened the sheet. Replacing it with Home would
+          // nest Home inside any sheet still below it.
+          if (!navigation.canGoBack()) {
             navigation.dispatch(StackActions.replace("Home"));
           } else {
             navigation.goBack();
@@ -194,7 +196,7 @@ export function ConnectionsNewRouteScreen({
       setIsSubmitting(false);
       return setPendingConnectionError(staged.error);
     }
-    if (!(await connectAndClose(pairingUrl, false))) await staged.undo();
+    if (!(await connectAndClose(pairingUrl))) await staged.undo();
   }, [access, codeInput, connectAndClose, hostInput]);
 
   useEffect(() => {
@@ -203,7 +205,7 @@ export function ConnectionsNewRouteScreen({
     }
 
     attemptedAutoConnectRef.current = routePairingUrl;
-    void connectAndClose(routePairingUrl, true);
+    void connectAndClose(routePairingUrl);
   }, [connectAndClose, routePairingUrl, shouldAutoConnect]);
 
   return (

@@ -197,7 +197,7 @@ export function ThreadCardLayoutContent(props: {
 }
 
 /** "3d" for "3 days ago" and "now" for "just now", as the sidebar status shows time. */
-export function compactRelativeTimeLabel(isoDate: string): string {
+function compactRelativeTimeLabel(isoDate: string): string {
   const label = formatRelativeTimeLabel(isoDate);
   if (label === "just now") return "now";
   return label.endsWith(" ago") ? label.slice(0, -4) : label;

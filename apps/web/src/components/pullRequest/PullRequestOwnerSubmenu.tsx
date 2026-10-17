@@ -18,7 +18,6 @@ import {
   MenuSubPopup,
   MenuSubTrigger,
 } from "../ui/menu";
-import { useMemo } from "react";
 
 import { useThreadShells } from "../../state/entities";
 import { MAX_PULL_REQUEST_LIST_OWNERS } from "./pullRequestListPreferences";
@@ -52,7 +51,7 @@ export function PullRequestOwnerSubmenu({
   // Read here, not on the page: the submenu renders only while the Filters menu is open, so
   // thread updates do not re-render the whole page.
   const threads = useThreadShells();
-  const options = useMemo(() => pullRequestProjectOwners(projects, threads), [projects, threads]);
+  const options = pullRequestProjectOwners(projects, threads);
   // A selected owner with no project here stays in the list, so that the reader can clear it.
   const visible = [...selected.filter((owner) => !options.includes(owner)), ...options];
   const full = selected.length >= MAX_PULL_REQUEST_LIST_OWNERS;

@@ -20,7 +20,6 @@ import {
   type ReactNode,
   use,
   useEffect,
-  useMemo,
   useRef,
   useState,
 } from "react";
@@ -75,7 +74,7 @@ const ChangelogClockContext = createContext<ChangelogClock | null>(null);
 export function ChangelogClockProvider({ children }: { readonly children: ReactNode }) {
   const nowMs = useRelativeTimeTick(60_000);
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
-  const clock = useMemo(() => ({ nowMs, timestampFormat }), [nowMs, timestampFormat]);
+  const clock = { nowMs, timestampFormat };
   return <ChangelogClockContext value={clock}>{children}</ChangelogClockContext>;
 }
 

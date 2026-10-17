@@ -3,7 +3,6 @@
  * (`routes/_chat.pull-requests.tsx`). The route calls this module and keeps one line per hook.
  */
 import type { ClientSettings, EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { useMemo } from "react";
 
 import type { FilterOperator } from "../filters/FilterChip";
 import type { PullRequestFilterChip } from "./pullRequestFilterChips.logic";
@@ -37,6 +36,36 @@ export const selectPullRequestFilterChips = (settings: ClientSettings) =>
   settings.pullRequestFilterChips;
 export const NO_FILTER_CHIPS: ReadonlyArray<PullRequestFilterChip> = [];
 
+type OwnerRow = { readonly environmentId: EnvironmentId; readonly projectId: ProjectId };
+type OwnerRowFilter = ((row: OwnerRow) => boolean) | null;
+
+/** `rows` narrowed to the selected owners. A null `keep` means no owner filter applies. */
+export function ownedRows<Row extends OwnerRow>(
+  rows: ReadonlyArray<Row>,
+  keep: OwnerRowFilter,
+): ReadonlyArray<Row>;
+export function ownedRows<Row extends OwnerRow>(
+  rows: ReadonlyArray<Row> | undefined,
+  keep: OwnerRowFilter,
+): ReadonlyArray<Row> | undefined;
+export function ownedRows<Row extends OwnerRow>(
+  rows: ReadonlyArray<Row> | undefined,
+  keep: OwnerRowFilter,
+): ReadonlyArray<Row> | undefined {
+  return rows === undefined || keep === null ? rows : rows.filter(keep);
+}
+
+export function ownedPartitions<Row extends OwnerRow>(
+  partitions:
+    | { readonly authored: ReadonlyArray<Row>; readonly reviewing: ReadonlyArray<Row> }
+    | undefined,
+  keep: OwnerRowFilter,
+) {
+  return partitions === undefined || keep === null
+    ? partitions
+    : { authored: partitions.authored.filter(keep), reviewing: partitions.reviewing.filter(keep) };
+}
+
 /** The search patch of an owner menu change. */
 export const ownerMenuPatch = (
   owners: ReadonlyArray<string>,
@@ -64,30 +93,18 @@ export function usePullRequestOwnerFilter<Project extends OwnedProject>(input: {
   // on screen read the typed text at once.
   const menuOwners = enabled ? (search.owners ?? NO_OWNERS) : NO_OWNERS;
   const menuOwnerOperator: FilterOperator = search.ownerOperator ?? "is";
-  const menuOwnerFilter = useMemo(
-    () => pullRequestMenuOwnerFilter(menuOwners, menuOwnerOperator),
-    [menuOwnerOperator, menuOwners],
-  );
+  const menuOwnerFilter = pullRequestMenuOwnerFilter(menuOwners, menuOwnerOperator);
   const requestOwners = sentOwners ?? menuOwnerFilter;
   const localOwners = typedOwners ?? menuOwnerFilter;
   // The projects that the list asks about. The project scope, the project menu and the
   // per-server split read these. The selection reads every project, because a link can open a
   // pull request from any owner.
-  const listProjects = useMemo(
-    () => projectsOfOwners(projects, requestOwners),
-    [projects, requestOwners],
-  );
-  const keepRequestOwnerRow = useMemo(
-    () => pullRequestOwnerRowFilter(projects, requestOwners),
-    [projects, requestOwners],
-  );
-  const keepLocalOwnerRow = useMemo(
-    () =>
-      localOwners === requestOwners
-        ? keepRequestOwnerRow
-        : pullRequestOwnerRowFilter(projects, localOwners),
-    [keepRequestOwnerRow, localOwners, projects, requestOwners],
-  );
+  const listProjects = projectsOfOwners(projects, requestOwners);
+  const keepRequestOwnerRow = pullRequestOwnerRowFilter(projects, requestOwners);
+  const keepLocalOwnerRow =
+    localOwners === requestOwners
+      ? keepRequestOwnerRow
+      : pullRequestOwnerRowFilter(projects, localOwners);
   // An owner change that leaves the scoped project out drops the project scope too, the same
   // way picking another server does. The owner menu and the owner chip both pass here.
   const withOwnerScope = (

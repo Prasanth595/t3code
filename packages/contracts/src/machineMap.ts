@@ -6,11 +6,13 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import {
-  AuthAdministrativeScopes,
+  AuthAccessReadScope,
+  AuthAccessWriteScope,
   AuthDiagnosticsReadScope,
   AuthFilesystemReadScope,
   type AuthGrantScope,
   AuthOrchestrationReadScope,
+  AuthRelayWriteScope,
   AuthStandardClientScopes,
   AuthTerminalReadScope,
 } from "./auth.ts";
@@ -46,8 +48,14 @@ export const MACHINE_LEVEL_SCOPES: Readonly<Record<MachineLevel, ReadonlyArray<A
     AuthTerminalReadScope,
     AuthDiagnosticsReadScope,
   ],
-  standard: AuthStandardClientScopes,
-  admin: AuthAdministrativeScopes,
+  // Upstream pairing grants access and relay management by default. The fork keeps them for `admin`.
+  standard: AuthStandardClientScopes.filter(
+    (scope) =>
+      scope !== AuthAccessReadScope &&
+      scope !== AuthAccessWriteScope &&
+      scope !== AuthRelayWriteScope,
+  ),
+  admin: AuthStandardClientScopes,
 };
 
 /** The session subject of a machine on the server of another machine (MM-1305). */

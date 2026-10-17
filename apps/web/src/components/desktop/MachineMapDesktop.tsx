@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Schema from "effect/Schema";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
 import {
@@ -16,7 +16,7 @@ import {
   readRequestHeaders as readRequestHeadersAtom,
   saveRequestHeaders as saveRequestHeadersAtom,
 } from "../../connection/onboarding";
-import { requestSiblingPairingCredential } from "../../connection/siblingEnvironments";
+import { pairSiblingOrigin } from "../../connection/siblingEnvironments";
 import {
   ensureClientSettingsHydrated,
   getClientSettings,
@@ -104,18 +104,13 @@ function MachineCatalogSync({
   const running = useRef(false);
   const runAgain = useRef(false);
 
-  const saved = useMemo(
-    () =>
-      environments
-        .filter((environment) => environment.environmentId !== primaryEnvironmentId)
-        .map((environment): SavedEnvironment => ({
-          environmentId: environment.environmentId,
-          origin:
-            environment.displayUrl === null ? null : requestHeaderOrigin(environment.displayUrl),
-          phase: environment.connection.phase,
-        })),
-    [environments, primaryEnvironmentId],
-  );
+  const saved = environments
+    .filter((environment) => environment.environmentId !== primaryEnvironmentId)
+    .map((environment): SavedEnvironment => ({
+      environmentId: environment.environmentId,
+      origin: environment.displayUrl === null ? null : requestHeaderOrigin(environment.displayUrl),
+      phase: environment.connection.phase,
+    }));
   const savedKey = stableStringify(saved);
 
   const syncOnce = async () => {
@@ -160,14 +155,9 @@ function MachineCatalogSync({
       if (saved.some((environment) => environment.origin === origin)) {
         repairAttempted.current.add(origin);
       }
-      try {
-        // Electron adds the token headers to this request, and only for this origin.
-        const pairingCode = await requestSiblingPairingCredential(origin, "omit");
-        const result = await connectPairing({ host: origin, pairingCode });
-        if (result._tag === "Failure") throw new Error(`Pairing with ${origin} failed.`);
-      } catch (error) {
-        console.warn("Machine map: could not add a machine.", origin, error);
-      }
+      // Electron adds the token headers to this request, and only for this origin.
+      const error = await pairSiblingOrigin(origin, connectPairing, "omit");
+      if (error !== null) console.warn("Machine map: could not add a machine.", origin, error);
     }
   };
 
@@ -179,20 +169,26 @@ function MachineCatalogSync({
       return;
     }
     running.current = true;
-    try {
+    const runUntilSettled = async () => {
       do {
         runAgain.current = false;
         await syncOnce();
       } while (runAgain.current);
-    } catch (error) {
+    };
+    // A promise handler, not try/finally: the React Compiler skips a hook with `finally`.
+    const error = await runUntilSettled().then(
+      () => null,
+      (cause: unknown) => cause ?? new Error("Machine map sync failed."),
+    );
+    running.current = false;
+    if (error !== null) {
       console.error("Machine map: could not sync the saved environments.", error);
-    } finally {
-      running.current = false;
     }
   });
 
   useEffect(() => {
     void sync();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each new state, saved list or readiness is a reason to sync again.
   }, [state, savedKey, isReady]);
 
   useEffect(() => {
@@ -267,6 +263,7 @@ function MachineDesktopReports({
   useEffect(() => {
     void applyDesiredClientSettings();
     // The key stands for the desired values, which arrive as a new object on each push.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The key is the trigger.
   }, [desiredKey]);
 
   const reportClientSettings = useEffectEvent((settings: ClientSettings) => {
@@ -375,6 +372,7 @@ function MachineDesktopReports({
   });
   useEffect(() => {
     runCommands(state.desktopCommands);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A command can wait for the update state, so its change runs the queue again.
   }, [state.desktopCommands, updateState, updateStateWaitOver]);
 
   return null;

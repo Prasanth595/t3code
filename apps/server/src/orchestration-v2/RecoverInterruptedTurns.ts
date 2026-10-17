@@ -26,7 +26,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
-import { isNativeMaintenanceCommand } from "./Orchestrator.ts";
+import { isNativeMaintenanceCommand } from "./CommandPolicy.ts";
 import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 import {
   isRestartContinuationSource,

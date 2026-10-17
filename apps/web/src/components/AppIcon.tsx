@@ -53,7 +53,7 @@ import {
   ZapIcon,
   type LucideIcon,
 } from "lucide-react";
-import { useSyncExternalStore, type SVGProps } from "react";
+import { createElement, useSyncExternalStore, type ComponentType, type SVGProps } from "react";
 
 import { cn } from "~/lib/utils";
 import { getActiveThemeIcons, subscribeToActiveThemeIcons } from "../themePalette";
@@ -138,7 +138,9 @@ export type AppIconSlot = `group.${GroupIconId}` | keyof typeof STATIC_SLOT_ICON
 const isStaticSlot = (slot: string): slot is keyof typeof STATIC_SLOT_ICONS =>
   Object.hasOwn(STATIC_SLOT_ICONS, slot);
 
-function stockIcon(slot: AppIconSlot) {
+function stockIcon(
+  slot: AppIconSlot,
+): ComponentType<SVGProps<SVGSVGElement> & { readonly "data-app-icon"?: string }> {
   if (isStaticSlot(slot)) return STATIC_SLOT_ICONS[slot];
   const id = slot.slice("group.".length);
   return GROUP_ICONS[isGroupIconId(id) ? id : "dot"];
@@ -190,8 +192,12 @@ export function AppIcon(props: { slot: AppIconSlot; className?: string | undefin
       />
     );
   }
-  const Icon = stockIcon(props.slot);
-  return <Icon aria-hidden data-app-icon={props.slot} className={className} />;
+  // createElement: the stock icon is a lookup in a module table, not a component made in render.
+  return createElement(stockIcon(props.slot), {
+    "aria-hidden": true,
+    "data-app-icon": props.slot,
+    className,
+  });
 }
 
 /**

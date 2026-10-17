@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { AuthStandardClientScopes, ClientId, MACHINE_LEVEL_SCOPES } from "@t3tools/contracts";
+import { ClientId, MACHINE_LEVEL_SCOPES } from "@t3tools/contracts";
 
 import {
   browserGrantFor,
@@ -22,7 +22,7 @@ describe("machineGrantFor (MM-1305)", () => {
     const desired = desiredState({ arrowsIn: [arrow(PEER, SELF, "standard")] });
     expect(machineGrantFor(desired, PEER_TOKEN, NOW)).toEqual({
       subject: `machine:${PEER}`,
-      scopes: AuthStandardClientScopes,
+      scopes: MACHINE_LEVEL_SCOPES.standard,
       label: "machine VPS",
     });
   });
@@ -71,7 +71,7 @@ describe("clientGrantFor (MM-912)", () => {
     });
     expect(clientGrantFor(withPhone("standard"), "phone.access", NOW)).toEqual({
       subject: "client:client-phone",
-      scopes: AuthStandardClientScopes,
+      scopes: MACHINE_LEVEL_SCOPES.standard,
       label: "client Phone",
     });
     expect(clientGrantFor(withPhone("standard"), PEER_TOKEN, NOW)).toBeUndefined();

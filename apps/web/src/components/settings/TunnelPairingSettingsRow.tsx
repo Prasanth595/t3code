@@ -1,5 +1,5 @@
 import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
-import { useCallback, useState } from "react";
+import { useState } from "react";
 
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import {
@@ -63,43 +63,43 @@ export function TunnelPairingSettingsRow() {
     Partial<Record<CloudflareAccessField, string>>
   >({});
 
-  const handleTunnelPairingChange = useCallback(
-    async (input: {
-      readonly enabled: boolean;
-      readonly url: string | null;
-      readonly trustedBrowserOrigins: string | null;
-      readonly cloudflareAccessTeamDomain: string | null;
-      readonly cloudflareAccessAud: string | null;
-      readonly cloudflareAccessSubjects: string | null;
-    }) => {
-      if (
-        !desktopBridge ||
-        primaryEnvironmentId === null ||
-        !readEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope)
-      )
-        return;
-      setIsUpdatingTunnelPairing(true);
-      try {
-        await desktopBridge.setTunnelPairing(input);
-        refreshDesktopNetworkAccessState();
-        setTunnelPairingUrlInput(null);
-        setTrustedOriginsInput(null);
-        setCloudflareAccessInputs({});
-      } catch (error) {
-        const message = error instanceof Error ? error.message : "Failed to update tunnel pairing.";
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not update tunnel pairing",
-            description: message,
-          }),
-        );
-      } finally {
-        setIsUpdatingTunnelPairing(false);
-      }
-    },
-    [desktopBridge, primaryEnvironmentId],
-  );
+  const handleTunnelPairingChange = async (input: {
+    readonly enabled: boolean;
+    readonly url: string | null;
+    readonly trustedBrowserOrigins: string | null;
+    readonly cloudflareAccessTeamDomain: string | null;
+    readonly cloudflareAccessAud: string | null;
+    readonly cloudflareAccessSubjects: string | null;
+  }) => {
+    if (
+      !desktopBridge ||
+      primaryEnvironmentId === null ||
+      !readEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope)
+    )
+      return;
+    setIsUpdatingTunnelPairing(true);
+    // A promise handler, not try/finally: the React Compiler skips a component with `finally`.
+    const error = await desktopBridge.setTunnelPairing(input).then(
+      () => null,
+      (cause: unknown) => cause ?? new Error("Failed to update tunnel pairing."),
+    );
+    setIsUpdatingTunnelPairing(false);
+    if (error === null) {
+      refreshDesktopNetworkAccessState();
+      setTunnelPairingUrlInput(null);
+      setTrustedOriginsInput(null);
+      setCloudflareAccessInputs({});
+      return;
+    }
+    const message = error instanceof Error ? error.message : "Failed to update tunnel pairing.";
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Could not update tunnel pairing",
+        description: message,
+      }),
+    );
+  };
 
   if (!canManageLocalBackend || !desktopBridge) return null;
 

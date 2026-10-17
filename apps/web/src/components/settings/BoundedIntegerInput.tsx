@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 import { Input } from "../ui/input";
 
@@ -19,9 +19,11 @@ export function BoundedIntegerInput({
   // Local draft so the field can be emptied mid-edit; the setting only moves
   // on valid input and snaps back to the persisted value on blur.
   const [draft, setDraft] = useState(String(value));
-  useEffect(() => {
+  const [draftValue, setDraftValue] = useState(value);
+  if (draftValue !== value) {
+    setDraftValue(value);
     setDraft(String(value));
-  }, [value]);
+  }
 
   return (
     <Input

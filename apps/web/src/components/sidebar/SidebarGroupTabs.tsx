@@ -12,7 +12,7 @@ import {
   type SidebarGroups,
 } from "@t3tools/contracts";
 import { BanIcon, PlusIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useEffectEvent, useRef, useState, type ReactNode } from "react";
 
 import { AppIcon, GroupIcon, GROUP_ICON_IDS } from "../AppIcon";
 import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
@@ -334,6 +334,7 @@ function useTabWidths(tabIds: readonly string[]) {
           : next,
       );
     });
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new tab set replaces the measured children, so the observer must follow them.
   }, [measureElement, tabIdsKey]);
   // The last measured child is a sample of the "more" button.
   const measured = widths.length === tabCount + 1;
@@ -367,19 +368,16 @@ export function SidebarGroupTabs(props: {
   const { setListElement, setMeasureElement, available, gap, tabWidths, moreWidth } = useTabWidths(
     state.tabs.map((tab) => tab.id),
   );
-  const visibleIndexes = useMemo(
-    () =>
-      available === null || tabWidths === null
-        ? state.tabs.map((_, index) => index)
-        : fitSidebarGroupTabs({
-            widths: tabWidths,
-            available,
-            gap,
-            moreWidth,
-            selectedIndex: state.tabs.findIndex((tab) => tab.id === state.tabId),
-          }),
-    [available, gap, moreWidth, state.tabId, state.tabs, tabWidths],
-  );
+  const visibleIndexes =
+    available === null || tabWidths === null
+      ? state.tabs.map((_, index) => index)
+      : fitSidebarGroupTabs({
+          widths: tabWidths,
+          available,
+          gap,
+          moreWidth,
+          selectedIndex: state.tabs.findIndex((tab) => tab.id === state.tabId),
+        });
   const visibleTabs = visibleIndexes.map((index) => state.tabs[index]!);
   const hiddenTabs = state.tabs.filter((_, index) => !visibleIndexes.includes(index));
   // At the narrowest sidebar the open tab alone can be wider than the bar. The fit keeps it anyway.
@@ -393,17 +391,24 @@ export function SidebarGroupTabs(props: {
 
   // A drag over the "more" button opens its menu, and the end of that drag closes it again.
   const [moreOpen, setMoreOpen] = useState(false);
-  const moreOpenedByDragRef = useRef(false);
-  useEffect(() => {
-    if (state.dropTargetId !== SIDEBAR_GROUP_DROP_MORE) return;
-    moreOpenedByDragRef.current = true;
-    setMoreOpen(true);
-  }, [state.dropTargetId]);
-  useEffect(() => {
-    if (props.dragging || !moreOpenedByDragRef.current) return;
-    moreOpenedByDragRef.current = false;
-    setMoreOpen(false);
-  }, [props.dragging]);
+  const [moreOpenedByDrag, setMoreOpenedByDrag] = useState(false);
+  const [seenDrag, setSeenDrag] = useState({
+    dropTargetId: state.dropTargetId,
+    dragging: props.dragging,
+  });
+  if (seenDrag.dropTargetId !== state.dropTargetId || seenDrag.dragging !== props.dragging) {
+    setSeenDrag({ dropTargetId: state.dropTargetId, dragging: props.dragging });
+    if (
+      state.dropTargetId === SIDEBAR_GROUP_DROP_MORE &&
+      seenDrag.dropTargetId !== SIDEBAR_GROUP_DROP_MORE
+    ) {
+      setMoreOpenedByDrag(true);
+      setMoreOpen(true);
+    } else if (!props.dragging && moreOpenedByDrag) {
+      setMoreOpenedByDrag(false);
+      setMoreOpen(false);
+    }
+  }
 
   // Drag a tab to reorder the groups. Not on the mobile layout, where a drag scrolls.
   const reorderable = !useSidebar().isMobile;

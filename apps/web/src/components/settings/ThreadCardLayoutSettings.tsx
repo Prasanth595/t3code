@@ -34,7 +34,7 @@ import {
   TerminalIcon,
   TypeIcon,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 
@@ -101,16 +101,10 @@ export function ThreadCardLayoutSettingsRows() {
   const layouts = settings.threadCardLayouts;
   const layout = layouts[surface];
   // The builder keeps its draft while the layout object stays the same.
-  const desktopLayout = useMemo(
-    () =>
-      layouts.desktop === null ? null : knownSlotLayout(layouts.desktop, THREAD_CARD_ELEMENTS),
-    [layouts.desktop],
-  );
-  const mobileLayout = useMemo(
-    () =>
-      layouts.mobile === null ? null : knownSlotLayout(layouts.mobile, MOBILE_THREAD_CARD_ELEMENTS),
-    [layouts.mobile],
-  );
+  const desktopLayout =
+    layouts.desktop === null ? null : knownSlotLayout(layouts.desktop, THREAD_CARD_ELEMENTS);
+  const mobileLayout =
+    layouts.mobile === null ? null : knownSlotLayout(layouts.mobile, MOBILE_THREAD_CARD_ELEMENTS);
   const surfaceLabel = surface === "desktop" ? "desktop and web" : "mobile";
 
   const setDesktop = (next: ThreadCardLayout | null) =>

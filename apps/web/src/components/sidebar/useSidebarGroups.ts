@@ -11,10 +11,11 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { useAtomValue } from "@effect/atom-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { randomUUID } from "~/lib/utils";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   useClientSettings,
   usePrimarySettings,
@@ -82,6 +83,70 @@ export interface SidebarGroupTab {
 
 const EMPTY_SETTINGS: SidebarGroups = { groups: [], assignments: {}, defaultTab: {} };
 
+const NO_TABS: readonly SidebarGroupTab[] = [];
+
+/**
+ * The tab of each group. It reads the clock, so `clockKey` changes at each snooze wake and the
+ * compiler builds the tabs again.
+ */
+function buildSidebarGroupTabs(input: {
+  readonly threads: ReadonlyArray<SidebarThreadSummary>;
+  readonly localLastVisitedAt: ReadonlyArray<string | undefined>;
+  readonly settings: SidebarGroups;
+  readonly compiled: ReturnType<typeof compileSidebarGroups>;
+  readonly showsThread: (tab: string, thread: SidebarThreadSummary) => boolean;
+  readonly singleThreadOpens: boolean;
+  readonly clockKey: number;
+}): readonly SidebarGroupTab[] {
+  const { threads, localLastVisitedAt, settings, compiled, showsThread, singleThreadOpens } = input;
+  const now = new Date().toISOString();
+  const states = threads.map((thread, index) => {
+    const lastVisitedAt = resolveThreadLastVisitedAt(
+      thread.lastVisitedAt,
+      localLastVisitedAt[index],
+    );
+    const wokeAt = threadWokeAt(thread, { now });
+    const settled = thread.settledOverride === "settled";
+    return {
+      thread,
+      settled,
+      asleep: settled || effectiveSnoozed(thread, { now }),
+      isUnread: hasUnseenCompletion({ ...thread, lastVisitedAt }),
+      isWoke:
+        wokeAt !== null &&
+        !settled &&
+        (lastVisitedAt === undefined || Date.parse(lastVisitedAt) < Date.parse(wokeAt)),
+    };
+  });
+  const describe = (
+    id: string,
+    name: string,
+    group: SidebarGroup | null,
+    look: { readonly icon?: string | undefined; readonly showName?: boolean | undefined },
+  ): SidebarGroupTab => {
+    const shown = states.filter((state) => showsThread(id, state.thread));
+    const open = shown.filter((state) => !state.settled);
+    const kind = resolveSidebarGroupTabStatus(shown.filter((state) => !state.asleep));
+    return {
+      id,
+      name,
+      isDefault: group === null,
+      isView: group !== null && compiled.byId.get(group.id)?.isView === true,
+      icon: look.icon,
+      showName: look.showName !== false,
+      threadCount: open.length,
+      status: kind === null ? null : sidebarGroupTabStatus(kind),
+      needsAttention: kind !== null && SIDEBAR_GROUP_ATTENTION_STATUSES.has(kind),
+      singleThread:
+        singleThreadOpens && group !== null && open.length === 1 ? open[0]!.thread : null,
+    };
+  };
+  return [
+    describe(DEFAULT_SIDEBAR_GROUP_ID, sidebarDefaultTabName(settings), null, settings.defaultTab),
+    ...settings.groups.map((group) => describe(group.id, group.name, group, group)),
+  ];
+}
+
 export function useSidebarGroups(input: {
   /** Every thread shell, before any filter. */
   readonly threads: ReadonlyArray<SidebarThreadSummary>;
@@ -111,53 +176,36 @@ export function useSidebarGroups(input: {
       ? storedTabId
       : DEFAULT_SIDEBAR_GROUP_ID;
 
-  const projects = useMemo(() => buildSidebarGroupProjectFacts(input.projects), [input.projects]);
+  const projects = buildSidebarGroupProjectFacts(input.projects);
   // Non-archived sidebar threads: what the groups hold and what an assignment can name.
-  const liveThreads = useMemo(
-    () => filterSidebarV2VisibleThreads(input.threads, null),
-    [input.threads],
-  );
-  const threads = useMemo(
-    () =>
-      filterSidebarV2VisibleThreads(
-        filterSidebarThreadsByOwner(input.threads, input.ownerVisibleProjectKeys),
-        input.scopedProjectKeys,
-      ),
-    [input.ownerVisibleProjectKeys, input.scopedProjectKeys, input.threads],
+  const liveThreads = filterSidebarV2VisibleThreads(input.threads, null);
+  const threads = filterSidebarV2VisibleThreads(
+    filterSidebarThreadsByOwner(input.threads, input.ownerVisibleProjectKeys),
+    input.scopedProjectKeys,
   );
 
   // Known rules and view flags, once per change of the groups, not once per thread.
-  const compiled = useMemo(() => compileSidebarGroups(settings), [settings]);
-  const groupIdByThreadKey = useMemo(
-    () =>
-      new Map(
-        threads.map((thread) => [
-          sidebarGroupThreadKey(thread),
-          resolveSidebarThreadGroupId(thread, compiled, projects),
-        ]),
-      ),
-    [compiled, projects, threads],
+  const compiled = compileSidebarGroups(settings);
+  const groupIdByThreadKey = new Map(
+    threads.map((thread) => [
+      sidebarGroupThreadKey(thread),
+      resolveSidebarThreadGroupId(thread, compiled, projects),
+    ]),
   );
 
-  const showsThread = useCallback(
-    (tab: string, thread: SidebarThreadSummary) =>
-      sidebarGroupShowsThread({
-        tabId: tab,
-        thread,
-        threadGroupId:
-          groupIdByThreadKey.get(sidebarGroupThreadKey(thread)) ?? DEFAULT_SIDEBAR_GROUP_ID,
-        compiled,
-        projects,
-      }),
-    [compiled, groupIdByThreadKey, projects],
-  );
+  const showsThread = (tab: string, thread: SidebarThreadSummary) =>
+    sidebarGroupShowsThread({
+      tabId: tab,
+      thread,
+      threadGroupId:
+        groupIdByThreadKey.get(sidebarGroupThreadKey(thread)) ?? DEFAULT_SIDEBAR_GROUP_ID,
+      compiled,
+      projects,
+    });
 
   /** The threads of the open tab. Search and a disabled feature see every thread. */
-  const visibleThreads = useMemo(
-    () =>
-      !enabled || searching ? threads : threads.filter((thread) => showsThread(tabId, thread)),
-    [enabled, searching, showsThread, tabId, threads],
-  );
+  const visibleThreads =
+    !enabled || searching ? threads : threads.filter((thread) => showsThread(tabId, thread));
 
   // A tab switch drops the selection, like a scope flip: hidden rows must not stay selected.
   const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
@@ -177,70 +225,17 @@ export function useSidebarGroups(input: {
     ),
   );
 
-  const tabs = useMemo((): SidebarGroupTab[] => {
-    if (!enabled) return [];
-    void snoozeWakeTick;
-    const now = new Date().toISOString();
-    const states = threads.map((thread, index) => {
-      const lastVisitedAt = resolveThreadLastVisitedAt(
-        thread.lastVisitedAt,
-        localLastVisitedAt[index],
-      );
-      const wokeAt = threadWokeAt(thread, { now });
-      const settled = thread.settledOverride === "settled";
-      return {
-        thread,
-        settled,
-        asleep: settled || effectiveSnoozed(thread, { now }),
-        isUnread: hasUnseenCompletion({ ...thread, lastVisitedAt }),
-        isWoke:
-          wokeAt !== null &&
-          !settled &&
-          (lastVisitedAt === undefined || Date.parse(lastVisitedAt) < Date.parse(wokeAt)),
-      };
-    });
-    const describe = (
-      id: string,
-      name: string,
-      group: SidebarGroup | null,
-      look: { readonly icon?: string | undefined; readonly showName?: boolean | undefined },
-    ): SidebarGroupTab => {
-      const shown = states.filter((state) => showsThread(id, state.thread));
-      const open = shown.filter((state) => !state.settled);
-      const kind = resolveSidebarGroupTabStatus(shown.filter((state) => !state.asleep));
-      return {
-        id,
-        name,
-        isDefault: group === null,
-        isView: group !== null && compiled.byId.get(group.id)?.isView === true,
-        icon: look.icon,
-        showName: look.showName !== false,
-        threadCount: open.length,
-        status: kind === null ? null : sidebarGroupTabStatus(kind),
-        needsAttention: kind !== null && SIDEBAR_GROUP_ATTENTION_STATUSES.has(kind),
-        singleThread:
-          singleThreadOpens && group !== null && open.length === 1 ? open[0]!.thread : null,
-      };
-    };
-    return [
-      describe(
-        DEFAULT_SIDEBAR_GROUP_ID,
-        sidebarDefaultTabName(settings),
-        null,
-        settings.defaultTab,
-      ),
-      ...settings.groups.map((group) => describe(group.id, group.name, group, group)),
-    ];
-  }, [
-    compiled,
-    enabled,
-    localLastVisitedAt,
-    settings,
-    showsThread,
-    singleThreadOpens,
-    snoozeWakeTick,
-    threads,
-  ]);
+  const tabs = enabled
+    ? buildSidebarGroupTabs({
+        threads,
+        localLastVisitedAt,
+        settings,
+        compiled,
+        showsThread,
+        singleThreadOpens,
+        clockKey: snoozeWakeTick,
+      })
+    : NO_TABS;
 
   // Opening a thread from a link, a notification or a new-thread action shows its tab, so the
   // open row is visible. Browsing other tabs while the thread stays open does not switch back.
@@ -284,64 +279,48 @@ export function useSidebarGroups(input: {
     latestSettingsRef.current = savedSettings;
     savedSettingsRef.current = savedSettings;
   }, [savedSettings]);
-  const update = useCallback(
-    (change: (current: SidebarGroups) => SidebarGroups) => {
-      if (primaryEnvironmentId === null || !ready) return;
-      const current = latestSettingsRef.current;
-      const next = pruneSidebarGroupAssignments(change(current), liveThreads);
-      if (JSON.stringify(next) === JSON.stringify(current)) return;
-      latestSettingsRef.current = next;
-      void persist({
-        environmentId: primaryEnvironmentId,
-        input: { patch: { sidebarGroups: next } },
-      }).then((result) => {
-        if (result._tag === "Success") {
-          shareToMachineMap(primaryEnvironmentId, ["sidebarGroups"]);
-          return;
-        }
-        // The next edit starts from the saved groups, not from the edit that failed. An edit made
-        // on top of it in the meantime stays: its own save reports its own result.
-        if (latestSettingsRef.current === next)
-          latestSettingsRef.current = savedSettingsRef.current;
-        if (isAtomCommandInterrupted(result)) return;
-        const error = squashAtomCommandFailure(result);
-        toastManager.add({
-          type: "error",
-          title: "Groups not saved",
-          description:
-            error instanceof Error ? error.message : "Try reconnecting and saving again.",
-        });
+  const update = (change: (current: SidebarGroups) => SidebarGroups) => {
+    if (primaryEnvironmentId === null || !ready) return;
+    const current = latestSettingsRef.current;
+    const next = pruneSidebarGroupAssignments(change(current), liveThreads);
+    if (JSON.stringify(next) === JSON.stringify(current)) return;
+    latestSettingsRef.current = next;
+    void persist({
+      environmentId: primaryEnvironmentId,
+      input: { patch: { sidebarGroups: next } },
+    }).then((result) => {
+      if (result._tag === "Success") {
+        shareToMachineMap(primaryEnvironmentId, ["sidebarGroups"]);
+        return;
+      }
+      // The next edit starts from the saved groups, not from the edit that failed. An edit made
+      // on top of it in the meantime stays: its own save reports its own result.
+      if (latestSettingsRef.current === next) latestSettingsRef.current = savedSettingsRef.current;
+      if (isAtomCommandInterrupted(result)) return;
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "error",
+        title: "Groups not saved",
+        description: error instanceof Error ? error.message : "Try reconnecting and saving again.",
       });
-    },
-    [liveThreads, persist, primaryEnvironmentId, ready, shareToMachineMap],
-  );
+    });
+  };
 
-  const threadsForRefs = useCallback(
-    (threadKeys: readonly string[]) => {
-      const keys = new Set(threadKeys);
-      return liveThreads.filter((thread) => keys.has(sidebarGroupThreadKey(thread)));
-    },
-    [liveThreads],
-  );
+  const threadsForRefs = (threadKeys: readonly string[]) => {
+    const keys = new Set(threadKeys);
+    return liveThreads.filter((thread) => keys.has(sidebarGroupThreadKey(thread)));
+  };
 
   /** The id of the new group, or null before the groups load, when no edit can save. */
-  const createGroup = useCallback(
-    (threadKeys: readonly string[]): string | null => {
-      if (!ready) return null;
-      const id = randomUUID();
-      update((current) =>
-        moveSidebarThreads(
-          createSidebarGroup(current, id),
-          threadsForRefs(threadKeys),
-          id,
-          projects,
-        ),
-      );
-      setTabId(id);
-      return id;
-    },
-    [projects, ready, setTabId, threadsForRefs, update],
-  );
+  const createGroup = (threadKeys: readonly string[]): string | null => {
+    if (!ready) return null;
+    const id = randomUUID();
+    update((current) =>
+      moveSidebarThreads(createSidebarGroup(current, id), threadsForRefs(threadKeys), id, projects),
+    );
+    setTabId(id);
+    return id;
+  };
 
   // The tab or the new-group area under a dragged thread. A view takes no drop: it holds no threads.
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
@@ -349,34 +328,28 @@ export function useSidebarGroups(input: {
   useEffect(() => {
     tabsRef.current = tabs;
   }, [tabs]);
-  const dropTargetAt = useCallback(
-    (point: { x: number; y: number }) => {
-      // Before the groups load, no edit can save, so the tab bar takes no drop.
-      if (!enabled || !ready) return null;
-      const target =
-        document
-          .elementFromPoint(point.x, point.y)
-          ?.closest(`[${SIDEBAR_GROUP_DROP_ATTRIBUTE}]`)
-          ?.getAttribute(SIDEBAR_GROUP_DROP_ATTRIBUTE) ?? null;
-      return target === SIDEBAR_GROUP_DROP_NEW ||
-        target === SIDEBAR_GROUP_DROP_MORE ||
-        tabsRef.current.some((tab) => tab.id === target && !tab.isView)
-        ? target
-        : null;
-    },
-    [enabled, ready],
-  );
+  const dropTargetAt = (point: { x: number; y: number }) => {
+    // Before the groups load, no edit can save, so the tab bar takes no drop.
+    if (!enabled || !ready) return null;
+    const target =
+      document
+        .elementFromPoint(point.x, point.y)
+        ?.closest(`[${SIDEBAR_GROUP_DROP_ATTRIBUTE}]`)
+        ?.getAttribute(SIDEBAR_GROUP_DROP_ATTRIBUTE) ?? null;
+    return target === SIDEBAR_GROUP_DROP_NEW ||
+      target === SIDEBAR_GROUP_DROP_MORE ||
+      tabsRef.current.some((tab) => tab.id === target && !tab.isView)
+      ? target
+      : null;
+  };
   /** Tracks the drop target under a dragged thread. True when the tab bar takes the move. */
-  const moveDrag = useCallback(
-    (point: { x: number; y: number }) => {
-      const target = dropTargetAt(point);
-      setDropTargetId(target);
-      return target !== null;
-    },
-    [dropTargetAt],
-  );
+  const moveDrag = useStableCallback((point: { x: number; y: number }) => {
+    const target = dropTargetAt(point);
+    setDropTargetId(target);
+    return target !== null;
+  });
   /** Drops dragged threads on the tab bar. True when the tab bar took the drop. */
-  const dropDrag = useCallback(
+  const dropDrag = useStableCallback(
     (point: { x: number; y: number }, threadKeys: readonly string[]) => {
       const target = dropTargetAt(point);
       setDropTargetId(null);
@@ -390,9 +363,8 @@ export function useSidebarGroups(input: {
         );
       return true;
     },
-    [createGroup, dropTargetAt, projects, threadsForRefs, update],
   );
-  const endDrag = useCallback(() => setDropTargetId(null), []);
+  const endDrag = useStableCallback(() => setDropTargetId(null));
 
   // The empty list of a group says why it is empty. The default tab keeps the upstream text.
   const openGroup = compiled.byId.get(tabId);
@@ -403,46 +375,30 @@ export function useSidebarGroups(input: {
         ? "No threads match the rules"
         : "Drag threads onto this tab";
 
-  const ruleOptions = useCallback(
-    (field: Exclude<SidebarGroupRuleField, "title">, groupId: string) =>
-      buildSidebarGroupRuleOptions({ field, groupId, threads, projects, settings }),
-    [projects, settings, threads],
-  );
+  const ruleOptions = (field: Exclude<SidebarGroupRuleField, "title">, groupId: string) =>
+    buildSidebarGroupRuleOptions({ field, groupId, threads, projects, settings });
 
-  const renameGroup = useCallback(
-    (groupId: string, name: string) => {
-      const trimmed = name.trim();
-      if (trimmed.length === 0) return;
-      update((current) =>
-        updateSidebarGroup(current, groupId, (group) => ({ ...group, name: trimmed })),
-      );
-    },
-    [update],
-  );
-  const setGroupRules = useCallback(
-    (groupId: string, rules: SidebarGroup["rules"]) =>
-      update((current) => updateSidebarGroup(current, groupId, (group) => ({ ...group, rules }))),
-    [update],
-  );
-  const setDefaultTab = useCallback(
-    (change: (tab: SidebarGroups["defaultTab"]) => SidebarGroups["defaultTab"]) =>
-      update((current) => updateSidebarDefaultTab(current, change)),
-    [update],
-  );
-  const setGroupLook = useCallback(
-    (groupId: string, look: { readonly icon?: string; readonly showName?: boolean }) =>
-      update((current) => updateSidebarGroup(current, groupId, (group) => ({ ...group, ...look }))),
-    [update],
-  );
-  const deleteGroup = useCallback(
-    (groupId: string) => update((current) => deleteSidebarGroup(current, groupId)),
-    [update],
-  );
-  const moveGroup = useCallback(
-    (groupId: string, toIndex: number) =>
-      update((current) => moveSidebarGroup(current, groupId, toIndex)),
-    [update],
-  );
+  const renameGroup = (groupId: string, name: string) => {
+    const trimmed = name.trim();
+    if (trimmed.length === 0) return;
+    update((current) =>
+      updateSidebarGroup(current, groupId, (group) => ({ ...group, name: trimmed })),
+    );
+  };
+  const setGroupRules = (groupId: string, rules: SidebarGroup["rules"]) =>
+    update((current) => updateSidebarGroup(current, groupId, (group) => ({ ...group, rules })));
+  const setDefaultTab = (
+    change: (tab: SidebarGroups["defaultTab"]) => SidebarGroups["defaultTab"],
+  ) => update((current) => updateSidebarDefaultTab(current, change));
+  const setGroupLook = (
+    groupId: string,
+    look: { readonly icon?: string; readonly showName?: boolean },
+  ) =>
+    update((current) => updateSidebarGroup(current, groupId, (group) => ({ ...group, ...look })));
+  const deleteGroup = (groupId: string) =>
+    update((current) => deleteSidebarGroup(current, groupId));
+  const moveGroup = (groupId: string, toIndex: number) =>
+    update((current) => moveSidebarGroup(current, groupId, toIndex));
 
   return {
     enabled,

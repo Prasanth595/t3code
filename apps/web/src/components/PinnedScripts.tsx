@@ -23,13 +23,7 @@ import {
   resolvePinnedScripts,
   togglePinnedScriptId,
 } from "@t3tools/shared/projectScripts";
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  type MouseEvent as ReactMouseEvent,
-  type ReactNode,
-} from "react";
+import { useEffect, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { create } from "zustand";
 
 import { showContextMenuFallback } from "~/contextMenuFallback";
@@ -139,99 +133,69 @@ export function usePinnedScripts(input: {
   const globalPinIds = settings.pinnedGlobalScriptIds;
   const projectPinIds = (projectId && settings.pinnedProjectScriptIds[projectId]) || NO_PINS;
 
-  const writeGlobalPins = useCallback(
-    (ids: readonly string[]) =>
-      void updateSettings({ environmentId, input: { patch: { pinnedGlobalScriptIds: ids } } }),
-    [environmentId, updateSettings],
-  );
-  const writeProjectPins = useCallback(
-    (ids: readonly string[]) => {
-      if (!projectId) return;
-      void updateSettings({
-        environmentId,
-        input: { patch: { pinnedProjectScriptIds: { [projectId]: ids.length > 0 ? ids : null } } },
-      });
-    },
-    [environmentId, projectId, updateSettings],
-  );
+  const writeGlobalPins = (ids: readonly string[]) =>
+    void updateSettings({ environmentId, input: { patch: { pinnedGlobalScriptIds: ids } } });
+  const writeProjectPins = (ids: readonly string[]) => {
+    if (!projectId) return;
+    void updateSettings({
+      environmentId,
+      input: { patch: { pinnedProjectScriptIds: { [projectId]: ids.length > 0 ? ids : null } } },
+    });
+  };
 
-  const openPinMenu = useCallback(
-    async (position: { x: number; y: number }) => {
-      const menuItems = (
-        group: "global" | "project",
-        scripts: readonly ProjectScript[],
-        pinnedIds: readonly string[],
-      ): ContextMenuItem[] =>
-        scripts.map((script) => ({
-          id: `${group}:${script.id}`,
-          label: script.name,
-          checked: pinnedIds.includes(script.id),
-          disabled: !canWrite,
-        }));
-      const items: ContextMenuItem[] = [
-        ...(globalScripts.length > 0
-          ? [
-              {
-                id: "global",
-                label: "Pin global scripts",
-                children: menuItems("global", globalScripts, globalPinIds),
-              },
-            ]
-          : []),
-        ...(projectId && projectScripts.length > 0
-          ? [
-              {
-                id: "project",
-                label: "Pin project scripts",
-                children: menuItems("project", projectScripts, projectPinIds),
-              },
-            ]
-          : []),
-      ];
-      if (items.length === 0) return;
-      // The in-app menu, not the native one: it matches the app theme on every platform.
-      const clicked = await showContextMenuFallback(items, position);
-      if (!clicked || !canWrite) return;
-      const separator = clicked.indexOf(":");
-      if (separator < 0) return;
-      const group = clicked.slice(0, separator);
-      const scriptId = clicked.slice(separator + 1);
-      if (group === "global") {
-        writeGlobalPins(togglePinnedScriptId(globalScripts, globalPinIds, scriptId));
-      } else if (group === "project") {
-        writeProjectPins(togglePinnedScriptId(projectScripts, projectPinIds, scriptId));
-      }
-    },
-    [
-      canWrite,
-      globalPinIds,
-      globalScripts,
-      projectId,
-      projectPinIds,
-      projectScripts,
-      writeGlobalPins,
-      writeProjectPins,
-    ],
-  );
+  const openPinMenu = async (position: { x: number; y: number }) => {
+    const menuItems = (
+      group: "global" | "project",
+      scripts: readonly ProjectScript[],
+      pinnedIds: readonly string[],
+    ): ContextMenuItem[] =>
+      scripts.map((script) => ({
+        id: `${group}:${script.id}`,
+        label: script.name,
+        checked: pinnedIds.includes(script.id),
+        disabled: !canWrite,
+      }));
+    const items: ContextMenuItem[] = [
+      ...(globalScripts.length > 0
+        ? [
+            {
+              id: "global",
+              label: "Pin global scripts",
+              children: menuItems("global", globalScripts, globalPinIds),
+            },
+          ]
+        : []),
+      ...(projectId && projectScripts.length > 0
+        ? [
+            {
+              id: "project",
+              label: "Pin project scripts",
+              children: menuItems("project", projectScripts, projectPinIds),
+            },
+          ]
+        : []),
+    ];
+    if (items.length === 0) return;
+    // The in-app menu, not the native one: it matches the app theme on every platform.
+    const clicked = await showContextMenuFallback(items, position);
+    if (!clicked || !canWrite) return;
+    const separator = clicked.indexOf(":");
+    if (separator < 0) return;
+    const group = clicked.slice(0, separator);
+    const scriptId = clicked.slice(separator + 1);
+    if (group === "global") {
+      writeGlobalPins(togglePinnedScriptId(globalScripts, globalPinIds, scriptId));
+    } else if (group === "project") {
+      writeProjectPins(togglePinnedScriptId(projectScripts, projectPinIds, scriptId));
+    }
+  };
 
-  const pinnedGlobalScripts = useMemo(
-    () => resolvePinnedScripts(globalScripts, globalPinIds),
-    [globalPinIds, globalScripts],
-  );
-  const pinnedProjectScripts = useMemo(
-    () => resolvePinnedScripts(projectScripts, projectPinIds),
-    [projectPinIds, projectScripts],
-  );
-  const moveGlobalPin = useCallback(
-    (scriptId: string, toIndex: number) =>
-      writeGlobalPins(movePinnedScriptId(globalScripts, globalPinIds, scriptId, toIndex)),
-    [globalPinIds, globalScripts, writeGlobalPins],
-  );
-  const moveProjectPin = useCallback(
-    (scriptId: string, toIndex: number) =>
-      writeProjectPins(movePinnedScriptId(projectScripts, projectPinIds, scriptId, toIndex)),
-    [projectPinIds, projectScripts, writeProjectPins],
-  );
+  const pinnedGlobalScripts = resolvePinnedScripts(globalScripts, globalPinIds);
+  const pinnedProjectScripts = resolvePinnedScripts(projectScripts, projectPinIds);
+  const moveGlobalPin = (scriptId: string, toIndex: number) =>
+    writeGlobalPins(movePinnedScriptId(globalScripts, globalPinIds, scriptId, toIndex));
+  const moveProjectPin = (scriptId: string, toIndex: number) =>
+    writeProjectPins(movePinnedScriptId(projectScripts, projectPinIds, scriptId, toIndex));
 
   return {
     globalScripts,
@@ -273,14 +237,11 @@ export function PinnedScriptsArea({
 }) {
   // A small distance keeps a plain click a click instead of a drag.
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
-  const handleDragEnd = useCallback(
-    ({ active, over }: DragEndEvent) => {
-      if (!over || active.id === over.id) return;
-      const toIndex = scripts.findIndex((script) => script.id === over.id);
-      if (toIndex >= 0) onMove(String(active.id), toIndex);
-    },
-    [onMove, scripts],
-  );
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    const toIndex = scripts.findIndex((script) => script.id === over.id);
+    if (toIndex >= 0) onMove(String(active.id), toIndex);
+  };
   if (scripts.length === 0) return null;
   return (
     <div
@@ -370,16 +331,13 @@ export function TitlebarPinnedScripts({
     projectId: target.projectId,
     projectScripts: target.projectScripts,
   });
-  const measureRef = useCallback(
-    (element: HTMLDivElement) => {
-      const stop = observeResize(element, () => onWidthChange(element.offsetWidth));
-      return () => {
-        stop();
-        onWidthChange(0);
-      };
-    },
-    [onWidthChange],
-  );
+  const measureRef = (element: HTMLDivElement) => {
+    const stop = observeResize(element, () => onWidthChange(element.offsetWidth));
+    return () => {
+      stop();
+      onWidthChange(0);
+    };
+  };
   return (
     <div
       className="contents"
