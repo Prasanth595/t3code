@@ -1,3 +1,6 @@
+import { useContext } from "react";
+import { RegistryContext } from "@effect/atom-react";
+import type * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { useEnvironmentsWithScope } from "../../state/session";
 import {
@@ -13,14 +16,10 @@ import {
   type ServerSettings,
   type UnifiedSettings,
 } from "@t3tools/contracts";
-import { useCallback, useContext, useMemo } from "react";
-import { RegistryContext } from "@effect/atom-react";
-import type * as AtomRegistry from "effect/reactivity/AtomRegistry";
 
 import {
-  mergeEnvironmentSettings,
   persistClientSettingsPatch,
-  useClientSettings,
+  useMergedSettings,
   useMigrateModelPreferences,
 } from "../../hooks/useSettings";
 import { serverEnvironment } from "../../state/server";
@@ -43,19 +42,12 @@ const scopedSettingsWriters = new WeakMap<
   ReturnType<typeof createScopedSettingsWriter>
 >();
 
-/** Effective settings for the representative target: project overrides applied on top of its environment. */
 export function useScopedSettings<T = UnifiedSettings>(
   selector?: (settings: UnifiedSettings) => T,
 ): T {
   const { target } = useSettingsScope();
-  const clientSettings = useClientSettings();
-  const serverSettings = target?.settings ?? DEFAULT_SERVER_SETTINGS;
   useMigrateModelPreferences(target?.environmentId ?? null, target?.settings ?? null);
-  const settings = useMemo(
-    () => mergeEnvironmentSettings(serverSettings, clientSettings),
-    [clientSettings, serverSettings],
-  );
-  return useMemo(() => (selector ? selector(settings) : (settings as T)), [selector, settings]);
+  return useMergedSettings(target?.settings ?? DEFAULT_SERVER_SETTINGS, selector);
 }
 
 export function useScopedSettingsMixed(keys: readonly (keyof ServerSettings)[]): boolean {
@@ -63,7 +55,6 @@ export function useScopedSettingsMixed(keys: readonly (keyof ServerSettings)[]):
   return scopedSettingsAreMixed(targets, keys);
 }
 
-/** Where the keys' effective values come from across the selected targets. */
 export function useScopedSettingSource(keys: readonly (keyof ServerSettings)[]) {
   const { targets } = useSettingsScope();
   return scopedSettingsSource(targets, keys);
@@ -76,101 +67,86 @@ function useRunScopedPlan() {
     writer = createScopedSettingsWriter();
     scopedSettingsWriters.set(registry, writer);
   }
-  const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
   const readServer = useAtomCommand(serverEnvironment.getSettings, { reportFailure: false });
-  return useCallback(
-    (
-      environments: Parameters<typeof planScopedSettingsPatch>[1],
-      planner: Parameters<typeof writer>[1],
-    ) => {
-      const plan = planner(environments);
-      if (plan.unavailableReason) {
-        toastManager.add({
-          type: "warning",
-          title: "Setting not saved",
-          description: plan.unavailableReason,
-        });
-        return;
-      }
-      void writer(
-        environments,
-        planner,
-        (environmentId) => readServer({ environmentId, input: {} }),
-        async (request) => {
-          const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
-            (scope) => !readEnvironmentScope(request.environmentId, scope),
-          );
-          if (missing)
-            return AsyncResult.failure(
-              Cause.fail(
-                new EnvironmentAuthorizationError({
-                  requiredScope: missing,
-                  message: "This connection lacks permission to change these settings.",
-                }),
-              ),
-            );
-          return persistServer(request);
-        },
-        persistClientSettingsPatch,
-      ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
-        if (failedEnvironments.length === 0) return;
-        toastManager.add({
-          type: "error",
-          title:
-            savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
-          description: [
-            ...failedEnvironments.map(
-              ({ label, message }) => `Could not save on ${label}: ${message}`,
-            ),
-            ...(savedEnvironmentCount > 0
-              ? [`Saved on ${savedEnvironments.map(({ label }) => label).join(", ")}.`]
-              : []),
-          ].join("\n"),
-        });
+  const persistServer = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
+  return (
+    environments: Parameters<typeof planScopedSettingsPatch>[1],
+    planner: Parameters<typeof writer>[1],
+  ) => {
+    const plan = planner(environments);
+    if (plan.unavailableReason) {
+      toastManager.add({
+        type: "warning",
+        title: "Setting not saved",
+        description: plan.unavailableReason,
       });
-    },
-    [persistServer, readServer, writer],
-  );
+      return;
+    }
+    void writer(
+      environments,
+      planner,
+      (environmentId) => readServer({ environmentId, input: {} }),
+      async (request) => {
+        const missing = requiredScopesForServerSettingsPatch(request.input.patch).find(
+          (scope) => !readEnvironmentScope(request.environmentId, scope),
+        );
+        if (missing)
+          return AsyncResult.failure(
+            Cause.fail(
+              new EnvironmentAuthorizationError({
+                requiredScope: missing,
+                message: "This connection lacks permission to change these settings.",
+              }),
+            ),
+          );
+        return persistServer(request);
+      },
+      persistClientSettingsPatch,
+    ).then(({ failedEnvironments, savedEnvironments, savedEnvironmentCount }) => {
+      if (failedEnvironments.length === 0) return;
+      toastManager.add({
+        type: "error",
+        title:
+          savedEnvironmentCount > 0 ? "Setting saved on some environments" : "Setting not saved",
+        description: [
+          ...failedEnvironments.map(
+            ({ label, message }) => `Could not save on ${label}: ${message}`,
+          ),
+          ...(savedEnvironmentCount > 0
+            ? [`Saved on ${savedEnvironments.map(({ label }) => label).join(", ")}.`]
+            : []),
+        ].join("\n"),
+      });
+    });
+  };
 }
 
 export function useUpdateScopedSettings() {
   const { scope, environments } = useSettingsScope();
   const run = useRunScopedPlan();
-  return useCallback(
-    (patch: ScopedSettingsPatch) =>
-      run(environments, (current) => planScopedSettingsPatch(scope, current, patch)),
-    [environments, run, scope],
-  );
+  return (patch: ScopedSettingsPatch) =>
+    run(environments, (current) => planScopedSettingsPatch(scope, current, patch));
 }
 
-/**
- * Drop the project overrides for `keys` so the selected checkouts inherit
- * again. Rows also render outside the settings layout (provider cards,
- * dialogs), where there is no scope and nothing to clear.
- */
 export function useClearScopedSettings() {
   const context = useOptionalSettingsScope();
   const run = useRunScopedPlan();
-  return useCallback(
-    (keys: readonly ProjectScopedServerSettingKey[]) => {
-      if (context === null) return;
-      run(context.environments, (current) => planScopedSettingsClear(context.scope, current, keys));
-    },
-    [context, run],
-  );
+  return (keys: readonly ProjectScopedServerSettingKey[]) => {
+    if (context === null) return;
+    run(context.environments, (current) => planScopedSettingsClear(context.scope, current, keys));
+  };
 }
 
-/** Clear `keys` on specific project entries, from an environment scope's chain popover. */
 export function useClearProjectOverrides() {
   const context = useOptionalSettingsScope();
   const run = useRunScopedPlan();
-  return useCallback(
-    (entries: readonly ProjectOverrideEntry[], keys: readonly ProjectScopedServerSettingKey[]) => {
-      if (context === null) return;
-      run(context.environments, (current) => planProjectOverridesClear(current, entries, keys));
-    },
-    [context, run],
-  );
+  return (
+    entries: readonly ProjectOverrideEntry[],
+    keys: readonly ProjectScopedServerSettingKey[],
+  ) => {
+    if (context === null) return;
+    run(context.environments, (current) => planProjectOverridesClear(current, entries, keys));
+  };
 }
 
 export function useScopedSettingsWriteAllowed() {
