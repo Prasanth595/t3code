@@ -859,6 +859,12 @@ describe("serverStartsSince", () => {
       dataDir,
       [NOW - 60 * HOUR, stopping(NOW - 60 * HOUR)],
       [NOW - 30 * HOUR, stopping(NOW - 30 * HOUR)],
+      // A start whose started_at is not a number is skipped, as serverStartsSince skips it, so it
+      // neither ends the scan nor claims the stop.
+      [
+        NOW - 28 * HOUR,
+        { event: "server_started", data: { started_at: "soon" } } as unknown as MachineEvent,
+      ],
       [NOW - 2 * HOUR + 5_000, started(NOW - 2 * HOUR)],
     );
     expect(serverStopsForStartsSince(dataDir, NOW - 24 * HOUR)).toEqual([NOW - 30 * HOUR]);
@@ -917,6 +923,8 @@ describe("serverStartsSince", () => {
       line(NOW - 90 * 24 * HOUR + i, "pass_started", `{"note":"n${i}"}`),
     );
     lines.push(line(NOW - 30 * HOUR, "server_stopping", `{"stopping_at":${NOW - 30 * HOUR}}`));
+    // A line older than the window between the stop and its start does not end the scan early.
+    lines.push(line(NOW - 29 * HOUR, "pass_started", `{"note":"late"}`));
     lines.push(line(NOW - 2 * HOUR, "server_started", `{"started_at":${NOW - 2 * HOUR}}`));
     NodeFS.writeFileSync(NodePath.join(dataDir, "events.jsonl"), lines.join(""));
     const read = readServerStopsForStarts(dataDir, NOW - 24 * HOUR);
