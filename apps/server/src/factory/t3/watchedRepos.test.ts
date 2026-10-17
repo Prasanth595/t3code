@@ -302,6 +302,27 @@ describe("FactoryWatchedRepos.list", () => {
     }),
   );
 
+  it.effect("lists two projects that resolve to one repo, once each: the pass decides", () =>
+    Effect.gen(function* () {
+      const mine = checkout("mine", FACTORY_CONFIG);
+      const clone = checkout("clone", FACTORY_CONFIG);
+      const list = yield* listed({
+        projects: [
+          ["p-1-mine", mine],
+          ["p-2-clone", clone],
+        ],
+        identities: new Map([
+          [mine, WIDGETS],
+          [clone, WIDGETS],
+        ]),
+      });
+      assert.deepStrictEqual(list.repos, [
+        { repo: "acme/widgets", path: mine, title: "Title of p-1-mine" },
+        { repo: "acme/widgets", path: clone, title: "Title of p-2-clone" },
+      ]);
+    }),
+  );
+
   it.effect("leaves out a deleted project and keeps the rest", () =>
     Effect.gen(function* () {
       const gone = checkout("gone", FACTORY_CONFIG);

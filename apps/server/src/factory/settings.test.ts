@@ -250,6 +250,33 @@ describe("readMachineConfigReport", () => {
     }),
   );
 
+  it.effect("marks every block of a repo that two projects name, whatever the case", () =>
+    Effect.gen(function* () {
+      const watched: ReadonlyArray<WatchedProject> = [
+        { repo: "Acme/Widgets", path: "/one", title: "One" },
+        { repo: "c/d", path: "/d", title: "Dee" },
+        { repo: "acme/widgets", path: "/two", title: "Two" },
+      ];
+      // A reading of the repo does not matter: nothing was loaded for it from either checkout.
+      const readings = new Map<string, RepoConfigReading>([
+        ["Acme/Widgets", { kind: "errors", errors: [{ file: ".dw/config.yml", message: "old" }] }],
+      ]);
+      const { report: r } = yield* report(COMMENTED, watched, readings);
+      const ambiguous = [
+        {
+          file: ".dw/config.yml",
+          message:
+            "2 T3 projects have this repo as their origin (/one, /two); the factory watches none of them",
+        },
+      ];
+      assert.deepStrictEqual(r.repos, [
+        { repo: "Acme/Widgets", path: "/one", title: "One", factory: null, errors: ambiguous },
+        { repo: "c/d", path: "/d", title: "Dee", factory: null, errors: null },
+        { repo: "acme/widgets", path: "/two", title: "Two", factory: null, errors: ambiguous },
+      ]);
+    }),
+  );
+
   it.effect("gives the form its draft: the values an invalid file holds, as written", () =>
     Effect.gen(function* () {
       const { report: r } = yield* report(COMMENTED.replace("poll_seconds: 60", "poll_seconds: 5"));

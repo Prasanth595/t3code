@@ -347,6 +347,44 @@ describe("FactorySettingsPanel", () => {
     expect(input(root, "Max concurrent gates").props.value).toBe("2");
   });
 
+  it("lists two projects that name one repo as two blocks, with no duplicate key", async () => {
+    const message =
+      "2 T3 projects have this repo as their origin (/a, /b); the factory watches none";
+    const twice = report({
+      repos: [
+        {
+          repo: "acme/alpha",
+          path: "/a",
+          title: "Alpha",
+          factory: null,
+          errors: [{ file: ".dw/config.yml", message }],
+        },
+        {
+          repo: "acme/alpha",
+          path: "/b",
+          title: "Alpha copy",
+          factory: null,
+          errors: [{ file: ".dw/config.yml", message }],
+        },
+      ],
+    });
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(twice));
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const root = await open();
+      const text = textOf(root);
+      expect(text).toContain("Watched repo: Alpha");
+      expect(text).toContain("Watched repo: Alpha copy");
+      expect(text.split(message)).toHaveLength(3);
+      const duplicateKey = consoleError.mock.calls.filter((call) =>
+        String(call[0]).includes("same key"),
+      );
+      expect(duplicateKey).toEqual([]);
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it("lists the watched projects the API returns, read-only", async () => {
     mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
     const root = await open();

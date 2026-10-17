@@ -802,6 +802,45 @@ describe("claiming new issues", () => {
     }),
   );
 
+  it.effect(
+    "a repo two T3 projects name is watched from neither: one error line, one event, the rest go on",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        // The same repo in a different case, from two checkouts, and a third repo of its own.
+        fake.watched = [
+          { repo: REPO, path: "/p/one", title: "One" },
+          { repo: OTHER, path: "/p/other", title: "Other" },
+          { repo: REPO.toUpperCase(), path: "/p/two", title: "Two" },
+        ];
+        fake.ready[REPO] = [1];
+        fake.ready[OTHER] = [4];
+        fake.pushStart(`${REPO}#1`, started(1));
+        fake.pushStart(`${OTHER}#4`, started(4, OTHER));
+        const lines: Array<string> = [];
+        const report = yield* runPass(fake, machine(5), (line) => lines.push(line));
+        const said = lines.filter((l) => l.startsWith("error: "));
+        assert.equal(report.errors, 1);
+        assert.deepEqual(said, [
+          `error: ${REPO}: 2 T3 projects have it as their origin (/p/one, /p/two), repo skipped`,
+        ]);
+        const skipped = fake.events.filter((e) => e.event === "repo_skipped");
+        assert.deepEqual(skipped, [
+          {
+            event: "repo_skipped",
+            data: {
+              repo: REPO,
+              reason: "ambiguous-project",
+              message: `${REPO}: 2 T3 projects have it as their origin (/p/one, /p/two), repo skipped`,
+            },
+          },
+        ]);
+        // Neither checkout was loaded or claimed from; the other repo was.
+        assert.deepEqual(fake.projected, [OTHER]);
+        assert.deepEqual(starts(fake), [`start ${OTHER}#4`]);
+      }),
+  );
+
   it.effect("a ledger that cannot be listed is an error and nothing is claimed", () =>
     Effect.gen(function* () {
       const fake = new Fake();
