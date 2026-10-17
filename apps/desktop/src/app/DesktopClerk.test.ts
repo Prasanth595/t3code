@@ -44,7 +44,6 @@ import * as DesktopPreReadyFileSystem from "./DesktopPreReadyFileSystem.ts";
 import * as DesktopShellEnvironment from "../shell/DesktopShellEnvironment.ts";
 import { WEB_LINK_OPEN_CHANNEL } from "../ipc/channels.ts";
 
-/** Clerk forwards web links; tests that are not about links ignore them. */
 const ignoreWebLinks = DesktopWebLinks.DesktopWebLinks.of({
   receive: () => Effect.void,
   setRendererReady: () => Effect.void,
@@ -158,8 +157,6 @@ describe("DesktopClerk", () => {
         events.push("createClerkBridge");
         return { cleanup: vi.fn(), isPrimaryInstance: true };
       });
-      // runSync throws if the layer ever suspends, which would let Electron emit
-      // ready before the bridge exists. main.ts provides the same FileSystem.
       // oxlint-disable-next-line t3code/no-manual-effect-runtime-in-tests -- The assertion IS that the layer builds synchronously; it.effect would mask a regression to async.
       Effect.runSync(
         Effect.scoped(
@@ -436,13 +433,10 @@ it.effect("hands web and app links to the renderer and leaves other links alone"
         listeners.get("open-url")!(event, url);
         return event.preventDefault.mock.calls.length;
       };
-      // macOS hands the default browser every web link.
       assert.strictEqual(open("https://example.com/page"), 1);
       assert.strictEqual(open("http://localhost:3000/"), 1);
-      // Prompt and thread links ride the same queue; the renderer routes them in the app.
       assert.strictEqual(open("t3code://new?prompt=hi"), 1);
       assert.strictEqual(open("t3code://threads/env-1/thread-1"), 1);
-      // Anything else is not a web page; Electron keeps its own handling.
       assert.strictEqual(open("mailto:hello@example.com"), 0);
       assert.strictEqual(open("t3code://somewhere-else"), 0);
       yield* Effect.yieldNow;
@@ -562,6 +556,7 @@ it.effect.each([
     const shellEnvironment = DesktopShellEnvironment.DesktopShellEnvironment.of({
       installIntoProcess: Deferred.succeed(probeStarted, undefined).pipe(
         Effect.andThen(Deferred.await(finishProbe)),
+        Effect.as(true),
       ),
     });
     const event = { preventDefault: vi.fn() };
