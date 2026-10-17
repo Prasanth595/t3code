@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const files = new Map<string, { text: string; deleted: boolean }>();
-const failMode = vi.hoisted(() => ({ current: "none" as "none" | "write" | "move", cleanupFails: false }));
+const failMode = vi.hoisted(() => ({
+  current: "none" as "none" | "write" | "move",
+  cleanupFails: false,
+}));
 
 vi.mock("expo-file-system", () => ({
   File: class {
