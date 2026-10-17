@@ -890,7 +890,7 @@ it("shows readable models and only differing workspace details in agent tooltips
     expect(text()).toContain(`My GPT${expected}`);
     if (!expected) expect(text()).not.toContain("My GPT ·");
   }
-  const baseConfig = state.configs.get("test");
+  const speedConfig = state.configs.get("test");
   const reasoningEffort: ProviderOptionDescriptor = {
     id: "reasoningEffort",
     label: "Reasoning",
@@ -905,6 +905,7 @@ it("shows readable models and only differing workspace details in agent tooltips
     [[reasoningEffort], [{ id: "reasoningEffort", value: "high" }], " · high"],
     [[reasoningEffort], [], " · medium"],
     [[reasoningEffort], undefined, " · medium"],
+    [[{ ...reasoningEffort, currentValue: "low" }], undefined, " · low"],
     [[], undefined, ""],
   ] as const) {
     state.configs.set("test", {
@@ -923,8 +924,36 @@ it("shows readable models and only differing workspace details in agent tooltips
     expect(text()).toContain(`My GPT${expected}`);
     if (!expected) expect(text()).not.toContain("My GPT ·");
   }
-  state.configs.set("test", baseConfig);
-  const speedConfig = state.configs.get("test");
+  state.configs.set("test", {
+    providers: [
+      {
+        instanceId: "codex",
+        driver: "codex",
+        models: [
+          {
+            slug: "gpt-5.4",
+            name: "My GPT",
+            capabilities: { optionDescriptors: [reasoningEffort] },
+          },
+        ],
+      },
+    ],
+  });
+  state.projection = {
+    ...projection,
+    subagents: [
+      {
+        ...projection.subagents[0],
+        origin: "provider_native",
+        modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+      },
+    ],
+  };
+  await update();
+  expect(text()).toContain("My GPT");
+  expect(text()).not.toContain("My GPT ·");
+  state.projection = projection;
+  await update();
   const serviceTier: ProviderOptionDescriptor = {
     id: "serviceTier",
     label: "Service Tier",

@@ -77,13 +77,14 @@ export function SubagentTooltipContent(props: {
       ? childSelection
       : undefined;
   const effortOptionIds = ["reasoningEffort", "effort", "reasoning", "variant"];
-  // A delegated task that omits effort runs at the model's default, so show that like the composer.
   const savedEffort = effortOptionIds
     .map((id) => getModelSelectionStringOptionValue(matchingSelection, id))
     .find(Boolean);
+  // An app-owned task saved without an effort starts at the model's default. A native subagent's
+  // selection is only what the provider reported, so a missing effort there stays unknown.
   const effort =
     savedEffort ??
-    (matchingSelection
+    (matchingSelection && props.origin === "app_owned"
       ? effortOptionIds
           .map((id) => {
             const descriptor = providerModel?.capabilities?.optionDescriptors?.find(
