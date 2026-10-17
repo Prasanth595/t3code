@@ -37,6 +37,8 @@ afterEach(async () => {
 
 type CheckoutInput = Parameters<typeof checkoutNewTaskBranch>[0];
 
+const REF_PAGE_SIZE = 2;
+
 // Mirrors the server's local ref listing: a branch's worktree comes from
 // `git worktree list`, and `current` means the queried checkout holds it.
 const readRefs: CheckoutInput["readRefs"] = (request) =>
@@ -77,11 +79,13 @@ const readRefs: CheckoutInput["readRefs"] = (request) =>
           worktreePath,
         };
       });
+    const cursor = request.input.cursor ?? 0;
+    const page = refs.slice(cursor, cursor + REF_PAGE_SIZE);
     return {
-      refs,
+      refs: page,
       isRepo: true,
       hasPrimaryRemote: false,
-      nextCursor: null,
+      nextCursor: cursor + page.length < refs.length ? cursor + page.length : null,
       totalCount: refs.length,
     };
   });
@@ -220,5 +224,15 @@ describe("new-task branch checkout", () => {
     expect(result._tag).toBe("Success");
     if (result._tag !== "Success") throw new Error("Current branch selection failed");
     expect(result.value.current).toBe(true);
+  });
+
+  it("finds the branch past the first page of similarly named branches", async () => {
+    for (const name of ["a-feature/a", "b-feature/a", "c-feature/a"]) await git("branch", name);
+    const worktreePath = NodePath.join(directory, "worktree");
+    await git("worktree", "add", worktreePath, "feature/a");
+    const result = await selectBranch(refuseSwitch);
+    expect(result._tag).toBe("Success");
+    if (result._tag !== "Success") throw new Error("Paged worktree selection failed");
+    expect(result.value.worktreePath).toBe(await NodeFSP.realpath(worktreePath));
   });
 });

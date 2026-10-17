@@ -51,18 +51,28 @@ export async function checkoutNewTaskBranch<E>(input: {
     ? deriveLocalBranchNameCandidatesFromRemoteRef(input.branch.name, input.branch.remoteName)
     : [input.branch.name];
   for (const localName of localNames) {
-    const refs = await input.readRefs({
-      environmentId: input.project.environmentId,
-      input: {
-        cwd: input.project.workspaceRoot,
-        query: localName,
-        refKind: "local",
-        refresh: true,
-      },
-    });
-    if (refs._tag === "Failure") return AsyncResult.failure(refs.cause);
-    const local = refs.value.refs.find((ref) => ref.name === localName);
-    if (local?.current || local?.worktreePath) return AsyncResult.success(local);
+    // The query is a substring match, so the exact branch can sit past the
+    // first page in a repository with many similarly named branches.
+    let cursor: number | undefined;
+    for (;;) {
+      const refs = await input.readRefs({
+        environmentId: input.project.environmentId,
+        input: {
+          cwd: input.project.workspaceRoot,
+          query: localName,
+          refKind: "local",
+          ...(cursor === undefined ? { refresh: true } : { cursor }),
+        },
+      });
+      if (refs._tag === "Failure") return AsyncResult.failure(refs.cause);
+      const local = refs.value.refs.find((ref) => ref.name === localName);
+      if (local) {
+        if (local.current || local.worktreePath) return AsyncResult.success(local);
+        break;
+      }
+      if (refs.value.nextCursor === null) break;
+      cursor = refs.value.nextCursor;
+    }
   }
 
   const result = await input.switchRef({
