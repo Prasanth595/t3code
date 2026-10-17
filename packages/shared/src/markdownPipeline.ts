@@ -151,6 +151,8 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
       "t3-citation",
       "t3-context",
       THREAD_LINK_PROTOCOL,
+      // Fork: thread app links. The chat URL transform keeps only those that `threadLinkChips` reads.
+      "t3code",
     ],
     src: [...(defaultSchema.protocols?.src ?? []), "file", "t3-context"],
   },
