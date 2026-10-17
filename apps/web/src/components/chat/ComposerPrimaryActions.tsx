@@ -383,16 +383,17 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     </Tooltip>
   );
   // Repeat Stop clicks can outlast any cooldown, so the stopped button keeps its slot
-  // and Resume appears beside it.
-  if (showResume && stopPhase === "landed") {
+  // and Resume or Submit appears beside it.
+  const stopped = stopPhase === "landed" ? renderStopGenerationButton(false) : null;
+  if (compactTokens === null) {
+    if (!stopped) return submit;
     return (
       <div className="flex items-center gap-2">
         {submit}
-        {renderStopGenerationButton(false)}
+        {stopped}
       </div>
     );
   }
-  if (compactTokens === null) return submit;
 
   return (
     <div data-chat-composer-compact-send="true" className="flex items-center gap-2">
@@ -426,6 +427,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
         </TooltipPopup>
       </Tooltip>
       {submit}
+      {stopped}
     </div>
   );
 });

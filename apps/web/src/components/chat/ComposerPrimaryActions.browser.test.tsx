@@ -1,6 +1,6 @@
 import "../../index.css";
 
-import { act, createElement } from "react";
+import { act, createElement, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -18,6 +18,7 @@ import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
 describe("ComposerPrimaryActions stop pending state", () => {
   const onInterrupt = vi.fn();
   const onResume = vi.fn();
+  const onSubmitMessage = vi.fn();
   function runningProps(canInterrupt: boolean, canOperateThread = true) {
     return {
       compact: true,
@@ -37,16 +38,24 @@ describe("ComposerPrimaryActions stop pending state", () => {
       onPreviousPendingQuestion: () => {},
       onInterrupt,
       onResume,
+      onSubmitMessage,
       onImplementPlanInNewThread: () => {},
     };
   }
 
   let container: HTMLDivElement;
   let root: Root;
-  const render = (canInterrupt: boolean, canOperateThread = true) =>
+  const render = (
+    canInterrupt: boolean,
+    canOperateThread = true,
+    overrides: Partial<ComponentProps<typeof ComposerPrimaryActions>> = {},
+  ) =>
     act(() =>
       root.render(
-        createElement(ComposerPrimaryActions, runningProps(canInterrupt, canOperateThread)),
+        createElement(ComposerPrimaryActions, {
+          ...runningProps(canInterrupt, canOperateThread),
+          ...overrides,
+        }),
       ),
     );
   const slot = () => [...container.querySelectorAll("button")].at(-1)!;
@@ -55,6 +64,7 @@ describe("ComposerPrimaryActions stop pending state", () => {
   beforeEach(() => {
     onInterrupt.mockClear();
     onResume.mockClear();
+    onSubmitMessage.mockClear();
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.useFakeTimers();
     container = document.createElement("div");
@@ -84,6 +94,23 @@ describe("ComposerPrimaryActions stop pending state", () => {
     expect(resume?.disabled).toBe(false);
     act(() => resume?.click());
     expect(onResume).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the stopped slot when typed text swaps Resume for Submit", () => {
+    clickStop();
+    render(false);
+    render(false, true, {
+      promptHasText: true,
+      hasSendableContent: true,
+      compactBeforeSendTokens: 50_000,
+    });
+
+    for (let i = 0; i < 20; i++) clickStop();
+    expect(onSubmitMessage).not.toHaveBeenCalled();
+    expect(onResume).not.toHaveBeenCalled();
+    expect(slot()).toMatchObject({ ariaLabel: "Stopped", disabled: true });
+    expect(container.querySelector('button[aria-label="Compact and send"]')).not.toBeNull();
+    expect(container.querySelector("[aria-pressed]")).not.toBeNull();
   });
 
   it("enables Stop at once for a new run started after the stop lands", () => {
