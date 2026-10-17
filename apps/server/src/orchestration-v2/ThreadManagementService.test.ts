@@ -480,6 +480,228 @@ it.effect("waitForThread reads the run again only when the run updates", () =>
   }),
 );
 
+it.effect.each([
+  { mode: "steer" as const },
+  { mode: "restart" as const },
+  { mode: "auto" as const },
+])("rejects a $mode send to a running Muse child without dispatching", ({ mode }) =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:muse-steer");
+    const threadId = ThreadId.make("thread:thread-management:muse-steer");
+    const runId = RunId.make("run:thread-management:muse-steer");
+    const selection = {
+      instanceId: ProviderInstanceId.make("muse-personal"),
+      model: "muse-spark-1.3",
+    };
+    const originalTask = "Original Muse brief: implement the whole task and push.";
+    const dispatched: Array<unknown> = [];
+    const running = {
+      thread: {
+        id: threadId,
+        projectId,
+        deletedAt: null,
+        archivedAt: null,
+        providerInstanceId: selection.instanceId,
+        modelSelection: selection,
+      },
+      runs: [
+        {
+          id: runId,
+          ordinal: 1,
+          status: "running",
+          activeAttemptId: "attempt:thread-management:muse-steer",
+          providerInstanceId: selection.instanceId,
+          modelSelection: selection,
+        },
+      ],
+      providerTurns: [{ runAttemptId: "attempt:thread-management:muse-steer", status: "running" }],
+      messages: [{ id: MessageId.make("message:muse-original"), runId, text: originalTask }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: () => Effect.succeed(running),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command);
+              return {} as Orchestrator.OrchestratorV2DispatchResult;
+            }),
+        }),
+      ),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+    const error = yield* Effect.flip(
+      service.sendToThread({
+        projectId,
+        commandId: CommandId.make("command:thread-management:muse-steer"),
+        threadId,
+        messageId: MessageId.make("message:thread-management:muse-steer"),
+        text: "Changed scope: do only this instead.",
+        attachments: [],
+        mode,
+        createdBy: "agent",
+        creationSource: "mcp",
+      }),
+    );
+
+    expect(error).toBeInstanceOf(ThreadManagementService.ThreadManagementMuseSteerRejectedError);
+    expect(error.message).toContain("Wait until");
+    expect(error.message).toContain("is terminal, then call delegate_task again");
+    expect(error.message).toContain("full brief, the current state, and the change");
+    // Nothing was dispatched, so the child's original task text is untouched.
+    expect(dispatched).toHaveLength(0);
+    expect(running.messages[0]?.text).toBe(originalTask);
+  }),
+);
+
+it.effect.each([
+  { label: "Cursor", instanceId: "cursor", model: "cursor-model" },
+  { label: "Codex", instanceId: "codex", model: "gpt-6.1-sol" },
+])("still steers a running $label child", ({ instanceId, model }) =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:steer-ok");
+    const threadId = ThreadId.make("thread:thread-management:steer-ok");
+    const runId = RunId.make("run:thread-management:steer-ok");
+    const messageId = MessageId.make("message:thread-management:steer-ok");
+    const selection = { instanceId: ProviderInstanceId.make(instanceId), model };
+    const dispatched: Array<{ readonly dispatchMode?: { readonly type: string } }> = [];
+    const thread = {
+      id: threadId,
+      projectId,
+      deletedAt: null,
+      archivedAt: null,
+      providerInstanceId: selection.instanceId,
+      modelSelection: selection,
+    };
+    const running = {
+      thread,
+      runs: [
+        {
+          id: runId,
+          ordinal: 1,
+          status: "running",
+          activeAttemptId: "attempt:thread-management:steer-ok",
+          providerInstanceId: selection.instanceId,
+          modelSelection: selection,
+        },
+      ],
+      providerTurns: [{ runAttemptId: "attempt:thread-management:steer-ok", status: "running" }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const afterDispatch = {
+      thread,
+      runs: [{ id: runId, status: "running" }],
+      messages: [{ id: messageId, runId }],
+      turnItems: [{ type: "user_message", messageId, inputIntent: "steer" }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: (_threadId, _fields, filter) =>
+            Effect.succeed(filter?.messageIds === undefined ? running : afterDispatch),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command as { readonly dispatchMode?: { readonly type: string } });
+              return {} as Orchestrator.OrchestratorV2DispatchResult;
+            }),
+        }),
+      ),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+    const result = yield* service.sendToThread({
+      projectId,
+      commandId: CommandId.make("command:thread-management:steer-ok"),
+      threadId,
+      messageId,
+      text: "Steer: adjust course.",
+      attachments: [],
+      mode: "steer",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0]?.dispatchMode?.type).toBe("steer_active");
+    expect(result.delivery).toBe("steered");
+  }),
+);
+
+it.effect("still delivers a new message to a terminal Muse child", () =>
+  Effect.gen(function* () {
+    const projectId = ProjectId.make("project:thread-management:muse-terminal");
+    const threadId = ThreadId.make("thread:thread-management:muse-terminal");
+    const runId = RunId.make("run:thread-management:muse-terminal");
+    const messageId = MessageId.make("message:thread-management:muse-terminal");
+    const selection = {
+      instanceId: ProviderInstanceId.make("muse-backstage-support"),
+      model: "muse-wonder-1.0",
+    };
+    const dispatched: Array<{ readonly dispatchMode?: { readonly type: string } }> = [];
+    const thread = {
+      id: threadId,
+      projectId,
+      deletedAt: null,
+      archivedAt: null,
+      providerInstanceId: selection.instanceId,
+      modelSelection: selection,
+    };
+    const terminal = {
+      thread,
+      runs: [
+        {
+          id: runId,
+          ordinal: 1,
+          status: "completed",
+          activeAttemptId: null,
+          providerInstanceId: selection.instanceId,
+          modelSelection: selection,
+        },
+      ],
+      providerTurns: [],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const afterDispatch = {
+      thread,
+      runs: [{ id: runId, status: "running" }],
+      messages: [{ id: messageId, runId }],
+      turnItems: [{ type: "user_message", messageId, inputIntent: "turn_start" }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getThreadRecords: (_threadId, _fields, filter) =>
+            Effect.succeed(filter?.messageIds === undefined ? terminal : afterDispatch),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatched.push(command as { readonly dispatchMode?: { readonly type: string } });
+              return {} as Orchestrator.OrchestratorV2DispatchResult;
+            }),
+        }),
+      ),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+    const result = yield* service.sendToThread({
+      projectId,
+      commandId: CommandId.make("command:thread-management:muse-terminal"),
+      threadId,
+      messageId,
+      text: "Follow-up after completion.",
+      attachments: [],
+      mode: "auto",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0]?.dispatchMode?.type).toBe("start_immediately");
+    expect(result.delivery).toBe("started");
+  }),
+);
+
 it.effect(
   "optional mission dispatch fails closed on a real unconfigured service and preserves legacy dispatch",
   () => {
