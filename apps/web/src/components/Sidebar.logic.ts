@@ -149,6 +149,23 @@ export type SidebarListItem =
   | { readonly kind: "thread"; readonly key: string; readonly section: SidebarSection }
   | { readonly kind: "marker"; readonly marker: SidebarListMarker };
 
+export function useSidebarListItems(freshItems: readonly SidebarListItem[]) {
+  // Shell updates do not move rows. Preserve the list identity so sortable
+  // contexts and rows stay memoized while their thread data changes.
+  const key = freshItems
+    .map((item) => (item.kind === "thread" ? item.section + ":" + item.key : item.marker))
+    .join("\n");
+  const [retained, setRetained] = React.useState({ key, items: freshItems });
+  if (retained.key !== key) {
+    const next = { key, items: freshItems };
+    setRetained(next);
+    // The caller keeps rendering before React retries. Its thread lookup
+    // already excludes rows hidden by settlement or a project switch.
+    return next;
+  }
+  return retained;
+}
+
 export function sidebarListItemId(item: SidebarListItem): string {
   return item.kind === "thread" ? item.key : sidebarMarkerId(item.marker);
 }
