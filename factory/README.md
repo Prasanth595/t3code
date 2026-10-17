@@ -73,7 +73,7 @@ factory/scripts/rollback.sh
 
 It points `current` at `previous`, restarts the job, removes `previous` and runs the same health check on the restored version. It exits 1 with `rollback to <previous> from <current> failed its health check` when that check fails too. When there is no `previous`, install an older archive from `release/` with `factory/scripts/install.sh <archive>`.
 
-A version from before #93 requires `model_instance` and `model` in `~/.config/t3fac/factory/config.yml`. The current version warns about them and keeps them through a save from `/settings/factory`, so a rollback to such a version loads the file as it is. If they were deleted by hand, add both back before rolling back, or the restored server fails its health check with `model: is missing`. Delete them once no rollback to such a version is possible.
+A version from before #93 requires `model_instance` and `model` in `~/.config/t3fac/factory/config.yml`. The current version does not read them: it warns about them and keeps them through a save from `/settings/factory`, but never adds them, so a file copied from `factory/config.example.yml` or first written by the settings page has neither. Before rolling back to such a version, check the file has both keys and add them if not, or the restored server fails its health check with `model: is missing`. Delete them once no rollback to such a version is possible.
 
 ### Handing the repo over and back
 
