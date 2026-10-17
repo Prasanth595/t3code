@@ -23,7 +23,12 @@ import * as Stream from "effect/Stream";
 import { describe } from "vite-plus/test";
 
 import { Attention, type NewItem } from "./attention.ts";
-import { timeLimitOnlyProjectConfig, type MachineConfig, type WatchedProject } from "./config.ts";
+import {
+  timeLimitOnlyProjectConfig,
+  type MachineConfig,
+  type WatchedListing,
+  type WatchedProject,
+} from "./config.ts";
 import type { State } from "./domain/lifecycle.ts";
 import {
   factoryRuntime,
@@ -88,7 +93,11 @@ const watching = (
 ) =>
   Layer.succeed(
     FactoryWatchedRepos,
-    FactoryWatchedRepos.of({ list: Effect.isEffect(list) ? list : Effect.succeed(list) }),
+    FactoryWatchedRepos.of({
+      list: (Effect.isEffect(list) ? list : Effect.succeed(list)).pipe(
+        Effect.map((repos): WatchedListing => ({ repos, unresolved: [] })),
+      ),
+    }),
   );
 
 /** A gate that never runs: the runtime is built without one. */

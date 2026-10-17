@@ -171,6 +171,8 @@ class Fake implements PassWorld {
   openHeads: Record<string, string | null | "error"> = {};
   /** The repos the T3 projects list as watched; set per pass by `pass`. */
   watched: Array<WatchedRepo> = [];
+  /** Workspace roots the reader could not identify this pass; they are not in `watched`. */
+  unresolved: Array<string> = [];
   /** Listing the watched repos fails, as the project store being down does. */
   watchedFails = false;
   /** The repos `project` was called for, in order. */
@@ -216,7 +218,7 @@ class Fake implements PassWorld {
           kind: "t3",
           message: "cannot list the T3 projects: project store down",
         })
-      : Effect.succeed(this.watched);
+      : Effect.succeed({ repos: this.watched, unresolved: this.unresolved });
   });
 
   project(watched: { repo: string }) {
@@ -3062,6 +3064,32 @@ describe("attention items", () => {
         ];
         yield* pass(fake, [REPO], 5);
         assert.deepEqual(ids(fake), ["kept", "machine"]);
+      }),
+  );
+
+  it.effect(
+    "a project the reader could not identify clears no item and says so in one plain line",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.unresolved = ["/p/a", "/p/b"];
+        fake.items = [
+          open({ id: "gone", kind: "stuck", repo: "rawphp/gone" }),
+          open({ id: "machine", kind: "config", repo: null, issue: null }),
+        ];
+        const { report, lines } = yield* pass(fake, [REPO], 5);
+        assert.deepEqual(ids(fake), ["gone", "machine"]);
+        assert.deepEqual(
+          lines.filter((l) => l.startsWith("watched:")),
+          [
+            "watched: 2 opted-in project(s) could not be identified this pass (/p/a, /p/b); no attention item is cleared",
+          ],
+        );
+        // A line, not an error: the pass reports none and the machine log has no event for it.
+        assert.equal(report.errors, 0);
+        assert.deepEqual(errorEvents(fake), []);
+        // The repos that were listed are still worked.
+        assert.deepEqual(fake.projected, [REPO]);
       }),
   );
 

@@ -135,17 +135,53 @@ describe("FactoryWatchedRepos.list", () => {
         projects: [["p-widgets", root]],
         identities: new Map([[root, WIDGETS]]),
       });
-      assert.deepStrictEqual(list, [
+      assert.deepStrictEqual(list.repos, [
         { repo: "acme/widgets", path: root, title: "Title of p-widgets" },
       ]);
     }),
   );
 
-  it.effect("skips a project with no repository identity", () =>
+  it.effect("reports an opted-in checkout T3 could not identify as unresolved, not as absent", () =>
     Effect.gen(function* () {
       const root = checkout("no-identity", FACTORY_CONFIG);
       const list = yield* listed({ projects: [["p-none", root]], identities: new Map() });
-      assert.deepStrictEqual(list, []);
+      assert.deepStrictEqual(list.repos, []);
+      assert.deepStrictEqual(list.unresolved, [root]);
+    }),
+  );
+
+  it.effect("reports a config file that cannot be read as unresolved", () =>
+    Effect.gen(function* () {
+      // A directory where the file should be: a read error that is not "not found".
+      const root = checkout("unreadable", null);
+      NodeFS.mkdirSync(NodePath.join(root, ".dw", "config.yml"), { recursive: true });
+      const list = yield* listed({
+        projects: [["p-unreadable", root]],
+        identities: new Map([[root, WIDGETS]]),
+      });
+      assert.deepStrictEqual(list.repos, []);
+      assert.deepStrictEqual(list.unresolved, [root]);
+    }),
+  );
+
+  it.effect("leaves a project that is certainly not opted in out of both lists", () =>
+    Effect.gen(function* () {
+      const bare = checkout("bare", null);
+      const noBlock = checkout("no-block-either", "tracker:\n  backend: do-work-io\n");
+      const gitlab = checkout("gitlab-either", FACTORY_CONFIG);
+      const list = yield* listed({
+        projects: [
+          ["p-bare", bare],
+          ["p-no-block-either", noBlock],
+          ["p-gitlab-either", gitlab],
+        ],
+        identities: new Map<string, RepositoryIdentity>([
+          [bare, WIDGETS],
+          [noBlock, WIDGETS],
+          [gitlab, { ...WIDGETS, provider: "gitlab" }],
+        ]),
+      });
+      assert.deepStrictEqual(list, { repos: [], unresolved: [] });
     }),
   );
 
@@ -156,7 +192,7 @@ describe("FactoryWatchedRepos.list", () => {
         projects: [["p-bare", root]],
         identities: new Map([[root, WIDGETS]]),
       });
-      assert.deepStrictEqual(list, []);
+      assert.deepStrictEqual(list.repos, []);
     }),
   );
 
@@ -167,7 +203,7 @@ describe("FactoryWatchedRepos.list", () => {
         projects: [["p-no-block", root]],
         identities: new Map([[root, WIDGETS]]),
       });
-      assert.deepStrictEqual(list, []);
+      assert.deepStrictEqual(list.repos, []);
     }),
   );
 
@@ -178,7 +214,7 @@ describe("FactoryWatchedRepos.list", () => {
         projects: [["p-broken", root]],
         identities: new Map([[root, WIDGETS]]),
       });
-      assert.deepStrictEqual(list, []);
+      assert.deepStrictEqual(list.repos, []);
     }),
   );
 
@@ -190,7 +226,7 @@ describe("FactoryWatchedRepos.list", () => {
         identities: new Map([[scratch, WIDGETS]]),
         scratch,
       });
-      assert.deepStrictEqual(list, []);
+      assert.deepStrictEqual(list.repos, []);
     }),
   );
 
@@ -212,7 +248,7 @@ describe("FactoryWatchedRepos.list", () => {
         projects: [["p-gitlab", root]],
         identities: new Map([[root, gitlab]]),
       });
-      assert.deepStrictEqual(list, []);
+      assert.deepStrictEqual(list.repos, []);
     }),
   );
 
@@ -224,7 +260,7 @@ describe("FactoryWatchedRepos.list", () => {
         projects: [["p-half", root]],
         identities: new Map([[root, noOwner]]),
       });
-      assert.deepStrictEqual(list, []);
+      assert.deepStrictEqual(list.repos, []);
     }),
   );
 
@@ -242,7 +278,7 @@ describe("FactoryWatchedRepos.list", () => {
           [second, GADGETS],
         ]),
       });
-      assert.deepStrictEqual(list, [
+      assert.deepStrictEqual(list.repos, [
         { repo: "acme/widgets", path: first, title: "Title of p-first" },
         { repo: "acme/gadgets", path: second, title: "Title of p-second" },
       ]);
@@ -264,7 +300,7 @@ describe("FactoryWatchedRepos.list", () => {
         ]),
         deleted: ["p-gone"],
       });
-      assert.deepStrictEqual(list, [
+      assert.deepStrictEqual(list.repos, [
         { repo: "acme/gadgets", path: kept, title: "Title of p-kept" },
       ]);
     }),
@@ -295,7 +331,7 @@ describe("FactoryWatchedRepos.list", () => {
         const watched = yield* WatchedRepos.FactoryWatchedRepos;
         return yield* watched.list;
       }).pipe(Effect.provide(layer));
-      assert.deepStrictEqual(list, []);
+      assert.deepStrictEqual(list.repos, []);
       assert.deepStrictEqual(asked, []);
     }),
   );
