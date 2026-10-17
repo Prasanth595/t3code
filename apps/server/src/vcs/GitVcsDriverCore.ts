@@ -1398,6 +1398,61 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           { allowNonZeroExit: true },
         ).pipe(Effect.map((result) => result.stdout.trim()));
         const zeroOid = "0".repeat(objectFormat === "sha256" ? 64 : 40);
+        const sourceConfiguration = yield* executeGit(
+          "GitVcsDriver.fetchRemoteForStatus.configuration",
+          fetchCwd,
+          ["--git-dir", gitCommonDir, "config", "--null", "--show-scope", "--list", "--includes"],
+        );
+        if (sourceConfiguration.stdoutTruncated) {
+          return yield* new GitCommandError({
+            operation: "GitVcsDriver.fetchRemoteForStatus.configuration",
+            command: "git config",
+            cwd: fetchCwd,
+            detail: "Git status fetch configuration exceeded the output limit.",
+          });
+        }
+        // Resolve includeIf before switching Git directories. Keep protected system/global
+        // settings separate from repository settings rather than elevating local values via -c.
+        const quoteConfigText = (value: string) =>
+          value.replaceAll("\\", "\\\\").replaceAll('"', '\\"');
+        const configurationLines: string[] = [];
+        const globalConfigurationLines: string[] = [];
+        const configurationEntries = sourceConfiguration.stdout.split("\0");
+        for (let index = 0; index + 1 < configurationEntries.length; index += 2) {
+          const scope = configurationEntries[index];
+          const entry = configurationEntries[index + 1]!;
+          // Command-scope settings are still supplied by the inherited process environment.
+          if (scope === "command") continue;
+          const separator = entry.indexOf("\n");
+          const key = separator === -1 ? entry : entry.slice(0, separator);
+          if (
+            key === "include.path" ||
+            key.startsWith("includeif.") ||
+            key === "core.bare" ||
+            key === "core.worktree" ||
+            key === "extensions.worktreeconfig"
+          )
+            continue;
+          const sectionEnd = key.indexOf(".");
+          const variableStart = key.lastIndexOf(".");
+          const section = key.slice(0, sectionEnd);
+          const subsection =
+            sectionEnd === variableStart
+              ? ""
+              : ` "${quoteConfigText(key.slice(sectionEnd + 1, variableStart))}"`;
+          const value =
+            separator === -1
+              ? ""
+              : ` = "${quoteConfigText(entry.slice(separator + 1))
+                  .replaceAll("\n", "\\n")
+                  .replaceAll("\t", "\\t")
+                  .replaceAll("\b", "\\b")}"`;
+          const lines =
+            scope === "system" || scope === "global"
+              ? globalConfigurationLines
+              : configurationLines;
+          lines.push(`[${section}${subsection}]\n${key.slice(variableStart + 1)}${value}\n`);
+        }
         yield* runGit("GitVcsDriver.fetchRemoteForStatus.init", fetchCwd, [
           "init",
           "--bare",
@@ -1405,6 +1460,34 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           ...(objectFormat === "sha256" ? ["--object-format=sha256"] : []),
           temporaryRoot,
         ]);
+        const sourceConfigPath = path.join(temporaryRoot, "config");
+        const globalConfigPath = path.join(temporaryRoot, "global-config");
+        yield* fileSystem
+          .chmod(sourceConfigPath, 0o600)
+          .pipe(
+            Effect.andThen(
+              fileSystem.writeFileString(sourceConfigPath, configurationLines.join(""), {
+                flag: "a",
+              }),
+            ),
+            Effect.andThen(
+              fileSystem.writeFileString(globalConfigPath, globalConfigurationLines.join(""), {
+                mode: 0o600,
+              }),
+            ),
+          )
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitCommandError({
+                  operation: "GitVcsDriver.fetchRemoteForStatus.configuration",
+                  command: "filesystem.writeFileString",
+                  cwd: fetchCwd,
+                  detail: "Failed to preserve Git status fetch configuration.",
+                  cause,
+                }),
+            ),
+          );
         yield* fileSystem
           .writeFileString(
             path.join(temporaryObjectDirectory, "info", "alternates"),
@@ -1440,8 +1523,6 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             "--git-dir",
             temporaryRoot,
             "-c",
-            `include.path=${path.join(gitCommonDir, "config")}`,
-            "-c",
             "fetch.unpackLimit=1",
             "fetch",
             "--quiet",
@@ -1460,6 +1541,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               allowNonZeroExit: true,
               env: {
                 ...STATUS_UPSTREAM_REFRESH_ENV,
+                GIT_CONFIG_NOSYSTEM: "1",
+                GIT_CONFIG_GLOBAL: globalConfigPath,
                 GIT_OBJECT_DIRECTORY: temporaryObjectDirectory,
                 GIT_ALTERNATE_OBJECT_DIRECTORIES: objectDirectory,
               },

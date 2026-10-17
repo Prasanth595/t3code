@@ -3385,6 +3385,122 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect.each(["gitdir", "onbranch", "global gitdir"] as const)(
+      "preserves conditional remote configuration during status fetches (%s)",
+      (conditionType) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const remote = yield* makeTmpDir("git-vcs-driver-remote with spaces-");
+          const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* initRepoWithCommit(cwd);
+          const branch = "feature/conditional-config";
+          yield* git(cwd, ["checkout", "-b", branch]);
+          yield* git(remote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "origin", remote]);
+          yield* git(cwd, ["push", "-u", "origin", branch]);
+          yield* git(updater, ["clone", "--branch", branch, remote, "."]);
+          yield* git(updater, ["config", "user.email", "test@test.com"]);
+          yield* git(updater, ["config", "user.name", "Test"]);
+          yield* writeTextFile(updater, "remote.txt", "conditional remote update\n");
+          yield* git(updater, ["add", "remote.txt"]);
+          yield* git(updater, ["commit", "-m", "remote update"]);
+          yield* git(updater, ["push"]);
+
+          const configDirectory = yield* makeTmpDir("git-vcs-driver-config-");
+          const includedConfig = path.join(configDirectory, "transport.gitconfig");
+          yield* git(cwd, [
+            "config",
+            "--file",
+            includedConfig,
+            "remote.origin.url",
+            "conditional-remote:",
+          ]);
+          yield* git(cwd, [
+            "config",
+            "--file",
+            includedConfig,
+            `url.${remote}.insteadOf`,
+            "conditional-remote:",
+          ]);
+          const gitDirectory = yield* fs.realPath(path.join(cwd, ".git"));
+          const condition =
+            conditionType !== "onbranch"
+              ? `gitdir:${gitDirectory.replaceAll("\\", "/")}`
+              : `onbranch:${branch}`;
+          const globalConfig = path.join(configDirectory, "global.gitconfig");
+          const configEnvironment =
+            conditionType === "global gitdir" ? { GIT_CONFIG_GLOBAL: globalConfig } : undefined;
+          yield* git(cwd, [
+            "config",
+            ...(configEnvironment ? ["--file", globalConfig] : []),
+            `includeIf.${condition}.path`,
+            includedConfig,
+          ]);
+          yield* git(cwd, ["config", "--unset", "remote.origin.url"]);
+          assert.equal(yield* git(cwd, ["remote", "get-url", "origin"], configEnvironment), remote);
+
+          const fixtureDriver = yield* GitVcsDriver.GitVcsDriver;
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          let checkedScope = false;
+          const spawner = ChildProcessSpawner.make((command) =>
+            Effect.gen(function* () {
+              if (!ChildProcess.isStandardCommand(command)) return yield* delegate.spawn(command);
+              const objectDirectory = command.options.env?.GIT_OBJECT_DIRECTORY;
+              if (objectDirectory && command.args.includes("fetch")) {
+                const isolatedRoot = path.dirname(objectDirectory);
+                assert.equal(
+                  yield* git(
+                    cwd,
+                    [
+                      "--git-dir",
+                      isolatedRoot,
+                      "config",
+                      "--show-scope",
+                      "--get",
+                      "remote.origin.url",
+                    ],
+                    command.options.env,
+                  ).pipe(
+                    Effect.provideService(GitVcsDriver.GitVcsDriver, fixtureDriver),
+                    Effect.orDie,
+                  ),
+                  `${configEnvironment ? "global" : "local"}\tconditional-remote:`,
+                );
+                if (HostProcess.Platform.defaultValue() !== "win32") {
+                  assert.equal(
+                    (yield* fs.stat(
+                      path.join(isolatedRoot, configEnvironment ? "global-config" : "config"),
+                    )).mode & 0o777,
+                    0o600,
+                  );
+                }
+                checkedScope = true;
+              }
+              return yield* delegate.spawn(
+                ChildProcess.make(command.command, command.args, {
+                  ...command.options,
+                  env: { ...command.options.env, ...(objectDirectory ? {} : configEnvironment) },
+                }),
+              );
+            }),
+          );
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provide(layerServerConfig),
+          );
+          const status = yield* driver.statusDetailsRemote(cwd);
+          assert.equal(status.behindCount, 1);
+          assert.isTrue(checkedScope);
+          assert.equal(
+            yield* git(cwd, ["show", `origin/${branch}:remote.txt`]),
+            "conditional remote update",
+          );
+          yield* git(cwd, ["fsck", "--full", "--no-dangling"]);
+        }),
+    );
+
     it.effect("does not start Git auto-maintenance from background upstream fetches", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
