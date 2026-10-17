@@ -9,42 +9,69 @@ import {
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 
-/** Fork: `threadLinkChips`, the attached-thread chip for every thread link. */
+/** Fork: the thread link settings, `threadLinkChips` and `threadLinksOpenDesktopApp`. */
 export function ThreadLinkChipsSettingsSection() {
   return (
     <SettingsSection id="thread-links" title="Thread links">
       <ThreadLinkChipsSettingsRow />
+      <ThreadLinksOpenDesktopAppSettingsRow />
     </SettingsSection>
   );
 }
 
 export function ThreadLinkChipsSettingsRow() {
+  return (
+    <ThreadLinkSwitchRow
+      settingKey="threadLinkChips"
+      searchId="thread-link-chips"
+      label="Thread link chips"
+      description="Every thread link in chat looks like an attached thread: thread links, app links, web addresses of a thread on this machine or a connected machine, and the thread markers that agents copy. A click opens the thread here, not in a browser. Applies on desktop, web and the mobile app."
+    />
+  );
+}
+
+export function ThreadLinksOpenDesktopAppSettingsRow() {
+  return (
+    <ThreadLinkSwitchRow
+      settingKey="threadLinksOpenDesktopApp"
+      searchId="thread-links-open-desktop-app"
+      label="Thread addresses open the desktop app"
+      description="A thread address opened from another app, such as Slack or GitHub, in a new browser tab opens the thread in the desktop app at once. The tab offers to continue in the browser."
+    />
+  );
+}
+
+function ThreadLinkSwitchRow(props: {
+  readonly settingKey: "threadLinkChips" | "threadLinksOpenDesktopApp";
+  readonly searchId: "thread-link-chips" | "thread-links-open-desktop-app";
+  readonly label: string;
+  readonly description: string;
+}) {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  const mixed = useScopedSettingsMixed(["threadLinkChips"]);
+  const mixed = useScopedSettingsMixed([props.settingKey]);
+  const fallback = DEFAULT_SERVER_SETTINGS[props.settingKey];
 
   return (
     <SettingsRow
-      {...searchableSetting("thread-link-chips")}
+      {...searchableSetting(props.searchId)}
       serverScoped
-      settingKeys={["threadLinkChips"]}
-      description="Thread links in chat look like an attached thread. A web link to a thread on this machine or a connected machine opens the thread here, not in a browser. Applies on desktop, web and the mobile app."
+      settingKeys={[props.settingKey]}
+      description={props.description}
       resetAction={
-        mixed || settings.threadLinkChips !== DEFAULT_SERVER_SETTINGS.threadLinkChips ? (
+        mixed || settings[props.settingKey] !== fallback ? (
           <SettingResetButton
-            label="thread link chips"
-            onClick={() =>
-              updateSettings({ threadLinkChips: DEFAULT_SERVER_SETTINGS.threadLinkChips })
-            }
+            label={props.label.toLowerCase()}
+            onClick={() => updateSettings({ [props.settingKey]: fallback })}
           />
         ) : null
       }
       control={
         <ScopedSwitch
-          settingKeys={["threadLinkChips"]}
-          checked={settings.threadLinkChips}
-          onCheckedChange={(checked) => updateSettings({ threadLinkChips: Boolean(checked) })}
-          aria-label="Thread link chips"
+          settingKeys={[props.settingKey]}
+          checked={settings[props.settingKey]}
+          onCheckedChange={(checked) => updateSettings({ [props.settingKey]: Boolean(checked) })}
+          aria-label={props.label}
         />
       }
     />

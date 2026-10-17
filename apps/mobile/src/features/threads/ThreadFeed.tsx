@@ -212,7 +212,7 @@ import {
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { usePreparedConnection } from "../../state/session";
 import { useLiveThreadLinkLabels } from "../../state/entities";
-import { useForkThreadLinks } from "./forkThreadLinks";
+import { useForkThreadLinks, useForkThreadMarkers } from "./forkThreadLinks";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
 import * as Option from "effect/Option";
@@ -804,7 +804,10 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly renderImage: MarkdownImageRenderer;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
-  const liveMarkdown = useLiveThreadLinkLabels(props.markdown, props.environmentId);
+  const liveMarkdown = useLiveThreadLinkLabels(
+    useForkThreadMarkers(props.markdown, props.environmentId),
+    props.environmentId,
+  );
   const segments = useMemo(() => splitCodexArtifactTemplateMarkdown(liveMarkdown), [liveMarkdown]);
 
   return segments.map((segment) => {

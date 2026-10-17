@@ -106,11 +106,13 @@ import { defaultUrlTransform } from "react-markdown";
 import { parseAssistantCitationHref } from "@t3tools/shared/assistantCitations";
 import { parseComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import { parseThreadAddress } from "@t3tools/shared/threadAddress";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
 import {
   ForkThreadAddressChip,
   ForkThreadLink,
   useForkKnownThreadAddress,
+  useForkThreadMarkers,
 } from "./chat/ForkThreadLink";
 import {
   artifactTemplateFromHastProperties,
@@ -2407,6 +2409,7 @@ function useChatMarkdownState({
     if (parseAssistantCitationHref(href)) return href;
     if (parseComposerContextHref(href)) return href;
     if (parseThreadLinkHref(href)) return href;
+    if (serverConfig?.settings.threadLinkChips && parseThreadAddress(href)) return href;
     if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   };
@@ -3269,13 +3272,17 @@ const CHAT_MARKDOWN_COMPONENTS = {
 } satisfies Components;
 
 function ChatMarkdown({
-  text,
+  text: writtenText,
   className,
   lineBreaks = false,
   parseRawHtml = true,
   extraRemarkPlugins = EMPTY_REMARK_PLUGINS,
   ...props
 }: ChatMarkdownProps) {
+  const text = useForkThreadMarkers(
+    writtenText,
+    props.onTaskListChange ? undefined : props.threadRef,
+  );
   const {
     componentState,
     handleCopy,

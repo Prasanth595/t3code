@@ -98,6 +98,7 @@ const FORK_SETTING_GROUPS = [
       { ids: ["installed-app"] },
       { ids: ["thread-card-layout"] },
       { ids: ["thread-link-chips"] },
+      { ids: ["thread-links-open-desktop-app"] },
     ],
   },
 ] as const satisfies ReadonlyArray<{

@@ -283,6 +283,10 @@
       "types": "./src/threadAddress.ts",
       "import": "./src/threadAddress.ts"
     },
+    "./threadMarkers": {
+      "types": "./src/threadMarkers.ts",
+      "import": "./src/threadMarkers.ts"
+    },
     "./composerContextReferences": {
       "types": "./src/composerContextReferences.ts",
       "import": "./src/composerContextReferences.ts"

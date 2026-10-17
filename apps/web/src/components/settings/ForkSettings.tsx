@@ -26,7 +26,10 @@ import { SidebarGroupsSettingsRow } from "./SidebarGroupsSettingsRow";
 import { SnoozeQuickOptionsSettingsRow } from "./SnoozeQuickOptionsSettingsRow";
 import { WorktreesDirectoryRow } from "./StorageSettings";
 import { ThreadCardLayoutSettingsRows } from "./ThreadCardLayoutSettings";
-import { ThreadLinkChipsSettingsRow } from "./ThreadLinkChipsSettings";
+import {
+  ThreadLinkChipsSettingsRow,
+  ThreadLinksOpenDesktopAppSettingsRow,
+} from "./ThreadLinkChipsSettings";
 import { TunnelPairingSettingsRow } from "./TunnelPairingSettingsRow";
 import { WorktreePathTemplateRow } from "./WorktreePathTemplateRow";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -69,6 +72,7 @@ const FORK_SETTING_ROWS: Readonly<Record<ForkSettingRowId, ComponentType>> = {
   "terminal-close-confirmation": TerminalCloseConfirmationSettingsRow,
   "thread-card-layout": ThreadCardLayoutSettingsRows,
   "thread-link-chips": ThreadLinkChipsSettingsRow,
+  "thread-links-open-desktop-app": ThreadLinksOpenDesktopAppSettingsRow,
   "machine-map": MachineMapSettingsRows,
 };
 

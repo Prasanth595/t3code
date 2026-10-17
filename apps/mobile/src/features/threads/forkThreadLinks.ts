@@ -1,9 +1,17 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
-import type { ComposerContextId, EnvironmentId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { formatComposerContextHref } from "@t3tools/shared/composerContextReferences";
 import { parseThreadAddress } from "@t3tools/shared/threadAddress";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import {
+  linkThreadMarkers,
+  threadMarkerTargets,
+  type ThreadMarkerTargets,
+} from "@t3tools/shared/threadMarkers";
+import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
 import { useCallback, useMemo } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
@@ -11,6 +19,9 @@ import { enrichedContextLinkPresentation } from "../../lib/enrichedLinkPresentat
 import { markdownFileIconSource } from "../../lib/markdownFileIcons";
 import type { MarkdownLinkCustomization } from "../../native/SelectableMarkdownText.types";
 import { useEnvironmentServerConfig } from "../../state/entities";
+import { serverEnvironment } from "../../state/server";
+import { environmentThreadDetails } from "../../state/threads";
+import { useThreadSelection } from "../../state/use-thread-selection";
 
 // The pill of an attached thread with no record, so both looks stay one.
 const threadPill = enrichedContextLinkPresentation(
@@ -58,4 +69,35 @@ export function useForkThreadLinks(environmentId: EnvironmentId) {
     () => ({ openKnownThread, linkCustomization }),
     [linkCustomization, openKnownThread],
   );
+}
+
+const NO_MARKER_TARGETS: ThreadMarkerTargets = new Map();
+const NO_MARKER_TARGETS_ATOM = Atom.make(NO_MARKER_TARGETS);
+
+/** Fork: `threadMarkerTargets` of a thread, while its server setting `threadLinkChips` is on. */
+const threadMarkerTargetsAtom = Atom.family((key: string) => {
+  const [environmentId, threadId] = key.split("\u0000") as [EnvironmentId, ThreadId];
+  const ref = scopeThreadRef(environmentId, threadId);
+  return Atom.make((get): ThreadMarkerTargets => {
+    if (get(serverEnvironment.configValueAtom(environmentId))?.settings.threadLinkChips !== true) {
+      return NO_MARKER_TARGETS;
+    }
+    const messages = get(environmentThreadDetails.threadAtom(ref))?.projection.messages ?? [];
+    return threadMarkerTargets(messages, Option.getOrNull(get.self<ThreadMarkerTargets>()));
+  });
+});
+
+/**
+ * Fork: `markdown` of the selected thread with each `[Thread: …; ref=…]` marker that an agent copied
+ * turned into a thread app link, which `useForkThreadLinks` then shows as a pill. Only text with
+ * `ref=` reads the thread's messages.
+ */
+export function useForkThreadMarkers(markdown: string, environmentId: EnvironmentId): string {
+  const threadId = useThreadSelection().selectedThread?.id;
+  const targets = useAtomValue(
+    threadId !== undefined && markdown.includes("ref=")
+      ? threadMarkerTargetsAtom(`${environmentId}\u0000${threadId}`)
+      : NO_MARKER_TARGETS_ATOM,
+  );
+  return linkThreadMarkers(markdown, targets);
 }

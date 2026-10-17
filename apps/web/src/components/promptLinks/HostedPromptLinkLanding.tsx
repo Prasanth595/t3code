@@ -18,6 +18,7 @@ import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
+import { useForkThreadAddressLanding } from "./ForkThreadAddressLanding";
 
 const OPENER_STORAGE_KEY = "t3code:prompt-link-opener";
 const Opener = Schema.NullOr(Schema.Literals(["app", "browser"]));
@@ -61,6 +62,7 @@ function summarize(
 }
 
 export function useHostedPromptLinkLanding(enabled: boolean): ReactNode | null {
+  const forkThreadAddressLanding = useForkThreadAddressLanding();
   const href = useLocation({ select: (location) => location.href });
   const { environments, isReady } = useEnvironments();
   const [opener, setOpener] = useLocalStorage(OPENER_STORAGE_KEY, null, Opener);
@@ -69,7 +71,7 @@ export function useHostedPromptLinkLanding(enabled: boolean): ReactNode | null {
     enabled && isHostedStaticApp()
       ? promptLinkAppPath(new URL(href, window.location.origin).href, window.location.origin)
       : null;
-  if (appPath === null || continuedHref === href) return null;
+  if (appPath === null || continuedHref === href) return forkThreadAddressLanding;
   const canContinue = isReady && environments.length > 0;
   if (opener === "browser") {
     if (canContinue) return null;

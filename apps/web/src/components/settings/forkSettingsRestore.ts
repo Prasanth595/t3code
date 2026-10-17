@@ -23,6 +23,7 @@ const FORK_RESTORED_SETTINGS = [
   ["backgroundWorkDetails", "Background work details"],
   ["preferOriginRemote", "Prefer origin remote"],
   ["threadLinkChips", "Thread link chips"],
+  ["threadLinksOpenDesktopApp", "Thread addresses open the desktop app"],
   ["pullRequestWatchRemarkFilter", "Pull request watch remarks"],
   ["agentSessionImportWindowDays", "Session import window"],
   ["agentSessionImportMaxMessages", "Imported messages per session"],

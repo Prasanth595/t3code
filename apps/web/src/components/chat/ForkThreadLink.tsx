@@ -1,13 +1,20 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { parseThreadAddress, type ThreadAddress } from "@t3tools/shared/threadAddress";
 import { formatThreadLink, percentDecodedThreadLinkId } from "@t3tools/shared/threadLinks";
+import {
+  linkThreadMarkers,
+  threadMarkerTargets,
+  type ThreadMarkerTargets,
+} from "@t3tools/shared/threadMarkers";
+import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
 import { useThreadShell } from "../../state/entities";
 import { environmentSummaries } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
+import { environmentThreadDetails } from "../../state/threads";
 import { ThreadContextChip } from "../ThreadContextChip";
 import { MarkdownThreadLink } from "./MarkdownThreadLink";
 
@@ -102,4 +109,32 @@ export function ForkThreadAddressChip(props: {
       copyMarkdown={`[${title.replace(/[[\]\\\r\n]/g, " ")}](${props.href})`}
     />
   );
+}
+
+const NO_MARKER_TARGETS: ThreadMarkerTargets = new Map();
+const NO_MARKER_TARGETS_ATOM = Atom.make(NO_MARKER_TARGETS);
+
+/** Fork: `threadMarkerTargets` of a thread, while `threadLinkChips` is on. */
+const threadMarkerTargetsAtom = Atom.family((key: string) => {
+  const [environmentId, threadId] = key.split("\u0000") as [EnvironmentId, ThreadId];
+  const ref = scopeThreadRef(environmentId, threadId);
+  return Atom.make((get): ThreadMarkerTargets => {
+    if (!get(threadLinkChipsAtom(environmentId))) return NO_MARKER_TARGETS;
+    const messages = get(environmentThreadDetails.threadAtom(ref))?.projection.messages ?? [];
+    return threadMarkerTargets(messages, Option.getOrNull(get.self<ThreadMarkerTargets>()));
+  });
+});
+
+/**
+ * Fork: `text` with each `[Thread: …; ref=…]` marker that an agent copied turned into a thread link
+ * (`linkThreadMarkers`). Only text with `ref=` reads the thread's messages. Without a thread, for
+ * example in a task list that edits its source by offset, the text stays as written.
+ */
+export function useForkThreadMarkers(text: string, threadRef: ScopedThreadRef | undefined): string {
+  const targets = useAtomValue(
+    threadRef && text.includes("ref=")
+      ? threadMarkerTargetsAtom(`${threadRef.environmentId}\u0000${threadRef.threadId}`)
+      : NO_MARKER_TARGETS_ATOM,
+  );
+  return linkThreadMarkers(text, targets);
 }
