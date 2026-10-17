@@ -39,11 +39,13 @@ const stopEarlierBackgroundWork = ({
   stopWithQueue,
   olderStart = false,
   staleRoster = false,
+  stopMissesBackgroundWork = false,
   stalledRun,
   workflowMember = false,
 }: {
   readonly failedStart?: boolean;
   readonly staleRoster?: boolean;
+  readonly stopMissesBackgroundWork?: boolean;
   readonly stopWithQueue?: "thread.stop" | "run.interrupt";
   readonly olderStart?: boolean;
   readonly workflowMember?: boolean;
@@ -85,6 +87,18 @@ const stopEarlierBackgroundWork = ({
                 lastError: null,
               },
               events: Stream.fromQueue(events),
+              ...(stopMissesBackgroundWork
+                ? {
+                    // Stop's interrupt never reached a background child, as when
+                    // OpenCode cannot stop a subagent, so it is still running.
+                    hasPendingBackgroundWorkForThread: (providerThread) =>
+                      Effect.sync(() =>
+                        interrupts.some(
+                          (interrupt) => interrupt.providerThread.id === providerThread.id,
+                        ),
+                      ),
+                  }
+                : {}),
               ensureThread: ({ threadId }) =>
                 Effect.succeed({
                   id: ProviderThreadId.make(`provider-thread:codex:${threadId}`),
@@ -932,7 +946,9 @@ const stopEarlierBackgroundWork = ({
           assert.deepEqual(
             after.providerThreads.find((candidate) => candidate.id === codexProviderThread.id)
               ?.pendingBackgroundTasks,
-            [],
+            stopMissesBackgroundWork
+              ? [{ taskId: "sleep", description: "Wait before the recheck", kind: "command" }]
+              : [],
           );
         }
       }).pipe(
@@ -957,6 +973,10 @@ it.effect("Stop settles workflow members without subagent turn items", () =>
 
 it.effect("Stop clears a live provider thread's roster its process no longer reports", () =>
   stopEarlierBackgroundWork({ staleRoster: true }),
+);
+
+it.effect("Stop keeps a live provider thread's roster its process still reports", () =>
+  stopEarlierBackgroundWork({ staleRoster: true, stopMissesBackgroundWork: true }),
 );
 
 it.effect(
