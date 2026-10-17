@@ -113,11 +113,18 @@ export const ambiguousRepos = (
 export const ambiguousMessage = (paths: ReadonlyArray<string>): string =>
   `${paths.length} T3 projects have this repo as their origin (${paths.join(", ")}); the factory watches none of them`;
 
-/** What the reader found: the watched projects, and the opted-in checkouts it could not identify this time. */
+/** What the reader found: the watched projects, every repo a project is a clone of, and the checkouts it could not settle this time. */
 export interface WatchedListing {
   /** The projects that opted in and resolved to a GitHub `owner/name`, in T3's order. A repo two projects name appears once per project. */
   readonly repos: ReadonlyArray<WatchedProject>;
-  /** Workspace roots of projects whose `.dw/config.yml` could not be read for a reason other than its absence, or that opted in but whose checkout T3 could not identify (a null identity). They are skipped; the list may be short. */
+  /**
+   * `owner/name` of every GitHub repo a non-scratch project is a clone of, opted in or not, through
+   * any remote (a clone with an `upstream` remote names its parent and its origin). A repo in none
+   * of them has left the factory. One here but not in `repos` still has a project, which no longer
+   * opts in (a branch without the factory block, a remote added), and its attention items stay.
+   */
+  readonly present: ReadonlyArray<string>;
+  /** Workspace roots of projects the reader could not settle: a `.dw/config.yml` that could not be read for a reason other than its absence, or that does not parse, a checkout T3 could not name (a null identity, or a GitHub one with no owner or name), or a git that could not run. They are skipped; the list may be short. */
   readonly unresolved: ReadonlyArray<string>;
 }
 

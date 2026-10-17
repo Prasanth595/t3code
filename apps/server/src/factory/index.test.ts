@@ -95,7 +95,11 @@ const watching = (
     FactoryWatchedRepos,
     FactoryWatchedRepos.of({
       list: (Effect.isEffect(list) ? list : Effect.succeed(list)).pipe(
-        Effect.map((repos): WatchedListing => ({ repos, unresolved: [] })),
+        Effect.map((repos): WatchedListing => ({
+          repos,
+          present: repos.map((r) => r.repo),
+          unresolved: [],
+        })),
       ),
     }),
   );
@@ -2095,11 +2099,13 @@ describe("reloading the machine config", () => {
           );
           assert.deepStrictEqual(yield* listing.loop.watchedRepos, {
             repos: [A_B],
+            present: ["a/b"],
             unresolved: [],
           });
           yield* Ref.set(projects, [A_B, C_D]);
           assert.deepStrictEqual(yield* listing.loop.watchedRepos, {
             repos: [A_B, C_D],
+            present: ["a/b", "c/d"],
             unresolved: [],
           });
           const failing = yield* started(
@@ -2130,7 +2136,11 @@ describe("reloading the machine config", () => {
         // The pass under way listed a/b; it is held at its first call.
         yield* Deferred.await(entered);
         yield* Ref.set(projects, [A_B, C_D]);
-        assert.deepStrictEqual(yield* loop.watchedRepos, { repos: [A_B, C_D], unresolved: [] });
+        assert.deepStrictEqual(yield* loop.watchedRepos, {
+          repos: [A_B, C_D],
+          present: ["a/b", "c/d"],
+          unresolved: [],
+        });
         assert.deepStrictEqual(loop.status, {
           state: "running",
           settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },

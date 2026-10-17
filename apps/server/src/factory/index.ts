@@ -133,7 +133,8 @@ export class FactoryLoop extends Context.Service<
     readonly repoConfigs: Effect.Effect<ReadonlyMap<string, RepoConfigReading>>;
     /**
      * The watched projects as the reader lists them now, for the settings page. A listing that
-     * fails is logged and answers an empty list. Reading it changes nothing the pass reports.
+     * fails fails with the reader's error, which the settings report shows as `watch_error`;
+     * nothing answers an empty list for it. Reading it changes nothing the pass reports.
      */
     readonly watchedRepos: Effect.Effect<WatchedListing, WatchedRepos.WatchedReposError>;
   }

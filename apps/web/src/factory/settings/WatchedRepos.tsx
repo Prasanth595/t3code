@@ -59,9 +59,10 @@ export function WatchedRepos({
                   </span>
                 ))}
                 <span className="block">
-                  These checkouts opted in, but their .dw/config.yml could not be read or their
-                  origin could not be identified. They are neither watched nor dropped; the factory
-                  keeps their attention items and reads them again on the next pass.
+                  The factory could not tell whether these checkouts are watched: a .dw/config.yml
+                  that could not be read or parsed, an origin that could not be identified, or a git
+                  that would not run. Nothing is dropped for them; their attention items stay, and
+                  the next pass reads them again.
                 </span>
               </>
             }

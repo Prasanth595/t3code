@@ -26,8 +26,13 @@ import {
  * project that did not opt in, are left out without a word: no error, no attention item.
  *
  * What the reader could not settle is reported in `unresolved`, not dropped: a config file that
- * could not be read for a reason other than its absence, a config file that does not parse, and
- * an opted-in checkout T3 could not identify (git failed or timed out). The pass keeps its attention items while there are any.
+ * could not be read for a reason other than its absence, a config file that does not parse, an
+ * checkout T3 could not name (git failed or timed out, no remote, a GitHub remote with no owner
+ * or name), and a git that would not run.
+ * The pass keeps its attention items while there are any. Every GitHub repo a checkout is a clone
+ * of is reported in `present`, opted in or not: the pass clears a repo's attention items only when
+ * no project is a clone of it any more, so a working tree that stops opting in (an older branch,
+ * a file without the block, an `upstream` remote added) loses nothing.
  *
  * The config file is read before the repository identity, so the identity is not resolved for
  * the projects that are not factory repos. The file is read from the checkout on disk; the loop
@@ -75,15 +80,15 @@ export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
+  const isCheckout = (root: string): Effect.Effect<boolean> =>
+    fs.exists(path.join(root, ".git")).pipe(Effect.orElseSucceed(() => false));
+
   // The copy committed on origin's default branch, for a checkout whose working tree has none.
   // `git show` fails for a directory that is no clone, a clone with no `origin/HEAD` and a branch
   // with no such file, all of which are "not opted in"; a git that times out did not finish.
   const committed = (root: string): Effect.Effect<Read> =>
     Effect.gen(function* () {
-      const isCheckout = yield* fs
-        .exists(path.join(root, ".git"))
-        .pipe(Effect.orElseSucceed(() => false));
-      if (!isCheckout) return ABSENT;
+      if (!(yield* isCheckout(root))) return ABSENT;
       const shown = yield* runner
         .run({
           command: "git",
@@ -92,8 +97,8 @@ export const make = Effect.gen(function* () {
           timeoutBehavior: "timedOutResult",
         })
         .pipe(Effect.option);
-      if (Option.isNone(shown)) return ABSENT;
-      if (shown.value.timedOut) return UNRESOLVED;
+      // A git that cannot run (not on PATH, or refused) has read nothing.
+      if (Option.isNone(shown) || shown.value.timedOut) return UNRESOLVED;
       return shown.value.code === 0 ? { kind: "text", text: shown.value.stdout } : ABSENT;
     });
 
@@ -114,38 +119,48 @@ export const make = Effect.gen(function* () {
     const scratch = yield* folders.scratchRoot;
     const scratchRoot = Option.map(scratch, (root) => path.resolve(root));
     const repos: Array<WatchedProject> = [];
+    const present = new Set<string>();
     const unresolved: Array<string> = [];
     for (const row of rows) {
-      if (Option.isSome(scratchRoot) && path.resolve(row.workspaceRoot) === scratchRoot.value) {
-        continue;
-      }
-      const file = yield* read(row.workspaceRoot);
+      const root = row.workspaceRoot;
+      if (Option.isSome(scratchRoot) && path.resolve(root) === scratchRoot.value) continue;
+      const file = yield* read(root);
       if (file.kind === "unresolved") {
-        unresolved.push(row.workspaceRoot);
+        unresolved.push(root);
         continue;
       }
-      if (file.kind === "absent") continue;
-      const optIn = factoryOptIn(file.text);
+      const optIn = file.kind === "absent" ? "no" : factoryOptIn(file.text);
       if (optIn === "unparsed") {
         // A conflicted or half-saved file is a read that did not finish, not a project that left.
-        unresolved.push(row.workspaceRoot);
+        unresolved.push(root);
         continue;
       }
-      if (optIn === "no") continue;
-      const identity = yield* identities.resolve(row.workspaceRoot);
+      // A directory that is no git checkout and does not opt in is nobody's clone: T3 is not asked.
+      if (optIn === "no" && !(yield* isCheckout(root))) continue;
+      const identity = yield* identities.resolve(root);
       if (identity === null) {
-        // Git failed or timed out, and T3 caches the null for a minute.
-        unresolved.push(row.workspaceRoot);
+        // Git failed or timed out (T3 caches the null for a minute), or the checkout has no
+        // remote: T3 answers both alike, so whose clone it is stays unknown, opted in or not.
+        unresolved.push(root);
         continue;
       }
+      if (identity.provider !== "github") continue;
+      const { owner, name } = identity;
+      const named = owner !== undefined && name !== undefined ? `${owner}/${name}` : null;
+      if (named === null) {
+        // A GitHub remote T3 could not split into an owner and a name may be any repo's clone.
+        unresolved.push(root);
+        continue;
+      }
+      present.add(named);
+      if (identity.origin?.displayName !== undefined) present.add(identity.origin.displayName);
       // T3 names a clone by its `upstream` remote when it has one, so only `origin` is the repo
       // the person cloned and works in.
-      if (identity.provider !== "github" || identity.locator.remoteName !== "origin") continue;
-      const { owner, name } = identity;
-      if (owner === undefined || name === undefined) continue;
-      repos.push({ repo: `${owner}/${name}`, path: row.workspaceRoot, title: row.title });
+      if (optIn === "yes" && identity.locator.remoteName === "origin") {
+        repos.push({ repo: named, path: root, title: row.title });
+      }
     }
-    return { repos, unresolved } satisfies WatchedListing;
+    return { repos, present: [...present], unresolved } satisfies WatchedListing;
   });
 
   return FactoryWatchedRepos.of({ list });

@@ -241,7 +241,7 @@ describe("FactoryWatchedRepos.list", () => {
           [gitlab, { ...WIDGETS, provider: "gitlab" }],
         ]),
       });
-      assert.deepStrictEqual(list, { repos: [], unresolved: [] });
+      assert.deepStrictEqual(list, { repos: [], present: [], unresolved: [] });
     }),
   );
 
@@ -336,11 +336,16 @@ describe("FactoryWatchedRepos.list", () => {
         projects: [["p-fork", root]],
         identities: new Map([[root, fork]]),
       });
-      assert.deepStrictEqual(list, { repos: [], unresolved: [] });
+      // Both names are present, so neither repo's attention items are cleared for this clone.
+      assert.deepStrictEqual(list, {
+        repos: [],
+        present: ["acme/widgets", "me/widgets"],
+        unresolved: [],
+      });
     }),
   );
 
-  it.effect("skips a GitHub identity that lacks an owner or a name", () =>
+  it.effect("reports a GitHub identity that lacks an owner or a name as unresolved", () =>
     Effect.gen(function* () {
       const root = checkout("half", FACTORY_CONFIG);
       const { owner: _owner, ...noOwner } = WIDGETS;
@@ -348,7 +353,7 @@ describe("FactoryWatchedRepos.list", () => {
         projects: [["p-half", root]],
         identities: new Map([[root, noOwner]]),
       });
-      assert.deepStrictEqual(list.repos, []);
+      assert.deepStrictEqual(list, { repos: [], present: [], unresolved: [root] });
     }),
   );
 
@@ -463,6 +468,7 @@ describe("FactoryWatchedRepos.list", () => {
           });
           assert.deepStrictEqual(list, {
             repos: [{ repo: "acme/widgets", path: clone, title: "Title of p-switched" }],
+            present: ["acme/widgets"],
             unresolved: [],
           });
         }),
@@ -475,7 +481,8 @@ describe("FactoryWatchedRepos.list", () => {
           projects: [["p-never", clone]],
           identities: new Map([[clone, WIDGETS]]),
         });
-        assert.deepStrictEqual(list, { repos: [], unresolved: [] });
+        // Not watched, but still a clone of the repo: present, so its items stay.
+        assert.deepStrictEqual(list, { repos: [], present: ["acme/widgets"], unresolved: [] });
       }),
     );
 
@@ -486,7 +493,7 @@ describe("FactoryWatchedRepos.list", () => {
           projects: [["p-plain", clone]],
           identities: new Map([[clone, WIDGETS]]),
         });
-        assert.deepStrictEqual(list, { repos: [], unresolved: [] });
+        assert.deepStrictEqual(list, { repos: [], present: ["acme/widgets"], unresolved: [] });
       }),
     );
 
@@ -500,8 +507,71 @@ describe("FactoryWatchedRepos.list", () => {
           identities: new Map([[root, WIDGETS]]),
           runner: runnerAnswering(calls, true),
         });
-        assert.deepStrictEqual(list, { repos: [], unresolved: [root] });
+        assert.deepStrictEqual(list, { repos: [], present: [], unresolved: [root] });
         assert.deepStrictEqual(calls, [`git -C ${root} show origin/HEAD:.dw/config.yml`]);
+      }),
+    );
+
+    it.effect("is unresolved when git cannot run at all", () =>
+      Effect.gen(function* () {
+        const root = checkout("no-git", null);
+        NodeFS.mkdirSync(NodePath.join(root, ".git"));
+        const list = yield* listed({
+          projects: [["p-no-git", root]],
+          identities: new Map([[root, WIDGETS]]),
+          runner: Layer.mock(ProcessRunner.ProcessRunner)({
+            run: (input) =>
+              Effect.fail(
+                new ProcessRunner.ProcessSpawnError({
+                  command: input.command,
+                  argumentCount: input.args.length,
+                  cause: new Error("spawn git ENOENT"),
+                }),
+              ),
+          }),
+        });
+        assert.deepStrictEqual(list, { repos: [], present: [], unresolved: [root] });
+      }),
+    );
+  });
+
+  describe("a checkout that does not opt in", () => {
+    it.effect(
+      "is present under its repo, so a branch without the factory block clears nothing",
+      () =>
+        Effect.gen(function* () {
+          const root = checkout("paused", "tracker:\n  backend: do-work-io\n");
+          NodeFS.mkdirSync(NodePath.join(root, ".git"));
+          const list = yield* listed({
+            projects: [["p-paused", root]],
+            identities: new Map([[root, WIDGETS]]),
+          });
+          assert.deepStrictEqual(list, { repos: [], present: ["acme/widgets"], unresolved: [] });
+        }),
+    );
+
+    it.effect("with no remote is unresolved: T3 cannot tell it from a git that failed", () =>
+      Effect.gen(function* () {
+        const root = checkout("personal", null);
+        NodeFS.mkdirSync(NodePath.join(root, ".git"));
+        const list = yield* listed({
+          projects: [["p-personal", root]],
+          identities: new Map(),
+          runner: runnerAnswering([]),
+        });
+        assert.deepStrictEqual(list, { repos: [], present: [], unresolved: [root] });
+      }),
+    );
+
+    it.effect("on a branch whose file has no factory block, with git failing, is unresolved", () =>
+      Effect.gen(function* () {
+        const root = checkout("paused-no-git", "tracker:\n  backend: do-work-io\n");
+        NodeFS.mkdirSync(NodePath.join(root, ".git"));
+        const list = yield* listed({
+          projects: [["p-paused-no-git", root]],
+          identities: new Map(),
+        });
+        assert.deepStrictEqual(list, { repos: [], present: [], unresolved: [root] });
       }),
     );
   });

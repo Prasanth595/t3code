@@ -194,7 +194,11 @@ const worldContext = (
     wakes.reloads += 1;
   });
   const repoConfigs = Effect.succeed(world.readings ?? new Map<string, RepoConfigReading>());
-  const watchedRepos = Effect.succeed({ repos: world.watched ?? [], unresolved: [] });
+  const watchedRepos = Effect.succeed({
+    repos: world.watched ?? [],
+    present: (world.watched ?? []).map((w) => w.repo),
+    unresolved: [],
+  });
   return Context.make(EnvironmentAuth.EnvironmentAuth, auth).pipe(
     Context.add(
       ServerExitService.ServerExit,

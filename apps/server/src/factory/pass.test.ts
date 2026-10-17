@@ -171,7 +171,9 @@ class Fake implements PassWorld {
   openHeads: Record<string, string | null | "error"> = {};
   /** The repos the T3 projects list as watched; set per pass by `pass`. */
   watched: Array<WatchedProject> = [];
-  /** Workspace roots the reader could not identify this pass; they are not in `watched`. */
+  /** Every repo a T3 project is a clone of; the watched repos when null. */
+  present: Array<string> | null = null;
+  /** Workspace roots the reader could not settle this pass; they are not in `watched`. */
   unresolved: Array<string> = [];
   /** Listing the watched repos fails, as the project store being down does. */
   watchedFails = false;
@@ -218,7 +220,11 @@ class Fake implements PassWorld {
           kind: "t3",
           message: "cannot list the T3 projects: project store down",
         })
-      : Effect.succeed({ repos: this.watched, unresolved: this.unresolved });
+      : Effect.succeed({
+          repos: this.watched,
+          present: this.present ?? this.watched.map((w) => w.repo),
+          unresolved: this.unresolved,
+        });
   });
 
   project(watched: { repo: string }) {
@@ -3107,6 +3113,24 @@ describe("attention items", () => {
   );
 
   it.effect(
+    "an item of a repo whose project stays but no longer opts in is kept: only a repo with no project left",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.present = [REPO, "rawphp/paused"];
+        fake.items = [
+          open({ id: "gone", kind: "stuck", repo: "rawphp/gone" }),
+          open({ id: "paused", kind: "stuck", repo: "rawphp/paused" }),
+          open({ id: "kept", repo: REPO, issue: 99 }),
+        ];
+        yield* pass(fake, [REPO], 5);
+        assert.deepEqual(ids(fake), ["paused", "kept"]);
+        // The paused repo is not worked, only kept.
+        assert.deepEqual(fake.projected, [REPO]);
+      }),
+  );
+
+  it.effect(
     "a project the reader could not identify clears no item and says so in one plain line",
     () =>
       Effect.gen(function* () {
@@ -3121,7 +3145,7 @@ describe("attention items", () => {
         assert.deepEqual(
           lines.filter((l) => l.startsWith("watched:")),
           [
-            "watched: 2 opted-in project(s) could not be identified this pass (/p/a, /p/b); no attention item is cleared",
+            "watched: 2 project(s) could not be settled this pass (/p/a, /p/b); no attention item is cleared",
           ],
         );
         // A line, not an error: the pass reports none and the machine log has no event for it.

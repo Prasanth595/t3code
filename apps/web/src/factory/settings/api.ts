@@ -69,7 +69,7 @@ export interface MachineConfigReport {
   readonly errors: ReadonlyArray<ConfigError>;
   /** The watched T3 projects, whatever the file holds. */
   readonly repos: ReadonlyArray<RepoBlock>;
-  /** Workspace roots of opted-in projects the factory could not settle on its last read: neither watched nor gone. */
+  /** Workspace roots of projects the factory could not settle on its last read: neither watched nor gone. */
   readonly unresolved: ReadonlyArray<string>;
   /** Why the T3 projects could not be listed, else null; `repos` and `unresolved` are then empty. */
   readonly watch_error: string | null;

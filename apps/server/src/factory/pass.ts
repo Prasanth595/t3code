@@ -520,19 +520,22 @@ export const runPass = (
       // an unread list has not left it.
       yield* pass.fail(null, passError(listed.failure.kind, "", listed.failure.message));
     }
-    const listing = listed._tag === "Success" ? listed.success : { repos: [], unresolved: [] };
+    const listing =
+      listed._tag === "Success" ? listed.success : { repos: [], present: [], unresolved: [] };
     const watched = listing.repos;
-    // A repo that left the list has nothing the factory still needs a person for. A short list
-    // does not say a repo left: a project that could not be identified may be one of its owners,
-    // and a `stuck` or `needs-info` item is raised once and never again.
+    // A repo no T3 project is a clone of any more has nothing the factory still needs a person
+    // for. One whose project stays but no longer opts in is still `present`, and its items stay:
+    // a `stuck` or `needs-info` item is raised once and never again. A short list does not say a
+    // repo left either: a project that could not be settled may be one of its owners.
     if (listed._tag === "Success") {
       if (listing.unresolved.length === 0) {
         yield* world.attention.clear(
-          (item) => item.repo !== null && !watched.some((r) => sameRepo(r.repo, item.repo!)),
+          (item) =>
+            item.repo !== null && !listing.present.some((repo) => sameRepo(repo, item.repo!)),
         );
       } else {
         pass.line(
-          `watched: ${listing.unresolved.length} opted-in project(s) could not be identified this pass (${listing.unresolved.map(plain).join(", ")}); no attention item is cleared`,
+          `watched: ${listing.unresolved.length} project(s) could not be settled this pass (${listing.unresolved.map(plain).join(", ")}); no attention item is cleared`,
         );
       }
     }

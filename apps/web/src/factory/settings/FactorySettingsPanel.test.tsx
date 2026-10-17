@@ -440,7 +440,7 @@ describe("FactorySettingsPanel", () => {
     const text = textOf(root);
     expect(text).toContain("Not settled on the last read");
     expect(text).toContain("/work/slow");
-    expect(text).toContain("neither watched nor dropped");
+    expect(text).toContain("Nothing is dropped for them");
     expect(text).not.toContain("No T3 project on this environment has one yet");
     expect(root.findAll((node) => node.type === "ul" || node.type === "li")).toHaveLength(0);
   });

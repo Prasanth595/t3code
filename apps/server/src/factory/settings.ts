@@ -87,7 +87,7 @@ export interface MachineConfigReport {
     readonly factory: ProjectBlock | null;
     readonly errors: ReadonlyArray<ConfigError> | null;
   }>;
-  /** Workspace roots of opted-in projects the reader could not settle this time (`WatchedListing.unresolved`). */
+  /** Workspace roots of projects the reader could not settle this time (`WatchedListing.unresolved`). */
   readonly unresolved: ReadonlyArray<string>;
   /** Why the T3 projects could not be listed at all, else null; `repos` and `unresolved` are then empty. */
   readonly watch_error: string | null;
