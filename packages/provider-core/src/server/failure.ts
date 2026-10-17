@@ -46,6 +46,7 @@ function causeMessage(cause: unknown): string | undefined {
           return new ContextHandoffBudgetError().message;
         case "ClaudeBackgroundWorkBlocksQueryReplacementError":
         case "ClaudeAppendSystemPromptFileError":
+        case "ClaudeAppendSystemPromptFileMissingPathError":
           return stringField(cause, "message");
         case "ContextHandoffDeliveryUncertainError":
           return "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.";

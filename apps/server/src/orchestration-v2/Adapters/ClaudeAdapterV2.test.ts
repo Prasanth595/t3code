@@ -1291,6 +1291,31 @@ describe("ClaudeAdapterV2 append-system-prompt-file launch argument", () => {
       ),
     ),
   );
+
+  it.effect.each(["--append-system-prompt-file", "--append-system-prompt-file="])(
+    "fails the turn before opening Claude when %s has no path",
+    (launchArgs) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const cwd = yield* fileSystem.makeTempDirectoryScoped({
+            prefix: "t3-claude-append-cwd-",
+          });
+          const { exit, opened } = yield* startTurnWithLaunchArgs(launchArgs, cwd);
+          assert.lengthOf(opened, 0);
+          assert.isTrue(Exit.isFailure(exit));
+          if (!Exit.isFailure(exit)) return;
+          assert.equal(
+            makeProviderFailure({ cause: exit.cause, class: "provider_error" }).message,
+            new ClaudeAdapterV2.ClaudeAppendSystemPromptFileMissingPathError().message,
+          );
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
+  );
 });
 
 describe("ClaudeAdapterV2 approval cancellation", () => {

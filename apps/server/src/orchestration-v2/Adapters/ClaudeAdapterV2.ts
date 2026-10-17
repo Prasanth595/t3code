@@ -457,6 +457,15 @@ export class ClaudeAppendSystemPromptFileError extends Schema.TaggedError<Claude
   }
 }
 
+export class ClaudeAppendSystemPromptFileMissingPathError extends Schema.TaggedError<ClaudeAppendSystemPromptFileMissingPathError>()(
+  "ClaudeAppendSystemPromptFileMissingPathError",
+  {},
+) {
+  override get message(): string {
+    return "The --append-system-prompt-file launch argument has no file path. Add the path after it in the Claude launch arguments, then send the message again.";
+  }
+}
+
 export interface ClaudeAgentSdkQueryRunnerShape {
   readonly allocateSessionId: Effect.Effect<string, ClaudeAgentSdkQueryRunnerError>;
   readonly open: (
@@ -1209,7 +1218,11 @@ const readClaudeAppendSystemPromptFile = Effect.fnUntraced(function* (input: {
       ? undefined
       : parseCliArgs(input.settings.launchArgs).flags["append-system-prompt-file"];
   if (file === undefined) return undefined;
-  const filePath = input.path.resolve(input.cwd ?? ".", file ?? "");
+  // parseCliArgs gives null for a trailing flag and "" for `--flag=`.
+  if (file === null || file === "") {
+    return yield* new ClaudeAppendSystemPromptFileMissingPathError();
+  }
+  const filePath = input.path.resolve(input.cwd ?? ".", file);
   return yield* input.fileSystem
     .readFileString(filePath)
     .pipe(
