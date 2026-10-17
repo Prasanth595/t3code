@@ -731,8 +731,13 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
 
   return {
     ...baseConfig,
+    // Without --cd, wsl.exe starts the server in the Windows cwd mounted under
+    // /mnt/c, and provider discovery that uses the server cwd (Codex skills,
+    // OpenCode's catalog) then scans the Windows home over slow drvfs.
     args: [
       ...distroArgs,
+      "--cd",
+      "~",
       "--exec",
       "env",
       `PATH=${launchPath}`,
