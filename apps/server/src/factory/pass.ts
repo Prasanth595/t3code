@@ -21,14 +21,18 @@ import { asciiLower, runIdToString, type RunId } from "./ledger/runId.ts";
 import { duration, formatTs } from "./ledger/time.ts";
 import type {
   AdvanceOutcome,
+  BadEnd,
   BuildingError,
+  Evidence,
   ForwardOutcome,
+  InterruptOutcome,
   LimitOutcome,
   WatchOutcome,
 } from "./runner/building.ts";
 import type { FeedbackError, FeedbackStep } from "./runner/feedback.ts";
 import { unchangedSince, type GateStepError, type LastPass } from "./runner/gating.ts";
 import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
+import type { SessionsError } from "./t3/sessions.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
 import { sanitize } from "./text.ts";
 import { LIST_LIMIT, type Blocker, type Listing, type UnassignedClaim } from "./tracker/github.ts";
@@ -111,6 +115,22 @@ export interface PassWorld {
   readonly forward: (repo: Repo, run: RunId) => Effect.Effect<ForwardOutcome, BuildingError>;
   /** The session's result: `advance`. */
   readonly advance: (repo: Repo, run: RunId) => Effect.Effect<AdvanceOutcome, BuildingError>;
+  /**
+   * The newest sign of T3 trouble in the machine log within the last ten minutes (a failed `t3`
+   * preflight or an `error` of kind `t3`), as its text; null for none. Read once a pass, and only
+   * when a session ended badly.
+   */
+  readonly t3Trouble: () => Effect.Effect<string | null, LedgerError>;
+  /** The server starts recorded in the machine log in the last day (`server_started`), oldest first: the rest of the evidence `interrupted` gets. */
+  readonly t3Starts: () => Effect.Effect<ReadonlyArray<number>, LedgerError>;
+  /** The server stops recorded in the machine log in the last day (`server_stopping`), oldest first. */
+  readonly t3Stops: () => Effect.Effect<ReadonlyArray<number>, LedgerError>;
+  /** Decides about a session `advance` said ended badly, with the pass's evidence: `interrupted`. */
+  readonly interrupted: (
+    repo: Repo,
+    run: RunId,
+    evidence: Evidence,
+  ) => Effect.Effect<InterruptOutcome, BuildingError>;
   /** Whether the run's gate is running now. */
   readonly gateRunning: (run: RunId) => boolean;
   /**
@@ -208,6 +228,8 @@ interface Notes {
   readonly errors: Array<NoteError>;
   /** The attention items to raise when the notes are flushed. */
   readonly raises: Array<NewItem>;
+  /** How `advance` found the session's run ended, when it ended badly: the pass decides about it after every run. */
+  endedBadly: BadEnd | null;
 }
 
 /** An error, as printed and as recorded. */
@@ -218,6 +240,14 @@ interface NoteError {
   readonly kind: ErrorKind;
   /** What went wrong, before it is cleaned for the ledger. */
   readonly message: string;
+  /**
+   * T3's session layer did not answer (a `FactorySessionsError`): the error also goes to the
+   * machine log, where `t3Trouble` reads the sign that sessions ending badly were an interruption.
+   * softfac has such a sign from its own T3 check of each repo, a server call; this factory's
+   * project lookup is in-process and cannot fail when T3 is down, so the calls that do fail are
+   * the sign.
+   */
+  readonly t3Down?: boolean;
 }
 
 /** `text` with nothing in it that could drive a terminal or hide text. */
@@ -267,6 +297,19 @@ export const errorKind = (error: StartError | BuildingError | GateStepError): Er
       return "ledger";
   }
 };
+
+/**
+ * The sessions operations that are a call on T3 itself: one that fails is T3 in trouble, the sign
+ * `t3Trouble` reads. `launch` is left out, as it also fails on the worktree (git, `origin`) and on
+ * bad ids, and so is `remove-worktree`, which is git on this machine.
+ */
+const T3_OPERATIONS: ReadonlySet<SessionsError["operation"]> = new Set([
+  "find-project",
+  "status",
+  "thread",
+  "send",
+  "archive",
+]);
 
 /** Repos match as run ids do: `owner/name` folded with `asciiLower`. */
 const sameRepo = (a: string, b: string) => asciiLower(a) === asciiLower(b);
@@ -368,7 +411,9 @@ class Pass {
   /**
    * Prints `error` as an error line and records it: as an `error` line in the ledger of `run`
    * when there is one that can take it, in the machine log otherwise (with the run's id when a
-   * run's ledger could not take it). `unreadable` is a run whose own ledger cannot be read.
+   * run's ledger could not take it). A run's error that says a T3 call failed (`t3Down`) goes to
+   * both, so the machine log holds the T3 trouble of this pass for the next one to read.
+   * `unreadable` is a run whose own ledger cannot be read.
    */
   fail(run: RunId | null, error: NoteError, unreadable = false): Effect.Effect<void> {
     this.error(error.line);
@@ -379,10 +424,14 @@ class Pass {
         data: { ...(id === null ? {} : { run: id }), step: error.step, kind: error.kind, message },
       });
     if (run === null) return toMachineLog(null);
-    if (unreadable) return toMachineLog(runIdToString(run));
-    return this.world
-      .recordError(run, error.step, error.kind, message)
-      .pipe(Effect.catch(() => toMachineLog(runIdToString(run))));
+    const id = runIdToString(run);
+    if (unreadable) return toMachineLog(id);
+    return this.world.recordError(run, error.step, error.kind, message).pipe(
+      Effect.matchEffect({
+        onFailure: () => toMachineLog(id),
+        onSuccess: () => (error.t3Down === true ? toMachineLog(id) : Effect.void),
+      }),
+    );
   }
 
   notes(repo: string, issue: number, state: State | null): Notes {
@@ -394,6 +443,7 @@ class Pass {
       parts: [],
       errors: [],
       raises: [],
+      endedBadly: null,
     };
   }
 
@@ -404,6 +454,7 @@ class Pass {
       step,
       kind: errorKind(error),
       message: error.message,
+      t3Down: error._tag === "FactorySessionsError" && T3_OPERATIONS.has(error.operation),
     });
   }
 
@@ -583,6 +634,8 @@ const workRuns = (
   pass: Pass,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
+    // The runs whose session `advance` found ended badly: they are decided together below.
+    const ended: Array<EndedBadly> = [];
     for (const info of [...known.infos]) {
       if (info.unreadable || !info.confirmed) continue;
       // A pull request that waits for a person is gated again after the others (`prOpenRuns`).
@@ -607,8 +660,128 @@ const workRuns = (
           yield* advanceRun(world, repo, info, notes, pass);
         }
       }
+      if (notes.endedBadly !== null) ended.push({ info, repo, what: notes.endedBadly });
       yield* known.refresh(world, pass, name, issue);
       yield* pass.flush(notes, info.id);
+    }
+    yield* decideInterruptions(world, ended, pass);
+  });
+
+/** A run `advance` found ended badly, with the repo it is in. */
+interface EndedBadly {
+  readonly info: RunInfo;
+  readonly repo: Repo;
+  readonly what: BadEnd;
+}
+
+/** How a pass says a session ended, from what `advance` called it. */
+const endedAs = (what: BadEnd): string =>
+  what === "thread-gone" ? "the T3 thread is gone" : `session ended as ${what}`;
+
+/**
+ * Decides, for the sessions `advance` found ended badly in this pass, whether each is an
+ * interruption or a stop (`interrupted` in `runner/building.ts`). The evidence is the same for all
+ * of them: the newest T3 trouble in the machine log, and how many sessions ended badly. The log
+ * is read once, and not at all when none did. A log that cannot be read is an error line, and then
+ * only two or more sessions that ended badly are decided; a lone one waits for the next pass.
+ */
+const decideInterruptions = (
+  world: PassWorld,
+  ended: ReadonlyArray<EndedBadly>,
+  pass: Pass,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    if (ended.length === 0) return;
+    const trouble = yield* Effect.result(
+      Effect.all([world.t3Trouble(), world.t3Starts(), world.t3Stops()], { concurrency: 1 }),
+    );
+    let t3Error: string | null = null;
+    let t3Starts: ReadonlyArray<number> = [];
+    let t3Stops: ReadonlyArray<number> = [];
+    if (trouble._tag === "Failure") {
+      yield* pass.fail(
+        null,
+        passError(
+          "ledger",
+          "cannot read the machine log for T3 trouble: ",
+          trouble.failure.message,
+        ),
+      );
+      // Without the log a lone session cannot be told from a stop, and a stop cannot be undone:
+      // those runs stay as they are and `advance` reports them again next pass. Two or more need
+      // no log.
+      if (ended.length < 2) return;
+    } else {
+      [t3Error, t3Starts, t3Stops] = trouble.success;
+    }
+    const evidence: Evidence = { t3Error, endedInPass: ended.length, t3Starts, t3Stops };
+    for (const { info, repo, what } of ended) {
+      const notes = pass.notes(repo.watched.repo, Number(info.id.issue), info.state);
+      const why = endedAs(what);
+      const decided = yield* Effect.result(world.interrupted(repo, info.id, evidence));
+      if (decided._tag === "Failure") {
+        pass.failed(notes, "interrupted", "advance", decided.failure);
+      } else {
+        const outcome = decided.success;
+        switch (outcome.kind) {
+          case "resumed":
+            notes.parts.push(
+              `${why}; interrupted, sent it a resume (${outcome.resumes} of ${outcome.limit})`,
+            );
+            break;
+          case "relaunched":
+            yield* relaunched(
+              pass,
+              notes,
+              why,
+              ` (${outcome.resumes} of ${outcome.limit})`,
+              outcome.start,
+            );
+            break;
+          case "unchanged":
+            notes.parts.push(`${why}, but ${outcome.why}; left alone`);
+            break;
+          case "stuck":
+            pass.stuck(notes, runIdToString(info.id));
+            break;
+        }
+      }
+      yield* pass.flush(notes, info.id);
+    }
+  });
+
+/**
+ * What a pass says of the next attempt that a relaunch started: `counted` is the resume count,
+ * when there is one to say.
+ */
+const relaunched = (
+  pass: Pass,
+  notes: Notes,
+  why: string,
+  counted: string,
+  start: StartOutcome,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    switch (start.kind) {
+      case "started":
+        notes.parts.push(
+          `${why}; interrupted, relaunched as run ${runIdToString(start.run)}${counted}`,
+        );
+        break;
+      case "stuck":
+        notes.parts.push(`${why}; interrupted, relaunched${counted}`);
+        pass.stuck(notes, runIdToString(start.run));
+        break;
+      case "abandoned":
+        notes.parts.push(`${why}; interrupted, relaunching${counted}`);
+        yield* abandoned(pass, notes, null, start.mayHaveSession, start.error);
+        break;
+      case "skipped":
+      case "refused":
+        notes.parts.push(
+          `${why}; interrupted, relaunching${counted}, the new attempt starts on the next pass`,
+        );
+        break;
     }
   });
 
@@ -944,6 +1117,13 @@ const advanceRun = (
         break;
       case "abandoned":
         yield* abandoned(pass, notes, run, []);
+        break;
+      case "ended-badly":
+        // Said at the decision, after every run has been through the pass.
+        notes.endedBadly = advanced.success.what;
+        break;
+      case "relaunched":
+        yield* relaunched(pass, notes, endedAs("thread-gone"), "", advanced.success.start);
         break;
     }
     const kind = advanced.success.kind;

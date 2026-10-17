@@ -6,6 +6,7 @@
 
 import type { State } from "../domain/lifecycle.ts";
 import type { CommandResult } from "../gate.ts";
+import { runIdToString, type RunId } from "../ledger/runId.ts";
 import { commandLine, sanitize, shortSha } from "../text.ts";
 import type {
   CheckStatus,
@@ -133,29 +134,49 @@ export const sessionMayExistNote = (what: string, commandId: string): string =>
 export const WRONG_ACCOUNT_PREFIX = "the session's gh account is ";
 
 /**
- * The pull request a launch continues, and why: the session's worktree is made from `branch` at its
- * tip on `origin`. `after` says why: the run's own pull request passed the gate and failed it
- * when it ran again, or passed it and an instructor left feedback (the time-limit resume belongs
- * to a later issue).
+ * What a launch continues from, and why. The worktree is made from `branch`. `time-limit` and
+ * `interrupted` continue an earlier run of this issue (`run`); `failed-regate` and `feedback`
+ * continue the run's own pull request at `prUrl`, which passed the gate and failed it when it ran
+ * again, or passed it and an instructor left feedback.
  */
-export interface ResumeFrom {
+export type ResumeFrom = EarlierRunResume | RegateResume;
+
+/** A launch that continues an earlier run's branch. */
+export interface EarlierRunResume {
+  readonly after: "time-limit" | "interrupted";
+  readonly run: RunId;
   readonly branch: string;
-  readonly prUrl: string;
-  readonly after: "failed-regate" | "feedback";
 }
 
-/** The paragraph a resumed launch adds, in the factory's fixed words; empty for a first launch. */
-const resumedParagraph = (resumed: ResumeFrom | undefined): string => {
-  if (resumed === undefined) return "";
-  return resumed.after === "feedback"
-    ? `\n\nThe pull request ${resumed.prUrl} of this issue passed the gate and waits for review, and an instructor left feedback on it or on the issue, below. The worktree holds that pull request's branch at its tip on origin. Address the feedback from there and push your commits to the same branch with \`git push origin HEAD:${resumed.branch}\`, so the same pull request is updated. Do not open another pull request.`
-    : `\n\nThe pull request ${resumed.prUrl} of this issue passed the gate, and the gate failed when it ran again. The worktree holds that pull request's branch at its tip on origin. Fix the failure below from there and push your commits to the same branch with \`git push origin HEAD:${resumed.branch}\`, so the same pull request is updated. Do not open another pull request.`;
+/** A launch that continues the run's own pull request, whose re-gate failed or that has instructor feedback. */
+export interface RegateResume {
+  readonly after: "failed-regate" | "feedback";
+  readonly branch: string;
+  readonly prUrl: string;
+}
+
+/**
+ * The paragraph of a resumed launch, in the factory's fixed words. The worktree holds the earlier
+ * commits and the session is to go on from them.
+ */
+const resumeParagraph = (resumed: ResumeFrom): string => {
+  switch (resumed.after) {
+    case "time-limit":
+      return `A previous attempt of this issue (${runIdToString(resumed.run)}) stopped at its time limit. The worktree already holds its commits: continue from them, do not start over.`;
+    case "interrupted":
+      return `A previous attempt of this issue (${runIdToString(resumed.run)}) was interrupted when T3 Code lost its session. The worktree already holds its commits: continue from them, do not start over.`;
+    case "feedback":
+      return `The pull request ${resumed.prUrl} of this issue passed the gate and waits for review, and an instructor left feedback on it or on the issue, below. The worktree holds that pull request's branch at its tip on origin. Address the feedback from there and push your commits to the same branch with \`git push origin HEAD:${resumed.branch}\`, so the same pull request is updated. Do not open another pull request.`;
+    case "failed-regate":
+      return `The pull request ${resumed.prUrl} of this issue passed the gate, and the gate failed when it ran again. The worktree holds that pull request's branch at its tip on origin. Fix the failure below from there and push your commits to the same branch with \`git push origin HEAD:${resumed.branch}\`, so the same pull request is updated. Do not open another pull request.`;
+  }
 };
 
 /**
  * The first message of a session for a GitHub issue: invokes `/factory`, says nobody is in the
- * chat, and names the GitHub identity the session acts as (`login`, and the `ghConfigDir` its T3
- * server should have been started with) with what to do when `gh` says otherwise.
+ * chat, adds the resume paragraph when the launch continues an earlier run's branch, and names
+ * the GitHub identity the session acts as (`login`, and the `ghConfigDir` its T3 server should
+ * have been started with) with what to do when `gh` says otherwise.
  */
 export const launchMessage = (
   repo: string,
@@ -164,7 +185,7 @@ export const launchMessage = (
   ghConfigDir: string,
   resumed?: ResumeFrom,
 ): string =>
-  `/factory ${repo}#${issue}\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR.${resumedParagraph(resumed)}\n\nYou act on GitHub as ${login}. Your T3 server should have been started with GH_CONFIG_DIR=${ghConfigDir}. Before anything else run gh api user --jq .login exactly as written, in the environment you were started with. Never set GH_CONFIG_DIR, GH_TOKEN or GH_HOST, and never use gh auth token or gh auth switch, on any command. If it prints any other login, end with FACTORY-STOP: stuck and make the first line of your message "${WRONG_ACCOUNT_PREFIX}<x>, not ${login}".`;
+  `/factory ${repo}#${issue}\n\nThe factory daemon launched this session unattended, in a worktree it created for you. Nobody is in the chat. The daemon owns the issue's labels and comments and runs its own gate after your draft PR.${resumed === undefined ? "" : `\n\n${resumeParagraph(resumed)}`}\n\nYou act on GitHub as ${login}. Your T3 server should have been started with GH_CONFIG_DIR=${ghConfigDir}. Before anything else run gh api user --jq .login exactly as written, in the environment you were started with. Never set GH_CONFIG_DIR, GH_TOKEN or GH_HOST, and never use gh auth token or gh auth switch, on any command. If it prints any other login, end with FACTORY-STOP: stuck and make the first line of your message "${WRONG_ACCOUNT_PREFIX}<x>, not ${login}".`;
 
 /** The issue's single status comment. */
 export const statusBody = (
@@ -178,6 +199,14 @@ export const statusBody = (
 /** The one message the factory sends into a session whose run ended with no result line. Its own fixed words, with no session or issue text in it. */
 export const RESULT_LINE_REMINDER =
   "Your last reply had no result line. If your work is still in progress, finish it. End your reply with one of these lines as the last line: FACTORY-DONE: <PR URL>, FACTORY-STOP: needs-info (after your numbered questions) or FACTORY-STOP: stuck.";
+
+/**
+ * The one message the factory sends into a session whose last run ended `failed` or `cancelled`
+ * while T3 Code was in trouble. Its own fixed words, with no session or issue text in it, and the
+ * same for every resume, so a send repeated after a crash is the same message.
+ */
+export const INTERRUPTION_MESSAGE =
+  "The session was interrupted: your last turn was cut off, probably because T3 Code was unreachable or restarting, so the factory is not treating it as your decision. Continue from where you were. End your reply with a result line as before: FACTORY-DONE: <PR URL>, FACTORY-STOP: needs-info (after your numbered questions) or FACTORY-STOP: stuck.";
 
 /** The public reason when the session's `gh` acts as another GitHub account than the launch message names. */
 export const WRONG_ACCOUNT =

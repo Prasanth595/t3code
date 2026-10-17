@@ -10,6 +10,7 @@ import {
   pendingRelaunch,
   readProgress,
   regateAttempt,
+  regateBranch,
   relaunchCommandId,
 } from "./progress.ts";
 
@@ -346,6 +347,159 @@ describe("readProgress: the last wait marker", () => {
       assert.strictEqual(seen.lastWait, null, bad);
       assert.strictEqual(seen.waitingAfter, null, bad);
     }
+  });
+});
+
+describe("readProgress: an interruption", () => {
+  const interrupted = (ms: number, over: Record<string, unknown> = {}) =>
+    line(ms, "session_interrupted", {
+      resumes: 1,
+      relaunch: false,
+      run_ordinal: 2,
+      branch: "t3code/abc",
+      t3_error: null,
+      ended_in_pass: 2,
+      ...over,
+    });
+
+  it("is none before the first line", () => {
+    const seen = readProgress([launched(1)]);
+    assert.strictEqual(seen.interruption, null);
+    assert.strictEqual(seen.lastBranch, "t3code/abc");
+  });
+
+  it("keeps the newest line, owed its send until the matching step", () => {
+    const owed = readProgress([launched(1), interrupted(2)]);
+    assert.deepStrictEqual(owed.interruption, {
+      resumes: 1,
+      relaunch: false,
+      runOrdinal: 2,
+      branch: "t3code/abc",
+      sent: false,
+    });
+    const sent = readProgress([launched(1), interrupted(2), step(3, "interruption-sent 1")]);
+    assert.strictEqual(sent.interruption?.sent, true);
+    // A step for another count is not this line's.
+    const other = readProgress([launched(1), interrupted(2), step(3, "interruption-sent 2")]);
+    assert.strictEqual(other.interruption?.sent, false);
+  });
+
+  it("is a wait marker for the run that ended, as a forward's is", () => {
+    const seen = readProgress([launched(1), interrupted(2)]);
+    assert.strictEqual(seen.waitingAfter, 2);
+    assert.strictEqual(seen.lastWait, 2);
+    // A relaunch waits for nothing: the thread is gone.
+    const relaunch = readProgress([
+      launched(1),
+      interrupted(2, { relaunch: true, run_ordinal: null }),
+    ]);
+    assert.strictEqual(relaunch.waitingAfter, null);
+    assert.strictEqual(relaunch.interruption?.relaunch, true);
+  });
+
+  it("names the newest branch a launch or an interruption line carries", () => {
+    const seen = readProgress([
+      launched(1),
+      interrupted(2, { branch: "t3code/def" }),
+      interrupted(3, { branch: null }),
+    ]);
+    assert.strictEqual(seen.lastBranch, "t3code/def");
+    // The line's own branch is kept apart: this one names none.
+    assert.strictEqual(seen.interruption?.branch, null);
+  });
+
+  it("carries a relaunch's branch and count, which the next attempt reads", () => {
+    const seen = readProgress([
+      launched(1),
+      interrupted(2, { resumes: 2, relaunch: true, run_ordinal: null, branch: "t3code/def" }),
+    ]);
+    assert.deepStrictEqual(seen.interruption, {
+      resumes: 2,
+      relaunch: true,
+      runOrdinal: null,
+      branch: "t3code/def",
+      sent: false,
+    });
+    // A count that is not a number is no line at all, so the older decision stands.
+    const odd = readProgress([
+      launched(1),
+      interrupted(2, { relaunch: true, run_ordinal: null }),
+      interrupted(3, { resumes: "two", relaunch: true, run_ordinal: null, branch: "t3code/x" }),
+    ]);
+    assert.strictEqual(odd.interruption?.resumes, 1);
+    assert.strictEqual(odd.interruption?.branch, "t3code/abc");
+    assert.strictEqual(odd.lastBranch, "t3code/x");
+  });
+
+  it("owes nothing to a new session: its thread has its own runs", () => {
+    const seen = readProgress([launched(1), interrupted(2), launched(3)]);
+    assert.strictEqual(seen.interruption?.sent, true);
+    assert.strictEqual(seen.waitingAfter, null);
+  });
+});
+
+describe("readProgress: the approval", () => {
+  const approved = (ms: number, actor?: string): Entry => ({
+    ...step(ms, "approved 2026-10-04T10:00:00Z"),
+    cause: { step: "start", reason: "approved", ...(actor === undefined ? {} : { actor }) },
+  });
+
+  it("names the moment and the instructor on the first approved step", () => {
+    const seen = readProgress([approved(1, "tomkaczocha"), approved(2, "other")]);
+    assert.strictEqual(seen.approvedAt, "2026-10-04T10:00:00Z");
+    assert.strictEqual(seen.approvedBy, "tomkaczocha");
+  });
+
+  it("names no instructor when the cause has none, or has an empty one", () => {
+    assert.strictEqual(readProgress([approved(1)]).approvedBy, null);
+    assert.strictEqual(readProgress([approved(1, "")]).approvedBy, null);
+    assert.strictEqual(readProgress([]).approvedBy, null);
+  });
+});
+
+describe("readProgress: the branch a launch resumed from", () => {
+  const RUN = { repo: "rawphp/softfac", issue: "10", attempt: 2 };
+  const resumedLaunch = (ms: number, run: string, branch: string) =>
+    line(ms, "session_launched", {
+      thread_id: "thread-2",
+      worktree: "/t3/wt2",
+      branch: "t3code/own",
+      model_instance: null,
+      model: null,
+      resumed_from: { run, branch },
+    });
+
+  it("is none for a plain launch", () => {
+    const seen = readProgress([launched(1)]);
+    assert.strictEqual(seen.resumedFrom, null);
+    assert.strictEqual(seen.resumedFromRun, null);
+    assert.strictEqual(regateBranch(seen, RUN), null);
+  });
+
+  it("names the run and the branch of the launch line's resumed_from", () => {
+    const seen = readProgress([resumedLaunch(1, "rawphp__softfac__10__1", "t3code/old")]);
+    assert.strictEqual(seen.resumedFrom, "t3code/old");
+    assert.strictEqual(seen.resumedFromRun, "rawphp__softfac__10__1");
+    assert.strictEqual(seen.lastBranch, "t3code/own");
+  });
+
+  it("is the pull request's branch only for a re-gate session, which resumed from the run itself", () => {
+    // A re-gate of run 2 launched a session from its pull request's branch: that is where it pushes.
+    const regate = readProgress([resumedLaunch(1, "rawphp__softfac__10__2", "feat/pr-12")]);
+    assert.strictEqual(regateBranch(regate, RUN), "feat/pr-12");
+    // A session resumed from attempt 1's branch works on T3's own branch.
+    const resumed = readProgress([resumedLaunch(1, "rawphp__softfac__10__1", "t3code/old")]);
+    assert.strictEqual(regateBranch(resumed, RUN), null);
+  });
+
+  it("is the newest launch line's", () => {
+    const seen = readProgress([
+      resumedLaunch(1, "rawphp__softfac__10__2", "feat/pr-12"),
+      launched(2),
+    ]);
+    assert.strictEqual(seen.resumedFrom, null);
+    assert.strictEqual(seen.resumedFromRun, null);
+    assert.strictEqual(regateBranch(seen, RUN), null);
   });
 });
 
