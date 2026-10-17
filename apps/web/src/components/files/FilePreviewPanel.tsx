@@ -89,6 +89,7 @@ import {
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
 import { installFileEditorDismissal } from "./fileEditorDismissal";
+import { getFileScrollPosition, guardFileScrollTarget } from "./fileScrollPosition";
 import {
   FILE_LINK_REVEAL_ATTRIBUTE,
   FILE_LINK_REVEAL_UNSAFE_CSS,
@@ -389,39 +390,32 @@ function updateFileLinkReveal(fileContainer: HTMLElement, line: number | null): 
 }
 
 const REVEAL_MAX_ATTEMPTS = 30;
-/**
- * After scrolling to the target, hold it for a short window so late
- * programmatic scroll resets (editable-editor focus and state restoration)
- * cannot silently snap the file back to the top.
- */
-const REVEAL_GUARD_FRAMES = 20;
-const REVEAL_GUARD_TOLERANCE_PX = 2;
-
 interface FileRevealState {
+  stopTrackingScroll: (() => void) | null;
   frameId: number | null;
   cancelGuard: (() => void) | null;
-  handledRequestId: number | null;
-  latestRequestId: number | null;
+  latestRequestId: number;
 }
 
 function useFileLineReveal(
-  relativePath: string | null,
+  scrollKey: string | null,
   revealLine: number | null,
   revealRequestId: number,
 ): FilePostRender {
-  const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
+  const [revealStates] = useState(() => new Map<string, FileRevealState>());
 
   return (fileContainer, instance, phase) => {
-    if (relativePath === null) return;
+    if (scrollKey === null) return;
 
-    const existingState = revealStatesByPath.get(relativePath);
+    const position = getFileScrollPosition(scrollKey);
+    const existingState = revealStates.get(scrollKey);
     const state: FileRevealState = existingState ?? {
+      stopTrackingScroll: null,
       frameId: null,
       cancelGuard: null,
-      handledRequestId: null,
-      latestRequestId: null,
+      latestRequestId: revealRequestId,
     };
-    if (!existingState) revealStatesByPath.set(relativePath, state);
+    if (!existingState) revealStates.set(scrollKey, state);
 
     const cancelPendingReveal = () => {
       if (state.frameId !== null) {
@@ -433,6 +427,8 @@ function useFileLineReveal(
 
     if (phase === "unmount") {
       cancelPendingReveal();
+      state.stopTrackingScroll?.();
+      state.stopTrackingScroll = null;
       return;
     }
 
@@ -446,21 +442,31 @@ function useFileLineReveal(
     if (state.latestRequestId !== revealRequestId) {
       cancelPendingReveal();
       state.latestRequestId = revealRequestId;
-      state.handledRequestId = null;
+    }
+
+    const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
+    if (!scrollContainer) return;
+    if (state.stopTrackingScroll === null) {
+      const remember = () => {
+        position.top = scrollContainer.scrollTop;
+      };
+      scrollContainer.addEventListener("scroll", remember, { passive: true });
+      state.stopTrackingScroll = () => scrollContainer.removeEventListener("scroll", remember);
+      if (revealLine === null || position.handledRevealRequestId === revealRequestId) {
+        const top = position.top;
+        state.cancelGuard = guardFileScrollTarget(scrollContainer, () => top);
+      }
     }
 
     if (revealLine === null) {
       fileContainer.style.minHeight = "";
       return;
     }
-
-    const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
-    if (!scrollContainer) return;
     fileContainer.style.minHeight = `${Math.ceil(
       Math.max(instance.height, scrollContainer.clientHeight),
     )}px`;
 
-    if (state.handledRequestId === revealRequestId || state.frameId !== null) {
+    if (position.handledRevealRequestId === revealRequestId || state.frameId !== null) {
       return;
     }
 
@@ -495,49 +501,6 @@ function useFileLineReveal(
       });
     };
 
-    const guardScrollTarget = (line: number) => {
-      let framesLeft = REVEAL_GUARD_FRAMES;
-      let guardFrameId: number | null = null;
-      const cancelGuard = () => {
-        if (guardFrameId !== null) {
-          cancelAnimationFrame(guardFrameId);
-          guardFrameId = null;
-        }
-        scrollContainer.removeEventListener("wheel", cancelGuard);
-        scrollContainer.removeEventListener("touchstart", cancelGuard);
-        scrollContainer.removeEventListener("pointerdown", cancelGuard, true);
-        window.removeEventListener("keydown", cancelGuard, true);
-        if (state.cancelGuard === cancelGuard) state.cancelGuard = null;
-      };
-      scrollContainer.addEventListener("wheel", cancelGuard, { passive: true });
-      scrollContainer.addEventListener("touchstart", cancelGuard, { passive: true });
-      // Pierre stops gutter pointer events from bubbling. Listen in capture
-      // so starting a comment cancels the reveal guard before the row expands.
-      scrollContainer.addEventListener("pointerdown", cancelGuard, {
-        passive: true,
-        capture: true,
-      });
-      window.addEventListener("keydown", cancelGuard, true);
-      const holdTarget = () => {
-        guardFrameId = null;
-        framesLeft -= 1;
-        if (framesLeft <= 0 || !scrollContainer.isConnected) {
-          cancelGuard();
-          return;
-        }
-        const targetTop = resolveScrollTarget(line);
-        if (
-          targetTop !== null &&
-          Math.abs(scrollContainer.scrollTop - targetTop) > REVEAL_GUARD_TOLERANCE_PX
-        ) {
-          scrollContainer.scrollTop = targetTop;
-        }
-        guardFrameId = requestAnimationFrame(holdTarget);
-      };
-      guardFrameId = requestAnimationFrame(holdTarget);
-      state.cancelGuard = cancelGuard;
-    };
-
     const scheduleReveal = (attempt: number) => {
       state.frameId = requestAnimationFrame(() => {
         state.frameId = null;
@@ -559,8 +522,8 @@ function useFileLineReveal(
         updateFileLinkReveal(fileContainer, line);
 
         scrollContainer.scrollTop = targetTop;
-        state.handledRequestId = revealRequestId;
-        guardScrollTarget(line);
+        position.handledRevealRequestId = revealRequestId;
+        state.cancelGuard = guardFileScrollTarget(scrollContainer, () => resolveScrollTarget(line));
       });
     };
 
@@ -1119,7 +1082,11 @@ export default function FilePreviewPanel({
       : relativePath && attachment === undefined
         ? resolvePathLinkTarget(relativePath, cwd)
         : null;
-  const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const onFilePostRender = useFileLineReveal(
+    absolutePath === null ? null : `${environmentId}:${threadRef.threadId}:${absolutePath}`,
+    revealLine,
+    revealRequestId,
+  );
   useWorkspaceMutationRefresh({
     enabled:
       attachment === undefined &&

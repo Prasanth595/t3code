@@ -186,7 +186,7 @@ export function RightPanelSurfaceContent(props: {
       return (
         <Suspense fallback={null}>
           <FilePreviewPanel
-            key={`${props.environmentId}:${
+            key={`${scopedThreadKey(threadRef)}:${
               attachment ? `attachment:${attachment.id}` : files.workspaceRoot
             }`}
             environmentId={props.environmentId}
