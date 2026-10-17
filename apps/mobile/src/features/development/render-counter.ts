@@ -20,6 +20,8 @@ interface Fiber {
 }
 interface HookSlot {
   readonly memoizedState: unknown;
+  /** Non-null only for useState and useReducer, the hooks that can schedule a render. */
+  readonly queue: unknown;
   readonly next: HookSlot | null;
 }
 interface DevToolsHook {
@@ -71,12 +73,9 @@ function changedStateSlot(alternate: Fiber, node: Fiber): number {
   for (let index = 0; a && b && index < 800; index++) {
     const before = a.memoizedState;
     const after = b.memoizedState;
-    if (!isEffect(after) && !Object.is(before, after)) {
-      // A memo/callback slot whose deps did not change is a recompute, not a cause.
-      const memoSlot =
-        Array.isArray(before) && Array.isArray(after) && before.length === 2 && after.length === 2;
-      if (!memoSlot) return index;
-    }
+    // Memo, callback and ref slots change because something upstream did; only a
+    // state update is a cause of its own.
+    if (b.queue !== null && !isEffect(after) && !Object.is(before, after)) return index;
     a = a.next;
     b = b.next;
   }
