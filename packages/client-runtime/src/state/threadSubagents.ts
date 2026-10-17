@@ -36,23 +36,26 @@ function orderKey(subagent: Subagent): number {
 export function deriveThreadTurnSubagents(
   projection: Pick<Projection, "runs" | "subagents">,
 ): ThreadTurnSubagents | null {
-  if (projection.subagents.length === 0) return null;
-  const activeRun = resolveActiveThreadRun(projection);
-  const latestUpdated = projection.subagents.reduce((latest, subagent) =>
-    DateTime.toEpochMillis(subagent.updatedAt) > DateTime.toEpochMillis(latest.updatedAt)
-      ? subagent
-      : latest,
-  );
-  const runId = activeRun?.id ?? latestUpdated.runId;
   const rolledBackRunIds = new Set(
     projection.runs.filter((run) => run.status === "rolled_back").map((run) => run.id),
   );
+  const eligible = projection.subagents.filter(
+    (subagent) => subagent.runId === null || !rolledBackRunIds.has(subagent.runId),
+  );
+  const [first] = eligible;
+  if (first === undefined) return null;
+  const activeRun = resolveActiveThreadRun(projection);
+  const latestUpdated = eligible.reduce(
+    (latest, subagent) =>
+      DateTime.toEpochMillis(subagent.updatedAt) > DateTime.toEpochMillis(latest.updatedAt)
+        ? subagent
+        : latest,
+    first,
+  );
+  const runId = activeRun?.id ?? latestUpdated.runId;
   const subagents = copySorted(
-    projection.subagents.filter(
-      (subagent) =>
-        subagent.runId === runId ||
-        (isActiveSubagentStatus(subagent.status) &&
-          (subagent.runId === null || !rolledBackRunIds.has(subagent.runId))),
+    eligible.filter(
+      (subagent) => subagent.runId === runId || isActiveSubagentStatus(subagent.status),
     ),
     (left, right) => orderKey(left) - orderKey(right) || left.id.localeCompare(right.id),
   );

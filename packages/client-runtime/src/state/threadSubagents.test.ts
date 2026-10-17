@@ -154,6 +154,33 @@ describe("deriveThreadTurnSubagents", () => {
     expect(turn?.subagents.map((entry) => entry.id)).toEqual(["live"]);
   });
 
+  it("does not pick a rolled-back turn when its agent was updated last", () => {
+    const turn = deriveThreadTurnSubagents({
+      runs: [run("run-0", "rolled_back"), finishedRun],
+      subagents: [
+        subagent({
+          id: "rolled-back",
+          runId: RunId.make("run-0"),
+          updatedAt: at("2026-06-20T00:00:09.000Z"),
+        }),
+        subagent({
+          id: "done",
+          status: "completed",
+          updatedAt: at("2026-06-20T00:00:05.000Z"),
+        }),
+      ],
+    });
+
+    expect(turn?.runId).toBe("run-1");
+    expect(turn?.subagents.map((entry) => entry.id)).toEqual(["done"]);
+    expect(
+      deriveThreadTurnSubagents({
+        runs: [run("run-0", "rolled_back")],
+        subagents: [subagent({ id: "rolled-back", runId: RunId.make("run-0") })],
+      }),
+    ).toBeNull();
+  });
+
   it("lists a workflow coordinator's members, which carry no run", () => {
     const turn = deriveThreadTurnSubagents({
       runs: [],
