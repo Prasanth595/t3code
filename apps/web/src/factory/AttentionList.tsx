@@ -28,7 +28,7 @@ export function AttentionList({
                 {item.issue !== null ? `#${item.issue}` : null}
               </span>
             ) : null}
-            <span className="min-w-0 flex-1">{item.message}</span>
+            <span className="min-w-0 flex-1 break-words">{item.message}</span>
             <span className="text-xs text-muted-foreground">
               {formatAge(Date.parse(item.first_seen), nowMs)}
             </span>
