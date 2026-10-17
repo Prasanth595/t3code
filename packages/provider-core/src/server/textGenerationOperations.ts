@@ -1,11 +1,3 @@
-/**
- * The text generation operations every provider shares. A provider supplies a
- * runner that sends one prompt and decodes the reply; prompts, linked source
- * control context, and output sanitizing live here so providers cannot drift
- * on them.
- *
- * @module textGeneration/TextGenerationOperations
- */
 import * as Effect from "effect/Effect";
 import type * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
@@ -32,7 +24,6 @@ import {
 
 export type Operation = keyof ProviderTextGeneration;
 
-/** One prompt for a provider to run. */
 export interface Request<S extends Schema.Top> {
   readonly operation: Operation;
   /**
@@ -43,36 +34,27 @@ export interface Request<S extends Schema.Top> {
   readonly prompt: string;
   readonly outputSchema: S;
   readonly modelSelection: ModelSelection;
-  /** The user's attachments, already listed in the prompt. Providers that accept images send them. */
   readonly attachments?: ReadonlyArray<ChatAttachment> | undefined;
   /**
    * Set when the model must investigate `cwd` before answering: it may read files and run
-   * read-only commands there, over as many turns as it needs, and must change nothing. Absent,
-   * the prompt carries everything and the model runs with no tools at all. A runner that cannot
-   * guarantee read-only tools fails rather than answering blind.
+   * read-only commands there, over as many turns as it needs, and must change nothing. A
+   * runner that cannot guarantee read-only tools fails rather than answering blind.
    */
   readonly investigate?: { readonly timeoutMs: number } | undefined;
 }
 
-/** How long an investigating run may take; a large change needs far longer than a title. */
 const INVESTIGATION_TIMEOUT_MS = 15 * 60_000;
 
-/** The refusal a runner gives when it has no read-only tool mode to investigate with. */
 export const investigationUnsupported = (operation: Operation, provider: string) =>
   new TextGenerationError({
     operation,
     detail: `${provider} cannot investigate a checkout read-only. Choose another review guide model, or source control writer model when none is set.`,
   });
 
-/** Runs one request and decodes the reply as its `outputSchema`. */
 export type Runner = <S extends Schema.Top>(
   request: Request<S>,
 ) => Effect.Effect<S["Type"], TextGenerationError, S["DecodingServices"]>;
 
-/**
- * For a runner with no read-only tool mode: it answers prompts that carry everything, and
- * refuses an investigation rather than answering one blind.
- */
 export const withoutInvestigation =
   (provider: string, run: Runner): Runner =>
   (request) =>
@@ -107,7 +89,6 @@ export const decodeJsonReply = <S extends Schema.Top>(
   provider: string,
   text: string,
 ) => {
-  // Each request builds its own output schema, so the decoder cannot be hoisted.
   const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(request.outputSchema));
   return decodeOutput(extractJsonObject(text)).pipe(
     Effect.mapError(
