@@ -10,6 +10,17 @@
  *   runs cost a stat and a tail read each; only the unfinished ones are read whole.
  * - `GET /api/factory/runs/:id`: `runs show`, every entry of one run.
  *
+ * - `GET /api/factory/config`: the machine config file as the settings page shows it (values, or
+ *   the defaults with no file, or the errors of a file that does not load), with what the loop
+ *   last read of each repo's project config.
+ *
+ * Settings need `settings:write`:
+ * - `PUT /api/factory/config`: applies the keys of the JSON body to the machine config file,
+ *   keeping its comments and the keys the page does not edit, and writes it only when
+ *   `parseMachineConfig` accepts the result (else 422 `invalid_config` with the errors, file
+ *   untouched; a body that is not a JSON object is 400 `invalid_body`). It then reloads the loop
+ *   and answers the new report.
+ *
  * Control needs `orchestration:operate`:
  * - `POST /api/factory/runs/:id/stop`: `runs stop`; leaves a stop request for the next pass, as
  *   `stop-run.sh` does, and wakes the loop. The pass archives the thread and removes the worktree.
@@ -31,12 +42,14 @@ import {
   AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpRouter from "effect/http/HttpRouter";
 
@@ -47,6 +60,7 @@ import { FactoryLoop, hostName } from "../index.ts";
 import { isLedgerError, type LedgerError } from "../ledger/errors.ts";
 import { listRuns, type RunSummary } from "../ledger/listRuns.ts";
 import { runIdToString } from "../ledger/runId.ts";
+import { readMachineConfigReport } from "../settings.ts";
 import { buildStatus } from "../status.ts";
 import { route } from "./auth.ts";
 import { ServerExit } from "./exit.ts";
@@ -58,6 +72,7 @@ export const RUN_PATH = "/api/factory/runs/:id";
 export const STOP_PATH = "/api/factory/runs/:id/stop";
 export const PAUSE_PATH = "/api/factory/claims/pause";
 export const RESUME_PATH = "/api/factory/claims/resume";
+export const CONFIG_PATH = "/api/factory/config";
 export const RESTART_PATH = "/api/factory/restart";
 
 /** What the restart's 202 tells the caller to expect. */
@@ -94,7 +109,7 @@ const failure = (error: LedgerError | FactoryFileError) => {
 
 /** A route of the factory: `route`, with every ledger or file failure answered by `failure`. */
 const factoryRoute = <R>(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PUT",
   path: `/${string}`,
   scope: Parameters<typeof route>[2],
   handler: Effect.Effect<HttpServerResponse.HttpServerResponse, LedgerError | FactoryFileError, R>,
@@ -241,6 +256,42 @@ const resumeRoute = factoryRoute(
   }),
 );
 
+const toFileError = Effect.mapError((cause: unknown) => new FactoryFileError({ cause }));
+
+const configRoute = factoryRoute(
+  "GET",
+  CONFIG_PATH,
+  AuthOrchestrationReadScope,
+  Effect.gen(function* () {
+    const loop = yield* FactoryLoop;
+    const { machineConfigPath } = yield* FactoryPaths;
+    return respond(yield* readMachineConfigReport(machineConfigPath, yield* loop.repoConfigs));
+  }),
+);
+
+const invalidBody = (message: string) => respond({ code: "invalid_body", message }, 400);
+
+const saveConfigRoute = factoryRoute(
+  "PUT",
+  CONFIG_PATH,
+  AuthSettingsWriteScope,
+  Effect.gen(function* () {
+    const loop = yield* FactoryLoop;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const body = yield* Effect.result(request.json);
+    if (Result.isFailure(body)) return invalidBody("the body is not valid JSON");
+    const saved = yield* loop.save(body.success).pipe(toFileError);
+    switch (saved.kind) {
+      case "invalid-body":
+        return invalidBody("the body must be a JSON object");
+      case "invalid":
+        return respond({ code: "invalid_config", errors: saved.errors }, 422);
+      case "ok":
+        return respond(saved.report);
+    }
+  }),
+);
+
 const restartRoute = factoryRoute(
   "POST",
   RESTART_PATH,
@@ -264,5 +315,7 @@ export const FactoryRoutes = Layer.mergeAll(
   stopRoute,
   pauseRoute,
   resumeRoute,
+  configRoute,
+  saveConfigRoute,
   restartRoute,
 );

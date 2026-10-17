@@ -52,9 +52,9 @@ const DEFAULT_MINUTES = 180;
 const DEFAULT_CHECKS_MINUTES = 30;
 const DEFAULT_REGATES = 5;
 const DEFAULT_INTERRUPTION_RESUMES = 2;
-const DEFAULT_POLL_SECONDS = 60;
-const DEFAULT_MAX_CONCURRENT_GATES = 2;
-const DEFAULT_MODEL_INSTANCE = "claudeAgent";
+export const DEFAULT_POLL_SECONDS = 60;
+export const DEFAULT_MAX_CONCURRENT_GATES = 2;
+export const DEFAULT_MODEL_INSTANCE = "claudeAgent";
 
 /** What a repo's runs are timed by when none of its project configs has loaded. */
 export const timeLimitOnlyProjectConfig = (): ProjectConfig => ({
@@ -74,6 +74,11 @@ export const timeLimitOnlyProjectConfig = (): ProjectConfig => ({
 });
 
 export const PROJECT_CONFIG_PATH = ".dw/config.yml";
+
+/** What the last pass found when it read a repo's project config. */
+export type RepoConfigReading =
+  | { readonly kind: "ok"; readonly project: ProjectConfig }
+  | { readonly kind: "errors"; readonly errors: ReadonlyArray<ConfigError> };
 
 export interface WatchedRepo {
   readonly repo: string;

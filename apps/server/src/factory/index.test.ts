@@ -8,6 +8,7 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -35,6 +36,7 @@ import {
   ownedThreads,
   serverStartedMs,
   wakeOn,
+  type RuntimeOptions,
 } from "./index.ts";
 import { isLedgerError } from "./ledger/errors.ts";
 import { makeCause } from "./ledger/events.ts";
@@ -43,11 +45,11 @@ import { MachineLog, scanMachineLog } from "./ledger/machineLog.ts";
 import { readRun } from "./ledger/read.ts";
 import { newRunId, runIdToString, runPath, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
-import type { Repo } from "./pass.ts";
+import type { PassWorld, Repo } from "./pass.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { stopRequestPath } from "./runner/stop.ts";
 import { utcSecond } from "./runner/start.ts";
-import { MARKER } from "./tracker/github.ts";
+import { ClaimMemo, MARKER } from "./tracker/github.ts";
 import { FactoryProcess, RunSpawnError, type RunInput, type RunResult } from "./process.ts";
 import { FactoryGate } from "./gate.ts";
 import { EventsError, FactoryEvents } from "./t3/events.ts";
@@ -95,6 +97,36 @@ const quietEvents = Layer.succeed(
 const messageText = (message: unknown): string => {
   const first = Array.isArray(message) ? message[0] : message;
   return typeof first === "string" ? first : String(first);
+};
+
+/** A building run whose session reported its pull request: the gate reads the issue, then the thread. */
+const seedReportedRun = (dataDir: string, repo: string): RunId => {
+  const run = newRunId(repo, "10", 1);
+  const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
+  ledger.append(
+    {
+      event: "session_launched",
+      data: {
+        thread_id: "thread-1",
+        worktree: null,
+        branch: null,
+        model_instance: null,
+        model: null,
+        resumed_from: null,
+      },
+    },
+    makeCause("start", "seed"),
+  );
+  ledger.append(
+    { event: "state_changed", data: { from: "triage", to: "building" } },
+    makeCause("start", "seed"),
+  );
+  ledger.append(
+    { event: "pr_opened", data: { pr: 12, url: `https://github.com/${repo}/pull/12` } },
+    makeCause("advance", "seed"),
+  );
+  ledger.close();
+  return run;
 };
 
 const VALID = `gh_config_dir: /gh
@@ -1317,34 +1349,7 @@ describe("the gate in the background", () => {
     } satisfies RunResult);
 
   /** A building run whose session reported its pull request: the gate reads the issue, then the thread. */
-  const reportedRun = (dataDir: string): RunId => {
-    const run = newRunId(REPO, "10", 1);
-    const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
-    ledger.append(
-      {
-        event: "session_launched",
-        data: {
-          thread_id: "thread-1",
-          worktree: null,
-          branch: null,
-          model_instance: null,
-          model: null,
-          resumed_from: null,
-        },
-      },
-      makeCause("start", "seed"),
-    );
-    ledger.append(
-      { event: "state_changed", data: { from: "triage", to: "building" } },
-      makeCause("start", "seed"),
-    );
-    ledger.append(
-      { event: "pr_opened", data: { pr: 12, url: "https://github.com/rawphp/softfac/pull/12" } },
-      makeCause("advance", "seed"),
-    );
-    ledger.close();
-    return run;
-  };
+  const reportedRun = (dataDir: string): RunId => seedReportedRun(dataDir, REPO);
 
   const gateMachine: MachineConfig = {
     ghConfigDir: "/gh/rawphp",
@@ -1409,6 +1414,70 @@ describe("the gate in the background", () => {
         // The run is free for the next pass's gate.
         assert.deepStrictEqual(yield* world.gate(gateRepo, run), { kind: "started" });
       }),
+  );
+
+  it.effect("a world built on the same shared state sees the gates another world started", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const run = reportedRun(dataDir);
+      const other = newRunId(REPO, "11", 1);
+      const held = yield* Deferred.make<void>();
+      const entered = yield* Deferred.make<void>();
+      const sessions = Sessions.FactorySessions.of({
+        ...stubSessions,
+        status: () =>
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(held)),
+            Effect.andThen(Effect.die("released")),
+          ),
+      });
+      const live = {
+        gate: { run: () => Effect.die("never reached") },
+        wake: Effect.void,
+        scope: yield* Scope.make(),
+      };
+      const shared = { gating: new Set<string>(), claimMemo: new ClaimMemo() };
+      const build = () =>
+        liveWorld(
+          gateMachine,
+          dataDir,
+          deadGh,
+          sessions,
+          () => 1_000,
+          "mac-mini",
+          noAttention,
+          live,
+          undefined,
+          undefined,
+          shared,
+        );
+      const before = build();
+      assert.deepStrictEqual(yield* before.gate(gateRepo, run), { kind: "started" });
+      yield* Deferred.await(entered);
+      // What a reload does: a new world, on the state the old one shares.
+      const after = build();
+      assert.strictEqual(after.gateRunning(run), true);
+      assert.deepStrictEqual(yield* after.gate(gateRepo, other), {
+        kind: "queued",
+        running: 1,
+        max: 1,
+      });
+      // Without shared state a world starts from nothing: that is the defect this guards.
+      assert.strictEqual(
+        liveWorld(
+          gateMachine,
+          dataDir,
+          deadGh,
+          sessions,
+          () => 1_000,
+          "mac-mini",
+          noAttention,
+          live,
+        ).gateRunning(run),
+        false,
+      );
+      yield* Deferred.succeed(held, undefined);
+    }),
   );
 
   it.effect("a gate that ends in stuck raises the run's stuck item, as a pass would", () =>
@@ -1698,4 +1767,310 @@ describe("the gate in the background", () => {
         assert.ok(isLedgerError(missing), missing.message);
       }),
   );
+});
+
+describe("reloading the machine config", () => {
+  /** A fake `gh` that records the argv of every call and holds the first call naming each of `repos` until released. */
+  const holdingProcess = (repos: ReadonlyArray<string> = ["a/b"]) => {
+    const calls: Array<string> = [];
+    /** The `GH_CONFIG_DIR` of each call, in the order of `calls`. */
+    const ghDirs: Array<string | undefined> = [];
+    const holds = new Map(
+      repos.map((repo) => [
+        repo,
+        { held: false, entered: Deferred.makeUnsafe<void>(), release: Deferred.makeUnsafe<void>() },
+      ]),
+    );
+    const process = FactoryProcess.of({
+      run: (input) =>
+        Effect.gen(function* () {
+          const call = [input.command, ...(input.args ?? [])].join(" ");
+          calls.push(call);
+          ghDirs.push(input.env?.["GH_CONFIG_DIR"]);
+          const hold = [...holds].find(([repo]) => call.includes(repo))?.[1];
+          if (hold !== undefined && !hold.held) {
+            hold.held = true;
+            yield* Deferred.succeed(hold.entered, undefined);
+            yield* Deferred.await(hold.release);
+          }
+          return yield* Effect.fail(
+            new RunSpawnError({ shell: false, cause: new Error("gh not found") }),
+          );
+        }),
+    });
+    const first = holds.get(repos[0]!)!;
+    return { calls, ghDirs, process, holds, entered: first.entered, release: first.release };
+  };
+
+  /** The runtime over a temp base dir holding `config` (or no file); `write` replaces the file. */
+  const started = (
+    config: string | undefined,
+    process: FactoryProcess["Service"],
+    events: Layer.Layer<FactoryEvents> = quietEvents,
+    options: RuntimeOptions = {},
+  ) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "factory-reload-" });
+      const factoryDir = join(baseDir, "factory");
+      yield* fs.makeDirectory(factoryDir);
+      const machineConfigPath = join(factoryDir, "config.yml");
+      if (config !== undefined) yield* fs.writeFileString(machineConfigPath, config);
+      const context = yield* Layer.build(
+        factoryRuntime(options).pipe(
+          Layer.provide(
+            Layer.succeed(Paths.FactoryPaths, {
+              baseDir,
+              worktreesDir: join(baseDir, "worktrees"),
+              factoryDir,
+              machineConfigPath,
+            }),
+          ),
+          Layer.provide(Layer.succeed(FactoryProcess, process)),
+          Layer.provide(noSessions),
+          Layer.provide(events),
+          Layer.provide(noGate),
+        ),
+      );
+      return {
+        loop: Context.get(context, FactoryLoop),
+        factoryDir,
+        file: machineConfigPath,
+        write: (text: string) => fs.writeFileString(machineConfigPath, text),
+      };
+    });
+
+  const OTHER = VALID.replace("a/b", "c/d")
+    .replace("/b", "/d")
+    .replace("gh_config_dir: /gh", "gh_config_dir: /gh2");
+
+  it.effect("goes from idle to running when a valid file appears and is reloaded", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { calls, process, entered, release } = holdingProcess();
+        const { loop, write } = yield* started(undefined, process);
+        assert.deepStrictEqual(loop.status, { state: "idle", reason: "no factory config" });
+        yield* write(VALID);
+        yield* loop.reload;
+        yield* Deferred.await(entered);
+        const pass = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+        yield* Deferred.succeed(release, undefined);
+        assert.strictEqual((yield* Fiber.join(pass))?.errors, 1);
+        assert.deepStrictEqual(loop.status, {
+          state: "running",
+          settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+        });
+        assert.ok(
+          calls.some((call) => call.startsWith("gh ") && call.includes("a/b")),
+          calls.join("\n"),
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("goes idle when the file turns invalid or is removed, and passes do nothing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { calls, process, entered, release } = holdingProcess();
+        const { loop, write } = yield* started(VALID, process);
+        yield* Deferred.await(entered);
+        yield* Deferred.succeed(release, undefined);
+        yield* write(VALID.replace("model: claude-sonnet-5-5\n", ""));
+        yield* loop.reload;
+        assert.deepStrictEqual(loop.status, {
+          state: "idle",
+          reason: "factory config failed to load",
+        });
+        const seen = calls.length;
+        const pass = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+        yield* loop.wake;
+        assert.deepStrictEqual(yield* Fiber.join(pass), {
+          runs: 0,
+          claimed: 0,
+          errors: 0,
+          attention: 0,
+        });
+        assert.strictEqual(calls.length, seen);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "a pass under way finishes on the config it started with, the next uses the new one",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { calls, ghDirs, process, holds, entered, release } = holdingProcess([
+            "a/b",
+            "c/d",
+          ]);
+          const { loop, write } = yield* started(VALID, process);
+          yield* Deferred.await(entered);
+          const first = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+          yield* write(OTHER);
+          yield* loop.reload;
+          assert.deepStrictEqual(loop.status, {
+            state: "running",
+            settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["c/d"] },
+          });
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(first);
+          // The next pass follows at once, on the new config: it is held at its first call.
+          const second = holds.get("c/d")!;
+          yield* Deferred.await(second.entered);
+          const next = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+          yield* Deferred.succeed(second.release, undefined);
+          yield* Fiber.join(next);
+          const lastOld = calls.findLastIndex((call) => call.includes("a/b"));
+          const firstNew = calls.findIndex((call) => call.includes("c/d"));
+          assert.ok(lastOld >= 0 && firstNew > lastOld, calls.join("\n"));
+          // The world follows the config too: the pass under way keeps its login, the next one has the new.
+          calls.forEach((call, at) => {
+            if (call.includes("a/b")) assert.strictEqual(ghDirs[at], "/gh", call);
+            if (call.includes("c/d")) assert.strictEqual(ghDirs[at], "/gh2", call);
+          });
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a reload's world sees the gates the world before it started", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const hold = yield* Deferred.make<void>();
+        const process = FactoryProcess.of({
+          run: () =>
+            Deferred.await(hold).pipe(
+              Effect.andThen(
+                Effect.fail(new RunSpawnError({ shell: false, cause: new Error("gh not found") })),
+              ),
+            ),
+        });
+        const worlds: Array<PassWorld> = [];
+        const oneGate = VALID.replace("model:", "max_concurrent_gates: 1\nmodel:");
+        const { loop, factoryDir, write } = yield* started(oneGate, process, quietEvents, {
+          onWorld: (world) => worlds.push(world),
+        });
+        const repo: Repo = {
+          watched: { repo: "a/b", path: "/b" },
+          project: timeLimitOnlyProjectConfig(),
+          trackerUser: "rawphp",
+        };
+        const run = seedReportedRun(factoryDir, "a/b");
+        const other = newRunId("a/b", "11", 1);
+        const worldA = worlds[0]!;
+        // The gate holds on its first gh call, so it is running when the file changes.
+        assert.deepStrictEqual(yield* worldA.gate(repo, run), { kind: "started" });
+        yield* write(oneGate.replace("gh_config_dir", "poll_seconds: 30\ngh_config_dir"));
+        yield* loop.reload;
+        const worldB = worlds[1]!;
+        assert.notStrictEqual(worldB, worldA);
+        assert.strictEqual(worldB.gateRunning(run), true);
+        assert.deepStrictEqual(yield* worldB.gate(repo, other), {
+          kind: "queued",
+          running: 1,
+          max: 1,
+        });
+        yield* Deferred.succeed(hold, undefined);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("repoConfigs holds the errors of a repo whose project config could not be read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { process, entered, release } = holdingProcess();
+        const { loop } = yield* started(VALID, process);
+        yield* Deferred.await(entered);
+        assert.strictEqual((yield* loop.repoConfigs).size, 0);
+        const pass = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(pass);
+        const reading = (yield* loop.repoConfigs).get("a/b");
+        assert.strictEqual(reading?.kind, "errors");
+        const errors = reading?.kind === "errors" ? reading.errors : [];
+        assert.strictEqual(errors.length, 1);
+        assert.ok(
+          errors[0]!.message.startsWith("cannot read .dw/config.yml from GitHub"),
+          errors[0]!.message,
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("two reloads at once from idle make one loop and one wake stream", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const logs: Array<string> = [];
+        const capture = Logger.make(({ message }) => {
+          logs.push(messageText(message));
+        });
+        const subscribed = yield* Deferred.make<void>();
+        let subscriptions = 0;
+        const events = Layer.succeed(
+          FactoryEvents,
+          FactoryEvents.of({
+            runStatusChanges: Stream.suspend(() => {
+              subscriptions += 1;
+              Deferred.doneUnsafe(subscribed, Exit.void);
+              return Stream.never;
+            }),
+          }),
+        );
+        const { process } = holdingProcess();
+        const { loop, write } = yield* started(undefined, process, events);
+        yield* write(VALID);
+        yield* Effect.all([loop.reload, loop.reload], { concurrency: 2 }).pipe(
+          Effect.provide(Logger.layer([capture], { mergeWithExisting: false })),
+        );
+        yield* Deferred.await(subscribed);
+        for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
+        assert.strictEqual(logs.filter((line) => line === "factory started").length, 1);
+        assert.strictEqual(subscriptions, 1);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  describe("save", () => {
+    it.effect(
+      "creates a missing file from a valid body, reloads and leaves the factory running",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const { process } = holdingProcess();
+            const { loop, file } = yield* started(undefined, process);
+            assert.strictEqual(loop.status.state, "idle");
+            const result = yield* loop.save({
+              gh_config_dir: "/gh",
+              max_concurrent_runs: 1,
+              model: "claude-sonnet-5-5",
+              repos: [{ repo: "a/b", path: "/b" }],
+            });
+            assert.strictEqual(result.kind, "ok");
+            if (result.kind === "ok") {
+              assert.strictEqual(result.report.exists, true);
+              assert.deepStrictEqual(result.report.config?.repos, [{ repo: "a/b", path: "/b" }]);
+            }
+            assert.strictEqual(loop.status.state, "running");
+            assert.ok((yield* (yield* FileSystem.FileSystem).readFileString(file)).includes("a/b"));
+          }),
+        ).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    it.effect("answers an invalid body with the errors and a non-object body as invalid-body", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { process } = holdingProcess();
+          const { loop, file } = yield* started(undefined, process);
+          const invalid = yield* loop.save({ poll_seconds: 5 });
+          assert.strictEqual(invalid.kind, "invalid");
+          assert.strictEqual(yield* (yield* FileSystem.FileSystem).exists(file), false);
+          for (const body of [null, [1], "x"]) {
+            assert.deepStrictEqual(yield* loop.save(body), { kind: "invalid-body" });
+          }
+          assert.strictEqual(loop.status.state, "idle");
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+    );
+  });
 });

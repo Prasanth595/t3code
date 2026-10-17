@@ -82,11 +82,11 @@ factory/                            repo root: SEAMS, sync/build/install scripts
 1. `apps/server/src/server.ts`: one line adding `FactoryLayer` to `layerRuntimeCoreDependenciesBase` (#1), and one adding the factory route layer `FactoryRoutes` to `layerMakeRoutes` (#57).
 2. `.gitignore` (#3): `.worktrees/`, so `build.sh` counts a main checkout that holds local worktrees as clean.
 3. One nav link in the web sidebar, `apps/web/src/components/sidebar/SidebarChrome.tsx` (#28).
-4. `apps/web/src/routeTree.gen.ts` (#28): generated, so a merge regenerates it instead of resolving it by hand.
+4. `apps/web/src/routeTree.gen.ts` (#28): generated, so a merge regenerates it instead of resolving it by hand. `apps/web/src/routes/settings.factory*` is factory-owned like `routes/factory*`.
 5. `apps/web/src/components/settings/settingsSearch.ts` (#55): the `SettingsPath`, section label, search entry and scope map for the factory settings page.
 6. `apps/web/src/components/settings/SettingsSidebarNav.tsx` (#55): the icon for that page.
 
-Six entries, of which the first four (`server.ts`, `.gitignore`, the sidebar nav link in `SidebarChrome.tsx` and `routeTree.gen.ts`) are in `factory/SEAMS` today and the rest join it with the issue that adds each. Nothing in `ws.ts`, `rpc.ts`, `packages/contracts` or `Migrations.ts`. Those are the files upstream churns most, and adding an RPC would touch five of them. The factory API is a separate HTTP route layer instead.
+Six entries, all in `factory/SEAMS`. Nothing in `ws.ts`, `rpc.ts`, `packages/contracts` or `Migrations.ts`. Those are the files upstream churns most, and adding an RPC would touch five of them. The factory API is a separate HTTP route layer instead.
 
 ### Boundary rules, checked by a test
 

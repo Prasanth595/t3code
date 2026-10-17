@@ -28,7 +28,7 @@ describe("the pass loop", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const { calls, onePass } = counting();
-        yield* runLoop(onePass, 60);
+        yield* runLoop(onePass, () => 60);
         assert.strictEqual(calls.n, 1);
         yield* TestClock.adjust("59 seconds");
         assert.strictEqual(calls.n, 1);
@@ -44,7 +44,7 @@ describe("the pass loop", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const { calls, onePass } = counting();
-        const loop = yield* runLoop(onePass, 60);
+        const loop = yield* runLoop(onePass, () => 60);
         yield* TestClock.adjust("30 seconds");
         const next = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
         yield* loop.wake;
@@ -63,7 +63,7 @@ describe("the pass loop", () => {
       Effect.gen(function* () {
         const on = yield* Deferred.make<void>();
         const { calls, onePass } = counting({ at: 2, on });
-        const loop = yield* runLoop(onePass, 60);
+        const loop = yield* runLoop(onePass, () => 60);
         yield* TestClock.adjust("60 seconds");
         assert.strictEqual(calls.n, 2);
         yield* loop.wake;
@@ -89,7 +89,7 @@ describe("the pass loop", () => {
       Effect.gen(function* () {
         const on = yield* Deferred.make<void>();
         const { onePass } = counting({ at: 1, on });
-        const loop = yield* runLoop(onePass, 60);
+        const loop = yield* runLoop(onePass, () => 60);
         assert.isTrue(yield* loop.passRunning);
         const first = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
         yield* Deferred.succeed(on, undefined);
@@ -106,7 +106,7 @@ describe("the pass loop", () => {
   it.effect("passRunning is false again after a pass that died", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const loop = yield* runLoop(Effect.die(new Error("boom")), 60);
+        const loop = yield* runLoop(Effect.die(new Error("boom")), () => 60);
         yield* Effect.yieldNow;
         assert.isFalse(yield* loop.passRunning);
       }),
@@ -121,7 +121,7 @@ describe("the pass loop", () => {
           calls.n += 1;
           return calls.n === 1 ? Effect.die(new Error("boom")) : Effect.succeed(report(calls.n));
         });
-        const loop = yield* runLoop(onePass, 60);
+        const loop = yield* runLoop(onePass, () => 60);
         assert.strictEqual(calls.n, 1);
         const next = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
         yield* TestClock.adjust("60 seconds");
@@ -135,7 +135,7 @@ describe("the pass loop", () => {
       Effect.gen(function* () {
         const never = yield* Deferred.make<void>();
         const { calls, onePass } = counting({ at: 1, on: never });
-        const loop = yield* runLoop(onePass, 60);
+        const loop = yield* runLoop(onePass, () => 60);
         const first = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
         yield* TestClock.adjust(Duration.subtract(PASS_TIMEOUT, Duration.seconds(1)));
         assert.strictEqual(calls.n, 1, "the hung pass is still running");
@@ -153,7 +153,7 @@ describe("the pass loop", () => {
       Effect.gen(function* () {
         const on = yield* Deferred.make<void>();
         const { calls, onePass } = counting({ at: 1, on });
-        const loop = yield* runLoop(onePass, 60);
+        const loop = yield* runLoop(onePass, () => 60);
         const first = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
         yield* TestClock.adjust(Duration.subtract(PASS_TIMEOUT, Duration.seconds(1)));
         yield* Deferred.succeed(on, undefined);
@@ -170,10 +170,29 @@ describe("the pass loop", () => {
   it.effect("the loop stops with its scope", () =>
     Effect.gen(function* () {
       const { calls, onePass } = counting();
-      yield* Effect.scoped(runLoop(onePass, 60));
+      yield* Effect.scoped(runLoop(onePass, () => 60));
       assert.strictEqual(calls.n, 1);
       yield* TestClock.adjust("600 seconds");
       assert.strictEqual(calls.n, 1);
     }),
+  );
+
+  it.effect("a changed poll interval applies to the next wait, not the one running", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const poll = { seconds: 60 };
+        const { calls, onePass } = counting();
+        yield* runLoop(onePass, () => poll.seconds);
+        poll.seconds = 10;
+        yield* TestClock.adjust("59 seconds");
+        assert.strictEqual(calls.n, 1, "the wait that began at 60 seconds goes on");
+        yield* TestClock.adjust("1 second");
+        assert.strictEqual(calls.n, 2);
+        yield* TestClock.adjust("9 seconds");
+        assert.strictEqual(calls.n, 2);
+        yield* TestClock.adjust("1 second");
+        assert.strictEqual(calls.n, 3, "the wait after that pass is 10 seconds");
+      }),
+    ),
   );
 });
