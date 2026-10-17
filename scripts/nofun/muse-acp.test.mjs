@@ -808,7 +808,7 @@ describe("bridge process", () => {
     const options = Object.fromEntries(
       created.result.configOptions.map((option) => [option.id, option.currentValue]),
     );
-    assert.deepEqual(options, { model: "muse-spark-1.3", profile: "muse-review" });
+    assert.deepEqual(options, { model: "muse-spark-1.3", profile: "muse-full" });
     assert.deepEqual(created.result.configOptions.find((option) => option.id === "model").options, [
       { value: "muse-spark-1.3", name: "Muse Spark 1.3 Contributor" },
       { value: "muse-wonder-1.0", name: "Muse Wonder Contributor" },
@@ -910,7 +910,7 @@ describe("bridge process", () => {
       assert.equal(run.argv[run.argv.indexOf("--workspace") + 1], workspace);
       assert.equal(run.argv[run.argv.indexOf("--model") + 1], "muse-spark-1.3");
     }
-    assert.equal(first.argv[first.argv.indexOf("--profile") + 1], "muse-review");
+    assert.equal(first.argv[first.argv.indexOf("--profile") + 1], "muse-full");
     assert.equal(second.argv[second.argv.indexOf("--profile") + 1], "muse-judge");
     await bridge.close();
   });

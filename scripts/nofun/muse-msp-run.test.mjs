@@ -53,7 +53,7 @@ createInterface({input:process.stdin}).on('line', line => {
 });`;
 
 async function fixture(options = {}) {
-  const { extraArgs = [], ...hostEnv } = options;
+  const { extraArgs = [], readOnly = true, ...hostEnv } = options;
   const dir = mkdtempSync(join(tmpdir(), "msp-fixture-"));
   try {
     const cli = join(dir, "muse");
@@ -77,8 +77,7 @@ async function fixture(options = {}) {
         "--reasoning-effort",
         "high",
         "--disable-approval",
-        "--disable-write",
-        "--disable-shell",
+        ...(readOnly ? ["--disable-write", "--disable-shell"] : []),
         "--json",
         ...extraArgs,
       ],
@@ -325,8 +324,32 @@ test("native completion guard interrupts at the launcher's step bound and does n
   assert.ok(!events.some((e) => e.payload_type === "run.terminal.completed"));
 });
 
+test("full-access posture reaches the MSP host without disabling shell or writes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "msp-full-access-"));
+  try {
+    const launch = join(dir, "launch");
+    const { result, calls } = await fixture({
+      readOnly: false,
+      MSP_LAUNCH: launch,
+      extraArgs: ["--disable-sandbox", "--trust-workspace", "--disable-request-user-input"],
+    });
+    assert.equal(result, 0);
+    const args = JSON.parse(readFileSync(launch, "utf8")).argv;
+    for (const flag of ["--disable-sandbox", "--trust-workspace", "--disable-request-user-input"])
+      assert.ok(args.includes(flag), flag);
+    assert.ok(!args.includes("--disable-shell"));
+    assert.ok(!args.includes("--disable-write"));
+    assert.equal(
+      calls.find((call) => call.method === "session/start").params.approvalMode,
+      "allowAll",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("an unknown launcher constraint refuses the run instead of dropping the flag", async () => {
-  const { result, calls } = await fixture({ extraArgs: ["--disable-sandbox"] });
+  const { result, calls } = await fixture({ extraArgs: ["--not-a-real-constraint"] });
   assert.equal(result, 1);
   assert.deepEqual(calls, []);
 });

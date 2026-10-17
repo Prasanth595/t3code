@@ -142,11 +142,21 @@ function options(argv) {
     "--disable-write",
     "--disable-shell",
     "--trust-workspace",
+    "--disable-sandbox",
+    "--disable-request-user-input",
   ]);
   for (let i = 1; i < argv.length; i++) {
     const name = argv[i];
     if (flags.has(name)) {
-      if (["--disable-write", "--disable-shell", "--trust-workspace"].includes(name))
+      if (
+        [
+          "--disable-write",
+          "--disable-shell",
+          "--trust-workspace",
+          "--disable-sandbox",
+          "--disable-request-user-input",
+        ].includes(name)
+      )
         result.serve.push(name);
       continue;
     }
