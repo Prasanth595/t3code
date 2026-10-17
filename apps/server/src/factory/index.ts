@@ -32,6 +32,7 @@ import {
   type MachineConfig,
   type ProjectConfig,
   type RepoConfigReading,
+  type WatchedProject,
   type WatchedRepo,
 } from "./config.ts";
 import * as Gate from "./gate.ts";
@@ -95,6 +96,7 @@ import * as Events from "./t3/events.ts";
 import * as ServerExitService from "./t3/exit.ts";
 import * as Paths from "./t3/paths.ts";
 import * as T3Sessions from "./t3/sessions.ts";
+import * as WatchedRepos from "./t3/watchedRepos.ts";
 import {
   bindProcess,
   ClaimMemo,
@@ -129,6 +131,11 @@ export class FactoryLoop extends Context.Service<
     readonly save: (body: unknown) => Effect.Effect<SaveResult, SaveError>;
     /** What the passes last read of each repo's project config, by repo name. */
     readonly repoConfigs: Effect.Effect<ReadonlyMap<string, RepoConfigReading>>;
+    /**
+     * The watched projects as the reader lists them now, for the settings page. A listing that
+     * fails is logged and answers an empty list.
+     */
+    readonly watchedRepos: Effect.Effect<ReadonlyArray<WatchedProject>>;
   }
 >()("t3/factory/FactoryLoop") {}
 
@@ -341,6 +348,7 @@ export const liveWorld = (
   dataDir: string,
   process: FactoryProcess["Service"],
   sessions: T3Sessions.FactorySessions["Service"],
+  watchedRepos: Effect.Effect<ReadonlyArray<WatchedRepo>, PassError>,
   clock: () => number,
   host: string,
   attention: Pick<Attention["Service"], "raise" | "clear">,
@@ -476,6 +484,7 @@ export const liveWorld = (
       return { kind: "started" } as const;
     });
   return {
+    watchedRepos,
     project: (watched) =>
       withProcess(projectFromBase(githubFor(watched))).pipe(
         Effect.tap((project) =>
@@ -711,6 +720,7 @@ const startFactory = (options: RuntimeOptions) =>
     const path = yield* Path.Path;
     const process = yield* FactoryProcess;
     const sessions = yield* T3Sessions.FactorySessions;
+    const watched = yield* WatchedRepos.FactoryWatchedRepos;
     const gate = yield* FactoryGate;
     const events = yield* Events.FactoryEvents;
     const scope = yield* Effect.scope;
@@ -719,12 +729,30 @@ const startFactory = (options: RuntimeOptions) =>
     if (cleared > 0) yield* Effect.logInfo(`cleared ${cleared} gate lock(s)`);
 
     // What `reload` changes and the loop reads: a pass takes `current` once, at its start.
-    const state: { current: Current | null; loop: Loop | null; status: FactoryStatus } = {
+    const state: {
+      current: Current | null;
+      loop: Loop | null;
+      status: FactoryStatus;
+      watched: ReadonlyArray<string>;
+    } = {
       current: null,
       loop: null,
       status: idle("no factory config"),
+      watched: [],
     };
     const readings = new Map<string, RepoConfigReading>();
+    // The repos the last listing named, for the status; a pass lists them anew before it works.
+    const listWatched = watched.list.pipe(
+      Effect.tap((list) =>
+        Effect.sync(() => {
+          const repos = list.map((entry) => entry.repo);
+          state.watched = repos;
+          if (state.status.state === "running") {
+            state.status = { ...state.status, settings: { ...state.status.settings, repos } };
+          }
+        }),
+      ),
+    );
     const shared: LiveShared = { gating: new Set(), claimMemo: new ClaimMemo() };
     // The threads of the unfinished runs, read at start and after every pass: a pass is what
     // launches and finishes sessions, so between passes the set does not change.
@@ -752,6 +780,7 @@ const startFactory = (options: RuntimeOptions) =>
           factoryDir,
           process,
           sessions,
+          listWatched.pipe(Effect.mapError(asPassError("t3"))),
           () => Date.now(),
           hostName(),
           attention,
@@ -769,7 +798,7 @@ const startFactory = (options: RuntimeOptions) =>
           settings: {
             pollSeconds: machine.pollSeconds,
             maxConcurrentRuns: machine.maxConcurrentRuns,
-            repos: machine.repos.map((repo) => repo.repo),
+            repos: state.watched,
           },
         };
         if (state.loop !== null) {
@@ -848,6 +877,9 @@ const startFactory = (options: RuntimeOptions) =>
 
     // One reload or save at a time, and none cut short half way: two at once from idle would
     // make two loops, and a save cut short after the write leaves the loop on the old config.
+    const watchedRepos = listWatched.pipe(
+      Effect.catch((error) => Effect.logWarning(error.message).pipe(Effect.as([]))),
+    );
     const lock = yield* Semaphore.make(1);
     const reload = lock.withPermits(1)(Effect.uninterruptible(reloadNow));
     const save = (body: unknown) =>
@@ -857,6 +889,7 @@ const startFactory = (options: RuntimeOptions) =>
             saveMachineConfig(machineConfigPath, body, {
               reload: reloadNow,
               repoConfigs: Effect.sync(() => new Map(readings)),
+              watchedRepos,
             }),
           ),
         )
@@ -876,14 +909,15 @@ const startFactory = (options: RuntimeOptions) =>
       reload,
       save,
       repoConfigs: Effect.sync(() => new Map(readings)),
+      watchedRepos,
     } satisfies FactoryLoop["Service"];
   });
 
 /**
  * Gives FactoryLoop and Attention. Needs FactoryPaths, FactoryProcess, FactorySessions,
- * FactoryEvents, FactoryGate and FileSystem; what index.test.ts builds with a test FactoryPaths, a
- * fake FactoryProcess, a stub FactorySessions, a FactoryEvents it feeds by hand and a gate that
- * never runs.
+ * FactoryWatchedRepos, FactoryEvents, FactoryGate and FileSystem; what index.test.ts builds with a
+ * test FactoryPaths, a fake FactoryProcess, a stub FactorySessions, a fixed list of watched
+ * projects, a FactoryEvents it feeds by hand and a gate that never runs.
  */
 export const factoryRuntime = (options: RuntimeOptions = {}) =>
   Layer.effect(FactoryLoop, startFactory(options)).pipe(
@@ -899,5 +933,6 @@ export const FactoryLayer = FactoryRuntime.pipe(
   Layer.provide(Gate.layer),
   Layer.provide(Process.layer),
   Layer.provide(T3Sessions.layerLive),
+  Layer.provide(WatchedRepos.layer),
   Layer.provide(Events.layerLive),
 );

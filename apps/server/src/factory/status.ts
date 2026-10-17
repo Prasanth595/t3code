@@ -20,7 +20,7 @@ import { formatTs } from "./ledger/time.ts";
 export interface StatusSettings {
   readonly pollSeconds: number;
   readonly maxConcurrentRuns: number;
-  /** The `repo` of every watched repo, `owner/name`. */
+  /** The `repo` of every repo the last pass listed as watched, `owner/name`; empty before the first pass lists them. */
   readonly repos: ReadonlyArray<string>;
 }
 

@@ -265,7 +265,13 @@ const configRoute = factoryRoute(
   Effect.gen(function* () {
     const loop = yield* FactoryLoop;
     const { machineConfigPath } = yield* FactoryPaths;
-    return respond(yield* readMachineConfigReport(machineConfigPath, yield* loop.repoConfigs));
+    return respond(
+      yield* readMachineConfigReport(
+        machineConfigPath,
+        yield* loop.watchedRepos,
+        yield* loop.repoConfigs,
+      ),
+    );
   }),
 );
 

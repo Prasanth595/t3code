@@ -107,6 +107,7 @@ const listed = (fixture: Fixture) => {
     ),
     Layer.provide(
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+        namedProjectsRoot: "/unused",
         scratchRoot: Effect.succeed(Option.fromUndefinedOr(fixture.scratch)),
       }),
     ),
@@ -282,6 +283,7 @@ describe("FactoryWatchedRepos.list", () => {
         ),
         Layer.provide(
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+            namedProjectsRoot: "/unused",
             scratchRoot: Effect.succeedNone,
           }),
         ),

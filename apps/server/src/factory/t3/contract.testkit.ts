@@ -285,6 +285,9 @@ export const layerGit = GitVcsDriver.layer.pipe(
 export const layerWatchedRepos = WatchedRepos.layer.pipe(
   Layer.provide(RepositoryIdentityResolver.layer),
   Layer.provide(
-    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ scratchRoot: Effect.succeedNone }),
+    Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+      namedProjectsRoot: "/unused",
+      scratchRoot: Effect.succeedNone,
+    }),
   ),
 );
