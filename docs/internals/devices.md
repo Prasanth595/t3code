@@ -36,7 +36,11 @@ bearer and DPoP clients mint over authenticated HTTP. The ticket is stripped
 before the request reaches the hub.
 
 Stream responses carry `Cache-Control: no-transform`; the compression
-middleware would otherwise buffer an MJPEG body that never ends. In browser dev,
+middleware would otherwise buffer an MJPEG body that never ends. Browsers paint an
+MJPEG part only once the next part starts, and the hub writes a frame only when the
+screen changes, so the proxy
+[re-sends the last frame](../../apps/server/src/device/mjpegStillFrame.ts) after a
+short quiet period; without it a still screen never appears. In browser dev,
 the Vite proxy must forward WebSocket upgrades for `/api`, not only `/ws`.
 
 ## Device settings never go through the hub
