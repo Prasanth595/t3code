@@ -314,11 +314,11 @@ export function ExpandedImageDialogHost({ threadKey }: { readonly threadKey: str
   const state = useAtomValue(expandedImagePreviewAtom);
   const preview = state?.threadKey === threadKey ? state.preview : null;
   const item = preview?.images[preview.index];
-  const blobVideoSrc = item?.type === "video" && item.src?.startsWith("blob:") ? item.src : null;
+  const ownedSrc = item?.ownsSrc === true ? item.src : null;
   useEffect(() => {
-    if (blobVideoSrc === null) return;
-    return () => URL.revokeObjectURL(blobVideoSrc);
-  }, [blobVideoSrc]);
+    if (ownedSrc === null) return;
+    return () => URL.revokeObjectURL(ownedSrc);
+  }, [ownedSrc]);
   // Leaving the thread (or the chat view) drops its preview.
   useEffect(() => () => closeExpandedImagePreviewFor(threadKey), [threadKey]);
   if (preview === null) return null;
