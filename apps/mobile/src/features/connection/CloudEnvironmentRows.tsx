@@ -205,7 +205,9 @@ function ConnectedCloudEnvironmentRow(props: {
           accessibilityRole: onOpen ? "button" : undefined,
           accessibilityLabel: onOpen ? `Manage ${props.environment.environmentLabel}` : undefined,
           accessibilityHint: "Long press to remove from this device",
-          // VoiceOver's taps fall through to the row; TalkBack needs the actions on this node.
+          // VoiceOver lists every action in its rotor, so it gets a tap handler and TalkBack
+          // gets the actions. VoiceOver's double-tap-and-hold still reaches the row's long press.
+          onAccessibilityTap: onOpen,
           accessibilityActions:
             Platform.OS === "android"
               ? [...(onOpen ? [{ name: "activate" }] : []), { name: "longpress" }]

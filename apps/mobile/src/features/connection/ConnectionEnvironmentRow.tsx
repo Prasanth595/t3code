@@ -91,7 +91,9 @@ export function ConnectionEnvironmentRow(props: {
           accessibilityLabel={
             props.opensDetails ? `Manage ${props.environment.environmentLabel}` : undefined
           }
-          // VoiceOver's taps fall through to the row; TalkBack needs the action on this node.
+          // VoiceOver lists every action in its rotor, so it gets a tap handler and TalkBack
+          // gets the action.
+          onAccessibilityTap={() => props.onToggle()}
           accessibilityActions={Platform.OS === "android" ? [{ name: "activate" }] : undefined}
           onAccessibilityAction={() => props.onToggle()}
           className="flex-1 gap-0.5"
