@@ -7,6 +7,7 @@
 import { requestHeaderOrigin } from "@t3tools/client-runtime/connection";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import * as Haptics from "expo-haptics";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { useCallback } from "react";
 
@@ -27,6 +28,7 @@ interface ClientEnrollResult {
   readonly name: string;
   readonly paired: ReadonlyArray<string>;
   readonly failed: ReadonlyArray<{ readonly name: string; readonly reason: string }>;
+  readonly undoFailures: ReadonlyArray<string>;
 }
 
 function message(cause: unknown): string {
@@ -43,19 +45,22 @@ function useEnrollClient() {
       if (portalOrigin === null) throw new Error("The portal sent an invalid machine list URL.");
       // The portal origin keeps the token for the machine list (MM-914).
       const origins = [portalOrigin, ...enrolled.machines.map((machine) => machine.origin)];
-      const undos: Array<() => Promise<void>> = [];
-      // A token saved for origins that end with no environment stays unreachable, so undo it.
-      const undoAll = async () => {
-        for (const undo of undos) await undo();
+      const undos = new Map<string, () => Promise<string | null>>();
+      const undoFailures: string[] = [];
+      // A token saved for an origin that ends with no environment stays unreachable, so undo it.
+      const undo = async (origin: string) => {
+        const error = await undos.get(origin)?.();
+        undos.delete(origin);
+        if (error) undoFailures.push(`The token for ${origin} could not be removed. ${error}`);
       };
       for (const origin of new Set(origins.map(requestHeaderOrigin))) {
         if (origin === null) continue;
         const saved = await saveToken(origin, enrolled.serviceToken);
         if ("error" in saved) {
-          await undoAll();
-          throw new Error(saved.error);
+          for (const done of undos.keys()) await undo(done);
+          throw new Error([saved.error, ...undoFailures].join("\n"));
         }
-        undos.push(saved.undo);
+        undos.set(origin, saved.undo);
       }
 
       const paired: string[] = [];
@@ -64,14 +69,23 @@ function useEnrollClient() {
         try {
           const credential = await issueMachinePairingCredential(machine.origin);
           const result = await onConnectPress(buildPairingUrl(machine.origin, credential));
-          if (AsyncResult.isSuccess(result)) paired.push(machine.name);
-          else failed.push({ name: machine.name, reason: "Pairing failed." });
+          if (AsyncResult.isSuccess(result)) {
+            paired.push(machine.name);
+            continue;
+          }
+          failed.push({ name: machine.name, reason: message(Cause.squash(result.cause)) });
         } catch (cause) {
           failed.push({ name: machine.name, reason: message(cause) });
         }
+        const origin = requestHeaderOrigin(machine.origin);
+        // Two machines can share an origin; keep the token while one of them paired.
+        const shared = enrolled.machines.some(
+          (other) => paired.includes(other.name) && requestHeaderOrigin(other.origin) === origin,
+        );
+        if (origin !== null && origin !== portalOrigin && !shared) await undo(origin);
       }
-      if (paired.length === 0) await undoAll();
-      return { name: enrolled.name, paired, failed };
+      if (paired.length === 0) for (const origin of undos.keys()) await undo(origin);
+      return { name: enrolled.name, paired, failed, undoFailures };
     },
     [onConnectPress, saveToken],
   );
@@ -90,7 +104,10 @@ export function useClientEnroll(setSubmitting: (submitting: boolean) => void) {
       setPendingConnectionError(null);
       try {
         const result = await enrollClient(invite);
-        const failures = result.failed.map((entry) => `${entry.name}: ${entry.reason}`);
+        const failures = [
+          ...result.failed.map((entry) => `${entry.name}: ${entry.reason}`),
+          ...result.undoFailures,
+        ];
         if (result.paired.length > 0 && failures.length === 0) {
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           // Same as Add environment: return to what opened the sheet, so Home never nests in a sheet.
