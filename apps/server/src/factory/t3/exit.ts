@@ -54,15 +54,16 @@ export const make = (
  * Ends the process the way `t3 serve` already handles a stop: SIGTERM to itself, which
  * `NodeRuntime.runMain` turns into an interrupt of the main fiber, so the server closes its scope
  * (listeners, provider children, a running gate) as it does for `launchctl stop`. runMain's
- * teardown then exits 130 for an interrupt; the `exit` listener makes that 0, because a requested
- * restart is a clean exit to launchd (which restarts on any code) and to a shell alike. A shutdown
+ * teardown then exits 130 for an interrupt; the `exit` listener makes that one code 0, because a
+ * requested restart is a clean exit to launchd (which restarts on any code) and to a shell alike.
+ * Any other code is left alone, so a teardown that failed still shows as a failure. A shutdown
  * that hangs is cut short by `process.exit(0)` after `fallbackMs`, with a line on stderr so the
  * launchd log shows the shutdown did not finish on its own; the timer is unref'd so it never keeps
  * a finished process alive.
  */
 export const exitProcess = (fallbackMs = EXIT_FALLBACK_MS): void => {
-  process.once("exit", () => {
-    process.exitCode = 0;
+  process.once("exit", (code) => {
+    if (code === 130) process.exitCode = 0;
   });
   // @effect-diagnostics-next-line globalTimers:off - must fire while the Effect runtime is shutting down or stuck.
   setTimeout(() => {

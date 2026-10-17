@@ -44,6 +44,12 @@ describe("exitProcess", () => {
     assert.include(child.stderr, "shutdown did not finish in 200ms");
   });
 
+  it("leaves a teardown that failed at its own exit code", () => {
+    const child = run("() => process.exit(1)", 10_000);
+    assert.strictEqual(child.stdout, "sigterm\n", child.stderr);
+    assert.deepStrictEqual([child.status, child.signal], [1, null], child.stderr);
+  });
+
   it("writes nothing on stderr when the SIGTERM shutdown finishes on its own", () => {
     const child = run("() => process.exit(130)", 200);
     assert.strictEqual(child.stderr, "");
