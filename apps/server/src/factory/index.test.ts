@@ -1710,7 +1710,11 @@ describe("reloading the machine config", () => {
   };
 
   /** The runtime over a temp base dir holding `config` (or no file); `write` replaces the file. */
-  const started = (config: string | undefined, process: FactoryProcess["Service"]) =>
+  const started = (
+    config: string | undefined,
+    process: FactoryProcess["Service"],
+    events: Layer.Layer<FactoryEvents> = quietEvents,
+  ) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const { join } = yield* Path.Path;
@@ -1731,12 +1735,13 @@ describe("reloading the machine config", () => {
           ),
           Layer.provide(Layer.succeed(FactoryProcess, process)),
           Layer.provide(noSessions),
-          Layer.provide(quietEvents),
+          Layer.provide(events),
           Layer.provide(noGate),
         ),
       );
       return {
         loop: Context.get(context, FactoryLoop),
+        file: machineConfigPath,
         write: (text: string) => fs.writeFileString(machineConfigPath, text),
       };
     });
@@ -1845,4 +1850,80 @@ describe("reloading the machine config", () => {
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
+
+  it.effect("two reloads at once from idle make one loop and one wake stream", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const logs: Array<string> = [];
+        const capture = Logger.make(({ message }) => {
+          logs.push(messageText(message));
+        });
+        const subscribed = yield* Deferred.make<void>();
+        let subscriptions = 0;
+        const events = Layer.succeed(
+          FactoryEvents,
+          FactoryEvents.of({
+            runStatusChanges: Stream.suspend(() => {
+              subscriptions += 1;
+              Deferred.doneUnsafe(subscribed, Exit.void);
+              return Stream.never;
+            }),
+          }),
+        );
+        const { process } = holdingProcess();
+        const { loop, write } = yield* started(undefined, process, events);
+        yield* write(VALID);
+        yield* Effect.all([loop.reload, loop.reload], { concurrency: 2 }).pipe(
+          Effect.provide(Logger.layer([capture], { mergeWithExisting: false })),
+        );
+        yield* Deferred.await(subscribed);
+        for (let i = 0; i < 20; i++) yield* Effect.yieldNow;
+        assert.strictEqual(logs.filter((line) => line === "factory started").length, 1);
+        assert.strictEqual(subscriptions, 1);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  describe("save", () => {
+    it.effect(
+      "creates a missing file from a valid body, reloads and leaves the factory running",
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const { process } = holdingProcess();
+            const { loop, file } = yield* started(undefined, process);
+            assert.strictEqual(loop.status.state, "idle");
+            const result = yield* loop.save({
+              gh_config_dir: "/gh",
+              max_concurrent_runs: 1,
+              model: "claude-sonnet-5-5",
+              repos: [{ repo: "a/b", path: "/b" }],
+            });
+            assert.strictEqual(result.kind, "ok");
+            if (result.kind === "ok") {
+              assert.strictEqual(result.report.exists, true);
+              assert.deepStrictEqual(result.report.config?.repos, [{ repo: "a/b", path: "/b" }]);
+            }
+            assert.strictEqual(loop.status.state, "running");
+            assert.ok((yield* (yield* FileSystem.FileSystem).readFileString(file)).includes("a/b"));
+          }),
+        ).pipe(Effect.provide(NodeServices.layer)),
+    );
+
+    it.effect("answers an invalid body with the errors and a non-object body as invalid-body", () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { process } = holdingProcess();
+          const { loop, file } = yield* started(undefined, process);
+          const invalid = yield* loop.save({ poll_seconds: 5 });
+          assert.strictEqual(invalid.kind, "invalid");
+          assert.strictEqual(yield* (yield* FileSystem.FileSystem).exists(file), false);
+          for (const body of [null, [1], "x"]) {
+            assert.deepStrictEqual(yield* loop.save(body), { kind: "invalid-body" });
+          }
+          assert.strictEqual(loop.status.state, "idle");
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+    );
+  });
 });
