@@ -227,6 +227,11 @@ describe("FactorySettingsPanel", () => {
     expect(found.length, `project select ${index + 1}`).toBeGreaterThan(index);
     return found[index]!;
   };
+  /** What the closed select shows: the SelectValue text alone, never the option list. */
+  const triggerText = (root: ReactTestInstance, index: number) =>
+    textOf(
+      projectSelect(root, index).findAll((node) => String(node.type) === "select-trigger")[0]!,
+    ).trim();
   const field = (root: ReactTestInstance, name: string) =>
     root.findAll((node) => node.type === "div" && node.props["data-field"] === name)[0];
 
@@ -469,10 +474,10 @@ describe("FactorySettingsPanel", () => {
     mocks.saveFactoryConfig.mockResolvedValue(ok(populated));
     const root = await open();
 
-    expect(textOf(field(root, "repos[0].path")!)).toContain("Alpha");
+    expect(triggerText(root, 0)).toBe("Alpha");
     await act(async () => projectSelect(root, 0).props.onValueChange("/work/beta"));
     expect(projectSelect(root, 0).props.value).toBe("/work/beta");
-    expect(textOf(field(root, "repos[0].path")!)).toContain("Beta");
+    expect(triggerText(root, 0)).toBe("Beta");
 
     await click(button(root, "Save"));
 
@@ -499,9 +504,8 @@ describe("FactorySettingsPanel", () => {
     mocks.saveFactoryConfig.mockResolvedValue(ok(orphaned));
     const root = await open();
 
-    const shown = textOf(field(root, "repos[0].path")!);
-    expect(shown).toContain("/gone/away");
-    expect(shown).toContain("not a T3 project");
+    expect(triggerText(root, 0)).toBe("/gone/away (not a T3 project)");
+    expect(textOf(field(root, "repos[0].path")!)).toContain("Not a T3 project on this environment");
     expect(projectSelect(root, 0).props.value).toBe("/gone/away");
     const unknown = projectSelect(root, 0)
       .findAll((node) => node.type === "option")
@@ -520,7 +524,10 @@ describe("FactorySettingsPanel", () => {
     mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
     const root = await open();
 
+    expect(triggerText(root, 0)).toBe("Alpha");
+    expect(triggerText(root, 1)).toBe("Beta");
     expect(textOf(root)).not.toContain("not a T3 project");
+    expect(textOf(root)).not.toContain("Not a T3 project on this environment");
   });
 
   it("starts a new row with no project chosen and saves an empty path", async () => {
@@ -531,7 +538,7 @@ describe("FactorySettingsPanel", () => {
     await click(button(root, "Add repo"));
 
     expect(projectSelect(root, 0).props.value).toBeNull();
-    expect(textOf(field(root, "repos[0].path")!)).toContain("Choose a project");
+    expect(triggerText(root, 0)).toBe("Choose a project");
     expect(textOf(root)).not.toContain("not a T3 project");
 
     await click(button(root, "Save"));
