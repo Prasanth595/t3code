@@ -8,6 +8,7 @@ import type { ReactNode } from "react";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { viewport } from "../testing";
 import type { FactoryConfigResult, MachineConfigReport } from "./api";
 
 const mocks = vi.hoisted(() => ({
@@ -380,5 +381,28 @@ describe("FactorySettingsPanel", () => {
 
     expect(button(root, "Save").props.disabled).toBe(true);
     expect(textOf(root)).toContain("read-only");
+  });
+  describe.each([375, 1280])("at %i px", (width) => {
+    it("asks for touch-sized inputs and buttons, with Save present", async () => {
+      const restore = viewport(width);
+      try {
+        mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
+        const root = await open();
+        const inputs = root.findAll((node) => node.type === "input");
+        // Six machine fields, then a repo and a path for each of the two repos.
+        expect(inputs).toHaveLength(10);
+        expect(inputs.map((node) => node.props.size)).toEqual(inputs.map(() => "touch"));
+        const buttons = root.findAll((node) => node.type === "button");
+        expect(buttons.map((node) => textOf(node).trim())).toEqual([
+          "Add repo",
+          "Remove",
+          "Remove",
+          "Save",
+        ]);
+        expect(buttons.map((node) => node.props.size)).toEqual(buttons.map(() => "touch"));
+      } finally {
+        restore();
+      }
+    });
   });
 });
