@@ -1432,9 +1432,10 @@ export interface ChatComposerHandle {
     options?: { ensureLeadingBoundary?: boolean; clipboardData?: DataTransfer },
   ) => boolean;
   pasteTextAtEnd: (text: string, options?: { bypassAutoAttachment?: boolean }) => boolean;
+  /** A null `sourceAnchor` cites without opening the note editor. */
   citeAssistantText: (
     citation: AssistantCitation,
-    sourceAnchor: AssistantCitationSourceAnchor,
+    sourceAnchor: AssistantCitationSourceAnchor | null,
   ) => boolean;
   openModelPicker: () => void;
   stepReasoningEffort: (direction: 1 | -1) => void;
@@ -6048,7 +6049,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         insertComposerTextStable(
           formatAssistantCitationForComposer(citation, citation.comment),
           "cursor",
-          { ensureLeadingBoundary: true, citationCommentAnchor: sourceAnchor },
+          {
+            ensureLeadingBoundary: true,
+            ...(sourceAnchor ? { citationCommentAnchor: sourceAnchor } : {}),
+          },
         ),
       openModelPicker: openModelPickerStable,
       stepReasoningEffort: (direction) => {

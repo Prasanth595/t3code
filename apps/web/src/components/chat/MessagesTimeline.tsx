@@ -192,6 +192,7 @@ import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { WorkspaceEntryIcon, WorkspaceEntryTooltip } from "./WorkspaceEntryIcon";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
+import { TimelineCursor } from "../focusLevels/TimelineCursor";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
 import {
   AssistantCitationSource,
@@ -441,7 +442,7 @@ interface MessagesTimelineProps {
   citationHistoryLoading?: boolean;
   onCiteAssistantText?: (
     citation: AssistantCitation,
-    sourceAnchor: AssistantCitationSourceAnchor,
+    sourceAnchor: AssistantCitationSourceAnchor | null,
   ) => boolean;
   isWorking: boolean;
   runlessWorkActive?: boolean;
@@ -1425,6 +1426,13 @@ const ConversationTimeline = memo(function ConversationTimeline({
             className="relative h-full min-h-0"
             data-assistant-citation-viewport="true"
           >
+            <TimelineCursor
+              viewport={timelineViewportElement}
+              listRef={listRef}
+              rows={rows}
+              threadRef={citationThreadRef}
+              onCite={onCiteAssistantText}
+            />
             {onCiteAssistantText && citationThreadRef ? (
               <AssistantSelectionToolbar
                 viewport={timelineViewportElement}
