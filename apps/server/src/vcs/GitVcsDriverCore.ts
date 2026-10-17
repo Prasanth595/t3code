@@ -3773,6 +3773,52 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return { commitSha, remoteRefName };
     });
 
+  const fetchWorktreeBaseCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchWorktreeBaseCommit"] =
+    Effect.fn("fetchWorktreeBaseCommit")(function* (input) {
+      const remoteNames = yield* listRemoteNames(input.cwd);
+      // `%(upstream:*)` reads branch config, so it works before the tracking
+      // ref was ever fetched. The pattern also matches `<ref>/*`, hence the
+      // exact refname check.
+      const localBranch = yield* runGitStdout("GitVcsDriver.fetchWorktreeBaseCommit", input.cwd, [
+        "for-each-ref",
+        "--format=%(refname)\t%(upstream:remotename)\t%(upstream:remoteref)",
+        `refs/heads/${input.refName}`,
+      ]).pipe(
+        Effect.map((stdout) =>
+          stdout
+            .split("\n")
+            .map((line) => line.split("\t"))
+            .find(([refName]) => refName === `refs/heads/${input.refName}`),
+        ),
+      );
+      let target: { remoteName: string; branchName: string } | null;
+      if (localBranch) {
+        // A remote of "." tracks another local branch; it is not a remote name.
+        const [, remoteName = "", merge = ""] = localBranch;
+        target =
+          remoteNames.includes(remoteName) && merge.startsWith("refs/heads/")
+            ? { remoteName, branchName: merge.slice("refs/heads/".length) }
+            : null;
+      } else {
+        target = parseRemoteRefWithRemoteNames(input.refName, remoteNames);
+      }
+      const { remoteName, branchName } = target ?? {
+        remoteName: "origin",
+        branchName: input.refName,
+      };
+      if (!remoteNames.includes(remoteName)) return null;
+
+      const remoteRefName = `${remoteName}/${branchName}`;
+      yield* fetchRemote({ cwd: input.cwd, remoteName, refName: remoteRefName });
+      const resolved = yield* executeGit(
+        "GitVcsDriver.fetchWorktreeBaseCommit",
+        input.cwd,
+        ["rev-parse", "--verify", "--quiet", `refs/remotes/${remoteRefName}^{commit}`],
+        { allowNonZeroExit: true },
+      );
+      return resolved.exitCode === 0 ? { commitSha: resolved.stdout.trim(), remoteRefName } : null;
+    });
+
   const fetchRemoteBranch: GitVcsDriver.GitVcsDriver["Service"]["fetchRemoteBranch"] = Effect.fn(
     "fetchRemoteBranch",
   )(function* (input) {
@@ -4107,6 +4153,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     remoteExists,
     remoteBranchExists,
     resolveRemoteTrackingCommit,
+    fetchWorktreeBaseCommit: (input) =>
+      withListRefsInvalidation(input.cwd, fetchWorktreeBaseCommit(input)),
     fetchRemoteBranch: (input) => withListRefsInvalidation(input.cwd, fetchRemoteBranch(input)),
     fetchRemoteTrackingBranch: (input) =>
       withListRefsInvalidation(input.cwd, fetchRemoteTrackingBranch(input)),
