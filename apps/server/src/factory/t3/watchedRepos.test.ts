@@ -252,6 +252,23 @@ describe("FactoryWatchedRepos.list", () => {
     }),
   );
 
+  it.effect("skips a clone T3 names by its upstream remote, and does not call it unresolved", () =>
+    Effect.gen(function* () {
+      const root = checkout("fork", FACTORY_CONFIG);
+      // T3 prefers `upstream` over `origin`, so the identity is the parent's, not the fork's.
+      const fork: RepositoryIdentity = {
+        ...WIDGETS,
+        locator: { ...WIDGETS.locator, remoteName: "upstream" },
+        origin: { canonicalKey: "github.com/me/widgets", displayName: "me/widgets" },
+      };
+      const list = yield* listed({
+        projects: [["p-fork", root]],
+        identities: new Map([[root, fork]]),
+      });
+      assert.deepStrictEqual(list, { repos: [], unresolved: [] });
+    }),
+  );
+
   it.effect("skips a GitHub identity that lacks an owner or a name", () =>
     Effect.gen(function* () {
       const root = checkout("half", FACTORY_CONFIG);
