@@ -196,6 +196,41 @@ describe("useFactoryRuns and useFactoryRun", () => {
   });
 });
 
+describe("answers that arrive out of order", () => {
+  const deferred = <T>() => {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((r) => (resolve = r));
+    return { promise, resolve };
+  };
+
+  it("keeps the newer runs answer when an older request lands last", async () => {
+    const older = deferred<{ runs: [] }>();
+    const newer = deferred<{ runs: [] }>();
+    const calls = [older, newer];
+    __setFactoryApiForTests(
+      api({ runs: vi.fn(() => calls.shift()!.promise) as unknown as FactoryApi["runs"] }),
+    );
+    const runs = await mount(useFactoryRuns);
+    await act(async () => runs.current.refresh());
+    await act(async () => newer.resolve({ runs: [] }));
+    expect(runs.current.status).toBe("ready");
+    await act(async () => older.resolve({ runs: [{ id: "stale" }] } as never));
+    expect(runs.current.data?.runs).toEqual([]);
+  });
+
+  it("keeps the newer status answer when an older request lands last", async () => {
+    const older = deferred<ReturnType<typeof status>>();
+    const newer = deferred<ReturnType<typeof status>>();
+    const calls = [older, newer];
+    __setFactoryApiForTests(api({ status: vi.fn(() => calls.shift()!.promise) }));
+    const result = await mount(useFactoryStatus);
+    await act(async () => result.current.refresh());
+    await act(async () => newer.resolve(status(1)));
+    await act(async () => older.resolve(status(5)));
+    expect(result.current.data?.attention).toHaveLength(1);
+  });
+});
+
 describe("useFactoryAttentionCount", () => {
   it("is 0 while loading", async () => {
     __setFactoryApiForTests(api({ status: () => new Promise(() => {}) }));
