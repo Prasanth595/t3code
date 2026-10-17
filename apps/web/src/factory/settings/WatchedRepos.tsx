@@ -56,7 +56,7 @@ export function WatchedRepos({ repos }: { readonly repos: ReadonlyArray<RepoBloc
                 href={`https://github.com/${block.repo}/blob/${block.factory?.base ?? "HEAD"}/.dw/config.yml`}
                 target="_blank"
                 rel="noreferrer"
-                className="text-xs underline"
+                className="inline-flex min-h-11 items-center text-xs underline"
               >
                 View .dw/config.yml on GitHub
               </a>

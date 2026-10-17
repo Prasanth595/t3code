@@ -226,11 +226,11 @@ export function FactorySettingsPanel() {
   if (load.status === "error") {
     return (
       <SettingsPageContainer>
-        <div className="flex items-center gap-3 px-3 text-sm sm:px-4">
+        <div className="flex flex-wrap items-center gap-3 px-3 text-sm sm:px-4">
           <p role="alert" className="text-destructive-foreground">
             {load.message}
           </p>
-          <Button size="sm" variant="outline" onClick={() => setAttempt((n) => n + 1)}>
+          <Button size="touch" variant="outline" onClick={() => setAttempt((n) => n + 1)}>
             Retry
           </Button>
         </div>
@@ -286,7 +286,7 @@ export function FactorySettingsPanel() {
           control={
             <Field name="gh_config_dir" errors={errors}>
               <Input
-                size="sm"
+                size="touch"
                 font="mono"
                 aria-label="GitHub config directory"
                 value={form.gh_config_dir}
@@ -301,7 +301,7 @@ export function FactorySettingsPanel() {
           control={
             <Field name="poll_seconds" errors={errors}>
               <Input
-                size="sm"
+                size="touch"
                 type="number"
                 aria-label="Poll seconds"
                 value={form.poll_seconds}
@@ -315,7 +315,7 @@ export function FactorySettingsPanel() {
           control={
             <Field name="max_concurrent_runs" errors={errors}>
               <Input
-                size="sm"
+                size="touch"
                 type="number"
                 aria-label="Max concurrent runs"
                 value={form.max_concurrent_runs}
@@ -329,7 +329,7 @@ export function FactorySettingsPanel() {
           control={
             <Field name="max_concurrent_gates" errors={errors}>
               <Input
-                size="sm"
+                size="touch"
                 type="number"
                 aria-label="Max concurrent gates"
                 value={form.max_concurrent_gates}
@@ -343,7 +343,7 @@ export function FactorySettingsPanel() {
           control={
             <Field name="model_instance" errors={errors}>
               <Input
-                size="sm"
+                size="touch"
                 aria-label="Model instance"
                 value={form.model_instance}
                 onChange={setText("model_instance")}
@@ -355,7 +355,12 @@ export function FactorySettingsPanel() {
           title="Model"
           control={
             <Field name="model" errors={errors}>
-              <Input size="sm" aria-label="Model" value={form.model} onChange={setText("model")} />
+              <Input
+                size="touch"
+                aria-label="Model"
+                value={form.model}
+                onChange={setText("model")}
+              />
             </Field>
           }
         />
@@ -365,7 +370,7 @@ export function FactorySettingsPanel() {
         title="Repos"
         headerAction={
           <Button
-            size="xs"
+            size="touch"
             variant="outline"
             onClick={() => reshapeRepos((repos) => [...repos, { repo: "", path: "" }])}
           >
@@ -376,10 +381,13 @@ export function FactorySettingsPanel() {
         {form.repos.map((row, index) => (
           // Rows have no identity beyond their position, which is also how the server names them.
           // eslint-disable-next-line react/no-array-index-key
-          <div key={index} className="flex flex-wrap items-start gap-2 px-3 py-2 sm:px-4">
+          <div
+            key={index}
+            className="flex flex-col items-stretch gap-2 px-3 py-2 sm:flex-row sm:flex-wrap sm:items-start sm:px-4"
+          >
             <Field name={`repos[${index}].repo`} errors={errors}>
               <Input
-                size="sm"
+                size="touch"
                 placeholder="owner/name"
                 aria-label={`Repository ${index + 1}`}
                 value={row.repo}
@@ -388,7 +396,7 @@ export function FactorySettingsPanel() {
             </Field>
             <Field name={`repos[${index}].path`} errors={errors}>
               <Input
-                size="sm"
+                size="touch"
                 font="mono"
                 placeholder="/path/to/checkout"
                 aria-label={`Path ${index + 1}`}
@@ -397,7 +405,7 @@ export function FactorySettingsPanel() {
               />
             </Field>
             <Button
-              size="xs"
+              size="touch"
               variant="ghost-destructive"
               aria-label={`Remove repo ${index + 1}`}
               onClick={() => reshapeRepos((repos) => repos.filter((_, i) => i !== index))}
@@ -412,7 +420,7 @@ export function FactorySettingsPanel() {
       </SettingsSection>
 
       <div className="flex items-center gap-3 px-3 sm:px-4">
-        <Button size="sm" disabled={!canWrite || saving} onClick={() => void save()}>
+        <Button size="touch" disabled={!canWrite || saving} onClick={() => void save()}>
           Save
         </Button>
         {saveStatus === "saved" ? (

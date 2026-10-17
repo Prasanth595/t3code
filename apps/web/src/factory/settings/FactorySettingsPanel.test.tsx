@@ -40,8 +40,14 @@ vi.mock("../../components/settings/settingsLayout", async () => {
   return {
     SettingsPageContainer: (props: { children: ReactNode }) =>
       createElement("div", null, props.children),
-    SettingsSection: (props: { title: string; children: ReactNode }) =>
-      createElement("section", null, createElement("h2", null, props.title), props.children),
+    SettingsSection: (props: { title: string; headerAction?: ReactNode; children: ReactNode }) =>
+      createElement(
+        "section",
+        null,
+        createElement("h2", null, props.title),
+        props.headerAction,
+        props.children,
+      ),
     SettingsRow: (props: {
       title: string;
       description?: ReactNode;
