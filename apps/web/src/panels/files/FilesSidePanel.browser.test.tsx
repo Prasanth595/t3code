@@ -2,7 +2,7 @@ import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { act, cloneElement, Suspense, use, type ReactElement, type ReactNode } from "react";
-import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -139,7 +139,8 @@ const refOn = (environmentId: string): ScopedThreadRef => ({
   environmentId: EnvironmentId.make(environmentId),
   threadId,
 });
-let renderer: ReactTestRenderer | undefined;
+let root: Root;
+let container: HTMLDivElement;
 
 async function renderFileFor(threadRef: ScopedThreadRef) {
   const host: PanelHost = {
@@ -169,27 +170,24 @@ async function renderFileFor(threadRef: ScopedThreadRef) {
     </PanelHostContext>
   );
   await act(async () => {
-    if (renderer) renderer.update(element);
-    else renderer = create(element);
+    root.render(element);
   });
 }
 
-async function press(node: ReactTestInstance) {
-  await act(async () => node.props.onClick());
+async function press(node: HTMLButtonElement) {
+  await act(async () => node.click());
 }
 
 async function openSrcFolder() {
-  const browse = renderer!.root.findAll(
-    (node) => node.type === "button" && node.props["aria-label"] === "Browse src",
-  );
+  const browse = container.querySelectorAll<HTMLButtonElement>('button[aria-label="Browse src"]');
   expect(browse).toHaveLength(1);
   await press(browse[0]!);
 }
 
 const siblingValues = () =>
-  renderer!.root
-    .findAll((node) => node.type === "button" && node.props["data-value"] !== undefined)
-    .map((node) => node.props["data-value"] as string);
+  Array.from(container.querySelectorAll<HTMLButtonElement>("button[data-value]")).map(
+    (node) => node.dataset.value,
+  );
 
 const surfacesOf = (threadRef: ScopedThreadRef) =>
   useRightPanelStore.getState().byThreadKey[scopedThreadKey(threadRef)]?.surfaces;
@@ -198,16 +196,11 @@ const surfacesOf = (threadRef: ScopedThreadRef) =>
 beforeAll(() => import("./FilesSidePanel"), 30_000);
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  const storage = new Map<string, string>();
-  vi.stubGlobal("window", {
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    localStorage: {
-      getItem: (key: string) => storage.get(key) ?? null,
-      setItem: (key: string, value: string) => storage.set(key, value),
-      removeItem: (key: string) => storage.delete(key),
-    },
-  });
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+
+  localStorage.clear();
   siblingsByEnvironment.clear();
   siblingsByEnvironment.set("environment-a", ["src/a.ts", "src/b.ts"]);
   siblingsByEnvironment.set("environment-b", ["src/a.ts", "src/c.ts"]);
@@ -217,9 +210,9 @@ beforeEach(() => {
     userActionRevisionByThreadKey: {},
   });
 });
-afterEach(() => {
-  act(() => renderer?.unmount());
-  renderer = undefined;
+afterEach(async () => {
+  await act(() => root.unmount());
+  container.remove();
   vi.unstubAllGlobals();
 });
 
@@ -230,11 +223,7 @@ describe("files side panel", () => {
     await openSrcFolder();
     expect(siblingValues()).toEqual(["src/a.ts", "src/b.ts"]);
 
-    await press(
-      renderer!.root.find(
-        (node) => node.type === "button" && node.props["data-value"] === "src/b.ts",
-      ),
-    );
+    await press(container.querySelector<HTMLButtonElement>('button[data-value="src/b.ts"]')!);
     expect(surfacesOf(threadRef)).toMatchObject([{ kind: "file", relativePath: "src/b.ts" }]);
     expect(surfacesOf(refOn("environment-b"))).toBeUndefined();
   });
@@ -246,11 +235,7 @@ describe("files side panel", () => {
     await openSrcFolder();
     expect(siblingValues()).toEqual(["src/a.ts", "src/c.ts"]);
 
-    await press(
-      renderer!.root.find(
-        (node) => node.type === "button" && node.props["data-value"] === "src/c.ts",
-      ),
-    );
+    await press(container.querySelector<HTMLButtonElement>('button[data-value="src/c.ts"]')!);
     expect(surfacesOf(threadRef)).toMatchObject([{ kind: "file", relativePath: "src/c.ts" }]);
     expect(surfacesOf(refOn("environment-a"))).toBeUndefined();
   });
