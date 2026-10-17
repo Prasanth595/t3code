@@ -3293,8 +3293,12 @@ function applyClaudeTaskTool(
   }
   if (toolName === "TaskCreate") {
     const created = claudeTaskField(result, "task");
-    const id = claudeTaskString(created, "id") ?? claudeCreatedTaskIdFromText(result);
-    const text = claudeTaskString(created, "subject") ?? claudeTaskString(input, "subject");
+    const fromText = claudeCreatedTaskFromText(result);
+    const id = claudeTaskString(created, "id") ?? fromText?.id;
+    const text =
+      claudeTaskString(created, "subject") ??
+      fromText?.subject ??
+      claudeTaskString(input, "subject");
     if (id === undefined || text === undefined) return undefined;
     return new Map(tasks).set(id, { text, status: "pending" });
   }
@@ -3318,10 +3322,12 @@ function applyClaudeTaskTool(
 
 // Subagent results carry no structured `tool_use_result`, only the text
 // "Task #3 created successfully: <subject>".
-function claudeCreatedTaskIdFromText(result: unknown): string | undefined {
-  return typeof result === "string"
-    ? /^Task #(\S+) created successfully/.exec(result)?.[1]
-    : undefined;
+function claudeCreatedTaskFromText(
+  result: unknown,
+): { readonly id: string; readonly subject: string } | undefined {
+  const match =
+    typeof result === "string" ? /^Task #(\S+) created successfully: (.+)$/s.exec(result) : null;
+  return match === null ? undefined : { id: match[1]!, subject: match[2]!.trim() };
 }
 
 function claudeTaskSteps(tasks: ClaudeTaskList): ReadonlyArray<OrchestrationV2PlanStep> {

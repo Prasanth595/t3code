@@ -4457,7 +4457,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(new Set(plans.map((plan) => plan.id)).size, 1);
       assert.deepEqual(plans.at(-1)?.steps, [
         { id: "task-1", text: "Main task", status: "completed" },
-        { id: "task-2", text: "Requested Child task", status: "pending" },
+        { id: "task-2", text: "Child task", status: "pending" },
       ]);
     }).pipe(
       Effect.scoped,
