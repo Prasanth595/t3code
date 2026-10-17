@@ -1076,13 +1076,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
       onContentOverflowChange(measureContentOverflow());
     });
   };
-  const handleItemSizeChanged = () => {
-    if (disclosurePinsEndRef.current) {
-      queueMicrotask(pinDisclosureToEnd);
-      scheduleDisclosureSettle();
-    }
-    reportContentOverflow();
-  };
   useEffect(() => cancelContentOverflowFrame, [cancelContentOverflowFrame]);
   useLayoutEffect(() => {
     cancelContentOverflowFrame();
@@ -1151,7 +1144,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
 
   const itemMeasurementFrameRef = useRef<number | null>(null);
-  const handleItemSizeChanged = useCallback(() => {
+  const handleItemSizeChanged = () => {
+    if (disclosurePinsEndRef.current) {
+      queueMicrotask(pinDisclosureToEnd);
+      scheduleDisclosureSettle();
+    }
     reportContentOverflow();
     if (itemMeasurementFrameRef.current !== null) return;
     // Read after LegendList has applied all row measurements for this frame.
@@ -1159,7 +1156,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       itemMeasurementFrameRef.current = null;
       handleScroll();
     });
-  }, [handleScroll, reportContentOverflow]);
+  };
 
   useEffect(
     () => () => {
