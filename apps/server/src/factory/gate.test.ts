@@ -49,8 +49,6 @@ const BASE_SHORT = "89abcde";
 
 const isRoot = globalThis.process.getuid?.() === 0;
 
-// ---- helpers -----------------------------------------------------------------------------
-
 const spawnGit = (cwd: string, args: ReadonlyArray<string>) =>
   NodeChildProcess.spawnSync(
     "git",
@@ -205,8 +203,6 @@ const withEnv = <A, E, R>(
 const headField = (dir: string, format: string) =>
   git(dir, "log", "-1", `--format=${format}`).trim();
 
-// ---- a fake git on PATH -------------------------------------------------------------------
-
 /**
  * A directory with a script that stands in for `git`. The script first writes its pid to
  * `self.pid`, which is the id of its process group too; `kill` signals that group, so a test
@@ -280,8 +276,6 @@ const recordedCalls = (fake: FakeGit): Array<string> => fake.file("log").split("
 /** `checkout` on a script that stands in for `git`, in a directory of its own. */
 const checkoutWithFake = (fake: FakeGit, options: GateOptions) =>
   checkout(options, REPO, SOME_SHA, BASE, NodePath.join(fake.dir, "wt"));
-
-// ---- LocalWorkspace -----------------------------------------------------------------------
 
 it("a workspace error says what failed", () => {
   assert.strictEqual(
@@ -366,8 +360,6 @@ it.live("a gate command that cannot start is an error and not a failed command",
     );
   }).pipe(provided),
 );
-
-// ---- LocalWorkspace: a standalone repository holding one commit ---------------------------
 
 it.live("a checkout is a standalone repository at the fetched commit", () =>
   Effect.gen(function* () {
@@ -1208,8 +1200,6 @@ it.live("a checkout that runs past its limit is killed with everything it starte
   ),
 );
 
-// ---- gate: a fresh checkout of the pull request's head ------------------------------------
-
 /** The input of a gate with the defaults the tests share; each test overrides what it needs. */
 function baseInput(
   remote: Remote,
@@ -1666,8 +1656,6 @@ it("the gate's paths are built from the validated run id", () => {
   assert.throws(() => gateLockFile("/data", { repo: "a/b", issue: "1", attempt: -1 }));
 });
 
-// ---- gate: the head merged with the current base ------------------------------------------
-
 /**
  * The ledger's write and sync on the real file, except that the `write`th write fails having
  * written nothing and the `sync`th sync fails after its write landed (counting from one).
@@ -1828,8 +1816,6 @@ it.live("a head behind the base is gated on the merged tree", () =>
   }).pipe(provided),
 );
 
-// ---- gate: leftovers and cleanup ----------------------------------------------------------
-
 /** Makes `dir/sub/f` and takes the write permission off `dir/sub`, so `dir` cannot be removed. */
 const lockDown = (dir: string) => {
   NodeFS.mkdirSync(NodePath.join(dir, "sub"), { recursive: true });
@@ -1942,8 +1928,6 @@ it.live("a leftover that cannot be removed is noted once and the attempt is an e
     }).pipe(Effect.ensuring(Effect.sync(() => unlock(dir))));
   }).pipe(provided),
 );
-
-// ---- gate: what the ledger and git output may and may not hold -----------------------------
 
 /** The real process layer, except that the `nth` shell command (1-based) cannot start. */
 const failingShellLayer = (nth: number) =>

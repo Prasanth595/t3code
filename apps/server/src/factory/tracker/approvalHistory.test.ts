@@ -58,8 +58,6 @@ it("a UTC second is exactly YYYY-MM-DDTHH:MM:SSZ", () => {
   }
 });
 
-// ---- the judgement over an answer, with no gh call ----
-
 const READY = "factory:ready";
 const BEFORE = "2026-10-04T09:00:00Z";
 const LABELED = "2026-10-04T10:00:00Z";

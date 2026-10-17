@@ -1,3 +1,4 @@
+CLAUDE.md
 .gitignore
 apps/desktop/src/app/DesktopApp.test.ts
 apps/desktop/src/app/DesktopApp.ts
