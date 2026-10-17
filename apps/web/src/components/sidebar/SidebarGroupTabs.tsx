@@ -418,17 +418,20 @@ export function SidebarGroupTabs(props: {
   };
 
   const newGroupTarget = state.dropTargetId === SIDEBAR_GROUP_DROP_NEW;
-  const openBarMenu = async (position: { x: number; y: number }) => {
-    const clicked = await showContextMenuFallback(
-      [{ id: "new", label: "New group", disabled: !state.ready }],
-      position,
-    );
-    if (clicked !== "new") return;
+  // The tab bar's right-click menu and the editors make a group here. The editor then opens on it.
+  const createGroupAndEdit = () => {
     const id = state.createGroup([]);
     // The new tab renders on the next frame; anchor the editor to the bar until then.
     if (id !== null && barRef.current !== null) {
       setEditing({ groupId: id, anchor: barRef.current });
     }
+  };
+  const openBarMenu = async (position: { x: number; y: number }) => {
+    const clicked = await showContextMenuFallback(
+      [{ id: "new", label: "New group", disabled: !state.ready }],
+      position,
+    );
+    if (clicked === "new") createGroupAndEdit();
   };
   return (
     <div
@@ -544,6 +547,7 @@ export function SidebarGroupTabs(props: {
             <SidebarDefaultTabEditor
               defaultTab={state.settings.defaultTab}
               onChange={(update) => state.setDefaultTab(update)}
+              onNewGroup={createGroupAndEdit}
             />
           ) : editingGroup === null ? null : (
             <SidebarGroupEditor
@@ -561,6 +565,7 @@ export function SidebarGroupTabs(props: {
                 setEditing(null);
                 state.deleteGroup(editingGroup.id);
               }}
+              onNewGroup={createGroupAndEdit}
             />
           )}
         </PopoverPopup>
@@ -640,6 +645,7 @@ function SidebarGroupEditor(props: {
   onSetRules: (rules: SidebarGroup["rules"]) => void;
   onMove: (toIndex: number) => void;
   onDelete: () => void;
+  onNewGroup: () => void;
 }) {
   const { group } = props;
   const [name, setName] = useState(group.name);
@@ -761,7 +767,7 @@ function SidebarGroupEditor(props: {
           />
         </form>
       </div>
-      <EditorFooter>
+      <div className="flex gap-1">
         <Button
           variant="ghost"
           size="xs"
@@ -778,6 +784,9 @@ function SidebarGroupEditor(props: {
         >
           Move right
         </Button>
+      </div>
+      <EditorFooter>
+        <NewGroupButton onClick={props.onNewGroup} />
         <Button
           variant="destructive"
           size="xs"
@@ -850,6 +859,7 @@ function TabLookEditor(props: {
 function SidebarDefaultTabEditor(props: {
   defaultTab: SidebarGroups["defaultTab"];
   onChange: (update: (tab: SidebarGroups["defaultTab"]) => SidebarGroups["defaultTab"]) => void;
+  onNewGroup: () => void;
 }) {
   const { defaultTab } = props;
   const [name, setName] = useState(defaultTab.name ?? "");
@@ -903,7 +913,22 @@ function SidebarDefaultTabEditor(props: {
           </Button>
         </div>
       </div>
+      <EditorFooter>
+        <NewGroupButton onClick={props.onNewGroup} />
+      </EditorFooter>
     </div>
+  );
+}
+
+/**
+ * The way to a new group without a right-click or a drag, for touch screens and the keyboard.
+ */
+function NewGroupButton(props: { onClick: () => void }) {
+  return (
+    <Button variant="ghost" size="xs" onClick={props.onClick}>
+      <PlusIcon />
+      New group
+    </Button>
   );
 }
 
