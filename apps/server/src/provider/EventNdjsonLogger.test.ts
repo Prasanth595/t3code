@@ -17,6 +17,7 @@ import {
   makeEventNdjsonLogger,
   makeEventNdjsonLogStore,
   type PendingRecord,
+  resolveThreadSegment,
   writeBatchedMessages,
 } from "./EventNdjsonLogger.ts";
 
@@ -853,4 +854,22 @@ describe("EventNdjsonLogger", () => {
       }
     }),
   );
+
+  it("gives sibling delegated children different log segments", () => {
+    const parent = "thread:delegated-task:command:mcp:a3d4f4fd-98a2-4ae0-9b64-6d82420b5096";
+    const first = resolveThreadSegment(
+      `${parent}:delegate-task:canvas-first:11111111-2222-4333-8444-555555555555`,
+    );
+    const second = resolveThreadSegment(
+      `${parent}:delegate-task:canvas-second:66666666-7777-4888-8999-000000000000`,
+    );
+    assert.notEqual(first, second);
+    assert.isAtMost(first.length, 80);
+    assert.isAtMost(second.length, 80);
+  });
+
+  it("keeps short non-delegated thread log segments unchanged", () => {
+    assert.equal(resolveThreadSegment("mcp:094f2bda-50bf-4462-b1fb-603ca48a4397"), "mcp-094f2bda-50bf-4462-b1fb-603ca48a4397");
+    assert.equal(resolveThreadSegment(null), "_global");
+  });
 });
