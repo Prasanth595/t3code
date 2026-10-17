@@ -1,13 +1,13 @@
 // @effect-diagnostics nodeBuiltinImport:off - the exit ends a process, so it is proven on a child process.
 import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
-import * as NodeUrl from "node:url";
+import * as NodeURL from "node:url";
 
 import { assert } from "@effect/vitest";
 import { describe, it } from "vite-plus/test";
 
-const exitModule = NodeUrl.pathToFileURL(
-  NodePath.join(NodePath.dirname(NodeUrl.fileURLToPath(import.meta.url)), "exit.ts"),
+const exitModule = NodeURL.pathToFileURL(
+  NodePath.join(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "exit.ts"),
 ).href;
 
 /**
@@ -37,9 +37,15 @@ describe("exitProcess", () => {
     assert.deepStrictEqual([child.status, child.signal], [0, null], child.stderr);
   });
 
-  it("exits 0 through the fallback when the SIGTERM shutdown hangs", () => {
+  it("exits 0 through the fallback when the SIGTERM shutdown hangs, and says so on stderr", () => {
     const child = run("() => {}", 200);
     assert.strictEqual(child.stdout, "sigterm\n", child.stderr);
     assert.deepStrictEqual([child.status, child.signal], [0, null], child.stderr);
+    assert.include(child.stderr, "shutdown did not finish in 200ms");
+  });
+
+  it("writes nothing on stderr when the SIGTERM shutdown finishes on its own", () => {
+    const child = run("() => process.exit(130)", 200);
+    assert.strictEqual(child.stderr, "");
   });
 });

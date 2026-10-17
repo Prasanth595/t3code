@@ -37,7 +37,7 @@ import { formatTs, parseTs } from "../ledger/time.ts";
 import { stopRequestPath } from "../runner/stop.ts";
 import type { FactoryStatus } from "../status.ts";
 import { route } from "./auth.ts";
-import { ServerExit } from "./exit.ts";
+import * as ServerExitService from "./exit.ts";
 import { FactoryRoutes, RESTART_PATH, STATUS_PATH } from "./http.ts";
 import { FactoryPaths } from "./paths.ts";
 
@@ -170,12 +170,15 @@ const worldContext = (
   exits: ReturnType<typeof makeExits>,
 ) =>
   Context.make(EnvironmentAuth.EnvironmentAuth, auth).pipe(
-    Context.add(ServerExit, {
-      exit: Effect.sync(() => {
-        exits.count += 1;
-        exits.settle();
-      }),
-    }),
+    Context.add(
+      ServerExitService.ServerExit,
+      ServerExitService.make(
+        Effect.sync(() => {
+          exits.count += 1;
+          exits.settle();
+        }),
+      ),
+    ),
     Context.add(
       FactoryLoop,
       FactoryLoop.of({
