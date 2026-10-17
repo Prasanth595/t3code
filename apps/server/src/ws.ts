@@ -209,6 +209,7 @@ import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
+import { resolveUserProjectsRoot } from "./project/userProjectsRoot.ts";
 import { projectMutationOperation } from "./project/ProjectMutation.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
@@ -1667,6 +1668,7 @@ const layerWsRpc = (
           const environment = yield* serverEnvironment.getDescriptor;
           const auth = yield* serverAuth.getDescriptor();
           const scratchWorkspaceRoot = yield* managedFolders.scratchRoot;
+          const userProjectsRoot = yield* resolveUserProjectsRoot();
           const editorConfig = yield* resolveEditorConfig(
             yield* resolveAvailableEditorsForConfig(externalLauncher.resolveAvailableEditors()),
             resolveFileManagerRevealKindForConfig(externalLauncher.resolveFileManagerRevealKind()),
@@ -1710,6 +1712,10 @@ const layerWsRpc = (
               onSome: (root) => ({ scratchWorkspaceRoot: root }),
             }),
             newProjectsRoot: managedFolders.namedProjectsRoot,
+            ...Option.match(userProjectsRoot, {
+              onNone: () => ({}),
+              onSome: (root) => ({ userProjectsRoot: root }),
+            }),
           };
         });
 
