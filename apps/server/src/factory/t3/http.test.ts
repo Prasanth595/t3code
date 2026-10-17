@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  AuthEnvironmentMaintainScope,
   type AuthEnvironmentScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
@@ -128,6 +129,7 @@ type Call = (method: "GET" | "POST", path: string, token?: string) => Promise<Re
 interface Tokens {
   readonly read: string;
   readonly operate: string;
+  readonly maintain: string;
   readonly settingsWrite: string;
 }
 
@@ -230,6 +232,7 @@ const serving = <A>(
     const tokens: Tokens = {
       read: yield* issue(AuthOrchestrationReadScope),
       operate: yield* issue(AuthOrchestrationOperateScope),
+      maintain: yield* issue(AuthEnvironmentMaintainScope),
       settingsWrite: yield* issue(AuthSettingsWriteScope),
     };
     return yield* Effect.acquireUseRelease(
@@ -430,9 +433,9 @@ describe("the scope a route requires", () => {
     }),
   );
 
-  it.effect("the restart route answers 403 to a session without operate, and exits nothing", () =>
+  it.effect("the restart route answers 403 to a session without maintain, and exits nothing", () =>
     serving({}, async (call, { tokens, exits }) => {
-      for (const token of [tokens.read, tokens.settingsWrite]) {
+      for (const token of [tokens.read, tokens.operate, tokens.settingsWrite]) {
         const response = await call("POST", RESTART_PATH, token);
         assert.strictEqual(response.status, 403);
         assert.strictEqual((await json(response)).code, "insufficient_scope");
@@ -449,21 +452,21 @@ describe("POST /api/factory/restart", () => {
 
   it.effect("answers 202 before the exit, exits exactly once, and refuses a second request", () =>
     serving({}, async (call, { tokens, exits }) => {
-      const response = await call("POST", RESTART_PATH, tokens.operate);
+      const response = await call("POST", RESTART_PATH, tokens.maintain);
       assert.strictEqual(response.status, 202);
       const body = await json(response);
       assert.strictEqual(body.restarting, true);
       assert.isTrue(typeof body.message === "string" && body.message.length > 0);
       assert.strictEqual(exits.count, 0, "the response is produced before the exit");
 
-      const again = await call("POST", RESTART_PATH, tokens.operate);
+      const again = await call("POST", RESTART_PATH, tokens.maintain);
       assert.strictEqual(again.status, 409);
       assert.strictEqual((await json(again)).code, "restart_pending");
 
       await exits.done;
       assert.strictEqual(exits.count, 1);
 
-      const late = await call("POST", RESTART_PATH, tokens.operate);
+      const late = await call("POST", RESTART_PATH, tokens.maintain);
       assert.strictEqual(late.status, 409);
       assert.strictEqual(exits.count, 1, "a pending restart never exits twice");
     }),
