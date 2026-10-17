@@ -38,7 +38,7 @@ factory/scripts/rollback.sh                   # point `current` at the previous 
 
 Build the macOS app with `vp run dist:desktop:dmg:arm64`. The dmg is unsigned by default and lands under `release/`. The first time you open an unsigned app, right-click it and choose Open.
 
-It installs and runs beside upstream T3 Code and shares nothing with it, or with the LaunchAgent server: its own bundle id (`io.github.rawphp.t3factory`), name (`T3 Factory`), app data (`~/Library/Application Support/t3factory`), T3 home (`~/.t3factory`), `t3factory://` URL scheme, backend port scan from 3880 and launchd label (`io.github.rawphp.t3factory.service`). A local build has no update feed unless `T3CODE_DESKTOP_UPDATE_REPOSITORY` or `GITHUB_REPOSITORY` is set. The identity values live in `scripts/lib/fork-identity.ts`.
+It installs and runs beside upstream T3 Code and shares nothing with it, or with the LaunchAgent server: its own bundle id (`io.github.original-solutions.t3code-factory`), name (`T3 Code Factory`), app data (`~/Library/Application Support/t3code-factory`), T3 home (`~/.t3code-factory`), `t3code-factory://` URL scheme, backend port scan from 3880 and launchd label (`io.github.original-solutions.t3code-factory.service`). A local build has no update feed unless `T3CODE_DESKTOP_UPDATE_REPOSITORY` or `GITHUB_REPOSITORY` is set. The identity values live in `scripts/lib/fork-identity.ts`.
 
 ## Logs
 
