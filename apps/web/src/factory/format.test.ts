@@ -7,6 +7,8 @@ import {
   labelForState,
   lastGateOutput,
   parseRunId,
+  runIsFinished,
+  runState,
   stateBadgeVariant,
   threadIdOf,
 } from "./format";
@@ -156,5 +158,23 @@ describe("labelForState and stateBadgeVariant", () => {
     expect(stateBadgeVariant("needs-info")).toBe("warning");
     expect(stateBadgeVariant("triage")).toBe("secondary");
     expect(stateBadgeVariant(null)).toBe("secondary");
+  });
+});
+
+describe("runState and runIsFinished", () => {
+  it("reads the state from the last state_changed entry", () => {
+    const entries = [
+      entry("state_changed", { from: "ready", to: "triage" }),
+      entry("state_changed", { from: "triage", to: "building" }),
+    ];
+    expect(runState(entries)).toBe("building");
+    expect(runState([entry("claimed", {})])).toBeNull();
+  });
+
+  it("is finished once a finished entry is written", () => {
+    expect(runIsFinished([entry("claimed", {})])).toBe(false);
+    expect(runIsFinished([entry("claimed", {}), entry("finished", { outcome: "stuck" })])).toBe(
+      true,
+    );
   });
 });
