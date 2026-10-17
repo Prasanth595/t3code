@@ -249,7 +249,10 @@ describe("Antigravity process environment", () => {
       const findAmong = (existing: ReadonlyArray<string>, baseEnv: NodeJS.ProcessEnv = {}) =>
         findLinuxCaBundle(baseEnv).pipe(
           Effect.provide(
-            FileSystem.layerNoop({ exists: (path) => Effect.succeed(existing.includes(path)) }),
+            Layer.mergeAll(
+              FileSystem.layerNoop({ exists: (path) => Effect.succeed(existing.includes(path)) }),
+              NodePath.layerPosix,
+            ),
           ),
         );
       const nixBundle = "/nix/store/nss-cacert/etc/ssl/certs/ca-bundle.crt";
@@ -266,6 +269,11 @@ describe("Antigravity process environment", () => {
       expect(
         yield* findAmong(["/etc/ssl/certs/ca-certificates.crt"], { NIX_SSL_CERT_FILE: nixBundle }),
       ).toBe("/etc/ssl/certs/ca-certificates.crt");
+      expect(
+        yield* findAmong(["certs/ca-bundle.crt", "/etc/ssl/cert.pem"], {
+          NIX_SSL_CERT_FILE: "certs/ca-bundle.crt",
+        }),
+      ).toBe("/etc/ssl/cert.pem");
     }),
   );
 

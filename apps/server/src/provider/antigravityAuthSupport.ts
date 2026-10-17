@@ -205,13 +205,21 @@ const LINUX_CA_BUNDLE_PATHS = [
   "/etc/ssl/cert.pem",
 ];
 
-/** The first CA bundle that exists: Nix's own setting, then the usual system paths. */
+/**
+ * The first CA bundle that exists: Nix's own setting, then the usual system paths. A relative path
+ * is skipped, because the agent runs in the project directory and would read a different file.
+ */
 export const findLinuxCaBundle = Effect.fn("findLinuxCaBundle")(function* (
   baseEnv: NodeJS.ProcessEnv,
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   for (const candidate of [baseEnv.NIX_SSL_CERT_FILE, ...LINUX_CA_BUNDLE_PATHS]) {
-    if (candidate && (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false)))) {
+    if (
+      candidate &&
+      path.isAbsolute(candidate) &&
+      (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false)))
+    ) {
       return candidate;
     }
   }
