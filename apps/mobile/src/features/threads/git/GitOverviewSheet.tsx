@@ -106,9 +106,10 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       : null,
   );
 
+  const repositoryKey = selectedThreadProject?.repositoryIdentity?.canonicalKey;
   const gitStatusForActions = useMemo(
-    () => resolveThreadGitStatus(gitStatusQuery.data, selectedThread?.pullRequests),
-    [gitStatusQuery.data, selectedThread?.pullRequests],
+    () => resolveThreadGitStatus(gitStatusQuery.data, selectedThread?.pullRequests, repositoryKey),
+    [gitStatusQuery.data, selectedThread?.pullRequests, repositoryKey],
   );
 
   const currentBranchLabel =

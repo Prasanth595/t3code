@@ -1,7 +1,7 @@
 import { Toolbar } from "../../components/ui/Toolbar";
 import * as Dialog from "../../components/ui/Dialog";
 import { resolveThreadGitStatus } from "@t3tools/shared/threadPullRequests";
-import { useThreadShell } from "../../state/entities";
+import { useProject, useThreadShell } from "../../state/entities";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { createNativeHeaderMenu } from "../../components/ui/nativeHeaderMenu.ios";
 import type { AppBarMenu } from "../../components/ui/AppBar.types";
@@ -128,9 +128,15 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     environmentId: EnvironmentId.make(String(environmentId)),
     threadId: ThreadId.make(String(threadId)),
   });
+  const project = useProject(
+    thread
+      ? { environmentId: EnvironmentId.make(String(environmentId)), projectId: thread.projectId }
+      : null,
+  );
+  const repositoryKey = project?.repositoryIdentity?.canonicalKey;
   const gitStatus = useMemo(
-    () => resolveThreadGitStatus(props.gitStatus, thread?.pullRequests),
-    [props.gitStatus, thread?.pullRequests],
+    () => resolveThreadGitStatus(props.gitStatus, thread?.pullRequests, repositoryKey),
+    [props.gitStatus, thread?.pullRequests, repositoryKey],
   );
 
   const currentBranchLabel = gitStatus?.refName ?? props.currentBranch ?? "Detached HEAD";
@@ -520,9 +526,7 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
   return threadGitMenuDefinition(useThreadGitControlModel(props));
 }
 
-function threadGitMenuDefinition(
-  model: ReturnType<typeof useThreadGitControlModel>,
-): AppBarMenu {
+function threadGitMenuDefinition(model: ReturnType<typeof useThreadGitControlModel>): AppBarMenu {
   return {
     title: "Git controls",
     icon: "point.topleft.down.curvedto.point.bottomright.up",
