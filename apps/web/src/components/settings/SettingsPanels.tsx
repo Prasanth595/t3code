@@ -634,7 +634,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.newWorktreesStartFromOrigin !==
     DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
-      ? ["New worktrees start from origin"]
+      ? ["New worktrees start from remote"]
       : []),
     ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
       ? ["Add project base directory"]
@@ -2937,12 +2937,12 @@ export function GeneralSettingsPanel() {
           serverScoped
           settingKeys={["newWorktreesStartFromOrigin"]}
           {...searchableSetting("start-from-origin")}
-          description="Creates the worktree from the latest matching branch on origin instead of your local branch."
+          description="Creates the worktree from the latest fetched commit of the base branch's remote instead of your local branch."
           resetAction={
             settings.newWorktreesStartFromOrigin !==
             DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin ? (
               <SettingResetButton
-                label="new worktrees start from origin"
+                label="new worktrees start from remote"
                 onClick={() =>
                   updateSettings({
                     newWorktreesStartFromOrigin:
@@ -2959,7 +2959,7 @@ export function GeneralSettingsPanel() {
               onCheckedChange={(checked) =>
                 updateSettings({ newWorktreesStartFromOrigin: Boolean(checked) })
               }
-              aria-label="Start new worktrees from origin by default"
+              aria-label="Start new worktrees from remote by default"
             />
           }
         />

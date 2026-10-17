@@ -105,7 +105,7 @@ interface HarnessOptions {
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
-  readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
+  readonly fetchWorktreeBaseCommit?: GitWorkflow.GitWorkflowService["Service"]["fetchWorktreeBaseCommit"];
   readonly hasCommit?: GitWorkflow.GitWorkflowService["Service"]["hasCommit"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
@@ -181,13 +181,12 @@ function makeHarness(options: HarnessOptions = {}) {
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
       renameBranch,
-      fetchRemote: options.fetchRemote ?? (() => Effect.void),
+      fetchWorktreeBaseCommit:
+        options.fetchWorktreeBaseCommit ??
+        (() => Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" })),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
       remoteExists: () => Effect.succeed(true),
-      remoteBranchExists: () => Effect.succeed(true),
       removeWorktree,
-      resolveRemoteTrackingCommit: () =>
-        Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" }),
       ...options.git,
     }),
     Layer.succeed(ProjectSetupScriptRunner.ProjectSetupScriptRunner, {
@@ -1458,7 +1457,7 @@ it.effect("shows the fetch diagnosis when preparing a worktree from origin fails
   const detail =
     "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.";
   const harness = makeHarness({
-    fetchRemote: () =>
+    fetchWorktreeBaseCommit: () =>
       Effect.fail(
         new GitCommandError({
           operation: "GitVcsDriver.fetchRemote",
@@ -1506,7 +1505,7 @@ it.effect("shows the fetch diagnosis when preparing a worktree from origin fails
 it.effect("retries a failed workspace preparation on the same run", () => {
   let fetchFailures = 1;
   const harness = makeHarness({
-    fetchRemote: () =>
+    fetchWorktreeBaseCommit: () =>
       fetchFailures-- > 0
         ? Effect.fail(
             new GitCommandError({
@@ -1517,7 +1516,7 @@ it.effect("retries a failed workspace preparation on the same run", () => {
               exitCode: 1,
             }),
           )
-        : Effect.void,
+        : Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" }),
   });
   return Effect.gen(function* () {
     const launches = yield* ThreadLaunch.ThreadLaunchService;
@@ -1580,9 +1579,9 @@ it.effect.each(["fails", "is interrupted"] as const)(
       const allowFetch = yield* Deferred.make<void>();
       let fetchFailures = 1;
       const harness = makeHarness({
-        fetchRemote: () =>
+        fetchWorktreeBaseCommit: () =>
           fetchFailures-- <= 0
-            ? Effect.void
+            ? Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" })
             : Deferred.succeed(fetchEntered, undefined).pipe(
                 Effect.andThen(Deferred.await(allowFetch)),
                 Effect.andThen(
@@ -1662,7 +1661,7 @@ it.effect.each(["failed", "interrupted"] as const)(
   (ending) => {
     let fetchEntered: Deferred.Deferred<void> | null = null;
     const harness = makeHarness({
-      fetchRemote: () =>
+      fetchWorktreeBaseCommit: () =>
         ending === "interrupted"
           ? Deferred.succeed(fetchEntered!, undefined).pipe(Effect.andThen(Effect.never))
           : Effect.fail(

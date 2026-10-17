@@ -229,21 +229,21 @@ export function BranchPicker({
                   >
                     <span className="flex min-w-0 items-center gap-1.5 font-medium text-muted-foreground">
                       <RefreshIcon aria-hidden="true" className="size-3 shrink-0" />
-                      <span className="truncate">Start from origin</span>
+                      <span className="truncate">Start from remote</span>
                     </span>
                     <Switch
                       id={startFromOriginSwitchId}
                       checked={originControl.checked}
                       size="sm"
-                      aria-label="Start worktree from origin"
+                      aria-label="Start worktree from remote"
                       onCheckedChange={(checked) => originControl.onCheckedChange(Boolean(checked))}
                     />
                   </label>
                 }
               />
               <TooltipPopup side="top" className="max-w-72 whitespace-normal">
-                Creates the worktree from the latest matching branch on origin instead of your local
-                branch.
+                Creates the worktree from the latest fetched commit of the base branch's remote
+                instead of your local branch.
               </TooltipPopup>
             </Tooltip>
           ) : null}
