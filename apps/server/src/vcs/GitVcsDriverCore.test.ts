@@ -4158,6 +4158,39 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect("fetches a worktree base from the longest matching remote name", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const team = yield* makeTmpDir("git-team-");
+        const teamFork = yield* makeTmpDir("git-team-fork-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(team, ["init", "--bare"]);
+        yield* git(teamFork, ["init", "--bare"]);
+        yield* git(cwd, ["push", team, `HEAD:refs/heads/fork/${initialBranch}`]);
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "team fork"]);
+        const teamForkHead = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* git(cwd, ["push", teamFork, `HEAD:refs/heads/${initialBranch}`]);
+        // `git remote add` refuses this pair, so write the config directly.
+        // `team` is listed first so a first-match parse would pick it.
+        for (const [name, url] of [
+          ["team", team],
+          ["team/fork", teamFork],
+        ] as const) {
+          yield* git(cwd, ["config", `remote.${name}.url`, url]);
+          yield* git(cwd, [
+            "config",
+            `remote.${name}.fetch`,
+            `+refs/heads/*:refs/remotes/${name}/*`,
+          ]);
+        }
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        assert.deepEqual(
+          yield* driver.fetchWorktreeBaseCommit({ cwd, refName: `team/fork/${initialBranch}` }),
+          { commitSha: teamForkHead, remoteRefName: `team/fork/${initialBranch}` },
+        );
+      }),
+    );
+
     it.effect("fails to fetch a worktree base from an unreachable remote", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

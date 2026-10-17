@@ -3775,7 +3775,11 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
 
   const fetchWorktreeBaseCommit: GitVcsDriver.GitVcsDriver["Service"]["fetchWorktreeBaseCommit"] =
     Effect.fn("fetchWorktreeBaseCommit")(function* (input) {
-      const remoteNames = yield* listRemoteNames(input.cwd);
+      // `git remote add` refuses nested names like `team` and `team/fork`,
+      // but hand-edited config can hold both; the longest name wins.
+      const remoteNames = (yield* listRemoteNames(input.cwd)).toSorted(
+        (left, right) => right.length - left.length,
+      );
       // `%(upstream:*)` reads branch config, so it works before the tracking
       // ref was ever fetched. The pattern also matches `<ref>/*`, hence the
       // exact refname check.
