@@ -76,6 +76,7 @@ const report = (overrides: Partial<MachineConfigReport> = {}): MachineConfigRepo
   file: FILE,
   exists: true,
   config: defaultsConfig,
+  defaults: defaultsConfig,
   errors: [],
   repos: [],
   ...overrides,
@@ -255,6 +256,70 @@ describe("FactorySettingsPanel", () => {
       poll_seconds: 30,
     });
     expect(textOf(root)).not.toContain("not valid YAML");
+  });
+
+  it("fills the form of an invalid file from its draft so only the bad field is fixed", async () => {
+    mocks.fetchFactoryConfig.mockResolvedValue(
+      ok(
+        report({
+          config: null,
+          draft: {
+            gh_config_dir: "/home/t3/gh",
+            poll_seconds: 45,
+            model: 7 as unknown as string,
+            repos: [{ repo: "acme/alpha", path: "/work/alpha" }, { repo: "acme/beta" }],
+          },
+          errors: [{ file: FILE, field: "model", message: "must be a string" }],
+        }),
+      ),
+    );
+    mocks.saveFactoryConfig.mockResolvedValue(ok(report()));
+    const root = await open();
+
+    expect(input(root, "GitHub config directory").props.value).toBe("/home/t3/gh");
+    expect(input(root, "Poll seconds").props.value).toBe("45");
+    expect(input(root, "Max concurrent runs").props.value).toBe("1");
+    expect(input(root, "Repository 1").props.value).toBe("acme/alpha");
+    expect(input(root, "Path 2").props.value).toBe("");
+    expect(textOf(field(root, "model")!)).toContain("must be a string");
+
+    await type(input(root, "Model"), "gpt-5.5");
+    await click(button(root, "Save"));
+
+    expect(mocks.saveFactoryConfig).toHaveBeenCalledWith(mocks.prepared, {
+      ...SAVED_KEYS,
+      gh_config_dir: "/home/t3/gh",
+      poll_seconds: 45,
+      model: "gpt-5.5",
+      repos: [
+        { repo: "acme/alpha", path: "/work/alpha" },
+        { repo: "acme/beta", path: "" },
+      ],
+    });
+  });
+
+  it("lists every save error that names no input at the top", async () => {
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
+    mocks.saveFactoryConfig.mockResolvedValue({
+      kind: "invalid",
+      errors: [
+        { file: FILE, field: "model", message: "model is bad" },
+        { file: FILE, field: "repos", message: "must not be empty" },
+        { file: FILE, field: "repos[0].path", message: "path is bad" },
+        { file: FILE, message: "file level" },
+      ],
+    });
+    const root = await open();
+
+    await click(button(root, "Save"));
+
+    const top = textOf(root.findAll((node) => node.props["data-testid"] === "form-errors")[0]!);
+    expect(top).toContain("must not be empty");
+    expect(top).toContain("file level");
+    expect(top).not.toContain("model is bad");
+    expect(top).not.toContain("path is bad");
+    expect(textOf(field(root, "model")!)).toContain("model is bad");
+    expect(textOf(field(root, "repos[0].path")!)).toContain("path is bad");
   });
 
   it("fills the form from the file and shows each watched repo read-only", async () => {
