@@ -319,6 +319,7 @@ function useStreamingHaptics(threadId: ThreadId, feed: ReadonlyArray<ThreadFeedE
 }
 
 const USAGE_LIMITS_PANEL_GAP = 12;
+const USAGE_LIMITS_PANEL_MIN_HEIGHT = 44;
 
 const USER_INPUT_TOGGLE_TIMING = {
   duration: USER_INPUT_TOGGLE_DURATION_MS,
@@ -687,9 +688,10 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
       ? usageLimitsLayout.overlay - usageLimitsLayout.panel
       : composerOverlapHeight;
   // The keyboard is reserved even while closed, like the question card, so the
-  // panel never grows over the header while the keyboard animates.
+  // panel never grows over the header while the keyboard animates. The floor
+  // keeps the close row on screen when the stack below leaves no room at all.
   const usageLimitsMaxHeight = Math.max(
-    0,
+    USAGE_LIMITS_PANEL_MIN_HEIGHT,
     Math.min(
       Math.round(screenAreaHeight * 0.4),
       screenAreaHeight -
