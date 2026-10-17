@@ -1,3 +1,4 @@
+CLAUDE.md
 .gitignore
 apps/server/src/server.ts
 apps/web/src/components/settings/SettingsSidebarNav.tsx

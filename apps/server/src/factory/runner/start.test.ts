@@ -1432,8 +1432,6 @@ describe("resume", () => {
   );
 });
 
-// ---- a closed issue ends its unfinished runs (#20) ----------------------------------------------
-
 /** The summary line of a seeded run, whose first line is a second older than the clock. */
 const FINISHED_SEEDED = { ...FINISHED, total_ms: 1000 };
 
@@ -1683,8 +1681,6 @@ describe("start: a closed issue", () => {
     }),
   );
 });
-
-// ---- the resume after a time limit ------------------------------------------------------------
 
 const run7n = (attempt: number): RunId => ({ ...run7, attempt });
 const TIME_LIMIT_TEXT = "the run passed its time limit";

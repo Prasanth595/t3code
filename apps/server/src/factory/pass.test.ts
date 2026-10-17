@@ -560,8 +560,6 @@ const recordedErrorKinds = (fake: Fake): Array<ErrorKind> =>
 
 const FROM_TEXT = " (from Depends on, add the GitHub link)";
 
-// ---- claiming new issues ----
-
 describe("claiming new issues", () => {
   it.effect("ready issues are claimed oldest first", () =>
     Effect.gen(function* () {
@@ -823,8 +821,6 @@ describe("claiming new issues", () => {
   );
 });
 
-// ---- a ready issue whose older run is gating ----
-
 describe("a ready issue whose older run is gating", () => {
   it.effect("is not claimed again, says gate running, and is neither blocked nor held back", () =>
     Effect.gen(function* () {
@@ -862,8 +858,6 @@ describe("a ready issue whose older run is gating", () => {
     }),
   );
 });
-
-// ---- which repo gets a free slot ----
 
 describe("which repo gets a free slot", () => {
   it.effect("a free slot goes to the repo with the fewest runs, not the one listed first", () =>
@@ -950,8 +944,6 @@ describe("which repo gets a free slot", () => {
     }),
   );
 });
-
-// ---- runs that are confirmed and still in triage ----
 
 describe("runs that are confirmed and still in triage", () => {
   it.effect("a confirmed triage run is resumed on the next pass, and the line says so", () =>
@@ -1248,8 +1240,6 @@ describe("runs that are confirmed and still in triage", () => {
   );
 });
 
-// ---- claims that have no run in the ledger ----
-
 describe("claims that have no run in the ledger", () => {
   it.effect("a triage issue of ours with no run is resumed, and is not a new claim", () =>
     Effect.gen(function* () {
@@ -1390,8 +1380,6 @@ describe("claims that have no run in the ledger", () => {
   );
 });
 
-// ---- claims with no run and no assignee ----
-
 describe("claims with no run and no assignee", () => {
   const reconciled = (issue: number): MachineEvent => ({
     event: "claim_repaired",
@@ -1517,8 +1505,6 @@ describe("claims with no run and no assignee", () => {
   );
 });
 
-// ---- issues blocked by an open issue ----
-
 describe("issues blocked by an open issue", () => {
   it.effect("an issue blocked by an open issue is not claimed", () =>
     Effect.gen(function* () {
@@ -1641,8 +1627,6 @@ describe("issues blocked by an open issue", () => {
   );
 });
 
-// ---- issues whose `## Depends on` text names an open issue ----
-
 describe("issues whose Depends on text names an open issue", () => {
   it.effect("an issue whose depends on names an open issue is not claimed", () =>
     Effect.gen(function* () {
@@ -1734,8 +1718,6 @@ describe("issues whose Depends on text names an open issue", () => {
   );
 });
 
-// ---- the limit, said out loud ----
-
 describe("the limit, said out loud", () => {
   const LIMIT_1 = "limit reached: 1 ready issue was not claimed, max_concurrent_runs is 1";
 
@@ -1787,8 +1769,6 @@ describe("the limit, said out loud", () => {
     }),
   );
 });
-
-// ---- the hand pause ----
 
 describe("the hand pause", () => {
   /** A person paused claims two hours before the clock of the fake. */
@@ -1861,8 +1841,6 @@ describe("the hand pause", () => {
       }),
   );
 });
-
-// ---- what the pass records ----
 
 describe("what the pass records", () => {
   it.effect("a pass records its start and the counts it prints", () =>
@@ -2049,8 +2027,6 @@ describe("what the pass records", () => {
   );
 });
 
-// ---- reading the ledger ----
-
 describe("reading the ledger", () => {
   it.effect(
     "the ledger is listed whole once a pass, and an issue's runs again after its start",
@@ -2108,8 +2084,6 @@ describe("reading the ledger", () => {
   );
 });
 
-// ---- text that is printed ----
-
 describe("text that is printed", () => {
   it.effect("a repo name from the config is escaped where it is printed", () =>
     Effect.gen(function* () {
@@ -2127,8 +2101,6 @@ describe("text that is printed", () => {
 const _loaded: Loaded = { kind: "broken", name: REPO };
 void _loaded;
 void runIdToString;
-
-// ---- following a building run ----
 
 describe("following a building run", () => {
   const stopped = (reason = "the reason") => ({ kind: "stopped" as const, reason });
@@ -2930,8 +2902,6 @@ describe("following a building run", () => {
   );
 });
 
-// ---- attention items ----
-
 describe("attention items", () => {
   const open = (overrides: Partial<AttentionItem>): AttentionItem => ({
     id: "seed",
@@ -3095,8 +3065,6 @@ describe("attention items", () => {
     }),
   );
 });
-
-// ---- sessions that ended badly ----
 
 /**
  * softfac's `tick/tests/interruption.rs`: `advance` says a session ended `failed` or `cancelled`
@@ -3697,8 +3665,6 @@ describe("sessions that ended badly", () => {
   );
 });
 
-// ---- pr-open runs: gated again when something moved ----
-
 describe("pr-open runs: gated again only when something moved", () => {
   const pr = (fake: Fake, issue: number, repo = REPO) => fake.runIn(issue, "pr-open", repo, false);
   const gated = (fake: Fake) => fake.calls.filter((c) => c.startsWith("gate "));
@@ -3939,8 +3905,6 @@ describe("pr-open runs: gated again only when something moved", () => {
     }),
   );
 });
-
-// ---- instructor feedback on a pr-open run ----
 
 describe("pr-open runs: instructor feedback", () => {
   const RUN12 = runIdToString(rid(12));

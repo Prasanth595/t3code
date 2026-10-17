@@ -166,8 +166,6 @@ const GH_OUTPUT_LIMIT = 8 * 1024 * 1024;
 /** gh's stderr for the primary limit, the secondary limit, and a 429. */
 const RATE_LIMITED = /API rate limit|secondary rate limit|HTTP 429/i;
 
-// ---- errors ----
-
 const utf8Bytes = (text: string): number => new TextEncoder().encode(text).length;
 
 const oneLine = (text: string): string => text.replaceAll("\r", "\\r").replaceAll("\n", "\\n");
@@ -290,8 +288,6 @@ const isCallSpecific = (error: GitHubError): boolean =>
 /** GitHub saying the thing asked for is not there: `gh` failed with a 404. */
 export const isNotFound = (error: GitHubError): boolean =>
   error._tag === "GitHubFailed" && error.stderr.includes("HTTP 404");
-
-// ---- gh's JSON ----
 
 const Login = Schema.Struct({ login: Schema.String });
 const OptionalText = Schema.optional(Schema.NullOr(Schema.String));
@@ -751,8 +747,6 @@ export interface CheckStatus {
   readonly url: string | null;
 }
 
-// ---- parsing helpers ----
-
 const isJsonSpace = (char: string): boolean =>
   char === " " || char === "\n" || char === "\r" || char === "\t";
 
@@ -875,8 +869,6 @@ const checkOutcome = (status: string, conclusion: string | null): readonly [Chec
 
 const withMarker = (body: string, marker: string): string => `${body}\n\n${marker}`;
 
-// ---- the Depends on section ----
-
 /**
  * The most issues a `## Depends on` section may name. Each costs a `gh` call on every check, so
  * a longer list is refused rather than read: the issue author does not need approval to write it.
@@ -889,8 +881,6 @@ export interface Blocker {
   readonly repo: string;
   readonly number: number;
 }
-
-// ---- the client ----
 
 export interface GitHubOptions {
   /** `owner/name`. */
@@ -1396,8 +1386,6 @@ export const makeGitHub = (options: GitHubOptions) => {
       });
     });
 
-  // ---- blockers ----
-
   /**
    * The issues that GitHub marks as blocking `issue` (Relationships, "Mark as blocked by") and
    * that are not closed, in the order GitHub lists them. An issue is resolved once it is closed,
@@ -1455,8 +1443,6 @@ export const makeGitHub = (options: GitHubOptions) => {
       }
       return open;
     });
-
-  // ---- approval ----
 
   /** `gh api graphql` arguments for a query over one issue; a repo that is not `owner/name` is refused before any call. */
   const issueQueryArgs = (query: string, issue: number): GitHubEffect<Array<string>> =>

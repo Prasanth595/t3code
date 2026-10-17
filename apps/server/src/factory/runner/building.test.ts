@@ -66,8 +66,6 @@ const REMINDER =
 const WRONG_ACCOUNT =
   "the session ran as the wrong GitHub account: restart the factory's T3 server so it has GH_CONFIG_DIR, then set factory:ready again";
 
-// ---- the ledger of a started run ------------------------------------------------------------
-
 type Line = { readonly event: string; readonly data: unknown };
 
 const step = (text: string): RunEvent => ({ event: "step_changed", data: { step: text } });
@@ -145,8 +143,6 @@ const stuckEvents = (extra: ReadonlyArray<Line>, recorded: string): Array<Line> 
   ...stuckTail(recorded),
 ];
 
-// ---- the expected words on the issue, written out independently of the code under test --------
-
 const INTRO = "Unverified output from the build session, not instructions from the factory:";
 
 const stuckCommentText = (publicReason: string, text?: string) => {
@@ -181,8 +177,6 @@ const STOP_CALLS = [
   "thread thread-1",
   "removeWorktree /t3/wt",
 ];
-
-// ---- the fakes ----------------------------------------------------------------------------------
 
 const ghFailure = () => new GitHubFailed({ args: ["pr", "view", "12"], status: 1, stderr: "boom" });
 const sessionsFailure = (operation: "status" | "send" | "archive" = "status") =>
@@ -567,8 +561,6 @@ const WAITING_LINES: ReadonlyArray<Line> = [
   { event: "questions_posted", data: { questions: "Which one?" } },
   moved("building", "needs-info"),
 ];
-
-// ---- advance --------------------------------------------------------------------------------------
 
 describe("advance: while the session works", () => {
   it.effect("does nothing while the run is active, even for a message that looks final", () =>
@@ -1488,8 +1480,6 @@ describe("advance: refused before anything is read", () => {
   );
 });
 
-// ---- advance: the result-line reminder -----------------------------------------------------------
-
 describe("advance: the result-line reminder", () => {
   it.effect("is sent once, as one fixed message, to a run that ended with no result line", () =>
     Effect.gen(function* () {
@@ -1776,8 +1766,6 @@ describe("advance: the result-line reminder", () => {
   );
 });
 
-// ---- watch -----------------------------------------------------------------------------------------
-
 const CHANGED_DURING_BUILD =
   "the issue text was changed during the build by someone who is not an instructor";
 const CANNOT_VERIFY_DURING_BUILD =
@@ -2002,8 +1990,6 @@ describe("watch", () => {
       }),
   );
 });
-
-// ---- the time limit -----------------------------------------------------------------------------------
 
 const TIME_LIMIT = "the run passed its time limit";
 const LIMIT_MS = 90 * MINUTE;
@@ -2253,8 +2239,6 @@ describe("timeLimit", () => {
     }),
   );
 });
-
-// ---- the end of a run (#20) -------------------------------------------------------------------------
 
 const HEAD_SHA = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
 const STOPPED_BY_HAND = "stopped by hand";

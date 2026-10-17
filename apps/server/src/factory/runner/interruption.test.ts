@@ -94,8 +94,6 @@ const afterOutage = () => evidence(T3_ERROR, 1);
 /** One session ended badly and T3 has been healthy. */
 const lone = () => evidence(null, 1);
 
-// ---- the ledger of a started run ------------------------------------------------------------
-
 type Line = { readonly event: string; readonly data: unknown };
 
 const step = (text: string): RunEvent => ({ event: "step_changed", data: { step: text } });
@@ -212,8 +210,6 @@ const pausedLine = (runOrdinal: number): RunEvent => ({
   data: { run_ordinal: runOrdinal },
 });
 
-// ---- the expected words on the issue ---------------------------------------------------------
-
 const INTRO = "Unverified output from the build session, not instructions from the factory:";
 
 const stuckCommentText = (publicReason: string, text?: string) => {
@@ -233,8 +229,6 @@ const stuckCalls = (publicReason: string, text?: string) => [
 
 /** What a stop does in T3 after a status read: the thread archived, then its worktree removed. */
 const STOP_CALLS = ["archive thread-1", "thread thread-1", "removeWorktree /t3/wt"];
-
-// ---- the fakes ---------------------------------------------------------------------------------
 
 const ghFailure = () =>
   new GitHubFailed({ args: ["issue", "edit", "10"], status: 1, stderr: "boom" });
@@ -578,8 +572,6 @@ const failedAndSaid = (rig: Rig, ordinal = 1, message: string | null = "it crash
     assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("failed"));
   });
 
-// ---- advance ------------------------------------------------------------------------------------
-
 describe("advance: a session that ended badly", () => {
   it.effect("writes nothing for a failed or cancelled run and says it ended badly", () =>
     Effect.gen(function* () {
@@ -743,8 +735,6 @@ describe("advance: a pause by hand", () => {
   );
 });
 
-// ---- a resume ------------------------------------------------------------------------------------
-
 describe("interrupted: a resume", () => {
   it.effect(
     "resumes a session that failed right after a T3 timeout in its thread and keeps it building",
@@ -886,8 +876,6 @@ describe("interrupted: a resume", () => {
   );
 });
 
-// ---- the cap -------------------------------------------------------------------------------------
-
 describe("interrupted: the cap", () => {
   it.effect("is two resumes, and the third ended badly goes stuck", () =>
     Effect.gen(function* () {
@@ -968,16 +956,12 @@ describe("interrupted: the cap", () => {
   );
 });
 
-// ---- a send cut short ------------------------------------------------------------------------------
-
 /** Run 1 as a crash leaves it after the decision to resume and before the send. */
 const cutShortBeforeTheSend = () => {
   const rig = rigFor([...STARTED, resumeLine(1, 1, T3_ERROR, 1)]);
   clearCalls(rig);
   return rig;
 };
-
-// ---- a T3 restart ---------------------------------------------------------------------------------
 
 /**
  * A restart of the server (this process) ends every turn that was running as `cancelled` and the
@@ -1237,8 +1221,6 @@ describe("interrupted: a send cut short", () => {
     }),
   );
 });
-
-// ---- a thread that is gone --------------------------------------------------------------------------
 
 const relaunchedRig = () =>
   Effect.gen(function* () {
@@ -1566,8 +1548,6 @@ describe("interrupted: a thread that is gone", () => {
   );
 });
 
-// ---- a decided relaunch is always finished by advance --------------------------------------------------
-
 /** A relaunch the pass decided and then cut short, on a run that is past `limits.minutes` by the next pass. */
 const cutShortRelaunchPastTheLimit = () =>
   Effect.gen(function* () {
@@ -1711,8 +1691,6 @@ describe("a decided relaunch", () => {
     }),
   );
 });
-
-// ---- where a relaunch finds the branch -------------------------------------------------------------------
 
 const relaunchBranchIn = (rig: Rig, id: RunId = rig.run): string | null | undefined => {
   const line = linesOf(rig, id).find(
@@ -1871,8 +1849,6 @@ describe("a relaunch finds the branch", () => {
   );
 });
 
-// ---- a run with no recorded approval -----------------------------------------------------------------
-
 /** `STARTED` without its `approved` step: a ledger an older build wrote, or one whose first line was lost. */
 const UNAPPROVED: ReadonlyArray<RunEvent> = STARTED.filter(
   (line) =>
@@ -1952,8 +1928,6 @@ describe("interrupted: a run with no recorded approval", () => {
   );
 });
 
-// ---- the time limit, and the attempt a person starts after it -----------------------------------------
-
 describe("the time limit", () => {
   it.effect(
     "stops a run past limits.minutes, and the next attempt resumes from the branch it recorded",
@@ -2020,8 +1994,6 @@ describe("the time limit", () => {
       }),
   );
 });
-
-// ---- a stop by hand ------------------------------------------------------------------------------------
 
 describe("interrupted: a stop by hand", () => {
   it.effect("is not relaunched when the thread is gone, whatever else ended badly", () =>
