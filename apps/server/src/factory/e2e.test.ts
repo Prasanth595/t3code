@@ -35,6 +35,7 @@ import { APPROVAL_QUERY } from "./tracker/approvalHistory.ts";
 import {
   ACTIVITY_QUERY,
   CLOSED_BY_QUERY,
+  PR_FEEDBACK_QUERY,
   MARKER,
   READY_BY_QUERY,
   STATUS_MARKER,
@@ -201,6 +202,21 @@ const makeGitHub = (input: { readonly baseSha: string; readonly projectConfig: s
                 lastEditedAt: null,
                 editor: null,
                 userContentEdits: { totalCount: 0, nodes: [] },
+              },
+            },
+          },
+        }),
+      );
+    }
+    if (query === PR_FEEDBACK_QUERY) {
+      // The instructors never review or comment on the pull request in these runs.
+      return ok(
+        json({
+          data: {
+            repository: {
+              pullRequest: {
+                reviews: { totalCount: 0, pageInfo: { startCursor: null }, nodes: [] },
+                comments: { nodes: [] },
               },
             },
           },

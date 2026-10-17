@@ -36,6 +36,7 @@ import { formatTs } from "../ledger/time.ts";
 import { isUtcSecond } from "../tracker/approvalHistory.ts";
 import {
   GitHubParse,
+  issueCommentFeedbackId,
   type Activity,
   type BoundGitHub,
   type Dropped,
@@ -1052,7 +1053,8 @@ const sinceRunStart = (firstMs: number): string => `${formatTs(firstMs).slice(0,
 /**
  * What `forward` still has to send from one read of the instructors' activity: the comments the
  * ledger has no `comment_forwarded` for, oldest first and each id once, and the body edit whose
- * time has no `body-edit-forwarded` step. A comment the issue was told about as dropped is never
+ * time has no `body-edit-forwarded` step. A comment the issue was told about as dropped, or that went
+ * to the session as instructor feedback, is never
  * sent later, whatever a later read says: the instructor was asked to post it again. A body edit
  * time that is not GitHub's form is refused before anything is sent or written: it ends up in the
  * ledger and in a command id.
@@ -1068,7 +1070,9 @@ const unsent = (seen: Seen, activity: Activity) =>
     }
     const told = new Set([...seen.forwarded, ...seen.dropped]);
     const comments = activity.comments.filter((comment) => {
-      if (told.has(comment.id)) return false;
+      // Nor one that went into the session as instructor feedback, when the run was waiting for review.
+      if (told.has(comment.id) || seen.feedbackSent.has(issueCommentFeedbackId(comment.id)))
+        return false;
       told.add(comment.id);
       return true;
     });
@@ -1080,13 +1084,18 @@ const unsent = (seen: Seen, activity: Activity) =>
 
 /**
  * The dropped comments the issue was not told about yet, in the order read, each id once. A
- * comment already forwarded is left out: the session has the instructor's own words, and a later
- * edit by someone else changes nothing it holds.
+ * comment already forwarded, or sent as instructor feedback, is left out: the session has the
+ * instructor's own words, and a later edit by someone else changes nothing it holds.
  */
 const unreported = (seen: Seen, activity: Activity): ReadonlyArray<Dropped> => {
   const told = new Set(seen.dropped);
   return activity.dropped.filter((dropped) => {
-    if (seen.forwarded.has(dropped.id) || told.has(dropped.id)) return false;
+    if (
+      seen.forwarded.has(dropped.id) ||
+      seen.feedbackSent.has(issueCommentFeedbackId(dropped.id)) ||
+      told.has(dropped.id)
+    )
+      return false;
     told.add(dropped.id);
     return true;
   });

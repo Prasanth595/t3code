@@ -498,6 +498,7 @@ describe("listRuns", () => {
         startedTs: "2026-10-04T10:13:16.123Z",
         lastEvent: "finished",
         state: null,
+        step: null,
         prUrl: null,
         finished: true,
         totalMs: 2000,
@@ -508,6 +509,7 @@ describe("listRuns", () => {
         startedTs: "2026-10-04T10:14:16.123Z",
         lastEvent: "claimed",
         state: null,
+        step: "approved 2026-10-04T10:00:00Z",
         prUrl: null,
         finished: false,
         totalMs: null,
@@ -525,6 +527,28 @@ describe("listRuns", () => {
     expect(listRuns(dataDir).map((run) => [run.state, run.lastEvent])).toEqual([
       ["pr-open", "state_changed"],
     ]);
+  });
+
+  it("reads the step from the last step_changed of a run read whole, null before any", () => {
+    const dataDir = tempDir();
+    const ledger = Ledger.create(dataDir, rid(8), { clock: ticking(T0, 1000) });
+    handles.push(ledger);
+    ledger.append({ event: "claimed", data: { machine: "m", github_user: "u" } }, cause);
+    expect(listRuns(dataDir)[0]?.step).toBeNull();
+    ledger.append({ event: "step_changed", data: { step: "launch-sending" } }, cause);
+    ledger.append({ event: "step_changed", data: { step: "gate-passed" } }, cause);
+    ledger.append({ event: "claimed", data: { machine: "m", github_user: "u" } }, cause);
+    expect(listRuns(dataDir)[0]?.step).toBe("gate-passed");
+  });
+
+  it("a finished run has no step, read whole or from the ends of its file", () => {
+    const dataDir = tempDir();
+    const ledger = Ledger.create(dataDir, rid(8), { clock: ticking(T0, 1000) });
+    handles.push(ledger);
+    ledger.append({ event: "step_changed", data: { step: "gate-passed" } }, cause);
+    ledger.finish("stuck", null, null, cause);
+    expect(readRuns(dataDir)[0]?.summary).toMatchObject({ finished: true, step: null });
+    expect(listRuns(dataDir)[0]).toMatchObject({ finished: true, step: null });
   });
 
   it("reads the pull request url from the last pr_opened, and from the finished line over it", () => {
@@ -576,6 +600,7 @@ describe("listRuns", () => {
       startedTs: null,
       lastEvent: null,
       state: null,
+      step: null,
       prUrl: null,
       finished: false,
       totalMs: null,
@@ -614,6 +639,7 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
     return NodePath.join(dataDir, RUNS_DIR, runIdFileName(id));
   };
   const moved = (from: string, to: string) => ({ event: "state_changed", data: { from, to } });
+  const stepped = (step: string) => ({ event: "step_changed", data: { step } });
   const opened = (pr: number) => ({
     event: "pr_opened",
     data: { pr, url: `https://example.test/pull/${pr}` },
@@ -628,15 +654,20 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
       finishedRun(
         dataDir,
         rid(1),
-        [moved("ready", "triage"), moved("triage", "building")],
+        [stepped("launch-sending"), moved("ready", "triage"), moved("triage", "building")],
         "stuck",
         null,
       ),
-      // The finished line carries the pull request.
+      // The finished line carries the pull request; a step after the last state change.
       finishedRun(
         dataDir,
         rid(2),
-        [moved("triage", "building"), opened(3), moved("building", "pr-open")],
+        [
+          moved("triage", "building"),
+          opened(3),
+          moved("building", "pr-open"),
+          stepped("gate-passed"),
+        ],
         "pr-open",
         PR_URL,
       ),
@@ -666,6 +697,7 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
       [null, null, true, "finished"],
     ]);
     expect(summaries.every((run) => run.totalMs !== null && run.startedTs !== null)).toBe(true);
+    expect(summaries.every((run) => run.step === null)).toBe(true);
   });
 
   it("skips damaged lines at both ends as the whole read does", () => {
@@ -835,5 +867,23 @@ describe("readRuns: skipFinishedBefore", () => {
     const old = writeRun(dataDir, rid(1), stateLine("building") + finishedLine);
     age(old, Date.parse("2026-10-17T00:00:00Z"), 30 * DAY);
     expect(readRuns(dataDir).map((read) => read.summary.finished)).toEqual([true]);
+  });
+
+  it("listRuns leaves out the same files, and reads an old unfinished one as ever", () => {
+    const dataDir = tempDir();
+    const nowMs = Date.parse("2026-10-17T00:00:00Z");
+    const oldFinished = writeRun(dataDir, rid(1), stateLine("building") + finishedLine);
+    const oldOpen = writeRun(dataDir, rid(2), stateLine("building"));
+    writeRun(dataDir, rid(3), stateLine("building") + finishedLine);
+    age(oldFinished, nowMs, 3 * DAY);
+    age(oldOpen, nowMs, 3 * DAY);
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    const runs = listRuns(dataDir, { skipFinishedBefore: nowMs - DAY });
+    expect(runs.map((run) => [run.id.issue, run.finished])).toEqual([
+      ["2", false],
+      ["3", true],
+    ]);
+    expect(fullReads()).not.toContain(oldFinished);
+    expect(listRuns(dataDir).map((run) => run.id.issue)).toEqual(["1", "2", "3"]);
   });
 });

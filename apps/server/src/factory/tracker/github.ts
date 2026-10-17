@@ -106,6 +106,58 @@ export const COMMENT_EDITOR_QUERY =
 /** How many ids one {@link COMMENT_EDITOR_QUERY} call carries: the most `nodes` accepts. */
 const COMMENT_EDITOR_IDS = 100;
 
+/**
+ * The most pages of 50 reviews one feedback read takes: the newest, and up to 19 earlier ones
+ * (20 points). 1,000 reviews is far past the factory's scale, so going on is GitHub misbehaving or
+ * a pull request flooded with reviews, and it must not hold the pass open. A read pages back only
+ * to the start of the last read that found nothing new, so the limit is hit only when more than
+ * 1,000 reviews arrive between two such reads. Every read after that fails the same way.
+ */
+export const REVIEW_PAGE_LIMIT = 20;
+
+/**
+ * The newest 50 reviews of a pull request with the first 50 comments each left on the diff, and
+ * the newest 100 comments in its conversation. `totalCount` and `pageInfo { startCursor }` on the
+ * reviews let `prFeedback` see that older reviews exist and read them (see
+ * {@link REVIEWS_BEFORE_QUERY}). `__typename` on an author tells a person from a GitHub App. For a
+ * review and a conversation comment, `editor` says who last changed the text and
+ * `userContentEdits(first: 20)` who made every change (20 keeps the nested query within GitHub's
+ * node limit; a longer history is cut off, and the text is then not trusted). An inline comment
+ * carries `lastEditedAt` and its node `id`, and no editor or history: those are read for the ones
+ * an instructor wrote and that were edited, together, one call for each 100 (see
+ * {@link COMMENT_EDITOR_QUERY}).
+ *
+ * GitHub prices a query by the requests its nested connections would make: each is requested
+ * once per combination of its parents' page sizes. This shape is 202 requests, 2 points.
+ */
+export const PR_FEEDBACK_QUERY =
+  "query($owner: String!, $name: String!, $number: Int!) { " +
+  "repository(owner: $owner, name: $name) { pullRequest(number: $number) { " +
+  "reviews(last: 50) { totalCount pageInfo { startCursor } nodes { " +
+  "fullDatabaseId state body submittedAt author { __typename login } " +
+  "lastEditedAt editor { __typename login } " +
+  "userContentEdits(first: 20) { totalCount nodes { editedAt editor { __typename login } } } " +
+  "comments(first: 50) { totalCount nodes { id body path line originalLine author { __typename login } " +
+  "lastEditedAt } } } } " +
+  "comments(last: 100) { nodes { " +
+  "fullDatabaseId body createdAt author { __typename login } " +
+  "lastEditedAt editor { __typename login } " +
+  "userContentEdits(first: 20) { totalCount nodes { editedAt editor { __typename login } } } } } } } }";
+
+/**
+ * The 50 reviews before the cursor `$before`, oldest first: the page {@link PR_FEEDBACK_QUERY} cut
+ * off. The review fields are the same as there, and cost the same (1 point).
+ */
+export const REVIEWS_BEFORE_QUERY =
+  "query($owner: String!, $name: String!, $number: Int!, $before: String!) { " +
+  "repository(owner: $owner, name: $name) { pullRequest(number: $number) { " +
+  "reviews(last: 50, before: $before) { totalCount pageInfo { startCursor } nodes { " +
+  "fullDatabaseId state body submittedAt author { __typename login } " +
+  "lastEditedAt editor { __typename login } " +
+  "userContentEdits(first: 20) { totalCount nodes { editedAt editor { __typename login } } } " +
+  "comments(first: 50) { totalCount nodes { id body path line originalLine author { __typename login } " +
+  "lastEditedAt } } } } } } }";
+
 /** The most a file read through the contents API may be. A project config is a few lines. */
 export const MAX_FILE_BYTES = 64 * 1024;
 
@@ -324,6 +376,91 @@ const CommentEditorsAnswer = Schema.Struct({
 });
 type CommentEditors = NonNullable<(typeof CommentEditorsAnswer.Type)["data"]["nodes"][number]>;
 
+const OptionalActor = Schema.optional(Schema.NullOr(Actor));
+const OptionalCount = Schema.optional(Schema.NullOr(Schema.Number));
+/** GitHub's `fullDatabaseId` is a BigInt that GraphQL sends as a decimal string; a number is read too. */
+const FullDatabaseId = Schema.optional(Schema.NullOr(Schema.Union([Schema.String, Schema.Number])));
+
+/** A comment a review left on a line of the diff. Its edit history is read on its own. */
+const FeedbackInlineComment = Schema.Struct({
+  id: OptionalText,
+  body: OptionalText,
+  path: OptionalText,
+  line: OptionalCount,
+  originalLine: OptionalCount,
+  author: OptionalActor,
+  lastEditedAt: OptionalText,
+});
+
+/** `submittedAt` is null for a review still pending; the author and editor for a deleted account. */
+const FeedbackReview = Schema.Struct({
+  fullDatabaseId: FullDatabaseId,
+  state: Schema.String,
+  body: OptionalText,
+  submittedAt: OptionalText,
+  author: OptionalActor,
+  lastEditedAt: OptionalText,
+  editor: OptionalActor,
+  userContentEdits: Schema.optional(Schema.NullOr(EditHistory)),
+  comments: Schema.Struct({
+    totalCount: OptionalCount,
+    nodes: Schema.Array(FeedbackInlineComment),
+  }),
+});
+
+/** A page of reviews, oldest first, with the cursor of its first review. */
+const FeedbackReviews = Schema.Struct({
+  totalCount: OptionalCount,
+  pageInfo: Schema.optional(Schema.NullOr(Schema.Struct({ startCursor: OptionalText }))),
+  nodes: Schema.Array(FeedbackReview),
+});
+
+const FeedbackPrComment = Schema.Struct({
+  fullDatabaseId: FullDatabaseId,
+  body: OptionalText,
+  createdAt: Schema.String,
+  author: OptionalActor,
+  lastEditedAt: OptionalText,
+  editor: OptionalActor,
+  userContentEdits: Schema.optional(Schema.NullOr(EditHistory)),
+});
+
+/** `pullRequest` is null when the pull request is gone. */
+const FeedbackAnswer = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      pullRequest: Schema.optional(
+        Schema.NullOr(
+          Schema.Struct({
+            reviews: FeedbackReviews,
+            comments: Schema.Struct({ nodes: Schema.Array(FeedbackPrComment) }),
+          }),
+        ),
+      ),
+    }),
+  }),
+});
+const ReviewsBeforeAnswer = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      pullRequest: Schema.optional(Schema.NullOr(Schema.Struct({ reviews: FeedbackReviews }))),
+    }),
+  }),
+});
+type FeedbackReviewNode = typeof FeedbackReview.Type;
+
+/** The review states whose inline comments are read: every submitted one. */
+const FEEDBACK_STATES = ["CHANGES_REQUESTED", "COMMENTED", "APPROVED", "DISMISSED"];
+
+/** The id of a review or comment as the decimal digits GitHub gave, or null when it is not a number. */
+const databaseId = (id: string | number | null | undefined): string | null => {
+  if (typeof id === "number") return Number.isSafeInteger(id) && id >= 0 ? String(id) : null;
+  if (typeof id === "string" && /^\d+$/.test(id) && BigInt(id) <= 0xffff_ffff_ffff_ffffn) {
+    return BigInt(id).toString();
+  }
+  return null;
+};
+
 /**
  * Whether an edit history can be trusted to show every edit up to the latest one: it is not cut
  * off (a full page, or a total larger than the page, may hide entries) and, when there is a
@@ -341,6 +478,28 @@ const editsWhole = (
     newest !== undefined &&
     newest.editedAt === lastEditedAt &&
     (newest.editor?.login ?? null) === (editor?.login ?? null)
+  );
+};
+
+/**
+ * Whether the text of a review, a comment or an inline comment is its instructor's alone: it was
+ * never edited, or the person who last edited it and every person in its edit history is a human
+ * instructor (the creation is the oldest entry, by the author) and the history is whole. One that
+ * GitHub shows no history for, or shows cut off, is not trusted.
+ */
+const textIsInstructors = (
+  lastEditedAt: string | null | undefined,
+  editor: Actor | null | undefined,
+  edits: typeof EditHistory.Type | null | undefined,
+  instructors: ReadonlyArray<string>,
+): boolean => {
+  if (lastEditedAt === null || lastEditedAt === undefined) return true;
+  return (
+    isHumanInstructor(editor, instructors) &&
+    edits !== null &&
+    edits !== undefined &&
+    editsWhole(edits, lastEditedAt, editor) &&
+    edits.nodes.every((edit) => isHumanInstructor(edit.editor, instructors))
   );
 };
 
@@ -441,6 +600,39 @@ export interface Activity {
   readonly bodyEdit: BodyEdit | null;
   readonly dropped: ReadonlyArray<Dropped>;
 }
+
+/** Where a piece of feedback was written. `state` is GitHub's review state. */
+export type FeedbackKind =
+  | { readonly kind: "review"; readonly state: string }
+  | { readonly kind: "pr-comment" }
+  | { readonly kind: "issue-comment" };
+
+/** A comment a review left on a line of the pull request's diff. */
+export interface InlineComment {
+  readonly path: string;
+  /** The line it is on, or the line it was on when the diff changed; null when GitHub gives neither. */
+  readonly line: number | null;
+  readonly body: string;
+}
+
+/** One piece of instructor feedback: a review of a pull request, or a comment on it or its issue. */
+export interface Feedback {
+  /** `review:<id>`, `pr-comment:<id>` or `issue-comment:<id>`, so the id spaces cannot collide. */
+  readonly id: string;
+  readonly author: string;
+  readonly kind: FeedbackKind;
+  /** GitHub's UTC form, e.g. `2026-10-04T10:13:16Z`. */
+  readonly createdAt: string;
+  /** The review's body or the comment's text; empty when there is none. */
+  readonly body: string;
+  /** The comments a review left on lines of the diff, in GitHub's order; empty for any other kind. */
+  readonly inline: ReadonlyArray<InlineComment>;
+  /** How many inline comments of a review were not read (GitHub lists the first 50); 0 for any other kind. */
+  readonly inlineUnread: number;
+}
+
+/** The `Feedback` id of the issue comment `id`, as the ledger names an item sent as feedback. */
+export const issueCommentFeedbackId = (id: string): string => `issue-comment:${id}`;
 
 export interface IssueDetail {
   readonly number: number;
@@ -1515,6 +1707,269 @@ export const makeGitHub = (options: GitHubOptions) => {
       return { comments, bodyEdit, dropped };
     });
 
+  /**
+   * Every review of pull request `pr` that may be new, oldest first: the newest page `first` and
+   * the pages before it, read with `before:` until one starts with a review at or before `floor`,
+   * or there are no more. `args` are the arguments of the call that read `first`, for an error. A
+   * page that starts at the cursor just sent, another page wanted after {@link REVIEW_PAGE_LIMIT}
+   * pages, a page with more behind it but no cursor to reach it, and a pull request gone from a
+   * later page are errors: a read that stopped short of `floor` must not count as one that found
+   * nothing. An empty page ends the paging, as the start of the list.
+   */
+  const reviewsSince = (
+    pr: number,
+    floor: string,
+    args: ReadonlyArray<string>,
+    first: typeof FeedbackReviews.Type,
+  ): GitHubEffect<Array<FeedbackReviewNode>> =>
+    Effect.gen(function* () {
+      const total = first.totalCount ?? 0;
+      let cursor: string | null = first.pageInfo?.startCursor ?? null;
+      let reviews = [...first.nodes];
+      let pages = 1;
+      while (total > reviews.length) {
+        // The oldest review read is proven old only by a submission time at or before `floor`.
+        const at = reviews[0]?.submittedAt;
+        if (at !== null && at !== undefined) {
+          if (!isUtcSecond(at)) {
+            return yield* parseError(
+              args,
+              `a review time as YYYY-MM-DDTHH:MM:SSZ, got ${quoted(at)}`,
+            );
+          }
+          if (at <= floor) break;
+        }
+        const before = cursor;
+        cursor = null;
+        if (before === null) {
+          return yield* parseError(
+            args,
+            `a cursor for the reviews before the oldest one read, since there are ${total} and ${reviews.length} were read`,
+          );
+        }
+        if (pages >= REVIEW_PAGE_LIMIT) {
+          return yield* parseError(
+            args,
+            `the reviews since ${floor} within ${REVIEW_PAGE_LIMIT} pages of 50`,
+          );
+        }
+        const pageArgs = [
+          ...(yield* issueQueryArgs(REVIEWS_BEFORE_QUERY, pr)),
+          "-f",
+          `before=${before}`,
+        ];
+        const answer = yield* ghJson(
+          pageArgs,
+          ReviewsBeforeAnswer,
+          "a GraphQL response with the earlier reviews",
+        );
+        pages += 1;
+        const pull = answer.data.repository.pullRequest;
+        if (pull === null || pull === undefined) {
+          return yield* parseError(pageArgs, "the pull request on every page of its reviews");
+        }
+        // GitHub answers `before:` the oldest cursor with an empty page: the start of the list was
+        // reached, and everything was read even if `totalCount` counted more.
+        if (pull.reviews.nodes.length === 0) break;
+        cursor = pull.reviews.pageInfo?.startCursor ?? null;
+        if (cursor === before) {
+          return yield* parseError(
+            pageArgs,
+            `a new cursor for the reviews before ${before}, got the same one again`,
+          );
+        }
+        reviews = [...pull.reviews.nodes, ...reviews];
+      }
+      return reviews;
+    });
+
+  /**
+   * The instructors' feedback on pull request `pr` written after `since`, oldest first. One
+   * GraphQL call (2 points) reads the newest 50 reviews, with the first 50 comments each left on
+   * the diff, and the newest 100 conversation comments, plus one call (1 point) for each earlier
+   * page of 50 reviews it pages back through, up to {@link REVIEW_PAGE_LIMIT} pages. `since` and
+   * `floor` must be GitHub's uniform UTC form; anything else is rejected before `gh` runs.
+   * Timestamps are compared as strings, so an equal timestamp is not "after".
+   *
+   * `floor` (not before `since`) is how far back the paging goes: it stops at a review submitted
+   * at or before `floor`. A review submitted after `since` on the pages read is judged, whether or
+   * not it is after `floor`. GitHub lists reviews by when each was started, so a review missed is
+   * one started as a pending review before that one and submitted after `floor`, or a dismissed
+   * review with no text, judged as not counting and later edited to say something.
+   * Only the newest 100 conversation comments are read.
+   *
+   * Only a person who is an instructor counts, and nothing that carries the factory's marker. A
+   * review is judged by its `submittedAt` and its state: one that asks for changes or comments is
+   * feedback; one that approves is feedback only when it has an inline comment, one that was
+   * dismissed only when it has a body or an inline comment; a pending one is not. A review, a
+   * conversation comment or an inline comment whose text was edited counts only when every edit in
+   * its history and its last editor are instructors who are people and the history is whole; an
+   * inline comment that fails drops out of its review and the rest of the review stays. The line of
+   * an inline comment is the one it is on, or the one it was on. A time or id GitHub gives that
+   * this cannot read is an error and not a guess; a pull request that is gone has no feedback.
+   */
+  const prFeedback = (
+    pr: number,
+    since: string,
+    floor: string,
+    instructors: ReadonlyArray<string>,
+  ): GitHubEffect<ReadonlyArray<Feedback>> =>
+    Effect.gen(function* () {
+      for (const [name, time] of [
+        ["since", since],
+        ["floor", floor],
+      ] as const) {
+        if (!isUtcSecond(time)) {
+          return yield* parseError(
+            ["api", "graphql"],
+            `\`${name}\` as YYYY-MM-DDTHH:MM:SSZ, got ${quoted(time)}`,
+          );
+        }
+      }
+      const args = yield* issueQueryArgs(PR_FEEDBACK_QUERY, pr);
+      const answer = yield* ghJson(
+        args,
+        FeedbackAnswer,
+        "a GraphQL response with the pull request",
+      );
+      const pull = answer.data.repository.pullRequest;
+      if (pull === null || pull === undefined) return [];
+      const unreadable = (what: string, got: string) =>
+        parseError(args, `${what}, got ${quoted(got)}`);
+      // Written by an instructor who is a person, and not by the factory.
+      const theirs = (author: Actor | null | undefined, body: string | null | undefined) =>
+        isHumanInstructor(author, instructors) && !(body ?? "").includes(MARKER_PREFIX);
+
+      const reviews = yield* reviewsSince(pr, floor, args, pull.reviews);
+      // The reviews to judge, with the time each was submitted.
+      const judged: Array<{ readonly review: FeedbackReviewNode; readonly at: string }> = [];
+      for (const review of reviews) {
+        if (
+          !theirs(review.author, review.body) ||
+          !textIsInstructors(
+            review.lastEditedAt,
+            review.editor,
+            review.userContentEdits,
+            instructors,
+          )
+        ) {
+          continue;
+        }
+        const at = review.submittedAt;
+        if (at === null || at === undefined) continue;
+        if (!isUtcSecond(at)) {
+          return yield* unreadable("a review time as YYYY-MM-DDTHH:MM:SSZ", at);
+        }
+        if (at <= since) continue;
+        judged.push({ review, at });
+      }
+
+      // The edit history of every edited inline comment of those reviews, read together.
+      const editedIds = new Set<string>();
+      for (const { review } of judged) {
+        if (!FEEDBACK_STATES.includes(review.state)) continue;
+        for (const c of review.comments.nodes) {
+          if (
+            c.id !== null &&
+            c.id !== undefined &&
+            c.lastEditedAt !== null &&
+            c.lastEditedAt !== undefined &&
+            theirs(c.author, c.body)
+          ) {
+            editedIds.add(c.id);
+          }
+        }
+      }
+      const histories = yield* commentEditors([...editedIds]);
+
+      const found: Array<Feedback> = [];
+      for (const { review, at } of judged) {
+        const body = review.body ?? "";
+        const inlineUnread = Math.max(
+          0,
+          (review.comments.totalCount ?? 0) - review.comments.nodes.length,
+        );
+        const inline: Array<InlineComment> = [];
+        for (const c of review.comments.nodes) {
+          if (!theirs(c.author, c.body)) continue;
+          // One that was never edited needs no history; an edited one with no node id, or whose
+          // history the answer does not have (it is gone), is not trusted.
+          if (c.lastEditedAt !== null && c.lastEditedAt !== undefined) {
+            const node = c.id === null || c.id === undefined ? undefined : histories.get(c.id);
+            if (
+              node === undefined ||
+              !textIsInstructors(node.lastEditedAt, node.editor, node.userContentEdits, instructors)
+            ) {
+              continue;
+            }
+          }
+          inline.push({
+            path: c.path ?? "",
+            line: c.line ?? c.originalLine ?? null,
+            body: c.body ?? "",
+          });
+        }
+        // Only an approval's body is not read: softfac also counts it, so approving with "LGTM!"
+        // would send the pull request back to draft and the issue back to building. A comment and
+        // a `COMMENTED` review always count, whatever they say: the factory's login opens the pull
+        // requests, so an instructor acting as it cannot approve or request changes, and its
+        // comments are its only way to ask (softfac `docs/lifecycle.md`, "Instructor feedback").
+        const counts =
+          review.state === "CHANGES_REQUESTED" || review.state === "COMMENTED"
+            ? true
+            : review.state === "APPROVED"
+              ? inline.length > 0
+              : review.state === "DISMISSED"
+                ? body.trim() !== "" || inline.length > 0
+                : false;
+        if (!counts) continue;
+        const id = databaseId(review.fullDatabaseId);
+        if (id === null) return yield* unreadable("a review with an id", review.state);
+        found.push({
+          id: `review:${id}`,
+          author: review.author?.login ?? "",
+          kind: { kind: "review", state: review.state },
+          createdAt: at,
+          body,
+          inline,
+          inlineUnread,
+        });
+      }
+
+      for (const comment of pull.comments.nodes) {
+        if (
+          !theirs(comment.author, comment.body) ||
+          !textIsInstructors(
+            comment.lastEditedAt,
+            comment.editor,
+            comment.userContentEdits,
+            instructors,
+          )
+        ) {
+          continue;
+        }
+        if (!isUtcSecond(comment.createdAt)) {
+          return yield* unreadable("a comment time as YYYY-MM-DDTHH:MM:SSZ", comment.createdAt);
+        }
+        if (comment.createdAt <= since) continue;
+        const id = databaseId(comment.fullDatabaseId);
+        if (id === null) return yield* unreadable("a comment with an id", comment.createdAt);
+        found.push({
+          id: `pr-comment:${id}`,
+          author: comment.author?.login ?? "",
+          kind: { kind: "pr-comment" },
+          createdAt: comment.createdAt,
+          body: comment.body ?? "",
+          inline: [],
+          inlineUnread: 0,
+        });
+      }
+      // Stable, so a review and a comment of the same second keep the order they were read in.
+      return found.toSorted((a, b) =>
+        a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : 0,
+      );
+    });
+
   /** The login `gh` is authenticated as, from the API. */
   const login = (): GitHubEffect<string> =>
     Effect.gen(function* () {
@@ -1696,6 +2151,7 @@ export const makeGitHub = (options: GitHubOptions) => {
     textCheck,
     textEditedSince,
     activitySince,
+    prFeedback,
   };
 };
 

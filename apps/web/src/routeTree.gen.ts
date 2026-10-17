@@ -13,6 +13,7 @@ import { Route as WelcomeRouteImport } from './routes/welcome'
 import { Route as UsageRouteImport } from './routes/usage'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PairRouteImport } from './routes/pair'
+import { Route as FactoryRouteImport } from './routes/factory'
 import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
@@ -33,6 +34,7 @@ import { Route as SettingsConnectionsRouteImport } from './routes/settings.conne
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
+import { Route as FactoryRunIdRouteImport } from './routes/factory_.$runId'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
@@ -56,6 +58,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const PairRoute = PairRouteImport.update({
   id: '/pair',
   path: '/pair',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FactoryRoute = FactoryRouteImport.update({
+  id: '/factory',
+  path: '/factory',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConnectAgentRoute = ConnectAgentRouteImport.update({
@@ -158,6 +165,11 @@ const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   path: '/projects/$projectKey',
   getParentRoute: () => rootRouteImport,
 } as any)
+const FactoryRunIdRoute = FactoryRunIdRouteImport.update({
+  id: '/factory_/$runId',
+  path: '/factory/$runId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   id: '/pull-requests',
   path: '/pull-requests',
@@ -184,12 +196,14 @@ export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
+  '/factory': typeof FactoryRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/factory/$runId': typeof FactoryRunIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -212,12 +226,14 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
+  '/factory': typeof FactoryRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/new': typeof ChatNewRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/factory/$runId': typeof FactoryRunIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -243,12 +259,14 @@ export interface FileRoutesById {
   '/_chat': typeof ChatRouteWithChildren
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
+  '/factory': typeof FactoryRoute
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/_chat/new': typeof ChatNewRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
+  '/factory_/$runId': typeof FactoryRunIdRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
@@ -275,12 +293,14 @@ export interface FileRouteTypes {
     | '/'
     | '/connect'
     | '/connect-agent'
+    | '/factory'
     | '/pair'
     | '/settings'
     | '/usage'
     | '/welcome'
     | '/new'
     | '/pull-requests'
+    | '/factory/$runId'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -303,12 +323,14 @@ export interface FileRouteTypes {
   to:
     | '/connect'
     | '/connect-agent'
+    | '/factory'
     | '/pair'
     | '/settings'
     | '/usage'
     | '/welcome'
     | '/new'
     | '/pull-requests'
+    | '/factory/$runId'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -333,12 +355,14 @@ export interface FileRouteTypes {
     | '/_chat'
     | '/connect'
     | '/connect-agent'
+    | '/factory'
     | '/pair'
     | '/settings'
     | '/usage'
     | '/welcome'
     | '/_chat/new'
     | '/_chat/pull-requests'
+    | '/factory_/$runId'
     | '/projects/$projectKey'
     | '/settings/appearance'
     | '/settings/archived'
@@ -364,10 +388,12 @@ export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
   ConnectRoute: typeof ConnectRoute
   ConnectAgentRoute: typeof ConnectAgentRoute
+  FactoryRoute: typeof FactoryRoute
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   UsageRoute: typeof UsageRoute
   WelcomeRoute: typeof WelcomeRoute
+  FactoryRunIdRoute: typeof FactoryRunIdRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
 }
 
@@ -399,6 +425,13 @@ declare module '@tanstack/react-router' {
       path: '/pair'
       fullPath: '/pair'
       preLoaderRoute: typeof PairRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/factory': {
+      id: '/factory'
+      path: '/factory'
+      fullPath: '/factory'
+      preLoaderRoute: typeof FactoryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/connect-agent': {
@@ -541,6 +574,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectKeyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/factory_/$runId': {
+      id: '/factory_/$runId'
+      path: '/factory/$runId'
+      fullPath: '/factory/$runId'
+      preLoaderRoute: typeof FactoryRunIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_chat/pull-requests': {
       id: '/_chat/pull-requests'
       path: '/pull-requests'
@@ -634,10 +674,12 @@ const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
   ConnectRoute: ConnectRoute,
   ConnectAgentRoute: ConnectAgentRoute,
+  FactoryRoute: FactoryRoute,
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
   UsageRoute: UsageRoute,
   WelcomeRoute: WelcomeRoute,
+  FactoryRunIdRoute: FactoryRunIdRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
 }
 export const routeTree = rootRouteImport

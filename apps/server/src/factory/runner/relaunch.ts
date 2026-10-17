@@ -99,7 +99,7 @@ export const relaunchSession = (
     const resumed: ResumeFrom = {
       branch: relaunch.branch,
       prUrl: from.prUrl,
-      after: "failed-regate",
+      after: relaunch.fixes.kind === "feedback" ? "feedback" : "failed-regate",
     };
     const message = `${launchMessage(ctx.repo, issue, ctx.trackerUser, ctx.ghConfigDir, resumed)}\n\n${END_WITH_DONE}\n\n${relaunch.message}`;
     const launched = yield* Effect.result(

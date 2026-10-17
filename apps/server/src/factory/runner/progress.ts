@@ -232,6 +232,20 @@ export interface Seen {
    * and pushes to this one, so a pull request from it is the session's.
    */
   readonly resumedFrom: string | null;
+  /** The ids named by any `feedback_relaunching` or `feedback_forwarding` line: each is acted on at most once. */
+  readonly feedbackSent: ReadonlySet<string>;
+  /** The number on the newest `feedback_relaunching` line, 0 before any: how many feedback relaunches the run has had. */
+  readonly feedbackRelaunches: number;
+  /** How many items the newest `feedback_relaunching` line names. */
+  readonly feedbackLastItems: number;
+  /**
+   * When the run first reached `pr-open` since its last feedback relaunch (since it began, when
+   * there is none), in epoch milliseconds: the moment of the gate pass that took it there.
+   * Feedback is read from here. A feedback relaunch resets it to null and the next `pr-open` sets
+   * it. A later trip through `building` and back, or a re-gate pass on a moved base, does not
+   * move it, so feedback written while those ran is not lost.
+   */
+  readonly prOpenSince: number | null;
   /** The run on that `resumed_from`: this run's own id for a re-gate's session, the earlier attempt's for a resume from its branch. */
   readonly resumedFromRun: string | null;
 }
@@ -249,6 +263,18 @@ export const regateBranch = (seen: Seen, run: RunId): string | null =>
 /** A relaunch that was decided and whose session the ledger does not name: the launch may have reached T3. */
 export const pendingRelaunch = (seen: Seen): Relaunch | null =>
   seen.launchedSinceSending ? null : seen.relaunch;
+
+/**
+ * A feedback relaunch whose session the ledger records and whose state change it does not: what
+ * is left of it is the transition.
+ */
+export const committingFeedback = (seen: Seen): Relaunch | null =>
+  seen.relaunch !== null &&
+  seen.relaunch.fixes.kind === "feedback" &&
+  seen.launchedSinceSending &&
+  seen.state === "pr-open"
+    ? seen.relaunch
+    : null;
 
 /** The ledger step that says a launch call is about to be sent. */
 export const LAUNCH_SENDING = "launch-sending";
@@ -323,6 +349,12 @@ export const parseGatePassed = (
   return n === null || n === 0 ? null : { sha: sha.toLowerCase(), count: n };
 };
 
+/** The item ids a feedback line names; anything but a string is not one. */
+const feedbackItems = (data: unknown): ReadonlyArray<string> => {
+  const items = dataField(data, "items");
+  return Array.isArray(items) ? items.filter((id): id is string => typeof id === "string") : [];
+};
+
 const sentInterruption = (interruption: Interruption): Interruption => ({
   ...interruption,
   sent: true,
@@ -385,6 +417,10 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let relaunch: Relaunch | null = null;
   let launchedSinceSending = false;
   let resumedFrom: string | null = null;
+  const feedbackSent = new Set<string>();
+  let feedbackRelaunches = 0;
+  let feedbackLastItems = 0;
+  let prOpenSince: number | null = null;
   let resumedFromRun: string | null = null;
   // A wait marker names run `k`: the awaited ordinal never goes down.
   const awaitRun = (k: number, forward: boolean) => {
@@ -522,6 +558,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         // before it was ready came within the limit and is not charged again.
         if (state === "pr-open" && to === "building") workedMs = 0;
         if (to === "triage" || to === "building") workingSince = entry.ms;
+        // The first time here since the last feedback relaunch: the moment of the pass that took
+        // the run here, else of this line.
+        if (to === "pr-open" && prOpenSince === null) prOpenSince = pass?.atMs ?? entry.ms;
         state = isState(to) ? to : null;
         relaunch = null;
         regating = false;
@@ -718,8 +757,16 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (n === null || typeof branch !== "string" || typeof message !== "string") break;
         launchedSinceSending = false;
         relaunch = { fixes: { kind: "feedback", n }, branch, message };
+        prOpenSince = null;
+        const items = feedbackItems(entry.data);
+        for (const id of items) feedbackSent.add(id);
+        feedbackRelaunches = Math.max(feedbackRelaunches, n);
+        feedbackLastItems = items.length;
         break;
       }
+      case "feedback_forwarding":
+        for (const id of feedbackItems(entry.data)) feedbackSent.add(id);
+        break;
       case "gate_cleanup_failed": {
         const dir = dataField(entry.data, "dir");
         if (typeof dir === "string") cleanupFailed.add(dir);
@@ -783,6 +830,10 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     relaunch,
     launchedSinceSending,
     resumedFrom,
+    feedbackSent,
+    feedbackRelaunches,
+    feedbackLastItems,
+    prOpenSince,
     resumedFromRun,
   };
 };
