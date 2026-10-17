@@ -205,6 +205,11 @@ export interface RunSummary {
   readonly lastEvent: string | null;
   /** The `to` of the last `state_changed`; null before any, or for one this build does not know. */
   readonly state: State | null;
+  /**
+   * The `step` of the last `step_changed`; null before any, for a finished run summarised from the
+   * ends of its file, and for a file that could not be read.
+   */
+  readonly step: string | null;
   /** The `finished` line's pull request URL, else the last `pr_opened` URL. */
   readonly prUrl: string | null;
   readonly finished: boolean;
@@ -226,6 +231,7 @@ const unreadableSummary = (id: RunId): RunSummary => ({
   startedTs: null,
   lastEvent: null,
   state: null,
+  step: null,
   prUrl: null,
   finished: false,
   totalMs: null,
@@ -246,6 +252,10 @@ const summarise = (id: RunId, { record, seen }: WholeRead): RunSummary => {
     startedTs: record.entries[0]?.ts ?? null,
     lastEvent: record.entries.at(-1)?.event ?? null,
     state: seen.state,
+    step: dataText(
+      record.entries.findLast((entry) => entry.event === "step_changed")?.data,
+      "step",
+    ),
     prUrl: (end === undefined ? null : dataText(end.data, "pr_url")) ?? seen.lastPr?.url ?? null,
     finished: seen.finished,
     totalMs: totalMsOf(end),
@@ -289,6 +299,7 @@ const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
         startedTs: first?.ts ?? null,
         lastEvent: "finished",
         state: state ?? null,
+        step: null,
         prUrl,
         finished: true,
         totalMs: totalMsOf(end),

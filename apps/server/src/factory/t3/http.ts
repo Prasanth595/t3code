@@ -134,6 +134,7 @@ const runsRoute = factoryRoute(
         started_ts: run.startedTs,
         state: run.state,
         last_event: run.lastEvent,
+        step: run.step,
         status: statusWord(run),
         pr_url: run.prUrl,
         finished: run.finished,
