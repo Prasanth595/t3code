@@ -130,6 +130,11 @@ function paint(range: Range | null) {
   else CSS.highlights.set(HIGHLIGHT_NAME, new Highlight(range));
 }
 
+/** `getScrollableNode` is typed `any`, and some timeline tests render without `HTMLElement`. */
+function asHtmlElement(node: unknown): HTMLElement | null {
+  return typeof HTMLElement !== "undefined" && node instanceof HTMLElement ? node : null;
+}
+
 export function TimelineCursor(props: {
   readonly viewport: HTMLElement | null;
   readonly listRef: RefObject<LegendListRef | null>;
@@ -146,18 +151,22 @@ export function TimelineCursor(props: {
 
   // The scroller takes focus for the timeline level. It is not in the tab order.
   useEffect(() => {
-    const scroller = props.listRef.current?.getScrollableNode();
-    if (!(scroller instanceof HTMLElement)) return;
+    // Like the selection toolbar, wait for the viewport.
+    const scroller = asHtmlElement(
+      props.viewport ? props.listRef.current?.getScrollableNode() : null,
+    );
+    if (!scroller) return;
     if (scroller.tabIndex !== 0) scroller.tabIndex = -1;
     scroller.dataset.timelineScroller = "";
   });
 
+  const hasViewport = props.viewport !== null;
   useEffect(() => {
+    if (!hasViewport) return;
     let cursor: Cursor | null = null;
     const rowIds = () => latest.current.rows.map((row) => row.id);
     const scroller = () => {
-      const node = latest.current.listRef.current?.getScrollableNode();
-      return node instanceof HTMLElement ? node : null;
+      return asHtmlElement(latest.current.listRef.current?.getScrollableNode());
     };
     const rowElement = (rowId: string) =>
       latest.current.viewport?.querySelector(`[data-timeline-row-id="${CSS.escape(rowId)}"]`) ??
@@ -358,7 +367,7 @@ export function TimelineCursor(props: {
       document.removeEventListener("focusin", onFocusIn);
       paint(null);
     };
-  }, []);
+  }, [hasViewport]);
 
   return null;
 }
