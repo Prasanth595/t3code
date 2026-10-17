@@ -8,6 +8,7 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -1611,5 +1612,171 @@ describe("the gate in the background", () => {
         const missing = yield* Effect.flip(world.hasPendingGateSend(newRunId(REPO, "12", 1)));
         assert.ok(isLedgerError(missing), missing.message);
       }),
+  );
+});
+
+describe("reloading the machine config", () => {
+  /** A fake `gh` that records the argv of every call and holds the first one until released. */
+  const holdingProcess = () => {
+    const calls: Array<string> = [];
+    const entered = Deferred.makeUnsafe<void>();
+    const release = Deferred.makeUnsafe<void>();
+    let first = true;
+    const process = FactoryProcess.of({
+      run: (input) =>
+        Effect.gen(function* () {
+          calls.push([input.command, ...(input.args ?? [])].join(" "));
+          if (first) {
+            first = false;
+            yield* Deferred.succeed(entered, undefined);
+            yield* Deferred.await(release);
+          }
+          return yield* Effect.fail(
+            new RunSpawnError({ shell: false, cause: new Error("gh not found") }),
+          );
+        }),
+    });
+    return { calls, process, entered, release };
+  };
+
+  /** The runtime over a temp base dir holding `config` (or no file); `write` replaces the file. */
+  const started = (config: string | undefined, process: FactoryProcess["Service"]) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const { join } = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "factory-reload-" });
+      const factoryDir = join(baseDir, "factory");
+      yield* fs.makeDirectory(factoryDir);
+      const machineConfigPath = join(factoryDir, "config.yml");
+      if (config !== undefined) yield* fs.writeFileString(machineConfigPath, config);
+      const context = yield* Layer.build(
+        FactoryRuntime.pipe(
+          Layer.provide(
+            Layer.succeed(Paths.FactoryPaths, {
+              baseDir,
+              worktreesDir: join(baseDir, "worktrees"),
+              factoryDir,
+              machineConfigPath,
+            }),
+          ),
+          Layer.provide(Layer.succeed(FactoryProcess, process)),
+          Layer.provide(noSessions),
+          Layer.provide(quietEvents),
+          Layer.provide(noGate),
+        ),
+      );
+      return {
+        loop: Context.get(context, FactoryLoop),
+        write: (text: string) => fs.writeFileString(machineConfigPath, text),
+      };
+    });
+
+  const OTHER = VALID.replace("a/b", "c/d").replace("/b", "/d");
+
+  it.effect("goes from idle to running when a valid file appears and is reloaded", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { calls, process, entered, release } = holdingProcess();
+        const { loop, write } = yield* started(undefined, process);
+        assert.deepStrictEqual(loop.status, { state: "idle", reason: "no factory config" });
+        yield* write(VALID);
+        yield* loop.reload;
+        yield* Deferred.await(entered);
+        const pass = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+        yield* Deferred.succeed(release, undefined);
+        assert.strictEqual((yield* Fiber.join(pass))?.errors, 1);
+        assert.deepStrictEqual(loop.status, {
+          state: "running",
+          settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+        });
+        assert.ok(
+          calls.some((call) => call.startsWith("gh ") && call.includes("a/b")),
+          calls.join("\n"),
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("goes idle when the file turns invalid or is removed, and passes do nothing", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { calls, process, entered, release } = holdingProcess();
+        const { loop, write } = yield* started(VALID, process);
+        yield* Deferred.await(entered);
+        yield* Deferred.succeed(release, undefined);
+        yield* write(VALID.replace("model: claude-sonnet-5-5\n", ""));
+        yield* loop.reload;
+        assert.deepStrictEqual(loop.status, {
+          state: "idle",
+          reason: "factory config failed to load",
+        });
+        const seen = calls.length;
+        const pass = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+        yield* loop.wake;
+        assert.deepStrictEqual(yield* Fiber.join(pass), {
+          runs: 0,
+          claimed: 0,
+          errors: 0,
+          attention: 0,
+        });
+        assert.strictEqual(calls.length, seen);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "a pass under way finishes on the config it started with, the next uses the new one",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { calls, process, entered, release } = holdingProcess();
+          const { loop, write } = yield* started(VALID, process);
+          yield* Deferred.await(entered);
+          const first = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+          yield* write(OTHER);
+          yield* loop.reload;
+          assert.deepStrictEqual(loop.status, {
+            state: "running",
+            settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["c/d"] },
+          });
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(first);
+          const firstPass = calls.length;
+          const second = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+          yield* Fiber.join(second);
+          assert.ok(
+            calls.slice(0, firstPass).every((call) => call.includes("a/b")),
+            calls.join("\n"),
+          );
+          const next = calls.slice(firstPass);
+          assert.ok(next.length > 0);
+          assert.ok(
+            next.every((call) => call.includes("c/d") && !call.includes("a/b")),
+            next.join("\n"),
+          );
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("repoConfigs holds the errors of a repo whose project config could not be read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { process, entered, release } = holdingProcess();
+        const { loop } = yield* started(VALID, process);
+        yield* Deferred.await(entered);
+        assert.strictEqual((yield* loop.repoConfigs).size, 0);
+        const pass = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(pass);
+        const reading = (yield* loop.repoConfigs).get("a/b");
+        assert.strictEqual(reading?.kind, "errors");
+        const errors = reading?.kind === "errors" ? reading.errors : [];
+        assert.strictEqual(errors.length, 1);
+        assert.ok(
+          errors[0]!.message.startsWith("cannot read .dw/config.yml from GitHub"),
+          errors[0]!.message,
+        );
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 });
