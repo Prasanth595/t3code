@@ -8,7 +8,10 @@ import {
   type OrchestrationV2ServerCommand,
   ThreadId,
 } from "@t3tools/contracts";
-import { RetroId } from "../../../../packages/contracts/src/missionRetro.ts";
+import {
+  RetroId,
+  REQUESTED_RETRO_REPORTER,
+} from "../../../../packages/contracts/src/missionRetro.ts";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -168,7 +171,7 @@ const make = Effect.gen(function* () {
     if (
       (selection.instanceId !== "muse-personal" &&
         selection.instanceId !== "muse-backstage-support") ||
-      selection.model !== "muse-spark-1.3-contributor" ||
+      selection.model !== REQUESTED_RETRO_REPORTER ||
       profiles.length !== 1 ||
       profiles[0]!.value !== "muse-review" ||
       actual.runtimeMode !== "full-access" ||

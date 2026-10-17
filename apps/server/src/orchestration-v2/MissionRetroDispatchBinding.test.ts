@@ -38,7 +38,7 @@ it.effect(
             resolve: () =>
               Effect.succeed({
                 providerInstanceId: "muse-personal",
-                modelId: "muse-spark-1.3-contributor",
+                modelId: "muse-spark-1.3",
                 accountId: "account",
                 company: "No Fun",
                 profile,
@@ -52,7 +52,7 @@ it.effect(
         const now = yield* DateTime.now;
         const selection = {
           instanceId: ProviderInstanceId.make("muse-personal"),
-          model: "muse-spark-1.3-contributor",
+          model: "muse-spark-1.3",
           options: [{ id: "profile", value: "muse-review" }],
         };
         const thread: OrchestrationV2AppThread = {

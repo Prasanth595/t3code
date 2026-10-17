@@ -24,7 +24,7 @@ export const MAX_MISSION_RETRO_SOURCE_REFS = 16;
 export const MAX_MISSION_RETRO_OMISSIONS = 16;
 
 /** Owner-requested reporter identity for queued retro analysis. */
-export const REQUESTED_RETRO_REPORTER = "muse-spark-1.3-contributor";
+export const REQUESTED_RETRO_REPORTER = "muse-spark-1.3";
 /** Company allowlist value that may confirm a queued-ready reporter. */
 export const ELIGIBLE_RETRO_COMPANY = "No Fun";
 
@@ -78,10 +78,9 @@ export const MissionRetroSourceRef = Schema.Struct({
   coveredFromInclusive: NonNegativeInt,
   coveredToExclusive: NonNegativeInt,
 }).check(
-  Schema.makeFilter(
-    (ref) => ref.coveredFromInclusive < ref.coveredToExclusive,
-    { expected: "an ascending non-empty event range" },
-  ),
+  Schema.makeFilter((ref) => ref.coveredFromInclusive < ref.coveredToExclusive, {
+    expected: "an ascending non-empty event range",
+  }),
 );
 export type MissionRetroSourceRef = typeof MissionRetroSourceRef.Type;
 
@@ -109,7 +108,9 @@ export const MissionRetroCheckpoint = Schema.Struct({
   /** Authorized log root the snapshot was read from. */
   sourceRoot: RetroId,
   trigger: RetroTrigger,
-  requestedReporter: Schema.Literal(REQUESTED_RETRO_REPORTER),
+  // Decode existing checkpoints verbatim; new dispatch always uses the current
+  // CLI catalog ID above. The suffix is legacy data, never a runnable model.
+  requestedReporter: Schema.Literals([REQUESTED_RETRO_REPORTER, "muse-spark-1.3-contributor"]),
   status: RetroCheckpointStatus,
   coverage: RetroCoverage,
   snapshotFingerprint: Sha256Hex,

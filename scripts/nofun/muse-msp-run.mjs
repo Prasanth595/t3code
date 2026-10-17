@@ -90,9 +90,10 @@ const { createInterface } = NodeReadline;
 const { fileURLToPath } = NodeURL;
 
 const models = new Set([
-  "muse-spark-1.3-contributor",
-  "muse-wonder-1.0-contributor",
-  "muse-wonder-full-1.0-contributor",
+  "muse-spark-1.3",
+  "muse-spark-1.2",
+  "muse-wonder-1.0",
+  "muse-wonder-full-1.0",
 ]);
 const failure = () => new Error("Muse native useful-run protocol failed.");
 // MSP commands require UUIDv7; randomUUID() produces v4.
