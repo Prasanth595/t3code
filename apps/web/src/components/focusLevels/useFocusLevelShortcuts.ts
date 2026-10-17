@@ -4,7 +4,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { isElectron } from "../../env";
-import { getClientSettings } from "../../hooks/useSettings";
+import { getClientSettings, useClientSettings } from "../../hooks/useSettings";
 import { resolveShortcutCommand } from "../../keybindings";
 import { isEditableFocused } from "../../lib/editableFocus";
 import { isPreviewFocused } from "../../lib/previewFocus";
@@ -17,6 +17,8 @@ import {
   focusLevelOf,
   focusLevelSideways,
   focusLevelUp,
+  focusLevelsEnabled,
+  setFocusLevelsEnabled,
   watchFocusLevelChanges,
 } from "./focusLevels";
 
@@ -61,6 +63,15 @@ function isForkCommand(command: string): command is ForkKeybindingCommand {
   return FORK_COMMANDS.has(command);
 }
 
+/** The commands that `keyboardFocusLevels` turns on. */
+function isLevelCommand(command: ForkKeybindingCommand): boolean {
+  return (
+    command.startsWith("focus.") ||
+    command.startsWith("sidebar.") ||
+    command.startsWith("timeline.")
+  );
+}
+
 const DIRECT_FOCUS: Partial<Record<ForkKeybindingCommand, FocusLevel>> = {
   "focus.composer": "composer",
   "focus.timeline": "timeline",
@@ -81,21 +92,24 @@ function stepRightPanelTab(direction: 1 | -1): boolean {
 }
 
 /**
- * Fork: dispatches the focus level commands for the whole app. Escape (`focus.up`) runs in the
- * bubble phase, after menus, popovers and editors had the chance to handle it themselves. The
- * other commands run in the capture phase, before the focused element's own key handler.
+ * Fork: dispatches the fork keyboard commands for the whole app. Most run in the capture phase,
+ * before the focused element's own key handler. Escape (`focus.up`) waits until every listener
+ * had the event, and yields when any of them used it: a menu, an editor, the find bar, the sidebar
+ * selection or the pull request page.
  */
 export function useFocusLevelShortcuts() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const levelsSetting = useClientSettings((settings) => settings.keyboardFocusLevels);
   const navigate = useNavigate();
   const latest = useRef({ keybindings, navigate });
   useLayoutEffect(() => {
     latest.current = { keybindings, navigate };
+    setFocusLevelsEnabled(levelsSetting);
   });
 
   useEffect(() => {
-    const runBuiltIn = (command: ForkKeybindingCommand, event: KeyboardEvent): boolean => {
-      const level = focusLevelOf(event.target);
+    const runBuiltIn = (command: ForkKeybindingCommand, target: EventTarget | null): boolean => {
+      const level = focusLevelOf(target);
       const direct = DIRECT_FOCUS[command];
       if (direct) return focusLevel(direct);
       switch (command) {
@@ -116,12 +130,8 @@ export function useFocusLevelShortcuts() {
           return false;
       }
     };
-    const dispatch = (phase: "capture" | "bubble") => (event: KeyboardEvent) => {
-      // ProseMirror marks every Escape in the composer as handled. A composer menu that uses
-      // Escape also stops it, so in the bubble phase an Escape from the composer is unused.
-      const composerEscape = phase === "bubble" && focusLevelOf(event.target) === "composer";
-      if (event.defaultPrevented && !composerEscape) return;
-      if (event.isComposing || isCommandPaletteOpen()) return;
+    const resolve = (event: KeyboardEvent): ForkKeybindingCommand | null => {
+      if (event.isComposing || isCommandPaletteOpen()) return null;
       const command = resolveShortcutCommand(event, latest.current.keybindings, {
         context: {
           terminalFocus: getTerminalFocusOwner() !== null,
@@ -132,23 +142,40 @@ export function useFocusLevelShortcuts() {
           ...focusLevelContext(event.target),
         },
       });
-      if (command === null || !isForkCommand(command)) return;
-      if ((command === "focus.up") !== (phase === "bubble")) return;
-      const registered = Array.from(handlers.get(command) ?? []);
-      const handled = registered.some((handler) => handler(event)) || runBuiltIn(command, event);
-      if (!handled) return;
+      if (command === null || !isForkCommand(command)) return null;
+      if (isLevelCommand(command) && !focusLevelsEnabled()) return null;
+      return command;
+    };
+    const run = (command: ForkKeybindingCommand, event: KeyboardEvent): boolean =>
+      Array.from(handlers.get(command) ?? []).some((handler) => handler(event)) ||
+      runBuiltIn(command, event.target);
+
+    const onCapture = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      const command = resolve(event);
+      if (command === null || command === "focus.up" || !run(command, event)) return;
       event.preventDefault();
       event.stopPropagation();
     };
+    // Reached only when no element stopped the event. ProseMirror marks every Escape in the
+    // composer as handled, so there a mark from before this point does not count as a use.
+    const onDocumentEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || resolve(event) !== "focus.up") return;
+      const markedByElement = event.defaultPrevented;
+      if (markedByElement && focusLevelOf(event.target) !== "composer") return;
+      // Window listeners run after this one, in registration order. Decide once all of them ran.
+      setTimeout(() => {
+        if (event.defaultPrevented !== markedByElement) return;
+        run("focus.up", event);
+      }, 0);
+    };
     const stopWatching = watchFocusLevelChanges(() => getClientSettings().focusLevelHighlight);
-    const onCapture = dispatch("capture");
-    const onBubble = dispatch("bubble");
     window.addEventListener("keydown", onCapture, true);
-    window.addEventListener("keydown", onBubble);
+    document.addEventListener("keydown", onDocumentEscape);
     return () => {
       stopWatching();
       window.removeEventListener("keydown", onCapture, true);
-      window.removeEventListener("keydown", onBubble);
+      document.removeEventListener("keydown", onDocumentEscape);
     };
   }, []);
 }

@@ -195,6 +195,12 @@ export const ForkClientSettingsFields = {
    * built-in options. The mobile app always shows the built-in options.
    */
   snoozeQuickOptions: SnoozeQuickOptions.pipe(Schema.withDecodingDefault(Effect.succeed(null))),
+  /**
+   * Fork: focus levels. Escape moves focus from the composer to the timeline, then to the
+   * sidebar. Arrow keys move a cursor in the timeline and the sidebar. Off by default, because
+   * these keys change what Escape, arrows, `mod+f` and digits do today.
+   */
+  keyboardFocusLevels: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Fork: a short outline fade on the screen area that takes focus: composer, timeline, sidebar or right panel. */
   focusLevelHighlight: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 };
@@ -214,6 +220,7 @@ export const ForkClientSettingsPatchFields = {
   sidebarGroupsEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarGroupSingleThreadOpens: Schema.optionalKey(Schema.Boolean),
   snoozeQuickOptions: Schema.optionalKey(SnoozeQuickOptions),
+  keyboardFocusLevels: Schema.optionalKey(Schema.Boolean),
   focusLevelHighlight: Schema.optionalKey(Schema.Boolean),
 };
 

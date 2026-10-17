@@ -46,12 +46,18 @@ in Settings.
 
 ## Focus levels
 
-Keyboard focus moves between the composer, the timeline, the right panel and the sidebar.
+Turn on **Settings → General → Keyboard focus levels** to move focus between the composer,
+the timeline, the right panel and the sidebar with the keyboard. It is off by default.
 
-- Escape moves one level up: from the composer to the timeline, then to the sidebar. An open menu, dialog or find bar closes first.
-- `mod+alt+left` and `mod+alt+right` move between the sidebar, the chat and the right panel.
-- Typing a letter outside a text field still goes to the composer.
-- The area that takes focus shows a short outline. Turn it off in **Settings → General → Focus highlight**.
+- Escape moves one level up: from the composer to the timeline, then to the sidebar.
+  An open menu, dialog, find bar or sidebar selection takes Escape first. On the Pull Requests
+  page, Escape still goes back.
+- In the desktop app, `mod+alt+left` and `mod+alt+right` move between the sidebar, the chat and
+  the right panel.
+- Outside a text field, typing a letter in the chat goes to the composer. In the sidebar, digits
+  switch groups, and other letters do nothing.
+- A key that moves focus outlines the area it moves to. Turn this off in
+  **Settings → General → Focus highlight**.
 
 In the sidebar, Up and Down move between threads, and Enter opens one and focuses its timeline.
 Up from the first thread reaches the group tabs. Left and Right, or `1` to `9`, switch groups.
@@ -61,13 +67,17 @@ In the timeline, Up and Down move a cursor between messages. Right goes one leve
 blocks such as paragraphs and list items, then sentences or code lines. Left goes back up.
 Shift with Up or Down extends the selection. Enter cites the selection with a note, and
 `alt+enter` cites it without one. Only assistant text can be cited. `mod+down` jumps to the
-latest message.
+latest message. PageUp and PageDown still scroll.
 
-Thread keys act on the selected sidebar thread, or on the open thread elsewhere:
-`mod+backspace` archives (sidebar and timeline only), `mod+alt+s` snoozes or wakes,
-`mod+alt+r` renames, and `mod+alt+u` marks unread. While an approval waits, `mod+y` approves,
-`mod+shift+y` always allows for the session, and `mod+alt+y` declines.
-`ctrl+tab` and `ctrl+shift+tab` switch right panel tabs. In a browser, `mod+,` opens settings.
+These keys work with the setting off too:
+
+- Thread keys act on the selected sidebar thread, or on the open thread elsewhere.
+  `mod+backspace` archives (sidebar and timeline only), `mod+alt+s` snoozes or wakes,
+  `mod+alt+r` renames, and `mod+shift+u` marks unread.
+- While an approval waits and no text field or terminal has focus, `mod+y` approves,
+  `mod+shift+y` always allows for the session, and `mod+alt+y` declines.
+- In the desktop app, `ctrl+tab` and `ctrl+shift+tab` switch right panel tabs.
+- In a browser, `mod+,` opens settings.
 
 ## Copy pull request references
 

@@ -2,6 +2,10 @@ import { type KeybindingRule, SIDEBAR_GROUP_JUMP_KEYBINDING_COMMANDS } from "@t3
 
 const SIDEBAR_KEYS = "sidebarFocus && !editableFocus";
 const TIMELINE_KEYS = "timelineFocus && !editableFocus";
+// `mod+y` is redo in editors, and Ctrl+Y pastes in shells. An approval cannot be undone.
+const APPROVAL_KEYS = "approvalPending && !editableFocus && !terminalFocus";
+// Browsers keep these keys for their own tabs, and a terminal must still receive them.
+const DESKTOP_KEYS = "isDesktop && !terminalFocus";
 
 /**
  * Fork: defaults for the focus level commands. `keybindings.ts` appends them after the upstream
@@ -14,8 +18,8 @@ export const FORK_DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
     command: "focus.up",
     when: "composerFocus || ((timelineFocus || rightPanelFocus) && !editableFocus)",
   },
-  { key: "mod+alt+arrowleft", command: "focus.left" },
-  { key: "mod+alt+arrowright", command: "focus.right" },
+  { key: "mod+alt+arrowleft", command: "focus.left", when: DESKTOP_KEYS },
+  { key: "mod+alt+arrowright", command: "focus.right", when: DESKTOP_KEYS },
   { key: "arrowup", command: "sidebar.previousItem", when: SIDEBAR_KEYS },
   { key: "arrowdown", command: "sidebar.nextItem", when: SIDEBAR_KEYS },
   { key: "enter", command: "sidebar.openItem", when: SIDEBAR_KEYS },
@@ -45,11 +49,11 @@ export const FORK_DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   },
   { key: "mod+alt+s", command: "thread.snooze", when: "!terminalFocus" },
   { key: "mod+alt+r", command: "thread.rename", when: "!terminalFocus" },
-  { key: "mod+alt+u", command: "thread.markUnread", when: "!terminalFocus" },
-  { key: "mod+y", command: "approval.approve", when: "approvalPending" },
-  { key: "mod+shift+y", command: "approval.alwaysAllow", when: "approvalPending" },
-  { key: "mod+alt+y", command: "approval.decline", when: "approvalPending" },
-  { key: "ctrl+shift+tab", command: "rightPanel.previousTab", when: "!terminalFocus" },
-  { key: "ctrl+tab", command: "rightPanel.nextTab", when: "!terminalFocus" },
+  { key: "mod+shift+u", command: "thread.markUnread", when: "!terminalFocus" },
+  { key: "mod+y", command: "approval.approve", when: APPROVAL_KEYS },
+  { key: "mod+shift+y", command: "approval.alwaysAllow", when: APPROVAL_KEYS },
+  { key: "mod+alt+y", command: "approval.decline", when: APPROVAL_KEYS },
+  { key: "ctrl+shift+tab", command: "rightPanel.previousTab", when: DESKTOP_KEYS },
+  { key: "ctrl+tab", command: "rightPanel.nextTab", when: DESKTOP_KEYS },
   { key: "mod+,", command: "settings.open", when: "isWeb" },
 ];

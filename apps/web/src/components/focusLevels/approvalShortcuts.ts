@@ -18,6 +18,7 @@ const DECISION_BY_COMMAND = {
  */
 export function approvalShortcutCommands(input: {
   readonly approval: PendingApproval | null;
+  readonly canOperate: boolean;
   readonly respondingRequestIds: ReadonlyArray<RuntimeRequestId>;
   readonly respond: (requestId: RuntimeRequestId, decision: ProviderApprovalDecision) => unknown;
 }): Partial<Record<KeybindingCommand, ChatShortcutHandler>> {
@@ -25,7 +26,7 @@ export function approvalShortcutCommands(input: {
   for (const [command, decision] of Object.entries(DECISION_BY_COMMAND)) {
     commands[command as keyof typeof DECISION_BY_COMMAND] = ({ event }) => {
       const approval = input.approval;
-      if (!approval || approval.responseCapability !== "live") return false;
+      if (!input.canOperate || !approval || approval.responseCapability !== "live") return false;
       if (approval.options && !approval.options.some((option) => option.decision === decision))
         return false;
       if (event.repeat || input.respondingRequestIds.includes(approval.requestId)) return;

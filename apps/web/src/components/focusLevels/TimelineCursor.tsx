@@ -1,10 +1,16 @@
-import { type AssistantCitation, MessageId, type ScopedThreadRef } from "@t3tools/contracts";
+import {
+  type AssistantCitation,
+  type ClientSettings,
+  MessageId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 import type { LegendListRef } from "@legendapp/list/react";
 import { type RefObject, useEffect, useLayoutEffect, useRef } from "react";
 import {
   type AssistantCitationSourceAnchor,
   captureAssistantTextRange,
 } from "~/lib/assistantTextSelection";
+import { useClientSettings } from "../../hooks/useSettings";
 import { toastManager } from "../ui/toast";
 import {
   type FocusLevelCommandHandler,
@@ -25,6 +31,7 @@ const ROW_CONTENT_SELECTOR = "[data-assistant-citation-source], [data-user-messa
 /** Leaves this much of the timeline above or below the cursor when it scrolls into view. */
 const SCROLL_MARGIN_PX = 32;
 const MOUNT_WAIT_FRAMES = 12;
+const selectKeyboardFocusLevels = (settings: ClientSettings) => settings.keyboardFocusLevels;
 
 interface Unit {
   /** Null for a text unit, a sentence or a code line, which has no deeper units. */
@@ -149,20 +156,26 @@ export function TimelineCursor(props: {
     latest.current = props;
   });
 
-  // The scroller takes focus for the timeline level. It is not in the tab order.
+  const enabled = useClientSettings(selectKeyboardFocusLevels);
+  // While the setting is on, the scroller takes focus for the timeline level, outside the tab
+  // order. Like the selection toolbar, it waits for the viewport.
   useEffect(() => {
-    // Like the selection toolbar, wait for the viewport.
     const scroller = asHtmlElement(
       props.viewport ? props.listRef.current?.getScrollableNode() : null,
     );
-    if (!scroller) return;
-    if (scroller.tabIndex !== 0) scroller.tabIndex = -1;
+    if (!scroller || !enabled) return;
+    const addedTabIndex = !scroller.hasAttribute("tabindex");
+    if (addedTabIndex) scroller.tabIndex = -1;
     scroller.dataset.timelineScroller = "";
-  });
+    return () => {
+      if (addedTabIndex) scroller.removeAttribute("tabindex");
+      delete scroller.dataset.timelineScroller;
+    };
+  }, [props.viewport, props.listRef, enabled]);
 
   const hasViewport = props.viewport !== null;
   useEffect(() => {
-    if (!hasViewport) return;
+    if (!hasViewport || !enabled) return;
     let cursor: Cursor | null = null;
     const rowIds = () => latest.current.rows.map((row) => row.id);
     const scroller = () => {
@@ -367,7 +380,7 @@ export function TimelineCursor(props: {
       document.removeEventListener("focusin", onFocusIn);
       paint(null);
     };
-  }, [hasViewport]);
+  }, [hasViewport, enabled]);
 
   return null;
 }

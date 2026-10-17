@@ -306,6 +306,7 @@ import {
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { approvalShortcutCommands } from "./focusLevels/approvalShortcuts";
+import { focusLevelContext } from "./focusLevels/focusLevels";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
 import { resolveNewDraftStartFromOrigin } from "../lib/chatThreadActions";
 import {
@@ -5595,6 +5596,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadKey, focusComposerStable, terminalUiState.terminalOpen]);
 
   const getShortcutContext = (eventTarget: EventTarget | null = document.activeElement) => ({
+    ...focusLevelContext(eventTarget),
     terminalFocus: getTerminalFocusOwner() !== null,
     terminalOpen: Boolean(terminalUiState.terminalOpen),
     previewFocus: isPreviewFocused(),
@@ -5761,6 +5763,7 @@ export default function ChatView(props: ChatViewProps) {
       },
       ...approvalShortcutCommands({
         approval: activePendingApproval,
+        canOperate: canOperateThread,
         respondingRequestIds,
         respond: onRespondToApprovalStable,
       }),

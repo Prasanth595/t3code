@@ -17,7 +17,6 @@ import {
   type ShortcutEventLike,
   type ShortcutModifierStateLike,
 } from "@t3tools/shared/keybindings";
-import { focusLevelContext } from "./components/focusLevels/focusLevels";
 import { isElectron } from "./env";
 import { projectScriptIdFromCommand } from "./projectScripts";
 
@@ -62,7 +61,6 @@ function resolveContext(options: ShortcutMatchOptions | undefined): ShortcutMatc
     isWeb: !isElectron,
     isDesktop: isElectron,
     editableFocus: false,
-    ...focusLevelContext(),
     ...options?.context,
   };
 }

@@ -272,10 +272,17 @@ The client setting `appToggleShortcuts` lists global keys that show and hide the
 
 Keyboard focus moves between four levels: the composer, the timeline, the right panel and the sidebar. The commands are normal keybinding commands (`packages/contracts/src/forkKeybindings.ts`), with defaults in `packages/shared/src/forkKeybindings.ts`. The code is in `apps/web/src/components/focusLevels/`.
 
+- The client setting `keyboardFocusLevels` turns on the `focus.*`, `sidebar.*` and `timeline.*` commands. It is off by default, because these keys change existing behavior:
+  - Escape in the composer did nothing. In the timeline and the right panel, it now moves focus.
+  - A click into the timeline focuses its scroller, so Up and Down move the cursor instead of scrolling.
+  - `mod+f` in the sidebar focuses sidebar search instead of thread find.
+  - Letters and digits typed in the sidebar no longer go to the composer. Digits switch groups.
+- With the setting off, the level `when` flags (`timelineFocus`, `sidebarFocus`, `rightPanelFocus`) are false, so the upstream rules for the same keys apply.
+- Thread action keys, approval keys, right panel tab keys and `mod+,` on web only add keys, so they work with the setting off.
 - The level is the area that holds focus, found through markers that the areas already render. No other state exists.
-- `focus.up` (Escape) runs after menus, popovers and editors handle the key. The other commands run before the focused element handles it.
+- `focus.up` (Escape) waits until every listener had the key. It yields when an element or a window listener used it, such as a menu, the find bar, the sidebar selection or the Escape-to-go-back of the pull request page. ProseMirror marks every Escape in the composer as handled, so that mark alone does not count.
 - The timeline cursor paints with the CSS Custom Highlight API and cites through the same code as a mouse selection.
-- The client setting `focusLevelHighlight` outlines the area that takes focus. It is on by default.
+- The client setting `focusLevelHighlight` outlines the area that takes focus from a key. It is on by default.
 
 ## Repository owner filters
 

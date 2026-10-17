@@ -37,6 +37,7 @@ const FORK_RESTORED_SETTINGS = [
   ["sidebarOwnerFilter", "Sidebar owner filter"],
   ["appToggleShortcuts", "App toggle shortcuts"],
   ["terminalAppShortcutsFirst", "App shortcuts in terminal"],
+  ["keyboardFocusLevels", "Keyboard focus levels"],
   ["focusLevelHighlight", "Focus highlight"],
   ["confirmTerminalClose", "Terminal close confirmation"],
 ] as const satisfies ReadonlyArray<

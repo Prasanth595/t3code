@@ -2,10 +2,22 @@
  * Fork: focus levels. The composer, timeline, right panel and sidebar are areas of the screen
  * that keyboard focus moves between. The DOM is the only state: the level is the area that
  * holds `document.activeElement`, found through markers that the areas already render.
- * `keybindings.ts` imports this module, so it imports nothing from the app.
+ * Chat shortcut code low in the import graph imports this module, so it imports nothing from
+ * the app; an app import here once closed an import cycle.
  */
 
 export type FocusLevel = "composer" | "timeline" | "rightPanel" | "sidebar";
+
+/** The client setting `keyboardFocusLevels`, set by `useFocusLevelShortcuts`. */
+let levelsEnabled = false;
+
+export function setFocusLevelsEnabled(enabled: boolean) {
+  levelsEnabled = enabled;
+}
+
+export function focusLevelsEnabled(): boolean {
+  return levelsEnabled;
+}
 
 /** Inner levels first: the composer sits inside the chat column, beside the timeline. */
 const FOCUS_LEVEL_SELECTORS = [
@@ -41,11 +53,12 @@ export function focusLevelElement(level: FocusLevel): HTMLElement | null {
   return document.querySelector<HTMLElement>(levelSelector(level));
 }
 
-/** The `when` flags of the focus levels, for every keybinding context. */
-export function focusLevelContext(target?: EventTarget | null) {
-  // Keybinding helpers also run in node tests, where there is no document.
-  const level =
-    typeof document === "undefined" ? null : focusLevelOf(target ?? document.activeElement);
+/**
+ * The `when` flags of the focus levels. All are false while `keyboardFocusLevels` is off, so the
+ * level keys fall back to the upstream rules for the same keys, such as `mod+f` for thread find.
+ */
+export function focusLevelContext(target: EventTarget | null) {
+  const level = levelsEnabled ? focusLevelOf(target) : null;
   return {
     composerFocus: level === "composer",
     timelineFocus: level === "timeline",
@@ -111,11 +124,19 @@ export function focusLevelSideways(from: FocusLevel, direction: "left" | "right"
 }
 
 /**
- * The highlight: one outline fade on the area that takes focus. It runs once per change, so it
- * does not repaint while the user works.
+ * The highlight: one outline fade on the area that takes focus from the keyboard. A click shows
+ * where focus went already, so it does not flash. It runs once per change, so it does not repaint
+ * while the user works.
  */
 export function watchFocusLevelChanges(highlightEnabled: () => boolean): () => void {
   let previous = focusLevelOf(document.activeElement);
+  let lastInputWasKeyboard = false;
+  const onKeyDown = () => {
+    lastInputWasKeyboard = true;
+  };
+  const onPointerDown = () => {
+    lastInputWasKeyboard = false;
+  };
   const onFocusIn = (event: FocusEvent) => {
     const level = focusLevelOf(event.target);
     if (level === null || level === previous) {
@@ -123,7 +144,7 @@ export function watchFocusLevelChanges(highlightEnabled: () => boolean): () => v
       return;
     }
     previous = level;
-    if (!highlightEnabled()) return;
+    if (!lastInputWasKeyboard || !highlightEnabled()) return;
     const element = focusLevelElement(level);
     if (!element) return;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -135,6 +156,12 @@ export function watchFocusLevelChanges(highlightEnabled: () => boolean): () => v
       { duration: 450, easing: reduceMotion ? "step-end" : "ease-out" },
     );
   };
+  window.addEventListener("keydown", onKeyDown, true);
+  window.addEventListener("pointerdown", onPointerDown, true);
   document.addEventListener("focusin", onFocusIn);
-  return () => document.removeEventListener("focusin", onFocusIn);
+  return () => {
+    window.removeEventListener("keydown", onKeyDown, true);
+    window.removeEventListener("pointerdown", onPointerDown, true);
+    document.removeEventListener("focusin", onFocusIn);
+  };
 }
