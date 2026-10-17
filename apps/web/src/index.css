@@ -1708,8 +1708,12 @@ code {
    rather than every pre: a global rule would beat text-size utilities and
    inherited sizes on unrelated pre surfaces (terminal previews, approvals).
    Inline code stays relative to its sentence so it never towers over prose;
-   diffs and file previews take the size through --diffs-font-size. */
+   diffs and file previews take the size through --diffs-font-size.
+   The size goes on every chat code block pre, not only Shiki's: a pre's own
+   font sets each line's minimum height, so the hidden placeholder shown while
+   Shiki loads would otherwise be taller and shift the thread when swapped. */
 .chat-markdown .chat-markdown-shiki .shiki,
+.chat-markdown .chat-markdown-codeblock pre,
 :is(.chat-markdown, .composer-tiptap) pre code {
   font-size: var(--font-size-code, inherit);
 }
