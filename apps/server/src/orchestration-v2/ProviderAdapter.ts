@@ -276,6 +276,17 @@ export class ProviderAdapterTurnStartError extends Schema.TaggedError<ProviderAd
   }
 }
 
+export class ProviderAdapterCompactionUnsupportedError extends Schema.TaggedError<ProviderAdapterCompactionUnsupportedError>()(
+  "ProviderAdapterCompactionUnsupportedError",
+  { driver: ProviderDriverKind },
+) {
+  override get message(): string {
+    return this.driver === "cursor"
+      ? "Cursor does not expose a compaction API. Change this thread to another provider, then retry; its conversation and worktree stay in this thread. T3 has not submitted a compaction request."
+      : "This provider does not support context compaction. Change this thread to another provider before compacting. T3 has not submitted a compaction request.";
+  }
+}
+
 export class ProviderAdapterSteerRunUnsupportedError extends Schema.TaggedError<ProviderAdapterSteerRunUnsupportedError>()(
   "ProviderAdapterSteerRunUnsupportedError",
   {
@@ -366,6 +377,7 @@ export const ProviderAdapterV2Error = Schema.Union([
   ProviderAdapterRollbackThreadError,
   ProviderAdapterForkThreadError,
   ProviderAdapterTurnStartError,
+  ProviderAdapterCompactionUnsupportedError,
   ProviderAdapterSteerRunUnsupportedError,
   ProviderAdapterSteerRunError,
   ProviderAdapterInterruptError,

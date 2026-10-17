@@ -2440,11 +2440,8 @@ export function makeCursorAdapterV2(
               ),
           ),
           startTurn,
-          compactThread: (turnInput) =>
-            startTurn({
-              ...turnInput,
-              message: { ...turnInput.message, text: "/compress" },
-            }),
+          // SDKAgent has no compaction operation. Sending "/compress" through
+          // send() is an ordinary prompt, not an acknowledged history compaction.
           steerTurn: (turnInput) =>
             Effect.fail(
               new ProviderAdapter.ProviderAdapterSteerRunUnsupportedError({

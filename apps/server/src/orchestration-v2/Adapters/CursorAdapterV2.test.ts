@@ -209,11 +209,13 @@ describe("CursorAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
   );
 
-  it.effect("fails standalone SDK transport diagnostics and sends compaction as /compress", () =>
+  it.effect("reports transport errors without native compaction", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const workspace = yield* fileSystem.makeTempDirectoryScoped({ prefix: "cursor-v2-errors-" });
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "cursor-v2-errors-",
+      });
       const sentMessages: Array<string> = [];
       let sendCalls = 0;
       const instanceId = ProviderInstanceId.make("cursor");
@@ -331,31 +333,10 @@ describe("CursorAdapterV2", () => {
         assert.equal(first.value.failure?.class, "transport_error");
       }
 
-      assert.isDefined(runtime.compactThread);
-      yield* runtime.compactThread!({
-        threadId,
-        providerThread,
-        modelSelection,
-        runtimePolicy,
-        runId: RunId.make("cursor-compact-run"),
-        runOrdinal: 2,
-        providerTurnOrdinal: 2,
-        attemptId: RunAttemptId.make("cursor-compact-attempt"),
-        rootNodeId: NodeId.make("cursor-compact-root"),
-        appThread,
-        message: {
-          messageId: MessageId.make("cursor-compact-message"),
-          createdBy: "user",
-          creationSource: "web",
-          text: "ignored by compactThread",
-          attachments: [],
-        },
-      });
-      yield* runtime.events.pipe(
-        Stream.filter((event) => event.type === "turn.terminal"),
-        Stream.runHead,
-      );
-      assert.equal(sentMessages[1], "/compress");
+      assert.isUndefined(runtime.compactThread);
+      assert.lengthOf(sentMessages, 1);
+      assert.include(sentMessages[0]!, "continue");
+      assert.notInclude(sentMessages[0]!, "/compress");
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, IdAllocator.layer))),
   );
 

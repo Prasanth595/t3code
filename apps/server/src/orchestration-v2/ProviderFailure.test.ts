@@ -101,6 +101,23 @@ it("preserves actionable handoff errors wrapped by turn startup", () => {
   );
 });
 
+it("gives Cursor a recoverable handoff refusal instead of an unsupported compact instruction", () => {
+  const failure = makeProviderFailure({
+    cause: new ProviderAdapterTurnStartError({
+      driver: ProviderDriverKind.make("cursor"),
+      threadId: ThreadId.make("thread:cursor-handoff"),
+      providerThreadId: ProviderThreadId.make("provider-thread:cursor-handoff"),
+      runId: RunId.make("run:cursor-handoff"),
+      cause: new ContextHandoffBudgetError(),
+    }),
+  });
+  assert.include(failure.message, "Cursor does not expose a compaction API");
+  assert.include(failure.message, "Change this thread to another provider");
+  assert.include(failure.message, "not submitted");
+  assert.equal(failure.code, "context_handoff_budget_exceeded");
+  assert.equal(failure.retryable, false);
+});
+
 it("does not expose defect text nested inside a known error category", () => {
   const failure = makeProviderFailure({
     cause: {
