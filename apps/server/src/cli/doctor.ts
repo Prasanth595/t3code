@@ -117,7 +117,8 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
     );
   }
   if (selected.includes("legacy")) {
-    // Only versions before 0.1.0 open this file, so the service keeps running.
+    // Only versions before 0.1.0 open this file, so the service keeps running;
+    // the removal itself refuses while one of those still has it open.
     yield* maintenance.removeLegacyDatabase(databasePath);
     yield* Console.log("\nDeleted the database from before 0.1.0.");
   }

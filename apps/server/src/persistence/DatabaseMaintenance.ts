@@ -26,7 +26,7 @@ export class DatabaseInUseError extends Schema.TaggedError<DatabaseInUseError>()
   { path: Schema.String, cause: Schema.Defect() },
 ) {
   override get message() {
-    return "Stop the T3 Code server and desktop app before compacting the database.";
+    return "Stop the T3 Code server and desktop app, including any version before 0.1.0, before repairing the database.";
   }
 }
 
@@ -99,7 +99,7 @@ export class DatabaseMaintenance extends Context.Service<
      */
     readonly removeLegacyDatabase: (
       databasePath: string,
-    ) => Effect.Effect<void, LegacyDatabaseRemoveError>;
+    ) => Effect.Effect<void, DatabaseInUseError | LegacyDatabaseRemoveError>;
   }
 >()("t3/persistence/DatabaseMaintenance") {}
 
@@ -120,6 +120,26 @@ const readStorage = Effect.gen(function* () {
     incrementalVacuumEnabled: mode[0]?.auto_vacuum === 2,
   };
 });
+
+/**
+ * Holds an exclusive lock on the connection's database. In WAL mode this is
+ * refused while any other connection has the file open, even an idle one,
+ * which is how a running server or desktop app is detected.
+ */
+const lockExclusively = (databasePath: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`PRAGMA busy_timeout = 0`;
+    yield* sql`PRAGMA locking_mode = EXCLUSIVE`;
+    yield* sql`BEGIN EXCLUSIVE`.pipe(
+      Effect.mapError((cause) =>
+        isSqlError(cause) && cause.reason._tag === "LockTimeoutError"
+          ? new DatabaseInUseError({ path: databasePath, cause })
+          : cause,
+      ),
+    );
+    yield* sql`COMMIT`;
+  });
 
 const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -159,19 +179,8 @@ const make = Effect.gen(function* () {
       const beforeBytes = Number((yield* fs.stat(databasePath)).size);
       const result = yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
-        // Hold an exclusive lock through compaction and VACUUM. In WAL mode this
-        // is refused while any other connection has the file open, even an idle
-        // one, which is how a running server or desktop app is detected.
-        yield* sql`PRAGMA busy_timeout = 0`;
-        yield* sql`PRAGMA locking_mode = EXCLUSIVE`;
-        yield* sql`BEGIN EXCLUSIVE`.pipe(
-          Effect.mapError((cause) =>
-            isSqlError(cause) && cause.reason._tag === "LockTimeoutError"
-              ? new DatabaseInUseError({ path: databasePath, cause })
-              : cause,
-          ),
-        );
-        yield* sql`COMMIT`;
+        // Held through compaction and VACUUM.
+        yield* lockExclusively(databasePath);
         const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
         if (!(yield* maintenance.verify).valid) {
           return yield* new DatabaseProjectionsInvalidError({ path: databasePath });
@@ -213,14 +222,23 @@ const make = Effect.gen(function* () {
   const removeLegacyDatabase = Effect.fn("DatabaseMaintenance.removeLegacyDatabase")(
     function* (databasePath: string) {
       const legacy = legacyPath(databasePath);
-      for (const suffix of ["-wal", "-shm", ""]) {
-        yield* fs.remove(legacy + suffix, { force: true });
-      }
+      if (!(yield* fs.exists(legacy))) return;
+      // A version before 0.1.0 may still be running against it. Keep the lock
+      // while deleting, and delete the database before its WAL so a failure
+      // never leaves it without committed transactions.
+      yield* Effect.gen(function* () {
+        yield* lockExclusively(legacy);
+        for (const suffix of ["", "-wal", "-shm"]) {
+          yield* fs.remove(legacy + suffix, { force: true });
+        }
+      }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: legacy })));
     },
     (effect, databasePath) =>
       effect.pipe(
-        Effect.mapError(
-          (cause) => new LegacyDatabaseRemoveError({ path: legacyPath(databasePath), cause }),
+        Effect.mapError((cause) =>
+          cause._tag === "DatabaseInUseError"
+            ? cause
+            : new LegacyDatabaseRemoveError({ path: legacyPath(databasePath), cause }),
         ),
       ),
   );

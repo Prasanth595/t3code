@@ -45,9 +45,22 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
         assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
 
-        yield* fs.writeFileString(legacy, "V1 data");
-        yield* fs.writeFileString(`${legacy}-wal`, "V1 log");
-        assert.equal((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes, 7);
+        const openLegacy = NodeSqliteClient.layer({ filename: legacy });
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`PRAGMA journal_mode = WAL`;
+          yield* sql`CREATE TABLE v1_data (value TEXT)`;
+        }).pipe(Effect.provide(openLegacy));
+        assert.isAbove((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes ?? 0, 0);
+
+        // A version before 0.1.0 still running against it keeps it.
+        const refused = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`SELECT value FROM v1_data`;
+          return yield* Effect.flip(maintenance.removeLegacyDatabase(dbPath));
+        }).pipe(Effect.provide(openLegacy));
+        assert.equal(refused._tag, "DatabaseInUseError");
+        assert.isTrue(yield* fs.exists(legacy));
 
         yield* maintenance.removeLegacyDatabase(dbPath);
         assert.isFalse(yield* fs.exists(legacy));
