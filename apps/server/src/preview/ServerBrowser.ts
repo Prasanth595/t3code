@@ -1909,7 +1909,11 @@ const make = Effect.gen(function* () {
       }
       case "snapshot": {
         return withScreencastsPaused(tab, async () =>
-          ServerBrowserPage.snapshot({ ...tab, ...(await snapshotRendering(tab)) }),
+          ServerBrowserPage.snapshot({
+            ...tab,
+            renderScale: RENDER_SCALE,
+            ...(tab.desktop ? { rendering: () => snapshotRendering(tab) } : {}),
+          }),
         );
       }
       case "click": {

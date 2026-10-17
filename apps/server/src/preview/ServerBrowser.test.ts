@@ -1707,3 +1707,62 @@ it.live.each([
     }),
   ).pipe(Effect.provide(layer)),
 );
+
+it.live("a stalled desktop metrics read times out and resumes snapshot viewers", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      desktopRendersNext = true;
+      const { browser, broker, tabId } = yield* ready;
+      yield* browser.attachViewer(viewerInput(tabId, false));
+      const context = desktopConnections[0]!.context;
+      const reading = Promise.withResolvers<void>();
+      let stalled = true;
+      for (const session of context.sessions) {
+        const send = session.send.getMockImplementation()!;
+        session.send.mockClear().mockImplementation(async (method, input) => {
+          if (
+            method === "Runtime.evaluate" &&
+            String((input as { expression?: string })?.expression).includes("ratio:")
+          ) {
+            if (stalled) {
+              reading.resolve();
+              return new Promise(() => {});
+            }
+            return { result: { value: { ratio: 1, width: 1280, height: 800, zoom: 1 } } };
+          }
+          return send(method, input);
+        });
+      }
+      const snapshot = broker.invoke<PreviewAutomationSnapshot>({
+        scope,
+        tabId,
+        operation: "snapshot",
+        input: {},
+      });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+      try {
+        const pending = yield* snapshot.pipe(
+          Effect.exit,
+          Effect.tap(() => Effect.sync(() => reading.resolve())),
+          Effect.forkScoped,
+        );
+        yield* Effect.promise(() => reading.promise);
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(9_999));
+        expect(pending.pollUnsafe()).toBeUndefined();
+        yield* Effect.promise(() => vi.advanceTimersByTimeAsync(1));
+        const result = pending.pollUnsafe();
+        expect(result).toBeDefined();
+        expect(JSON.stringify(result)).toContain(
+          "The page was too busy to capture a snapshot in time",
+        );
+        const viewerSession = context.sessions.at(-1)!;
+        expect(viewerSession.send).toHaveBeenCalledWith("Page.stopScreencast");
+        expect(viewerSession.send).toHaveBeenCalledWith("Page.startScreencast", expect.anything());
+        stalled = false;
+        expect((yield* snapshot).screenshot).toMatchObject({ width: 1280, height: 800 });
+      } finally {
+        vi.useRealTimers();
+      }
+    }),
+  ).pipe(Effect.provide(layer)),
+);

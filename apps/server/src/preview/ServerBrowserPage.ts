@@ -468,6 +468,7 @@ type SnapshotInput = {
   readonly page: Page;
   readonly cdp: CDPSession;
   readonly renderScale: number;
+  readonly rendering?: () => Promise<Pick<SnapshotInput, "renderScale" | "viewport">>;
   /** For a page Playwright did not size, such as one the desktop draws. */
   readonly viewport?: Viewport;
   readonly consoleEntries: ReadonlyArray<PreviewAutomationConsoleEntry>;
@@ -564,13 +565,20 @@ export const snapshot = async (input: SnapshotInput): Promise<PreviewAutomationS
   // A page that changed mid-capture, like one rotating ads, has usually settled by a second
   // try. None starts late or after another snapshot began, since it would revoke the refs of
   // whichever snapshot came next.
-  const captured = capture(input, deadline).catch((cause: unknown) =>
-    Date.now() < deadline &&
-    snapshotTurns.get(input.page) === turn &&
-    !(cause instanceof Error && cause.message === VALUE_TOO_LONG)
-      ? capture(input, deadline)
-      : Promise.reject(cause),
-  );
+  const captured = (async () => {
+    if (input.rendering) {
+      input = { ...input, ...(await input.rendering()) };
+      // A late metrics reply must not begin a capture after viewers have resumed.
+      if (Date.now() >= deadline) throw tooBusy();
+    }
+    return capture(input, deadline).catch((cause: unknown) =>
+      Date.now() < deadline &&
+      snapshotTurns.get(input.page) === turn &&
+      !(cause instanceof Error && cause.message === VALUE_TOO_LONG)
+        ? capture(input, deadline)
+        : Promise.reject(cause),
+    );
+  })();
   try {
     return await Promise.race([captured, expired]);
   } catch (cause) {
