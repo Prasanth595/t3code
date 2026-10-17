@@ -306,8 +306,8 @@ export const makeEnvironment = Effect.fn("T3Client.makeEnvironment")(function* (
 
   const sendMessage = Effect.fn("T3Client.sendMessage")(function* (input: SendMessageInput) {
     yield* ready;
-    const commandId = input.commandId ?? CommandId.make(yield* crypto.randomUUIDv4);
-    const messageId = input.messageId ?? MessageId.make(yield* crypto.randomUUIDv4);
+    const commandId = input.commandId ?? CommandId.make(yield* crypto.randomUUIDv4());
+    const messageId = input.messageId ?? MessageId.make(yield* crypto.randomUUIDv4());
     const result = yield* startThreadTurn({
       commandId,
       threadId: input.threadId,

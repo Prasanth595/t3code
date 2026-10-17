@@ -1,14 +1,22 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 
-/**
- * Creates a new owner-only credential file. Fails if `path` already exists, so
- * token bytes never land in a file with looser permissions or behind a symlink.
- */
-export const writeCredentialFile = Effect.fn("example.writeCredentialFile")(function* (
+/** Reserves an owner-only file before creating the credential, refusing existing paths. */
+export const writeCredentialFile = Effect.fn("example.writeCredentialFile")(function* <E, R>(
   path: string,
-  encoded: string,
+  encoded: Effect.Effect<string, E, R>,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  yield* fs.writeFileString(path, encoded, { flag: "wx", mode: 0o600 });
+  let reserved = false;
+  yield* Effect.scoped(
+    Effect.gen(function* () {
+      const file = yield* fs.open(path, { flag: "wx", mode: 0o600 });
+      reserved = true;
+      yield* file.writeAll(new TextEncoder().encode(yield* encoded));
+    }),
+  ).pipe(
+    Effect.onError(() =>
+      reserved ? fs.remove(path).pipe(Effect.ignore({ log: true })) : Effect.void,
+    ),
+  );
 });

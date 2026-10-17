@@ -35,10 +35,13 @@ const readCredential = Effect.fn("example.readCredential")(function* (path: stri
 const pairCommand = Effect.fn("example.pair")(function* (path: string) {
   const pairingUrl = process.env.T3_PAIRING_URL;
   if (!pairingUrl) return yield* Effect.die(new Error("Set T3_PAIRING_URL to a pairing link."));
-  const credential = yield* pair({ pairingUrl, label: "list-threads-and-send example" });
-  const encoded = yield* encodeCredential(credential);
-  yield* writeCredentialFile(path, encoded);
-  yield* Console.log(`Paired with ${credential.label} (${credential.environmentId}).`);
+  yield* writeCredentialFile(
+    path,
+    pair({ pairingUrl, label: "list-threads-and-send example" }).pipe(
+      Effect.flatMap(encodeCredential),
+    ),
+  );
+  yield* Console.log(`Paired. Saved credentials to ${path}.`);
 });
 
 const listCommand = Effect.fn("example.list")(function* (paths: ReadonlyArray<string>) {
