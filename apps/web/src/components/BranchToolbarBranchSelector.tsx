@@ -64,6 +64,7 @@ import {
 } from "./ThreadStatusIndicators";
 
 import { ComboboxItem, ComboboxTrigger } from "./ui/combobox";
+import { ShortcutTooltip } from "./focusLevels/ShortcutHint";
 import { ComposerControl } from "./chat/ComposerControl";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
@@ -697,7 +698,10 @@ export function BranchToolbarBranchSelector({
             }}
           />
         ) : null}
-        <span
+        <ShortcutTooltip
+          command={displayMode === "panel" ? null : "composer.branch"}
+          label={triggerLabel}
+          render={<span />}
           className="flex min-w-0"
           onMouseDownCapture={(event) => {
             if (event.button !== 0 || event.ctrlKey) {
@@ -734,7 +738,7 @@ export function BranchToolbarBranchSelector({
               <ChevronDownIcon className="size-3 shrink-0 opacity-50" />
             ) : null}
           </ComboboxTrigger>
-        </span>
+        </ShortcutTooltip>
         {displayMode === "panel" && prNumber !== undefined && prUrl !== undefined ? (
           <ThreadDetailsPrRows
             threadRef={threadRef}

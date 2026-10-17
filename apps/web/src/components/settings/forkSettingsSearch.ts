@@ -132,6 +132,12 @@ export const BEHAVIOR_ITEMS = [
     searchTerms: ["keyboard focus outline flash escape composer timeline sidebar right panel"],
   },
   {
+    id: "tooltip-shortcuts",
+    title: "Shortcuts in tooltips",
+    to: "/settings/general",
+    searchTerms: ["keyboard shortcuts keybindings tooltip hint key label"],
+  },
+  {
     id: "repository-owner-filters",
     title: "Repository owner filters",
     to: "/settings/general",

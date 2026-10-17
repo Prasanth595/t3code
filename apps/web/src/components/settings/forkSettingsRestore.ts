@@ -39,6 +39,7 @@ const FORK_RESTORED_SETTINGS = [
   ["terminalAppShortcutsFirst", "App shortcuts in terminal"],
   ["keyboardFocusLevels", "Keyboard focus levels"],
   ["focusLevelHighlight", "Focus highlight"],
+  ["tooltipShortcuts", "Shortcuts in tooltips"],
   ["confirmTerminalClose", "Terminal close confirmation"],
 ] as const satisfies ReadonlyArray<
   readonly [keyof UnifiedSettings & keyof ScopedSettingsPatch, string]

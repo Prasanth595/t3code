@@ -62,6 +62,7 @@ import {
 } from "./ui/menu";
 import { Separator } from "./ui/separator";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { ShortcutHint } from "./focusLevels/ShortcutHint";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { ComposerSurface } from "./chat/ComposerSurface";
 import { useComposerMenuProps } from "./chat/composerEventScope";
@@ -221,6 +222,9 @@ const RunContextSelector = memo(function RunContextSelector({
             ? "Each model starts in its own worktree."
             : (workspacePath ?? workspaceLabel)
           : workspaceLabel}
+        <ShortcutHint
+          command={isPanel || isLocked || envModeLocked ? null : "composer.workspace"}
+        />
       </TooltipPopup>
     </Tooltip>
   );
@@ -242,7 +246,12 @@ const RunContextSelector = memo(function RunContextSelector({
             />
           )}
         </TooltipTrigger>
-        <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+        <TooltipPopup>
+          {autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}
+          <ShortcutHint
+            command={isPanel || isLocked || !showEnvironmentPicker ? null : "composer.host"}
+          />
+        </TooltipPopup>
       </Tooltip>
       {workspaceIcon}
     </span>

@@ -6,6 +6,7 @@ import { isElectron } from "../../env";
 import { AppToggleShortcutsSettingsRow } from "./AppToggleShortcutsSettingsRow";
 import {
   FocusLevelHighlightSettingsRow,
+  TooltipShortcutsSettingsRow,
   KeyboardFocusLevelsSettingsRow,
 } from "./FocusLevelsSettingsRows";
 import { ForkChangelogSettingsRow } from "./ForkChangelogSettingsRow";
@@ -66,6 +67,8 @@ export function BehaviorRows() {
       <KeyboardFocusLevelsSettingsRow />
 
       <FocusLevelHighlightSettingsRow />
+
+      <TooltipShortcutsSettingsRow />
 
       {isElectron ? <AppToggleShortcutsSettingsRow /> : null}
 
