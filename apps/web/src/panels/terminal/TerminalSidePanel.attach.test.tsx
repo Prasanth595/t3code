@@ -54,7 +54,7 @@ vi.mock("~/terminal/ghostty/surface", async (importOriginal) => ({
 vi.mock("~/state/entities", () => {
   const project = { workspaceRoot: "/repo" };
   return {
-    useThreadShell: (ref: ScopedThreadRef) => ({
+    useQuietThreadShell: (ref: ScopedThreadRef) => ({
       environmentId: ref.environmentId,
       projectId: "project-a",
       worktreePath: null,
