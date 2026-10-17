@@ -199,7 +199,9 @@ export const useFactoryRun = (
  * The environment whose factory the pages show: the first connected environment whose status says
  * `running`, the primary first; with none running, the primary, whose status then says why it is
  * idle. Every candidate's status is read and polled here, through the same stores the pages' own
- * status hooks use, so choosing costs no read beyond the candidates'. Null without a primary.
+ * status hooks use, so choosing costs no read beyond the candidates'. Null without a primary, and
+ * while a candidate ahead of any running one has not answered yet: the pages read nothing from an
+ * environment that a later answer could displace.
  */
 export function useFactoryEnvironmentId(): EnvironmentId | null {
   const primary = usePrimaryEnvironmentId();
@@ -220,13 +222,14 @@ export function useFactoryEnvironmentId(): EnvironmentId | null {
       },
       [candidates],
     ),
-    useCallback(
-      () =>
-        candidates.find(
-          (id) => (snapshot(keyOf(id, "status")).data as FactoryStatus | null)?.state === "running",
-        ) ?? primary,
-      [candidates, primary],
-    ),
+    useCallback(() => {
+      for (const id of candidates) {
+        const { status, data } = snapshot(keyOf(id, "status"));
+        if ((data as FactoryStatus | null)?.state === "running") return id;
+        if (status === "loading") return null;
+      }
+      return primary;
+    }, [candidates, primary]),
   );
   const tickAll = useCallback(
     () => candidates.forEach((id) => tick(keyOf(id, "status"))),
