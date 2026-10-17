@@ -84,31 +84,32 @@ export default function DeviceSidePanel(props: {
     setOperationError(null);
     setPendingDevice(device);
     const stillCurrent = isCurrentScope();
-    try {
-      const result = await open({
-        environmentId,
-        input: {
-          threadId,
-          hostId: device.hostId,
-          deviceId: device.id,
-          platform: device.platform,
-        },
+    return open({
+      environmentId,
+      input: {
+        threadId,
+        hostId: device.hostId,
+        deviceId: device.id,
+        platform: device.platform,
+      },
+    })
+      .then((result) => {
+        // The server opened the device for the starting thread, so its tab opens
+        // there even after a switch; only this panel's own state is scope-guarded.
+        if (result._tag === "Failure") {
+          if (stillCurrent()) setOperationError(formatEnvironmentQueryError(result.cause));
+        } else {
+          useRightPanelStore.getState().openDevice(threadRef, {
+            hostId: result.value.hostId,
+            deviceId: result.value.deviceId,
+            platform: device.platform,
+            name: device.name,
+          });
+        }
+      })
+      .finally(() => {
+        if (stillCurrent()) setPendingDevice(null);
       });
-      // The server opened the device for the starting thread, so its tab opens
-      // there even after a switch; only this panel's own state is scope-guarded.
-      if (result._tag === "Failure") {
-        if (stillCurrent()) setOperationError(formatEnvironmentQueryError(result.cause));
-      } else {
-        useRightPanelStore.getState().openDevice(threadRef, {
-          hostId: result.value.hostId,
-          deviceId: result.value.deviceId,
-          platform: device.platform,
-          name: device.name,
-        });
-      }
-    } finally {
-      if (stillCurrent()) setPendingDevice(null);
-    }
   };
 
   const floatActive = () => {
