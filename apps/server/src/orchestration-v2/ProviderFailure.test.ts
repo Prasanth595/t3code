@@ -224,3 +224,19 @@ it.effect("keys terminal failure items by provider turn across retries and fallb
     assert.equal(firstAttempt.ordinal, 101);
   }).pipe(Effect.provide(IdAllocator.layer)),
 );
+
+it("preserves the unconfirmed Cursor attachment fence in the public failure", () => {
+  const failure = makeProviderFailure({
+    cause: {
+      _tag: "ProviderAdapterTurnStartError",
+      cause: {
+        _tag: "CursorRunAttachmentUnconfirmedError",
+        message:
+          "cursor_run_attachment_unconfirmed: cancellation is not confirmed; inspect before retrying.",
+      },
+    },
+  });
+  assert.equal(failure.code, "cursor_run_attachment_unconfirmed");
+  assert.equal(failure.retryable, false);
+  assert.include(failure.message, "cancellation is not confirmed");
+});

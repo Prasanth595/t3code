@@ -44,8 +44,18 @@ function causeFailure(cause: unknown):
       cursor ||= stringField(cause, "driver") === "cursor";
       switch ((cause as Record<string, unknown>)._tag) {
         case "CursorRunAttachmentUnconfirmedError":
+          return {
+            message:
+              stringField(cause, "message") ??
+              "Cursor attachment and cancellation are unconfirmed. Inspect the existing agent before retrying.",
+            code: "cursor_run_attachment_unconfirmed",
+            retryable: false,
+          };
         case "CursorLocalSessionLimitError":
-          return stringField(cause, "message") ?? undefined;
+          message = stringField(cause, "message");
+          return message === undefined
+            ? undefined
+            : { message, code: "cursor_local_concurrency_limit" };
         case "ContextHandoffBudgetError":
           return {
             message: new ContextHandoffBudgetError(
