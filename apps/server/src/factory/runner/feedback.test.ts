@@ -1026,16 +1026,16 @@ describe("feedback: the window", () => {
       // A review an instructor wrote at 1h, while the failing re-gate ran, is still new.
       rig.gh.feedback.push({ ...review11(), createdAt: "2026-10-04T11:13:16Z" });
       assert.deepStrictEqual(yield* feedbackIn(rig), relaunched(1));
-      // It is named now, so it is not sent again; the window starts over after the relaunch.
+      // It is named now, so it is not sent again; the window starts at the relaunch (decided at
+      // the rig's first instant), not at the pass that brings the run back.
       assert.strictEqual(decisions(rig).length, 1);
       assert.deepStrictEqual(decisions(rig)[0]![2], ["review:11"]);
       appendAt(rig, T0 + 4 * hour, [moved("building", "pr-open")]);
-      assert.strictEqual(progressOf(rig).prOpenSince, T0 + 4 * hour);
+      assert.strictEqual(progressOf(rig).prOpenSince, T0);
       rig.clock.now = T0 + 5 * hour;
       clearCalls(rig);
       assert.deepStrictEqual(yield* feedbackIn(rig), NONE);
-      const since = secondBefore(T0 + 4 * hour);
-      assert.deepStrictEqual(rig.gh.calls, feedbackReads(since, since));
+      assert.deepStrictEqual(rig.gh.calls, feedbackReads(SINCE_THE_PASS, SINCE_THE_PASS));
     }),
   );
 });
@@ -1339,7 +1339,7 @@ describe("feedback: the step", () => {
   );
 
   it.effect(
-    "after a feedback relaunch feedback is read from the pass the run came back to pr-open on",
+    "after a feedback relaunch feedback is read from the relaunch, so a review written while it built is not lost",
     () =>
       Effect.gen(function* () {
         const rig = yield* prOpenRun();
@@ -1350,10 +1350,23 @@ describe("feedback: the step", () => {
           moved("pr-open", "building"),
         ]);
         backToPrOpen(rig, T0 + 5_000_000);
+        // The review the relaunch sent is still on the pull request, and the instructor wrote
+        // another while the feedback session built. The read goes back to the relaunch: the
+        // first is not sent again, the second starts the next relaunch. softfac starts the
+        // window at the pass instead and never reads the second.
+        rig.gh.feedback.push(review11(), {
+          ...review11(),
+          id: "review:12",
+          createdAt: "2026-10-04T11:00:00Z",
+        });
         clearCalls(rig);
-        assert.deepStrictEqual(yield* feedbackIn(rig), NONE);
-        const since = secondBefore(T0 + 5_000_000);
-        assert.deepStrictEqual(rig.gh.calls, feedbackReads(since, since));
+        assert.deepStrictEqual(yield* feedbackIn(rig), relaunched(1));
+        assert.deepStrictEqual(
+          rig.gh.calls.filter(isFeedbackRead),
+          feedbackReads(SINCE_THE_PASS, SINCE_THE_PASS),
+        );
+        assert.strictEqual(rig.t3.launches[0]!.commandId, `softfac:${RUN}:feedback:2`);
+        assert.deepStrictEqual(decisions(rig)[1]![2], ["review:12"]);
       }),
   );
 

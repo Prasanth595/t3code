@@ -1790,14 +1790,14 @@ export const makeGitHub = (options: GitHubOptions) => {
    * `floor` (not before `since`) is how far back the paging goes: it stops at a review submitted
    * at or before `floor`. A review submitted after `since` on the pages read is judged, whether or
    * not it is after `floor`. GitHub lists reviews by when each was started, so a review missed is
-   * one started as a pending review before that one and submitted after `floor`, or an approving
-   * or dismissed review with no text, judged as not counting and later edited to say something.
+   * one started as a pending review before that one and submitted after `floor`, or a dismissed
+   * review with no text, judged as not counting and later edited to say something.
    * Only the newest 100 conversation comments are read.
    *
    * Only a person who is an instructor counts, and nothing that carries the factory's marker. A
    * review is judged by its `submittedAt` and its state: one that asks for changes or comments is
-   * feedback; one that approves or was dismissed is feedback only when it has a body or an inline
-   * comment; a pending one is not. A review, a conversation comment or an inline comment whose
+   * feedback; one that approves is feedback only when it has an inline comment, one that was
+   * dismissed only when it has a body or an inline comment; a pending one is not. A review, a conversation comment or an inline comment whose
    * text was edited counts only when every edit in its history and its last editor are
    * instructors who are people and the history is whole; an inline comment that fails drops out
    * of its review and the rest of the review stays. The line of an inline comment is the one it
@@ -1905,13 +1905,16 @@ export const makeGitHub = (options: GitHubOptions) => {
             body: c.body ?? "",
           });
         }
-        const saysSomething = body.trim() !== "" || inline.length > 0;
+        // softfac also counts an approval with a body, so approving with "LGTM!" would send the
+        // pull request back to draft and the issue back to building. This port does not.
         const counts =
           review.state === "CHANGES_REQUESTED" || review.state === "COMMENTED"
             ? true
-            : review.state === "APPROVED" || review.state === "DISMISSED"
-              ? saysSomething
-              : false;
+            : review.state === "APPROVED"
+              ? inline.length > 0
+              : review.state === "DISMISSED"
+                ? body.trim() !== "" || inline.length > 0
+                : false;
         if (!counts) continue;
         const id = databaseId(review.fullDatabaseId);
         if (id === null) return yield* unreadable("a review with an id", review.state);

@@ -628,20 +628,23 @@ describe("readProgress: gating again", () => {
       assert.strictEqual(readProgress(tripped).prOpenSince, 5);
     });
 
-    it("resets the cursor on a feedback relaunch, and the next pr-open sets it again", () => {
+    it("moves the cursor to a feedback relaunch, and the next pr-open keeps it there", () => {
+      // softfac resets it and lets the next pass set it, so a review written while the relaunch
+      // built was never read. The relaunch's own moment covers that time; what the relaunch sent
+      // is kept out by `feedbackSent`.
       const decided = [...PASS, deciding(8, 1, ["review:11"])];
-      assert.strictEqual(readProgress(decided).prOpenSince, null);
+      assert.strictEqual(readProgress(decided).prOpenSince, 8);
       const building = [...decided, launched(9), moved(10, "pr-open", "building")];
-      assert.strictEqual(readProgress(building).prOpenSince, null);
+      assert.strictEqual(readProgress(building).prOpenSince, 8);
       const back = [...building, moved(5_000, "building", "pr-open")];
-      assert.strictEqual(readProgress(back).prOpenSince, 5_000);
-      // Later trips through building and back (a failed re-gate) do not move it.
+      assert.strictEqual(readProgress(back).prOpenSince, 8);
+      // Later trips through building and back (a failed re-gate) do not move it either.
       const tripped = [
         ...back,
         moved(9_000, "pr-open", "building"),
         moved(12_000, "building", "pr-open"),
       ];
-      assert.strictEqual(readProgress(tripped).prOpenSince, 5_000);
+      assert.strictEqual(readProgress(tripped).prOpenSince, 8);
     });
 
     it("launches under a command id of what the relaunch fixes", () => {

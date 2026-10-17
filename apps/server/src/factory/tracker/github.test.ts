@@ -5112,11 +5112,9 @@ describe("pr feedback", () => {
           "williammartin",
         ]),
       );
-      assert.deepStrictEqual(feedbackIds(items), [
-        "pr-comment:2082274688",
-        "review:2028628010",
-        "review:2028948315",
-      ]);
+      // Review 2028948315 approves with a body that ends in "LGTM!" and no inline comment, so
+      // it is not feedback.
+      assert.deepStrictEqual(feedbackIds(items), ["pr-comment:2082274688", "review:2028628010"]);
       assert.deepStrictEqual(items[1]?.kind, { kind: "review", state: "COMMENTED" });
       assert.deepStrictEqual(
         items[1]?.inline.map((c) => [c.path, c.line]),
@@ -5295,23 +5293,28 @@ describe("pr feedback", () => {
   );
 
   it.effect(
-    "an approval with nothing in it is not feedback; one with words or inline comments is",
+    "an approval is feedback only with inline comments; a dismissed review with words or inline comments is too",
     () =>
       Effect.gen(function* () {
+        // softfac also counts an approval with a body, so approving with "LGTM!" would send the
+        // pull request back to draft and the issue back to building. This port does not.
         const inline = inlineNode("nit", "src/a.rs", 3, "rawphp");
         const got = yield* readFeedback(
           feedbackReply(
             [
               reviewNode(11, "APPROVED", "", "2026-10-04T11:00:00Z", "rawphp"),
               reviewNode(12, "DISMISSED", "  \n", "2026-10-04T11:01:00Z", "rawphp"),
-              reviewNode(13, "APPROVED", "looks good", "2026-10-04T11:02:00Z", "rawphp"),
+              reviewNode(13, "APPROVED", "LGTM!", "2026-10-04T11:02:00Z", "rawphp"),
               reviewNode(14, "APPROVED", "", "2026-10-04T11:03:00Z", "rawphp", [inline]),
               reviewNode(15, "DISMISSED", "stale", "2026-10-04T11:04:00Z", "rawphp"),
+              reviewNode(16, "APPROVED", "one more nit", "2026-10-04T11:05:00Z", "rawphp", [
+                inline,
+              ]),
             ],
             [],
           ),
         );
-        assert.deepStrictEqual(feedbackIds(got), ["review:13", "review:14", "review:15"]);
+        assert.deepStrictEqual(feedbackIds(got), ["review:14", "review:15", "review:16"]);
       }),
   );
 

@@ -99,10 +99,11 @@ const NONE: FeedbackStep = { kind: "none" };
  *
  * Three kinds of feedback count, each from a person in `factory.instructors` and never with the
  * factory's marker: a review of the pull request, a comment in its conversation, and a comment on
- * the issue. They are read from one second before the pass that first took the run to `pr-open`
- * since its last feedback relaunch, and an item that a `feedback_relaunching` or
- * `feedback_forwarding` line names (by its GitHub id, which an edit does not change) is never sent
- * again. With none left, nothing is written and `none` is the answer.
+ * the issue. They are read from one second before the pass that first took the run to `pr-open`,
+ * or before the last feedback relaunch when there was one (softfac starts the window over at the
+ * next pass, and loses a review written while the relaunch builds), and an item that a
+ * `feedback_relaunching` or `feedback_forwarding` line names (by its GitHub id, which an edit does
+ * not change) is never sent again. With none left, nothing is written and `none` is the answer.
  *
  * The feedback of a run is read at most once every `FEEDBACK_READ_EVERY_MS`. The time of the last
  * read is kept in `feedbackReadFile` and is written before the read is made, so a read that fails
