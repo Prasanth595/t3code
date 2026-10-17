@@ -235,7 +235,7 @@ describe("Antigravity setup", () => {
     expect(occurrences("Open the Google sign-in link.")).toBe(0);
 
     setup.auth = authState({ message: "Open the Google sign-in link.", inputError: null });
-    await renderSetup();
+    await publish();
     expect(occurrences(refused)).toBe(0);
   });
 
