@@ -382,7 +382,7 @@ import {
   readThreadShell,
   waitForThreadShell,
 } from "../state/entities";
-import { environmentShell, environmentSnapshotAtom } from "../state/shell";
+import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { createPageScrollController, type PageScrollKey } from "./chat/pageScrollController";
 import { isTimelineScrollTarget } from "./chat/timelineScrollTarget";
@@ -5110,7 +5110,7 @@ export default function ChatView(props: ChatViewProps) {
     // The thread route sends a missing thread to the start page, so stay here instead.
     if (
       shell === null
-        ? appAtomRegistry.get(environmentSnapshotAtom(environmentId)) !== null
+        ? appAtomRegistry.get(environmentShell.stateValueAtom(environmentId)).status === "live"
         : shell.deletedAt != null
     ) {
       toastManager.add({ type: "info", title: "This thread was deleted" });
