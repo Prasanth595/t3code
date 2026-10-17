@@ -32,6 +32,7 @@ import {
   missionRetroReportReceipts,
   missionRetroSkillEvaluations,
 } from "../../../../packages/contracts/src/missionExecution.ts";
+import { reserveDueRotation } from "./MissionManagerDailyRotation.ts";
 import * as Transfer from "./MissionManagerTransferStore.ts";
 import * as Handoff from "./MissionManagerHandoffArtifacts.ts";
 import { evaluateManagerRotation, type ManagerRotationDecision } from "./MissionManagerRotation.ts";
@@ -196,6 +197,13 @@ const StartupConfig = Schema.Struct({
   approvedConfigDigest: Digest,
   reportArtifactDirectory: Id,
   plans: Schema.Record(Id, Plan),
+  rotation: Schema.optional(
+    Schema.Struct({
+      enabled: Schema.Literal(true),
+      authorityRef: Id,
+      missionIds: Schema.Array(Id),
+    }),
+  ),
 });
 type StartupConfig = typeof StartupConfig.Type;
 const decodeConfig = Schema.decodeUnknownSync(Schema.fromJsonString(StartupConfig), {
@@ -943,6 +951,43 @@ const make = Effect.gen(function* () {
               !mission.value.bindings.every((b) => trusted.allowedProjectIds.includes(b.projectId))
             )
               continue;
+            // Daily activation is an explicit owner-configured allowlist, separate
+            // from merely installing/registering these consumers.
+            if (
+              approved &&
+              Option.isSome(config) &&
+              config.value.rotation?.missionIds.includes(mission.value.id)
+            ) {
+              for (const role of ["delivery", "retro"] as const) {
+                const owner = mission.value.managers[role];
+                if (!owner?.threadId || owner.epoch === undefined) continue;
+                const memo = yield* Layer.forkMemoMap(parentMemo);
+                const context = yield* Layer.buildWithMemoMap(
+                  RuntimeLayer.layerMissionManagerLifecycle.pipe(
+                    Layer.provide(
+                      Layer.succeed(Lifecycle.MissionManagerLifecycleAuthority, {
+                        teamId: trusted.teamId,
+                        environmentId,
+                        role,
+                        isCurrent,
+                      }),
+                    ),
+                  ),
+                  memo,
+                  yield* Scope.Scope,
+                ).pipe(Effect.provide(startupContext));
+                yield* reserveDueRotation(mission.value.id).pipe(
+                  Effect.provide(Context.merge(startupContext, context)),
+                  Effect.provideService(Transfer.MissionManagerReservationAuthority, {
+                    teamId: trusted.teamId,
+                    environmentId,
+                    controllerThreadId: owner.threadId,
+                    role,
+                    isCurrent,
+                  }),
+                );
+              }
+            }
             const pending = missionManagerReservations(
               mission.value.execution ?? emptyMissionExecution(),
             ).filter((r) => managerReservationState(r) !== "retired");
