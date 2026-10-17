@@ -25,8 +25,8 @@ The command:
    port.
 2. Creates T3 Code, React, and Linux Git repositories with recognizable favicons, feature branches,
    and a deterministic T3 Code review diff.
-3. Seeds each server's migrated SQLite database with playful threads, messages, activities, and
-   terminal history, then adds two persisted mobile-outbox tasks waiting to send.
+3. Seeds each server's migrated SQLite database with playful threads, messages, and terminal
+   history, then adds two persisted mobile-outbox tasks waiting to send.
 4. Starts an isolated Metro server, builds the selected native apps, and boots each device.
 5. Pairs each clean app installation with Moonbase Terminal, Suspense Station, and Kernel Cabin.
 6. Navigates to the real application route for every requested scene.
