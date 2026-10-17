@@ -228,6 +228,7 @@ export class ProviderAdapterThreadInUseError extends Schema.TaggedError<Provider
     driver: ProviderDriverKind,
     providerThreadId: ProviderThreadId,
     detail: Schema.String,
+    cause: Schema.Defect(),
   },
 ) {
   override get message(): string {
