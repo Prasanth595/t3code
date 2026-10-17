@@ -14,10 +14,12 @@ import * as Result from "effect/Result";
 import { isMap, isScalar, parseDocument, YAMLMap } from "yaml";
 
 import {
+  ambiguousRepos,
   DEFAULT_MAX_CONCURRENT_GATES,
   DEFAULT_POLL_SECONDS,
   loadMachineConfig,
   parseMachineConfig,
+  PROJECT_CONFIG_PATH,
   RETIRED_MACHINE_KEYS,
   type ConfigError,
   type MachineConfig,
@@ -25,6 +27,7 @@ import {
   type RepoConfigReading,
   type WatchedProject,
 } from "./config.ts";
+import { asciiLower } from "./ledger/runId.ts";
 import { writeFileAtomically } from "./t3/files.ts";
 
 /** A project config as the report shows it: the YAML field names. */
@@ -168,7 +171,24 @@ export const readMachineConfigReport = (
 ): Effect.Effect<MachineConfigReport, never, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
+    const ambiguous = ambiguousRepos(watched);
     const repos = watched.map(({ repo, path, title }) => {
+      const paths = ambiguous.get(asciiLower(repo));
+      if (paths !== undefined) {
+        // The pass loaded neither checkout, so there is no reading to show.
+        return {
+          repo,
+          path,
+          title,
+          factory: null,
+          errors: [
+            {
+              file: PROJECT_CONFIG_PATH,
+              message: `${paths.length} T3 projects have this repo as their origin (${paths.join(", ")}); the factory watches none of them`,
+            },
+          ],
+        };
+      }
       const reading = readings.get(repo);
       return {
         repo,

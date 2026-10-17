@@ -34,7 +34,7 @@ export function WatchedRepos({ repos }: { readonly repos: ReadonlyArray<RepoBloc
         </p>
       </SettingsSection>
       {repos.map((block) => (
-        <SettingsSection key={block.repo} title={`Watched repo: ${block.title}`}>
+        <SettingsSection key={`${block.repo} ${block.path}`} title={`Watched repo: ${block.title}`}>
           <SettingsRow title="Repository" description={block.repo} />
           <SettingsRow
             title="Workspace root"

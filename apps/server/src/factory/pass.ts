@@ -13,7 +13,13 @@ import * as Effect from "effect/Effect";
 
 import type { Attention, NewItem } from "./attention.ts";
 import type { HandPause } from "./claims.ts";
-import type { MachineConfig, ProjectConfig, WatchedListing, WatchedRepo } from "./config.ts";
+import {
+  ambiguousRepos,
+  type MachineConfig,
+  type ProjectConfig,
+  type WatchedListing,
+  type WatchedRepo,
+} from "./config.ts";
 import { stateLabel, type State } from "./domain/lifecycle.ts";
 import type { LedgerError } from "./ledger/errors.ts";
 import type { CauseStep, ErrorKind, MachineEvent } from "./ledger/events.ts";
@@ -562,7 +568,8 @@ export const runPass = (
 
 /**
  * The project config and tracker login of every watched repo. A repo whose config cannot be
- * loaded is reported and its issues are left alone; so is one whose tracker login cannot be read.
+ * loaded is reported and its issues are left alone; so is one whose tracker login cannot be read,
+ * and one that two T3 projects name (`ambiguousRepos`).
  */
 const loadRepos = (
   world: PassWorld,
@@ -571,7 +578,29 @@ const loadRepos = (
 ): Effect.Effect<Array<Loaded>> =>
   Effect.gen(function* () {
     const repos: Array<Loaded> = [];
+    const ambiguous = ambiguousRepos(watchedRepos);
+    const said = new Set<string>();
     for (const watched of watchedRepos) {
+      const key = asciiLower(watched.repo);
+      const paths = ambiguous.get(key);
+      if (paths !== undefined) {
+        // Said once per repo, not per project: the repo is skipped whole.
+        if (!said.has(key)) {
+          said.add(key);
+          const message = `${watched.repo}: ${paths.length} T3 projects have it as their origin (${paths.join(", ")}), repo skipped`;
+          pass.error(plain(message));
+          yield* pass.record({
+            event: "repo_skipped",
+            data: {
+              repo: watched.repo,
+              reason: "ambiguous-project",
+              message: prepareText(message),
+            },
+          });
+          repos.push({ kind: "broken", name: watched.repo });
+        }
+        continue;
+      }
       const project = yield* Effect.result(world.project(watched));
       if (project._tag === "Failure") {
         const message = project.failure.message;

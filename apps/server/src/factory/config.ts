@@ -5,6 +5,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { parse } from "yaml";
 
+import { asciiLower } from "./ledger/runId.ts";
+
 export const ConfigErrorSchema = Schema.Struct({
   file: Schema.String,
   field: Schema.optionalKey(Schema.String),
@@ -88,6 +90,24 @@ export interface WatchedRepo {
 export interface WatchedProject extends WatchedRepo {
   readonly title: string;
 }
+
+/**
+ * The repos that two or more watched projects name, by the repo folded with `asciiLower`, each
+ * with the paths of its projects in order. A repo like that is watched from none of them: the
+ * factory cannot tell which checkout is its own. The pass and the settings report both ask here.
+ */
+export const ambiguousRepos = (
+  watched: ReadonlyArray<WatchedRepo>,
+): ReadonlyMap<string, ReadonlyArray<string>> => {
+  const byRepo = new Map<string, Array<string>>();
+  for (const { repo, path } of watched) {
+    const key = asciiLower(repo);
+    const paths = byRepo.get(key);
+    if (paths === undefined) byRepo.set(key, [path]);
+    else paths.push(path);
+  }
+  return new Map([...byRepo].filter(([, paths]) => paths.length > 1));
+};
 
 /** What the reader found: the watched projects, and the opted-in checkouts it could not identify this time. */
 export interface WatchedListing {
