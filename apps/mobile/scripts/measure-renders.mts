@@ -214,6 +214,22 @@ const measureStreamReply = Effect.fn("measure.streamReply")(function* (
     workspaceStrategy: { type: "root" },
     initialMessage: { text: STREAM_PROMPT, attachments: [] },
   });
+  // A failed or interrupted window must not leave a provider turn running.
+  yield* Effect.addFinalizer(() =>
+    Effect.gen(function* () {
+      const after = yield* client["orchestration.getThreadProjection"]({ threadId });
+      const activeRun = after.runs.find(
+        (entry) => !["completed", "failed", "interrupted", "cancelled"].includes(entry.status),
+      );
+      if (!activeRun) return;
+      yield* client["orchestration.dispatchCommand"]({
+        type: "run.interrupt",
+        commandId: CommandId.make(yield* uuid),
+        threadId,
+        runId: activeRun.id,
+      });
+    }).pipe(Effect.ignore),
+  );
   yield* evaluate(
     `__t3RenderCounterOpen(${encodeJson(`${options.scheme}://threads/${environmentId}/${threadId}`)})`,
   );
@@ -238,18 +254,7 @@ const measureStreamReply = Effect.fn("measure.streamReply")(function* (
       message: `Run ${run}: no React commits in the window. Check the device for a red box.`,
     });
   const after = yield* client["orchestration.getThreadProjection"]({ threadId });
-  const stillStreaming = streamingItem(after) !== undefined;
-  const activeRun = after.runs.find(
-    (entry) => !["completed", "failed", "interrupted", "cancelled"].includes(entry.status),
-  );
-  if (activeRun)
-    yield* client["orchestration.dispatchCommand"]({
-      type: "run.interrupt",
-      commandId: CommandId.make(yield* uuid),
-      threadId,
-      runId: activeRun.id,
-    });
-  return { report, stillStreaming };
+  return { report, stillStreaming: streamingItem(after) !== undefined };
 }, Effect.scoped);
 
 const formatTable = (reports: ReadonlyArray<RenderReport>) => {
