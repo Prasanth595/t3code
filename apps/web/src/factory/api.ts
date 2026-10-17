@@ -12,6 +12,7 @@ import {
   factoryRequest,
   failureMessage,
   parseJson,
+  timeoutMessage,
 } from "./http";
 
 /** The factory's HTTP API as the server serves it (`apps/server/src/factory/t3/http.ts`). */
@@ -118,8 +119,9 @@ export interface FactoryApi {
 }
 
 /**
- * How long one call may wait for its answer. A server that hangs then fails the call (status 0,
- * code `timeout`) instead of pinning a page on loading and its poll on a request that never ends.
+ * How long one call may wait for its answer, the wait for a connection included. A server that
+ * hangs then fails the call (status 0, code `timeout`) instead of pinning a page on loading and its
+ * poll on a request that never ends.
  */
 let timeoutMs = DEFAULT_TIMEOUT_MS;
 
@@ -172,15 +174,26 @@ const call = async <T>(
   path: string,
   searchParams?: Record<string, string>,
 ): Promise<T> => {
+  // One deadline for the whole call: the request gets what the wait for a connection left.
+  const deadline = Date.now() + timeoutMs;
+  const timedOut = () => new FactoryApiError(0, "timeout", timeoutMessage(timeoutMs));
   let result;
   try {
     const prepared = await connectionWithin(timeoutMs);
-    result = await factoryRequest(prepared, { method, path, searchParams, timeoutMs });
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) throw timedOut();
+    result = await factoryRequest(prepared, {
+      method,
+      path,
+      searchParams,
+      timeoutMs: remainingMs,
+    });
   } catch (error) {
     if (error instanceof FactoryApiError) throw error;
+    if (error instanceof FactoryHttpError && error.kind === "timeout") throw timedOut();
     throw new FactoryApiError(
       0,
-      error instanceof FactoryHttpError && error.kind === "timeout" ? "timeout" : null,
+      null,
       error instanceof Error && error.message ? error.message : "The request failed.",
     );
   }

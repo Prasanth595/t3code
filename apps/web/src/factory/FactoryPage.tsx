@@ -57,7 +57,7 @@ export function FactoryPage() {
           <Alert variant="error">
             <AlertDescription>Could not refresh: {messageOf(stale.error)}</AlertDescription>
             <AlertAction>
-              <Button onClick={retry} size="touch" variant="outline">
+              <Button onClick={retry} size="sm" variant="outline">
                 Retry
               </Button>
             </AlertAction>
@@ -103,7 +103,7 @@ export function FactoryPage() {
               onClick={() =>
                 void control(() => (paused ? factoryApi.resumeClaims() : factoryApi.pauseClaims()))
               }
-              size="touch"
+              size="sm"
               variant="outline"
             >
               {paused ? "Resume claims" : "Pause claims"}

@@ -15,6 +15,9 @@ import { textField } from "./format";
 /** How long one call may wait for its answer. */
 export const DEFAULT_TIMEOUT_MS = 15_000;
 
+export const timeoutMessage = (timeoutMs: number): string =>
+  `The factory did not answer within ${Math.round(timeoutMs / 1000)} seconds.`;
+
 /** A call that was not sent (`relay`) or got no answer in time (`timeout`). */
 export class FactoryHttpError extends Error {
   readonly kind: "relay" | "timeout";
@@ -64,12 +67,7 @@ export const factoryRequest = async (
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       controller.abort();
-      reject(
-        new FactoryHttpError(
-          "timeout",
-          `The factory did not answer within ${Math.round(timeoutMs / 1000)} seconds.`,
-        ),
-      );
+      reject(new FactoryHttpError("timeout", timeoutMessage(timeoutMs)));
     }, timeoutMs);
   });
   const send = async (): Promise<FactoryHttpResponse> => {

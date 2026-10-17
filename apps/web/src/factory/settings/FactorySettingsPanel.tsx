@@ -234,7 +234,7 @@ export function FactorySettingsPanel() {
           <p role="alert" className="text-destructive-foreground">
             {load.message}
           </p>
-          <Button size="touch" variant="outline" onClick={() => setAttempt((n) => n + 1)}>
+          <Button size="sm" variant="outline" onClick={() => setAttempt((n) => n + 1)}>
             Retry
           </Button>
         </div>
@@ -375,7 +375,7 @@ export function FactorySettingsPanel() {
         title="Repos"
         headerAction={
           <Button
-            size="touch"
+            size="xs"
             variant="outline"
             onClick={() => reshapeRepos((repos) => [...repos, { repo: "", path: "" }])}
           >
@@ -407,7 +407,7 @@ export function FactorySettingsPanel() {
               />
             </Field>
             <Button
-              size="touch"
+              size="xs"
               variant="ghost-destructive"
               aria-label={`Remove repo ${index + 1}`}
               onClick={() => reshapeRepos((repos) => repos.filter((_, i) => i !== index))}
@@ -422,7 +422,7 @@ export function FactorySettingsPanel() {
       </SettingsSection>
 
       <div className="flex items-center gap-3 px-3 sm:px-4">
-        <Button size="touch" disabled={!canWrite || saving} onClick={() => void save()}>
+        <Button size="sm" disabled={!canWrite || saving} onClick={() => void save()}>
           Save
         </Button>
         {saveStatus === "saved" ? (

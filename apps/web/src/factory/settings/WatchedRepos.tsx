@@ -1,5 +1,6 @@
 import { SettingsRow, SettingsSection } from "../../components/settings/settingsLayout";
 import type { RepoBlock } from "./api";
+import { TouchLink } from "../TouchLink";
 
 const list = (items: ReadonlyArray<string>) => (items.length === 0 ? "None" : items.join(", "));
 
@@ -52,14 +53,17 @@ export function WatchedRepos({ repos }: { readonly repos: ReadonlyArray<RepoBloc
           <SettingsRow
             title="Project config on GitHub"
             control={
-              <a
-                href={`https://github.com/${block.repo}/blob/${block.factory?.base ?? "HEAD"}/.dw/config.yml`}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex min-h-11 items-center text-xs underline"
+              <TouchLink
+                render={
+                  <a
+                    href={`https://github.com/${block.repo}/blob/${block.factory?.base ?? "HEAD"}/.dw/config.yml`}
+                    target="_blank"
+                    rel="noreferrer"
+                  />
+                }
               >
                 View .dw/config.yml on GitHub
-              </a>
+              </TouchLink>
             }
           />
         </SettingsSection>

@@ -4,7 +4,7 @@ import {
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import type { ReactNode } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { act, create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -34,7 +34,14 @@ vi.mock("./api", () => ({
   saveFactoryConfig: mocks.saveFactoryConfig,
 }));
 vi.mock("../../components/ui/input", () => ({ Input: "input" }));
-vi.mock("../../components/ui/button", () => ({ Button: "button" }));
+vi.mock("../../components/ui/button", async () => {
+  const { cloneElement } = await import("react");
+  return {
+    Button: "button",
+    InlineButton: ({ render, children }: { render: ReactElement; children?: ReactNode }) =>
+      cloneElement(render, undefined, children),
+  };
+});
 vi.mock("../../components/settings/settingsLayout", async () => {
   const { createElement } = await import("react");
   return {
@@ -229,7 +236,6 @@ describe("FactorySettingsPanel", () => {
 
     expect(textOf(root)).toContain("the factory is unreachable");
     expect(root.findAll((node) => node.type === "input")).toHaveLength(0);
-    expect(button(root, "Retry").props.size).toBe("touch");
 
     await click(button(root, "Retry"));
 
@@ -407,7 +413,7 @@ describe("FactorySettingsPanel", () => {
       }
     });
 
-    it("asks for touch-sized inputs and buttons, with Save present", async () => {
+    it("asks for touch-sized inputs, with Save present", async () => {
       const restore = viewport(width);
       try {
         mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
@@ -423,7 +429,6 @@ describe("FactorySettingsPanel", () => {
           "Remove",
           "Save",
         ]);
-        expect(buttons.map((node) => node.props.size)).toEqual(buttons.map(() => "touch"));
       } finally {
         restore();
       }

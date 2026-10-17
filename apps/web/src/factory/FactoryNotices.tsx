@@ -31,7 +31,7 @@ export function FactoryError({
         <EmptyDescription>{message}</EmptyDescription>
       </EmptyHeader>
       {onRetry ? (
-        <Button onClick={onRetry} size="touch" variant="outline">
+        <Button onClick={onRetry} size="sm" variant="outline">
           Retry
         </Button>
       ) : null}

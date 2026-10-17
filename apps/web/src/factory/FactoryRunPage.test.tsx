@@ -3,7 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
 import type { FactoryResource } from "./useFactoryData";
-import { Button } from "~/components/ui/button";
 import { render, renderAt } from "./testing";
 
 const state = vi.hoisted(() => ({ run: null as unknown, environmentId: "env-1" as string | null }));
@@ -115,10 +114,6 @@ describe("FactoryRunPage", () => {
     });
     const page = await mount();
     expect(page.text()).toContain("ledger exploded");
-    const retry = page.renderer.root
-      .findAllByType(Button)
-      .find((b) => b.props.children === "Retry");
-    expect(retry!.props.size).toBe("touch");
     await act(async () => page.button("Retry")!.props.onClick());
     expect(refresh).toHaveBeenCalledTimes(1);
   });
@@ -242,14 +237,6 @@ describe.each([375, 1280])("FactoryRunPage at %i px", (width) => {
     for (const part of ["pnpm lint", "pnpm test", "412", "26311", "session_launched", "thread-9"]) {
       expect(text).toContain(part);
     }
-    await page.unmount();
-  });
-
-  it("asks for a touch-sized Stop button", async () => {
-    const page = await mountAt();
-    const buttons = page.renderer.root.findAllByType(Button);
-    expect(buttons.length).toBeGreaterThanOrEqual(1);
-    expect(buttons.map((b) => b.props.size)).toEqual(buttons.map(() => "touch"));
     await page.unmount();
   });
 });

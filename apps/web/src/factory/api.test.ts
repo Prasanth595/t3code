@@ -10,6 +10,13 @@ import {
 } from "vite-plus/test";
 
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
+import type { EnvironmentId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import type { Atom } from "effect/reactivity";
+
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
+import { environmentSession } from "~/state/session";
 
 import {
   __setFactoryConnectionForTests,
@@ -17,6 +24,47 @@ import {
   FactoryApiError,
   factoryApi,
 } from "./api";
+
+// The two upstream atoms the lookup reads are writable here, so a test can be the environment
+// catalog and the session: which environment is primary, and what connection each one holds.
+vi.mock("~/state/primaryEnvironment", async () => {
+  const { Atom } = await import("effect/reactivity");
+  return {
+    primaryEnvironmentIdAtom: Atom.make<EnvironmentId | null>(null).pipe(Atom.keepAlive),
+  };
+});
+vi.mock("~/state/session", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const Option = await import("effect/Option");
+  const connections = new Map<string, Atom.Writable<Option.Option<PreparedConnection>>>();
+  return {
+    environmentSession: {
+      preparedConnectionValueAtom: (environmentId: string) => {
+        let atom = connections.get(environmentId);
+        if (atom === undefined) {
+          atom = Atom.make(Option.none<PreparedConnection>()).pipe(Atom.keepAlive);
+          connections.set(environmentId, atom);
+        }
+        return atom;
+      },
+    },
+  };
+});
+
+const ENV_1 = "env-1" as EnvironmentId;
+const ENV_2 = "env-2" as EnvironmentId;
+const setPrimaryEnvironment = (environmentId: EnvironmentId | null) =>
+  appAtomRegistry.set(
+    primaryEnvironmentIdAtom as Atom.Writable<EnvironmentId | null>,
+    environmentId,
+  );
+const setConnectionOf = (environmentId: EnvironmentId, prepared: PreparedConnection | null) =>
+  appAtomRegistry.set(
+    environmentSession.preparedConnectionValueAtom(environmentId) as Atom.Writable<
+      Option.Option<PreparedConnection>
+    >,
+    prepared === null ? Option.none() : Option.some(prepared),
+  );
 
 // Only the wire is stubbed: the calls go through `fetch` against the connected environment's HTTP
 // base, never the window's own origin (kept at 127.0.0.1:3773 here to prove it).
@@ -51,9 +99,13 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   fetchMock.mockReset();
   __setFactoryTimeoutForTests();
   __setFactoryConnectionForTests();
+  setPrimaryEnvironment(null);
+  setConnectionOf(ENV_1, null);
+  setConnectionOf(ENV_2, null);
 });
 
 const answer = (status: number, body: string, contentType = "application/json") =>
@@ -194,5 +246,83 @@ describe("factoryApi on the connected environment", () => {
     const error = await failure(factoryApi.status());
     expect([error.status, error.code]).toEqual([0, "no_connection"]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("gives the request only the time the wait for a connection left", async () => {
+    vi.useFakeTimers();
+    __setFactoryTimeoutForTests(2000);
+    __setFactoryConnectionForTests(null);
+    fetchMock.mockImplementationOnce(() => new Promise(() => {}));
+    const pending = failure(factoryApi.status());
+    await vi.advanceTimersByTimeAsync(1200);
+    __setFactoryConnectionForTests(bearerConnection);
+    await vi.advanceTimersByTimeAsync(799);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(await Promise.race([pending, Promise.resolve("still waiting")])).toBe("still waiting");
+    await vi.advanceTimersByTimeAsync(1);
+    const error = await pending;
+    expect([error.status, error.code]).toEqual([0, "timeout"]);
+    expect(error.message).toBe("The factory did not answer within 2 seconds.");
+  });
+
+  it("keeps an answer that comes within the time left after the wait", async () => {
+    vi.useFakeTimers();
+    __setFactoryTimeoutForTests(2000);
+    __setFactoryConnectionForTests(null);
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(
+            () =>
+              resolve(
+                new Response('{"state":"idle"}', {
+                  status: 200,
+                  headers: { "content-type": "application/json" },
+                }),
+              ),
+            500,
+          );
+        }),
+    );
+    const pending = factoryApi.status();
+    await vi.advanceTimersByTimeAsync(1200);
+    __setFactoryConnectionForTests(bearerConnection);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(await pending).toEqual({ state: "idle" });
+  });
+});
+
+describe("factoryApi on the primary environment", () => {
+  beforeEach(() => {
+    __setFactoryConnectionForTests();
+  });
+
+  it("sends on the primary environment's prepared connection, not another environment's", async () => {
+    setConnectionOf(ENV_2, cookieConnection("https://other-host.test:4000"));
+    setConnectionOf(ENV_1, bearerConnection);
+    setPrimaryEnvironment(ENV_1);
+    answer(200, '{"state":"idle"}');
+    expect(await factoryApi.status()).toEqual({ state: "idle" });
+    expect(String(fetchMock.mock.calls.at(-1)![0])).toBe(`${REMOTE_BASE}/api/factory/status`);
+    expect(sent().headers.get("authorization")).toBe("Bearer tok-1");
+  });
+
+  it("fails with no_connection while no environment is primary", async () => {
+    __setFactoryTimeoutForTests(20);
+    setConnectionOf(ENV_1, bearerConnection);
+    const error = await failure(factoryApi.status());
+    expect([error.status, error.code]).toEqual([0, "no_connection"]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("waits while the primary environment has no prepared connection yet", async () => {
+    setPrimaryEnvironment(ENV_1);
+    answer(200, '{"state":"idle"}');
+    const pending = factoryApi.status();
+    await Promise.resolve();
+    expect(fetchMock).not.toHaveBeenCalled();
+    setConnectionOf(ENV_1, bearerConnection);
+    expect(await pending).toEqual({ state: "idle" });
+    expect(String(fetchMock.mock.calls.at(-1)![0])).toBe(`${REMOTE_BASE}/api/factory/status`);
   });
 });

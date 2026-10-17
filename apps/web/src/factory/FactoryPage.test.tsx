@@ -4,7 +4,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
 import type { FactoryResource } from "./useFactoryData";
-import { Button } from "~/components/ui/button";
 import { render, renderAt } from "./testing";
 
 const NOW = Date.parse("2026-10-17T12:00:00.000Z");
@@ -80,10 +79,6 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   ...overrides,
 });
 
-/** The design-system `Button` whose text is `label`. */
-const buttonNamed = (page: Awaited<ReturnType<typeof render>>, label: string) =>
-  page.renderer.root.findAllByType(Button).find((b) => b.props.children === label)!;
-
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(NOW);
@@ -127,7 +122,6 @@ describe("FactoryPage", () => {
     });
     const page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("Missing permission orchestration:read");
-    expect(buttonNamed(page, "Retry").props.size).toBe("touch");
     await act(async () => page.button("Retry")!.props.onClick());
     expect(refreshStatus).toHaveBeenCalledTimes(1);
     expect(refreshRuns).toHaveBeenCalledTimes(1);
@@ -147,7 +141,6 @@ describe("FactoryPage", () => {
     expect(page.text()).toContain("original-solutions/t3code-factory");
     expect(page.text()).toContain("fetch failed");
     expect(page.text()).not.toContain("Could not load the factory");
-    expect(buttonNamed(page, "Retry").props.size).toBe("touch");
     await act(async () => page.button("Retry")!.props.onClick());
     expect(refreshStatus).toHaveBeenCalledTimes(1);
     expect(refreshRuns).toHaveBeenCalledTimes(1);
@@ -169,7 +162,6 @@ describe("FactoryPage", () => {
     expect(page.text()).toContain("o__r__1__1");
     expect(page.text()).toContain("Every run, read once.");
     expect(page.button("Show all runs")).toBeUndefined();
-    expect(buttonNamed(page, "Show recent runs").props.size).toBe("touch");
     await act(async () => page.button("Show recent runs")!.props.onClick());
     expect(runLinks()).toHaveLength(1);
   });
@@ -443,15 +435,6 @@ describe.each([375, 1280])("FactoryPage at %i px", (width) => {
     const text = page.text();
     expect(text.indexOf("claims paused")).toBeGreaterThan(text.indexOf("run ended stuck"));
     expect(text.indexOf("claims paused")).toBeLessThan(text.indexOf("launch-sending"));
-    await page.unmount();
-  });
-
-  it("asks for touch-sized buttons", async () => {
-    populate();
-    const page = await renderAt(width, createElement(FactoryPage));
-    const buttons = page.renderer.root.findAllByType(Button);
-    expect(buttons.map((b) => b.props.size)).toEqual(buttons.map(() => "touch"));
-    expect(buttons.length).toBeGreaterThanOrEqual(3);
     await page.unmount();
   });
 });

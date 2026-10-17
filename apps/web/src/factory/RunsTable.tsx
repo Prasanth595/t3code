@@ -3,7 +3,7 @@ import { useMemo } from "react";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { Badge } from "~/components/ui/badge";
-import { Button } from "~/components/ui/button";
+import { Button, InlineButton } from "~/components/ui/button";
 import { Empty, EmptyHeader, EmptyTitle } from "~/components/ui/empty";
 import {
   Table,
@@ -16,6 +16,7 @@ import {
 
 import type { FactoryRunRow } from "./api";
 import { formatAge, labelForState, parseRunId, stateBadgeVariant } from "./format";
+import { TouchLink } from "./TouchLink";
 
 const startedMs = (run: FactoryRunRow) =>
   run.started_ts ? Date.parse(run.started_ts) : Number.NaN;
@@ -58,27 +59,22 @@ const stateBadge = (run: FactoryRunRow) =>
     <Badge variant={stateBadgeVariant(run.state)}>{labelForState(run.state)}</Badge>
   );
 
-/** The table's version of `Ref`: a plain link, no tap-target sizing. */
-function TableRef({ text, href }: { text: string; href: string | null }) {
-  return href === null ? (
-    <>{text}</>
+/** A reference that is a link when it has a target, else plain text; `touch` on the phone cards. */
+function Ref({
+  text,
+  href,
+  touch = false,
+}: {
+  text: string;
+  href: string | null;
+  touch?: boolean;
+}) {
+  if (href === null) return <span className="min-w-0 break-all">{text}</span>;
+  const anchor = <a href={href} rel="noreferrer" target="_blank" />;
+  return touch ? (
+    <TouchLink render={anchor}>{text}</TouchLink>
   ) : (
-    <a className="underline-offset-2 hover:underline" href={href} rel="noreferrer" target="_blank">
-      {text}
-    </a>
-  );
-}
-
-const REF_LINK = "inline-flex min-h-11 items-center underline-offset-2 hover:underline";
-
-/** A reference that is a link when it has a target, else plain text. */
-function Ref({ text, href }: { text: string; href: string | null }) {
-  return href === null ? (
-    <span className="min-w-0 break-all">{text}</span>
-  ) : (
-    <a className={REF_LINK} href={href} rel="noreferrer" target="_blank">
-      {text}
-    </a>
+    <InlineButton render={anchor}>{text}</InlineButton>
   );
 }
 
@@ -110,8 +106,8 @@ function RunCard({ run, nowMs }: { run: FactoryRunRow; nowMs: number }) {
       </Link>
       {issue || pr ? (
         <span className="flex flex-wrap items-center gap-x-4 px-3 text-xs text-muted-foreground">
-          {issue ? <Ref {...issue} /> : null}
-          {pr ? <Ref {...pr} /> : null}
+          {issue ? <Ref {...issue} touch /> : null}
+          {pr ? <Ref {...pr} touch /> : null}
         </span>
       ) : null}
     </li>
@@ -138,13 +134,13 @@ export function RunsTable({
   const cards = useMediaQuery("max-sm");
   const sorted = useMemo(() => [...runs].sort(newestFirst), [runs]);
   const showAll = partial ? (
-    <Button onClick={onShowAll} size="touch" variant="ghost">
+    <Button onClick={onShowAll} size="sm" variant="ghost">
       Show all runs
     </Button>
   ) : (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
       <span>Every run, read once.</span>
-      <Button onClick={onShowRecent} size="touch" variant="ghost">
+      <Button onClick={onShowRecent} size="sm" variant="ghost">
         Show recent runs
       </Button>
     </div>
@@ -193,11 +189,11 @@ export function RunsTable({
             return (
               <TableRow key={run.id}>
                 <TableCell>{parsed ? `${parsed.owner}/${parsed.repo}` : "—"}</TableCell>
-                <TableCell>{issue ? <TableRef {...issue} /> : "—"}</TableCell>
+                <TableCell>{issue ? <Ref {...issue} /> : "—"}</TableCell>
                 <TableCell>{stateBadge(run)}</TableCell>
                 <TableCell>{run.step ?? run.last_event ?? "—"}</TableCell>
                 <TableCell>{formatAge(startedMs(run), nowMs)}</TableCell>
-                <TableCell>{pr ? <TableRef {...pr} /> : "—"}</TableCell>
+                <TableCell>{pr ? <Ref {...pr} /> : "—"}</TableCell>
                 <TableCell>
                   <Link
                     className="font-mono text-xs underline-offset-2 hover:underline"

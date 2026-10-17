@@ -28,6 +28,7 @@ import {
   stateBadgeVariant,
   threadIdOf,
 } from "./format";
+import { TouchLink } from "./TouchLink";
 import { useFactoryRun } from "./useFactoryData";
 
 /** Pairs each item with a key unique within the list, though two rows may read the same. */
@@ -221,13 +222,11 @@ export function FactoryRunPage({ runId }: { runId: string }) {
           <Badge variant={stateBadgeVariant(state)}>{labelForState(state)}</Badge>
           <span className="min-w-0 break-words text-muted-foreground">Step: {step ?? "—"}</span>
           {threadId ? (
-            <Link
-              className="inline-flex min-h-11 items-center underline-offset-2 hover:underline"
-              params={{ environmentId, threadId }}
-              to="/$environmentId/$threadId"
+            <TouchLink
+              render={<Link params={{ environmentId, threadId }} to="/$environmentId/$threadId" />}
             >
               Thread
-            </Link>
+            </TouchLink>
           ) : (
             <span className="text-muted-foreground">no thread yet</span>
           )}
@@ -235,7 +234,7 @@ export function FactoryRunPage({ runId }: { runId: string }) {
             className="ml-auto"
             disabled={!canStop || busy}
             onClick={() => void stop()}
-            size="touch"
+            size="sm"
             variant="destructive-outline"
           >
             Stop
@@ -256,12 +255,9 @@ export function FactoryRunPage({ runId }: { runId: string }) {
     <FactoryFrame
       header={
         <div className="flex min-w-0 flex-1 items-center gap-3">
-          <Link
-            className="inline-flex min-h-11 shrink-0 items-center text-sm text-muted-foreground hover:text-foreground"
-            to="/factory"
-          >
+          <TouchLink render={<Link to="/factory" />} tone="muted">
             Back
-          </Link>
+          </TouchLink>
           <h1 className="min-w-0 truncate font-mono text-sm font-medium">{runId}</h1>
         </div>
       }
