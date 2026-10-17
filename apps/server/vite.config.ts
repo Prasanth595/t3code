@@ -6,6 +6,7 @@ import baseConfig from "../../vite.config.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
 import packageJson from "./package.json" with { type: "json" };
 import { WeightedShardSequencer } from "./src/testUtils/weightedShardSequencer.ts";
+import * as MissionPeerBundleIdentity from "./src/orchestration-v2/MissionPeerBundleIdentity.ts";
 
 // The bundle used to inline only workspace packages, leaving every third-party
 // runtime dep external. External deps must exist on the real filesystem (the WSL
@@ -95,6 +96,26 @@ export default mergeConfig(
             };
           },
         },
+        !packExecutable && {
+              name: "mission-peer-bundle-manifest",
+              generateBundle: {
+                order: "post" as const,
+                handler(_options, bundle) {
+                  const outputs = Object.values(bundle);
+                  if (outputs.some((file) => file.type === "asset" && /\.(?:mjs|cjs|js)$/.test(file.fileName))) {
+                    this.error("Executable assets need an explicit mission bundle layout.");
+                  }
+                  const manifest = MissionPeerBundleIdentity.makeManifest(
+                    outputs.filter((file) => file.type === "chunk").map((file) => file.fileName),
+                  );
+                  this.emitFile({
+                    type: "asset",
+                    fileName: MissionPeerBundleIdentity.MANIFEST_FILE_NAME,
+                    source: JSON.stringify(manifest) + "\n",
+                  });
+                },
+              },
+            },
       ],
       // The executable embeds one entry; the history worker becomes a hidden
       // subcommand there instead of a sibling script.

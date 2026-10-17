@@ -37,6 +37,11 @@ const Manifest = Schema.Struct({
   ),
 });
 type Manifest = typeof Manifest.Type;
+const encodeDigestDocument = Schema.encodeSync(Schema.fromJsonString(Schema.Struct({
+  format: Manifest.fields.format,
+  entry: Manifest.fields.entry,
+  modules: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
+})));
 
 export class MissionPeerBundleIdentityError extends Schema.TaggedError<MissionPeerBundleIdentityError>()(
   "MissionPeerBundleIdentityError",
@@ -157,7 +162,7 @@ export const rehash = Effect.fn("MissionPeerBundleIdentity.rehash")(function* (
     modules.push([fileName, createHash("sha256").update(bytes).digest("hex")]);
   }
   return createHash("sha256")
-    .update(JSON.stringify({ format: manifest.format, entry: manifest.entry, modules }))
+    .update(encodeDigestDocument({ format: manifest.format, entry: manifest.entry, modules }))
     .digest("hex");
 });
 

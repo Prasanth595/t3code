@@ -4,6 +4,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { HostProtocolId } from "../../../../packages/contracts/src/missionHostProtocol.ts";
@@ -53,6 +54,7 @@ export const layer = (inputs: PeerRuntimeInputs | null) =>
     MissionPeerRuntimeFacts,
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const environment = yield* ServerEnvironmentIdentity;
       // Capture immutable metadata; never let a later caller replace the build pin.
       const loaded = inputs?.loadedBuild;
@@ -75,14 +77,18 @@ export const layer = (inputs: PeerRuntimeInputs | null) =>
           Effect.flatMap(Schema.decodeUnknownEffect(HostProtocolId)),
           Effect.mapError((cause) => new MissionPeerRuntimeFactsError({ category: "read", cause })),
         );
+        const readFailed = (cause: unknown) => new MissionPeerRuntimeFactsError({ category: "read", cause });
         const readBuildHash = "kind" in build
-          ? Bundle.rehash(build)
+          ? Bundle.rehash(build).pipe(
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(Path.Path, path),
+              Effect.mapError(readFailed),
+            )
           : fs.readFile(build.artifactPath).pipe(
               Effect.map((bytes) => createHash("sha256").update(bytes).digest("hex")),
+              Effect.mapError(readFailed),
             );
-        const buildSha256 = yield* readBuildHash.pipe(
-          Effect.mapError((cause) => new MissionPeerRuntimeFactsError({ category: "read", cause })),
-        );
+        const buildSha256 = yield* readBuildHash;
         if (buildSha256 !== build.sha256) {
           return yield* new MissionPeerRuntimeFactsError({ category: "build_mismatch" });
         }
