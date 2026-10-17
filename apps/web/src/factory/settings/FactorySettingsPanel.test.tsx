@@ -433,8 +433,8 @@ describe("FactorySettingsPanel", () => {
         mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
         const root = await open();
         const inputs = root.findAll((node) => node.type === "input");
-        // Six machine fields, then a repo and a path for each of the two repos.
-        expect(inputs).toHaveLength(10);
+        // Four machine fields, then a repo and a path for each of the two repos.
+        expect(inputs).toHaveLength(8);
         expect(inputs.map((node) => node.props.size)).toEqual(inputs.map(() => "touch"));
         const buttons = root.findAll((node) => node.type === "button");
         expect(buttons.map((node) => textOf(node).trim())).toEqual([

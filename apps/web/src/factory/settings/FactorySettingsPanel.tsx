@@ -26,8 +26,6 @@ interface FormState {
   readonly poll_seconds: string;
   readonly max_concurrent_runs: string;
   readonly max_concurrent_gates: string;
-  readonly model_instance: string;
-  readonly model: string;
   readonly repos: ReadonlyArray<{ readonly repo: string; readonly path: string }>;
 }
 
@@ -36,8 +34,6 @@ const EMPTY_FORM: FormState = {
   poll_seconds: "",
   max_concurrent_runs: "",
   max_concurrent_gates: "",
-  model_instance: "",
-  model: "",
   repos: [],
 };
 
@@ -51,8 +47,6 @@ const formOf = (report: MachineConfigReport): FormState => {
     poll_seconds: text(source.poll_seconds),
     max_concurrent_runs: text(source.max_concurrent_runs),
     max_concurrent_gates: text(source.max_concurrent_gates),
-    model_instance: text(source.model_instance),
-    model: text(source.model),
     repos: (source.repos ?? []).map((row) => ({ repo: text(row.repo), path: text(row.path) })),
   };
 };
@@ -64,8 +58,6 @@ const valuesOf = (form: FormState): MachineConfigValues => ({
   poll_seconds: toNumber(form.poll_seconds),
   max_concurrent_runs: toNumber(form.max_concurrent_runs),
   max_concurrent_gates: toNumber(form.max_concurrent_gates),
-  model_instance: form.model_instance,
-  model: form.model,
   repos: form.repos.map(({ repo, path }) => ({ repo, path })),
 });
 
@@ -249,8 +241,6 @@ export function FactorySettingsPanel() {
     "poll_seconds",
     "max_concurrent_runs",
     "max_concurrent_gates",
-    "model_instance",
-    "model",
     ...form.repos.flatMap((_, index) => [`repos[${index}].repo`, `repos[${index}].path`]),
   ]);
   const topErrors = errors.filter((error) => !inputNames.has(fieldKey(error) ?? ""));
@@ -339,32 +329,6 @@ export function FactorySettingsPanel() {
                 aria-label="Max concurrent gates"
                 value={form.max_concurrent_gates}
                 onChange={setText("max_concurrent_gates")}
-              />
-            </Field>
-          }
-        />
-        <SettingsRow
-          title="Model instance"
-          control={
-            <Field name="model_instance" errors={errors}>
-              <Input
-                size="touch"
-                aria-label="Model instance"
-                value={form.model_instance}
-                onChange={setText("model_instance")}
-              />
-            </Field>
-          }
-        />
-        <SettingsRow
-          title="Model"
-          control={
-            <Field name="model" errors={errors}>
-              <Input
-                size="touch"
-                aria-label="Model"
-                value={form.model}
-                onChange={setText("model")}
               />
             </Field>
           }
