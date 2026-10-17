@@ -25,6 +25,7 @@ import * as Schema from "effect/Schema";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "../settings/DesktopSavedEnvironments.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import * as DesktopSafeStorageIdentity from "./DesktopSafeStorageIdentity.ts";
 
 const EncryptedConnectionCatalogDocument = Schema.Struct({
   version: Schema.Literal(1),
@@ -44,6 +45,10 @@ const RuntimeConnectionCatalogDocumentJson = Schema.fromJsonString(
 );
 const encodeRuntimeConnectionCatalogDocumentJson = Schema.encodeEffect(
   RuntimeConnectionCatalogDocumentJson,
+);
+// A wrong key can still unpad cleanly, so recovered plaintext must look like a catalog.
+const decodeCatalogJsonOption = Schema.decodeOption(
+  Schema.fromJsonString(Schema.Struct({ schemaVersion: Schema.Literal(1) })),
 );
 
 const DesktopConnectionCatalogStoreWriteOperation = Schema.Literals([
@@ -382,6 +387,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const safeStorage = yield* ElectronSafeStorage.ElectronSafeStorage;
+  const safeStorageIdentity = yield* DesktopSafeStorageIdentity.DesktopSafeStorageIdentity;
   const crypto = yield* Crypto.Crypto;
   const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
   const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
@@ -471,6 +477,33 @@ export const make = Effect.gen(function* () {
     return Option.some(encoded);
   });
 
+  // Re-encrypting under the current name means only the first read after an
+  // upgrade pays for the previous key lookup.
+  const recoverPreviousIdentityCatalog = Effect.fn(
+    "desktop.connectionCatalogStore.recoverPreviousIdentityCatalog",
+  )(function* (
+    encryptedCatalog: Uint8Array,
+    cause: ElectronSafeStorage.ElectronSafeStorageDecryptError,
+  ) {
+    const recovered = Option.filter(
+      yield* safeStorageIdentity.decryptWithPreviousName(encryptedCatalog),
+      (catalog) => Option.isSome(decodeCatalogJsonOption(catalog)),
+    );
+    if (Option.isNone(recovered)) {
+      return yield* new DesktopConnectionCatalogStoreProtectionError({
+        operation: "decrypt-catalog",
+        catalogPath,
+        cause,
+      });
+    }
+    yield* writeCatalog(recovered.value).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("Could not re-encrypt the connection catalog.", { catalogPath, error }),
+      ),
+    );
+    return recovered.value;
+  });
+
   return DesktopConnectionCatalogStore.of({
     get: Effect.gen(function* () {
       const document = yield* readDocument(fileSystem, catalogPath);
@@ -482,16 +515,9 @@ export const make = Effect.gen(function* () {
       }
       const decrypted = yield* decodeSecretBytes(catalogPath, document.value.encryptedCatalog).pipe(
         Effect.flatMap((encryptedCatalog) =>
-          safeStorage.decryptString(encryptedCatalog).pipe(
-            Effect.mapError(
-              (cause) =>
-                new DesktopConnectionCatalogStoreProtectionError({
-                  operation: "decrypt-catalog",
-                  catalogPath,
-                  cause,
-                }),
-            ),
-          ),
+          safeStorage
+            .decryptString(encryptedCatalog)
+            .pipe(Effect.catch((cause) => recoverPreviousIdentityCatalog(encryptedCatalog, cause))),
         ),
       );
       return Option.some(decrypted);
