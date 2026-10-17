@@ -599,9 +599,11 @@ function UsageOverview({
     PROVIDER_ORDER.filter((provider) => loading.everyProvider || loading.providers.has(provider)),
   );
   const providersWithData = new Set(providersWithUsage(merged.providers));
+  // `everyProvider` marks shown providers as loading; only `loading.providers`, which excludes
+  // hidden ones, may add a provider that has no data yet.
   // Filtering a fresh copy, not the shared module array, lets the compiler cache this on its own.
   const activeProviders = [...PROVIDER_ORDER].filter(
-    (provider) => providersWithData.has(provider) || loadingProviders.has(provider),
+    (provider) => providersWithData.has(provider) || loading.providers.has(provider),
   );
   const chartLoadingProviders = new Set(
     activeProviders.filter((provider) => loadingProviders.has(provider)),
