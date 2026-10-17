@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
 import {
   __resetFactoryStoresForTests,
+  pickFactoryEnvironment,
   useFactoryAttentionCount,
   useFactoryEnvironmentId,
   useFactoryRun,
@@ -598,5 +599,112 @@ describe("useFactoryEnvironmentId", () => {
     expect(fetchStatus).toHaveBeenCalledTimes(2);
     await settle(30_000);
     expect(fetchStatus).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("the factory environment across a change of candidates", () => {
+  const settled = (state: "running" | "idle") => ({
+    status: "ready" as const,
+    data: status(0, state),
+  });
+
+  it("stays on the running environment, and reads nothing again, when a third environment connects and leaves", async () => {
+    environments.connected = [ENV_1, ENV_2];
+    const fetchStatus = vi.fn(async (env: EnvironmentId) =>
+      status(0, env === ENV_2 ? "running" : "idle"),
+    );
+    const fetchRuns = vi.fn(async (_env: EnvironmentId) => ({ runs: [] }));
+    __setFactoryApiForTests(api({ status: fetchStatus, runs: fetchRuns }));
+    const seen: Array<EnvironmentId | null> = [];
+    const Probe = () => {
+      const id = useFactoryEnvironmentId();
+      seen.push(id);
+      useFactoryStatus(id);
+      useFactoryRuns(id);
+      return null;
+    };
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(createElement(Probe));
+    });
+    renderers.push(renderer);
+    const calls = (fn: typeof fetchStatus, env: EnvironmentId) =>
+      fn.mock.calls.filter(([e]) => e === env).length;
+    const ranOnce = { status: calls(fetchStatus, ENV_2), runs: fetchRuns.mock.calls.length };
+    expect(ranOnce).toEqual({ status: 1, runs: 1 });
+
+    seen.length = 0;
+    environments.connected = [ENV_1, ENV_2, ENV_3];
+    await act(async () => renderer.update(createElement(Probe)));
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((id) => id === ENV_2)).toBe(true);
+    expect(calls(fetchStatus, ENV_2)).toBe(1);
+    expect(calls(fetchStatus, ENV_1)).toBe(1);
+    expect(calls(fetchStatus, ENV_3)).toBe(1);
+    expect(fetchRuns).toHaveBeenCalledTimes(1);
+
+    seen.length = 0;
+    environments.connected = [ENV_1, ENV_2];
+    await act(async () => renderer.update(createElement(Probe)));
+    expect(seen.length).toBeGreaterThan(0);
+    expect(seen.every((id) => id === ENV_2)).toBe(true);
+    expect(calls(fetchStatus, ENV_2)).toBe(1);
+    expect(calls(fetchStatus, ENV_1)).toBe(1);
+    expect(fetchRuns).toHaveBeenCalledTimes(1);
+  });
+
+  describe("pickFactoryEnvironment", () => {
+    const statuses: Record<
+      string,
+      | ReturnType<typeof settled>
+      | { status: "loading" | "error"; data: null }
+      | { status: "error"; data: ReturnType<typeof status> }
+    > = {};
+    const pick = (candidates: Array<EnvironmentId>, primary: EnvironmentId | null) =>
+      pickFactoryEnvironment(candidates, primary, (id) => statuses[id] as never);
+    beforeEach(() => {
+      for (const key of Object.keys(statuses)) delete statuses[key];
+    });
+
+    it("is the first candidate that runs", () => {
+      statuses[ENV_1] = settled("running");
+      statuses[ENV_2] = settled("running");
+      expect(pick([ENV_1, ENV_2], ENV_1)).toBe(ENV_1);
+    });
+
+    it("is a running candidate behind an idle one", () => {
+      statuses[ENV_1] = settled("idle");
+      statuses[ENV_2] = settled("running");
+      expect(pick([ENV_1, ENV_2], ENV_1)).toBe(ENV_2);
+    });
+
+    it("is null while a candidate ahead of a running one is loading", () => {
+      statuses[ENV_1] = { status: "loading", data: null };
+      statuses[ENV_2] = settled("running");
+      expect(pick([ENV_1, ENV_2], ENV_1)).toBeNull();
+    });
+
+    it("is the primary when every candidate is idle", () => {
+      statuses[ENV_1] = settled("idle");
+      statuses[ENV_2] = settled("idle");
+      expect(pick([ENV_1, ENV_2], ENV_1)).toBe(ENV_1);
+    });
+
+    it("is the primary without candidates, and null without a primary", () => {
+      expect(pick([], ENV_1)).toBe(ENV_1);
+      expect(pick([], null)).toBeNull();
+    });
+
+    it("counts an errored candidate's stale running data", () => {
+      statuses[ENV_1] = { status: "error", data: status(0, "running") };
+      statuses[ENV_2] = settled("running");
+      expect(pick([ENV_1, ENV_2], ENV_1)).toBe(ENV_1);
+    });
+
+    it("skips an errored candidate that never had data", () => {
+      statuses[ENV_1] = { status: "error", data: null };
+      statuses[ENV_2] = settled("running");
+      expect(pick([ENV_1, ENV_2], ENV_1)).toBe(ENV_2);
+    });
   });
 });
