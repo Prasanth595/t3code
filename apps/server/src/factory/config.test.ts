@@ -12,7 +12,7 @@ import {
   type ConfigError,
   ConfigErrors,
   formatConfigError,
-  hasFactoryBlock,
+  factoryOptIn,
   loadMachineConfig,
   loadProjectConfig,
   parseMachineConfig,
@@ -412,28 +412,31 @@ describe("formatConfigError", () => {
   });
 });
 
-describe("hasFactoryBlock", () => {
-  it("is true when the root has a factory mapping", () => {
-    expect(hasFactoryBlock(PROJECT)).toBe(true);
-    expect(hasFactoryBlock("factory: {}\n")).toBe(true);
+describe("factoryOptIn", () => {
+  it('is "yes" when the root has a factory mapping', () => {
+    expect(factoryOptIn(PROJECT)).toBe("yes");
+    expect(factoryOptIn("factory: {}\n")).toBe("yes");
   });
-  it("is true for a block that would not validate: it only decides the opt-in", () => {
-    expect(hasFactoryBlock("factory:\n  base: 5\n")).toBe(true);
+  it('is "yes" for a block that would not validate: it only decides the opt-in', () => {
+    expect(factoryOptIn("factory:\n  base: 5\n")).toBe("yes");
   });
-  it("is false when there is no factory key", () => {
-    expect(hasFactoryBlock("tracker:\n  backend: do-work-io\n")).toBe(false);
+  it('is "no" when there is no factory key', () => {
+    expect(factoryOptIn("tracker:\n  backend: do-work-io\n")).toBe("no");
   });
-  it("is false when factory is not a mapping", () => {
-    expect(hasFactoryBlock("factory: 1\n")).toBe(false);
-    expect(hasFactoryBlock("factory: [a]\n")).toBe(false);
-    expect(hasFactoryBlock("factory:\n")).toBe(false);
+  it('is "no" when factory is not a mapping', () => {
+    expect(factoryOptIn("factory: 1\n")).toBe("no");
+    expect(factoryOptIn("factory: [a]\n")).toBe("no");
+    expect(factoryOptIn("factory:\n")).toBe("no");
   });
-  it("is false for invalid YAML", () => {
-    expect(hasFactoryBlock("factory: [unclosed\n")).toBe(false);
+  it('is "unparsed" for invalid YAML, which is a read that did not finish', () => {
+    expect(factoryOptIn("factory: [unclosed\n")).toBe("unparsed");
+    expect(factoryOptIn("<<<<<<< HEAD\nfactory: {}\n=======\nfactory: {}\n>>>>>>> main\n")).toBe(
+      "unparsed",
+    );
   });
-  it("is false when the document is not a mapping", () => {
-    expect(hasFactoryBlock("- factory\n")).toBe(false);
-    expect(hasFactoryBlock("")).toBe(false);
+  it('is "no" when the document is not a mapping', () => {
+    expect(factoryOptIn("- factory\n")).toBe("no");
+    expect(factoryOptIn("")).toBe("no");
   });
 });
 

@@ -207,14 +207,25 @@ describe("FactoryWatchedRepos.list", () => {
     }),
   );
 
-  it.effect("skips a project whose .dw/config.yml is not YAML", () =>
+  it.effect("reports a .dw/config.yml that does not parse as unresolved, not as absent", () =>
     Effect.gen(function* () {
-      const root = checkout("broken", "factory: [unclosed\n");
+      const broken = checkout("broken", "factory: [unclosed\n");
+      const conflicted = checkout(
+        "conflicted",
+        "<<<<<<< HEAD\nfactory: {}\n=======\nfactory: {}\n>>>>>>> main\n",
+      );
       const list = yield* listed({
-        projects: [["p-broken", root]],
-        identities: new Map([[root, WIDGETS]]),
+        projects: [
+          ["p-broken", broken],
+          ["p-conflicted", conflicted],
+        ],
+        identities: new Map([
+          [broken, WIDGETS],
+          [conflicted, WIDGETS],
+        ]),
       });
       assert.deepStrictEqual(list.repos, []);
+      assert.deepStrictEqual(list.unresolved, [broken, conflicted]);
     }),
   );
 
