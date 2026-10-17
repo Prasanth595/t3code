@@ -109,6 +109,10 @@ export const ambiguousRepos = (
   return new Map([...byRepo].filter(([, paths]) => paths.length > 1));
 };
 
+/** The one sentence the pass and the settings report say about a repo in `ambiguousRepos`. */
+export const ambiguousMessage = (paths: ReadonlyArray<string>): string =>
+  `${paths.length} T3 projects have this repo as their origin (${paths.join(", ")}); the factory watches none of them`;
+
 /** What the reader found: the watched projects, and the opted-in checkouts it could not identify this time. */
 export interface WatchedListing {
   /** The projects that opted in and resolved to a GitHub `owner/name`, in T3's order. A repo two projects name appears once per project. */

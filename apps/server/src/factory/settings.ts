@@ -14,6 +14,7 @@ import * as Result from "effect/Result";
 import { isMap, isScalar, parseDocument, YAMLMap } from "yaml";
 
 import {
+  ambiguousMessage,
   ambiguousRepos,
   DEFAULT_MAX_CONCURRENT_GATES,
   DEFAULT_POLL_SECONDS,
@@ -25,9 +26,10 @@ import {
   type MachineConfig,
   type ProjectConfig,
   type RepoConfigReading,
-  type WatchedProject,
+  type WatchedListing,
 } from "./config.ts";
 import { asciiLower } from "./ledger/runId.ts";
+import type { WatchedReposError } from "./t3/watchedRepos.ts";
 import { writeFileAtomically } from "./t3/files.ts";
 
 /** A project config as the report shows it: the YAML field names. */
@@ -85,6 +87,10 @@ export interface MachineConfigReport {
     readonly factory: ProjectBlock | null;
     readonly errors: ReadonlyArray<ConfigError> | null;
   }>;
+  /** Workspace roots of opted-in projects the reader could not settle this time (`WatchedListing.unresolved`). */
+  readonly unresolved: ReadonlyArray<string>;
+  /** Why the T3 projects could not be listed at all, else null; `repos` and `unresolved` are then empty. */
+  readonly watch_error: string | null;
 }
 
 const EDITABLE_KEYS = [
@@ -159,45 +165,53 @@ const draftOf = (text: string): MachineConfigDraft => {
   return draft;
 };
 
-/**
- * The report of the machine config file, with the watched projects joined to the loop's last
- * reading of each one's project config. What is watched does not depend on the machine file, so
- * every report lists it.
- */
-export const readMachineConfigReport = (
-  file: string,
-  watched: ReadonlyArray<WatchedProject>,
+/** The watched part of the report: every block, or why there is none, so an empty page is never a lie. */
+const watchedReport = (
+  watched: Result.Result<WatchedListing, WatchedReposError>,
   readings: ReadonlyMap<string, RepoConfigReading>,
-): Effect.Effect<MachineConfigReport, never, FileSystem.FileSystem> =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const ambiguous = ambiguousRepos(watched);
-    const repos = watched.map(({ repo, path, title }) => {
-      const paths = ambiguous.get(asciiLower(repo));
-      if (paths !== undefined) {
-        // The pass loaded neither checkout, so there is no reading to show.
-        return {
-          repo,
-          path,
-          title,
-          factory: null,
-          errors: [
-            {
-              file: PROJECT_CONFIG_PATH,
-              message: `${paths.length} T3 projects have this repo as their origin (${paths.join(", ")}); the factory watches none of them`,
-            },
-          ],
-        };
-      }
-      const reading = readings.get(repo);
+): Pick<MachineConfigReport, "repos" | "unresolved" | "watch_error"> => {
+  if (Result.isFailure(watched)) {
+    return { repos: [], unresolved: [], watch_error: watched.failure.message };
+  }
+  const ambiguous = ambiguousRepos(watched.success.repos);
+  const repos = watched.success.repos.map(({ repo, path, title }) => {
+    const paths = ambiguous.get(asciiLower(repo));
+    if (paths !== undefined) {
+      // The pass loaded neither checkout, so there is no reading to show.
       return {
         repo,
         path,
         title,
-        factory: reading?.kind === "ok" ? projectBlock(reading.project) : null,
-        errors: reading?.kind === "errors" ? reading.errors : null,
+        factory: null,
+        errors: [{ file: PROJECT_CONFIG_PATH, message: ambiguousMessage(paths) }],
       };
-    });
+    }
+    const reading = readings.get(repo);
+    return {
+      repo,
+      path,
+      title,
+      factory: reading?.kind === "ok" ? projectBlock(reading.project) : null,
+      errors: reading?.kind === "errors" ? reading.errors : null,
+    };
+  });
+  return { repos, unresolved: watched.success.unresolved, watch_error: null };
+};
+
+/**
+ * The report of the machine config file, with the watched projects joined to the loop's last
+ * reading of each one's project config. What is watched does not depend on the machine file, so
+ * every report lists it, and a listing the reader could not make is reported as such rather
+ * than as no project watched.
+ */
+export const readMachineConfigReport = (
+  file: string,
+  watched: Result.Result<WatchedListing, WatchedReposError>,
+  readings: ReadonlyMap<string, RepoConfigReading>,
+): Effect.Effect<MachineConfigReport, never, FileSystem.FileSystem> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const repos = watchedReport(watched, readings);
     const loaded = yield* Effect.result(loadMachineConfig(file));
     if (Result.isFailure(loaded)) {
       const text = yield* fs.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
@@ -208,7 +222,7 @@ export const readMachineConfigReport = (
         defaults: defaults(),
         draft: draftOf(text),
         errors: loaded.failure.errors,
-        repos,
+        ...repos,
       } satisfies MachineConfigReport;
     }
     if (Option.isNone(loaded.success)) {
@@ -218,7 +232,7 @@ export const readMachineConfigReport = (
         config: defaults(),
         defaults: defaults(),
         errors: [],
-        repos,
+        ...repos,
       } satisfies MachineConfigReport;
     }
     const machine = loaded.success.value.config;
@@ -228,7 +242,7 @@ export const readMachineConfigReport = (
       config: fieldsOf(machine),
       defaults: defaults(),
       errors: [],
-      repos,
+      ...repos,
     } satisfies MachineConfigReport;
   });
 
@@ -285,7 +299,7 @@ export const saveMachineConfig = (
   loop: {
     readonly reload: Effect.Effect<void>;
     readonly repoConfigs: Effect.Effect<ReadonlyMap<string, RepoConfigReading>>;
-    readonly watchedRepos: Effect.Effect<ReadonlyArray<WatchedProject>>;
+    readonly watchedRepos: Effect.Effect<WatchedListing, WatchedReposError>;
   },
 ): Effect.Effect<SaveResult, SaveError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
@@ -304,7 +318,7 @@ export const saveMachineConfig = (
     yield* loop.reload;
     const report = yield* readMachineConfigReport(
       file,
-      yield* loop.watchedRepos,
+      yield* Effect.result(loop.watchedRepos),
       yield* loop.repoConfigs,
     );
     return { kind: "ok", report } as const;

@@ -325,7 +325,11 @@ export function FactorySettingsPanel() {
         ) : null}
       </div>
 
-      <WatchedRepos repos={report.repos} />
+      <WatchedRepos
+        repos={report.repos}
+        unresolved={report.unresolved}
+        watchError={report.watch_error}
+      />
     </SettingsPageContainer>
   );
 }

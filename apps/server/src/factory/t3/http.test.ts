@@ -194,7 +194,7 @@ const worldContext = (
     wakes.reloads += 1;
   });
   const repoConfigs = Effect.succeed(world.readings ?? new Map<string, RepoConfigReading>());
-  const watchedRepos = Effect.succeed(world.watched ?? []);
+  const watchedRepos = Effect.succeed({ repos: world.watched ?? [], unresolved: [] });
   return Context.make(EnvironmentAuth.EnvironmentAuth, auth).pipe(
     Context.add(
       ServerExitService.ServerExit,
@@ -1004,6 +1004,8 @@ repos:
         defaults: DEFAULTS,
         errors: [],
         repos: [],
+        unresolved: [],
+        watch_error: null,
       });
     }),
   );

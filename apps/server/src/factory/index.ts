@@ -32,7 +32,7 @@ import {
   type MachineConfig,
   type ProjectConfig,
   type RepoConfigReading,
-  type WatchedProject,
+  type WatchedListing,
   type WatchedRepo,
 } from "./config.ts";
 import * as Gate from "./gate.ts";
@@ -135,7 +135,7 @@ export class FactoryLoop extends Context.Service<
      * The watched projects as the reader lists them now, for the settings page. A listing that
      * fails is logged and answers an empty list. Reading it changes nothing the pass reports.
      */
-    readonly watchedRepos: Effect.Effect<ReadonlyArray<WatchedProject>>;
+    readonly watchedRepos: Effect.Effect<WatchedListing, WatchedRepos.WatchedReposError>;
   }
 >()("t3/factory/FactoryLoop") {}
 
@@ -882,10 +882,7 @@ const startFactory = (options: RuntimeOptions) =>
     // One reload or save at a time, and none cut short half way: two at once from idle would
     // make two loops, and a save cut short after the write leaves the loop on the old config.
     // The settings page reads the list untapped: only the pass writes `state.watched` and the status.
-    const watchedRepos = watched.list.pipe(
-      Effect.map((listing) => listing.repos),
-      Effect.catch((error) => Effect.logWarning(error.message).pipe(Effect.as([]))),
-    );
+    const watchedRepos = watched.list;
     const lock = yield* Semaphore.make(1);
     const reload = lock.withPermits(1)(Effect.uninterruptible(reloadNow));
     const save = (body: unknown) =>

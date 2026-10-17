@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - the tests lay out real checkouts and read them back.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -10,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
+import * as ProcessRunner from "../../processRunner.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../../project/ManagedProjectFolders.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
@@ -87,6 +89,61 @@ const checkout = (name: string, config: string | null): string => {
   return dir;
 };
 
+/** Runs the real `git` in `cwd` for a test and returns what it printed. */
+const git = (cwd: string, ...args: Array<string>): string => {
+  const result = NodeChildProcess.spawnSync(
+    "git",
+    ["-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false", ...args],
+    { cwd, encoding: "utf8" },
+  );
+  if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
+  return result.stdout;
+};
+
+/**
+ * A clone of a local "origin" whose default branch `main` holds `committed` as `.dw/config.yml`
+ * (nothing when null), checked out on an older branch that has no `.dw` at all. The clone has
+ * `origin/HEAD`, as `git clone` leaves it.
+ */
+const clonedCheckout = (name: string, committed: string | null): string => {
+  const root = tempDir(name);
+  const source = NodePath.join(root, "source");
+  NodeFS.mkdirSync(source);
+  git(source, "init", "-q", "-b", "main");
+  NodeFS.writeFileSync(NodePath.join(source, "README.md"), "before the opt-in\n");
+  git(source, "add", "README.md");
+  git(source, "commit", "-q", "-m", "before");
+  if (committed !== null) {
+    NodeFS.mkdirSync(NodePath.join(source, ".dw"));
+    NodeFS.writeFileSync(NodePath.join(source, ".dw", "config.yml"), committed);
+    git(source, "add", ".dw/config.yml");
+    git(source, "commit", "-q", "-m", "opt in");
+  }
+  git(root, "clone", "-q", "source", "clone");
+  const clone = NodePath.join(root, "clone");
+  git(clone, "switch", "-q", "-c", "old", git(clone, "rev-list", "--max-parents=0", "HEAD").trim());
+  return clone;
+};
+
+/** A ProcessRunner that records the commands it is given and answers each with no output: timed out, or ended with no code. */
+const runnerAnswering = (calls: Array<string>, timedOut = false) =>
+  Layer.mock(ProcessRunner.ProcessRunner)({
+    run: (input) =>
+      Effect.sync((): ProcessRunner.ProcessRunOutput => {
+        calls.push([input.command, ...input.args].join(" "));
+        return {
+          stdout: "",
+          stderr: "",
+          code: null,
+          timedOut,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        };
+      }),
+  });
+
 interface Fixture {
   /** Projects in creation order: id and workspace root. */
   readonly projects: ReadonlyArray<readonly [string, string]>;
@@ -94,11 +151,14 @@ interface Fixture {
   readonly identities: ReadonlyMap<string, RepositoryIdentity>;
   readonly scratch?: string;
   readonly deleted?: ReadonlyArray<string>;
+  /** The git the reader runs for a checkout with no `.dw/config.yml` on disk; the real one by default. */
+  readonly runner?: Layer.Layer<ProcessRunner.ProcessRunner>;
 }
 
 const listed = (fixture: Fixture) => {
   const layerProjects = ProjectStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory));
-  const layer = WatchedRepos.layer.pipe(
+  const layer = Layer.effect(WatchedRepos.FactoryWatchedRepos, WatchedRepos.make).pipe(
+    Layer.provide(fixture.runner ?? ProcessRunner.layer),
     Layer.provideMerge(layerProjects),
     Layer.provide(
       Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
@@ -355,33 +415,94 @@ describe("FactoryWatchedRepos.list", () => {
     }),
   );
 
-  it.effect("does not ask for the identity of a checkout that did not opt in", () =>
-    Effect.gen(function* () {
-      const root = checkout("unopted", null);
-      const asked: Array<string> = [];
-      const layer = WatchedRepos.layer.pipe(
-        Layer.provideMerge(ProjectStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
-        Layer.provide(
-          Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
-            resolve: (cwd) => Effect.sync(() => void asked.push(cwd)).pipe(Effect.as(WIDGETS)),
-          }),
-        ),
-        Layer.provide(
-          Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
-            namedProjectsRoot: "/unused",
-            scratchRoot: Effect.succeedNone,
-          }),
-        ),
-        Layer.provide(NodeServices.layer),
-      );
-      const list = yield* Effect.gen(function* () {
-        const store = yield* ProjectStore.ProjectStoreV2;
-        yield* store.apply(projectEvent("project.created", "p-unopted", root, 1));
-        const watched = yield* WatchedRepos.FactoryWatchedRepos;
-        return yield* watched.list;
-      }).pipe(Effect.provide(layer));
-      assert.deepStrictEqual(list.repos, []);
-      assert.deepStrictEqual(asked, []);
-    }),
+  it.effect(
+    "does not ask for the identity of a checkout that did not opt in, nor run git where there is no .git",
+    () =>
+      Effect.gen(function* () {
+        const root = checkout("unopted", null);
+        const asked: Array<string> = [];
+        const spawned: Array<string> = [];
+        const layer = Layer.effect(WatchedRepos.FactoryWatchedRepos, WatchedRepos.make).pipe(
+          Layer.provide(runnerAnswering(spawned)),
+          Layer.provideMerge(ProjectStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+          Layer.provide(
+            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
+              resolve: (cwd) => Effect.sync(() => void asked.push(cwd)).pipe(Effect.as(WIDGETS)),
+            }),
+          ),
+          Layer.provide(
+            Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
+              namedProjectsRoot: "/unused",
+              scratchRoot: Effect.succeedNone,
+            }),
+          ),
+          Layer.provide(NodeServices.layer),
+        );
+        const list = yield* Effect.gen(function* () {
+          const store = yield* ProjectStore.ProjectStoreV2;
+          yield* store.apply(projectEvent("project.created", "p-unopted", root, 1));
+          const watched = yield* WatchedRepos.FactoryWatchedRepos;
+          return yield* watched.list;
+        }).pipe(Effect.provide(layer));
+        assert.deepStrictEqual(list.repos, []);
+        assert.deepStrictEqual(asked, []);
+        assert.deepStrictEqual(spawned, []);
+      }),
   );
+
+  describe("a checkout whose working tree has no .dw/config.yml", () => {
+    it.effect(
+      "is watched when origin's default branch holds the opt-in: a branch switch is not a repo leaving",
+      () =>
+        Effect.gen(function* () {
+          const clone = clonedCheckout("switched", FACTORY_CONFIG);
+          assert.isFalse(NodeFS.existsSync(NodePath.join(clone, ".dw")));
+          const list = yield* listed({
+            projects: [["p-switched", clone]],
+            identities: new Map([[clone, WIDGETS]]),
+          });
+          assert.deepStrictEqual(list, {
+            repos: [{ repo: "acme/widgets", path: clone, title: "Title of p-switched" }],
+            unresolved: [],
+          });
+        }),
+    );
+
+    it.effect("is not opted in when origin's default branch has no .dw/config.yml either", () =>
+      Effect.gen(function* () {
+        const clone = clonedCheckout("never", null);
+        const list = yield* listed({
+          projects: [["p-never", clone]],
+          identities: new Map([[clone, WIDGETS]]),
+        });
+        assert.deepStrictEqual(list, { repos: [], unresolved: [] });
+      }),
+    );
+
+    it.effect("is not opted in when the committed copy has no factory block", () =>
+      Effect.gen(function* () {
+        const clone = clonedCheckout("plain", "tracker:\n  backend: do-work-io\n");
+        const list = yield* listed({
+          projects: [["p-plain", clone]],
+          identities: new Map([[clone, WIDGETS]]),
+        });
+        assert.deepStrictEqual(list, { repos: [], unresolved: [] });
+      }),
+    );
+
+    it.effect("is unresolved when git times out reading the committed copy", () =>
+      Effect.gen(function* () {
+        const root = checkout("slow-git", null);
+        NodeFS.mkdirSync(NodePath.join(root, ".git"));
+        const calls: Array<string> = [];
+        const list = yield* listed({
+          projects: [["p-slow", root]],
+          identities: new Map([[root, WIDGETS]]),
+          runner: runnerAnswering(calls, true),
+        });
+        assert.deepStrictEqual(list, { repos: [], unresolved: [root] });
+        assert.deepStrictEqual(calls, [`git -C ${root} show origin/HEAD:.dw/config.yml`]);
+      }),
+    );
+  });
 });

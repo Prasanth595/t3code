@@ -822,7 +822,7 @@ describe("claiming new issues", () => {
         const said = lines.filter((l) => l.startsWith("error: "));
         assert.equal(report.errors, 1);
         assert.deepEqual(said, [
-          `error: ${REPO}: 2 T3 projects have it as their origin (/p/one, /p/two), repo skipped`,
+          `error: ${REPO}: 2 T3 projects have this repo as their origin (/p/one, /p/two); the factory watches none of them`,
         ]);
         const skipped = fake.events.filter((e) => e.event === "repo_skipped");
         assert.deepEqual(skipped, [
@@ -831,7 +831,7 @@ describe("claiming new issues", () => {
             data: {
               repo: REPO,
               reason: "ambiguous-project",
-              message: `${REPO}: 2 T3 projects have it as their origin (/p/one, /p/two), repo skipped`,
+              message: `${REPO}: 2 T3 projects have this repo as their origin (/p/one, /p/two); the factory watches none of them`,
             },
           },
         ]);

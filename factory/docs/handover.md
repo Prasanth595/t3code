@@ -72,7 +72,7 @@ The Rust factory's T3 server (`~/.config/softfac/t3-serve.sh`) also set `ANTHROP
 git clone https://github.com/original-solutions/t3code-factory ~/EA/projects/t3code-factory-fac
 ```
 
-The path must be a clone of its own, never the Rust factory's. Then add it as a project on the fork's T3 server. The factory finds a repo's project by its workspace root, and `FactorySessions.findProject` compares the path exactly, so the project's path must be character for character the `path` in the config. Open `http://127.0.0.1:3876`, pair the browser with the `Pairing URL:` line the server wrote to `~/Library/Logs/t3fac/t3fac.log` when it started (it holds a one-time token; do not paste it anywhere), and add a project at `/Users/tomkaczocha/EA/projects/t3code-factory-fac`.
+The path must be a clone of its own, never the Rust factory's. Then add it as a project on the fork's T3 server: the project's workspace root is the clone, and that is the path the factory watches and launches sessions in; nothing else names it. Open `http://127.0.0.1:3876`, pair the browser with the `Pairing URL:` line the server wrote to `~/Library/Logs/t3fac/t3fac.log` when it started (it holds a one-time token; do not paste it anywhere), and add a project at `/Users/tomkaczocha/EA/projects/t3code-factory-fac`.
 
 `apps/server/src/cli/project.ts` also has `t3 project add <path> --base-dir ~/.config/t3fac` for a running server. It is read from the source, not run on this install.
 
@@ -131,10 +131,10 @@ A good run goes `factory:ready`, `factory:triage`, `factory:building`, then `fac
 
 ### Handing this repo back to the Rust factory
 
-Do this when every installed version has a bug that stops the fork from building its own fix. It is the reverse of the #21 switch. A factory keeps watching the repos it read at its last start, so the order matters: the fork lets go of the repo before the Rust factory takes it.
+Do this when every installed version has a bug that stops the fork from building its own fix. It is the reverse of the #21 switch. The Rust factory reads its `repos` list when it starts; the fork rereads its T3 projects at the start of every pass. Either way one factory must let go of the repo before the other takes it, so the order matters.
 
 1. Check that no run of either factory holds an issue for this repo: `softfac runs list` for the Rust factory, `softfac runs list --data-dir ~/.config/t3fac/factory` for the fork, and `gh issue list --repo original-solutions/t3code-factory --label factory:building` and `--label factory:triage` both come back empty.
-2. Stop the fork watching the repo: remove the `original-solutions/t3code-factory` project from the fork's server (the sidebar, or `t3 project remove`), or move the whole machine config aside (`mv ~/.config/t3fac/factory/config.yml ~/.config/t3fac/factory/config.yml.off`), which makes the fork log `no factory config` and pass its health check. The fork reads the T3 projects at the start of every pass, so a removed project is let go on the next pass.
+2. Stop the fork watching the repo by moving the whole machine config aside: `mv ~/.config/t3fac/factory/config.yml ~/.config/t3fac/factory/config.yml.off`. The fork then logs `no factory config`, passes its health check and keeps the project and its threads. Removing the project instead (the sidebar, or `t3 project remove /Users/tomkaczocha/EA/projects/t3code-factory-fac --base-dir ~/.config/t3fac`) is refused while the project has threads, and every factory run so far has one; `--force` removes it with all of its threads, which is the run history on the T3 side, so do not. The fork reads the T3 projects at the start of every pass, so a project that does go is let go on the next pass.
 3. Restart the fork (`launchctl kickstart -k gui/$(id -u)/io.github.rawphp.t3fac`) and check `~/Library/Logs/t3fac/t3fac.log` for `no factory config`, or for `factory started` when the machine config stays, after the restart.
 4. Only then add the repo to `repos` in `~/.config/softfac/config.yml` with `repo`, `path` and `user`, and restart the Rust factory (`launchctl kickstart -k gui/$(id -u)/io.github.rawphp.softfac`).
 
@@ -142,4 +142,4 @@ The Rust factory then builds the fix.
 
 ### Moving it back
 
-Once `install.sh` has installed a fixed archive and it passed its health check, run steps 3 to 7 again, in their order: check that no run holds an issue, remove the repo from `~/.config/softfac/config.yml` and restart the Rust factory, and only then add the repo's clone back as a T3 project on the fork's server (or move `config.yml.off` back to `config.yml` and restart the fork). launchd can restart the fork at any time, so the config goes back only after the Rust factory has let go of the repo.
+Once `install.sh` has installed a fixed archive and it passed its health check, run steps 3 to 7 again, in their order: check that no run holds an issue, remove the repo from `~/.config/softfac/config.yml` and restart the Rust factory, and only then move `config.yml.off` back to `config.yml` and restart the fork (the project is still there; add the clone back as a T3 project only if it was removed). launchd can restart the fork at any time, so the config goes back only after the Rust factory has let go of the repo.

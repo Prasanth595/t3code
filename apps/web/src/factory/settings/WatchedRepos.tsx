@@ -22,16 +22,51 @@ function ProjectConfigRows({ factory }: { readonly factory: NonNullable<RepoBloc
   );
 }
 
-/** The watched T3 projects and what the factory last read of each one's `.dw/config.yml`, read-only. */
-export function WatchedRepos({ repos }: { readonly repos: ReadonlyArray<RepoBlock> }) {
+/**
+ * The watched T3 projects and what the factory last read of each one's `.dw/config.yml`, read-only.
+ * A list the factory could not make, or checkouts it could not settle, are said as such: the
+ * "none yet" hint is only for a list that really is empty.
+ */
+export function WatchedRepos({
+  repos,
+  unresolved,
+  watchError,
+}: {
+  readonly repos: ReadonlyArray<RepoBlock>;
+  readonly unresolved: ReadonlyArray<string>;
+  readonly watchError: string | null;
+}) {
+  const none = repos.length === 0 && unresolved.length === 0 && watchError === null;
   return (
     <>
       <SettingsSection title="Watched repos">
         <p className="px-3 py-2 text-xs text-muted-foreground sm:px-4">
           Repos are added as T3 projects: the factory watches every project on this environment
           whose checkout has a .dw/config.yml with a factory block.
-          {repos.length === 0 ? " No T3 project on this environment has one yet." : null}
+          {none ? " No T3 project on this environment has one yet." : null}
         </p>
+        {watchError !== null ? (
+          <SettingsRow title="T3 projects not listed" description={watchError} />
+        ) : null}
+        {unresolved.length > 0 ? (
+          <SettingsRow
+            title="Not settled on the last read"
+            description={
+              <>
+                {unresolved.map((path) => (
+                  <span key={path} className="block">
+                    <code className="break-all">{path}</code>
+                  </span>
+                ))}
+                <span className="block">
+                  These checkouts opted in, but their .dw/config.yml could not be read or their
+                  origin could not be identified. They are neither watched nor dropped; the factory
+                  keeps their attention items and reads them again on the next pass.
+                </span>
+              </>
+            }
+          />
+        ) : null}
       </SettingsSection>
       {repos.map((block) => (
         <SettingsSection key={`${block.repo} ${block.path}`} title={`Watched repo: ${block.title}`}>

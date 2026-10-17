@@ -90,6 +90,8 @@ const report = (overrides: Partial<MachineConfigReport> = {}): MachineConfigRepo
   defaults: defaultsConfig,
   errors: [],
   repos: [],
+  unresolved: [],
+  watch_error: null,
   ...overrides,
 });
 
@@ -428,6 +430,31 @@ describe("FactorySettingsPanel", () => {
     const text = textOf(root);
     expect(text).toContain("Repos are added as T3 projects");
     expect(text).toContain("No T3 project on this environment has one yet.");
+    expect(text).not.toContain("Watched repo:");
+  });
+
+  it("names the checkouts the factory could not settle instead of saying none is watched", async () => {
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(report({ unresolved: ["/work/slow"] })));
+    const root = await open();
+
+    const text = textOf(root);
+    expect(text).toContain("Not settled on the last read");
+    expect(text).toContain("/work/slow");
+    expect(text).toContain("neither watched nor dropped");
+    expect(text).not.toContain("No T3 project on this environment has one yet");
+    expect(root.findAll((node) => node.type === "ul" || node.type === "li")).toHaveLength(0);
+  });
+
+  it("shows why the T3 projects could not be listed instead of saying none is watched", async () => {
+    mocks.fetchFactoryConfig.mockResolvedValue(
+      ok(report({ watch_error: "cannot list the T3 projects: store down" })),
+    );
+    const root = await open();
+
+    const text = textOf(root);
+    expect(text).toContain("T3 projects not listed");
+    expect(text).toContain("cannot list the T3 projects: store down");
+    expect(text).not.toContain("No T3 project on this environment has one yet");
     expect(text).not.toContain("Watched repo:");
   });
 

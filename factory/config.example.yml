@@ -42,5 +42,7 @@ notify: true
 # is one of its own, never the one the Rust factory uses. A clone with an `upstream` remote is
 # not watched, since T3 names it by that remote. Take a repo out of the Rust factory's
 # repos list before adding it here: one factory per repo. A `repos` key left in this file
-# loads with a warning, and a version from before #106 requires one, so keep it in the file
-# until no rollback to such a version is possible.
+# loads with a warning and a save from /settings/factory keeps it, but a file copied from this
+# example has none, and a version from before #106 requires a non-empty one: add a `repos`
+# list (`repo: owner/name` and `path: <clone>` per watched repo) before rolling back to such
+# a version, and delete it once no such rollback is possible.

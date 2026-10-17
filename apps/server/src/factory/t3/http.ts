@@ -11,8 +11,9 @@
  * - `GET /api/factory/runs/:id`: `runs show`, every entry of one run.
  *
  * - `GET /api/factory/config`: the machine config file as the settings page shows it (values, or
- *   the defaults with no file, or the errors of a file that does not load), with what the loop
- *   last read of each repo's project config.
+ *   the defaults with no file, or the errors of a file that does not load), with the watched T3
+ *   projects and what the loop last read of each one's project config, the opted-in checkouts the
+ *   reader could not settle, and why the projects could not be listed when they could not.
  *
  * Settings need `settings:write`:
  * - `PUT /api/factory/config`: applies the keys of the JSON body to the machine config file,
@@ -268,7 +269,7 @@ const configRoute = factoryRoute(
     return respond(
       yield* readMachineConfigReport(
         machineConfigPath,
-        yield* loop.watchedRepos,
+        yield* Effect.result(loop.watchedRepos),
         yield* loop.repoConfigs,
       ),
     );

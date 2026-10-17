@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import type { Attention, NewItem } from "./attention.ts";
 import type { HandPause } from "./claims.ts";
 import {
+  ambiguousMessage,
   ambiguousRepos,
   type MachineConfig,
   type ProjectConfig,
@@ -587,7 +588,7 @@ const loadRepos = (
         // Said once per repo, not per project: the repo is skipped whole.
         if (!said.has(key)) {
           said.add(key);
-          const message = `${watched.repo}: ${paths.length} T3 projects have it as their origin (${paths.join(", ")}), repo skipped`;
+          const message = `${watched.repo}: ${ambiguousMessage(paths)}`;
           pass.error(plain(message));
           yield* pass.record({
             event: "repo_skipped",

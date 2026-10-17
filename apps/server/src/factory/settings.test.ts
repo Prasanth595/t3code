@@ -8,9 +8,15 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import { describe } from "vite-plus/test";
 
-import { parseMachineConfig, type RepoConfigReading, type WatchedProject } from "./config.ts";
+import {
+  parseMachineConfig,
+  type RepoConfigReading,
+  type WatchedListing,
+  type WatchedProject,
+} from "./config.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
 import { editMachineConfig, isJsonObject, readMachineConfigReport } from "./settings.ts";
+import { WatchedReposError } from "./t3/watchedRepos.ts";
 
 const tempDir = useTempDirs();
 
@@ -200,9 +206,13 @@ const DEFAULTS = {
 };
 
 describe("readMachineConfigReport", () => {
+  /** A listing of these watched projects, none unresolved. */
+  const of = (repos: ReadonlyArray<WatchedProject>) =>
+    Result.succeed<WatchedListing>({ repos, unresolved: [] });
+
   const report = (
     text: string | null,
-    watched: ReadonlyArray<WatchedProject> = [],
+    watched: Result.Result<WatchedListing, WatchedReposError> = of([]),
     readings: ReadonlyMap<string, RepoConfigReading> = new Map(),
   ) =>
     Effect.gen(function* () {
@@ -221,8 +231,45 @@ describe("readMachineConfigReport", () => {
         defaults: DEFAULTS,
         errors: [],
         repos: [],
+        unresolved: [],
+        watch_error: null,
       });
     }),
+  );
+
+  it.effect(
+    "names the opted-in checkouts the reader could not settle, beside the watched ones",
+    () =>
+      Effect.gen(function* () {
+        const { report: r } = yield* report(
+          COMMENTED,
+          Result.succeed({
+            repos: [{ repo: "a/b", path: "/b", title: "Bee" }],
+            unresolved: ["/slow", "/conflicted"],
+          }),
+        );
+        assert.deepStrictEqual(
+          r.repos.map((block) => block.repo),
+          ["a/b"],
+        );
+        assert.deepStrictEqual(r.unresolved, ["/slow", "/conflicted"]);
+        assert.strictEqual(r.watch_error, null);
+      }),
+  );
+
+  it.effect(
+    "reports a listing the reader could not make as its error, not as no project watched",
+    () =>
+      Effect.gen(function* () {
+        const { report: r } = yield* report(
+          COMMENTED,
+          Result.fail(new WatchedReposError({ cause: new Error("store down") })),
+        );
+        assert.deepStrictEqual(r.config?.poll_seconds, 60);
+        assert.deepStrictEqual(r.repos, []);
+        assert.deepStrictEqual(r.unresolved, []);
+        assert.strictEqual(r.watch_error, "cannot list the T3 projects: store down");
+      }),
   );
 
   it.effect("reports an invalid file as errors with no config", () =>
@@ -243,9 +290,9 @@ describe("readMachineConfigReport", () => {
   it.effect("lists the watched projects for a missing file and for an invalid one", () =>
     Effect.gen(function* () {
       const expected = WATCHED.map((w) => ({ ...w, factory: null, errors: null }));
-      const missing = yield* report(null, WATCHED);
+      const missing = yield* report(null, of(WATCHED));
       assert.deepStrictEqual(missing.report.repos, expected);
-      const invalid = yield* report("poll_seconds: 1\n", WATCHED);
+      const invalid = yield* report("poll_seconds: 1\n", of(WATCHED));
       assert.deepStrictEqual(invalid.report.repos, expected);
     }),
   );
@@ -261,7 +308,7 @@ describe("readMachineConfigReport", () => {
       const readings = new Map<string, RepoConfigReading>([
         ["Acme/Widgets", { kind: "errors", errors: [{ file: ".dw/config.yml", message: "old" }] }],
       ]);
-      const { report: r } = yield* report(COMMENTED, watched, readings);
+      const { report: r } = yield* report(COMMENTED, of(watched), readings);
       const ambiguous = [
         {
           file: ".dw/config.yml",
@@ -315,7 +362,7 @@ describe("readMachineConfigReport", () => {
       const readings = new Map<string, RepoConfigReading>([
         ["a/b", { kind: "errors", errors: [{ file: ".dw/config.yml", message: "bad" }] }],
       ]);
-      const { report: r } = yield* report(COMMENTED, WATCHED, readings);
+      const { report: r } = yield* report(COMMENTED, of(WATCHED), readings);
       assert.strictEqual(r.exists, true);
       assert.deepStrictEqual(r.errors, []);
       assert.deepStrictEqual(r.repos, [
@@ -349,7 +396,7 @@ describe("readMachineConfigReport", () => {
         autonomy: "pr" as const,
       };
       const readings = new Map<string, RepoConfigReading>([["a/b", { kind: "ok", project }]]);
-      const { report: r } = yield* report(COMMENTED, WATCHED.slice(0, 1), readings);
+      const { report: r } = yield* report(COMMENTED, of(WATCHED.slice(0, 1)), readings);
       assert.strictEqual(r.repos[0]?.factory?.base, "main");
       assert.deepStrictEqual(r.repos[0]?.factory?.required_checks, ["ci"]);
       assert.strictEqual(r.repos[0]?.errors, null);

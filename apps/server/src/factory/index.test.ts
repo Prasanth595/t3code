@@ -2079,31 +2079,40 @@ describe("reloading the machine config", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("watchedRepos lists the T3 projects as they are now, and none when listing fails", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { process } = holdingProcess();
-        const projects = yield* Ref.make<ReadonlyArray<WatchedProject>>([A_B]);
-        const listing = yield* started(
-          VALID,
-          process,
-          quietEvents,
-          {},
-          watching(Ref.get(projects)),
-        );
-        assert.deepStrictEqual(yield* listing.loop.watchedRepos, [A_B]);
-        yield* Ref.set(projects, [A_B, C_D]);
-        assert.deepStrictEqual(yield* listing.loop.watchedRepos, [A_B, C_D]);
-        const failing = yield* started(
-          VALID,
-          process,
-          quietEvents,
-          {},
-          watching(Effect.fail(new WatchedReposError({ cause: new Error("store down") }))),
-        );
-        assert.deepStrictEqual(yield* failing.loop.watchedRepos, []);
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
+  it.effect(
+    "watchedRepos lists the T3 projects as they are now, and fails as the reader does",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { process } = holdingProcess();
+          const projects = yield* Ref.make<ReadonlyArray<WatchedProject>>([A_B]);
+          const listing = yield* started(
+            VALID,
+            process,
+            quietEvents,
+            {},
+            watching(Ref.get(projects)),
+          );
+          assert.deepStrictEqual(yield* listing.loop.watchedRepos, {
+            repos: [A_B],
+            unresolved: [],
+          });
+          yield* Ref.set(projects, [A_B, C_D]);
+          assert.deepStrictEqual(yield* listing.loop.watchedRepos, {
+            repos: [A_B, C_D],
+            unresolved: [],
+          });
+          const failing = yield* started(
+            VALID,
+            process,
+            quietEvents,
+            {},
+            watching(Effect.fail(new WatchedReposError({ cause: new Error("store down") }))),
+          );
+          const error = yield* Effect.flip(failing.loop.watchedRepos);
+          assert.strictEqual(error.message, "cannot list the T3 projects: store down");
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reading watchedRepos for the settings page leaves the status as the pass set it", () =>
@@ -2121,7 +2130,7 @@ describe("reloading the machine config", () => {
         // The pass under way listed a/b; it is held at its first call.
         yield* Deferred.await(entered);
         yield* Ref.set(projects, [A_B, C_D]);
-        assert.deepStrictEqual(yield* loop.watchedRepos, [A_B, C_D]);
+        assert.deepStrictEqual(yield* loop.watchedRepos, { repos: [A_B, C_D], unresolved: [] });
         assert.deepStrictEqual(loop.status, {
           state: "running",
           settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
@@ -2129,6 +2138,51 @@ describe("reloading the machine config", () => {
         yield* Deferred.succeed(release, undefined);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "a listing that fails after a pass keeps the last repos in the status and logs the error",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const { process, entered, release } = holdingProcess();
+          let fail = false;
+          const logs: Array<string> = [];
+          const capture = Logger.make(({ message }) => {
+            logs.push(messageText(message));
+          });
+          const { loop } = yield* started(
+            VALID,
+            process,
+            quietEvents,
+            {},
+            watching(
+              Effect.suspend(() =>
+                fail
+                  ? Effect.fail(new WatchedReposError({ cause: new Error("store down") }))
+                  : Effect.succeed([A_B]),
+              ),
+            ),
+          ).pipe(Effect.provide(Logger.layer([capture], { mergeWithExisting: false })));
+          yield* Deferred.await(entered);
+          const first = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+          fail = true;
+          yield* Deferred.succeed(release, undefined);
+          yield* Fiber.join(first);
+          const next = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+          yield* loop.wake;
+          yield* Fiber.join(next);
+          // What the last listing named stands; the pass that could not list said so and worked nothing.
+          assert.deepStrictEqual(loop.status, {
+            state: "running",
+            settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+          });
+          assert.ok(
+            logs.some((line) => line.includes("cannot list the T3 projects: store down")),
+            logs.join("\n"),
+          );
+        }),
+      ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("two reloads at once from idle make one loop and one wake stream", () =>
