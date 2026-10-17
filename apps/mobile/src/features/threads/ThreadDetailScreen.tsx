@@ -318,7 +318,7 @@ function useStreamingHaptics(threadId: ThreadId, feed: ReadonlyArray<ThreadFeedE
   }, [threadId, feed]);
 }
 
-const USAGE_LIMITS_PANEL_BOTTOM_GAP = 12;
+const USAGE_LIMITS_PANEL_GAP = 12;
 
 const USER_INPUT_TOGGLE_TIMING = {
   duration: USER_INPUT_TOGGLE_DURATION_MS,
@@ -638,25 +638,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     navigationHeaderHeight,
     composerOverlapHeight: composerBottomInset,
   });
-  // Android lays the screen out below its opaque header and reports a zero
-  // header height, so the window height overstates the room by the header.
-  const [screenHeight, setScreenHeight] = useState<number | null>(null);
-  const handleScreenLayout = useCallback((event: LayoutChangeEvent) => {
-    setScreenHeight(event.nativeEvent.layout.height);
-  }, []);
-  const screenAreaHeight = screenHeight ?? windowHeight;
-  // The usage panel stacks above the composer instead of replacing it, so it
-  // must also clear the composer and its own bottom padding, or its top row
-  // (with the close button) ends up behind the header.
-  const usageLimitsMaxHeight = Math.min(
-    Math.round(screenAreaHeight * 0.4),
-    derivePendingUserInputMaxHeight({
-      windowHeight: screenAreaHeight,
-      keyboardHeight: reservedKeyboardHeight,
-      navigationHeaderHeight,
-      composerOverlapHeight: composerOverlapHeight + USAGE_LIMITS_PANEL_BOTTOM_GAP,
-    }),
-  );
   const estimatedOverlayHeight = composerOverlapHeight;
   // The overlay's measured height includes the home-indicator inset (the
   // composer pads it), but contentInsetAdjustmentBehavior="automatic" makes
@@ -673,6 +654,50 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     Math.max(0, estimatedOverlayHeight - nativeInsetOvercount),
     -nativeInsetOvercount,
     Platform.OS === "ios" ? COMPOSER_TRANSITION_DURATION_MS : 0,
+  );
+  // Android lays the screen out below its opaque header and reports a zero
+  // header height, so the window height overstates the room by the header.
+  const [screenHeight, setScreenHeight] = useState<number | null>(null);
+  const handleScreenLayout = useCallback((event: LayoutChangeEvent) => {
+    setScreenHeight(event.nativeEvent.layout.height);
+  }, []);
+  const screenAreaHeight = screenHeight ?? windowHeight;
+  // The usage panel stacks with the composer and any approval card, so it gets
+  // whatever room they leave below the header. Measured only while it is open
+  // so typing in the composer does not re-render the screen.
+  const usageLimitsOpen = usageLimitsReport !== null && activeUserInputRequestId === null;
+  const [usageLimitsLayout, setUsageLimitsLayout] = useState({ overlay: 0, panel: 0 });
+  const handleComposerOverlayLayout = useCallback(
+    (event: LayoutChangeEvent) => {
+      onComposerLayout(event);
+      if (!usageLimitsOpen) return;
+      const overlay = event.nativeEvent.layout.height;
+      setUsageLimitsLayout((current) =>
+        current.overlay === overlay ? current : { ...current, overlay },
+      );
+    },
+    [onComposerLayout, usageLimitsOpen],
+  );
+  const handleUsageLimitsLayout = useCallback((event: LayoutChangeEvent) => {
+    const panel = event.nativeEvent.layout.height;
+    setUsageLimitsLayout((current) => (current.panel === panel ? current : { ...current, panel }));
+  }, []);
+  const overlayBesideUsageLimits =
+    usageLimitsLayout.overlay > 0
+      ? usageLimitsLayout.overlay - usageLimitsLayout.panel
+      : composerOverlapHeight;
+  // The keyboard is reserved even while closed, like the question card, so the
+  // panel never grows over the header while the keyboard animates.
+  const usageLimitsMaxHeight = Math.max(
+    0,
+    Math.min(
+      Math.round(screenAreaHeight * 0.4),
+      screenAreaHeight -
+        navigationHeaderHeight -
+        reservedKeyboardHeight -
+        overlayBesideUsageLimits -
+        USAGE_LIMITS_PANEL_GAP * 2,
+    ),
   );
   const userInputCardProgress = useSharedValue(1);
   const userInputInsetProgress = useSharedValue(1);
@@ -1179,7 +1204,11 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               {/* No paddingTop here: the overlay's measured height becomes the
                 list's bottom inset, so any padding above the pill/composer
                 pushes the resting content floor up by the same amount. */}
-              <View ref={composerOverlayRef} onLayout={onComposerLayout} className="w-full">
+              <View
+                ref={composerOverlayRef}
+                onLayout={handleComposerOverlayLayout}
+                className="w-full"
+              >
                 <FloatingWorkingControl
                   colorScheme={isDarkMode ? "dark" : "light"}
                   status={floatingStatus}
@@ -1256,7 +1285,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                   {usageLimitsReport && activeUserInputRequestId === null ? (
                     <Animated.View
                       className="shrink-0 px-4"
-                      style={{ paddingBottom: USAGE_LIMITS_PANEL_BOTTOM_GAP }}
+                      style={{ paddingBottom: USAGE_LIMITS_PANEL_GAP }}
+                      onLayout={handleUsageLimitsLayout}
                       entering={FadeInDown.duration(220)}
                       exiting={FadeOut.duration(140)}
                     >
