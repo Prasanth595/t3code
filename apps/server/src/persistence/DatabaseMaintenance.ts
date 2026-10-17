@@ -65,6 +65,7 @@ export class DatabaseMaintenance extends Context.Service<
         readonly databaseBytes: number;
         readonly reclaimableBytes: number;
         readonly incrementalVacuumEnabled: boolean;
+        readonly hasUnusedV1Tables: boolean;
       },
       DatabaseMissingError | DatabaseInspectError
     >;
@@ -84,6 +85,15 @@ export class DatabaseMaintenance extends Context.Service<
   }
 >()("t3/persistence/DatabaseMaintenance") {}
 
+const UNUSED_V1_TABLES = [
+  "projection_thread_activities",
+  "projection_turns",
+  "projection_thread_proposed_plans",
+  "projection_pending_approvals",
+  "projection_state",
+  "checkpoint_diff_blobs",
+] as const;
+
 const isDomainError = Schema.is(
   Schema.Union([DatabaseMissingError, DatabaseInUseError, DatabaseProjectionsInvalidError]),
 );
@@ -94,11 +104,15 @@ const readStorage = Effect.gen(function* () {
   const free = yield* sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`;
   const size = yield* sql<{ readonly page_size: number }>`PRAGMA page_size`;
   const mode = yield* sql<{ readonly auto_vacuum: number }>`PRAGMA auto_vacuum`;
+  const unusedTables = yield* sql`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ${sql.in(UNUSED_V1_TABLES)} LIMIT 1
+  `;
   const pageSize = size[0]?.page_size ?? 0;
   return {
     databaseBytes: (pages[0]?.page_count ?? 0) * pageSize,
     reclaimableBytes: (free[0]?.freelist_count ?? 0) * pageSize,
     incrementalVacuumEnabled: mode[0]?.auto_vacuum === 2,
+    hasUnusedV1Tables: unusedTables.length > 0,
   };
 });
 
@@ -152,6 +166,11 @@ const make = Effect.gen(function* () {
         const summary = yield* maintenance.compactEventStore;
         if (!(yield* maintenance.verify).valid) {
           return yield* new DatabaseProjectionsInvalidError({ path: databasePath });
+        }
+        // V2 never reads these tables; V1 keeps its own copy in state.sqlite.
+        // Keep the threads, messages and pull request links for lazy transcript import.
+        for (const table of UNUSED_V1_TABLES) {
+          yield* sql`DROP TABLE IF EXISTS ${sql(table)}`;
         }
         // VACUUM rebuilds the file, which is the only way to switch an existing
         // database to incremental auto_vacuum; the server reclaims online after.

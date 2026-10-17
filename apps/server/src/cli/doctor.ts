@@ -25,11 +25,16 @@ export const runDoctor = Effect.fn("runDoctor")(function* (
   yield* Console.log(
     `Database: ${formatBytes(status.databaseBytes)}, ${formatBytes(status.reclaimableBytes)} reclaimable.`,
   );
-  if (status.incrementalVacuumEnabled && status.reclaimableBytes === 0) {
+  if (
+    status.incrementalVacuumEnabled &&
+    status.reclaimableBytes === 0 &&
+    !status.hasUnusedV1Tables
+  ) {
     yield* Console.log("Nothing to repair.");
     return;
   }
   const recommended =
+    status.hasUnusedV1Tables ||
     !status.incrementalVacuumEnabled ||
     status.reclaimableBytes >= DATABASE_COMPACTION_RECOMMENDED_BYTES;
   const repairs = [
