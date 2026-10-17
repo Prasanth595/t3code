@@ -244,6 +244,15 @@ export const bodyEditMessage = (
 ): string =>
   `The body of ${repo}#${issue} was edited by ${loginText(editor)}. Go back to your Contract step and work from the new body:\n\n${instructionText(body, repo, issue)}`;
 
+/** Why an instructor's comment was not sent to the session: a tracker drop, or a send T3 refused. */
+export type CommentDropReason = DropReason | "refused";
+
+const DROP_WHY: Record<CommentDropReason, string> = {
+  "edited-by-other": "someone who is not an instructor edited it",
+  unverifiable: "the factory could not check who edited it",
+  refused: "T3 refused it",
+};
+
 /**
  * The comment the factory posts when an instructor's comment was not sent to the session, in its
  * own fixed words. It names the comment by link and quotes nothing from it.
@@ -252,14 +261,9 @@ export const droppedCommentMessage = (
   repo: string,
   issue: number,
   commentId: string,
-  reason: DropReason,
+  reason: CommentDropReason,
 ): string => {
-  const why =
-    reason === "edited-by-other"
-      ? "someone who is not an instructor edited it"
-      : reason === "unverifiable"
-        ? "the factory could not check who edited it"
-        : "T3 refused it";
+  const why = DROP_WHY[reason];
   return `The factory did not send an instructor's comment to the build session, because ${why}.\n\nComment: https://github.com/${repo}/issues/${issue}#issuecomment-${commentId}\n\nPost the instruction as a new comment and the factory will send it.`;
 };
 

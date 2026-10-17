@@ -58,6 +58,7 @@ import {
   REFUSED_BODY_EDIT,
   bodyEditMessage,
   commentMessage,
+  type CommentDropReason,
   droppedCommentMessage,
   prepareSessionText,
 } from "./messages.ts";
@@ -873,7 +874,11 @@ interface Notice {
   readonly reason: string;
 }
 
-const dropNotice = (ctx: BuildingContext, issue: number, dropped: Dropped): Notice => ({
+const dropNotice = (
+  ctx: BuildingContext,
+  issue: number,
+  dropped: { readonly id: string; readonly reason: CommentDropReason },
+): Notice => ({
   body: droppedCommentMessage(ctx.repo, issue, dropped.id, dropped.reason),
   step: `${COMMENT_DROPPED} ${dropped.id}`,
   reason: "comment-dropped",
@@ -885,7 +890,6 @@ const refusedEditNotice = (editedAt: string): Notice => ({
   reason: "body-edit-dropped",
 });
 
-/** Posts each notice and records it. A failure stops the call and the rest is said on the next one. */
 /** The ordinal of the session's latest run when no run is active, so a message sent now starts a run after it; null while one is. */
 const idleOrdinal = (status: ThreadStatus): number | null =>
   status.run === null || isTerminal(status.run) ? (status.runOrdinal ?? 0) : null;
@@ -899,6 +903,7 @@ const cancelForwardWait = (out: Out, k: number): Effect.Effect<void, BuildingErr
     "forward-wait-cancelled",
   );
 
+/** Posts each notice and records it. A failure stops the call and the rest is said on the next one. */
 const tellIssue = (
   ctx: BuildingContext,
   out: Out,
