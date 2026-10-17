@@ -14,14 +14,6 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import bundledManifestJson from "./model-manifest.json" with { type: "json" };
 
-/**
- * Test policy: this file covers manifest machinery, not manifest contents.
- * Do not add assertions for real model slugs, names, status, aliases, or
- * profiles when editing model-manifest.json. Add tests only when fetch/cache
- * behavior or the provider-neutral resolver semantics change, and use
- * synthetic models for resolver coverage.
- */
-
 describe("resolveProviderCatalog", () => {
   it("resolves generic model presentation through a reusable profile", () => {
     const manifest: ModelManifest.ModelManifestData = {
@@ -352,8 +344,6 @@ describe("ModelManifest service", () => {
       const refreshed = yield* service.refresh;
       assert.deepStrictEqual(refreshed, REMOTE_MANIFEST);
 
-      // A fresh service instance sees the disk cache without another fetch:
-      // its HTTP layer is still stubbed, but `current` never fetches at all.
       const rebooted = yield* ModelManifest.make;
       assert.deepStrictEqual(yield* rebooted.current, REMOTE_MANIFEST);
     }).pipe(
@@ -470,9 +460,6 @@ describe("ModelManifest service", () => {
       const path = yield* Path.Path;
       const config = yield* ServerConfig.ServerConfig;
       const cachePath = path.join(config.stateDir, "model-manifest.json");
-      // A cache of the manifest as it was before the release edited it. The
-      // fetch time is irrelevant: the remote may be unreachable now, so
-      // `current` must already prefer the bundle.
       const { updatedAt: _undated, ...undatedManifest } = REMOTE_MANIFEST;
       for (const stale of [
         undatedManifest,
@@ -486,7 +473,6 @@ describe("ModelManifest service", () => {
         assert.deepStrictEqual(yield* service.current, ModelManifest.BUNDLED_MODEL_MANIFEST);
       }
 
-      // A cache of a newer edit still outranks the bundle.
       yield* fs.writeFileString(
         cachePath,
         yield* ModelManifest.encodeManifestCache({ fetchedAtMs: 0, manifest: REMOTE_MANIFEST }),
