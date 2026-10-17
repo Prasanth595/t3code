@@ -98,6 +98,8 @@ export interface Seen {
   readonly claimed: boolean;
   /** The moment in the first `approved <time>` step: when an instructor applied the label the run was approved on. */
   readonly approvedAt: string | null;
+  /** The instructor on that step's cause (`actor`), who applied the label; null when the line names none. */
+  readonly approvedBy: string | null;
   /** From the last `state_changed`; null before any. */
   readonly state: State | null;
   /** The `session_launched` line's thread. */
@@ -288,6 +290,7 @@ const sentInterruption = (interruption: Interruption): Interruption => ({
 export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let claimed = false;
   let approvedAt: string | null = null;
+  let approvedBy: string | null = null;
   let state: State | null = null;
   let threadId: string | null = null;
   let launchSent = false;
@@ -354,6 +357,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (typeof step !== "string") break;
         if (approvedAt === null && step.startsWith("approved ")) {
           approvedAt = step.slice("approved ".length);
+          const actor = entry.cause?.actor;
+          approvedBy = typeof actor === "string" && actor !== "" ? actor : null;
         }
         if (step === APPROVAL_RECHECKED) rechecked = true;
         if (step === RESULT_LINE_REMINDED) reminded = true;
@@ -619,6 +624,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   return {
     claimed,
     approvedAt,
+    approvedBy,
     state,
     threadId,
     launchSent,

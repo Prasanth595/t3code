@@ -95,6 +95,7 @@ import {
 import {
   isPlainRefName,
   previousRun,
+  recordApproval,
   resume,
   type GateRunningError,
   type StartContext,
@@ -1545,22 +1546,18 @@ const carryOutRelaunch = (
     // The label goes back to `triage` only for an attempt `resume` has not begun: once the next
     // attempt is claimed, or has any state, the issue's label is its own.
     const begun = nextSeen !== null && (nextSeen.claimed || nextSeen.state !== null);
-    yield* ledger(() => {
-      const fresh =
-        existing === null
-          ? Ledger.create(ctx.dataDir, next, { clock: ctx.clock })
-          : Ledger.open(ctx.dataDir, next, { clock: ctx.clock });
-      try {
-        if (nextSeen?.approvedAt == null) {
-          fresh.append(
-            { event: "step_changed", data: { step: `approved ${labeledAt}` } },
-            makeCause("advance", "approved"),
-          );
-        }
-      } finally {
-        fresh.close();
+    const fresh = yield* ledger(() =>
+      existing === null
+        ? Ledger.create(ctx.dataDir, next, { clock: ctx.clock })
+        : Ledger.open(ctx.dataDir, next, { clock: ctx.clock }),
+    );
+    try {
+      if (nextSeen?.approvedAt == null) {
+        yield* recordApproval(fresh, labeledAt, seen.approvedBy, "advance");
       }
-    });
+    } finally {
+      fresh.close();
+    }
     if (!begun) yield* ctx.tracker.setState(issueOf(run), "triage");
     yield* withLedger(ctx, run, (out) =>
       Effect.gen(function* () {

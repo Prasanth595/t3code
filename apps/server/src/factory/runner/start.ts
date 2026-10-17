@@ -36,7 +36,13 @@ import { refusalReason, unapprovedComment, type Refusal } from "../domain/approv
 import { InvalidTransition, stateLabel, transition } from "../domain/lifecycle.ts";
 import { gateLockFile } from "../gate.ts";
 import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
-import { makeCause, type Cause, type ClaimRepair, type Outcome } from "../ledger/events.ts";
+import {
+  makeCause,
+  type Cause,
+  type CauseStep,
+  type ClaimRepair,
+  type Outcome,
+} from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { MachineLog } from "../ledger/machineLog.ts";
 import { field, readRun, type Entry } from "../ledger/read.ts";
@@ -340,13 +346,7 @@ const startFresh = (
     if (claimed.kind === "skipped-assigned") return skipped(issue, claimed.assignees);
     const out = yield* ledger(() => Ledger.create(ctx.dataDir, run, { clock: ctx.clock }));
     try {
-      // First line of the run: what it was approved on, for the checks that come later.
-      yield* ledger(() =>
-        out.append(
-          { event: "step_changed", data: { step: `approved ${labeledAt}` } },
-          makeCause("start", "approved", labeledBy === "" ? {} : { actor: labeledBy }),
-        ),
-      );
+      yield* recordApproval(out, labeledAt, labeledBy === "" ? null : labeledBy, "start");
       return yield* begin(ctx, issue, detail, run, out, project);
     } finally {
       out.close();
@@ -733,6 +733,25 @@ const launchSession = (
     );
     return { ok: true, threadId, worktree: worktreePath };
   });
+
+/**
+ * The first line of an attempt's ledger, the `approved <labeled_at>` step: what the attempt was
+ * approved on, for the text checks that come later, with the instructor whose label it was
+ * (`actor` on the cause) when the approval names one. The claim writes it for the run it starts;
+ * a relaunch writes the same line for the next attempt, carrying this run's approval over.
+ */
+export const recordApproval = (
+  out: Ledger,
+  labeledAt: string,
+  labeledBy: string | null,
+  step: CauseStep,
+): Effect.Effect<void, LedgerError> =>
+  ledger(() =>
+    out.append(
+      { event: "step_changed", data: { step: `approved ${labeledAt}` } },
+      makeCause(step, "approved", labeledBy === null ? {} : { actor: labeledBy }),
+    ),
+  );
 
 /** The run before `run` and its ledger lines; null for a first attempt or an earlier run with no ledger. */
 export const previousRun = (

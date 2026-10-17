@@ -52,6 +52,7 @@ import {
   type InterruptContext,
 } from "./building.ts";
 import { launchMessage, type ResumeFrom } from "./messages.ts";
+import { readProgress } from "./progress.ts";
 import { resume, start } from "./start.ts";
 
 const tempDir = useTempDirs();
@@ -306,10 +307,24 @@ const defaultPr = (): PullRequest => ({
   headSha: "abc123",
 });
 
-const seed = (dataDir: string, id: RunId, events: ReadonlyArray<RunEvent>) => {
+const seed = (
+  dataDir: string,
+  id: RunId,
+  events: ReadonlyArray<RunEvent>,
+  approvedBy: string | null = null,
+) => {
   const ledger = Ledger.create(dataDir, id, { clock: () => T0 });
   try {
-    for (const event of events) ledger.append(event, makeCause("start", "seed"));
+    for (const event of events) {
+      const isApproval =
+        event.event === "step_changed" && String(field(event.data, "step")).startsWith("approved ");
+      ledger.append(
+        event,
+        isApproval && approvedBy !== null
+          ? makeCause("start", "approved", { actor: approvedBy })
+          : makeCause("start", "seed"),
+      );
+    }
   } finally {
     ledger.close();
   }
@@ -329,9 +344,12 @@ interface Rig {
   ctx: InterruptContext;
 }
 
-const rigFor = (events: ReadonlyArray<RunEvent> = STARTED): Rig => {
+const rigFor = (
+  events: ReadonlyArray<RunEvent> = STARTED,
+  approvedBy: string | null = null,
+): Rig => {
   const dataDir = tempDir();
-  seed(dataDir, run10, events);
+  seed(dataDir, run10, events, approvedBy);
   const world: World = {
     issue: issueDetail("building", ["rawphp"]),
     pr: null,
@@ -1123,6 +1141,26 @@ describe("interrupted: a thread that is gone", () => {
     );
     assert.ok(!message.includes("time limit"));
   });
+
+  it.effect("gives the next attempt this run's approval, with the instructor who made it", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(STARTED, "tomkaczocha");
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      assert.strictEqual((yield* decide(rig, afterOutage())).kind, "relaunched");
+      const first = readRun(rig.dataDir, run10b).entries[0]!;
+      assert.deepStrictEqual({ event: first.event, data: first.data }, step(`approved ${LABELED}`));
+      assert.deepStrictEqual(first.cause, {
+        step: "advance",
+        reason: "approved",
+        actor: "tomkaczocha",
+      });
+      // The relaunched attempt's own checks read the same approval and instructor.
+      const next = readProgress(readRun(rig.dataDir, run10b).entries);
+      assert.strictEqual(next.approvedAt, LABELED);
+      assert.strictEqual(next.approvedBy, "tomkaczocha");
+    }),
+  );
 
   it.effect("with no evidence goes stuck as thread-gone", () =>
     Effect.gen(function* () {

@@ -426,6 +426,25 @@ describe("readProgress: an interruption", () => {
   });
 });
 
+describe("readProgress: the approval", () => {
+  const approved = (ms: number, actor?: string): Entry => ({
+    ...step(ms, "approved 2026-10-04T10:00:00Z"),
+    cause: { step: "start", reason: "approved", ...(actor === undefined ? {} : { actor }) },
+  });
+
+  it("names the moment and the instructor on the first approved step", () => {
+    const seen = readProgress([approved(1, "tomkaczocha"), approved(2, "other")]);
+    assert.strictEqual(seen.approvedAt, "2026-10-04T10:00:00Z");
+    assert.strictEqual(seen.approvedBy, "tomkaczocha");
+  });
+
+  it("names no instructor when the cause has none, or has an empty one", () => {
+    assert.strictEqual(readProgress([approved(1)]).approvedBy, null);
+    assert.strictEqual(readProgress([approved(1, "")]).approvedBy, null);
+    assert.strictEqual(readProgress([]).approvedBy, null);
+  });
+});
+
 describe("readProgress: the branch a launch resumed from", () => {
   const RUN = { repo: "rawphp/softfac", issue: "10", attempt: 2 };
   const resumedLaunch = (ms: number, run: string, branch: string) =>
