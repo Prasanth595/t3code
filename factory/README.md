@@ -34,6 +34,8 @@ Build and install the darwin-arm64 binary on this Mac (LaunchAgent `io.github.ra
 factory/scripts/deploy.sh                     # build.sh then install.sh; reuses release/ for this commit, --rebuild to build again, --build-only to stop before install
 ```
 
+The build needs current stable Rust, the toolchain upstream's CI uses; `rustup update stable` when cargo says a crate wants a newer rustc.
+
 The steps on their own:
 
 ```sh
