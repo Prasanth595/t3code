@@ -195,7 +195,19 @@ export interface Seen {
    * and pushes to this one, so a pull request from it is the session's.
    */
   readonly resumedFrom: string | null;
+  /** The run on that `resumed_from`: this run's own id for a re-gate's session, the earlier attempt's for a resume from its branch. */
+  readonly resumedFromRun: string | null;
 }
+
+/**
+ * The pull request's branch when the run's session was launched to fix a failed re-gate of this
+ * same run (its `session_launched` line's `resumed_from` names the run itself): that session works
+ * on a branch of T3's own and pushes to the pull request's, so that is where its work is. Null for
+ * a first launch, and for a session resumed from an earlier attempt's branch, whose work is on
+ * T3's branch.
+ */
+export const regateBranch = (seen: Seen, run: RunId): string | null =>
+  seen.resumedFromRun === runIdToString(run) ? seen.resumedFrom : null;
 
 /** A relaunch that was decided and whose session the ledger does not name: the launch may have reached T3. */
 export const pendingRelaunch = (seen: Seen): Relaunch | null =>
@@ -324,6 +336,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let relaunch: Relaunch | null = null;
   let launchedSinceSending = false;
   let resumedFrom: string | null = null;
+  let resumedFromRun: string | null = null;
   // A wait marker names run `k`: the awaited ordinal never goes down.
   const awaitRun = (k: number, forward: boolean) => {
     if (waitingAfter === null || k >= waitingAfter) {
@@ -444,6 +457,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         const from = field(entry.data, "resumed_from");
         const fromBranch = field(from, "branch");
         resumedFrom = typeof fromBranch === "string" ? fromBranch : null;
+        const fromRun = field(from, "run");
+        resumedFromRun = typeof fromRun === "string" ? fromRun : null;
         const launchedBranch = field(entry.data, "branch");
         if (typeof launchedBranch === "string") lastBranch = launchedBranch;
         // A resume owed to the old thread is not owed to this one.
@@ -642,6 +657,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     relaunch,
     launchedSinceSending,
     resumedFrom,
+    resumedFromRun,
   };
 };
 

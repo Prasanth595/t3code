@@ -7,6 +7,7 @@ import {
   pendingRelaunch,
   readProgress,
   regateAttempt,
+  regateBranch,
   relaunchCommandId,
 } from "./progress.ts";
 
@@ -396,6 +397,52 @@ describe("readProgress: an interruption", () => {
     const seen = readProgress([launched(1), interrupted(2), launched(3)]);
     assert.strictEqual(seen.interruption?.sent, true);
     assert.strictEqual(seen.waitingAfter, null);
+  });
+});
+
+describe("readProgress: the branch a launch resumed from", () => {
+  const RUN = { repo: "rawphp/softfac", issue: "10", attempt: 2 };
+  const resumedLaunch = (ms: number, run: string, branch: string) =>
+    line(ms, "session_launched", {
+      thread_id: "thread-2",
+      worktree: "/t3/wt2",
+      branch: "t3code/own",
+      model_instance: null,
+      model: null,
+      resumed_from: { run, branch },
+    });
+
+  it("is none for a plain launch", () => {
+    const seen = readProgress([launched(1)]);
+    assert.strictEqual(seen.resumedFrom, null);
+    assert.strictEqual(seen.resumedFromRun, null);
+    assert.strictEqual(regateBranch(seen, RUN), null);
+  });
+
+  it("names the run and the branch of the launch line's resumed_from", () => {
+    const seen = readProgress([resumedLaunch(1, "rawphp__softfac__10__1", "t3code/old")]);
+    assert.strictEqual(seen.resumedFrom, "t3code/old");
+    assert.strictEqual(seen.resumedFromRun, "rawphp__softfac__10__1");
+    assert.strictEqual(seen.lastBranch, "t3code/own");
+  });
+
+  it("is the pull request's branch only for a re-gate session, which resumed from the run itself", () => {
+    // A re-gate of run 2 launched a session from its pull request's branch: that is where it pushes.
+    const regate = readProgress([resumedLaunch(1, "rawphp__softfac__10__2", "feat/pr-12")]);
+    assert.strictEqual(regateBranch(regate, RUN), "feat/pr-12");
+    // A session resumed from attempt 1's branch works on T3's own branch.
+    const resumed = readProgress([resumedLaunch(1, "rawphp__softfac__10__1", "t3code/old")]);
+    assert.strictEqual(regateBranch(resumed, RUN), null);
+  });
+
+  it("is the newest launch line's", () => {
+    const seen = readProgress([
+      resumedLaunch(1, "rawphp__softfac__10__2", "feat/pr-12"),
+      launched(2),
+    ]);
+    assert.strictEqual(seen.resumedFrom, null);
+    assert.strictEqual(seen.resumedFromRun, null);
+    assert.strictEqual(regateBranch(seen, RUN), null);
   });
 });
 

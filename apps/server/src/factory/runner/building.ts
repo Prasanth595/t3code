@@ -73,6 +73,7 @@ import {
   RESULT_LINE_REMINDING,
   field,
   readProgress,
+  regateBranch,
   type Seen,
 } from "./progress.ts";
 import {
@@ -1389,7 +1390,7 @@ export const interrupted = (
       stuckEnded(ctx, run, from, "thread-gone", stopOf(THREAD_GONE, null));
     const relaunch = (from: Seen, resumes: number) =>
       Effect.gen(function* () {
-        const branch = yield* relaunchBranchOf(ctx, from);
+        const branch = yield* relaunchBranchOf(ctx, run, from);
         yield* withLedger(ctx, run, (out) =>
           append(
             out,
@@ -1486,18 +1487,23 @@ export const interrupted = (
 
 /**
  * The branch the work of a run whose thread is lost is on, for the relaunch to continue from, read
- * before the decision is written. In order: the newest branch the ledger names (a launch line
- * usually has none, as it is written before the worktree exists); the branch the thread itself
- * reports, which T3 keeps for an archived thread (one it does not know gives nothing); the head
- * branch of the run's own pull request, when that is a plain ref name and not a fork's. `null`
- * starts the next attempt from `base`. A read that fails, other than T3 not knowing the thread,
- * is an error with nothing written, and the next pass reads again.
+ * before the decision is written. In order: the pull request's branch for a session that fixes a
+ * failed re-gate of the run, which pushes there and not to T3's own branch (`regateBranch`); the
+ * newest branch the ledger names (a launch line usually has none, as it is written before the
+ * worktree exists); the branch the thread itself reports, which T3 keeps for an archived thread
+ * (one it does not know gives nothing); the head branch of the run's own pull request, when that
+ * is a plain ref name and not a fork's. `null` starts the next attempt from `base`. A read that
+ * fails, other than T3 not knowing the thread, is an error with nothing written, and the next pass
+ * reads again.
  */
 const relaunchBranchOf = (
   ctx: BuildingContext,
+  run: RunId,
   seen: Seen,
 ): Effect.Effect<string | null, BuildingError> =>
   Effect.gen(function* () {
+    const regate = regateBranch(seen, run);
+    if (regate !== null) return regate;
     if (seen.lastBranch !== null) return seen.lastBranch;
     if (seen.threadId !== null) {
       const thread = yield* ctx.sessions

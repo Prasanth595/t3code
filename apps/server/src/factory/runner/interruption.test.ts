@@ -121,6 +121,27 @@ const startedWith = (
 ];
 const STARTED = startedWith();
 
+/** `STARTED` whose launch line names T3's `branch` and, under `resumed_from`, the run and branch the worktree was made from. */
+const startedResumedFrom = (
+  branch: string,
+  resumedFrom: { readonly run: string; readonly branch: string },
+): ReadonlyArray<RunEvent> =>
+  STARTED.map((line): RunEvent =>
+    line.event === "session_launched"
+      ? {
+          event: "session_launched",
+          data: {
+            thread_id: "thread-1",
+            worktree: "/t3/wt",
+            branch,
+            model_instance: "claudeAgent",
+            model: "claude-opus-5-5",
+            resumed_from: resumedFrom,
+          },
+        }
+      : line,
+  );
+
 const FINISHED: Line = {
   event: "finished",
   data: {
@@ -1422,8 +1443,8 @@ describe("a decided relaunch", () => {
 
 // ---- where a relaunch finds the branch -------------------------------------------------------------------
 
-const relaunchBranchIn = (rig: Rig): string | null | undefined => {
-  const line = linesOf(rig).find(
+const relaunchBranchIn = (rig: Rig, id: RunId = rig.run): string | null | undefined => {
+  const line = linesOf(rig, id).find(
     (entry) =>
       entry.event === "session_interrupted" && (entry.data as { relaunch: boolean }).relaunch,
   );
@@ -1448,6 +1469,44 @@ describe("a relaunch finds the branch", () => {
       assert.strictEqual(request.baseRef, "t3code/from-thread");
       assert.strictEqual(request.startFromOrigin, true);
       assert.ok(request.message.includes(INTERRUPTED_WORDS), request.message);
+    }),
+  );
+
+  it.effect("takes the pull request's branch of a re-gate session over T3's own", () =>
+    Effect.gen(function* () {
+      // The run's session was launched to fix a failed re-gate: its line names T3's branch and,
+      // under `resumed_from`, this run and the pull request's branch it pushes to.
+      const rig = rigFor(
+        startedResumedFrom("t3code/own", { run: "rawphp__softfac__10__1", branch: "feat/pr-12" }),
+      );
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      assert.strictEqual((yield* decide(rig, afterOutage())).kind, "relaunched");
+      assert.strictEqual(relaunchBranchIn(rig), "feat/pr-12");
+      const request = rig.launches.at(-1)!;
+      assert.strictEqual(request.baseRef, "feat/pr-12");
+      assert.strictEqual(request.startFromOrigin, true);
+      assert.deepStrictEqual(
+        rig.reads.filter((read) => read.startsWith("branchTip ")),
+        ["branchTip feat/pr-12"],
+      );
+    }),
+  );
+
+  it.effect("takes T3's own branch for a session that resumed from an earlier attempt's", () =>
+    Effect.gen(function* () {
+      // Attempt 2 was launched from attempt 1's branch on origin; its work is on T3's branch.
+      const rig = rigFor();
+      seed(
+        rig.dataDir,
+        run10b,
+        startedResumedFrom("t3code/own", { run: "rawphp__softfac__10__1", branch: "t3code/old" }),
+      );
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig, run10b), endedBadly("thread-gone"));
+      assert.strictEqual((yield* decide(rig, afterOutage(), run10b)).kind, "relaunched");
+      assert.strictEqual(relaunchBranchIn(rig, run10b), "t3code/own");
+      assert.strictEqual(rig.launches.at(-1)!.baseRef, "t3code/own");
     }),
   );
 
