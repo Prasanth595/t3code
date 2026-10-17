@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import {
   BUILT_IN_BROWSER_PROFILES,
   DEFAULT_BROWSER_PROFILE_ID,
@@ -9,6 +7,9 @@ import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { userEvent } from "vite-plus/test/browser";
+
+vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "light" }) }));
 
 // The profile list normally comes from client settings; the built-ins are enough to choose from.
 vi.mock("~/browser/browserDefaults", async (importOriginal) => ({
@@ -34,8 +35,7 @@ beforeEach(() => {
       disconnect() {}
     },
   );
-  // jsdom lacks the Web Animations API that the tab bar's scroll area waits on.
-  Element.prototype.getAnimations ??= () => [];
+  vi.spyOn(Element.prototype, "getAnimations").mockReturnValue([]);
   opened = [];
   container = document.createElement("div");
   document.body.append(container);
@@ -45,6 +45,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -120,11 +121,7 @@ function menuItem(label: string): HTMLElement {
 
 async function click(element: Element) {
   await act(async () => {
-    element.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-    element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    element.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
-    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await userEvent.click(element);
   });
 }
 
