@@ -425,10 +425,6 @@ export const liveWorld = (
     trackerUser: (watched) =>
       withProcess(githubFor(watched).login()).pipe(Effect.mapError(asPassError("tracker"))),
     unfinishedRuns: (only) => ledger(() => listUnfinishedRuns(dataDir, only)),
-    checkRepo: (repo: Repo) =>
-      sessions
-        .findProject(repo.watched.path)
-        .pipe(Effect.asVoid, Effect.mapError(asPassError("t3"))),
     readyIssues: (repo: Repo) =>
       withProcess(githubFor(repo.watched).listIssues("ready")).pipe(
         Effect.map((listing) => ({ items: unassignedByNumber(listing.items), cut: listing.cut })),

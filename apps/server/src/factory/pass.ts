@@ -72,12 +72,6 @@ export interface PassWorld {
     readonly repo: string;
     readonly issue: number;
   }) => Effect.Effect<ReadonlyArray<RunInfo>, LedgerError>;
-  /**
-   * Asks T3 whether the repo has a project (softfac's `check_repo`): a server that cannot answer
-   * is a `t3` error, the sign `t3Trouble` reads from the machine log. No project is no error
-   * here: `start` refuses that launch itself.
-   */
-  readonly checkRepo: (repo: Repo) => Effect.Effect<void, PassError>;
   /** The open `factory:ready` issues nobody is assigned to, and whether the listing was cut. */
   readonly readyIssues: (repo: Repo) => Effect.Effect<Listing<number>, PassError>;
   /** The open `factory:triage` issues the factory's login is the only assignee of. */
@@ -235,6 +229,14 @@ interface NoteError {
   readonly kind: ErrorKind;
   /** What went wrong, before it is cleaned for the ledger. */
   readonly message: string;
+  /**
+   * T3's session layer did not answer (a `FactorySessionsError`): the error also goes to the
+   * machine log, where `t3Trouble` reads the sign that sessions ending badly were an interruption.
+   * softfac has such a sign from its own T3 check of each repo, a server call; this factory's
+   * project lookup is in-process and cannot fail when T3 is down, so the calls that do fail are
+   * the sign.
+   */
+  readonly t3Down?: boolean;
 }
 
 /** `text` with nothing in it that could drive a terminal or hide text. */
@@ -384,7 +386,9 @@ class Pass {
   /**
    * Prints `error` as an error line and records it: as an `error` line in the ledger of `run`
    * when there is one that can take it, in the machine log otherwise (with the run's id when a
-   * run's ledger could not take it). `unreadable` is a run whose own ledger cannot be read.
+   * run's ledger could not take it). A run's error that says T3 did not answer (`t3Down`) goes to
+   * both, so the machine log holds the T3 trouble of this pass for the next one to read.
+   * `unreadable` is a run whose own ledger cannot be read.
    */
   fail(run: RunId | null, error: NoteError, unreadable = false): Effect.Effect<void> {
     this.error(error.line);
@@ -395,10 +399,14 @@ class Pass {
         data: { ...(id === null ? {} : { run: id }), step: error.step, kind: error.kind, message },
       });
     if (run === null) return toMachineLog(null);
-    if (unreadable) return toMachineLog(runIdToString(run));
-    return this.world
-      .recordError(run, error.step, error.kind, message)
-      .pipe(Effect.catch(() => toMachineLog(runIdToString(run))));
+    const id = runIdToString(run);
+    if (unreadable) return toMachineLog(id);
+    return this.world.recordError(run, error.step, error.kind, message).pipe(
+      Effect.matchEffect({
+        onFailure: () => toMachineLog(id),
+        onSuccess: () => (error.t3Down === true ? toMachineLog(id) : Effect.void),
+      }),
+    );
   }
 
   notes(repo: string, issue: number, state: State | null): Notes {
@@ -421,6 +429,7 @@ class Pass {
       step,
       kind: errorKind(error),
       message: error.message,
+      t3Down: error._tag === "FactorySessionsError",
     });
   }
 
@@ -1405,21 +1414,6 @@ const claim = (
       if (loaded.kind !== "ready") continue;
       const repo = loaded.repo;
       const name = repo.watched.repo;
-      // Before the ready issues are read, and on every pass while it holds, so the machine log
-      // shows how long the repo was unclaimable and `t3Trouble` finds the T3 error: the repo's
-      // open runs were already worked above; nothing new is claimed from it.
-      const checked = yield* Effect.result(world.checkRepo(repo));
-      if (checked._tag === "Failure") {
-        yield* pass.fail(
-          null,
-          passError(
-            checked.failure.kind,
-            `${name}: cannot ask T3 Code for the repo's project: `,
-            checked.failure.message,
-          ),
-        );
-        continue;
-      }
       const listing = yield* Effect.result(world.readyIssues(repo));
       if (listing._tag === "Failure") {
         yield* pass.fail(
