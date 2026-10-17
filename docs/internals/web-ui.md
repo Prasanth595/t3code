@@ -64,6 +64,7 @@ makes it skip the whole function without a build error. Lint reports each skip a
 Every file under `apps/web/src` must compile. Lint makes those rules errors there, and
 `t3code/no-manual-memo` rejects `useMemo` and `useCallback`, which the compiler makes redundant;
 no upstream rule bans them outright. Lint misses some bailouts, notably `try` with `finally` and
-`throw` inside `try`, so avoid them in components and hooks. Async handlers rarely need `try`: an
+`throw` inside `try`, so [`reactCompilerCoverage.test.ts`](../../apps/web/src/reactCompilerCoverage.test.ts)
+compiles every file and fails on any skip. Async handlers rarely need `try`: an
 atom command settles into a result, so cleanup can follow the `await`. `useStableCallback` still
 marks handlers that leave a large component, as described above.
