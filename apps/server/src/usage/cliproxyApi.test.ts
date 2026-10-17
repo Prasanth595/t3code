@@ -271,6 +271,7 @@ describe("CLIProxyAPI built-in management API", () => {
             {
               entry: { target: { label: "Test" } },
               serverConfig: {
+                providers: [],
                 usageLimitSources: [
                   {
                     id: UsageLimitSourceId.make("hub"),
