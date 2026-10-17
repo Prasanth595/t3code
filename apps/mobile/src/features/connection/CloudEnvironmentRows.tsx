@@ -11,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useState } from "react";
-import { Pressable, type TextLayoutEvent, View } from "react-native";
+import { Pressable, type TextLayoutEvent, View, type ViewProps } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -190,15 +190,24 @@ function ConnectedCloudEnvironmentRow(props: {
   if (props.descriptor !== undefined && props.descriptor !== lastDescriptor) {
     setLastDescriptor(props.descriptor);
   }
+  const onOpen = props.onOpen;
   return (
-    <Pressable
-      accessibilityHint="Long press to remove from this device"
-      accessibilityRole={props.onOpen ? "button" : undefined}
-      accessibilityLabel={props.onOpen ? `Manage ${props.environment.environmentLabel}` : undefined}
-      onPress={props.onOpen}
-      onLongPress={props.onRemove}
-    >
+    // An accessible row would hide its switch from screen readers, so the title stands in for it.
+    <Pressable accessible={false} onPress={onOpen} onLongPress={props.onRemove}>
       <CloudEnvironmentRowShell
+        titleAccessibility={{
+          accessible: true,
+          accessibilityRole: onOpen ? "button" : undefined,
+          accessibilityLabel: onOpen ? `Manage ${props.environment.environmentLabel}` : undefined,
+          accessibilityHint: "Long press to remove from this device",
+          accessibilityActions: onOpen
+            ? [{ name: "activate" }, { name: "longpress" }]
+            : [{ name: "longpress" }],
+          onAccessibilityAction: (event) => {
+            if (event.nativeEvent.actionName === "activate") onOpen?.();
+            else props.onRemove();
+          },
+        }}
         opensDetails={props.onOpen !== undefined}
         connectionError={enabled || unsupported ? props.environment.connectionError : null}
         connectionErrorTraceId={enabled ? props.environment.connectionErrorTraceId : null}
@@ -271,6 +280,7 @@ function CloudEnvironmentRowShell(props: {
   readonly onToggleError: () => void;
   readonly onValueChange: (enabled: boolean) => void;
   readonly statusText?: string;
+  readonly titleAccessibility?: ViewProps;
   readonly value: boolean;
 }) {
   const isRetrying =
@@ -316,7 +326,7 @@ function CloudEnvironmentRowShell(props: {
   return (
     <View collapsable={false} className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5">
       <View className="min-w-0 flex-1 gap-0.5">
-        <View className="min-w-0 flex-row items-center gap-2">
+        <View {...props.titleAccessibility} className="min-w-0 flex-row items-center gap-2">
           <ConnectionStatusDot state={props.connectionState} pulse={shouldPulse} size={7} />
           <EnvironmentMachineSymbol
             kind={props.machine}
@@ -377,6 +387,7 @@ function CloudEnvironmentRowShell(props: {
         </StatusContainer>
       </View>
       <ThemedSwitch
+        accessibilityLabel={props.label}
         style={{ alignSelf: "center" }}
         disabled={props.disabled}
         onValueChange={props.onValueChange}

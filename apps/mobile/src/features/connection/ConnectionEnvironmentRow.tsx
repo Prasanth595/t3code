@@ -78,15 +78,22 @@ export function ConnectionEnvironmentRow(props: {
 
   return (
     <Animated.View layout={LinearTransition.duration(250)} className="bg-grouped-card">
+      {/* An accessible row would hide its switch from screen readers, so the details stand in for it. */}
       <Pressable
+        accessible={false}
         className="flex-row items-center gap-3 px-4 py-3.5 active:opacity-70"
-        accessibilityRole="button"
-        accessibilityLabel={
-          props.opensDetails ? `Manage ${props.environment.environmentLabel}` : undefined
-        }
         onPress={props.onToggle}
       >
-        <View className="flex-1 gap-0.5">
+        <View
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel={
+            props.opensDetails ? `Manage ${props.environment.environmentLabel}` : undefined
+          }
+          accessibilityActions={[{ name: "activate" }]}
+          onAccessibilityAction={() => props.onToggle()}
+          className="flex-1 gap-0.5"
+        >
           <View className="flex-row items-center gap-1.5">
             <ConnectionStatusDot
               state={enabled || unsupported ? props.environment.connectionState : "available"}
@@ -132,6 +139,7 @@ export function ConnectionEnvironmentRow(props: {
         </View>
 
         <ThemedSwitch
+          accessibilityLabel={props.environment.environmentLabel}
           style={{ alignSelf: "center" }}
           disabled={unsupported}
           onValueChange={(next) => props.onSetEnabled(props.environment.environmentId, next)}
