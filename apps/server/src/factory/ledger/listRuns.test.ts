@@ -498,6 +498,7 @@ describe("listRuns", () => {
         startedTs: "2026-10-04T10:13:16.123Z",
         lastEvent: "finished",
         state: null,
+        step: null,
         prUrl: null,
         finished: true,
         totalMs: 2000,
@@ -508,6 +509,7 @@ describe("listRuns", () => {
         startedTs: "2026-10-04T10:14:16.123Z",
         lastEvent: "claimed",
         state: null,
+        step: "approved 2026-10-04T10:00:00Z",
         prUrl: null,
         finished: false,
         totalMs: null,
@@ -525,6 +527,27 @@ describe("listRuns", () => {
     expect(listRuns(dataDir).map((run) => [run.state, run.lastEvent])).toEqual([
       ["pr-open", "state_changed"],
     ]);
+  });
+
+  it("reads the step from the last step_changed of a run read whole, null before any", () => {
+    const dataDir = tempDir();
+    const ledger = Ledger.create(dataDir, rid(8), { clock: ticking(T0, 1000) });
+    handles.push(ledger);
+    ledger.append({ event: "claimed", data: { machine: "m", github_user: "u" } }, cause);
+    expect(listRuns(dataDir)[0]?.step).toBeNull();
+    ledger.append({ event: "step_changed", data: { step: "launch-sending" } }, cause);
+    ledger.append({ event: "step_changed", data: { step: "gate-passed" } }, cause);
+    ledger.append({ event: "claimed", data: { machine: "m", github_user: "u" } }, cause);
+    expect(listRuns(dataDir)[0]?.step).toBe("gate-passed");
+  });
+
+  it("a finished run summarised from the ends of its file has no step", () => {
+    const dataDir = tempDir();
+    const ledger = Ledger.create(dataDir, rid(8), { clock: ticking(T0, 1000) });
+    handles.push(ledger);
+    ledger.append({ event: "step_changed", data: { step: "gate-passed" } }, cause);
+    ledger.finish("stuck", null, null, cause);
+    expect(listRuns(dataDir)[0]).toMatchObject({ finished: true, step: null });
   });
 
   it("reads the pull request url from the last pr_opened, and from the finished line over it", () => {
@@ -576,6 +599,7 @@ describe("listRuns", () => {
       startedTs: null,
       lastEvent: null,
       state: null,
+      step: null,
       prUrl: null,
       finished: false,
       totalMs: null,

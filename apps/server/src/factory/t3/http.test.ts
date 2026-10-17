@@ -80,6 +80,7 @@ const CLAIMED: RunEvent = {
 };
 const moved = (from: string, to: string): RunEvent =>
   ({ event: "state_changed", data: { from, to } }) as RunEvent;
+const stepped = (step: string): RunEvent => ({ event: "step_changed", data: { step } }) as RunEvent;
 const FINISHED: RunEvent = {
   event: "finished",
   data: {
@@ -400,7 +401,7 @@ describe("GET /api/factory/runs", () => {
   it.effect("lists every run oldest first with the word runs list gives its status", () =>
     serving({}, async (call, { tokens, dir }) => {
       seed(dir, run12, [...BUILDING, FINISHED], T0 + 20_000);
-      seed(dir, run10, BUILDING, T0);
+      seed(dir, run10, [...BUILDING, stepped("gate-passed")], T0);
       seed(
         dir,
         run11,
@@ -418,7 +419,7 @@ describe("GET /api/factory/runs", () => {
       assert.deepStrictEqual(
         body.runs.map((run) => [run.id, run.state, run.status, run.finished, run.last_event]),
         [
-          [ID, "building", "running", false, "state_changed"],
+          [ID, "building", "running", false, "step_changed"],
           [runIdToString(run11), "pr-open", "watching", false, "state_changed"],
           [runIdToString(run12), "building", "finished", true, "finished"],
         ],
@@ -428,12 +429,17 @@ describe("GET /api/factory/runs", () => {
         "started_ts",
         "state",
         "last_event",
+        "step",
         "status",
         "pr_url",
         "finished",
         "total_ms",
         "unreadable",
       ]);
+      assert.deepStrictEqual(
+        body.runs.map((run) => run.step),
+        ["gate-passed", null, null],
+      );
       assert.strictEqual(body.runs[0]!.started_ts, formatTs(T0 + 1000));
       assert.strictEqual(body.runs[0]!.unreadable, false);
     }),
