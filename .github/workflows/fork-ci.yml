@@ -243,6 +243,8 @@ jobs:
           node-version-file: package.json
           cache: true
           run-install: true
+      # The browser project runs React tests in headless Chromium.
+      - run: node apps/web/node_modules/playwright/cli.js install --with-deps --only-shell chromium
       - run: vp run --filter @t3tools/web test
 
   test_server:
