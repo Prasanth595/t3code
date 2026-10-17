@@ -147,6 +147,7 @@ import {
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
 import { isPreviewFocused } from "../lib/previewFocus";
+import { focusLevelPaletteItems } from "./focusLevels/focusLevelPaletteItems";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
   PULL_REQUESTS_PANEL_REF,
@@ -2016,6 +2017,7 @@ function OpenCommandPaletteDialog(props: {
     applyOpenIntent(openIntent);
   }, [openIntent, projectThreadItemCount]);
 
+  actionItems.push(...focusLevelPaletteItems(ITEM_ICON_CLASS));
   actionItems.push({
     kind: "action",
     value: "action:theme-editor",
