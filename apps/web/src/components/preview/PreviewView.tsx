@@ -160,7 +160,7 @@ export function PreviewView({
     useState<DesktopPreviewAnnotationVoiceConfig | null>(null);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
-  const pickActiveRef = useRef<{ cancelled: boolean } | null>(null);
+  const pickActiveRef = useRef<{ cancelled: boolean; ownerKey: string } | null>(null);
   const isMountedRef = useRef(true);
   const previewState = useThreadPreviewState(threadRef);
   const recentHistoryEntries = useThreadRecentHistory(
@@ -777,7 +777,7 @@ export function PreviewView({
     // guest webContents.
     const previouslyFocused =
       typeof document !== "undefined" ? (document.activeElement as HTMLElement | null) : null;
-    const pickRequest = { cancelled: false };
+    const pickRequest = { cancelled: false, ownerKey: scopedThreadKey(threadRef) };
     let submitted = false;
     pickActiveRef.current = pickRequest;
     setPickActive(true);
@@ -876,9 +876,10 @@ export function PreviewView({
       .catch(() => undefined);
   }, [canSendAnnotation, pickActive, runtimeTabId]);
 
+  const pickOwnerKey = scopedThreadKey(threadRef);
   useEffect(() => {
     return () => {
-      if (!pickActiveRef.current) return;
+      if (!pickActiveRef.current || pickActiveRef.current.ownerKey !== pickOwnerKey) return;
       pickActiveRef.current.cancelled = true;
       pickActiveRef.current = null;
       if (previewBridge && runtimeTabId) {
@@ -889,7 +890,7 @@ export function PreviewView({
         setAnnotationVoice(null);
       }
     };
-  }, [runtimeTabId, threadRef.environmentId, threadRef.threadId]);
+  }, [runtimeTabId, pickOwnerKey]);
 
   // Subscribe only while visible; `toggle-panel` is owned by ChatView's
   // URL-aware handler regardless of whether the panel is currently mounted.

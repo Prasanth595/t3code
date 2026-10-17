@@ -370,7 +370,6 @@ import {
 import { prepareVideoFirstFrame } from "../../lib/videoFirstFrame";
 import { observeResize } from "~/lib/observeResize";
 
-
 function ComposerVideoThumbnail({ file }: { file: File }) {
   const setVideo = (video: HTMLVideoElement | null) => {
     if (!video) return;
@@ -1402,36 +1401,36 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
       ) : null}
       {props.children}
       {props.showActions !== false ? (
-      <ComposerPrimaryActions
-        compact={props.compact}
-        canOperateThread={props.canOperateThread}
-        pendingAction={props.pendingAction}
-        isRunning={props.isRunning}
-        canInterrupt={props.canInterrupt}
-        followUpBehavior={props.followUpBehavior}
-        canSteer={props.canSteer}
-        alternateShortcutLabel={props.alternateShortcutLabel}
-        showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
-        promptHasText={props.promptHasText}
-        voiceInputActive={props.voiceInputActive ?? false}
-        isSendBusy={props.isSendBusy}
-        sendDisabledReason={props.sendDisabledReason}
-        isConnecting={props.isConnecting}
-        isEnvironmentUnavailable={props.isEnvironmentUnavailable}
-        isPreparingWorktree={props.isPreparingWorktree}
-        hasSendableContent={props.hasSendableContent}
-        canResume={props.canResume}
-        preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
-        isEditingQueuedMessage={props.isEditingQueuedMessage}
-        onSubmitMessage={props.onSubmitMessage}
-        onResume={props.onResume}
-        onPreviousPendingQuestion={props.onPreviousPendingQuestion}
-        onInterrupt={props.onInterrupt}
-        onImplementPlanInNewThread={props.onImplementPlanInNewThread}
-        compactBeforeSendTokens={props.compactBeforeSendTokens}
-        keepFullHistory={props.keepFullHistory}
-        onToggleKeepFullHistory={props.onToggleKeepFullHistory}
-      />
+        <ComposerPrimaryActions
+          compact={props.compact}
+          canOperateThread={props.canOperateThread}
+          pendingAction={props.pendingAction}
+          isRunning={props.isRunning}
+          canInterrupt={props.canInterrupt}
+          followUpBehavior={props.followUpBehavior}
+          canSteer={props.canSteer}
+          alternateShortcutLabel={props.alternateShortcutLabel}
+          showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
+          promptHasText={props.promptHasText}
+          voiceInputActive={props.voiceInputActive ?? false}
+          isSendBusy={props.isSendBusy}
+          sendDisabledReason={props.sendDisabledReason}
+          isConnecting={props.isConnecting}
+          isEnvironmentUnavailable={props.isEnvironmentUnavailable}
+          isPreparingWorktree={props.isPreparingWorktree}
+          hasSendableContent={props.hasSendableContent}
+          canResume={props.canResume}
+          preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
+          isEditingQueuedMessage={props.isEditingQueuedMessage}
+          onSubmitMessage={props.onSubmitMessage}
+          onResume={props.onResume}
+          onPreviousPendingQuestion={props.onPreviousPendingQuestion}
+          onInterrupt={props.onInterrupt}
+          onImplementPlanInNewThread={props.onImplementPlanInNewThread}
+          compactBeforeSendTokens={props.compactBeforeSendTokens}
+          keepFullHistory={props.keepFullHistory}
+          onToggleKeepFullHistory={props.onToggleKeepFullHistory}
+        />
       ) : null}
     </>
   );
@@ -3785,7 +3784,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         focusEditorAfterReplace: false,
       });
       if (!applied) return;
-      const cursor = collapseExpandedComposerCursor(text, selection.start);
+      const cursor = collapseExpandedComposerCursor(text, selection.start, isLiteralPendingAnswer);
       setComposerCursor(cursor);
       window.requestAnimationFrame(() => composerEditorRef.current?.focusAt(cursor));
     },
@@ -4004,7 +4003,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return showPlanFollowUpPrompt || composerSendState.hasSendableContent;
   };
 
-  const submitComposerRef = useRef<(dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => void>(() => {});
+  const submitComposerRef = useRef<
+    (dispatchMode?: ComposerDispatchMode, submissionIntent?: ComposerSubmissionIntent) => void
+  >(() => {});
   const submitComposer = (
     event?: { preventDefault: () => void },
     dispatchMode?: ComposerDispatchMode,
@@ -7464,7 +7465,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       }
                       compactDisabledReason={resolvedCompactDisabledReason}
                       {...(compactCommandAvailable
-                        ? { onCompactContext: compactThreadContext }
+                        ? { onCompactContext: compactThreadContextStable }
                         : {})}
                     >
                       {speechInput.available ? (

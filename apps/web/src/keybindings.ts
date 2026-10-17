@@ -1,4 +1,18 @@
 import {
+  resolveEventKeys,
+  normalizeEventKey,
+  evaluateWhenNode,
+  matchesKeybindingShortcutModifiers,
+  resolveKeybindingCommand,
+  type ShortcutEventLike,
+  type ShortcutModifierStateLike,
+} from "@t3tools/shared/keybindingMatching";
+export {
+  shortcutKeyFromEvent,
+  type ShortcutEventLike,
+  type ShortcutModifierStateLike,
+} from "@t3tools/shared/keybindingMatching";
+import {
   type KeybindingCommand,
   type KeybindingShortcut,
   type KeybindingWhenNode,
@@ -11,9 +25,6 @@ import {
 import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { isElectron } from "./env";
 import { projectScriptIdFromCommand } from "./projectScripts";
-
-export type { ShortcutEventLike, ShortcutModifierStateLike } from "@t3tools/shared/keybindings";
-export { shortcutKeyFromEvent } from "@t3tools/shared/keybindings";
 
 export interface ShortcutMatchContext {
   terminalFocus: boolean;
@@ -132,17 +143,12 @@ export function resolveShortcutCommand(
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): KeybindingCommand | null {
-  const platform = resolvePlatform(options);
-  const context = resolveContext(options);
-
-  for (let index = keybindings.length - 1; index >= 0; index -= 1) {
-    const binding = keybindings[index];
-    if (!binding) continue;
-    if (!matchesWhenClause(binding.whenAst, context)) continue;
-    if (!matchesKeybindingShortcut(event, binding.shortcut, platform)) continue;
-    return binding.command;
-  }
-  return null;
+  return resolveKeybindingCommand(
+    event,
+    keybindings,
+    resolvePlatform(options),
+    resolveContext(options),
+  );
 }
 
 export function resolveChatShortcutCommand(

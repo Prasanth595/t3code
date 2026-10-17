@@ -5,7 +5,6 @@ import {
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
   DEFAULT_SPEECH_POST_PROCESSING_MODELS,
-  isProviderDriverKind,
   isProviderAvailable,
   isUnconfiguredDefaultInstanceEnabled,
   resolveProjectProviderInstanceEnabled,
