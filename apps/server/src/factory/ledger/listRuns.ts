@@ -10,6 +10,12 @@ import { errnoCode, LedgerIoError, LedgerNotFoundError } from "./errors.ts";
 import { lastLineIsFinished, readRun, type RunRecord } from "./read.ts";
 import { asciiLower, RUNS_DIR, runIdFromFileName, runPath, type RunId } from "./runId.ts";
 
+/**
+ * How far back a finished run, or a problem, still counts as recent: the status report's window,
+ * and the runs a listing shows by default besides the unfinished ones.
+ */
+export const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 /** One unfinished run as the pass sees it: its id, its last state, and whether its file could be read. */
 export interface RunInfo {
   readonly id: RunId;
@@ -253,6 +259,8 @@ export const readRuns = (
   }));
 };
 
-/** {@link readRuns} without the lines: one summary per run. */
-export const listRuns = (dataDir: string): Array<RunSummary> =>
-  readRuns(dataDir).map((read) => read.summary);
+/** {@link readRuns} without the lines: one summary per run, with the same options. */
+export const listRuns = (
+  dataDir: string,
+  options: { readonly skipFinishedBefore?: number } = {},
+): Array<RunSummary> => readRuns(dataDir, options).map((read) => read.summary);

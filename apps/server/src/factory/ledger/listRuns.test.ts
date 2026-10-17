@@ -700,6 +700,20 @@ describe("readRuns: skipFinishedBefore", () => {
     ]);
   });
 
+  it("listRuns takes the same option: an old finished file is neither read nor listed", () => {
+    const dataDir = tempDir();
+    const nowMs = Date.parse("2026-10-17T00:00:00Z");
+    const oldFinished = writeRun(dataDir, rid(1), stateLine("building") + finishedLine);
+    const oldOpen = writeRun(dataDir, rid(2), stateLine("building"));
+    age(oldFinished, nowMs, 25 * 3_600_000);
+    age(oldOpen, nowMs, 25 * 3_600_000);
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    const runs = listRuns(dataDir, { skipFinishedBefore: nowMs - DAY });
+    expect(runs.map((run) => run.id.issue)).toEqual(["2"]);
+    expect(fullReads()).not.toContain(oldFinished);
+    expect(listRuns(dataDir).map((run) => run.id.issue)).toEqual(["1", "2"]);
+  });
+
   it("without the option every file is read, finished and old ones included", () => {
     const dataDir = tempDir();
     const old = writeRun(dataDir, rid(1), stateLine("building") + finishedLine);

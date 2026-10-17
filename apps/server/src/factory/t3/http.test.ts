@@ -460,6 +460,37 @@ describe("GET /api/factory/runs", () => {
   );
 });
 
+describe("GET /api/factory/runs: finished runs outside the status window", () => {
+  /** Sets a run file's mtime `hours` back from the wall clock the handler reads. */
+  const writtenHoursAgo = (dir: string, id: RunId, hours: number) => {
+    const seconds = (Date.now() - hours * 3_600_000) / 1000;
+    NodeFS.utimesSync(runPath(dir, id), seconds, seconds);
+  };
+  const listed = async (call: Call, token: string, path = "/api/factory/runs") =>
+    ((await json(await call("GET", path, token))) as { runs: Array<{ id: string }> }).runs.map(
+      (run) => run.id,
+    );
+
+  it.effect(
+    "lists the unfinished runs and the finished runs of the last 24 hours, and all with all=true",
+    () =>
+      serving({}, async (call, { tokens, dir }) => {
+        seed(dir, run10, BUILDING);
+        seed(dir, run11, [...BUILDING, FINISHED], T0 + 10_000);
+        seed(dir, run12, [...BUILDING, FINISHED], T0 + 20_000);
+        writtenHoursAgo(dir, run10, 25);
+        writtenHoursAgo(dir, run11, 25);
+        writtenHoursAgo(dir, run12, 23);
+        assert.deepStrictEqual(await listed(call, tokens.read), [ID, runIdToString(run12)]);
+        assert.deepStrictEqual(await listed(call, tokens.read, "/api/factory/runs?all=true"), [
+          ID,
+          runIdToString(run11),
+          runIdToString(run12),
+        ]);
+      }),
+  );
+});
+
 describe("GET /api/factory/runs/:id", () => {
   it.effect("shows each entry with its time, event, data and cause", () =>
     serving({}, async (call, { tokens, dir }) => {

@@ -4,7 +4,9 @@
  *
  * Reads need `orchestration:read` and answer what softfac prints:
  * - `GET /api/factory/status`: the `status --json` report, with the open attention items.
- * - `GET /api/factory/runs`: `runs list`, one row per run.
+ * - `GET /api/factory/runs`: `runs list`, one row per run: every unfinished run, and the finished
+ *   runs whose file was written within the status report's window (`RECENT_WINDOW_MS`), so an old
+ *   finished file is never read. `?all=true` lists every run, as `runs list` does.
  * - `GET /api/factory/runs/:id`: `runs show`, every entry of one run.
  *
  * Control needs `orchestration:operate`:
@@ -22,7 +24,7 @@ import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerResponse } from "effect/http";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpRouter from "effect/http/HttpRouter";
 
 import packageJson from "../../../package.json" with { type: "json" };
@@ -30,7 +32,7 @@ import { Attention } from "../attention.ts";
 import { pauseClaimsNow, resumeClaimsNow, showRun, stopRun } from "../control.ts";
 import { FactoryLoop, hostName } from "../index.ts";
 import { isLedgerError, type LedgerError } from "../ledger/errors.ts";
-import { listRuns, type RunSummary } from "../ledger/listRuns.ts";
+import { listRuns, RECENT_WINDOW_MS, type RunSummary } from "../ledger/listRuns.ts";
 import { runIdToString } from "../ledger/runId.ts";
 import { buildStatus } from "../status.ts";
 import { route } from "./auth.ts";
@@ -117,7 +119,11 @@ const runsRoute = route(
   AuthOrchestrationReadScope,
   Effect.gen(function* () {
     const { factoryDir } = yield* FactoryPaths;
-    const runs = yield* guarded(() => listRuns(factoryDir));
+    const { all } = yield* HttpServerRequest.ParsedSearchParams;
+    const nowMs = yield* Clock.currentTimeMillis;
+    const runs = yield* guarded(() =>
+      listRuns(factoryDir, all === "true" ? {} : { skipFinishedBefore: nowMs - RECENT_WINDOW_MS }),
+    );
     return respond({
       runs: runs.map((run) => ({
         id: runIdToString(run.id),
