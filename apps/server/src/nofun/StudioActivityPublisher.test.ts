@@ -117,6 +117,34 @@ function setup(
 }
 
 describe("StudioActivityPublisher", () => {
+  it("persists a direct POST acceptance without adding a synthetic event to replay deduplication", async () => {
+    let saved: StudioActivityState | null = null;
+    const make = () =>
+      new StudioActivityPublisher({
+        epoch: EPOCH,
+        allowedProjectIds: [],
+        reads: { listActivityThreads: () => [] },
+        sink: { send: (input) => ({ ...ack(input), eventId: "" }) },
+        stateStore: {
+          load: async () => (saved ? decodeStudioActivityState(structuredClone(saved)) : null),
+          save: async (state) => {
+            saved = structuredClone(state);
+          },
+        },
+      });
+    const first = make();
+    expect((await first.publishNow()).delivered).toBe(true);
+    expect(first.pendingCount).toBe(0);
+    expect(saved).toMatchObject({
+      watermark: { eventId: "", stamp: { sequence: 1 } },
+      seenEventIds: [],
+    });
+    const restarted = make();
+    expect((await restarted.publishNow()).delivered).toBe(true);
+    expect(restarted.lastAckedStamp?.sequence).toBe(2);
+    expect(restarted.pendingCount).toBe(0);
+  });
+
   it("keeps sequences increasing across a restart when seeded from the clock", async () => {
     const make = (initialSequence: number, sent: ActivityProducerInput[]) =>
       new StudioActivityPublisher({

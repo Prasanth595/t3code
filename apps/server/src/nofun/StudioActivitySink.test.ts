@@ -83,6 +83,66 @@ describe("studio activity HTTP sink", () => {
     expect(String(calls[0]!.init.body)).not.toContain(TOKEN);
   });
 
+  it.each(["accept", "replay_duplicate"])(
+    "accepts a matching legacy POST %s receipt without inventing an event ID",
+    async (verdict) => {
+      const sink = makeStudioActivitySink({
+        config: { baseUrl: BASE_URL, token: TOKEN },
+        fetchFn: async () =>
+          Response.json({ verdict, stamp: envelope().stamp, payloadHash: "hash-1" }),
+      });
+      expect(await sink.send(envelope())).toEqual({
+        verdict,
+        eventId: "",
+        stamp: envelope().stamp,
+        payloadHash: "hash-1",
+      });
+    },
+  );
+
+  it("keeps legacy POST receipt identity checks", async () => {
+    const sink = makeStudioActivitySink({
+      config: { baseUrl: BASE_URL, token: TOKEN },
+      fetchFn: async () =>
+        Response.json({
+          verdict: "accept",
+          stamp: { ...envelope().stamp!, sequence: 2 },
+          payloadHash: "hash-1",
+        }),
+    });
+    await expect(sink.send(envelope())).rejects.toMatchObject({ kind: "ack_invalid" });
+  });
+
+  it("treats GET 405 as unsupported readback, without fabricating events or retrying GET", async () => {
+    let gets = 0;
+    const sink = makeStudioActivitySink({
+      config: { baseUrl: BASE_URL, token: TOKEN },
+      fetchFn: async (_url, init) => {
+        if (init.method === "GET") {
+          gets++;
+          return new Response(null, { status: 405 });
+        }
+        return Response.json({ verdict: "accept", stamp: envelope().stamp, payloadHash: "hash-1" });
+      },
+    });
+    const empty = { events: [], cursor: "saved", has_more: false, watermark: null };
+    expect(await sink.readEvents!("saved", "t3.activity-publisher")).toEqual(empty);
+    expect(await sink.readEvents!("saved", "t3.activity-publisher")).toEqual(empty);
+    expect(gets).toBe(1);
+    expect(await sink.send(envelope())).toMatchObject({ verdict: "accept", eventId: "" });
+  });
+
+  it.each([401, 404, 503])("does not hide readback HTTP %s failures", async (status) => {
+    const sink = makeStudioActivitySink({
+      config: { baseUrl: BASE_URL, token: TOKEN },
+      fetchFn: async () => new Response(null, { status }),
+    });
+    await expect(sink.readEvents!(null, "t3.activity-publisher")).rejects.toMatchObject({
+      kind: "http",
+      status,
+    });
+  });
+
   it("tolerates a trailing slash on the base URL", async () => {
     const seen: string[] = [];
     const sink = makeStudioActivitySink({
@@ -155,10 +215,11 @@ describe("studio activity HTTP sink", () => {
     }
   });
 
-  it("requires observed bridge acceptance, including the event ID and exact stamp/hash", async () => {
+  it("requires an acceptance verdict and exact stamp/hash", async () => {
     for (const body of [
       {},
-      { verdict: "accept", stamp: envelope().stamp, payloadHash: "hash-1" },
+      { verdict: "accept", eventId: "", stamp: envelope().stamp, payloadHash: "hash-1" },
+      { verdict: "accept", stamp: envelope().stamp, payloadHash: "wrong-hash" },
       {
         verdict: "accept",
         eventId: "evt_one",
