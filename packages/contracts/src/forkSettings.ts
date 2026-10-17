@@ -295,6 +295,11 @@ export const ForkServerSettingsFields = {
    * client setting `sidebarGroupsEnabled` is on.
    */
   sidebarGroups: SidebarGroups.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /**
+   * Fork: the machine map reports and applies the rules of `keybindings.json` as the server
+   * setting `keybindings` (`KEYBINDINGS_SETTING_KEY`). See docs/fork.md "Machine map".
+   */
+  keybindingSync: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 };
 
 export const ForkServerSettingsPatchFields = {
@@ -314,6 +319,7 @@ export const ForkServerSettingsPatchFields = {
   preferOriginRemote: Schema.optionalKey(Schema.Boolean),
   threadLinkChips: Schema.optionalKey(Schema.Boolean),
   threadLinksOpenDesktopApp: Schema.optionalKey(Schema.Boolean),
+  keybindingSync: Schema.optionalKey(Schema.Boolean),
   /** Replaces the saved groups whole: a merge would keep deleted groups and assignments. */
   sidebarGroups: Schema.optionalKey(SidebarGroups),
   /** Per surface: a patched layout replaces the saved one, and `null` restores the built-in card. */

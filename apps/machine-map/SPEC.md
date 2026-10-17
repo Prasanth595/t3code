@@ -67,7 +67,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 ## 4. Settings
 
 - **MM-401** The map holds shared values for T3 server settings and client settings. Each machine can override a shared value with its own value.
-- **MM-402** A machine applies its settings through the T3 settings service, so they apply live like a change in T3 Settings. The theme settings of MM-408 to MM-410 are the exception.
+- **MM-402** A machine applies its settings through the T3 settings service, so they apply live like a change in T3 Settings. The theme settings of MM-408 to MM-410 and the `keybindings` setting of the fork (docs/fork.md "Machine map") are the exceptions.
 - **MM-403** A desktop machine applies client settings in its desktop app. A closed app applies them at its next start.
 - **MM-404** A change made on a machine in T3 Settings, to a setting with a shared value or an override, becomes an override of that machine in the map. The portal shows it as "changed on <machine>". "Make shared" copies it to all machines. A change to another setting stays local.
 - **MM-405** The Settings view shows each setting as a row and each machine as a column, with a filter. Settings with a shared value come first. Values that differ from the shared value show as drift.

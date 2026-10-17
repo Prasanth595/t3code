@@ -3,7 +3,7 @@
  * A change saved for all environments becomes the shared value of the map, so offline and new
  * machines get it too. A row shows a marker when the map syncs its value.
  */
-import type { EnvironmentId, ServerSettings } from "@t3tools/contracts";
+import type { EnvironmentId, KEYBINDINGS_SETTING_KEY, ServerSettings } from "@t3tools/contracts";
 import { RefreshCwIcon } from "lucide-react";
 
 import type { planScopedSettingsPatch } from "../components/settings/scopedSettings";
@@ -88,8 +88,10 @@ export function useShareToMachineMap() {
  */
 export function useShareServerSettingsToMachineMap() {
   const share = useAtomCommand(shareMachineMapSettings, { reportFailure: false });
-  return (environmentId: EnvironmentId, keys: readonly (keyof ServerSettings)[]) =>
-    queueShare(share, environmentId, keys, {});
+  return (
+    environmentId: EnvironmentId,
+    keys: readonly (keyof ServerSettings | typeof KEYBINDINGS_SETTING_KEY)[],
+  ) => queueShare(share, environmentId, keys, {});
 }
 
 /** MM-412: a small marker beside a settings row whose value the machine map syncs. */
