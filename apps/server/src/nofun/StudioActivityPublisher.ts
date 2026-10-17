@@ -98,6 +98,7 @@ export type StudioActivityReads = {
 };
 
 export type ActivityAcknowledgement = {
+  /** Empty only for a direct acknowledgement from the POST-only bridge. */
   eventId: string;
   verdict: "accept" | "replay_duplicate";
   stamp: ActivityProducerStamp;
@@ -432,15 +433,10 @@ export class StudioActivityPublisher {
   }
 
   private remember(receipt: ActivityAcknowledgement): void {
-    if (this.seenEventIds.includes(receipt.eventId)) return;
-    if (
-      !receipt.eventId ||
-      receipt.stamp.producer_id !== this.producerId ||
-      receipt.stamp.epoch !== this.epoch
-    )
-      return;
+    if (receipt.eventId && this.seenEventIds.includes(receipt.eventId)) return;
+    if (receipt.stamp.producer_id !== this.producerId || receipt.stamp.epoch !== this.epoch) return;
     this.observeWatermark(receipt.stamp, receipt.payloadHash, receipt.eventId);
-    this.seenEventIds = [...this.seenEventIds, receipt.eventId].slice(-512);
+    if (receipt.eventId) this.seenEventIds = [...this.seenEventIds, receipt.eventId].slice(-512);
   }
 
   /** One bounded replay page per tick; persist its opaque cursor only after reconciliation. */
@@ -493,7 +489,6 @@ export class StudioActivityPublisher {
     }
     if (
       !receipt ||
-      !receipt.eventId ||
       !["accept", "replay_duplicate"].includes(receipt.verdict) ||
       canonicalActivityJson(receipt.stamp) !== canonicalActivityJson(entry.stamp) ||
       receipt.payloadHash !== entry.payloadHash
