@@ -3293,7 +3293,7 @@ function applyClaudeTaskTool(
   }
   if (toolName === "TaskCreate") {
     const created = claudeTaskField(result, "task");
-    const id = claudeTaskString(created, "id");
+    const id = claudeTaskString(created, "id") ?? claudeCreatedTaskIdFromText(result);
     const text = claudeTaskString(created, "subject") ?? claudeTaskString(input, "subject");
     if (id === undefined || text === undefined) return undefined;
     return new Map(tasks).set(id, { text, status: "pending" });
@@ -3314,6 +3314,14 @@ function applyClaudeTaskTool(
   const status = claudeTaskStatus(nativeStatus) ?? task.status;
   if (text === task.text && status === task.status) return undefined;
   return new Map(tasks).set(id, { text, status });
+}
+
+// Subagent results carry no structured `tool_use_result`, only the text
+// "Task #3 created successfully: <subject>".
+function claudeCreatedTaskIdFromText(result: unknown): string | undefined {
+  return typeof result === "string"
+    ? /^Task #(\S+) created successfully/.exec(result)?.[1]
+    : undefined;
 }
 
 function claudeTaskSteps(tasks: ClaudeTaskList): ReadonlyArray<OrchestrationV2PlanStep> {
@@ -7297,7 +7305,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* stopTaskOutputTail(toolCall.nativeItemId);
             yield* emitToolCallArtifacts(artifacts);
             toolCallsFor(context, toolCall).delete(toolCall.nativeItemId);
-            if (parentToolUseId === null && !isClaudeToolResultError(toolResult)) {
+            // Subagents write to the session's shared task store, so their
+            // task tools update the parent turn's list. Failed or never-run
+            // calls changed nothing.
+            if (toolNonExecutionKind === undefined && !isClaudeToolResultError(toolResult)) {
               const taskLists = yield* Ref.get(taskListsByNativeThread);
               const taskList = applyClaudeTaskTool(
                 taskLists.get(liveQuery.nativeThreadId) ?? new Map(),
