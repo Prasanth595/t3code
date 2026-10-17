@@ -383,6 +383,43 @@ function applySync(
   };
 }
 
+/**
+ * Like `PullRequestReadCache`: a stack read is kept for 60 s after it completes, and
+ * invalidating the reference drops it.
+ */
+function makeStackReadCache(currentLayers: () => PullRequestStack["layers"]) {
+  const entries = new Map<
+    number,
+    { readonly layers: PullRequestStack["layers"]; expiresAt: number }
+  >();
+  const invalidated: Array<number> = [];
+  return {
+    invalidated,
+    invalidate: (({ reference }) =>
+      Effect.sync(() => {
+        invalidated.push(reference?.number ?? -1);
+        entries.delete(reference?.number ?? -1);
+      })) satisfies PullRequestService.PullRequestService["Service"]["invalidate"],
+    stack: (input: PullRequestRef) =>
+      Clock.currentTimeMillis.pipe(
+        Effect.map((now): PullRequestStack => {
+          let entry = entries.get(input.number);
+          if (entry === undefined || entry.expiresAt <= now) {
+            entry = { layers: currentLayers(), expiresAt: now + 60_000 };
+            entries.set(input.number, entry);
+          }
+          return {
+            id: "stack-80",
+            number: 80,
+            url: "https://github.com/owner/repository/stack/80",
+            base: "main",
+            layers: entry.layers,
+          };
+        }),
+      ),
+  };
+}
+
 describe("PullRequestSyncReactor", () => {
   it.effect("retries a failed stack read after the summary becomes terminal", () =>
     Effect.scoped(
@@ -1023,6 +1060,175 @@ describe("PullRequestSyncReactor", () => {
             (yield* Ref.get(fixture.stackCalls)).length,
             readsBeforeGrowth + readsAfterGrowth.length,
           );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("reads a flagged member's layers past a cache entry a requested sweep left live", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const layer = (number: number) => ({
+          number,
+          headBranch: `layer-${number}`,
+          state: "open" as const,
+        });
+        let layers = [layer(18), layer(20)];
+        const cache = makeStackReadCache(() => layers);
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([
+            makeThread("one", { pullRequests: [makeLink(18), makeLink(20)] }),
+          ]),
+          invalidate: cache.invalidate,
+          stack: cache.stack,
+        });
+        const apply = Ref.get(fixture.syncCommands).pipe(
+          Effect.flatMap((commands) =>
+            Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, commands)),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* apply;
+
+          // 30 s later a state change refreshes #18, which caches its two-layer read until 90 s.
+          yield* TestClock.adjust("30 seconds");
+          yield* reactor.requestSync({
+            host: "github.com",
+            repository: "owner/repository",
+            number: 18,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          yield* apply;
+
+          // At 40 s #83 is pushed on top and linked. Its requested sweep flags #18 and #20.
+          yield* TestClock.adjust("10 seconds");
+          layers = [layer(18), layer(20), layer(83)];
+          yield* Ref.update(fixture.snapshots, (snapshot) => ({
+            ...snapshot,
+            threads: snapshot.threads.map((thread) => ({
+              ...thread,
+              pullRequests: [...thread.pullRequests, makeLink(83, null)],
+            })),
+          }));
+          yield* reactor.requestSync({
+            host: "github.com",
+            repository: "owner/repository",
+            number: 83,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          yield* apply;
+
+          // The scheduled sweep at 60 s: #20's entry has expired, #18's is still live.
+          const invalidatedBefore = cache.invalidated.length;
+          yield* TestClock.adjust("20 seconds");
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          yield* apply;
+
+          const snapshot = yield* Ref.get(fixture.snapshots);
+          assert.deepStrictEqual(
+            snapshot.threads[0]!.pullRequests.map((link) => [
+              link.number,
+              link.stack?.layers.map((entry) => entry.number),
+            ]),
+            [
+              [18, [18, 20, 83]],
+              [20, [18, 20, 83]],
+              [83, [18, 20, 83]],
+            ],
+          );
+          // Only the two flagged members invalidate, once each.
+          assert.deepStrictEqual(cache.invalidated.slice(invalidatedBefore).toSorted(), [18, 20]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("reads past the cache when a sibling flags a member during its summary read", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const layer = (number: number) => ({
+          number,
+          headBranch: `layer-${number}`,
+          state: "open" as const,
+        });
+        let layers = [layer(18), layer(20)];
+        const cache = makeStackReadCache(() => layers);
+        let syncCommands: Ref.Ref<ReadonlyArray<SyncCommand>> | undefined;
+        let holdSummary = false;
+        // #18's summary stays in flight until #83 has read its stack, flagged #18 and synced.
+        const untilSynced = (number: number) =>
+          Effect.gen(function* () {
+            while (!(yield* Ref.get(syncCommands!)).some((command) => command.number === number)) {
+              yield* Effect.yieldNow;
+            }
+          });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("one", { pullRequests: [makeLink(18)] })]),
+          invalidate: cache.invalidate,
+          stack: cache.stack,
+          summary: (input) =>
+            (holdSummary && input.number === 18 ? untilSynced(83) : Effect.void).pipe(
+              Effect.as(makeSummary(input)),
+            ),
+        });
+        syncCommands = fixture.syncCommands;
+        const apply = Ref.get(fixture.syncCommands).pipe(
+          Effect.flatMap((commands) =>
+            Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, commands)),
+          ),
+        );
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* startAndSweep(fixture);
+          yield* apply;
+
+          // 30 s later a state change refreshes #18, which caches its two-layer read until 90 s.
+          yield* TestClock.adjust("30 seconds");
+          yield* reactor.requestSync({
+            host: "github.com",
+            repository: "owner/repository",
+            number: 18,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          yield* apply;
+
+          // #83 is pushed on top and linked as the scheduled sweep at 60 s starts, so that sweep
+          // reads #83 for the first time while #18's summary is still in flight.
+          layers = [layer(18), layer(20), layer(83)];
+          yield* Ref.update(fixture.snapshots, (snapshot) => ({
+            ...snapshot,
+            threads: snapshot.threads.map((thread) => ({
+              ...thread,
+              pullRequests: [...thread.pullRequests, makeLink(83, null)],
+            })),
+          }));
+          holdSummary = true;
+          const invalidatedBefore = cache.invalidated.length;
+          yield* TestClock.adjust("30 seconds");
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          yield* apply;
+
+          const snapshot = yield* Ref.get(fixture.snapshots);
+          assert.deepStrictEqual(
+            snapshot.threads[0]!.pullRequests.map((link) => [
+              link.number,
+              link.stack?.layers.map((entry) => entry.number),
+            ]),
+            [
+              [18, [18, 20, 83]],
+              [83, [18, 20, 83]],
+            ],
+          );
+          assert.deepStrictEqual(cache.invalidated.slice(invalidatedBefore), [18]);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

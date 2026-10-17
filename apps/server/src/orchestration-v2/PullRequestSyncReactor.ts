@@ -285,7 +285,9 @@ export const make = Effect.gen(function* () {
         number: first.link.number,
       };
       const generation = requested.get(key);
-      if (generation !== undefined) yield* pullRequests.invalidate({ reference: ref });
+      // A stack retry reads past the cache, or it could get back the layer list it is retrying.
+      const invalidated = generation !== undefined || retryStacks.has(key);
+      if (invalidated) yield* pullRequests.invalidate({ reference: ref });
       const summary = yield* pullRequests.summary(ref, { recoverTransientFailure: false });
       const fields = snapshotFieldsOf(summary);
       const needsStack =
@@ -300,6 +302,10 @@ export const make = Effect.gen(function* () {
         );
       const knownUnstacked =
         summary.stack === null && entries.every((entry) => entry.link.stack === null);
+      // A sibling can flag this group while its summary read is in flight.
+      if (!invalidated && retryStacks.has(key) && !knownUnstacked) {
+        yield* pullRequests.invalidate({ reference: ref });
+      }
       const fetchedStack = !needsStack
         ? null
         : knownUnstacked
