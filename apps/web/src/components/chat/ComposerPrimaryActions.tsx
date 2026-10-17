@@ -114,15 +114,19 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   keepFullHistory = false,
   onToggleKeepFullHistory,
 }: ComposerPrimaryActionsProps) {
-  const [isStopping, setIsStopping] = useState(false);
+  const [stopPhase, setStopPhase] = useState<"pending" | "landed" | null>(null);
+  // Once the stop has landed, interruptible again means a new run started.
+  if (stopPhase === "pending" && !canInterrupt) setStopPhase("landed");
+  else if (stopPhase === "landed" && canInterrupt) setStopPhase(null);
+  const isStopping = stopPhase !== null;
   useEffect(() => {
-    if (!isStopping) return;
+    if (stopPhase === null) return;
     const timeout = setTimeout(
-      () => setIsStopping(false),
-      canInterrupt ? STOP_PENDING_MAX_MS : RESUME_AFTER_STOP_GUARD_MS,
+      () => setStopPhase(null),
+      stopPhase === "pending" ? STOP_PENDING_MAX_MS : RESUME_AFTER_STOP_GUARD_MS,
     );
     return () => clearTimeout(timeout);
-  }, [isStopping, canInterrupt]);
+  }, [stopPhase]);
   const pointerFocusProps = preserveComposerFocusOnPointerDown
     ? { onPointerDown: preventPointerFocus }
     : undefined;
@@ -156,7 +160,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             disabled={!canOperateThread || isStopping}
             onClick={() => {
               if (!canOperateThread || isStopping) return;
-              setIsStopping(true);
+              setStopPhase("pending");
               onInterrupt();
             }}
             aria-label={isStopping ? "Stopping" : "Stop generation"}
