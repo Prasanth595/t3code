@@ -276,6 +276,8 @@ async function renderFileFor(
         <Suspense fallback={null}>
           <RegisteredSidePanel
             id="files"
+            onNavigateFolder={() => undefined}
+            folderTrail={undefined}
             cwd="/repo"
             projectName="repo"
             relativePath={relativePath}
