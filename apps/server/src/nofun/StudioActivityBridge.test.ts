@@ -149,6 +149,20 @@ const decodePostedBody = Schema.decodeEffect(
   ),
 );
 
+const decodePostedReceiptFields = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      stamp: Schema.Struct({
+        producer_id: Schema.String,
+        epoch: Schema.String,
+        sequence: Schema.Number,
+        emitted_at: Schema.String,
+      }),
+      payloadHash: Schema.String,
+    }),
+  ),
+);
+
 interface PostedCall {
   readonly url: string;
   readonly authorization: string | null;
@@ -664,7 +678,7 @@ it.effect("startup retries the persisted envelope before allocating a fresh snap
             if (init.method === "GET")
               return Response.json({ events: [], cursor: null, has_more: false, watermark: null });
             retried.resolve(String(init.body));
-            const input = JSON.parse(String(init.body));
+            const input = decodePostedReceiptFields(String(init.body));
             return Response.json({
               verdict: "accept",
               eventId: `evt_${input.stamp.sequence}`,
