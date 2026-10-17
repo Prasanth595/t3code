@@ -1,3 +1,4 @@
+import { vcsOperationErrorMessage } from "@t3tools/client-runtime/errors";
 import { useCallback, useEffect, useEffectEvent, useMemo } from "react";
 
 import { EnvironmentProject, EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -17,7 +18,14 @@ import {
   dedupeRemoteBranchesWithLocalMatches,
   sanitizeFeatureBranchName,
 } from "@t3tools/shared/git";
+import {
+  resolveVcsTerminology,
+  resolveVcsUnsupportedReason,
+  supportsVcsActions,
+} from "@t3tools/shared/vcs";
+import { useEnvironmentQuery } from "./query";
 import * as Cause from "effect/Cause";
+import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 
 import { useBranches } from "../state/queries";
@@ -60,6 +68,17 @@ export function useSelectedThreadGitActions() {
     }),
     { reportFailure: false },
   );
+
+  const status = useEnvironmentQuery(
+    selectedThread !== null && selectedThreadCwd !== null
+      ? vcsEnvironment.status({
+          environmentId: selectedThread.environmentId,
+          input: { cwd: selectedThreadCwd },
+        })
+      : null,
+  );
+  const vcsActionsSupported = supportsVcsActions(status.data);
+  const vcsTerminology = resolveVcsTerminology(status.data);
 
   const selectedThreadGitRootCwd = selectedThreadProject?.workspaceRoot ?? null;
   const branchTarget = useMemo(
@@ -131,14 +150,17 @@ export function useSelectedThreadGitActions() {
           );
       if (AsyncResult.isFailure(result)) {
         const error = Cause.squash(result.cause);
-        const message = error instanceof Error ? error.message : "Failed to refresh git status.";
+        const message =
+          error instanceof Error
+            ? error.message
+            : `Failed to refresh ${vcsTerminology.repositoryAdjective} status.`;
         setPendingConnectionError(message);
         return null;
       }
       setPendingConnectionError(null);
       return result.value;
     },
-    [refreshStatus, selectedThread, selectedThreadCwd, selectedThreadProject],
+    [refreshStatus, selectedThread, selectedThreadCwd, selectedThreadProject, vcsTerminology],
   );
 
   // Key refreshes on primitives; streaming frequently replaces the selected thread object.
@@ -180,6 +202,7 @@ export function useSelectedThreadGitActions() {
       options?: { readonly managedExternally?: boolean; readonly changesThreadBranch?: boolean },
     ): Promise<T | null> => {
       if (
+        !vcsActionsSupported ||
         !selectedThread ||
         !selectedThreadProject ||
         !selectedThreadCwd ||
@@ -189,6 +212,35 @@ export function useSelectedThreadGitActions() {
       ) {
         return null;
       }
+      if (
+        !supportsVcsActions(
+          Option.getOrNull(
+            AsyncResult.value(
+              appAtomRegistry.get(
+                vcsEnvironment.status({
+                  environmentId: selectedThread.environmentId,
+                  input: { cwd: selectedThreadCwd },
+                }),
+              ),
+            ),
+          ),
+        ) ||
+        (operation === "create_worktree" &&
+          selectedThreadProject.workspaceRoot !== selectedThreadCwd &&
+          !supportsVcsActions(
+            Option.getOrNull(
+              AsyncResult.value(
+                appAtomRegistry.get(
+                  vcsEnvironment.status({
+                    environmentId: selectedThread.environmentId,
+                    input: { cwd: selectedThreadProject.workspaceRoot },
+                  }),
+                ),
+              ),
+            ),
+          ))
+      )
+        return null;
 
       const target = {
         environmentId: selectedThread.environmentId,
@@ -207,14 +259,14 @@ export function useSelectedThreadGitActions() {
           : await vcsActionManager.track(appAtomRegistry, target, { operation, label }, run);
       if (AsyncResult.isFailure(result)) {
         const error = Cause.squash(result.cause);
-        const message = error instanceof Error ? error.message : "Git action failed.";
+        const message = vcsOperationErrorMessage(error, "Git action failed.");
         setPendingConnectionError(message);
         showGitActionResult({ type: "error", title: "Git action failed", description: message });
         return null;
       }
       return result.value;
     },
-    [selectedThread, selectedThreadCwd, selectedThreadProject],
+    [selectedThread, selectedThreadCwd, selectedThreadProject, vcsActionsSupported],
   );
 
   const refreshSelectedThreadBranches = useCallback(async (): Promise<ReadonlyArray<VcsRef>> => {
@@ -250,7 +302,7 @@ export function useSelectedThreadGitActions() {
     async (branch: string) => {
       return runSelectedThreadGitMutation(
         "switch_ref",
-        "Switching branch",
+        `Switching ${vcsTerminology.refNoun}`,
         async ({ thread, cwd }) => {
           const result = await switchRef({
             environmentId: thread.environmentId,
@@ -277,6 +329,7 @@ export function useSelectedThreadGitActions() {
       selectedThreadWorktreePath,
       syncSelectedThreadBranchState,
       switchRef,
+      vcsTerminology,
     ],
   );
 
@@ -284,7 +337,7 @@ export function useSelectedThreadGitActions() {
     async (branch: string) => {
       return runSelectedThreadGitMutation(
         "create_ref",
-        "Creating branch",
+        `Creating ${vcsTerminology.refNoun}`,
         async ({ thread, cwd }) => {
           const result = await createRef({
             environmentId: thread.environmentId,
@@ -311,6 +364,7 @@ export function useSelectedThreadGitActions() {
       selectedThreadWorktreePath,
       syncSelectedThreadBranchState,
       createRef,
+      vcsTerminology,
     ],
   );
 
@@ -318,7 +372,7 @@ export function useSelectedThreadGitActions() {
     async (nextWorktree: { readonly baseBranch: string; readonly newBranch: string }) => {
       return runSelectedThreadGitMutation(
         "create_worktree",
-        "Creating worktree",
+        `Creating ${vcsTerminology.workspaceNoun}`,
         async ({ thread, project }) => {
           const result = await createWorktree({
             environmentId: thread.environmentId,
@@ -345,7 +399,7 @@ export function useSelectedThreadGitActions() {
         { changesThreadBranch: true },
       );
     },
-    [createWorktree, runSelectedThreadGitMutation, syncSelectedThreadBranchState],
+    [createWorktree, runSelectedThreadGitMutation, syncSelectedThreadBranchState, vcsTerminology],
   );
 
   const onPullSelectedThreadBranch = useCallback(async () => {
@@ -429,8 +483,10 @@ export function useSelectedThreadGitActions() {
   );
 
   return {
-    canWriteSourceControl,
-    canChangeThreadBranch,
+    canWriteSourceControl: canWriteSourceControl && vcsActionsSupported,
+    canChangeThreadBranch: canChangeThreadBranch && vcsActionsSupported,
+    vcsActionsSupported,
+    vcsUnsupportedReason: resolveVcsUnsupportedReason(status.data),
     refreshSelectedThreadGitStatus,
     refreshSelectedThreadBranches,
     onCheckoutSelectedThreadBranch,

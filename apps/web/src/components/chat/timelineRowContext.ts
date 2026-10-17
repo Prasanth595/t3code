@@ -1,3 +1,4 @@
+import type { VcsTerminology } from "@t3tools/shared/vcs";
 import type { WorktreeSetupSnapshot } from "@t3tools/contracts";
 import {
   type EnvironmentId,
@@ -37,6 +38,7 @@ export interface TurnItemSource {
 }
 
 export interface TimelineRowSharedState {
+  vcsTerminology: VcsTerminology;
   citationRequest: AssistantCitationTarget | null;
   listRef: React.RefObject<LegendListRef | null>;
   timestampFormat: TimestampFormat;

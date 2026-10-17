@@ -284,12 +284,13 @@ function ExpandedWorkGroupEntries({
 const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 
 export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
+  const { vcsTerminology } = use(TimelineRowCtx);
   const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
   const compacting = row.compacting ?? (isCompacting ? "Compacting…" : undefined);
   const shimmer = isPreparingWorktree || compacting !== undefined;
   const label = isPreparingWorktree ? (
-    "Setting up worktree…"
+    `Setting up ${vcsTerminology.workspaceNoun}…`
   ) : compacting !== undefined ? (
     <CompactingLabel label={compacting} />
   ) : row.createdAt ? (
@@ -341,6 +342,7 @@ function BackgroundWorktreeSetupChip({ snapshot }: { snapshot: WorktreeSetupSnap
       <PopoverPopup side="bottom" align="end" width="lg" padding="compact">
         <WorktreeSetupCard
           snapshot={snapshot}
+          terminology={ctx.vcsTerminology}
           embedded
           onCancel={null}
           onWorkLocally={null}

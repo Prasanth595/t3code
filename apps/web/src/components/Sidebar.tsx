@@ -1,3 +1,4 @@
+import { vcsEnvironment } from "../state/vcs";
 import { type EnvironmentId, type ScopedProjectRef } from "@t3tools/contracts";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
@@ -12,6 +13,9 @@ import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 import * as Schema from "effect/Schema";
+import { AsyncResult } from "effect/reactivity";
+import { resolveVcsTerminology, type VcsTerminology } from "@t3tools/shared/vcs";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
   DndContext,
   useSensor,
@@ -139,7 +143,6 @@ import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/older
 import { useThreadSearch } from "../state/queries";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { readEnvironmentScope } from "../state/session";
-import { appAtomRegistry } from "../rpc/atomRegistry";
 import { canShareWithGuestAtom } from "./chat/guestShareAvailability";
 import { openGuestShareDialog } from "./chat/guestShareDialogState";
 import { buildThreadRouteParams, resolveActiveThreadRouteRef } from "../threadRoutes";
@@ -2309,12 +2312,25 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const workspacePath =
           session.worktreePath ??
           projectByKey.get(`${session.environmentId}:${session.projectId}`)?.workspaceRoot;
+        const vcsStatus = workspacePath
+          ? Option.getOrNull(
+              AsyncResult.value(
+                appAtomRegistry.get(
+                  vcsEnvironment.status({
+                    environmentId: session.environmentId,
+                    input: { cwd: workspacePath, includeRemote: false },
+                  }),
+                ),
+              ),
+            )
+          : null;
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildDraftActionMenuItems({
               hasPath: Boolean(workspacePath),
               hasBranch: Boolean(session.branch),
               hasProject: projectGroup != null,
+              terminology: resolveVcsTerminology(vcsStatus),
             }),
             position,
           ),
@@ -2346,7 +2362,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   );
 
   const handleThreadContextMenu = useStableCallback(
-    (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
+    (
+      threadRef: ScopedThreadRef,
+      position: { x: number; y: number },
+      terminology: VcsTerminology,
+    ) => {
       void (async () => {
         const api = readLocalApi();
         if (!api) return;
@@ -2402,6 +2422,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     isActive: projectScopeKey === threadProjectGroup.projectKey,
                   }
                 : null,
+              terminology,
               isPinned,
               isSettled,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,

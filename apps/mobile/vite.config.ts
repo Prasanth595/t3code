@@ -8,13 +8,16 @@ const reactTests = [
   "src/components/ui/Dialog.android.test.tsx",
   "src/features/settings/SettingsServerControlsRouteScreen.test.tsx",
   "src/features/settings/components/BranchNamingSettings.test.tsx",
+  "src/features/threads/new-task-project-selection.test.ts",
+  "src/features/threads/checkout-new-task-branch.test.ts",
+  "src/state/vcs.render.test.tsx",
+  "src/features/threads/useThreadHeaderOptions.test.tsx",
   "src/native/NativeHeaderToolbar.test.tsx",
   "src/native/useRestingTopOffset.test.tsx",
   "src/native/useRetryingImageSource.test.tsx",
   "src/state/queries.debounce.test.tsx",
   "src/state/use-selected-thread-git-actions.test.tsx",
 ];
-
 export default defineConfig({
   test: {
     hookTimeout: 60_000,

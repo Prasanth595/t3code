@@ -1,4 +1,5 @@
 import { DEFAULT_SERVER_SETTINGS, type ServerSettingsPatch } from "@t3tools/contracts";
+import { GIT_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
 import { AsyncResult } from "effect/reactivity";
 import type { ReactNode } from "react";
 import { act } from "react";
@@ -51,6 +52,7 @@ vi.mock("../../state/session", () => ({
   useEnvironmentsWithScope: () => new Set(mocks.targets.map((target) => target.environmentId)),
 }));
 vi.mock("../../state/server", () => ({ serverEnvironment: { updateSettings: {} } }));
+vi.mock("../../state/vcs", () => ({ useVcsTerminology: () => GIT_VCS_TERMINOLOGY }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => mocks.updateSettings,
 }));

@@ -41,6 +41,7 @@ import {
 } from "../layout/native-mail-search-toolbar";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
+import { useVcsActionSupport, useVcsTerminology } from "../../state/vcs";
 import { checkoutNewTaskBranch } from "./checkout-new-task-branch";
 
 import { useEnvironmentPresentation } from "../../state/presentation";
@@ -141,6 +142,7 @@ function ToggleRow(props: {
   readonly title: string;
   readonly value: boolean;
   readonly onValueChange: (value: boolean) => void;
+  readonly disabled?: boolean;
 }) {
   return (
     <View className="min-h-14 flex-row items-center gap-3 bg-grouped-card px-4 py-3">
@@ -155,6 +157,7 @@ function ToggleRow(props: {
       </Text>
       <ThemedSwitch
         accessibilityLabel={props.title}
+        disabled={props.disabled}
         onValueChange={props.onValueChange}
         value={props.value}
       />
@@ -262,6 +265,7 @@ export function NewTaskBranchPickerRouteScreen() {
   );
 
   const selectBranch = async (branch: VcsRef) => {
+    if (!flow.canUseVcsActions(flow.workspaceMode === "local" ? branch.worktreePath : null)) return;
     const needsCheckout = shouldCheckoutNewTaskBranch({
       branchIsCurrent: branch.current,
       branchWorktreePath: branch.worktreePath,
@@ -292,8 +296,10 @@ export function NewTaskBranchPickerRouteScreen() {
       if (mountedRef.current && navigation.isFocused() && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         Dialog.alert(
-          "Could not switch branch",
-          error instanceof Error ? error.message : "The branch could not be checked out.",
+          `Could not switch ${flow.vcsTerminology.refNoun}`,
+          error instanceof Error
+            ? error.message
+            : `The ${flow.vcsTerminology.refNoun} could not be checked out.`,
         );
       }
       return;
@@ -315,7 +321,11 @@ export function NewTaskBranchPickerRouteScreen() {
 
   return (
     <BranchPickerScreen
-      title={flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}
+      title={
+        flow.workspaceMode === "worktree"
+          ? `Base ${flow.vcsTerminology.refNoun}`
+          : flow.vcsTerminology.refNounTitle
+      }
       project={flow.selectedProject}
       branches={flow.filteredBranches}
       selectedBranchName={
@@ -332,7 +342,7 @@ export function NewTaskBranchPickerRouteScreen() {
       hasMore={flow.hasMoreBranches}
       onRefresh={flow.loadBranches}
       onLoadMore={flow.loadMoreBranches}
-      selectionDisabled={switchingBranchName !== null}
+      selectionDisabled={switchingBranchName !== null || !flow.vcsActionsSupported}
       onSelect={selectBranch}
       worktree={
         flow.workspaceMode === "worktree"
@@ -370,6 +380,14 @@ export function BranchPickerScreen(props: {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
+  const vcsTerminology = useVcsTerminology(
+    props.project?.environmentId ?? null,
+    props.project?.workspaceRoot ?? null,
+  );
+  const vcsActionSupport = useVcsActionSupport(
+    props.project?.environmentId ?? null,
+    props.project?.workspaceRoot ?? null,
+  );
   const selectedBranchName =
     props.selectedBranchName ??
     props.branches.find((branch) => branch.current)?.name ??
@@ -388,12 +406,16 @@ export function BranchPickerScreen(props: {
   const renderBranch = ({ item, index }: { readonly item: VcsRef; readonly index: number }) => (
     <SelectionRow
       icon="arrow.triangle.branch"
-      disabled={props.selectionDisabled ?? false}
+      disabled={Boolean(props.selectionDisabled) || !vcsActionSupport.supported}
       isFirst={index === 0}
       isLast={index === props.branches.length - 1}
       onPress={() => props.onSelect(item)}
       selected={selectedBranchName === item.name}
-      subtitle={branchBadgeLabel({ branch: item, project: props.project })?.toUpperCase()}
+      subtitle={branchBadgeLabel({
+        branch: item,
+        project: props.project,
+        terminology: vcsTerminology,
+      })?.toUpperCase()}
       title={item.name}
     />
   );
@@ -406,6 +428,7 @@ export function BranchPickerScreen(props: {
       )}
     >
       <ToggleRow
+        disabled={props.selectionDisabled || !vcsActionSupport.supported}
         onValueChange={props.worktree.onChangeStartFromOrigin}
         title="Start from remote"
         value={props.worktree.startFromOrigin}
@@ -434,12 +457,12 @@ export function BranchPickerScreen(props: {
           {props.loading ? <AppActivityIndicator /> : null}
           <Text className="text-center text-sm text-foreground-muted">
             {props.loading
-              ? "Loading branches…"
+              ? `Loading ${vcsTerminology.refNounPlural}…`
               : props.error
                 ? props.error
                 : props.query
-                  ? "No matching branches"
-                  : "No branches available"}
+                  ? `No matching ${vcsTerminology.refNounPlural}`
+                  : `No ${vcsTerminology.refNounPlural} available`}
           </Text>
           {!props.loading && props.error ? (
             <View className="self-center">
@@ -487,14 +510,19 @@ export function BranchPickerScreen(props: {
           hideBottomBorder
           onBack={() => navigation.goBack()}
         />
+        {vcsActionSupport.unsupportedReason !== null ? (
+          <Text accessibilityRole="alert" className="px-4 py-2 text-sm text-foreground-muted">
+            {vcsActionSupport.unsupportedReason}
+          </Text>
+        ) : null}
         <View className="bg-header px-4 pb-3 pt-1">
           <SearchField
             inputRef={searchRef}
             autoFocus={false}
-            accessibilityLabel="Find a branch"
-            clearAccessibilityLabel="Clear branch search"
+            accessibilityLabel={`Find a ${vcsTerminology.refNoun}`}
+            clearAccessibilityLabel={`Clear ${vcsTerminology.refNoun} search`}
             onChangeText={props.onQueryChange}
-            placeholder="Find a branch"
+            placeholder={`Find a ${vcsTerminology.refNoun}`}
             value={props.query}
           />
         </View>
@@ -513,7 +541,7 @@ export function BranchPickerScreen(props: {
             ? () => [
                 createNativeMailSearchToolbarItem({
                   onSearchTextChange: props.onQueryChange,
-                  placeholder: "Find a branch",
+                  placeholder: `Find a ${vcsTerminology.refNoun}`,
                   searchTextChangeId: "new-task-branch-search-text",
                   showsSearchDismissButton: true,
                 }),
@@ -526,7 +554,7 @@ export function BranchPickerScreen(props: {
                 autoCapitalize: "none",
                 hideNavigationBar: false,
                 obscureBackground: false,
-                placeholder: "Find a branch",
+                placeholder: `Find a ${vcsTerminology.refNoun}`,
                 onChangeText: (event) => {
                   props.onQueryChange(event.nativeEvent.text);
                 },
@@ -541,6 +569,11 @@ export function BranchPickerScreen(props: {
           <Toolbar.SearchBarSlot />
         </Toolbar>
       )}
+      {vcsActionSupport.unsupportedReason !== null ? (
+        <Text accessibilityRole="alert" className="px-4 py-2 text-sm text-foreground-muted">
+          {vcsActionSupport.unsupportedReason}
+        </Text>
+      ) : null}
       {branchContent}
     </>
   );

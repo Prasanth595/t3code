@@ -1,7 +1,8 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
-import type { ReviewDiffPreviewSource } from "@t3tools/contracts";
+import { getVcsTerminology, type VcsTerminology } from "@t3tools/shared/vcs";
+import type { ReviewDiffPreviewSource, VcsDriverKind } from "@t3tools/contracts";
 import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
@@ -11,7 +12,6 @@ export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
 
 const CHANGES_SECTION_ID = "git:branch-range";
 const CHANGES_TITLE = "Changes";
-const UNCOMMITTED_SUBTITLE = "Staged, unstaged, and untracked files";
 
 export interface ReviewSectionItem {
   readonly id: string;
@@ -129,14 +129,16 @@ const readyCheckpointOrder = Order.make<ThreadCheckpointSummary>(
   compareCheckpointTurnCountDescending,
 );
 
-function gitSubtitle(section: ReviewDiffPreviewSource): string | null {
+function gitSubtitle(section: ReviewDiffPreviewSource, terminology: VcsTerminology): string | null {
   if (section.kind === "working-tree") {
-    return UNCOMMITTED_SUBTITLE;
+    return terminology.preserveReviewSectionTitles
+      ? `${terminology.workingTreeNounTitle} changes`
+      : "Staged, unstaged, and untracked files";
   }
   if (section.baseRef) {
     return `${section.baseRef} ... ${section.headRef ?? "HEAD"}`;
   }
-  return "Base branch unavailable";
+  return `Base ${terminology.refNoun} unavailable`;
 }
 
 function stripTrailingNewline(value: string): string {
@@ -505,7 +507,9 @@ export function buildReviewSectionItems(input: {
   readonly turnDiffById: Readonly<Record<string, string | undefined>>;
   readonly loadingTurnIds: Readonly<Record<string, boolean | undefined>>;
   readonly loadingGitSections: boolean;
+  readonly vcsKind?: VcsDriverKind | null;
 }): ReadonlyArray<ReviewSectionItem> {
+  const terminology = getVcsTerminology(input.vcsKind);
   const turnItems = getReadyReviewCheckpoints(input.checkpoints).map<ReviewSectionItem>(
     (checkpoint) => {
       const id = getReviewSectionIdForCheckpoint(checkpoint);
@@ -524,7 +528,7 @@ export function buildReviewSectionItems(input: {
     id: `git:${section.kind}`,
     kind: section.kind,
     title: section.title,
-    subtitle: gitSubtitle(section),
+    subtitle: gitSubtitle(section, terminology),
     diff: section.diff,
     source: section,
     ...(section.files ? { files: section.files } : {}),
@@ -538,7 +542,9 @@ export function buildReviewSectionItems(input: {
           {
             id: CHANGES_SECTION_ID,
             kind: "branch-range",
-            title: CHANGES_TITLE,
+            title: terminology.preserveReviewSectionTitles
+              ? `Against base ${terminology.refNoun}`
+              : CHANGES_TITLE,
             subtitle: null,
             diff: null,
             isLoading: true,

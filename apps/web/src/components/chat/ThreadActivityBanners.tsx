@@ -1,3 +1,4 @@
+import type { VcsTerminology } from "@t3tools/shared/vcs";
 import type {
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderGoal,
@@ -160,6 +161,7 @@ export function backgroundWorkBannerItem(input: {
 
 /** The local checkout moved off the branch this thread last ran on. */
 export function branchMismatchBannerItem(input: {
+  readonly terminology: VcsTerminology;
   readonly mismatchKey: string;
   readonly mismatch: { readonly threadBranch: string; readonly currentBranch: string };
   readonly restoreDisabled: boolean;
@@ -174,7 +176,9 @@ export function branchMismatchBannerItem(input: {
     icon: <GitBranchIcon />,
     title: (
       <span className="flex min-w-0 items-baseline gap-1.5">
-        <span className="shrink-0 font-normal text-muted-foreground">Branch changed from</span>
+        <span className="shrink-0 font-normal text-muted-foreground">
+          {input.terminology.refNounTitle} changed from
+        </span>
         <Tooltip>
           <TooltipTrigger
             render={
@@ -192,10 +196,10 @@ export function branchMismatchBannerItem(input: {
     ),
     actions: (
       <Button size="xs" variant="ghost" disabled={input.restoreDisabled} onClick={input.onRestore}>
-        {input.restoring ? "Restoring..." : "Restore branch"}
+        {input.restoring ? "Restoring..." : `Restore ${input.terminology.refNoun}`}
       </Button>
     ),
-    dismissLabel: "Dismiss branch change notice",
+    dismissLabel: `Dismiss ${input.terminology.refNoun} change notice`,
     onDismiss: input.onDismiss,
   };
 }

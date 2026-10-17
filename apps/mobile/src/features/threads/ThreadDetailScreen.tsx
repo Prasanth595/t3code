@@ -1,3 +1,5 @@
+import { AppText as Text } from "../../components/ui/AppText";
+import { selectTerminology, selectUnsupportedReason, vcsEnvironment, VcsTerminologyContext } from "../../state/vcs";
 import { useSidebarWorkspaceTabs } from "../workspace/useSystemWorkspaceTabBar";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import {
@@ -135,7 +137,7 @@ import {
 } from "../../lib/layout";
 import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
 import { deviceEnvironment } from "../../state/device";
-import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentQuery, useEnvironmentQuerySelector } from "../../state/query";
 import { threadDevicePreviews } from "../devices/threadDevicePreviews";
 import { ThreadBrowserFloat } from "../browser/ThreadBrowserFloat";
 import { useThreadServerBrowserTabs } from "../../state/preview";
@@ -543,6 +545,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     });
   };
   const insets = useSafeAreaInsets();
+  const vcsEnvironmentId = props.selectedThread.environmentId;
+  const selectedThreadCwd = props.threadCwd;
+  const vcsStatusAtom = vcsEnvironmentId === null || selectedThreadCwd === null ? null : vcsEnvironment.status({ environmentId: vcsEnvironmentId, input: { cwd: selectedThreadCwd } });
+  const vcsTerminology = useEnvironmentQuerySelector(vcsStatusAtom, selectTerminology);
+  const vcsUnsupportedReason = useEnvironmentQuerySelector(vcsStatusAtom, selectUnsupportedReason);
   const isKeyboardVisible = useKeyboardState((state) => state.isVisible);
   const liveKeyboardHeight = useKeyboardState((state) => state.height);
   // Android can lose IME hide callbacks on backgrounding. Quarantine translation on resume unless focused input retained its keyboard.
@@ -772,7 +779,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       if (props.worktreeSetup) return null;
       return {
         kind: "preparing",
-        label: props.creationState.preparingWorktree ? "Setting up worktree…" : "Starting…",
+        label: props.creationState.preparingWorktree ? `Setting up ${vcsTerminology.workspaceNoun}…` : "Starting…",
       };
     }
     if (props.creationState?.kind === "failed") {
@@ -1433,6 +1440,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   };
 
   return (
+    <VcsTerminologyContext value={vcsTerminology}>
     <View className="flex-1" onLayout={handleScreenLayout}>
       {!usesNativeWorkspaceColumns ? <NativeLayoutObserver onChange={setScreenMetrics} /> : null}
       <ThreadVisitWatermark
@@ -1440,6 +1448,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
         selectedThread={props.selectedThread}
         showContent={showContent && !props.draftMode}
       />
+      {vcsUnsupportedReason ? <Text accessibilityRole="alert" className="border-b border-border bg-card px-4 py-3 text-sm text-danger-foreground">{vcsUnsupportedReason}</Text> : null}
       {props.draftMode ? (
         props.draftMode.content(
           navigationHeaderHeight,
@@ -1483,7 +1492,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
               workspaceRoot={props.threadCwd}
               feed={props.selectedThreadFeed}
               pendingHandoff={props.pendingHandoff}
-              worktreeSetup={props.worktreeSetup}
+              worktreeSetup={props.worktreeSetup ? { ...props.worktreeSetup, vcsTerminology } : props.worktreeSetup}
               setupWorkingStartedAt={props.setupWorkingStartedAt}
               queuedMessages={props.queuedMessages}
               dispatchingMessageId={props.dispatchingMessageId}
@@ -1837,5 +1846,6 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
         </KeyboardStickyView>
       ) : null}
     </View>
+    </VcsTerminologyContext>
   );
 };
