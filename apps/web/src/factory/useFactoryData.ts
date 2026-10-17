@@ -24,13 +24,20 @@ function usePolled<T>(load: () => Promise<T>): FactoryResource<T> {
 
   useEffect(() => {
     let alive = true;
+    // Requests are numbered; an answer older than one already applied is dropped.
+    let issued = 0;
+    let applied = 0;
     const fetchNow = () => {
+      const n = ++issued;
       load().then(
         (data) => {
-          if (alive) setState({ status: "ready", data, error: null });
+          if (!alive || n < applied) return;
+          applied = n;
+          setState({ status: "ready", data, error: null });
         },
         (cause: unknown) => {
-          if (!alive) return;
+          if (!alive || n < applied) return;
+          applied = n;
           const error = cause instanceof Error ? cause : new Error(String(cause));
           setState((previous) => ({ status: "error", data: previous.data, error }));
         },
@@ -61,6 +68,9 @@ let statusState: Loaded<FactoryStatus> = LOADING;
 let statusTimer: ReturnType<typeof setInterval> | null = null;
 // Bumped when the store stops, so an answer to an earlier subscription is dropped.
 let statusEpoch = 0;
+// Requests are numbered like in `usePolled`; an answer older than one already applied is dropped.
+let statusIssued = 0;
+let statusApplied = 0;
 const statusListeners = new Set<() => void>();
 
 const setStatusState = (next: Loaded<FactoryStatus>) => {
@@ -70,12 +80,16 @@ const setStatusState = (next: Loaded<FactoryStatus>) => {
 
 const refreshStatus = () => {
   const epoch = statusEpoch;
+  const n = ++statusIssued;
   factoryApi.status().then(
     (data) => {
-      if (epoch === statusEpoch) setStatusState({ status: "ready", data, error: null });
+      if (epoch !== statusEpoch || n < statusApplied) return;
+      statusApplied = n;
+      setStatusState({ status: "ready", data, error: null });
     },
     (cause: unknown) => {
-      if (epoch !== statusEpoch) return;
+      if (epoch !== statusEpoch || n < statusApplied) return;
+      statusApplied = n;
       const error = cause instanceof Error ? cause : new Error(String(cause));
       setStatusState({ status: "error", data: statusState.data, error });
     },
@@ -86,6 +100,8 @@ const stopStatus = () => {
   if (statusTimer !== null) clearInterval(statusTimer);
   statusTimer = null;
   statusEpoch += 1;
+  statusIssued = 0;
+  statusApplied = 0;
   statusState = LOADING;
 };
 
