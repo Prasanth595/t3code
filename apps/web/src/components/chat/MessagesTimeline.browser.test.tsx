@@ -1089,9 +1089,9 @@ describe("timeline tooltip scroll dismissal", () => {
     await renderElement(
       <>
         <TooltipScrollDismissArea>
-          <div data-testid="scrollable" style={{ height: 100, overflow: "auto" }}>
+          <div data-testid="scrollable" className="h-[100px] overflow-auto">
             {outside ? null : tooltip}
-            <div style={{ height: 1000 }} />
+            <div className="h-[1000px]" />
           </div>
         </TooltipScrollDismissArea>
         {outside ? tooltip : null}
@@ -1171,7 +1171,7 @@ describe("MessagesTimeline scroll position", () => {
       const [liveFollowEnabled, setLiveFollowEnabled] = useState(true);
       // The chat view stops following the live edge when the reader scrolls.
       return (
-        <div style={{ display: "contents" }} onWheelCapture={() => setLiveFollowEnabled(false)}>
+        <div className="contents" onWheelCapture={() => setLiveFollowEnabled(false)}>
           <MessagesTimeline
             {...props}
             timelineEntries={tallEntries}
