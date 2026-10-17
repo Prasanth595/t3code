@@ -1,3 +1,4 @@
+import * as Dialog from "../components/ui/Dialog";
 import type { MediaActionsSource } from "../lib/mediaActionsSource";
 import { useNavigation } from "@react-navigation/native";
 import type { MediaActionId } from "@t3tools/client-runtime/media-actions";
@@ -19,7 +20,6 @@ import { environmentSession } from "./session";
 import { downloadAndShareAttachment, shareLocalAttachment } from "../lib/attachmentDownload";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
 import { loadLocalAttachmentPreview } from "../lib/localAttachmentPreview";
-import { showAlert } from "../lib/alert";
 
 /** An explicit action may ask the server while its grant is still unresolved. */
 function allowsHostMedia(session: SessionGrantInput | null) {
@@ -83,7 +83,10 @@ export function useMediaActions(source: MediaActionsSource | undefined, onOpenFi
     })()
       .catch((error: unknown) => {
         if (!request.signal.aborted) {
-          showAlert("Could not share file", error instanceof Error ? error.message : "Try again.");
+          Dialog.alert(
+            "Could not share file",
+            error instanceof Error ? error.message : "Try again.",
+          );
         }
       })
       .finally(() => {

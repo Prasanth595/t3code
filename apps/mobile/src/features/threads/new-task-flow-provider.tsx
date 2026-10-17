@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { environmentSession } from "../../state/session";
@@ -120,7 +121,6 @@ import {
 } from "./new-task-context-presentation";
 import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
-import { showAlert } from "../../lib/alert";
 
 type WorkspaceMode = "local" | "worktree";
 
@@ -883,7 +883,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         }
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
-          showAlert(
+          Dialog.alert(
             "Could not switch machine",
             error instanceof Error
               ? error.message

@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { useNavigation, useNavigationState, useRoute } from "@react-navigation/native";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import {
@@ -35,7 +36,6 @@ import {
   pullRequestAgentPrompt,
   type PullRequestAgentTask,
 } from "./pullRequestAgentTasks";
-import { showAlert } from "../../lib/alert";
 
 type LinkedThread = PullRequestLinkedThreadsResult["threads"][number];
 
@@ -151,7 +151,7 @@ export function usePullRequestThreads(
           params: { draftId: draftKey, title: `Ask about #${pr.number}` },
         });
     } catch (cause) {
-      showAlert("Couldn't open a thread", cause instanceof Error ? cause.message : "Try again.");
+      Dialog.alert("Couldn't open a thread", cause instanceof Error ? cause.message : "Try again.");
     } finally {
       pending.current = false;
       setBusy(false);

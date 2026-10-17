@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthProvidersManageScope,
@@ -21,14 +22,13 @@ import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "rea
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
 import { Linking, Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useProviderColors } from "./usageProviders";
-import { showAlert } from "../../lib/alert";
 
 const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
 
@@ -247,7 +247,7 @@ export function ResetCredits(props: {
 
   const confirm = () => {
     if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
-    showAlert(
+    Dialog.alert(
       "Use a reset credit?",
       "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
       [

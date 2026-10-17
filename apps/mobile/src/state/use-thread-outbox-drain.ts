@@ -1,3 +1,4 @@
+import * as Dialog from "../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
   threadRuntimeIsActive,
@@ -87,7 +88,6 @@ import {
 } from "./use-thread-outbox";
 import { clearThreadComposerError, setThreadComposerError } from "./thread-composer-error";
 import { useRemoteConnectionStatus } from "./use-remote-environment-registry";
-import { showAlert } from "../lib/alert";
 
 // Ordinary offline behavior (a socket dropping mid-request, a retryable
 // attachment upload failure) must not spam `console.warn` on every backoff
@@ -758,7 +758,7 @@ export function useThreadOutboxDrain(): void {
     let mounted = true;
     const load = async () => {
       if ((await threadOutboxManager.load()) || !mounted) return;
-      showAlert(
+      Dialog.alert(
         "Some queued messages could not be loaded",
         "Unreadable records and attachment files are still saved. Other messages can still be sent.",
         [

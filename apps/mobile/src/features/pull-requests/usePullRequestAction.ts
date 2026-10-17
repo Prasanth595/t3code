@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { useAtomRefresh } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
@@ -11,7 +12,6 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { canPerformPullRequestAction } from "./pullRequestActions";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
-import { showAlert } from "../../lib/alert";
 
 /** Small row actions stay in place, preserving expanded rows and scroll position. */
 export function usePullRequestAction(params: PullRequestParams, pr: PullRequestDetail | null) {
@@ -37,7 +37,7 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
       refreshDetail();
       refreshActivity();
     } catch (cause) {
-      showAlert(
+      Dialog.alert(
         "Couldn't update this pull request",
         cause instanceof Error ? cause.message : "Try again.",
       );
@@ -47,7 +47,7 @@ export function usePullRequestAction(params: PullRequestParams, pr: PullRequestD
     }
   };
   const confirm = (action: PullRequestAction, title: string, message: string) =>
-    showAlert(title, message, [
+    Dialog.alert(title, message, [
       { text: "Cancel", style: "cancel" },
       {
         text: title,

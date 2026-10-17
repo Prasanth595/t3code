@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import Constants from "expo-constants";
 import * as Crypto from "expo-crypto";
 import { PROVIDER_SEND_TURN_MAX_FILE_BYTES } from "@t3tools/contracts";
@@ -25,7 +26,6 @@ import {
   removeIncomingShareDraft,
   writeIncomingShareDraft,
 } from "./incoming-share-storage";
-import { showAlert } from "../../lib/alert";
 
 type IncomingShareContextValue = {
   readonly pendingShare: IncomingShareDraft | null;
@@ -279,7 +279,7 @@ export function IncomingShareProvider(props: React.PropsWithChildren) {
     if (!error) {
       return;
     }
-    showAlert("Could not import shared content", error.message, [
+    Dialog.alert("Could not import shared content", error.message, [
       { text: "Dismiss", style: "cancel", onPress: () => setError(null) },
       {
         text: "Retry",

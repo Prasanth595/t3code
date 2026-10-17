@@ -9,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   pendingOrder: null as object | null,
@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
     environmentId: string;
     input: { threadId: string; orderKey?: string };
   }[],
+  dialogs: [] as { onConfirm: () => void }[],
   alerts: [] as {
     title: string;
     buttons?: { text: string; onPress?: () => void }[];
@@ -41,6 +42,11 @@ vi.mock("react-native", () => ({
 vi.mock("expo-haptics", () => ({
   impactAsync: async () => {},
   ImpactFeedbackStyle: { Light: "light" },
+}));
+vi.mock("../../components/ui/Dialog", () => ({
+  alert: (title: string, _message: string, buttons?: { text: string; onPress?: () => void }[]) =>
+    state.alerts.push({ title, buttons }),
+  confirm: (dialog: { onConfirm: () => void }) => state.dialogs.push(dialog),
 }));
 vi.mock("../archive/useArchivedThreadSnapshots", () => ({
   refreshArchivedThreadsForEnvironment: () => {},
@@ -173,9 +179,12 @@ beforeEach(() => {
   ]);
   state.requests = [];
   state.shells = [];
+  state.dialogs = [];
   state.alerts = [];
   state.afterRequest = undefined;
 });
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe("thread list operation permissions", () => {
   it.each(mutationCases)(
@@ -220,13 +229,14 @@ describe("thread list operation permissions", () => {
   it("does not show a forbidden delete confirmation", () => {
     useThreadListActions().confirmDeleteThread(makeThread({ environmentId: otherEnvironmentId }));
 
+    expect(state.dialogs).toEqual([]);
     expect(state.alerts.some((alert) => alert.title === "Delete thread?")).toBe(false);
     expect(state.requests).toEqual([]);
   });
 
   it("rechecks permission after a retained delete confirmation", async () => {
     useThreadListActions().confirmDeleteThread(makeThread());
-    const confirm = state.alerts[0]?.buttons?.find((button) => button.text === "Delete")?.onPress;
+    const confirm = state.dialogs[0]?.onConfirm;
     expect(confirm).toBeTypeOf("function");
     state.scopes.get(primaryEnvironmentId)!.clear();
 
@@ -249,8 +259,9 @@ describe("thread list operation permissions", () => {
   });
 
   it("keeps delete independent of terminal and source-control permissions", async () => {
+    vi.stubEnv("EXPO_OS", "android");
     useArchivedThreadListActions(() => {}).confirmDeleteThread(makeThread());
-    await state.alerts[0]!.buttons!.find((button) => button.text === "Delete")!.onPress!();
+    await state.dialogs[0]!.onConfirm();
 
     expect(state.requests).toEqual([expect.objectContaining({ action: "delete" })]);
   });

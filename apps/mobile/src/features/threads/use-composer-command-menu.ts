@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import type {
   EnvironmentId,
   ProjectId,
@@ -8,7 +9,6 @@ import type {
 } from "@t3tools/contracts";
 import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
-import { showAlert } from "../../lib/alert";
 
 const EMPTY_THREAD_SHELLS: ReadonlyArray<EnvironmentThreadShell> = [];
 import {
@@ -564,7 +564,10 @@ export function useComposerCommandMenu({
         const existing = getComposerDraftSnapshot(ownerKey).context?.records ?? [];
         const alreadyAttached = existing.some((entry) => entry.contextId === record.contextId);
         if (!alreadyAttached && existing.length >= COMPOSER_CONTEXT_MAX_RECORDS) {
-          showAlert("Too many context items", "Remove some context from the draft and try again.");
+          Dialog.alert(
+            "Too many context items",
+            "Remove some context from the draft and try again.",
+          );
           return;
         }
         const result = replaceTextRange(
@@ -596,7 +599,10 @@ export function useComposerCommandMenu({
           (getComposerDraftSnapshot(ownerKey).context?.records.length ?? 0) >=
           COMPOSER_CONTEXT_MAX_RECORDS
         ) {
-          showAlert("Too many context items", "Remove some context from the draft and try again.");
+          Dialog.alert(
+            "Too many context items",
+            "Remove some context from the draft and try again.",
+          );
           return;
         }
         const result = replaceTextRange(

@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { useNavigation } from "@react-navigation/native";
 import { parseThreadLinkPrompt } from "@t3tools/shared/promptLinks";
 import { useEffect, useRef } from "react";
@@ -8,7 +9,6 @@ import {
   promptLinkNotice,
   promptLinkSearchFromParams,
 } from "./prompt-link-model";
-import { showAlert } from "../../lib/alert";
 
 const THREAD_LINK_KEYS = ["prompt"];
 
@@ -33,7 +33,7 @@ export function useThreadPromptLink(
     navigation.setParams(clearedPromptLinkParams(THREAD_LINK_KEYS));
     const parsed = parseThreadLinkPrompt(search);
     if (!parsed.ok) {
-      showAlert("Could not open link", parsed.error);
+      Dialog.alert("Could not open link", parsed.error);
       return;
     }
     if (parsed.value === null) return;

@@ -1,3 +1,5 @@
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import * as Dialog from "../../components/ui/Dialog";
 import previewStreamScript from "@t3tools/mobile-preview-stream";
 import {
   previewStreamControlLabel,
@@ -18,11 +20,11 @@ import {
   useState,
   type Ref,
 } from "react";
-import { ActivityIndicator, Platform, Pressable, TextInput, View } from "react-native";
+import { Platform, Pressable, TextInput, View } from "react-native";
 import { WebView } from "react-native-webview";
 import * as Clipboard from "expo-clipboard";
 
-import { AppText } from "../../components/AppText";
+import { AppText } from "../../components/ui/AppText";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { beginForegroundHandoff } from "../../lib/foreground-handoff";
 import { usePreviewStreamAccess } from "../../state/preview";
@@ -33,7 +35,6 @@ import {
   previewStreamMessage,
   type PreviewStreamConfiguration,
 } from "./preview-stream-document";
-import { showAlert } from "../../lib/alert";
 
 export interface PreviewStreamRef {
   /** Navigation requires current control of the browser. */
@@ -92,7 +93,7 @@ async function sendFilesToPage(chooser: PreviewStreamFileChooser, pick: boolean)
 
 /** The file is on the environment; saving it here goes through the share sheet. */
 function offerDownload(download: PreviewStreamDownload) {
-  showAlert(`Downloaded ${download.fileName}`, undefined, [
+  Dialog.alert(`Downloaded ${download.fileName}`, undefined, [
     { text: "Not now", style: "cancel" },
     {
       text: "Save or share",
@@ -102,7 +103,7 @@ function offerDownload(download: PreviewStreamDownload) {
           attachment: { name: download.fileName, mimeType: "application/octet-stream" },
           signal: new AbortController().signal,
         }).catch((cause: unknown) =>
-          showAlert(
+          Dialog.alert(
             "Could not save the download",
             cause instanceof Error ? cause.message : undefined,
           ),
@@ -134,7 +135,7 @@ export function PreviewStreamWebView(
           : "flex-1 items-center justify-center gap-4 px-6"
       }
     >
-      {props.compact || !error ? <ActivityIndicator colorClassName="accent-icon" /> : null}
+      {props.compact || !error ? <AppActivityIndicator colorClassName="accent-icon" /> : null}
       {!props.compact && (
         <>
           <AppText
@@ -266,7 +267,7 @@ function PreviewStreamDocumentView({
     if (!chooser) return;
     setFileChooser(null);
     void sendFilesToPage(chooser, pick).catch((cause: unknown) =>
-      showAlert(
+      Dialog.alert(
         "Could not send the files to the page",
         cause instanceof Error ? cause.message : undefined,
       ),
@@ -502,7 +503,7 @@ function PreviewStreamDocumentView({
           className="absolute inset-0 items-center justify-center gap-4 px-6"
           style={{ backgroundColor: background }}
         >
-          {status === "connecting" ? <ActivityIndicator colorClassName="accent-icon" /> : null}
+          {status === "connecting" ? <AppActivityIndicator colorClassName="accent-icon" /> : null}
           {compact ? null : (
             <AppText
               accessibilityLiveRegion="polite"

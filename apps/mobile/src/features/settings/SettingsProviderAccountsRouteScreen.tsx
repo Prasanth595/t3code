@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -8,8 +9,8 @@ import { useRef, useState } from "react";
 import { Linking, Pressable, ScrollView, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { AppText as Text } from "../../components/AppText";
-import { ScreenScrollView } from "../../components/ScreenScrollView";
+import { AppText as Text } from "../../components/ui/AppText";
+import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -21,7 +22,6 @@ import {
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
-import { showAlert } from "../../lib/alert";
 
 export function SettingsProviderAccountsRouteScreen() {
   const { selectedTargets } = useSettingsEnvironmentFilter();
@@ -334,7 +334,7 @@ function ProviderAccount({
           tone="danger"
           disabled={disabled || state === null}
           onPress={() =>
-            showAlert(
+            Dialog.alert(
               "Sign out?",
               `Running threads sharing this sign-in on ${environment.label} will stop. Thread history is kept.`,
               [

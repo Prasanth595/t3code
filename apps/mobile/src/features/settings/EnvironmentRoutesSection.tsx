@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type ConnectionRoute,
@@ -17,8 +18,8 @@ import { useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import Reanimated, { ReduceMotion, useAnimatedStyle, withTiming } from "react-native-reanimated";
 
-import { type AppSymbolName, SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
+import { type AppSymbolName, SymbolView } from "../../components/ui/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
 import { StatusPill } from "../../components/StatusPill";
 import { environmentCatalog } from "../../connection/catalog";
 import { cn } from "../../lib/cn";
@@ -28,7 +29,6 @@ import { connectionTone } from "../connection/connectionTone";
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsSection } from "./components/SettingsSection";
-import { showAlert } from "../../lib/alert";
 
 const ICON_SIZE = Platform.OS === "android" ? 24 : 22;
 const REMOVE_SIZE = 20;
@@ -119,7 +119,7 @@ export function EnvironmentRoutesSection({
     return to;
   };
   const confirmRemove = (route: ConnectionRoute) =>
-    showAlert(
+    Dialog.alert(
       `Remove ${connectionRouteLabel(route)}?`,
       connectionRouteAddress(route) ?? undefined,
       [

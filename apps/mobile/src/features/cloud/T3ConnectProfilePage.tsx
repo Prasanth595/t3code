@@ -9,16 +9,16 @@ import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import { type ReactNode, useRef, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, Text, View } from "react-native";
 
-import { AppActivityIndicator } from "../../components/AppActivityIndicator";
-import { SymbolView } from "../../components/AppSymbol";
-import { ControlPillMenu } from "../../components/ControlPill";
+import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import * as Dialog from "../../components/ui/Dialog";
+import { Menu } from "../../components/ui/Menu";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
   deregisterManagedRelayEnvironmentCommand,
   useManagedRelayEnvironments,
 } from "./managedRelayState";
-import { showAlert } from "../../lib/alert";
 
 const linkedAtFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "medium" });
 
@@ -38,10 +38,7 @@ function endpointLabel(environment: RelayClientEnvironmentRecord): string {
 function confirmDeregister(environment: RelayClientEnvironmentRecord, onConfirm: () => void) {
   const title = "Deregister server?";
   const message = `“${environment.label}” will be removed from this account. T3 Connect access will be revoked, any managed tunnel will be removed, and a host space will become available. Local connections on your devices are not changed.`;
-  showAlert(title, message, [
-    { text: "Cancel", style: "cancel" },
-    { text: "Deregister", style: "destructive", onPress: onConfirm },
-  ]);
+  Dialog.confirm({ title, message, confirmText: "Deregister", destructive: true, onConfirm });
 }
 
 /**
@@ -98,7 +95,7 @@ export function T3ConnectProfilePage() {
       traceId,
       cause,
     });
-    showAlert(
+    Dialog.alert(
       "Could not deregister server",
       traceId ? `${message}\n\nTrace ID: ${traceId}` : message,
       traceId
@@ -172,7 +169,7 @@ export function T3ConnectProfilePage() {
                   size="small"
                 />
               ) : (
-                <ControlPillMenu
+                <Menu
                   actions={ENVIRONMENT_MENU_ACTIONS}
                   isAnchoredToRight
                   onPressAction={() =>
@@ -194,7 +191,7 @@ export function T3ConnectProfilePage() {
                       />
                     </View>
                   </Pressable>
-                </ControlPillMenu>
+                </Menu>
               )
             }
           />

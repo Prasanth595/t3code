@@ -1,3 +1,4 @@
+import * as Dialog from "../components/ui/Dialog";
 import { useServerConfigs } from "./entities";
 import {
   questionAttachmentDraftKey,
@@ -35,7 +36,6 @@ import { useSelectedThreadPendingRequests } from "./use-thread-detail";
 import { useThreadSelection } from "./use-thread-selection";
 import { useAtomCommand } from "./use-atom-command";
 import { readEnvironmentScope } from "./session";
-import { showAlert } from "../lib/alert";
 
 const EMPTY_PENDING_REQUESTS: PendingThreadRequests = { approvals: [], userInputs: [] };
 
@@ -294,7 +294,7 @@ export function useSelectedThreadRequests() {
             attachment.uploadEnvironmentId !== selectedThreadShell.environmentId,
         )
       ) {
-        showAlert(
+        Dialog.alert(
           "Attachments are not ready",
           "Wait for uploads to finish, or retry failed uploads.",
         );

@@ -1,3 +1,4 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import {
   connectionCatalogDisplayUrl,
@@ -8,12 +9,11 @@ import {
 import { useState } from "react";
 import { Pressable, View } from "react-native";
 
-import { AppText as Text } from "../../components/AppText";
-import { SymbolView } from "../../components/AppSymbol";
+import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { environmentCatalog } from "../../connection/catalog";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "../settings/components/SettingsSection";
-import { showAlert } from "../../lib/alert";
 
 const options: ReadonlyArray<{
   value: GitHubRoutingPermission;
@@ -87,7 +87,7 @@ export function GitHubRoutingSettings() {
                         void update({ environmentId, permission: option.value }).then((result) => {
                           setSaving(false);
                           if (result._tag === "Failure")
-                            showAlert(
+                            Dialog.alert(
                               "Could not save GitHub routing permission",
                               "Try again before leaving this screen.",
                             );

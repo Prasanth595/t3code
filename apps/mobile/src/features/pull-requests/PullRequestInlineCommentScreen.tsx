@@ -1,9 +1,10 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useRef, useState } from "react";
 import { View } from "react-native";
 import type { PullRequestReviewPosition } from "@t3tools/contracts";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
-import { MaterialButton } from "../../components/MaterialButton";
+import { AppText as Text, AppTextInput as TextInput } from "../../components/ui/AppText";
+import { Button } from "../../components/ui/Button";
 import { uuidv4 } from "../../lib/uuid";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useEnvironmentQuery } from "../../state/query";
@@ -12,7 +13,6 @@ import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { reviewPositionLabel } from "./pullRequestDiffComments";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
-import { showAlert } from "../../lib/alert";
 
 export type InlineCommentParams = PullRequestParams & {
   readonly draftId?: string;
@@ -78,7 +78,7 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
       title={saved ? "Edit review comment" : "Review comment"}
       subtitle={`#${params.number} · ${reviewPositionLabel(params.position)}`}
       footer={
-        <MaterialButton
+        <Button
           fullWidth
           tone="contrast"
           label={busy ? "Saving…" : "Save draft"}
@@ -126,10 +126,10 @@ export function PullRequestInlineCommentScreen({ route }: StaticScreenProps<Inli
         <Text className="text-sm text-danger-foreground">{store.error ?? detail.error}</Text>
       ) : null}
       {saved ? (
-        <MaterialButton
+        <Button
           label="Delete draft"
           onPress={() =>
-            showAlert("Delete this draft?", "Your other review comments will be kept.", [
+            Dialog.alert("Delete this draft?", "Your other review comments will be kept.", [
               { text: "Cancel", style: "cancel" },
               {
                 text: "Delete",

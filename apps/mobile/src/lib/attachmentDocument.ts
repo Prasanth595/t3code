@@ -1,3 +1,4 @@
+import * as Dialog from "../components/ui/Dialog";
 import { filePreviewDelimiter, parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { readFilePreviewResponse } from "@t3tools/client-runtime/file-preview";
@@ -11,7 +12,6 @@ import { loadLocalAttachmentPreview } from "./localAttachmentPreview";
 import { downloadAndShareAttachment, shareLocalAttachment } from "./attachmentDownload";
 import { useRefreshAssetUrl } from "../state/assets";
 import { attachmentDocumentPresentation } from "./attachmentDocumentPresentation";
-import { showAlert } from "./alert";
 
 const isLocalUri = (uri: string) => /^(file|content):/.test(uri);
 
@@ -179,7 +179,7 @@ export function useAttachmentDocument(input: {
       else await downloadAndShareAttachment({ ...request, url: (await refresh()) ?? uri });
     } catch (cause) {
       if (controller.signal.aborted) return;
-      showAlert(
+      Dialog.alert(
         "Could not share file",
         cause instanceof Error ? cause.message : "Please try again.",
       );

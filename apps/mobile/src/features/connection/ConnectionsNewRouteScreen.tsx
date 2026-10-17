@@ -1,4 +1,5 @@
-import { ScreenScrollView as ScrollView } from "../../components/ScreenScrollView";
+import * as Dialog from "../../components/ui/Dialog";
+import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { useAuth } from "@clerk/expo";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Haptics from "expo-haptics";
@@ -19,18 +20,17 @@ import { cn } from "../../lib/cn";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
-import { AppText as Text, AppTextInput, type AppTextInputProps } from "../../components/AppText";
-import { FrostedCutout } from "../../components/FrostedCutout";
+import { AppText as Text, AppTextInput, type AppTextInputProps } from "../../components/ui/AppText";
+import { FrostedCutout } from "../../components/ui/FrostedCutout";
 import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
 import {
   setPendingConnectionError,
   useRemoteConnections,
 } from "../../state/use-remote-environment-registry";
-import { SymbolView } from "../../components/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
 import { splitEnvironmentSections } from "./environmentSections";
-import { showAlert } from "../../lib/alert";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
@@ -117,7 +117,7 @@ export function ConnectionsNewRouteScreen({
       return;
     }
     if (permission.canAskAgain) return;
-    showAlert(
+    Dialog.alert(
       "Camera access needed",
       "Camera access was denied for this app. Open Settings to enable it.",
       [
@@ -145,7 +145,7 @@ export function ConnectionsNewRouteScreen({
         setScannerLocked(false);
       } catch (error) {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        showAlert(
+        Dialog.alert(
           "Invalid QR code",
           error instanceof Error ? error.message : "Scanned QR code was not recognized.",
         );
