@@ -194,6 +194,8 @@ export function BranchToolbarBranchSelector({
     )
       return;
     const latest = readLatestThreadState();
+    // Defaulting must not retarget a thread another client has already started or moved.
+    if (automatic && (latest.runtime || latest.worktreePath)) return;
     if (latest.runtime && worktreePath !== latest.worktreePath) {
       void stopThreadSession({
         environmentId,
@@ -418,15 +420,16 @@ export function BranchToolbarBranchSelector({
   const selectBranch = (refName: VcsRef) => {
     if (!canUpdateThreadBranch || !branchCwd || !activeProjectCwd || isBranchActionPending) return;
 
+    // Enter selects the highlighted value directly, so disabled rows need this too.
+    const latest = readLatestThreadState();
     if (isSelectingWorktreeBase) {
+      // A base pick no longer applies once another client has assigned a worktree.
+      if (latest.worktreePath) return;
       setThreadBranch(refName.name, null);
       setIsBranchMenuOpen(false);
       onComposerFocusRequest?.();
       return;
     }
-
-    // Enter selects the highlighted value directly, so disabled rows need this too.
-    const latest = readLatestThreadState();
     if (isWorktreeChangeBlockedForRef(refName, latest)) return;
 
     const selectionTarget = resolveBranchSelectionTarget({

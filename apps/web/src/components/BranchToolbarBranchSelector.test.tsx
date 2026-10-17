@@ -14,6 +14,9 @@ import { expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   worktreePath: null as string | null,
+  started: true,
+  latestWorktreePath: undefined as string | null | undefined,
+  latestStarted: undefined as boolean | undefined,
   updateMetadata: vi.fn().mockResolvedValue({ _tag: "Success" }),
   stopSession: vi.fn().mockResolvedValue({ _tag: "Success" }),
 }));
@@ -24,25 +27,37 @@ const mainRef: VcsRef = {
   current: false,
   worktreePath: "/repo",
 };
-const serverThread = () => ({
+const topicBaseRef: VcsRef = {
+  ...mainRef,
+  name: "topic-base",
+  isDefault: false,
+  worktreePath: null,
+};
+const serverThread = (started = state.started, worktreePath = state.worktreePath) => ({
   id: ThreadId.make("thread"),
   environmentId: EnvironmentId.make("local"),
   projectId: ProjectId.make("project"),
-  branch: "topic",
-  worktreePath: state.worktreePath,
+  branch: started ? "topic" : null,
+  worktreePath,
   pullRequests: [],
-  runtime: {
-    status: "running",
-    activeRunId: RunId.make("run"),
-    providerInstanceId: ProviderInstanceId.make("codex"),
-    providerName: null,
-    lastError: null,
-    updatedAt: "2026-10-16T00:00:00Z",
-  },
+  runtime: started
+    ? {
+        status: "running",
+        activeRunId: RunId.make("run"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerName: null,
+        lastError: null,
+        updatedAt: "2026-10-16T00:00:00Z",
+      }
+    : null,
 });
 vi.mock("../state/entities", () => ({
   useQuietThreadShell: () => serverThread(),
-  readThreadShell: () => serverThread(),
+  readThreadShell: () =>
+    serverThread(
+      state.latestStarted ?? state.started,
+      state.latestWorktreePath === undefined ? state.worktreePath : state.latestWorktreePath,
+    ),
   useProject: () => ({ id: ProjectId.make("project"), workspaceRoot: "/repo" }),
 }));
 vi.mock("../composerDraftStore", () => ({
@@ -75,8 +90,9 @@ vi.mock("../state/query", () => ({
 }));
 vi.mock("../state/queries", () => ({
   usePaginatedBranches: () => ({
-    refs: [mainRef],
-    data: { nextCursor: null, totalCount: 1 },
+    refs: [mainRef, topicBaseRef],
+    data: { nextCursor: null, totalCount: 2 },
+    refresh: vi.fn(),
     isPending: false,
   }),
 }));
@@ -156,3 +172,63 @@ it.each(["toolbar", "panel"] as const)(
     }
   },
 );
+
+it.each([
+  ["toolbar", "base-row pick"],
+  ["panel", "base-row pick"],
+  ["toolbar", "non-default base-row pick"],
+  ["panel", "non-default base-row pick"],
+  ["toolbar", "automatic default"],
+  ["panel", "automatic default"],
+] as const)("keeps a newer run in its worktree during a %s %s", async (displayMode, action) => {
+  vi.clearAllMocks();
+  state.started = false;
+  state.worktreePath = null;
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  const ref = createRef<BranchToolbarBranchSelectorHandle>();
+  try {
+    if (action === "automatic default") {
+      state.latestStarted = true;
+      state.latestWorktreePath = "/repo/worktree";
+    }
+    await act(async () =>
+      root.render(
+        <BranchToolbarBranchSelector
+          displayMode={displayMode}
+          ref={ref}
+          environmentId={EnvironmentId.make("local")}
+          threadId={ThreadId.make("thread")}
+          envLocked={false}
+          effectiveEnvModeOverride="worktree"
+          activeThreadBranchOverride={action !== "automatic default" ? "topic" : null}
+          startFromOrigin={false}
+          onStartFromOriginChange={vi.fn()}
+        />,
+      ),
+    );
+    if (action !== "automatic default") {
+      await act(async () => ref.current?.open());
+      const refName = action === "base-row pick" ? "main" : "topic-base";
+      const row = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find((option) =>
+        option.textContent?.includes(refName),
+      );
+      expect(row?.textContent).toContain(refName);
+      expect(row?.getAttribute("aria-disabled")).not.toBe("true");
+      state.latestStarted = true;
+      state.latestWorktreePath = "/repo/worktree";
+      await act(async () => row?.click());
+    }
+    expect(state.stopSession).not.toHaveBeenCalled();
+    expect(state.updateMetadata).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    state.started = true;
+    state.latestStarted = undefined;
+    state.latestWorktreePath = undefined;
+    vi.unstubAllGlobals();
+  }
+});
