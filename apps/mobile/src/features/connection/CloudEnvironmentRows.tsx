@@ -11,7 +11,7 @@ import {
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useState } from "react";
-import { Pressable, type TextLayoutEvent, View, type ViewProps } from "react-native";
+import { Platform, Pressable, type TextLayoutEvent, View, type ViewProps } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
@@ -193,16 +193,23 @@ function ConnectedCloudEnvironmentRow(props: {
   const onOpen = props.onOpen;
   return (
     // An accessible row would hide its switch from screen readers, so the title stands in for it.
-    <Pressable accessible={false} onPress={onOpen} onLongPress={props.onRemove}>
+    <Pressable
+      accessible={false}
+      importantForAccessibility="no"
+      onPress={onOpen}
+      onLongPress={props.onRemove}
+    >
       <CloudEnvironmentRowShell
         titleAccessibility={{
           accessible: true,
           accessibilityRole: onOpen ? "button" : undefined,
           accessibilityLabel: onOpen ? `Manage ${props.environment.environmentLabel}` : undefined,
           accessibilityHint: "Long press to remove from this device",
-          accessibilityActions: onOpen
-            ? [{ name: "activate" }, { name: "longpress" }]
-            : [{ name: "longpress" }],
+          // VoiceOver's taps fall through to the row; TalkBack needs the actions on this node.
+          accessibilityActions:
+            Platform.OS === "android"
+              ? [...(onOpen ? [{ name: "activate" }] : []), { name: "longpress" }]
+              : undefined,
           onAccessibilityAction: (event) => {
             if (event.nativeEvent.actionName === "activate") onOpen?.();
             else props.onRemove();

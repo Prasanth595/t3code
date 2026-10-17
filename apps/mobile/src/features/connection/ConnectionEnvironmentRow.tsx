@@ -81,6 +81,7 @@ export function ConnectionEnvironmentRow(props: {
       {/* An accessible row would hide its switch from screen readers, so the details stand in for it. */}
       <Pressable
         accessible={false}
+        importantForAccessibility="no"
         className="flex-row items-center gap-3 px-4 py-3.5 active:opacity-70"
         onPress={props.onToggle}
       >
@@ -90,7 +91,8 @@ export function ConnectionEnvironmentRow(props: {
           accessibilityLabel={
             props.opensDetails ? `Manage ${props.environment.environmentLabel}` : undefined
           }
-          accessibilityActions={[{ name: "activate" }]}
+          // VoiceOver's taps fall through to the row; TalkBack needs the action on this node.
+          accessibilityActions={Platform.OS === "android" ? [{ name: "activate" }] : undefined}
           onAccessibilityAction={() => props.onToggle()}
           className="flex-1 gap-0.5"
         >
