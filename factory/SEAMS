@@ -27,6 +27,7 @@ apps/server/src/cloud/bootService.test.ts
 apps/server/src/cloud/bootService.ts
 apps/server/src/httpCors.test.ts
 apps/server/src/httpCors.ts
+apps/server/src/provider/CodexChatGptAuth.test.ts
 apps/server/src/server.ts
 apps/web/src/components/settings/SettingsSidebarNav.tsx
 apps/web/src/components/settings/settingsSearch.ts
@@ -37,6 +38,7 @@ apps/web/src/routeTree.gen.ts
 packages/shared/package.json
 packages/shared/src/codexAuthHandoff.test.ts
 packages/shared/src/codexAuthHandoff.ts
+packages/shared/src/forkIdentity.test.ts
 packages/shared/src/forkIdentity.ts
 packages/shared/src/promptLinks.test.ts
 packages/shared/src/promptLinks.ts

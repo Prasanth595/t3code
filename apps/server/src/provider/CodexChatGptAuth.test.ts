@@ -1000,17 +1000,29 @@ it.effect("returns successful desktop sign-in to the original Welcome step", () 
   provision(
     Effect.gen(function* () {
       const h = yield* makeHarness;
-      h.setReturnUrl("t3code-dev://app/welcome#agents:test-environment");
+      h.setReturnUrl("t3code-factory-dev://app/welcome#agents:test-environment");
       yield* h.signIn;
       yield* h.phase("succeeded");
       assert.include(
         h.callbackResponses[0]!.body,
-        'content="1;url=t3code-dev://app/welcome#agents:test-environment"',
+        'content="1;url=t3code-factory-dev://app/welcome#agents:test-environment"',
       );
       assert.include(
         h.callbackResponses[0]!.body,
-        'href="t3code-dev://app/welcome#agents:test-environment"',
+        'href="t3code-factory-dev://app/welcome#agents:test-environment"',
       );
+    }),
+  ),
+);
+
+it.effect("never returns a desktop sign-in to upstream T3 Code's scheme", () =>
+  provision(
+    Effect.gen(function* () {
+      const h = yield* makeHarness;
+      h.setReturnUrl("t3code-dev://app/welcome#agents:test-environment");
+      yield* h.signIn;
+      yield* h.phase("succeeded");
+      assert.notInclude(h.callbackResponses[0]!.body, "t3code-dev://");
     }),
   ),
 );
