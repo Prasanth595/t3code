@@ -52,6 +52,7 @@ import {
   type InterruptContext,
 } from "./building.ts";
 import { launchMessage, type ResumeFrom } from "./messages.ts";
+import { field } from "./progress.ts";
 import { resume, start } from "./start.ts";
 
 const tempDir = useTempDirs();
@@ -1617,6 +1618,75 @@ describe("interrupted: a run with no recorded approval", () => {
         assert.deepStrictEqual(rig.gh, []);
         assert.deepStrictEqual(rig.launches, []);
         assert.ok(!NodeFS.existsSync(runPath(rig.dataDir, run10b)));
+      }),
+  );
+});
+
+// ---- the time limit, and the attempt a person starts after it -----------------------------------------
+
+describe("the time limit", () => {
+  it.effect(
+    "stops a run past limits.minutes, and the next attempt resumes from the branch it recorded",
+    () =>
+      Effect.gen(function* () {
+        // The launch line has no branch, as T3 answers the launch before the worktree exists: the
+        // stop reads the thread's branch and records it on the stuck line for the next attempt.
+        const rig = rigFor(startedWith(null));
+        rig.clock.now = T0 + 91 * MINUTE;
+        assert.strictEqual((yield* timeLimit(rig.ctx, rig.run)).kind, "stopped");
+        const stuck = readRun(rig.dataDir, rig.run).entries.find(
+          (entry) => entry.event === "stuck",
+        );
+        assert.ok(stuck !== undefined);
+        assert.strictEqual(stuck.cause?.reason, "time-limit");
+        assert.strictEqual((stuck.data as { branch: unknown }).branch, "t3code/abc");
+        assert.strictEqual(rig.world.issue.state, "stuck");
+
+        // A person sets `factory:ready` again: `start` continues from that branch on origin.
+        rig.world.issue = issueDetail("ready", []);
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* start(rig.ctx, 10), {
+          kind: "started",
+          run: run10b,
+          threadId: "thread-2",
+        });
+        assert.deepStrictEqual(
+          rig.reads.filter((read) => /^(branchTip|textEditedSince) /.test(read)),
+          [`textEditedSince 10 ${LABELED}`, "branchTip t3code/abc"],
+        );
+        const request = rig.launches.at(-1)!;
+        assert.strictEqual(request.commandId, "softfac:rawphp__softfac__10__2:launch");
+        assert.strictEqual(request.baseRef, "t3code/abc");
+        assert.strictEqual(request.startFromOrigin, true);
+        assert.strictEqual(
+          request.message,
+          launchMessage(REPO, 10, "rawphp", "/gh/rawphp", {
+            run: run10,
+            branch: "t3code/abc",
+            after: "time-limit",
+          }),
+        );
+        assert.ok(
+          request.message.includes(
+            "A previous attempt of this issue (rawphp__softfac__10__1) stopped at its time limit. The worktree already holds its commits: continue from them, do not start over.",
+          ),
+          request.message,
+        );
+        // The ledger shows the choice: the step, the launch line's `resumed_from` and its reason.
+        const next = readRun(rig.dataDir, run10b).entries;
+        assert.ok(
+          next.some(
+            (entry) =>
+              entry.event === "step_changed" &&
+              field(entry.data, "step") === "launch-sending resumed-from t3code/abc",
+          ),
+        );
+        const launched = next.find((entry) => entry.event === "session_launched");
+        assert.deepStrictEqual(field(launched?.data, "resumed_from"), {
+          run: "rawphp__softfac__10__1",
+          branch: "t3code/abc",
+        });
+        assert.strictEqual(launched?.cause?.reason, "resumed-from-branch");
       }),
   );
 });
