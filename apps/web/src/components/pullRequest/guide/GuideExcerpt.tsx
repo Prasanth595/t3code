@@ -138,6 +138,8 @@ export function GuideExcerpt({
   loadDiffFiles: FileDiffContentsLoader;
   onOpenFile: (path: string) => void;
 }) {
+  // Kept here, not in ExcerptDiff, so a selection survives the diff reloading for a new head.
+  const [draft, setDraft] = useState<ExcerptDraft | null>(null);
   const slice = excerptSlice(file, excerpt);
 
   return (
@@ -152,6 +154,8 @@ export function GuideExcerpt({
           excerpt={excerpt}
           file={file}
           slice={slice}
+          draft={draft}
+          setDraft={setDraft}
           loadDiffFiles={loadDiffFiles}
           notes={notes}
           commenting={commenting}
@@ -176,11 +180,13 @@ export function GuideExcerpt({
   );
 }
 
-// Owns the comment draft so draft edits re-render the diff without re-slicing the patch.
+// Split out so draft changes re-render the diff without re-slicing the patch.
 function ExcerptDiff({
   excerpt,
   file,
   slice,
+  draft,
+  setDraft,
   loadDiffFiles,
   notes,
   commenting,
@@ -189,12 +195,13 @@ function ExcerptDiff({
   excerpt: PullRequestReviewGuideExcerpt;
   file: FileDiffMetadata;
   slice: ExcerptSlice;
+  draft: ExcerptDraft | null;
+  setDraft: (draft: ExcerptDraft | null) => void;
   loadDiffFiles: FileDiffContentsLoader;
   notes: ReadonlyArray<ExcerptNoteMarker>;
   commenting: ExcerptCommenting | null;
   onOpenFile: (path: string) => void;
 }) {
-  const [draft, setDraft] = useState<ExcerptDraft | null>(null);
   const { resolvedTheme } = useTheme();
   const loadExcerptFiles = excerptLoader(excerpt, slice.rows, loadDiffFiles);
 
