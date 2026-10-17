@@ -231,6 +231,7 @@ describe("listUnfinishedRuns: whether a session may be running", () => {
         branch: "b",
         model_instance: "m",
         model: "x",
+        model_options: null,
         resumed_from: null,
       },
     });

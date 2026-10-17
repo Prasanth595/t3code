@@ -83,6 +83,8 @@ factory/scripts/rollback.sh
 
 It points `current` at `previous`, restarts the job, removes `previous` and runs the same health check on the restored version. It exits 1 with `rollback to <previous> from <current> failed its health check` when that check fails too. When there is no `previous`, install an older archive from `release/` with `factory/scripts/install.sh <archive>`.
 
+A version from before #93 requires `model_instance` and `model` in `~/.config/t3fac/factory/config.yml`. The current version does not read them: it warns about them and keeps them through a save from `/settings/factory`, but never adds them, so a file copied from `factory/config.example.yml` or first written by the settings page has neither. Before rolling back to such a version, check the file has both keys and add them if not, or the restored server fails its health check with `model: is missing`. Delete them once no rollback to such a version is possible.
+
 ### Handing the repo over and back
 
 [docs/handover.md](docs/handover.md) is the runbook for switching this repo from the Rust factory to the fork's factory, and for handing it back and moving it back.
@@ -100,7 +102,7 @@ The Factory pages work on a phone. They run in the fork's own web, so open the f
 
    It maps the server to Tailscale HTTPS and prints a pairing link such as `https://<machine>.<tailnet>.ts.net/pair#token=...`. Treat the link as a password.
 
-3. Open the link in the phone's browser, which signs it in. Then open `/factory` on that same origin. The machine config is at `/settings/factory`.
+3. Open the link in the phone's browser, which signs it in. Then open `/factory` on that same origin. The machine config is at `/settings/factory`. It names no model: each issue's session runs on the T3 project's default model, falling back to the default model in T3's own Settings, so the model is picked once, in T3.
 4. Add it to the home screen: in iOS Safari, Share, then Add to Home Screen; in Android Chrome, the menu, then Add to home screen.
 
 The pages use the paired session, so there is no factory token to set. Pause, resume and stop need the `orchestration:operate` scope that a normal pairing carries. A connection through T3 Connect (the relay) does not reach the Factory pages yet; pair directly as above.

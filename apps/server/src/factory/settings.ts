@@ -14,10 +14,10 @@ import { isMap, isScalar, isSeq, parseDocument, YAMLMap } from "yaml";
 
 import {
   DEFAULT_MAX_CONCURRENT_GATES,
-  DEFAULT_MODEL_INSTANCE,
   DEFAULT_POLL_SECONDS,
   loadMachineConfig,
   parseMachineConfig,
+  RETIRED_MACHINE_KEYS,
   type ConfigError,
   type MachineConfig,
   type ProjectConfig,
@@ -48,8 +48,6 @@ export interface MachineConfigFields {
   readonly poll_seconds: number;
   readonly max_concurrent_runs: number;
   readonly max_concurrent_gates: number;
-  readonly model_instance: string;
-  readonly model: string;
   readonly repos: ReadonlyArray<{ readonly repo: string; readonly path: string }>;
 }
 
@@ -91,12 +89,19 @@ const EDITABLE_KEYS = [
   "poll_seconds",
   "max_concurrent_runs",
   "max_concurrent_gates",
-  "model_instance",
-  "model",
 ] as const;
 
-/** The keys of the machine config file: the form's, `repos`, and `notify`, which stays a hand edit. */
-const KNOWN_KEYS: ReadonlySet<string> = new Set([...EDITABLE_KEYS, "repos", "notify"]);
+/**
+ * The keys an edit keeps: the form's, `repos`, `notify` (a hand edit), and the retired model keys.
+ * Those two stay so that a rollback to a version that still requires them loads the file; a key
+ * that is not here is dropped by an edit.
+ */
+const KNOWN_KEYS: ReadonlySet<string> = new Set([
+  ...EDITABLE_KEYS,
+  "repos",
+  "notify",
+  ...RETIRED_MACHINE_KEYS,
+]);
 
 /** `max_concurrent_runs` has no default in the file (it is required); the form starts at one. */
 const FORM_MAX_CONCURRENT_RUNS = 1;
@@ -106,8 +111,6 @@ const defaults = (): MachineConfigFields => ({
   poll_seconds: DEFAULT_POLL_SECONDS,
   max_concurrent_runs: FORM_MAX_CONCURRENT_RUNS,
   max_concurrent_gates: DEFAULT_MAX_CONCURRENT_GATES,
-  model_instance: DEFAULT_MODEL_INSTANCE,
-  model: "",
   repos: [],
 });
 
@@ -116,8 +119,6 @@ const fieldsOf = (machine: MachineConfig): MachineConfigFields => ({
   poll_seconds: machine.pollSeconds,
   max_concurrent_runs: machine.maxConcurrentRuns,
   max_concurrent_gates: machine.maxConcurrentGates,
-  model_instance: machine.modelInstance,
-  model: machine.model,
   repos: machine.repos.map(({ repo, path }) => ({ repo, path })),
 });
 
@@ -199,7 +200,7 @@ export const readMachineConfigReport = (
         repos: [],
       } satisfies MachineConfigReport;
     }
-    const machine = loaded.success.value;
+    const machine = loaded.success.value.config;
     return {
       file,
       exists: true,

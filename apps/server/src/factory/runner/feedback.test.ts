@@ -41,6 +41,7 @@ import { T0, useTempDirs } from "../ledger/testSupport.ts";
 import {
   SessionsError,
   ThreadNotFoundError,
+  type FactoryProject,
   type LaunchRequest,
   type RunStatus,
   type ThreadStatus,
@@ -106,6 +107,7 @@ const STARTED: ReadonlyArray<RunEvent> = [
       branch: "t3code/abc",
       model_instance: "claudeAgent",
       model: "claude-opus-5-5",
+      model_options: null,
       resumed_from: null,
     },
   },
@@ -384,7 +386,10 @@ class FakeT3 {
   failAt: number | null = null;
   worktreeRemoveFails = false;
   /** The T3 project of the repo; none when there is no project for it on this machine. */
-  project: string | null = "proj-1";
+  project: FactoryProject | null = {
+    id: "proj-1",
+    model: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+  };
   /** Every launch request T3 received, in order. */
   readonly launches: Array<LaunchRequest> = [];
   /** The thread T3 made for each launch command id: a launch sent again under an id answers the thread it made. */
@@ -711,7 +716,6 @@ const rigFor = (events: ReadonlyArray<RunEvent> = STARTED): Rig => {
     dataDir,
     repoPath: "/p/softfac",
     ghConfigDir: "/gh/rawphp",
-    model: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
     tracker: gh.tracker,
     sessions: t3.sessions,
     gate: ws.gate,
@@ -859,6 +863,7 @@ const relaunchedLine: Line = {
     branch: "t3code/def",
     model_instance: "claudeAgent",
     model: "claude-opus-5-5",
+    model_options: null,
     resumed_from: { run: RUN, branch: "t3code/abc" },
   },
 };

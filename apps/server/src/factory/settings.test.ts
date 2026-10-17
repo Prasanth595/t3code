@@ -25,9 +25,6 @@ gh_config_dir: /gh # trailing note
 poll_seconds: 60
 # runs at once
 max_concurrent_runs: 1
-# the model
-model_instance: claudeAgent
-model: claude-sonnet-5-5
 # notifications stay a hand edit
 notify: false
 # the repos
@@ -53,7 +50,6 @@ describe("editMachineConfig", () => {
       gh_config_dir: "/other",
       poll_seconds: 90,
       max_concurrent_runs: 3,
-      model: "claude-opus-4-8",
       repos: [
         { repo: "a/b", path: "/b2" },
         { repo: "c/d", path: "/d" },
@@ -69,13 +65,11 @@ describe("editMachineConfig", () => {
       );
     }
     const parsed = parseMachineConfig(text, FILE);
-    assert.deepStrictEqual(Result.isSuccess(parsed) && parsed.success, {
+    assert.deepStrictEqual(Result.isSuccess(parsed) && parsed.success.config, {
       ghConfigDir: "/other",
       pollSeconds: 90,
       maxConcurrentRuns: 3,
       maxConcurrentGates: 2,
-      modelInstance: "claudeAgent",
-      model: "claude-opus-4-8",
       notify: false,
       repos: [
         { repo: "a/b", path: "/b2" },
@@ -98,9 +92,22 @@ describe("editMachineConfig", () => {
   it("drops repos the body no longer lists", () => {
     const text = edited(COMMENTED, { repos: [{ repo: "x/y", path: "/y" }] });
     const parsed = parseMachineConfig(text, FILE);
-    assert.deepStrictEqual(Result.isSuccess(parsed) && parsed.success.repos, [
+    assert.deepStrictEqual(Result.isSuccess(parsed) && parsed.success.config.repos, [
       { repo: "x/y", path: "/y" },
     ]);
+  });
+
+  // #93 retired the two keys. A save keeps them as written, so a rollback to a version that
+  // still requires them loads the file; the current loader only warns about them.
+  it("keeps the retired model_instance and model keys through a save, with every other key and comment", () => {
+    const retired = COMMENTED.replace(
+      "# notifications stay a hand edit",
+      "# the model\nmodel_instance: claudeAgent # old\nmodel: claude-sonnet-5-5\n# notifications stay a hand edit",
+    );
+    const text = edited(retired, { poll_seconds: 60 });
+    // The YAML library may add a blank line before a trailing comment; the keys and comments are the point.
+    const unblank = (value: string) => value.replace(/\n{2,}/g, "\n");
+    assert.strictEqual(unblank(text), unblank(retired));
   });
 
   describe("repos", () => {
@@ -146,7 +153,6 @@ describe("editMachineConfig", () => {
         "gh_config_dir: /gh",
         "poll_seconds: 60",
         "max_concurrent_runs: 1",
-        "model: m",
         "repos:",
         "  # the main repo",
         "  - repo: a/b # primary",
@@ -168,7 +174,6 @@ describe("editMachineConfig", () => {
       gh_config_dir: "/gh",
       poll_seconds: 60,
       max_concurrent_runs: 1,
-      model: "m",
       repos: [{ repo: "a/b", path: "/b" }],
     };
 
@@ -188,10 +193,18 @@ describe("editMachineConfig", () => {
   });
 
   it("refuses an invalid body with the parser's fields", () => {
-    const result = editMachineConfig(COMMENTED, { poll_seconds: 5, model: "", repos: [] }, FILE);
+    const result = editMachineConfig(
+      COMMENTED,
+      { poll_seconds: 5, gh_config_dir: "", repos: [] },
+      FILE,
+    );
     assert.ok(Result.isFailure(result));
     const errors = Result.isFailure(result) ? result.failure : [];
-    assert.deepStrictEqual(errors.map((e) => e.field).sort(), ["model", "poll_seconds", "repos"]);
+    assert.deepStrictEqual(errors.map((e) => e.field).sort(), [
+      "gh_config_dir",
+      "poll_seconds",
+      "repos",
+    ]);
     assert.ok(errors.every((e) => e.file === FILE));
   });
 
@@ -218,8 +231,6 @@ describe("editMachineConfig", () => {
       poll_seconds: 60,
       max_concurrent_runs: 1,
       max_concurrent_gates: 2,
-      model_instance: "claudeAgent",
-      model: "m",
       repos: [{ repo: "a/b", path: "/b" }],
     });
     const parsed = parseMachineConfig(text, FILE);
@@ -230,7 +241,6 @@ describe("editMachineConfig", () => {
     const text = edited(null, {
       gh_config_dir: "/gh",
       max_concurrent_runs: 1,
-      model: "m",
       repos: [{ repo: "a/b", path: "/b", extra: true }],
     });
     assert.notInclude(text, "extra");
@@ -249,8 +259,6 @@ const DEFAULTS = {
   poll_seconds: 60,
   max_concurrent_runs: 1,
   max_concurrent_gates: 2,
-  model_instance: "claudeAgent",
-  model: "",
   repos: [],
 };
 
@@ -278,7 +286,7 @@ describe("readMachineConfigReport", () => {
 
   it.effect("reports an invalid file as errors with no config", () =>
     Effect.gen(function* () {
-      const { report: r } = yield* report("model: 1\n");
+      const { report: r } = yield* report("poll_seconds: 1\n");
       assert.strictEqual(r.exists, true);
       assert.strictEqual(r.config, null);
       assert.ok(r.errors.length > 0);
@@ -288,19 +296,13 @@ describe("readMachineConfigReport", () => {
 
   it.effect("gives the form its draft: the values an invalid file holds, as written", () =>
     Effect.gen(function* () {
-      const { report: r } = yield* report(
-        COMMENTED.replace("poll_seconds: 60", "poll_seconds: 5").replace(
-          "model: claude-sonnet-5-5\n",
-          "",
-        ),
-      );
+      const { report: r } = yield* report(COMMENTED.replace("poll_seconds: 60", "poll_seconds: 5"));
       assert.strictEqual(r.config, null);
       assert.deepStrictEqual(r.defaults, DEFAULTS);
       assert.deepStrictEqual(r.draft, {
         gh_config_dir: "/gh",
         poll_seconds: 5,
         max_concurrent_runs: 1,
-        model_instance: "claudeAgent",
         repos: [{ repo: "a/b", path: "/b" }],
       });
     }),
@@ -309,7 +311,7 @@ describe("readMachineConfigReport", () => {
   it.effect("copies only what is a string, a number or a repo mapping into the draft", () =>
     Effect.gen(function* () {
       const { report: r } = yield* report(
-        "poll_seconds: [1]\nmodel: true\ngh_config_dir: /x\nrepos:\n  - repo: a/b\n    path: 7\n  - nope\n  - {path: /p}\n",
+        "poll_seconds: [1]\ngh_config_dir: /x\nrepos:\n  - repo: a/b\n    path: 7\n  - nope\n  - {path: /p}\n",
       );
       assert.deepStrictEqual(r.draft, {
         gh_config_dir: "/x",

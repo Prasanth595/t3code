@@ -70,6 +70,14 @@ export type RunEvent =
         branch: string | null;
         model_instance: string | null;
         model: string | null;
+        /**
+         * The provider options the launch sent with the model (a reasoning effort, say), in T3's
+         * `ModelSelection.options` shape; null when it sent none.
+         */
+        model_options: ReadonlyArray<{
+          readonly id: string;
+          readonly value: string | boolean;
+        }> | null;
         resumed_from: ResumedFrom | null;
       };
     }
@@ -170,7 +178,15 @@ export const RUN_EVENT_FIELDS = {
   triage_result: ["passed", "reasons"],
   questions_posted: ["questions"],
   answer_received: ["comment_id", "body_edited"],
-  session_launched: ["thread_id", "worktree", "branch", "model_instance", "model", "resumed_from"],
+  session_launched: [
+    "thread_id",
+    "worktree",
+    "branch",
+    "model_instance",
+    "model",
+    "model_options",
+    "resumed_from",
+  ],
   comment_forwarded: ["comment_id"],
   session_interrupted: [
     "resumes",

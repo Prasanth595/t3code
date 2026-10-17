@@ -448,8 +448,6 @@ const scenario = (spec: Spec) =>
           `gh_config_dir: ${ghDir}`,
           "poll_seconds: 10",
           "max_concurrent_runs: 1",
-          "model_instance: claudeAgent",
-          "model: claude-sonnet-4-6",
           "notify: false",
           "repos:",
           `  - repo: ${REPO}`,

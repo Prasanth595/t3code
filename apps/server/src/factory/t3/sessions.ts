@@ -1,4 +1,12 @@
-import { CommandId, MessageId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type ModelSelection,
+} from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -14,6 +22,7 @@ import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ThreadLaunch from "../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
+import * as ServerSettings from "../../serverSettings.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 
 /**
@@ -43,6 +52,19 @@ export interface Model {
   readonly instanceId: string;
   /** The model id, e.g. `claude-sonnet-5-5`. */
   readonly model: string;
+  /** The provider options the selection carries (a reasoning effort, say), when it has any. */
+  readonly options?: ModelSelection["options"];
+}
+
+/** The T3 project of a watched repo, as `findProject` answers it. */
+export interface FactoryProject {
+  readonly id: string;
+  /**
+   * The model a session on this project runs on: the project's default model, else the default
+   * in T3's settings, the same choice a person gets in a new thread on the project. Null when
+   * neither names one; the factory then launches nothing.
+   */
+  readonly model: Model | null;
 }
 
 /** Everything `launch` needs. */
@@ -239,8 +261,10 @@ export const threadStatusOf = (snapshot: ThreadSnapshot): ThreadStatus => {
 export class FactorySessions extends Context.Service<
   FactorySessions,
   {
-    /** The id of the live T3 project whose workspace root is exactly `workspaceRoot`. */
-    readonly findProject: (workspaceRoot: string) => Effect.Effect<string | null, SessionsError>;
+    /** The live T3 project whose workspace root is exactly `workspaceRoot`, with its model. */
+    readonly findProject: (
+      workspaceRoot: string,
+    ) => Effect.Effect<FactoryProject | null, SessionsError>;
     /**
      * Starts a thread in its own worktree and runs `message` in it. The
      * worktree is prepared asynchronously, so the answer may not carry a
@@ -343,12 +367,20 @@ export const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
+  const settings = yield* ServerSettings.ServerSettingsService;
 
   const findProject: FactorySessions["Service"]["findProject"] = (workspaceRoot) =>
-    projects.findActiveByWorkspaceRoot(workspaceRoot).pipe(
-      Effect.map(Option.match({ onNone: () => null, onSome: (row) => row.projectId as string })),
-      Effect.mapError((cause) => new SessionsError({ operation: "find-project", cause })),
-    );
+    Effect.gen(function* () {
+      const row = yield* projects.findActiveByWorkspaceRoot(workspaceRoot);
+      if (Option.isNone(row)) return null;
+      // T3's own resolver, as a new thread uses it (`serverRuntimeStartup.ts`): a project
+      // override stored in the settings wins over the row, a folded install ignores the row,
+      // and a model whose provider instance is disabled for the project is skipped.
+      const { projectId } = row.value;
+      const model = resolveProjectSettings(yield* settings.getSettings, projectId, row.value)
+        .settings.defaultModelSelection;
+      return { id: projectId as string, model };
+    }).pipe(Effect.mapError((cause) => new SessionsError({ operation: "find-project", cause })));
 
   const launch: FactorySessions["Service"]["launch"] = (request) =>
     Effect.gen(function* () {
@@ -359,7 +391,11 @@ export const make = Effect.gen(function* () {
         commandId,
         projectId,
         title: request.title,
-        modelSelection: { instanceId, model: request.model.model },
+        modelSelection: {
+          instanceId,
+          model: request.model.model,
+          ...(request.model.options !== undefined && { options: request.model.options }),
+        },
         runtimeMode: "full-access",
         interactionMode: "default",
         workspaceStrategy: {

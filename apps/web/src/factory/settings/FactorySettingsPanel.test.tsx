@@ -81,8 +81,6 @@ const defaultsConfig = {
   poll_seconds: 60,
   max_concurrent_runs: 1,
   max_concurrent_gates: 2,
-  model_instance: "claudeAgent",
-  model: "",
   repos: [],
 };
 
@@ -102,8 +100,6 @@ const populated = report({
     poll_seconds: 45,
     max_concurrent_runs: 3,
     max_concurrent_gates: 2,
-    model_instance: "codex",
-    model: "gpt-5.5",
     repos: [
       { repo: "acme/alpha", path: "/work/alpha" },
       { repo: "acme/beta", path: "/work/beta" },
@@ -198,10 +194,29 @@ describe("FactorySettingsPanel", () => {
     poll_seconds: 60,
     max_concurrent_runs: 1,
     max_concurrent_gates: 2,
-    model_instance: "claudeAgent",
-    model: "",
     repos: [],
   };
+
+  // #93: the model is picked in T3 (the project's default, else Settings), not on this page.
+  it("has no model rows: the page edits no model_instance or model", async () => {
+    mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
+    mocks.saveFactoryConfig.mockResolvedValue(ok(populated));
+    const root = await open();
+
+    expect(root.findAll((node) => node.props["aria-label"] === "Model instance")).toHaveLength(0);
+    expect(root.findAll((node) => node.props["aria-label"] === "Model")).toHaveLength(0);
+    expect(textOf(root)).not.toContain("Model");
+
+    await click(button(root, "Save"));
+    const sent = mocks.saveFactoryConfig.mock.calls[0]![1] as Record<string, unknown>;
+    expect(Object.keys(sent).sort()).toEqual([
+      "gh_config_dir",
+      "max_concurrent_gates",
+      "max_concurrent_runs",
+      "poll_seconds",
+      "repos",
+    ]);
+  });
 
   it("shows the defaults when there is no file yet, and saving creates it", async () => {
     mocks.fetchFactoryConfig.mockResolvedValue(ok(report({ exists: false })));
@@ -211,7 +226,7 @@ describe("FactorySettingsPanel", () => {
     expect(textOf(root)).toContain("No config file exists at");
     expect(textOf(root)).toContain(FILE);
     expect(input(root, "Poll seconds").props.value).toBe("60");
-    expect(input(root, "Model instance").props.value).toBe("claudeAgent");
+    expect(input(root, "Max concurrent gates").props.value).toBe("2");
 
     await click(button(root, "Save"));
 
@@ -281,10 +296,10 @@ describe("FactorySettingsPanel", () => {
           draft: {
             gh_config_dir: "/home/t3/gh",
             poll_seconds: 45,
-            model: 7 as unknown as string,
+            max_concurrent_gates: "two" as unknown as number,
             repos: [{ repo: "acme/alpha", path: "/work/alpha" }, { repo: "acme/beta" }],
           },
-          errors: [{ file: FILE, field: "model", message: "must be a string" }],
+          errors: [{ file: FILE, field: "max_concurrent_gates", message: "must be an integer" }],
         }),
       ),
     );
@@ -296,16 +311,16 @@ describe("FactorySettingsPanel", () => {
     expect(input(root, "Max concurrent runs").props.value).toBe("1");
     expect(input(root, "Repository 1").props.value).toBe("acme/alpha");
     expect(input(root, "Path 2").props.value).toBe("");
-    expect(textOf(field(root, "model")!)).toContain("must be a string");
+    expect(textOf(field(root, "max_concurrent_gates")!)).toContain("must be an integer");
 
-    await type(input(root, "Model"), "gpt-5.5");
+    await type(input(root, "Max concurrent gates"), "3");
     await click(button(root, "Save"));
 
     expect(mocks.saveFactoryConfig).toHaveBeenCalledWith(mocks.prepared, {
       ...SAVED_KEYS,
       gh_config_dir: "/home/t3/gh",
       poll_seconds: 45,
-      model: "gpt-5.5",
+      max_concurrent_gates: 3,
       repos: [
         { repo: "acme/alpha", path: "/work/alpha" },
         { repo: "acme/beta", path: "" },
@@ -318,7 +333,7 @@ describe("FactorySettingsPanel", () => {
     mocks.saveFactoryConfig.mockResolvedValue({
       kind: "invalid",
       errors: [
-        { file: FILE, field: "model", message: "model is bad" },
+        { file: FILE, field: "gh_config_dir", message: "gh dir is bad" },
         { file: FILE, field: "repos", message: "must not be empty" },
         { file: FILE, field: "repos[0].path", message: "path is bad" },
         { file: FILE, message: "file level" },
@@ -331,9 +346,9 @@ describe("FactorySettingsPanel", () => {
     const top = textOf(root.findAll((node) => node.props["data-testid"] === "form-errors")[0]!);
     expect(top).toContain("must not be empty");
     expect(top).toContain("file level");
-    expect(top).not.toContain("model is bad");
+    expect(top).not.toContain("gh dir is bad");
     expect(top).not.toContain("path is bad");
-    expect(textOf(field(root, "model")!)).toContain("model is bad");
+    expect(textOf(field(root, "gh_config_dir")!)).toContain("gh dir is bad");
     expect(textOf(field(root, "repos[0].path")!)).toContain("path is bad");
   });
 
@@ -344,7 +359,6 @@ describe("FactorySettingsPanel", () => {
     expect(input(root, "GitHub config directory").props.value).toBe("/home/t3/gh");
     expect(input(root, "Poll seconds").props.value).toBe("45");
     expect(input(root, "Max concurrent runs").props.value).toBe("3");
-    expect(input(root, "Model").props.value).toBe("gpt-5.5");
     expect(input(root, "Repository 1").props.value).toBe("acme/alpha");
     expect(input(root, "Path 2").props.value).toBe("/work/beta");
 
@@ -419,8 +433,8 @@ describe("FactorySettingsPanel", () => {
         mocks.fetchFactoryConfig.mockResolvedValue(ok(populated));
         const root = await open();
         const inputs = root.findAll((node) => node.type === "input");
-        // Six machine fields, then a repo and a path for each of the two repos.
-        expect(inputs).toHaveLength(10);
+        // Four machine fields, then a repo and a path for each of the two repos.
+        expect(inputs).toHaveLength(8);
         expect(inputs.map((node) => node.props.size)).toEqual(inputs.map(() => "touch"));
         const buttons = root.findAll((node) => node.type === "button");
         expect(buttons.map((node) => textOf(node).trim())).toEqual([

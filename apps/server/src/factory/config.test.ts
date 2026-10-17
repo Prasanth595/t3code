@@ -36,7 +36,6 @@ factory:
 const MACHINE = `
 gh_config_dir: /Users/me/.config/softfac/gh
 max_concurrent_runs: 1
-model: claude-sonnet-5-5
 repos:
   - repo: rawphp/softfac
     path: /Users/me/EA/projects/softfac
@@ -90,12 +89,14 @@ const project = (text: string) => {
   return result.success;
 };
 
-const machine = (text: string) => {
+const machineLoaded = (text: string) => {
   const result = parseMachineConfig(text, MFILE);
   if (Result.isFailure(result))
     throw new Error(`unexpected errors: ${JSON.stringify(result.failure)}`);
   return result.success;
 };
+
+const machine = (text: string) => machineLoaded(text).config;
 
 /** Assert exactly one error whose field and file are exactly as given. */
 const assertOne = (errs: ReadonlyArray<ConfigError>, field: string, file: string) => {
@@ -420,11 +421,41 @@ describe("machine config", () => {
       pollSeconds: 60,
       maxConcurrentRuns: 1,
       maxConcurrentGates: 2,
-      modelInstance: "claudeAgent",
-      model: "claude-sonnet-5-5",
       notify: true,
       repos: [{ repo: "rawphp/softfac", path: "/Users/me/EA/projects/softfac" }],
     });
+    expect(machineLoaded(MACHINE).warnings).toEqual([]);
+  });
+
+  // The keys were retired by #93: the model now comes from the T3 project, then the T3 settings.
+  // A file written before that must keep loading, so the factory that builds the upgrade stays up.
+  it("machine model_instance and model are no longer read, and each is one warning", () => {
+    const t = edit(MACHINE, (tree) => {
+      set(tree, "model_instance", "claudeAgent");
+      set(tree, "model", "claude-sonnet-5-5");
+    });
+    const loaded = machineLoaded(t);
+    expect(loaded.config).not.toHaveProperty("model");
+    expect(loaded.config).not.toHaveProperty("modelInstance");
+    expect(loaded.warnings).toEqual([
+      {
+        file: MFILE,
+        field: "model_instance",
+        message:
+          "is no longer used: the model comes from the T3 project's default model, then the T3 settings default",
+      },
+      {
+        file: MFILE,
+        field: "model",
+        message:
+          "is no longer used: the model comes from the T3 project's default model, then the T3 settings default",
+      },
+    ]);
+  });
+
+  it("machine a retired key of any type is a warning, never an error", () => {
+    const loaded = machineLoaded(edit(MACHINE, (tree) => set(tree, "model", "[x]")));
+    expect(loaded.warnings.map((w) => w.field)).toEqual(["model"]);
   });
 
   it("machine notify can be turned off", () => {
@@ -442,19 +473,16 @@ describe("machine config", () => {
       set(tree, "poll_seconds", "10");
       set(tree, "max_concurrent_runs", "3");
       set(tree, "max_concurrent_gates", "4");
-      set(tree, "model_instance", "codex");
     });
     const c = machine(t);
     expect(c.pollSeconds).toBe(10);
     expect(c.maxConcurrentRuns).toBe(3);
     expect(c.maxConcurrentGates).toBe(4);
-    expect(c.modelInstance).toBe("codex");
   });
 
   describe("required keys", () => {
     it("machine missing gh config dir", () => machineMissing("gh_config_dir"));
     it("machine missing max concurrent runs", () => machineMissing("max_concurrent_runs"));
-    it("machine missing model", () => machineMissing("model"));
     it("machine missing repos", () => machineMissing("repos"));
     it("machine repo missing repo", () => machineMissing("repos.0.repo", "repos[0].repo"));
     it("machine repo missing path", () => {
@@ -492,7 +520,7 @@ describe("machine config", () => {
   });
 
   describe("strings", () => {
-    const KEYS = ["model", "model_instance", "gh_config_dir"];
+    const KEYS = ["gh_config_dir"];
     it.each(KEYS)("machine %s empty", (key) => {
       machineBad(key, '""');
       expect(machineErr(edit(MACHINE, (t) => set(t, key, '""')))[0]!.message).toBe(
@@ -551,12 +579,12 @@ describe("machine config", () => {
     it("machine two unknown keys are two errors, after the field errors", () => {
       const t = edit(MACHINE, (tree) => {
         set(tree, "zzz", "1");
-        remove(tree, "model");
+        remove(tree, "gh_config_dir");
         set(tree, "repos.0.pathh", "x");
       });
       const errs = machineErr(t);
       expect(errs.map(formatConfigError)).toEqual([
-        `${MFILE}: model: is missing`,
+        `${MFILE}: gh_config_dir: is missing`,
         `${MFILE}: unknown key zzz`,
         `${MFILE}: unknown key repos[0].pathh`,
       ]);
@@ -569,11 +597,11 @@ describe("machine config", () => {
 
   it("machine reports all errors together", () => {
     const t = edit(MACHINE, (tree) => {
-      remove(tree, "model");
+      remove(tree, "gh_config_dir");
       set(tree, "poll_seconds", "1");
       set(tree, "max_concurrent_runs", "0");
     });
-    expect(fields(machineErr(t))).toEqual(["poll_seconds", "max_concurrent_runs", "model"]);
+    expect(fields(machineErr(t))).toEqual(["gh_config_dir", "poll_seconds", "max_concurrent_runs"]);
   });
 
   it("machine invalid yaml names the file", () => {
@@ -618,11 +646,14 @@ describe("loaders", () => {
         const file = path.join(dir, "config.yml");
         yield* fs.writeFileString(file, MACHINE);
         const first = yield* loadMachineConfig(file);
-        expect(Option.map(first, (c) => c.model)).toEqual(Option.some("claude-sonnet-5-5"));
+        expect(Option.map(first, (c) => c.config.maxConcurrentRuns)).toEqual(Option.some(1));
 
-        yield* fs.writeFileString(file, MACHINE.replace("claude-sonnet-5-5", "claude-opus-4-8"));
+        yield* fs.writeFileString(
+          file,
+          MACHINE.replace("max_concurrent_runs: 1", "max_concurrent_runs: 3"),
+        );
         const second = yield* loadMachineConfig(file);
-        expect(Option.map(second, (c) => c.model)).toEqual(Option.some("claude-opus-4-8"));
+        expect(Option.map(second, (c) => c.config.maxConcurrentRuns)).toEqual(Option.some(3));
       }),
     ),
   );
@@ -631,9 +662,11 @@ describe("loaders", () => {
     withTempDir((dir, fs, path) =>
       Effect.gen(function* () {
         const file = path.join(dir, "config.yml");
-        yield* fs.writeFileString(file, MACHINE.replace("model: claude-sonnet-5-5\n", ""));
+        yield* fs.writeFileString(file, MACHINE.replace("max_concurrent_runs: 1\n", ""));
         const failure = yield* Effect.flip(loadMachineConfig(file));
-        expect(failure.errors.map(formatConfigError)).toEqual([`${file}: model: is missing`]);
+        expect(failure.errors.map(formatConfigError)).toEqual([
+          `${file}: max_concurrent_runs: is missing`,
+        ]);
       }),
     ),
   );
@@ -669,19 +702,20 @@ describe("loaders", () => {
       );
       expect(yield* loadMachineConfig(file)).toEqual(
         Option.some({
-          ghConfigDir: "/Users/tomkaczocha/.config/t3fac/gh",
-          pollSeconds: 60,
-          maxConcurrentRuns: 1,
-          maxConcurrentGates: 1,
-          modelInstance: "claudeAgent",
-          model: "claude-fable-5-1",
-          notify: true,
-          repos: [
-            {
-              repo: "original-solutions/t3code-factory",
-              path: "/Users/tomkaczocha/EA/projects/t3code-factory-fac",
-            },
-          ],
+          warnings: [],
+          config: {
+            ghConfigDir: "/Users/tomkaczocha/.config/t3fac/gh",
+            pollSeconds: 60,
+            maxConcurrentRuns: 1,
+            maxConcurrentGates: 1,
+            notify: true,
+            repos: [
+              {
+                repo: "original-solutions/t3code-factory",
+                path: "/Users/tomkaczocha/EA/projects/t3code-factory-fac",
+              },
+            ],
+          },
         }),
       );
     }).pipe(Effect.provide(NodeServices.layer)),

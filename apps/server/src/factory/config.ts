@@ -54,7 +54,6 @@ const DEFAULT_REGATES = 5;
 const DEFAULT_INTERRUPTION_RESUMES = 2;
 export const DEFAULT_POLL_SECONDS = 60;
 export const DEFAULT_MAX_CONCURRENT_GATES = 2;
-export const DEFAULT_MODEL_INSTANCE = "claudeAgent";
 
 /** What a repo's runs are timed by when none of its project configs has loaded. */
 export const timeLimitOnlyProjectConfig = (): ProjectConfig => ({
@@ -97,8 +96,6 @@ export interface MachineConfig {
    */
   readonly maxConcurrentRuns: number;
   readonly maxConcurrentGates: number;
-  readonly modelInstance: string;
-  readonly model: string;
   /** Whether a new attention item posts a macOS notification. The list is kept either way. */
   readonly notify: boolean;
   readonly repos: ReadonlyArray<WatchedRepo>;
@@ -112,14 +109,28 @@ const isMapping = (value: unknown): value is Mapping =>
 const join = (path: string, key: string) => (path === "" ? key : `${path}.${key}`);
 
 /**
+ * A machine config as it loaded: the config, and one warning per key the file still has that
+ * the factory no longer reads. A warning never stops the load.
+ */
+export interface LoadedMachineConfig {
+  readonly config: MachineConfig;
+  readonly warnings: ReadonlyArray<ConfigError>;
+}
+
+/**
  * Collects every problem of one file. A value of `undefined` stands for "no value": YAML never
  * produces it, so it marks an absent key or a parent that was already reported.
  */
 const makeChecker = (file: string) => {
   const errors: Array<ConfigError> = [];
+  const warnings: Array<ConfigError> = [];
 
   const err = (field: string, message: string) => {
     errors.push(field === "" ? { file, message } : { file, field, message });
+  };
+
+  const warn = (field: string, message: string) => {
+    warnings.push({ file, field, message });
   };
 
   const child = (parent: Mapping | undefined, path: string, key: string): unknown => {
@@ -264,6 +275,8 @@ const makeChecker = (file: string) => {
 
   return {
     err,
+    warn,
+    warnings,
     child,
     mapping,
     nonEmptyString,
@@ -360,11 +373,21 @@ const MACHINE_KEYS = [
   "poll_seconds",
   "max_concurrent_runs",
   "max_concurrent_gates",
-  "model_instance",
-  "model",
   "notify",
   "repos",
 ] as const;
+
+/**
+ * Keys the factory read before #93 and reads no more: the model comes from the T3 project's
+ * default, then the T3 settings default. A file written before the change still loads, with a
+ * warning per key, so the factory that builds the upgrade keeps running, and a save from the
+ * settings page keeps them (`settings.ts`) so a rollback to a version that requires them still
+ * loads. Remove both from the file by hand once no rollback past #93 is possible.
+ */
+export const RETIRED_MACHINE_KEYS = ["model_instance", "model"] as const;
+
+const RETIRED_KEY_MESSAGE =
+  "is no longer used: the model comes from the T3 project's default model, then the T3 settings default";
 
 const REPO_KEYS = ["repo", "path"] as const;
 
@@ -394,7 +417,10 @@ const reposFrom = (c: Checker, root: Mapping): ReadonlyArray<WatchedRepo> | unde
 
 /** Unknown keys at any depth, after the known-field errors. Wrong-typed values are skipped. */
 const checkUnknownKeys = (c: Checker, root: Mapping) => {
-  c.unknownKeys(root, MACHINE_KEYS, "");
+  for (const key of RETIRED_MACHINE_KEYS) {
+    if (Object.hasOwn(root, key)) c.warn(key, RETIRED_KEY_MESSAGE);
+  }
+  c.unknownKeys(root, [...MACHINE_KEYS, ...RETIRED_MACHINE_KEYS], "");
   const repos = root["repos"];
   if (!Array.isArray(repos)) return;
   repos.forEach((item, i) => {
@@ -417,13 +443,6 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     DEFAULT_MAX_CONCURRENT_GATES,
     1,
   );
-  const modelInstance = c.optionalNonEmptyString(
-    root,
-    "",
-    "model_instance",
-    DEFAULT_MODEL_INSTANCE,
-  );
-  const model = c.nonEmptyString(c.child(root, "", "model"), "model");
   const notify = c.optionalBoolean(root, "", "notify", true);
   const repos = reposFrom(c, root);
   checkUnknownKeys(c, root);
@@ -433,8 +452,6 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     pollSeconds === undefined ||
     maxConcurrentRuns === undefined ||
     maxConcurrentGates === undefined ||
-    modelInstance === undefined ||
-    model === undefined ||
     notify === undefined ||
     repos === undefined
   ) {
@@ -445,8 +462,6 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     pollSeconds,
     maxConcurrentRuns,
     maxConcurrentGates,
-    modelInstance,
-    model,
     notify,
     repos,
   };
@@ -465,11 +480,12 @@ export const parseProjectConfig = (
 export const parseMachineConfig = (
   text: string,
   file: string,
-): Result.Result<MachineConfig, ReadonlyArray<ConfigError>> => {
+): Result.Result<LoadedMachineConfig, ReadonlyArray<ConfigError>> => {
   const c = makeChecker(file);
   const parsed = c.root(text);
   if (Result.isFailure(parsed)) return Result.fail(parsed.failure);
-  return c.finish(machineFrom(c, parsed.success));
+  const config = machineFrom(c, parsed.success);
+  return c.finish(config === undefined ? undefined : { config, warnings: c.warnings });
 };
 
 const cannotRead = (file: string, cause: { readonly message: string }) =>
@@ -498,7 +514,7 @@ export const loadProjectConfig = (
 /** Reads the file on every call. A file that does not exist is `Option.none()`. */
 export const loadMachineConfig = (
   file: string,
-): Effect.Effect<Option.Option<MachineConfig>, ConfigErrors, FileSystem.FileSystem> =>
+): Effect.Effect<Option.Option<LoadedMachineConfig>, ConfigErrors, FileSystem.FileSystem> =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const text = yield* fs.readFileString(file).pipe(
@@ -509,6 +525,6 @@ export const loadMachineConfig = (
           : Effect.fail(cannotRead(file, cause)),
       ),
     );
-    if (Option.isNone(text)) return Option.none<MachineConfig>();
+    if (Option.isNone(text)) return Option.none<LoadedMachineConfig>();
     return Option.some(yield* toConfigErrors(file, parseMachineConfig(text.value, file)));
   });

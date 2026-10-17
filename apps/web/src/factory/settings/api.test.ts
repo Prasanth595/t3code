@@ -54,8 +54,6 @@ const values: MachineConfigValues = {
   poll_seconds: 45,
   max_concurrent_runs: 2,
   max_concurrent_gates: 1,
-  model_instance: "",
-  model: "",
   repos: [{ repo: "acme/app", path: "/work/app" }],
 };
 

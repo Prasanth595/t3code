@@ -21,6 +21,7 @@ import {
 } from "../../orchestration-v2/testkit/fixtures/shared.ts";
 import {
   MULTI_TURN_TRANSCRIPT,
+  SETTINGS_MODEL,
   createProject,
   git,
   initRepoWithCommit,
@@ -49,7 +50,11 @@ it.live(
           yield* createProject(repo);
 
           const sessions = yield* Sessions.FactorySessions;
-          assert.strictEqual(yield* sessions.findProject(repo), projectId);
+          // The kit's project has no default model, so the settings default is the one.
+          assert.deepStrictEqual(yield* sessions.findProject(repo), {
+            id: projectId,
+            model: SETTINGS_MODEL,
+          });
           assert.strictEqual(yield* sessions.findProject(`${repo}/`), null);
 
           const request: Sessions.LaunchRequest = {

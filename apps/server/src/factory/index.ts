@@ -366,7 +366,6 @@ export const liveWorld = (
     tracker: trackerFor(repo.watched),
     repoPath: repo.watched.path,
     ghConfigDir: machine.ghConfigDir,
-    model: { instanceId: machine.modelInstance, model: machine.model },
     sessions,
     clock,
   });
@@ -386,7 +385,6 @@ export const liveWorld = (
     ...buildingContext(repo),
     repoPath: repo.watched.path,
     ghConfigDir: machine.ghConfigDir,
-    model: { instanceId: machine.modelInstance, model: machine.model },
     tracker: trackerFor(repo.watched),
     sessions,
   });
@@ -395,7 +393,6 @@ export const liveWorld = (
     tracker: trackerFor(repo.watched),
     repoPath: repo.watched.path,
     ghConfigDir: machine.ghConfigDir,
-    model: { instanceId: machine.modelInstance, model: machine.model },
     sessions,
     gate: live.gate,
     maxConcurrentGates: machine.maxConcurrentGates,
@@ -841,7 +838,10 @@ const startFactory = (options: RuntimeOptions) =>
         state.status = idle("no factory config");
         return;
       }
-      const machine = loaded.success.value;
+      const { config: machine, warnings } = loaded.success.value;
+      for (const warning of warnings) {
+        yield* Effect.logWarning(formatConfigError(warning));
+      }
       yield* attention.setNotify(machine.notify);
       yield* start(machine);
     }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));

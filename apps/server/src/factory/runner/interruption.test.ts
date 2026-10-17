@@ -119,6 +119,7 @@ const startedWith = (
       branch,
       model_instance: "claudeAgent",
       model: "claude-opus-5-5",
+      model_options: null,
       resumed_from: null,
     },
   },
@@ -142,6 +143,7 @@ const startedResumedFrom = (
             branch,
             model_instance: "claudeAgent",
             model: "claude-opus-5-5",
+            model_options: null,
             resumed_from: resumedFrom,
           },
         }
@@ -447,7 +449,11 @@ const rigFor = (
     commentOnPr: notHere,
   };
   const sessions: InterruptContext["sessions"] = {
-    findProject: () => Effect.succeed("proj-1"),
+    findProject: () =>
+      Effect.succeed({
+        id: "proj-1",
+        model: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+      }),
     launch: (request) => {
       t3.push(`launch ${request.commandId}`);
       launches.push(request);
@@ -496,7 +502,6 @@ const rigFor = (
     sessions,
     repoPath: "/work/softfac",
     ghConfigDir: "/gh/rawphp",
-    model: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
     clock: () => clock.now,
   };
   return { dataDir, run: run10, world, gh, reads, t3, launches, clock, ctx };

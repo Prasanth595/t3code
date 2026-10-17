@@ -124,6 +124,12 @@ export const TEXT_CHANGED = "the issue text was changed while the factory was st
 /** The public reason when the launch was refused. The detail stays in the ledger. */
 export const LAUNCH_FAILED = "the factory could not launch a session";
 
+/** The ledger detail when the watched repo has no T3 project on this machine. */
+export const NO_PROJECT = "no T3 project for this repo on this machine";
+
+/** The ledger detail when the T3 project and the T3 settings name no default model. */
+export const NO_DEFAULT_MODEL = "no default model: set one on the T3 project or in Settings";
+
 /** The words a stuck run's ledger reason carries when a launch attempt may have started a session. */
 export const SESSION_MAY_EXIST = "a launch attempt may have started a session";
 

@@ -33,14 +33,12 @@ export interface RepoBlock {
   readonly errors: ReadonlyArray<ConfigError> | null;
 }
 
-/** The seven keys the form edits, under the YAML field names. */
+/** The five keys the form edits, under the YAML field names. The model is picked in T3, not here. */
 export interface MachineConfigValues {
   readonly gh_config_dir: string;
   readonly poll_seconds: number | null;
   readonly max_concurrent_runs: number | null;
   readonly max_concurrent_gates: number | null;
-  readonly model_instance: string;
-  readonly model: string;
   readonly repos: ReadonlyArray<{ readonly repo: string; readonly path: string }>;
 }
 
@@ -58,8 +56,6 @@ export interface MachineConfigReport {
     readonly poll_seconds: number;
     readonly max_concurrent_runs: number;
     readonly max_concurrent_gates: number;
-    readonly model_instance: string;
-    readonly model: string;
     readonly repos: ReadonlyArray<{ readonly repo: string; readonly path: string }>;
   } | null;
   /** What an empty form holds; the server owns these so the page never copies them. */
