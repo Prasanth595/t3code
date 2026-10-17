@@ -9,7 +9,7 @@ import type { PullRequestReviewGuideExcerpt, PullRequestReviewPosition } from "@
 import { ArrowUpRightIcon } from "lucide-react";
 import { useState } from "react";
 
-import { useRenderedAppearance } from "~/hooks/useRenderedAppearance";
+import { useRenderedAppearance } from "~/hooks/useTheme";
 import {
   getRenderablePatch,
   resolveDiffThemeName,
