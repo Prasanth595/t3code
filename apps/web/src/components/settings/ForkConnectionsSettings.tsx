@@ -10,7 +10,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import { resolveRemotePairingTarget } from "@t3tools/shared/remote";
 import { ChevronRightIcon } from "lucide-react";
-import { useCallback, useMemo, useState } from "react";
+import { useState } from "react";
 
 import {
   readRequestHeaders as readRequestHeadersAtom,
@@ -127,59 +127,53 @@ export function useAddBackendRequestHeaders() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState<RequestHeadersForm>(EMPTY_REQUEST_HEADERS_FORM);
 
-  const reset = useCallback(() => {
+  const reset = () => {
     setForm(EMPTY_REQUEST_HEADERS_FORM);
     setOpen(false);
-  }, []);
+  };
 
   // Headers are keyed by origin, so they are saved before pairing to let
   // the pairing request itself pass a proxy such as Cloudflare Access.
-  const saveForPairing = useCallback(
-    async (input: RemotePairingInput): Promise<PairingRequestHeaders> => {
-      let httpBaseUrl: string;
-      try {
-        httpBaseUrl = resolveRemotePairingTarget(input).httpBaseUrl;
-      } catch (error) {
-        return {
-          _tag: "Error",
-          message: error instanceof Error ? error.message : "Failed to add backend.",
-        };
-      }
-      const headerOrigin = requestHeaderOrigin(httpBaseUrl);
-      const parsedHeaders = requestHeadersFromForm(form);
-      if ("error" in parsedHeaders) {
-        return { _tag: "Error", message: parsedHeaders.error };
-      }
-      let previousHeaders: RequestHeaders | null = null;
-      if (headerOrigin !== null && parsedHeaders.headers.length > 0) {
-        const previous = await readRequestHeaders(headerOrigin);
-        const saved =
-          previous._tag === "Success"
-            ? await saveRequestHeaders({ origin: headerOrigin, headers: parsedHeaders.headers })
-            : previous;
-        if (previous._tag !== "Success" || saved._tag !== "Success") {
-          return { _tag: "Error", message: "Could not save the request headers." };
-        }
-        previousHeaders = previous.value;
-      }
+  const saveForPairing = async (input: RemotePairingInput): Promise<PairingRequestHeaders> => {
+    let httpBaseUrl: string;
+    try {
+      httpBaseUrl = resolveRemotePairingTarget(input).httpBaseUrl;
+    } catch (error) {
       return {
-        _tag: "Saved",
-        restore: async () => {
-          if (headerOrigin !== null && previousHeaders !== null) {
-            await saveRequestHeaders({ origin: headerOrigin, headers: previousHeaders });
-          }
-        },
-        failureMessage: async (fallback) =>
-          (await isCloudflareAccessChallenged(httpBaseUrl)) ? CLOUDFLARE_ACCESS_MESSAGE : fallback,
+        _tag: "Error",
+        message: error instanceof Error ? error.message : "Failed to add backend.",
       };
-    },
-    [form, readRequestHeaders, saveRequestHeaders],
-  );
+    }
+    const headerOrigin = requestHeaderOrigin(httpBaseUrl);
+    const parsedHeaders = requestHeadersFromForm(form);
+    if ("error" in parsedHeaders) {
+      return { _tag: "Error", message: parsedHeaders.error };
+    }
+    let previousHeaders: RequestHeaders | null = null;
+    if (headerOrigin !== null && parsedHeaders.headers.length > 0) {
+      const previous = await readRequestHeaders(headerOrigin);
+      const saved =
+        previous._tag === "Success"
+          ? await saveRequestHeaders({ origin: headerOrigin, headers: parsedHeaders.headers })
+          : previous;
+      if (previous._tag !== "Success" || saved._tag !== "Success") {
+        return { _tag: "Error", message: "Could not save the request headers." };
+      }
+      previousHeaders = previous.value;
+    }
+    return {
+      _tag: "Saved",
+      restore: async () => {
+        if (headerOrigin !== null && previousHeaders !== null) {
+          await saveRequestHeaders({ origin: headerOrigin, headers: previousHeaders });
+        }
+      },
+      failureMessage: async (fallback) =>
+        (await isCloudflareAccessChallenged(httpBaseUrl)) ? CLOUDFLARE_ACCESS_MESSAGE : fallback,
+    };
+  };
 
-  return useMemo(
-    () => ({ open, setOpen, form, setForm, reset, saveForPairing }),
-    [open, form, reset, saveForPairing],
-  );
+  return { open, setOpen, form, setForm, reset, saveForPairing };
 }
 type AddBackendRequestHeaders = ReturnType<typeof useAddBackendRequestHeaders>;
 

@@ -3,7 +3,6 @@
  * (`routes/_chat.pull-requests.tsx`). The route calls this module and keeps one line per hook.
  */
 import type { ClientSettings, EnvironmentId, ProjectId } from "@t3tools/contracts";
-import { useMemo } from "react";
 
 import type { FilterOperator } from "../filters/FilterChip";
 import type { PullRequestFilterChip } from "./pullRequestFilterChips.logic";
@@ -94,30 +93,18 @@ export function usePullRequestOwnerFilter<Project extends OwnedProject>(input: {
   // on screen read the typed text at once.
   const menuOwners = enabled ? (search.owners ?? NO_OWNERS) : NO_OWNERS;
   const menuOwnerOperator: FilterOperator = search.ownerOperator ?? "is";
-  const menuOwnerFilter = useMemo(
-    () => pullRequestMenuOwnerFilter(menuOwners, menuOwnerOperator),
-    [menuOwnerOperator, menuOwners],
-  );
+  const menuOwnerFilter = pullRequestMenuOwnerFilter(menuOwners, menuOwnerOperator);
   const requestOwners = sentOwners ?? menuOwnerFilter;
   const localOwners = typedOwners ?? menuOwnerFilter;
   // The projects that the list asks about. The project scope, the project menu and the
   // per-server split read these. The selection reads every project, because a link can open a
   // pull request from any owner.
-  const listProjects = useMemo(
-    () => projectsOfOwners(projects, requestOwners),
-    [projects, requestOwners],
-  );
-  const keepRequestOwnerRow = useMemo(
-    () => pullRequestOwnerRowFilter(projects, requestOwners),
-    [projects, requestOwners],
-  );
-  const keepLocalOwnerRow = useMemo(
-    () =>
-      localOwners === requestOwners
-        ? keepRequestOwnerRow
-        : pullRequestOwnerRowFilter(projects, localOwners),
-    [keepRequestOwnerRow, localOwners, projects, requestOwners],
-  );
+  const listProjects = projectsOfOwners(projects, requestOwners);
+  const keepRequestOwnerRow = pullRequestOwnerRowFilter(projects, requestOwners);
+  const keepLocalOwnerRow =
+    localOwners === requestOwners
+      ? keepRequestOwnerRow
+      : pullRequestOwnerRowFilter(projects, localOwners);
   // An owner change that leaves the scoped project out drops the project scope too, the same
   // way picking another server does. The owner menu and the owner chip both pass here.
   const withOwnerScope = (

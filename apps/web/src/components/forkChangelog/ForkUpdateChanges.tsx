@@ -3,7 +3,7 @@ import type { DesktopUpdateState, EnvironmentId, ForkCommit } from "@t3tools/con
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { TagIcon } from "lucide-react";
-import { type ReactNode, useMemo } from "react";
+import type { ReactNode } from "react";
 
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { forkReleaseChanges, forkReleases } from "../../state/forkChangelog";
@@ -87,14 +87,8 @@ function UpdateCommits({
   readonly fallback: ReactNode;
 }) {
   const tagsKey = tags.join("\n");
-  const changesAtom = useMemo(
-    () =>
-      Atom.make((get) =>
-        tagsKey
-          .split("\n")
-          .map((tag) => get(forkReleaseChanges({ environmentId, input: { tag } }))),
-      ),
-    [environmentId, tagsKey],
+  const changesAtom = Atom.make((get) =>
+    tagsKey.split("\n").map((tag) => get(forkReleaseChanges({ environmentId, input: { tag } }))),
   );
   const results = useAtomValue(changesAtom);
   if (results.some(AsyncResult.isFailure)) return fallback;

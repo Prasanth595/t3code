@@ -5,7 +5,6 @@
  */
 import type { EnvironmentId, ServerSettings } from "@t3tools/contracts";
 import { RefreshCwIcon } from "lucide-react";
-import { useCallback } from "react";
 
 import type { planScopedSettingsPatch } from "../components/settings/scopedSettings";
 import { useOptionalSettingsScope } from "../components/settings/SettingsScopeContext";
@@ -63,27 +62,24 @@ function queueShare(
 export function useShareToMachineMap() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const share = useAtomCommand(shareMachineMapSettings, { reportFailure: false });
-  return useCallback(
-    (
-      plan: ReturnType<typeof planScopedSettingsPatch>,
-      saved: readonly { readonly environmentId: EnvironmentId }[],
-    ) => {
-      // One environment shares. Another one can hold a different full value for a partial patch.
-      const environmentId =
-        saved.find((target) => target.environmentId === primaryEnvironmentId)?.environmentId ??
-        saved[0]?.environmentId ??
-        primaryEnvironmentId;
-      if (environmentId === null) return;
-      const write = plan.serverWrites.find((target) => target.environmentId === environmentId);
-      queueShare(
-        share,
-        environmentId,
-        Object.keys(write?.patch ?? {}),
-        plan.hasClientWrite ? plan.clientPatch : {},
-      );
-    },
-    [primaryEnvironmentId, share],
-  );
+  return (
+    plan: ReturnType<typeof planScopedSettingsPatch>,
+    saved: readonly { readonly environmentId: EnvironmentId }[],
+  ) => {
+    // One environment shares. Another one can hold a different full value for a partial patch.
+    const environmentId =
+      saved.find((target) => target.environmentId === primaryEnvironmentId)?.environmentId ??
+      saved[0]?.environmentId ??
+      primaryEnvironmentId;
+    if (environmentId === null) return;
+    const write = plan.serverWrites.find((target) => target.environmentId === environmentId);
+    queueShare(
+      share,
+      environmentId,
+      Object.keys(write?.patch ?? {}),
+      plan.hasClientWrite ? plan.clientPatch : {},
+    );
+  };
 }
 
 /**
@@ -92,11 +88,8 @@ export function useShareToMachineMap() {
  */
 export function useShareServerSettingsToMachineMap() {
   const share = useAtomCommand(shareMachineMapSettings, { reportFailure: false });
-  return useCallback(
-    (environmentId: EnvironmentId, keys: readonly (keyof ServerSettings)[]) =>
-      queueShare(share, environmentId, keys, {}),
-    [share],
-  );
+  return (environmentId: EnvironmentId, keys: readonly (keyof ServerSettings)[]) =>
+    queueShare(share, environmentId, keys, {});
 }
 
 /** MM-412: a small marker beside a settings row whose value the machine map syncs. */

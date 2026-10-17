@@ -218,6 +218,7 @@ export function useSiblingEnvironmentAutoPair(): void {
 
   useEffect(() => {
     void pairSiblings();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each of these changes can leave a sibling unpaired, so it pairs again.
   }, [isReady, trustedOrigins, environments.length, refusedKey]);
 
   useEffect(() => {

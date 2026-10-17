@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Schema from "effect/Schema";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
 import {
@@ -104,18 +104,13 @@ function MachineCatalogSync({
   const running = useRef(false);
   const runAgain = useRef(false);
 
-  const saved = useMemo(
-    () =>
-      environments
-        .filter((environment) => environment.environmentId !== primaryEnvironmentId)
-        .map((environment): SavedEnvironment => ({
-          environmentId: environment.environmentId,
-          origin:
-            environment.displayUrl === null ? null : requestHeaderOrigin(environment.displayUrl),
-          phase: environment.connection.phase,
-        })),
-    [environments, primaryEnvironmentId],
-  );
+  const saved = environments
+    .filter((environment) => environment.environmentId !== primaryEnvironmentId)
+    .map((environment): SavedEnvironment => ({
+      environmentId: environment.environmentId,
+      origin: environment.displayUrl === null ? null : requestHeaderOrigin(environment.displayUrl),
+      phase: environment.connection.phase,
+    }));
   const savedKey = stableStringify(saved);
 
   const syncOnce = async () => {
@@ -193,6 +188,7 @@ function MachineCatalogSync({
 
   useEffect(() => {
     void sync();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Each new state, saved list or readiness is a reason to sync again.
   }, [state, savedKey, isReady]);
 
   useEffect(() => {
@@ -267,6 +263,7 @@ function MachineDesktopReports({
   useEffect(() => {
     void applyDesiredClientSettings();
     // The key stands for the desired values, which arrive as a new object on each push.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The key is the trigger.
   }, [desiredKey]);
 
   const reportClientSettings = useEffectEvent((settings: ClientSettings) => {
@@ -375,6 +372,7 @@ function MachineDesktopReports({
   });
   useEffect(() => {
     runCommands(state.desktopCommands);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A command can wait for the update state, so its change runs the queue again.
   }, [state.desktopCommands, updateState, updateStateWaitOver]);
 
   return null;

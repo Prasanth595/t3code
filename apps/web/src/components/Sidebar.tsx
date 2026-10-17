@@ -57,7 +57,6 @@ import {
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
-import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import {
   resolveSettledThreadTimestamp,
   sortSettledThreads,
@@ -92,18 +91,13 @@ import {
   CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
-  CircleDashedIcon,
-  CircleDotDashedIcon,
   ClockIcon,
   FolderIcon,
   GitBranchIcon,
-  ListFilterIcon,
-  MessageCircleQuestionIcon,
   PinIcon,
   PinOffIcon,
   PlusIcon,
   SettingsIcon,
-  ShieldQuestionIcon,
   SquarePenIcon,
   TerminalIcon,
   Undo2Icon,
@@ -206,7 +200,6 @@ import {
 import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
-  filterSidebarV2VisibleThreads,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
   deleteSelectedThreadEntries,
@@ -561,8 +554,13 @@ function useSidebarThreads(input: {
 }
 
 function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
-  const { threads, visibleThreads: visible, serverConfigs, optimisticDrop, workingShelfEnabled } =
-    input;
+  const {
+    threads,
+    visibleThreads: visible,
+    serverConfigs,
+    optimisticDrop,
+    workingShelfEnabled,
+  } = input;
   const preciseNow = new Date().toISOString();
   inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
@@ -2902,10 +2900,6 @@ export default function Sidebar() {
         );
   // The scope lies inside the owner filter, so the scope wins when both are set.
   const draftProjectKeys = scopedProjectKeys ?? ownerVisibleProjectKeys;
-  // A selection made under one owner filter can hold threads the next one hides.
-  useEffect(() => {
-    clearSelection();
-  }, [clearSelection, ownerFilter]);
   useEffect(() => {
     const nextKey = resolveSidebarProjectScopeKey({
       groups: projectGroups,

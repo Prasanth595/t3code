@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useMemo, type ComponentType } from "react";
+import type { ComponentType } from "react";
 
 import { Button } from "../ui/button";
 import { AppToggleShortcutsSettingsRow } from "./AppToggleShortcutsSettingsRow";
@@ -85,10 +85,7 @@ function usualPlaceLinkProps(item: SettingsSearchItem) {
 export function ForkSettingsPanel() {
   const { search, scope } = useSettingsScope();
   const available = useAvailableSettingsSearchItems(search);
-  const availableById = useMemo(
-    () => new Map(available.map((item) => [item.id, item] as const)),
-    [available],
-  );
+  const availableById = new Map(available.map((item) => [item.id, item] as const));
   const platform = typeof navigator === "undefined" ? "" : navigator.platform;
 
   return (

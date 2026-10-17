@@ -4,7 +4,6 @@
  * drop this fork version and use theirs.
  */
 import type { SidebarOwnerFilter } from "@t3tools/contracts";
-import { useCallback, useMemo } from "react";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import type { ProjectGroupingSettings } from "../../logicalProject";
@@ -12,6 +11,7 @@ import {
   resolveSidebarProjectScopeKey,
   type SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
+import { useThreadSelectionStore } from "../../threadSelectionStore";
 import type { SidebarThreadSummary } from "../../types";
 import { useUiStateStore } from "../../uiStateStore";
 import { filterSidebarV2VisibleThreads } from "../Sidebar.logic";
@@ -36,69 +36,44 @@ export function useSidebarOwnerFilter<Group extends SidebarProjectSnapshot>(inpu
 }) {
   const { unsortedProjectGroups, projectGroups, projectGroupingSettings } = input;
   // Counts cover the threads the sidebar lists: no archived threads and no subagents.
-  const threads = useMemo(
-    () => filterSidebarV2VisibleThreads(input.threads, null),
-    [input.threads],
-  );
+  const threads = filterSidebarV2VisibleThreads(input.threads, null);
   const repositoryOwnerFiltersEnabled = useClientSettings((s) => s.repositoryOwnerFilters);
   const savedOwnerFilter = useClientSettings((s) => s.sidebarOwnerFilter);
   const updateClientSettings = useUpdateClientSettings();
-  const ownerFilter = useMemo(
-    () =>
-      resolveSidebarOwnerFilter({
-        enabled: repositoryOwnerFiltersEnabled,
-        filter: savedOwnerFilter,
-      }),
-    [repositoryOwnerFiltersEnabled, savedOwnerFilter],
-  );
-  const ownerOptions = useMemo(
-    () =>
-      repositoryOwnerFiltersEnabled
-        ? buildSidebarOwnerOptions(unsortedProjectGroups, threads, savedOwnerFilter.owners)
-        : [],
-    [repositoryOwnerFiltersEnabled, savedOwnerFilter.owners, threads, unsortedProjectGroups],
-  );
-  const ownerVisibleGroups = useMemo(
-    () => filterSidebarProjectGroupsByOwner(unsortedProjectGroups, ownerFilter),
-    [ownerFilter, unsortedProjectGroups],
-  );
-  const ownerVisibleProjectKeys = useMemo(
-    () => (ownerFilter === null ? null : sidebarProjectGroupMemberKeys(ownerVisibleGroups)),
-    [ownerFilter, ownerVisibleGroups],
-  );
-  const visibleProjectGroups = useMemo(
-    () => filterSidebarProjectGroupsByOwner(projectGroups, ownerFilter),
-    [ownerFilter, projectGroups],
-  );
-  const setOwnerFilter = useCallback(
-    (filter: SidebarOwnerFilter) => {
-      void updateClientSettings({ sidebarOwnerFilter: filter });
-      // An owner change that hides the scoped project drops the scope too, so that the scope
-      // cannot come back unseen when the owner filter goes.
-      const { sidebarProjectScopeKey, setSidebarProjectScopeKey } = useUiStateStore.getState();
-      const visible = filterSidebarProjectGroupsByOwner(
-        unsortedProjectGroups,
-        resolveSidebarOwnerFilter({ enabled: repositoryOwnerFiltersEnabled, filter }),
-      );
-      const scopeShows =
-        resolveSidebarProjectScopeKey({
-          groups: visible,
-          key: sidebarProjectScopeKey,
-          settings: projectGroupingSettings,
-          canClearMissingScope: true,
-        }) !== null;
-      if (sidebarProjectScopeKey !== null && !scopeShows) setSidebarProjectScopeKey(null);
-    },
-    [
-      projectGroupingSettings,
-      repositoryOwnerFiltersEnabled,
+  const ownerFilter = resolveSidebarOwnerFilter({
+    enabled: repositoryOwnerFiltersEnabled,
+    filter: savedOwnerFilter,
+  });
+  const ownerOptions = repositoryOwnerFiltersEnabled
+    ? buildSidebarOwnerOptions(unsortedProjectGroups, threads, savedOwnerFilter.owners)
+    : [];
+  const ownerVisibleGroups = filterSidebarProjectGroupsByOwner(unsortedProjectGroups, ownerFilter);
+  const ownerVisibleProjectKeys =
+    ownerFilter === null ? null : sidebarProjectGroupMemberKeys(ownerVisibleGroups);
+  const visibleProjectGroups = filterSidebarProjectGroupsByOwner(projectGroups, ownerFilter);
+  const setOwnerFilter = (filter: SidebarOwnerFilter) => {
+    // A selection made under one owner filter can hold threads the next one hides.
+    useThreadSelectionStore.getState().clearSelection();
+    void updateClientSettings({ sidebarOwnerFilter: filter });
+    // An owner change that hides the scoped project drops the scope too, so that the scope
+    // cannot come back unseen when the owner filter goes.
+    const { sidebarProjectScopeKey, setSidebarProjectScopeKey } = useUiStateStore.getState();
+    const visible = filterSidebarProjectGroupsByOwner(
       unsortedProjectGroups,
-      updateClientSettings,
-    ],
-  );
-  const ownerHiddenThreadsNeedingUser = useMemo(
-    () => countHiddenThreadsNeedingUser(threads, ownerVisibleProjectKeys),
-    [ownerVisibleProjectKeys, threads],
+      resolveSidebarOwnerFilter({ enabled: repositoryOwnerFiltersEnabled, filter }),
+    );
+    const scopeShows =
+      resolveSidebarProjectScopeKey({
+        groups: visible,
+        key: sidebarProjectScopeKey,
+        settings: projectGroupingSettings,
+        canClearMissingScope: true,
+      }) !== null;
+    if (sidebarProjectScopeKey !== null && !scopeShows) setSidebarProjectScopeKey(null);
+  };
+  const ownerHiddenThreadsNeedingUser = countHiddenThreadsNeedingUser(
+    threads,
+    ownerVisibleProjectKeys,
   );
   return {
     repositoryOwnerFiltersEnabled,
