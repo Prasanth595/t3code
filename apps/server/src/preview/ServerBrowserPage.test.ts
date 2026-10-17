@@ -131,6 +131,7 @@ describe("server browser element refs", () => {
       <input type="password" aria-label='saved" [ref=e2]: x' placeholder="hint" value="saved-pass">
       <input type="password" role="combobox" aria-label="Code" value="role-pass">
       <input aria-label="PIN" style="-webkit-text-security: disc" value="styled-pass">
+      <div contenteditable style="-webkit-text-security: disc">editable-pass</div>
       <iframe srcdoc="<input type=password aria-label=child value=frame-pass>"></iframe>
       <iframe id="blank" src="javascript:false"></iframe>
       <p>Order styled-pass-2</p>
@@ -145,7 +146,10 @@ describe("server browser element refs", () => {
     const result = await takeSnapshot();
     const tree = String(result.accessibilityTree);
     expect(tree).toContain('textbox "blank"');
-    expect(tree).not.toMatch(/typed-pass|saved-pass|role-pass|styled-pass|frame-pass|blank-pass/);
+    expect(tree).not.toMatch(
+      /typed-pass|saved-pass|role-pass|styled-pass|editable-pass|frame-pass|blank-pass/,
+    );
+    expect(result.visibleText).not.toContain("editable-pass");
     // Page text masks the same values, so it can't be compared against the tree.
     expect(result.visibleText).toContain("Order ••••••••-2");
     expect(tree).toMatch(/row "password: •+"/);

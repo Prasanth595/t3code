@@ -161,11 +161,12 @@ const DOTTED_SCRIPT = `(() => {
   const visit = (root) => {
     for (const element of root.querySelectorAll("*")) {
       if (element.shadowRoot) visit(element.shadowRoot);
-      if (element.localName !== "input" && element.localName !== "textarea") continue;
+      const field = element.localName === "input" || element.localName === "textarea";
+      if (!field && !element.isContentEditable) continue;
       const dots = getComputedStyle(element).getPropertyValue("-webkit-text-security");
-      if (element.type !== "password" && dots === "none") continue;
+      if (element.type !== "password" && (dots === "none" || dots === "")) continue;
       // Raw as page text shows it, and normalized as the tree does.
-      for (const value of [element.value, element.defaultValue])
+      for (const value of field ? [element.value, element.defaultValue] : [element.textContent ?? ""])
         values.push(value, value.replace(/[\\u200b\\u00ad]/g, "").trim().replace(/\\s+/g, " "));
     }
   };
