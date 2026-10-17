@@ -134,6 +134,18 @@ describe("listUnfinishedRuns", () => {
     expect(listUnfinishedRuns(dataDir)).toEqual([]);
   });
 
+  it("a directory and a symlink named like run files are not runs, so they hold no slot", () => {
+    // softfac's `scan_runs` keeps only entries whose file type `is_file` (src/ledger.rs).
+    const dataDir = tempDir();
+    runAt(dataDir, rid(1), T0, "building");
+    notFiles(dataDir, rid(6), rid(7));
+    const runs = listUnfinishedRuns(dataDir);
+    expect(runs.map((info) => info.id.issue)).toEqual(["1"]);
+    expect(listUnfinishedRuns(dataDir, { repo: "rawphp/softfac", issue: 6 })).toEqual([]);
+    expect(listUnfinishedRuns(dataDir, { repo: "rawphp/softfac", issue: 7 })).toEqual([]);
+    expect(runs.filter(holdsSlot)).toHaveLength(1);
+  });
+
   it("a run with an unknown last state is listed with no state", () => {
     const dataDir = tempDir();
     NodeFS.mkdirSync(NodePath.join(dataDir, RUNS_DIR), { recursive: true });
