@@ -304,8 +304,9 @@ describe("Linux device scale across update relaunches", () => {
     assert.deepEqual(applied.at(-1), ["force-device-scale-factor", "1"]);
   });
 
-  for (const value of ["", "garbage", "0", "-1", "Infinity", "NaN"]) {
-    it(`ignores invalid persisted scale ${JSON.stringify(value)}`, () => {
+  it.each(["", "garbage", "0", "-1", "Infinity", "NaN"])(
+    "ignores invalid persisted scale %j",
+    (value) => {
       const applied: Array<[string, string]> = [];
       restoreEarlyLinuxDeviceScaleFactor({
         ...input,
@@ -318,8 +319,8 @@ describe("Linux device scale across update relaunches", () => {
         writeFileString: () => assert.fail("unexpected write"),
       });
       assert.deepEqual(applied, []);
-    });
-  }
+    },
+  );
 
   it("preserves explicit switches even when persistence fails", () => {
     restoreEarlyLinuxDeviceScaleFactor({
