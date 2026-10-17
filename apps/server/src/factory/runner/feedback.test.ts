@@ -1373,6 +1373,12 @@ describe("feedback: the step", () => {
         assert.ok(req.message.includes(URL12), req.message);
         assert.ok(req.message.includes("git push origin HEAD:t3code/abc"), req.message);
         assert.ok(req.message.includes("Do not open another pull request."), req.message);
+        // The resume paragraph is the feedback one, not the failed re-gate's.
+        assert.ok(
+          req.message.includes("waits for review, and an instructor left feedback"),
+          req.message,
+        );
+        assert.notInclude(req.message, "the gate failed when it ran again");
         // The feedback, path and line and text included, after the ordinary words.
         assert.ok(req.message.includes("Inline comment: src/a.rs:7\n"), req.message);
         assert.ok(req.message.includes("use a better name"), req.message);
