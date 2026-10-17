@@ -168,6 +168,24 @@ describe("FactoryPage", () => {
     expect(link).toBeDefined();
   });
 
+  it("links a pull request only when it is a github.com URL", async () => {
+    state.runs = resource({
+      data: {
+        runs: [
+          runRow({ id: "acme__a__1__1", pr_url: "javascript:alert(1)" }),
+          runRow({ id: "acme__b__2__1", pr_url: "https://evil.example/pull/9" }),
+          runRow(),
+        ],
+      },
+    });
+    const page = await render(createElement(FactoryPage));
+    const hrefs = page.all("a").map((a) => a.props.href);
+    expect(hrefs).toContain(PR_URL);
+    expect(hrefs).not.toContain("javascript:alert(1)");
+    expect(hrefs).not.toContain("https://evil.example/pull/9");
+    expect(page.text()).toContain("javascript:alert(1)");
+  });
+
   it("lists the newest run first, and falls back to the last event without a step", async () => {
     state.runs = resource({
       data: {
