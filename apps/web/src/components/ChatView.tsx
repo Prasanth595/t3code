@@ -5108,17 +5108,25 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
   const handleStopBackgroundWorkStable = useStableCallback(handleStopBackgroundWork);
+  const openRelatedThreadGenerationRef = useRef(0);
   const onOpenRelatedThread = async (threadId: ThreadId) => {
+    const generation = ++openRelatedThreadGenerationRef.current;
     const threadRef = scopeThreadRef(environmentId, threadId);
-    const environmentLive =
+    const isEnvironmentLive = () =>
       appAtomRegistry.get(environmentShell.stateValueAtom(environmentId)).status === "live";
     // A just-launched child can reach this timeline before its shell syncs.
-    if (environmentLive && readThreadShell(threadRef) === null) {
+    if (isEnvironmentLive() && readThreadShell(threadRef) === null) {
       await waitForThreadShell(threadRef, RELATED_THREAD_SHELL_WAIT_MS);
+      if (
+        generation !== openRelatedThreadGenerationRef.current ||
+        currentRouteThreadKeyRef.current !== routeThreadKey
+      ) {
+        return;
+      }
     }
     const shell = readThreadShell(threadRef);
     // The thread route sends a missing thread to the start page, so stay here instead.
-    if (shell === null ? environmentLive : shell.deletedAt != null) {
+    if (shell === null ? isEnvironmentLive() : shell.deletedAt != null) {
       toastManager.add({ type: "info", title: "This thread was deleted" });
       return;
     }
