@@ -3258,6 +3258,106 @@ describe("sessions that ended badly", () => {
     }),
   );
 
+  it.effect(
+    "relaunched whose start found the issue closed says so, and where a session may be",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.runIn(12, BUILDING, REPO, true);
+        fake.advances[`${REPO}#12`] = [badEnd("thread-gone")];
+        const next = newRunId(REPO, "12", 2);
+        fake.interrupts[`${REPO}#12`] = [
+          {
+            kind: "relaunched",
+            resumes: 1,
+            limit: 2,
+            start: { kind: "abandoned", mayHaveSession: [next] },
+          },
+        ];
+        const { report, lines } = yield* pass(fake, machine([REPO], 1));
+        assert.equal(report.errors, 0);
+        assert.equal(
+          lineFor(lines, 12),
+          "rawphp/softfac#12 building: the T3 thread is gone; interrupted, relaunching (1 of 2), the issue is closed, the run is closed",
+        );
+        // The orphaned T3 thread of the next attempt is a person's to archive.
+        const run = runIdToString(next);
+        assert.deepEqual(
+          lines.filter((l) => l.startsWith("ATTENTION: ")),
+          [
+            `ATTENTION: ${REPO}#12 the issue was closed, and a session may exist for ${run}: look for launch command id softfac:${run}:launch in T3 Code and archive that thread by hand`,
+          ],
+        );
+        assert.equal(report.attention, 1);
+        assert.deepEqual(
+          fake.events.filter((e) => e.event === "attention"),
+          [{ event: "attention", data: { run, reason: "session-may-exist" } }],
+        );
+      }),
+  );
+
+  it.effect("relaunched whose start was refused is printed as relaunching for the next pass", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [badEnd("thread-gone")];
+      fake.interrupts[`${REPO}#12`] = [
+        {
+          kind: "relaunched",
+          resumes: 1,
+          limit: 2,
+          start: { kind: "refused", reason: "the issue is not approved" },
+        },
+      ];
+      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      assert.equal(report.errors, 0);
+      assert.equal(report.attention, 0);
+      assert.equal(
+        lineFor(lines, 12),
+        "rawphp/softfac#12 building: the T3 thread is gone; interrupted, relaunching (1 of 2), the new attempt starts on the next pass",
+      );
+    }),
+  );
+
+  it.effect("a relaunch advance finishes whose start was abandoned with an error says both", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.runIn(12, BUILDING, REPO, true);
+      const next = newRunId(REPO, "12", 2);
+      const error = new SessionsError({ operation: "archive", cause: "timeout" });
+      fake.advances[`${REPO}#12`] = [
+        {
+          kind: "relaunched",
+          start: { kind: "abandoned", mayHaveSession: [next], error },
+        },
+      ];
+      const { report, lines } = yield* pass(fake, machine([REPO], 1));
+      assert.equal(
+        lineFor(lines, 12),
+        "rawphp/softfac#12 building: the T3 thread is gone; interrupted, relaunching, the issue is closed, the run is closed",
+      );
+      const run = runIdToString(next);
+      assert.deepEqual(
+        lines.filter((l) => l.startsWith("ATTENTION: ")),
+        [
+          `ATTENTION: ${REPO}#12 the issue was closed, and a session may exist for ${run}: look for launch command id softfac:${run}:launch in T3 Code and archive that thread by hand`,
+        ],
+      );
+      assert.equal(report.attention, 1);
+      // The error of the run `start` could not end is this run's error line.
+      assert.equal(report.errors, 1);
+      assert.ok(
+        lines.some((l) => l.startsWith("error: rawphp/softfac#12 start: ")),
+        lines.join("\n"),
+      );
+      assert.deepEqual(
+        fake.runErrors.map((e) => [runIdToString(e.run), e.step, e.kind]),
+        [[runIdToString(rid(12)), "start", "t3"]],
+      );
+      assert.ok(!fake.calls.includes("t3_trouble"));
+    }),
+  );
+
   it.effect("that moved on before the decision is left alone and said so", () =>
     Effect.gen(function* () {
       const fake = new Fake();
