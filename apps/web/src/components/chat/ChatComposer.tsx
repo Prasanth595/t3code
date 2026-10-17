@@ -3319,19 +3319,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     questionId: string | null;
   } | null>(null);
   // Where the message caret was while the editor last showed the message, so
-  // the effect below can put it back after a question had the editor.
-  const messageCaretRef = useRef<{ text: string; cursor: number } | null>(null);
+  // the effect below can put it back after a question had the editor. Keyed by
+  // the draft, so another thread's draft with the same text does not inherit it.
+  const messageCaretRef = useRef<{ targetKey: string; text: string; cursor: number } | null>(null);
   useEffect(() => {
     if (activePendingProgress !== null || lastSyncedPendingInputRef.current !== null) return;
-    messageCaretRef.current = { text: prompt, cursor: composerCursor };
-  }, [activePendingProgress, composerCursor, prompt]);
+    messageCaretRef.current = {
+      targetKey: composerDraftTargetKey,
+      text: prompt,
+      cursor: composerCursor,
+    };
+  }, [activePendingProgress, composerCursor, composerDraftTargetKey, prompt]);
 
   useEffect(() => {
     const nextCustomAnswer = activePendingProgress?.customAnswer;
     if (typeof nextCustomAnswer !== "string") {
       if (lastSyncedPendingInputRef.current !== null) {
         promptRef.current = prompt;
-        const { cursor, trigger } = composerStateForReturningDraft(prompt, messageCaretRef.current);
+        const { cursor, trigger } = composerStateForReturningDraft(
+          prompt,
+          composerDraftTargetKey,
+          messageCaretRef.current,
+        );
         setComposerCursor(cursor);
         resetComposerTrigger(trigger);
       }
@@ -3365,6 +3374,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress?.activeQuestion?.id,
     isLiteralPendingAnswer,
     activePendingUserInput?.requestId,
+    composerDraftTargetKey,
     prompt,
     promptRef,
     resetComposerTrigger,

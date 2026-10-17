@@ -619,22 +619,43 @@ describe("composerStateForReturningDraft", () => {
   it("puts the caret back where the user left the message", () => {
     const prompt = "Also keep the README short, and";
 
-    expect(composerStateForReturningDraft(prompt, { text: prompt, cursor: 5 })).toEqual({
-      cursor: 5,
-      trigger: null,
-    });
+    expect(
+      composerStateForReturningDraft(prompt, "thread-a", {
+        targetKey: "thread-a",
+        text: prompt,
+        cursor: 5,
+      }),
+    ).toEqual({ cursor: 5, trigger: null });
   });
 
   it("continues at the end when the message changed while answering", () => {
     const prompt = carryDisplacedCustomAnswerIntoPrompt("first half", "second half");
 
-    expect(composerStateForReturningDraft(prompt, { text: "first half", cursor: 5 })).toEqual(
-      composerStateAtPromptEnd(prompt),
-    );
+    expect(
+      composerStateForReturningDraft(prompt, "thread-a", {
+        targetKey: "thread-a",
+        text: "first half",
+        cursor: 5,
+      }),
+    ).toEqual(composerStateAtPromptEnd(prompt));
+  });
+
+  it("continues at the end when the saved caret belongs to another draft", () => {
+    // Two threads can hold the same text; the caret saved in one must not move the other's.
+    expect(
+      composerStateForReturningDraft("draft", "thread-b", {
+        targetKey: "thread-a",
+        text: "draft",
+        cursor: 2,
+      }),
+    ).toEqual({ cursor: 5, trigger: null });
   });
 
   it("continues at the end when no caret was saved", () => {
-    expect(composerStateForReturningDraft("draft", null)).toEqual({ cursor: 5, trigger: null });
+    expect(composerStateForReturningDraft("draft", "thread-a", null)).toEqual({
+      cursor: 5,
+      trigger: null,
+    });
   });
 });
 
