@@ -132,3 +132,19 @@ export function stateBadgeVariant(state: string | null): StateBadgeVariant {
       return "secondary";
   }
 }
+
+/** The `to` of the last `state_changed` entry. */
+export function runState(entries: ReadonlyArray<FactoryEntry>): string | null {
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i]!;
+    if (entry.event !== "state_changed") continue;
+    const to = textField(entry.data, "to");
+    if (to !== null) return to;
+  }
+  return null;
+}
+
+/** A `finished` entry is written: the run is over whatever its last state says. */
+export function runIsFinished(entries: ReadonlyArray<FactoryEntry>): boolean {
+  return entries.some((entry) => entry.event === "finished");
+}
