@@ -15,7 +15,6 @@ import * as Option from "effect/Option";
 import type { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { environmentSession } from "~/state/session";
 
 import {
@@ -25,14 +24,8 @@ import {
   factoryApi,
 } from "./api";
 
-// The two upstream atoms the lookup reads are writable here, so a test can be the environment
-// catalog and the session: which environment is primary, and what connection each one holds.
-vi.mock("~/state/primaryEnvironment", async () => {
-  const { Atom } = await import("effect/reactivity");
-  return {
-    primaryEnvironmentIdAtom: Atom.make<EnvironmentId | null>(null).pipe(Atom.keepAlive),
-  };
-});
+// The session atom the lookup reads is writable here, so a test can be the session: what
+// connection each environment holds.
 vi.mock("~/state/session", async () => {
   const { Atom } = await import("effect/reactivity");
   const Option = await import("effect/Option");
@@ -53,11 +46,6 @@ vi.mock("~/state/session", async () => {
 
 const ENV_1 = "env-1" as EnvironmentId;
 const ENV_2 = "env-2" as EnvironmentId;
-const setPrimaryEnvironment = (environmentId: EnvironmentId | null) =>
-  appAtomRegistry.set(
-    primaryEnvironmentIdAtom as Atom.Writable<EnvironmentId | null>,
-    environmentId,
-  );
 const setConnectionOf = (environmentId: EnvironmentId, prepared: PreparedConnection | null) =>
   appAtomRegistry.set(
     environmentSession.preparedConnectionValueAtom(environmentId) as Atom.Writable<
@@ -103,7 +91,6 @@ afterEach(() => {
   fetchMock.mockReset();
   __setFactoryTimeoutForTests();
   __setFactoryConnectionForTests();
-  setPrimaryEnvironment(null);
   setConnectionOf(ENV_1, null);
   setConnectionOf(ENV_2, null);
 });
@@ -132,7 +119,7 @@ const failure = async (call: Promise<unknown>): Promise<FactoryApiError> => {
 describe("factoryApi over HTTP", () => {
   it("reads with GET and returns the body as JSON", async () => {
     answer(200, '{"runs":[{"id":"o__r__1__1"}]}');
-    expect(await factoryApi.runs({ all: false })).toEqual({ runs: [{ id: "o__r__1__1" }] });
+    expect(await factoryApi.runs(ENV_1, { all: false })).toEqual({ runs: [{ id: "o__r__1__1" }] });
     expect(sent().method).toBe("GET");
     const url = new URL(sent().url);
     expect([url.pathname, url.search]).toEqual(["/api/factory/runs", ""]);
@@ -140,14 +127,14 @@ describe("factoryApi over HTTP", () => {
 
   it("asks for every run with ?all=1", async () => {
     answer(200, '{"runs":[]}');
-    await factoryApi.runs({ all: true });
+    await factoryApi.runs(ENV_1, { all: true });
     const url = new URL(sent().url);
     expect([url.pathname, url.search]).toEqual(["/api/factory/runs", "?all=1"]);
   });
 
   it("stops a run with a POST to its encoded path", async () => {
     answer(200, '{"stopped":"a/b","already":false,"message":"stop requested"}');
-    const result = await factoryApi.stopRun("a/b");
+    const result = await factoryApi.stopRun(ENV_1, "a/b");
     expect(result.message).toBe("stop requested");
     expect(sent().method).toBe("POST");
     expect(new URL(sent().url).pathname).toBe("/api/factory/runs/a%2Fb/stop");
@@ -155,7 +142,7 @@ describe("factoryApi over HTTP", () => {
 
   it("maps an error body to the status, code and message", async () => {
     answer(404, '{"code":"run_not_found","message":"no such run"}');
-    const error = await failure(factoryApi.run("x"));
+    const error = await failure(factoryApi.run(ENV_1, "x"));
     expect([error.status, error.code, error.message]).toEqual([
       404,
       "run_not_found",
@@ -165,7 +152,7 @@ describe("factoryApi over HTTP", () => {
 
   it("names the status when the error body is not JSON", async () => {
     answer(500, "boom", "text/plain");
-    const error = await failure(factoryApi.status());
+    const error = await failure(factoryApi.status(ENV_1));
     expect([error.status, error.code, error.message]).toEqual([
       500,
       null,
@@ -175,7 +162,7 @@ describe("factoryApi over HTTP", () => {
 
   it("is status 0 when the request never got an answer", async () => {
     fetchMock.mockRejectedValueOnce(new TypeError("Failed to fetch"));
-    const error = await failure(factoryApi.status());
+    const error = await failure(factoryApi.status(ENV_1));
     expect(error.status).toBe(0);
     expect(error.code).toBeNull();
     expect(error.message).not.toBe("");
@@ -184,7 +171,7 @@ describe("factoryApi over HTTP", () => {
   it("gives up on an answer that does not come in time", async () => {
     __setFactoryTimeoutForTests(20);
     fetchMock.mockImplementationOnce(() => new Promise(() => {}));
-    const error = await failure(factoryApi.status());
+    const error = await failure(factoryApi.status(ENV_1));
     expect([error.status, error.code]).toEqual([0, "timeout"]);
     expect(error.message).toContain("did not answer");
   });
@@ -192,7 +179,7 @@ describe("factoryApi over HTTP", () => {
   it("keeps an answer that comes before the time is up", async () => {
     __setFactoryTimeoutForTests(1000);
     answer(200, '{"state":"idle"}');
-    expect(await factoryApi.status()).toEqual({ state: "idle" });
+    expect(await factoryApi.status(ENV_1)).toEqual({ state: "idle" });
   });
 });
 
@@ -200,7 +187,7 @@ describe("factoryApi on the connected environment", () => {
   it("sends to a remote environment's base with its bearer token and no cookies", async () => {
     __setFactoryConnectionForTests(bearerConnection);
     answer(200, '{"state":"idle"}');
-    await factoryApi.status();
+    await factoryApi.status(ENV_1);
     const [target, init] = fetchMock.mock.calls.at(-1)!;
     expect(String(target)).toBe(`${REMOTE_BASE}/api/factory/status`);
     expect(new URL(String(target)).origin).not.toBe(WINDOW_ORIGIN);
@@ -211,7 +198,7 @@ describe("factoryApi on the connected environment", () => {
   it("sends a cookie session's request with credentials and no authorization header", async () => {
     __setFactoryConnectionForTests(cookieConnection("https://other-host.test:4000"));
     answer(200, '{"state":"idle"}');
-    await factoryApi.status();
+    await factoryApi.status(ENV_1);
     const [target, init] = fetchMock.mock.calls.at(-1)!;
     expect(String(target)).toBe("https://other-host.test:4000/api/factory/status");
     expect(init?.credentials).toBe("include");
@@ -223,7 +210,7 @@ describe("factoryApi on the connected environment", () => {
       httpBaseUrl: REMOTE_BASE,
       httpAuthorization: { _tag: "Dpop" },
     } as unknown as PreparedConnection);
-    const error = await failure(factoryApi.status());
+    const error = await failure(factoryApi.status(ENV_1));
     expect(error.status).toBe(0);
     expect(error.message).toBe("The factory is not available over a relay connection yet.");
     expect(fetchMock).not.toHaveBeenCalled();
@@ -232,7 +219,7 @@ describe("factoryApi on the connected environment", () => {
   it("waits for a connection that appears after the call started", async () => {
     __setFactoryConnectionForTests(null);
     answer(200, '{"state":"idle"}');
-    const pending = factoryApi.status();
+    const pending = factoryApi.status(ENV_1);
     await Promise.resolve();
     expect(fetchMock).not.toHaveBeenCalled();
     __setFactoryConnectionForTests(bearerConnection);
@@ -243,7 +230,7 @@ describe("factoryApi on the connected environment", () => {
   it("fails with no_connection when none appears within the time", async () => {
     __setFactoryTimeoutForTests(20);
     __setFactoryConnectionForTests(null);
-    const error = await failure(factoryApi.status());
+    const error = await failure(factoryApi.status(ENV_1));
     expect([error.status, error.code]).toEqual([0, "no_connection"]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -253,7 +240,7 @@ describe("factoryApi on the connected environment", () => {
     __setFactoryTimeoutForTests(2000);
     __setFactoryConnectionForTests(null);
     fetchMock.mockImplementationOnce(() => new Promise(() => {}));
-    const pending = failure(factoryApi.status());
+    const pending = failure(factoryApi.status(ENV_1));
     await vi.advanceTimersByTimeAsync(1200);
     __setFactoryConnectionForTests(bearerConnection);
     await vi.advanceTimersByTimeAsync(799);
@@ -284,7 +271,7 @@ describe("factoryApi on the connected environment", () => {
           );
         }),
     );
-    const pending = factoryApi.status();
+    const pending = factoryApi.status(ENV_1);
     await vi.advanceTimersByTimeAsync(1200);
     __setFactoryConnectionForTests(bearerConnection);
     await vi.advanceTimersByTimeAsync(500);
@@ -292,37 +279,71 @@ describe("factoryApi on the connected environment", () => {
   });
 });
 
-describe("factoryApi on the primary environment", () => {
+describe("factoryApi on the given environment", () => {
   beforeEach(() => {
     __setFactoryConnectionForTests();
   });
 
-  it("sends on the primary environment's prepared connection, not another environment's", async () => {
-    setConnectionOf(ENV_2, cookieConnection("https://other-host.test:4000"));
-    setConnectionOf(ENV_1, bearerConnection);
-    setPrimaryEnvironment(ENV_1);
-    answer(200, '{"state":"idle"}');
-    expect(await factoryApi.status()).toEqual({ state: "idle" });
-    expect(String(fetchMock.mock.calls.at(-1)![0])).toBe(`${REMOTE_BASE}/api/factory/status`);
+  it("sends on the given environment's prepared connection, not another environment's", async () => {
+    setConnectionOf(ENV_1, cookieConnection("https://other-host.test:4000"));
+    setConnectionOf(ENV_2, bearerConnection);
+    answer(200, '{"state":"running"}');
+    expect(await factoryApi.status(ENV_2)).toEqual({ state: "running" });
+    const [target, init] = fetchMock.mock.calls.at(-1)!;
+    expect(String(target)).toBe(`${REMOTE_BASE}/api/factory/status`);
     expect(sent().headers.get("authorization")).toBe("Bearer tok-1");
+    expect(init?.credentials).toBe("omit");
+
+    answer(200, '{"state":"idle"}');
+    await factoryApi.status(ENV_1);
+    const [first, firstInit] = fetchMock.mock.calls.at(-1)!;
+    expect(String(first)).toBe("https://other-host.test:4000/api/factory/status");
+    expect(firstInit?.credentials).toBe("include");
+    expect(sent().headers.get("authorization")).toBeNull();
   });
 
-  it("fails with no_connection while no environment is primary", async () => {
+  it("sends every kind of call on the given environment", async () => {
+    setConnectionOf(ENV_1, cookieConnection("https://other-host.test:4000"));
+    setConnectionOf(ENV_2, bearerConnection);
+    const calls: Array<() => Promise<unknown>> = [
+      () => factoryApi.runs(ENV_2, { all: true }),
+      () => factoryApi.run(ENV_2, "r"),
+      () => factoryApi.stopRun(ENV_2, "r"),
+      () => factoryApi.pauseClaims(ENV_2),
+      () => factoryApi.resumeClaims(ENV_2),
+    ];
+    for (const call of calls) {
+      answer(200, "{}");
+      await call();
+      expect(new URL(String(fetchMock.mock.calls.at(-1)![0])).origin).toBe(REMOTE_BASE);
+    }
+  });
+
+  it("fails with no_connection while the environment has none, even if another does", async () => {
     __setFactoryTimeoutForTests(20);
     setConnectionOf(ENV_1, bearerConnection);
-    const error = await failure(factoryApi.status());
+    const error = await failure(factoryApi.status(ENV_2));
     expect([error.status, error.code]).toEqual([0, "no_connection"]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("waits while the primary environment has no prepared connection yet", async () => {
-    setPrimaryEnvironment(ENV_1);
+  it("waits while the environment has no prepared connection yet", async () => {
     answer(200, '{"state":"idle"}');
-    const pending = factoryApi.status();
+    const pending = factoryApi.status(ENV_2);
     await Promise.resolve();
     expect(fetchMock).not.toHaveBeenCalled();
-    setConnectionOf(ENV_1, bearerConnection);
+    setConnectionOf(ENV_1, cookieConnection("https://other-host.test:4000"));
+    await Promise.resolve();
+    expect(fetchMock).not.toHaveBeenCalled();
+    setConnectionOf(ENV_2, bearerConnection);
     expect(await pending).toEqual({ state: "idle" });
+    expect(String(fetchMock.mock.calls.at(-1)![0])).toBe(`${REMOTE_BASE}/api/factory/status`);
+  });
+
+  it("applies the test override to every environment", async () => {
+    __setFactoryConnectionForTests(bearerConnection);
+    answer(200, "{}");
+    await factoryApi.status(ENV_2);
     expect(String(fetchMock.mock.calls.at(-1)![0])).toBe(`${REMOTE_BASE}/api/factory/status`);
   });
 });
