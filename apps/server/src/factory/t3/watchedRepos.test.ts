@@ -156,6 +156,8 @@ interface Fixture {
   readonly runner?: Layer.Layer<ProcessRunner.ProcessRunner>;
   /** Where the reader keeps its memory; a fresh directory by default. Pass one to read it twice. */
   readonly factoryDir?: string;
+  /** Read as the settings page does, writing nothing; by default the pass's read, which remembers. */
+  readonly readOnly?: boolean;
 }
 
 const pathsAt = (factoryDir: string) =>
@@ -195,7 +197,7 @@ const listed = (fixture: Fixture) => {
       yield* store.apply(projectEvent("project.deleted", id, "", (sequence += 1)));
     }
     const watched = yield* WatchedRepos.FactoryWatchedRepos;
-    return yield* watched.list;
+    return yield* fixture.readOnly === true ? watched.list : watched.listAndRemember;
   }).pipe(Effect.provide(layer));
 };
 
@@ -645,6 +647,71 @@ describe("FactoryWatchedRepos.list", () => {
         assert.deepStrictEqual(unreadable.departed, []);
         const later = yield* listed({ projects: both, identities, factoryDir, deleted: ["p-a"] });
         assert.deepStrictEqual(later.departed, ["acme/widgets"]);
+      }),
+    );
+
+    it.effect("keeps a repo two projects watched while one of them is still in T3", () =>
+      Effect.gen(function* () {
+        const one = checkout("clone-one", FACTORY_CONFIG);
+        const two = checkout("clone-two", FACTORY_CONFIG);
+        const factoryDir = tempDir("clones-factory");
+        const identities = new Map([
+          [one, WIDGETS],
+          [two, WIDGETS],
+        ]);
+        const both: ReadonlyArray<readonly [string, string]> = [
+          ["p-one", one],
+          ["p-two", two],
+        ];
+        yield* listed({ projects: both, identities, factoryDir });
+        // One clone goes to a branch without the opt-in; a pass remembers only the other as watching.
+        NodeFS.writeFileSync(NodePath.join(one, ".dw", "config.yml"), "tracker: {}\n");
+        yield* listed({ projects: both, identities, factoryDir });
+        const twoGone = yield* listed({
+          projects: both,
+          identities,
+          factoryDir,
+          deleted: ["p-two"],
+        });
+        assert.deepStrictEqual(twoGone.departed, []);
+        const bothGone = yield* listed({
+          projects: both,
+          identities,
+          factoryDir,
+          deleted: ["p-two", "p-one"],
+        });
+        assert.deepStrictEqual(bothGone.departed, ["acme/widgets"]);
+      }),
+    );
+
+    it.effect("leaves a memory that does not parse as it is and says nothing departed", () =>
+      Effect.gen(function* () {
+        const { root, factoryDir, identities } = watchedOnce("garbled-memory");
+        const file = NodePath.join(factoryDir, WatchedRepos.MEMORY_FILE);
+        NodeFS.writeFileSync(file, '{"repos": {"acme/paused": ["p-paused"]');
+        const after = yield* listed({ projects: [["p-w", root]], identities, factoryDir });
+        assert.deepStrictEqual(after.departed, []);
+        assert.strictEqual(
+          NodeFS.readFileSync(file, "utf8"),
+          '{"repos": {"acme/paused": ["p-paused"]',
+        );
+      }),
+    );
+
+    it.effect("writes nothing on the settings page's read", () =>
+      Effect.gen(function* () {
+        const { root, factoryDir, identities } = watchedOnce("read-only");
+        const list = yield* listed({
+          projects: [["p-w", root]],
+          identities,
+          factoryDir,
+          readOnly: true,
+        });
+        assert.deepStrictEqual(
+          list.repos.map((r) => r.repo),
+          ["acme/widgets"],
+        );
+        assert.isFalse(NodeFS.existsSync(NodePath.join(factoryDir, WatchedRepos.MEMORY_FILE)));
       }),
     );
 

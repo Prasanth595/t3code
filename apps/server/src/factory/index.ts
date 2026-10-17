@@ -744,7 +744,7 @@ const startFactory = (options: RuntimeOptions) =>
     };
     const readings = new Map<string, RepoConfigReading>();
     // The repos the pass's last listing named, for the status; a pass lists them anew before it works.
-    const listWatched = watched.list.pipe(
+    const listWatched = watched.listAndRemember.pipe(
       Effect.tap((listing) =>
         Effect.sync(() => {
           const repos = listing.repos.map((entry) => entry.repo);

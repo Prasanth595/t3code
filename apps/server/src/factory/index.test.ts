@@ -90,19 +90,15 @@ const watching = (
   list:
     | ReadonlyArray<WatchedProject>
     | Effect.Effect<ReadonlyArray<WatchedProject>, WatchedReposError>,
-) =>
-  Layer.succeed(
-    FactoryWatchedRepos,
-    FactoryWatchedRepos.of({
-      list: (Effect.isEffect(list) ? list : Effect.succeed(list)).pipe(
-        Effect.map((repos): WatchedListing => ({
-          repos,
-          departed: [],
-          unresolved: [],
-        })),
-      ),
-    }),
+) => {
+  const listing = (Effect.isEffect(list) ? list : Effect.succeed(list)).pipe(
+    Effect.map((repos): WatchedListing => ({ repos, departed: [], unresolved: [] })),
   );
+  return Layer.succeed(
+    FactoryWatchedRepos,
+    FactoryWatchedRepos.of({ list: listing, listAndRemember: listing }),
+  );
+};
 
 /** A gate that never runs: the runtime is built without one. */
 const noGate = Layer.succeed(

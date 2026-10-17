@@ -42,7 +42,8 @@ export const MEMORY_FILE = "watched-projects.json";
  * from, and reports in `departed` the repos it watches no more whose every remembered project has
  * since been deleted. That is the only list the pass clears attention items by: `stuck` and
  * `needs-info` items are raised once. A repo nobody watched since the file began is never in it.
- * A memory that cannot be read reports nothing departed and is left as it is.
+ * A memory that cannot be read or parsed reports nothing departed and is left as it is. Only the
+ * pass's read (`listAndRemember`) writes the file, and passes do not overlap.
  *
  * The config file is read before the repository identity, so the identity is not resolved for a
  * project that did not opt in. The file is read from the checkout on disk; the loop still reads
@@ -66,8 +67,10 @@ export class WatchedReposError extends Schema.TaggedError<WatchedReposError>()(
 export class FactoryWatchedRepos extends Context.Service<
   FactoryWatchedRepos,
   {
-    /** The watched projects in the order T3 lists them, read afresh on every call. */
+    /** The watched projects in the order T3 lists them, read afresh on every call. Writes nothing. */
     readonly list: Effect.Effect<WatchedListing, WatchedReposError>;
+    /** `list`, then the projects each watched repo comes from remembered for the next call: the pass's read. */
+    readonly listAndRemember: Effect.Effect<WatchedListing, WatchedReposError>;
   }
 >()("t3/factory/t3/watchedRepos/FactoryWatchedRepos") {}
 
@@ -89,12 +92,9 @@ type Memory = (typeof MemoryJson.Type)["repos"];
 const decodeMemoryJson = Schema.decodeUnknownOption(MemoryJson);
 const encodeMemoryJson = Schema.encodeSync(MemoryJson);
 
-/** A file that is not the expected shape holds no memory: it is only ours. */
-const decodeMemory = (text: string): Memory =>
-  Option.match(decodeMemoryJson(text), {
-    onNone: () => ({}),
-    onSome: (memory) => memory.repos,
-  });
+/** None for a file that is not the expected shape: like one that cannot be read, it is left alone. */
+const decodeMemory = (text: string): Option.Option<Memory> =>
+  Option.map(decodeMemoryJson(text), (memory) => memory.repos);
 const encodeMemory = (repos: Memory): string => encodeMemoryJson({ repos });
 
 export const make = Effect.gen(function* () {
@@ -107,33 +107,39 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const memoryFile = path.join(factoryDir, MEMORY_FILE);
 
-  // None when the file exists and cannot be read: nothing is said to have departed from it.
+  // None when the file exists and cannot be read or parsed: nothing is said to have departed
+  // from it, and it is not written over, so no repo it remembers is lost.
   const readMemory: Effect.Effect<Option.Option<Memory>> = fs.readFileString(memoryFile).pipe(
-    Effect.map((text) => Option.some(decodeMemory(text))),
+    Effect.map(decodeMemory),
     Effect.catch((cause) =>
       Effect.succeed(cause.reason._tag === "NotFound" ? Option.some({}) : Option.none()),
     ),
   );
 
   /**
-   * Remembers the projects each watched repo comes from now and answers the repos that departed.
-   * The settings page's read writes it too: what it writes is what the pass would.
+   * The repos that departed. A repo's remembered projects are its remembered ones and the ones
+   * that watch it now, less those since deleted: an id goes only when its project does, so a
+   * project that merely stops opting in, or cannot be read this pass, stays one of the repo's. A
+   * repo departs when none is left. With `remember`, the memory is written for the next pass;
+   * only the pass remembers, so the settings page's read changes nothing.
    */
   const departures = (
     watchedFrom: ReadonlyMap<string, ReadonlyArray<string>>,
     active: ReadonlySet<string>,
+    remember: boolean,
   ): Effect.Effect<Array<string>> =>
     Effect.gen(function* () {
       const remembered = yield* readMemory;
       if (Option.isNone(remembered)) return [];
-      const next: Record<string, ReadonlyArray<string>> = {
-        ...remembered.value,
-        ...Object.fromEntries(watchedFrom),
-      };
+      const next: Record<string, ReadonlyArray<string>> = {};
+      for (const repo of new Set([...Object.keys(remembered.value), ...watchedFrom.keys()])) {
+        const ids = new Set([...(remembered.value[repo] ?? []), ...(watchedFrom.get(repo) ?? [])]);
+        next[repo] = [...ids].filter((id) => active.has(id));
+      }
       const departed = Object.entries(next)
-        .filter(([repo, ids]) => !watchedFrom.has(repo) && ids.every((id) => !active.has(id)))
+        .filter(([, ids]) => ids.length === 0)
         .map(([repo]) => repo);
-      if (encodeMemory(next) !== encodeMemory(remembered.value)) {
+      if (remember && encodeMemory(next) !== encodeMemory(remembered.value)) {
         yield* writeFileAtomically(memoryFile, `${encodeMemory(next)}\n`).pipe(
           Effect.catch((cause) =>
             Effect.logWarning(`cannot write ${memoryFile}: ${String(cause)}`),
@@ -178,56 +184,57 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const list = Effect.gen(function* () {
-    const rows = yield* projects
-      .list()
-      .pipe(Effect.mapError((cause) => new WatchedReposError({ cause })));
-    const scratch = yield* folders.scratchRoot;
-    const scratchRoot = Option.map(scratch, (root) => path.resolve(root));
-    const repos: Array<WatchedProject> = [];
-    const watchedFrom = new Map<string, Array<string>>();
-    const unresolved: Array<string> = [];
-    for (const row of rows) {
-      const root = row.workspaceRoot;
-      if (Option.isSome(scratchRoot) && path.resolve(root) === scratchRoot.value) continue;
-      const file = yield* read(root);
-      if (file.kind === "unresolved") {
-        unresolved.push(root);
-        continue;
+  const listing = (remember: boolean) =>
+    Effect.gen(function* () {
+      const rows = yield* projects
+        .list()
+        .pipe(Effect.mapError((cause) => new WatchedReposError({ cause })));
+      const scratch = yield* folders.scratchRoot;
+      const scratchRoot = Option.map(scratch, (root) => path.resolve(root));
+      const repos: Array<WatchedProject> = [];
+      const watchedFrom = new Map<string, Array<string>>();
+      const unresolved: Array<string> = [];
+      for (const row of rows) {
+        const root = row.workspaceRoot;
+        if (Option.isSome(scratchRoot) && path.resolve(root) === scratchRoot.value) continue;
+        const file = yield* read(root);
+        if (file.kind === "unresolved") {
+          unresolved.push(root);
+          continue;
+        }
+        if (file.kind === "absent") continue;
+        const optIn = factoryOptIn(file.text);
+        if (optIn === "unparsed") {
+          // A conflicted or half-saved file is a read that did not finish.
+          unresolved.push(root);
+          continue;
+        }
+        if (optIn === "no") continue;
+        const identity = yield* identities.resolve(root);
+        if (identity === null) {
+          // Git failed or timed out, and T3 caches the null for a minute.
+          unresolved.push(root);
+          continue;
+        }
+        // T3 names a clone by its `upstream` remote when it has one, so only `origin` is the repo
+        // the person cloned and works in.
+        if (identity.provider !== "github" || identity.locator.remoteName !== "origin") continue;
+        const { owner, name } = identity;
+        if (owner === undefined || name === undefined) {
+          unresolved.push(root);
+          continue;
+        }
+        const repo = `${owner}/${name}`;
+        repos.push({ repo, path: root, title: row.title });
+        const key = asciiLower(repo);
+        watchedFrom.set(key, [...(watchedFrom.get(key) ?? []), row.projectId]);
       }
-      if (file.kind === "absent") continue;
-      const optIn = factoryOptIn(file.text);
-      if (optIn === "unparsed") {
-        // A conflicted or half-saved file is a read that did not finish.
-        unresolved.push(root);
-        continue;
-      }
-      if (optIn === "no") continue;
-      const identity = yield* identities.resolve(root);
-      if (identity === null) {
-        // Git failed or timed out, and T3 caches the null for a minute.
-        unresolved.push(root);
-        continue;
-      }
-      // T3 names a clone by its `upstream` remote when it has one, so only `origin` is the repo
-      // the person cloned and works in.
-      if (identity.provider !== "github" || identity.locator.remoteName !== "origin") continue;
-      const { owner, name } = identity;
-      if (owner === undefined || name === undefined) {
-        unresolved.push(root);
-        continue;
-      }
-      const repo = `${owner}/${name}`;
-      repos.push({ repo, path: root, title: row.title });
-      const key = asciiLower(repo);
-      watchedFrom.set(key, [...(watchedFrom.get(key) ?? []), row.projectId]);
-    }
-    const active = new Set<string>(rows.map((row) => row.projectId));
-    const departed = yield* departures(watchedFrom, active);
-    return { repos, departed, unresolved } satisfies WatchedListing;
-  });
+      const active = new Set<string>(rows.map((row) => row.projectId));
+      const departed = yield* departures(watchedFrom, active, remember);
+      return { repos, departed, unresolved } satisfies WatchedListing;
+    });
 
-  return FactoryWatchedRepos.of({ list });
+  return FactoryWatchedRepos.of({ list: listing(false), listAndRemember: listing(true) });
 });
 
 /** Needs `FactoryPaths` for the memory file. */
