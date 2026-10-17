@@ -76,6 +76,8 @@ export type FactoryConfigResult =
   | { readonly kind: "forbidden" }
   | { readonly kind: "error"; readonly message: string };
 
+const isObject = (value: unknown): value is object => typeof value === "object" && value !== null;
+
 const CONFIG_PATH = "/api/factory/config";
 
 const request = async (
@@ -87,14 +89,17 @@ const request = async (
     const response = await factoryRequest(prepared, { method, path: CONFIG_PATH, body });
     const parsed = parseJson(response.text);
     if (response.status === 403) return { kind: "forbidden" };
-    if (response.status === 422) {
-      const errors = (parsed as { errors?: ReadonlyArray<ConfigError> } | null)?.errors;
-      return { kind: "invalid", errors: errors ?? [] };
-    }
     if (response.status < 200 || response.status >= 300) {
+      if (response.status === 422 && isObject(parsed)) {
+        const errors = (parsed as { errors?: ReadonlyArray<ConfigError> }).errors;
+        return { kind: "invalid", errors: errors ?? [] };
+      }
       return { kind: "error", message: failureMessage(response.status, parsed) };
     }
-    return { kind: "ok", report: parsed as MachineConfigReport };
+    if (!isObject(parsed)) {
+      return { kind: "error", message: "The factory's answer was not JSON." };
+    }
+    return { kind: "ok", report: parsed as unknown as MachineConfigReport };
   } catch (cause) {
     return { kind: "error", message: cause instanceof Error ? cause.message : String(cause) };
   }
