@@ -67,7 +67,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 ## 4. Settings
 
 - **MM-401** The map holds shared values for T3 server settings and client settings. Each machine can override a shared value with its own value.
-- **MM-402** A machine applies its settings through the T3 settings service, so they apply live like a change in T3 Settings. The theme settings of MM-408 to MM-410 are the exception.
+- **MM-402** A machine applies its settings through the T3 settings service, so they apply live like a change in T3 Settings. The theme settings of MM-408 to MM-410 and the `keybindings` setting of MM-414 are the exceptions.
 - **MM-403** A desktop machine applies client settings in its desktop app. A closed app applies them at its next start.
 - **MM-404** A change made on a machine in T3 Settings, to a setting with a shared value or an override, becomes an override of that machine in the map. The portal shows it as "changed on <machine>". "Make shared" copies it to all machines. A change to another setting stays local.
 - **MM-405** The Settings view shows each setting as a row and each machine as a column, with a filter. Settings with a shared value come first. Values that differ from the shared value show as drift.
@@ -79,6 +79,7 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-411** A change saved in T3 Settings with "All environments" selected becomes the shared value, when the machine has the map role `edit` and a portal connection. Overrides equal to the new value go; other overrides stay. One environment sends it, about one second after the last edit. Otherwise the change stays the bulk edit of T3 Settings. A change for one selected environment follows MM-404.
 - **MM-412** In T3 Settings, a server setting row shows a sync marker when the map syncs its value to the selected machine. A machine with the map off shows no marker.
 - **MM-413** "Import shared values" in the Settings view takes JSON in the form `{ "server": { ... }, "client": { ... } }` and sets each key as a shared value in one revision. It refuses a machine-local key or a value that the settings schema refuses.
+- **MM-414** While the server setting `keybindingSync` is on (off by default), a machine reports the rules of `keybindings.json` as the server setting `keybindings`. A change of that file is a local change (MM-404). When a desired state changes `keybindings` from the value of the previous desired state, the machine replaces the whole file and keeps the file before it as `keybindings.json.bak`. It does not write when the sync is off, when the value is not a rule list, or when the file is not a JSON array.
 
 ## 5. Commands
 

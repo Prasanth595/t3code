@@ -254,4 +254,11 @@ export const MACHINE_MAP_ITEMS = [
     to: "/settings/machines",
     searchTerms: ["reachable peers arrows levels read standard admin agent tools open"],
   },
+  {
+    id: "keybinding-sync",
+    title: "Sync keybindings",
+    to: "/settings/keybindings",
+    searchTerms: ["keybindings shortcuts machine map share sync all environments"],
+    environmentOnly: true,
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;

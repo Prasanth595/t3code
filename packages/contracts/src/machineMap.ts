@@ -162,6 +162,12 @@ export const ScopedSettingValues = Schema.Struct({
 export type ScopedSettingValues = typeof ScopedSettingValues.Type;
 
 /**
+ * Fork: the server setting that holds the rules of `keybindings.json` while `keybindingSync` is
+ * on. It is no settings service field: the machine map reads and writes the file.
+ */
+export const KEYBINDINGS_SETTING_KEY = "keybindings";
+
+/**
  * MM-406: settings that belong to one machine. They never become map entries: a machine does not
  * report them, the portal refuses a value for them, and a machine never applies one.
  */

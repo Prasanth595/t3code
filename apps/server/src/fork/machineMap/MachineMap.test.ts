@@ -40,6 +40,7 @@ import * as SessionStore from "../../auth/SessionStore.ts";
 import * as ServerSecretStore from "../../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../../config.ts";
 import * as EnvironmentTheme from "../../environmentTheme.ts";
+import * as Keybindings from "../../keybindings.ts";
 import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
@@ -249,6 +250,7 @@ const layerMachineMap = (input: {
     ),
     Layer.provide(ServerSecretStore.layer),
     Layer.provide(EnvironmentTheme.layer),
+    Layer.provideMerge(Keybindings.layer),
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "t3-machine-map-" })),
   );
 };
@@ -582,6 +584,99 @@ it.layer(NodeServices.layer)("MachineMap", (it) => {
           expect((yield* state.snapshot).token).toBeNull();
           const sessionIds = (yield* auth.listSessions()).map((session) => session.sessionId);
           expect(sessionIds).not.toContain(peerSession.sessionId);
+        }).pipe(Effect.provide(layerMachineMap({ portalUrl: portal.url, ran })));
+      }),
+    ),
+  );
+
+  it.effect("syncs keybindings.json while keybindingSync is on, without an echo", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const portal = yield* startFakePortal;
+        const ran = yield* Ref.make<ReadonlyArray<string>>([]);
+        yield* Effect.gen(function* () {
+          const machineMap = yield* MachineMap.MachineMap;
+          const settings = yield* ServerSettings.ServerSettingsService;
+          const keybindings = yield* Keybindings.Keybindings;
+          const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+          const fs = yield* FileSystem.FileSystem;
+          const readRules = fs.readFileString(keybindingsConfigPath).pipe(Effect.map(JSON.parse));
+
+          yield* machineMap.join({ code: "good" });
+          const { socket } = yield* Queue.take(portal.sockets);
+          expect((yield* nextOf(portal.received, "hello")).settings.server).not.toHaveProperty(
+            "keybindings",
+          );
+          const send = (message: PortalToMachine) =>
+            Effect.sync(() => socket.send(encodePortalMessage(message)));
+
+          // A command that this build does not know stays in the file.
+          const shared = [
+            { key: "mod+k", command: "commandPalette.toggle" },
+            { key: "mod+j", command: "fork.futureCommand", when: "terminalFocus" },
+          ];
+          yield* send({
+            _tag: "desired",
+            state: desiredState({ server: { keybindingSync: true, keybindings: shared } }),
+          });
+          yield* nextOf(portal.received, "applied");
+          expect(yield* readRules).toEqual(shared);
+
+          // The written rules read back equal: the next local change carries only itself.
+          yield* settings.updateSettings({ branchNamePrefix: "yz" });
+          expect((yield* nextOf(portal.received, "localSettings")).values).toEqual({
+            branchNamePrefix: "yz",
+          });
+
+          // A keybinding saved here is a local change of `keybindings`.
+          yield* keybindings.upsertKeybindingRule({
+            key: "mod+l",
+            command: "commandPalette.toggle",
+          });
+          const local = yield* nextOf(portal.received, "localSettings");
+          expect(Object.keys(local.values)).toEqual(["keybindings"]);
+          expect(local.values.keybindings).toContainEqual({
+            key: "mod+l",
+            command: "commandPalette.toggle",
+          });
+
+          // A revision with the same shared value does not write: the local save stays.
+          yield* send({
+            _tag: "desired",
+            state: desiredState({
+              revision: 2,
+              server: { keybindingSync: true, keybindings: shared, branchNamePrefix: "yz" },
+            }),
+          });
+          yield* nextOf(portal.received, "applied");
+          expect(yield* readRules).toContainEqual({
+            key: "mod+l",
+            command: "commandPalette.toggle",
+          });
+
+          // With the sync off, the file stays as it is.
+          const before = yield* readRules;
+          yield* send({
+            _tag: "desired",
+            state: desiredState({
+              revision: 3,
+              server: { keybindingSync: false, keybindings: shared },
+            }),
+          });
+          yield* nextOf(portal.received, "applied");
+          expect(yield* readRules).toEqual(before);
+
+          // A file that is not a JSON array stays for a fix by hand.
+          yield* fs.writeFileString(keybindingsConfigPath, "[{ broken");
+          yield* send({
+            _tag: "desired",
+            state: desiredState({
+              revision: 4,
+              server: { keybindingSync: true, keybindings: [shared[0]] },
+            }),
+          });
+          yield* nextOf(portal.received, "applied");
+          expect(yield* fs.readFileString(keybindingsConfigPath)).toBe("[{ broken");
         }).pipe(Effect.provide(layerMachineMap({ portalUrl: portal.url, ran })));
       }),
     ),

@@ -33,6 +33,7 @@ import {
   type MapToolName,
   type OrchestrationV2DomainEvent,
   ServerSettings as ServerSettingsSchema,
+  KEYBINDINGS_SETTING_KEY,
   ServerSettingsPatch,
   type SettingValues,
   TrimmedNonEmptyString,
@@ -71,6 +72,7 @@ import * as ThreadManagement from "../../orchestration-v2/ThreadManagementServic
 import * as ScheduledTasks from "../../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerConfig from "../../config.ts";
 import * as EnvironmentTheme from "../../environmentTheme.ts";
+import * as Keybindings from "../../keybindings.ts";
 import { forkParked } from "../../serverActivation.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import {
@@ -84,6 +86,7 @@ import * as MachineHost from "./MachineHost.ts";
 import * as MachineMapState from "./MachineMapState.ts";
 import * as MachineResources from "./MachineResources.ts";
 import * as MachineTunnel from "./MachineTunnel.ts";
+import { applyKeybindingSettings, withSyncedKeybindings } from "./keybindingSync.ts";
 import { applyThemeSettings, THEME_SETTING_KEYS, withSharedThemes } from "./themeSync.ts";
 import {
   PORTAL_CLOSE_CODES,
@@ -210,6 +213,7 @@ const make = Effect.gen(function* () {
   const resources = yield* MachineResources.MachineResources;
   const settings = yield* ServerSettings.ServerSettingsService;
   const environmentThemes = yield* EnvironmentTheme.EnvironmentThemeService;
+  const keybindings = yield* Keybindings.Keybindings;
   const auth = yield* EnvironmentAuth.EnvironmentAuth;
   const sessionStore = yield* SessionStore.SessionStore;
   const threads = yield* ThreadManagement.ThreadManagementService;
@@ -274,28 +278,34 @@ const make = Effect.gen(function* () {
 
   /**
    * The settings as the portal sees them: encoded, secrets redacted, without the machine-local
-   * keys (MM-406), with the published themes (MM-408).
+   * keys (MM-406), with the published themes (MM-408) and the synced keybindings.
    */
   const reportedServerSettings = (current: typeof ServerSettingsSchema.Type) =>
     Effect.gen(function* () {
       const encoded = yield* encodeServerSettings(
         ServerSettings.redactServerSettingsForClient(current),
       );
-      return withSharedThemes(
-        withoutMachineLocalSettings("server", encoded as Record<string, unknown>),
-        yield* environmentThemes.current,
+      return yield* withSyncedKeybindings(
+        fileSystem,
+        config.keybindingsConfigPath,
+        withSharedThemes(
+          withoutMachineLocalSettings("server", encoded as Record<string, unknown>),
+          yield* environmentThemes.current,
+        ),
       );
     });
 
   // MM-402: apply the server settings of a desired state
 
-  const applyServerSettings = (values: SettingValues) =>
+  /** `previous`: the server settings of the desired state before; at start, `values` itself. */
+  const applyServerSettings = (values: SettingValues, previous: SettingValues | null) =>
     Effect.gen(function* () {
       const current = yield* reportedServerSettings(yield* settings.getSettings);
       const changed: Record<string, unknown> = {};
       const changedThemeSettings: Record<string, unknown> = {};
       const skipped: Array<string> = [];
       for (const [key, value] of Object.entries(values)) {
+        if (key === KEYBINDINGS_SETTING_KEY) continue;
         if (THEME_SETTING_KEYS.has(key)) {
           if (stableStringify(current[key]) !== stableStringify(value)) {
             changedThemeSettings[key] = value;
@@ -320,6 +330,12 @@ const make = Effect.gen(function* () {
           keys: skipped,
         });
       }
+      yield* applyKeybindingSettings({
+        keybindingsPath: config.keybindingsConfigPath,
+        values,
+        previous,
+        current,
+      });
       if (Object.keys(changed).length > 0) {
         yield* settings.updateSettings(yield* decodePatch(changed));
       }
@@ -435,7 +451,7 @@ const make = Effect.gen(function* () {
           );
         }),
       );
-      yield* applyServerSettings(desired.settings.server);
+      yield* applyServerSettings(desired.settings.server, before?.settings.server ?? null);
       // Client settings reach the desktop app through the client stream (MM-403).
     });
 
@@ -870,10 +886,15 @@ const make = Effect.gen(function* () {
 
   // MM-404: settings that change outside the map
 
-  // A change in the themes folder is a change of `sharedThemes` (MM-408).
-  const watchLocalSettings = Stream.merge(
-    settings.streamChanges.pipe(Stream.as(undefined)),
-    environmentThemes.streamChanges.pipe(Stream.as(undefined)),
+  // A change in the themes folder is a change of `sharedThemes` (MM-408), and a change of
+  // `keybindings.json` is a change of `keybindings`.
+  const watchLocalSettings = Stream.mergeAll(
+    [
+      settings.streamChanges.pipe(Stream.as(undefined)),
+      environmentThemes.streamChanges.pipe(Stream.as(undefined)),
+      keybindings.streamChanges.pipe(Stream.as(undefined)),
+    ],
+    { concurrency: "unbounded" },
   ).pipe(
     Stream.runForEach(() =>
       Effect.gen(function* () {
@@ -1323,7 +1344,8 @@ const make = Effect.gen(function* () {
   // builds before the HTTP routes serve, so this runs first.
   const atStart = yield* state.snapshot;
   if (atStart.enabled && atStart.saved.desired !== null) {
-    yield* applyServerSettings(atStart.saved.desired.settings.server).pipe(
+    const saved = atStart.saved.desired.settings.server;
+    yield* applyServerSettings(saved, saved).pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("Machine map could not apply the saved desired state.", {
           cause: Cause.pretty(cause),
