@@ -499,14 +499,48 @@ describe("useFactoryEnvironmentId", () => {
     expect(id.current).toBe(ENV_1);
   });
 
-  it("is the primary while nothing runs, and while every answer is still loading", async () => {
+  it("is the primary while nothing runs", async () => {
     environments.connected = [ENV_1, ENV_2];
-    const pending = deferred<ReturnType<typeof status>>();
-    __setFactoryApiForTests(api({ status: () => pending.promise }));
-    const loading = await mount(useFactoryEnvironmentId);
-    expect(loading.current).toBe(ENV_1);
-    await act(async () => pending.resolve(status(0, "idle")));
-    expect(loading.current).toBe(ENV_1);
+    __setFactoryApiForTests(byEnvironment(() => []));
+    const id = await mount(useFactoryEnvironmentId);
+    expect(id.current).toBe(ENV_1);
+  });
+
+  it("is undecided while a candidate that could come first has not answered", async () => {
+    environments.connected = [ENV_1, ENV_2];
+    const primary = deferred<ReturnType<typeof status>>();
+    __setFactoryApiForTests(
+      api({ status: (env) => (env === ENV_1 ? primary.promise : Promise.resolve(status(0))) }),
+    );
+    const id = await mount(useFactoryEnvironmentId);
+    expect(id.current).toBeNull();
+    await act(async () => primary.resolve(status(0, "idle")));
+    expect(id.current).toBe(ENV_2);
+  });
+
+  it("is a running primary without waiting for the others", async () => {
+    environments.connected = [ENV_1, ENV_2];
+    __setFactoryApiForTests(
+      api({
+        status: (env) => (env === ENV_1 ? Promise.resolve(status(0)) : new Promise(() => {})),
+      }),
+    );
+    const id = await mount(useFactoryEnvironmentId);
+    expect(id.current).toBe(ENV_1);
+  });
+
+  it("moves past a candidate whose first read failed", async () => {
+    environments.connected = [ENV_1, ENV_2];
+    __setFactoryApiForTests(
+      api({
+        status: async (env) => {
+          if (env === ENV_1) throw new Error("down");
+          return status(0);
+        },
+      }),
+    );
+    const id = await mount(useFactoryEnvironmentId);
+    expect(id.current).toBe(ENV_2);
   });
 
   it("is the primary even before the catalog lists it as connected", async () => {
