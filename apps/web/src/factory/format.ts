@@ -76,7 +76,7 @@ const MESSAGE_EVENTS = new Set([
 
 /**
  * What a ledger holds of the last gate: the commands of the highest attempt, the message of the
- * last relaunch or forward, and the reason of the last `stuck` entry when it names the gate.
+ * last relaunch or forward after that attempt's last command, and the reason of the last `stuck` entry when it names the gate.
  */
 export function lastGateOutput(entries: ReadonlyArray<FactoryEntry>): GateOutput {
   let attempt: number | null = null;
@@ -85,10 +85,18 @@ export function lastGateOutput(entries: ReadonlyArray<FactoryEntry>): GateOutput
     const n = numberField(entry.data, "attempt");
     if (n !== null && (attempt === null || n > attempt)) attempt = n;
   }
+  // The index of the last command of that attempt: a message counts only after it, as the answer
+  // to that attempt's failure. One before it was about an earlier attempt.
+  let lastCommandAt = -1;
+  entries.forEach((entry, index) => {
+    if (entry.event === "gate_command" && numberField(entry.data, "attempt") === attempt) {
+      lastCommandAt = index;
+    }
+  });
   const commands: Array<GateCommand> = [];
   let message: string | null = null;
   let stuckReason: string | null = null;
-  for (const entry of entries) {
+  for (const [index, entry] of entries.entries()) {
     if (entry.event === "gate_command" && numberField(entry.data, "attempt") === attempt) {
       const command = textField(entry.data, "command");
       const exit = numberField(entry.data, "exit_code");
@@ -96,7 +104,7 @@ export function lastGateOutput(entries: ReadonlyArray<FactoryEntry>): GateOutput
       if (command !== null && exit !== null && duration !== null) {
         commands.push({ command, exit_code: exit, duration_ms: duration });
       }
-    } else if (MESSAGE_EVENTS.has(entry.event)) {
+    } else if (MESSAGE_EVENTS.has(entry.event) && index > lastCommandAt) {
       message = textField(entry.data, "message") ?? message;
     } else if (entry.event === "stuck") {
       const reason = textField(entry.data, "reason");
