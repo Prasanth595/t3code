@@ -3,6 +3,8 @@ import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
+import * as Result from "effect/Result";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -15,6 +17,7 @@ import * as Scope from "effect/Scope";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 
+import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import type { McpInvocationScope } from "../mcp/McpInvocationContext.ts";
@@ -25,9 +28,17 @@ import * as Receipts from "../persistence/OrchestrationCommandReceipts.ts";
 import { Mission } from "../../../../packages/contracts/src/mission.ts";
 import {
   emptyMissionExecution,
+  missionManagerReservations,
   missionRetroReportReceipts,
   missionRetroSkillEvaluations,
 } from "../../../../packages/contracts/src/missionExecution.ts";
+import { reserveDueRotation } from "./MissionManagerDailyRotation.ts";
+import * as Transfer from "./MissionManagerTransferStore.ts";
+import * as Handoff from "./MissionManagerHandoffArtifacts.ts";
+import { evaluateManagerRotation, type ManagerRotationDecision } from "./MissionManagerRotation.ts";
+import { managerReservationState } from "../../../../packages/contracts/src/missionManagerTransfer.ts";
+import type { MissionCompletionSelector } from "../../../../packages/contracts/src/missionCompletion.ts";
+import * as Completion from "./MissionCompletionRouteResolver.ts";
 import * as Lifecycle from "./MissionManagerLifecycleStore.ts";
 import * as Manager from "./MissionManagerRuntimeAdapter.ts";
 import * as ReplayArtifacts from "./MissionRetroReplayArtifacts.ts";
@@ -70,7 +81,9 @@ type RuntimeError =
   | Manager.MissionManagerRuntimeError
   | Planning.MissionPlanningStoreError
   | MissionPeerHandshakeError
-  | Missions.MissionServiceError;
+  | Missions.MissionServiceError
+  | Transfer.MissionManagerTransferStoreError
+  | Completion.MissionCompletionRouteResolverError;
 type Role = "delivery" | "retro";
 type ReplayCommand = {
   readonly commandId: CommandId;
@@ -81,6 +94,30 @@ type ReplayCommand = {
 
 /** Capabilities expire with this request; no authority or currency callback is caller supplied. */
 export interface CombinedMissionRequest {
+  /** Reread canonical decisions, attempts, pending reviews and role lineage after a restart. */
+  readonly readState: Effect.Effect<Mission, RuntimeError>;
+  readonly reserveRotation: (command: {
+    readonly commandId: CommandId;
+    readonly expectedRevision: number;
+  }) => Effect.Effect<
+    | { readonly kind: "hold"; readonly decision: ManagerRotationDecision }
+    | {
+        readonly kind: "reserved";
+        readonly reservation: import("../../../../packages/contracts/src/missionManagerTransfer.ts").MissionManagerReservation;
+        readonly recovered: boolean;
+      }
+    | { readonly kind: "denied"; readonly code: string },
+    RuntimeError
+  >;
+  readonly wakeCompletion: (
+    selector: MissionCompletionSelector,
+  ) => Effect.Effect<unknown, RuntimeError>;
+  /** Cut over once, then activate the exact successor even if the incumbent loses its reply. */
+  readonly transferAndWake: (command: {
+    readonly commandId: CommandId;
+    readonly expectedRevision: number;
+    readonly reservationId: string;
+  }) => Effect.Effect<unknown, RuntimeError>;
   /** Authenticates the peer channel only; never readiness, execution or artifact ACK. */
   readonly connectHost: Effect.Effect<HostTransportBinding, RuntimeError>;
   readonly commitPlanning: (command: {
@@ -160,6 +197,13 @@ const StartupConfig = Schema.Struct({
   approvedConfigDigest: Digest,
   reportArtifactDirectory: Id,
   plans: Schema.Record(Id, Plan),
+  rotation: Schema.optional(
+    Schema.Struct({
+      enabled: Schema.Literal(true),
+      authorityRef: Id,
+      missionIds: Schema.Array(Id),
+    }),
+  ),
 });
 type StartupConfig = typeof StartupConfig.Type;
 const decodeConfig = Schema.decodeUnknownSync(Schema.fromJsonString(StartupConfig), {
@@ -237,6 +281,10 @@ const make = Effect.gen(function* () {
   const environmentId = yield* (yield* ServerEnvironment.ServerEnvironment).getEnvironmentId;
   const sql = yield* SqlClient.SqlClient;
   const projections = yield* Projections.ProjectionStoreV2;
+  const serverConfig = yield* ServerConfig.ServerConfig;
+  const path = yield* Path.Path;
+  const handoffDirectory = path.join(serverConfig.stateDir, "nofun", "manager-artifacts");
+  const boundary = yield* Effect.serviceOption(Manager.MissionManagerBoundaryFacts);
   // Force the shared production dependencies to finish construction in the parent memo map.
   // A request forks that map: only the authority-dependent adapters/stores are new.
   yield* Sessions.ProviderSessionManagerV2;
@@ -284,6 +332,13 @@ const make = Effect.gen(function* () {
       : Option.isSome(config)
         ? ("configured" as const)
         : ("unconfigured" as const);
+
+  yield* Effect.logInfo("Mission P1/P2/P3 consumers registered", {
+    roles: "canonical-read/reserve/standby/quiesce/CAS/wake/adoption/retirement",
+    replay: replayStatus,
+    boundaryFacts: Option.isSome(boundary) ? "configured" : "unconfigured; transfers hold",
+    automation: "explicit requests only; no schedule activated",
+  });
 
   const withRequest: CombinedMissionRuntime["Service"]["withRequest"] = (inputScope, input, use) =>
     Effect.scoped(
@@ -439,10 +494,6 @@ const make = Effect.gen(function* () {
             yield* assertLive;
             return result;
           });
-        const transactional = <A, E extends RuntimeError>(effect: Effect.Effect<A, E>) =>
-          sql
-            .withTransaction(checked(effect))
-            .pipe(Effect.mapError((e) => (e._tag === "SqlError" ? fail("scope_denied") : e)));
         const planningStore = Effect.gen(function* () {
           if (request.role !== "delivery") return yield* fail("scope_denied");
           if (Option.isNone(planningFacts)) return yield* fail("planning_unavailable");
@@ -460,7 +511,220 @@ const make = Effect.gen(function* () {
           );
           return Context.get(context, Planning.MissionPlanningStore);
         });
+        const roleAuthority = Layer.succeed(Transfer.MissionManagerReservationAuthority, {
+          teamId: trusted.teamId,
+          environmentId,
+          controllerThreadId: scope.thread.threadId,
+          role: request.role,
+          isCurrent,
+        });
+        // These are runtime observations, never tool arguments. Missing external
+        // process/write evidence stays unknown and prevents a reservation.
+        const readRotationFacts = Effect.gen(function* () {
+          const mission = yield* assertCanonical;
+          const owner = mission.managers[request.role]!;
+          const reservations = missionManagerReservations(
+            mission.execution ?? emptyMissionExecution(),
+          ).filter((r) => r.role === request.role);
+          const last = reservations.at(-1);
+          const external = Option.isSome(boundary)
+            ? yield* boundary.value.quiesceBoundary({
+                ...request,
+                incumbentThreadId: owner.threadId!,
+                incumbentEpoch: owner.epoch!,
+              })
+            : null;
+          const routing = Option.isSome(boundary)
+            ? yield* boundary.value.completionRoutingReady(request)
+            : null;
+          return {
+            teamId: trusted.teamId,
+            environmentId,
+            missionId: mission.id,
+            role: request.role,
+            currentThreadId: owner.threadId!,
+            currentEpoch: owner.epoch!,
+            observedRevision: mission.revision,
+            projectTimezone: mission.projectTimezone ?? "",
+            nowIso: DateTime.formatIso(yield* DateTime.now),
+            lastSlot: last ? { localDate: last.localDate, ordinal: last.ordinal } : null,
+            safeBoundary:
+              external === null
+                ? null
+                : {
+                    incumbentIntegrationRunning: external.integrationRunning !== false,
+                    incumbentGuiOwned: external.guiOwned !== false,
+                    unresolvedShellWrite: external.unmanagedShellWrites === "present",
+                    sharedWriteUnknown:
+                      external.sharedWrites !== "none" ||
+                      external.unmanagedShellWrites === "unknown",
+                    quiescenceUnknown:
+                      external.integrationRunning === null || external.guiOwned === null,
+                    childWorkersPending: false,
+                    completionRoutingReady: routing === true,
+                  },
+            retroQueueDepth: (mission.execution?.retroAnalyses ?? []).filter(
+              (r) => r.status !== "settled",
+            ).length,
+            userStopRequested: mission.status === "stopped",
+            userPauseRequested: mission.status === "paused",
+            fence: adapter.currentFence(),
+          } satisfies Transfer.ManagerTrustedFacts;
+        });
+        const factsPort = Layer.succeed(Transfer.MissionManagerTrustedFactsPort, {
+          readFacts: () =>
+            readRotationFacts.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new Transfer.MissionManagerTransferStoreError({
+                    operation: "reserve",
+                    category: "scope_denied",
+                    cause,
+                  }),
+              ),
+            ),
+          isCurrent: (facts) => isCurrent() && facts.fence === adapter.currentFence(),
+        });
         const runtime: CombinedMissionRequest = {
+          readState: assertCanonical,
+          reserveRotation: (command) =>
+            managerActions.withPermits(1)(
+              checked(
+                Effect.gen(function* () {
+                  const mission = yield* assertCanonical;
+                  const facts = yield* readRotationFacts;
+                  const decision = evaluateManagerRotation({
+                    mission,
+                    role: request.role,
+                    projectTimezone: mission.projectTimezone,
+                    nowIso: facts.nowIso!,
+                    lastSlot: facts.lastSlot ?? null,
+                    safeBoundary: facts.safeBoundary ?? {
+                      incumbentIntegrationRunning: false,
+                      incumbentGuiOwned: false,
+                      unresolvedShellWrite: false,
+                      sharedWriteUnknown: true,
+                      quiescenceUnknown: true,
+                      childWorkersPending: false,
+                      completionRoutingReady: false,
+                    },
+                    retroQueueDepth: facts.retroQueueDepth ?? undefined,
+                    userStopRequested: facts.userStopRequested === true,
+                    userPauseRequested: facts.userPauseRequested === true,
+                  });
+                  if (decision.kind !== "rotate") return { kind: "hold" as const, decision };
+                  const previous = missionManagerReservations(
+                    mission.execution ?? emptyMissionExecution(),
+                  ).find(
+                    (r) => r.role === request.role && managerReservationState(r) !== "retired",
+                  );
+                  if (previous)
+                    return { kind: "reserved" as const, reservation: previous, recovered: true };
+                  if (mission.revision !== command.expectedRevision)
+                    return yield* fail("request_conflict");
+                  const artifact = yield* Handoff.stageManagerHandoffArtifact({
+                    artifactDirectory: handoffDirectory,
+                    input: {
+                      mission,
+                      intent: decision.intent,
+                      routePolicy: { ref: "mission-mcp-policy", revision: trusted.revision },
+                    },
+                  });
+                  const context = yield* Layer.buildWithMemoMap(
+                    Transfer.layer.pipe(
+                      Layer.provide(roleAuthority),
+                      Layer.provide(factsPort),
+                      Layer.provide(
+                        Handoff.layerFilesystemManagerHandoffArtifactPort(handoffDirectory),
+                      ),
+                    ),
+                    memo,
+                    requestScope,
+                  ).pipe(
+                    Effect.provide(Context.add(startupContext, SqlClient.SqlClient, requestSql)),
+                    Effect.provideService(Events.OrchestrationEventStore, events),
+                    Effect.provideService(Receipts.OrchestrationCommandReceiptRepository, receipts),
+                  );
+                  const intent = decision.intent;
+                  const result = yield* Context.get(
+                    context,
+                    Transfer.MissionManagerTransferStore,
+                  ).reserve({
+                    commandId: command.commandId,
+                    missionId: mission.id,
+                    role: request.role,
+                    expectedRevision: command.expectedRevision,
+                    projectTimezone: intent.timezone,
+                    currentThreadId: intent.currentThreadId,
+                    currentEpoch: intent.currentEpoch,
+                    localDate: intent.localDate,
+                    ordinal: intent.ordinal,
+                    reason: intent.reason,
+                    artifactRef: artifact.artifactRef,
+                  });
+                  return Result.isFailure(result)
+                    ? { kind: "denied" as const, code: result.failure.code }
+                    : {
+                        kind: "reserved" as const,
+                        reservation: result.success.reservation,
+                        recovered: result.success.recovered,
+                      };
+                }),
+              ),
+            ),
+          wakeCompletion: (selector) =>
+            managerActions.withPermits(1)(
+              checked(
+                Effect.gen(function* () {
+                  if (selector.missionId !== request.missionId) return yield* fail("scope_denied");
+                  const context = yield* Layer.buildWithMemoMap(
+                    Completion.layer.pipe(Layer.provide(roleAuthority)),
+                    memo,
+                    requestScope,
+                  ).pipe(Effect.provideService(SqlClient.SqlClient, requestSql));
+                  const route = yield* Context.get(
+                    context,
+                    Completion.MissionCompletionRouteResolver,
+                  ).resolve(selector);
+                  if (route.kind === "hold") return route;
+                  if (route.candidate.role !== request.role) return yield* fail("scope_denied");
+                  return yield* adapter.wakeCurrentRole({
+                    ...request,
+                    wakeKey: route.candidate.notificationId,
+                    expectedOwner: {
+                      threadId: route.candidate.targetThreadId,
+                      epoch: route.candidate.targetEpoch,
+                    },
+                    instruction:
+                      "A canonical completion is awaiting review. Reread the mission and inspect its original producing task/run and exact result before accepting or integrating. Notification: " +
+                      route.candidate.notificationId,
+                  });
+                }),
+              ),
+            ),
+          transferAndWake: (command) =>
+            managerActions.withPermits(1)(
+              Effect.gen(function* () {
+                yield* assertCanonical;
+                const transfer = yield* lifecycle.advance({
+                  ...command,
+                  ...request,
+                  step: "transfer",
+                });
+                if (Result.isFailure(transfer)) return transfer;
+                // No outer SQL transaction around external thread/session commands:
+                // those commands own their commits. The lifecycle CAS is durable first.
+                yield* assertLive;
+                const wake = yield* adapter.wakeCurrentRole({
+                  ...request,
+                  reservationId: command.reservationId,
+                  wakeKey: `activate:${command.reservationId}`,
+                  instruction:
+                    "Adopt the canonical manager role. Reread accepted decisions, attempts, pending reviews and the immutable handoff before acting. Confirm routing with the requested ACK.",
+                });
+                return { transfer, wake };
+              }),
+            ),
           connectHost: managerActions.withPermits(1)(
             Effect.gen(function* () {
               if (request.role !== "delivery") return yield* fail("scope_denied");
@@ -494,21 +758,21 @@ const make = Effect.gen(function* () {
             ),
           launchStandby: (reservationId) =>
             managerActions.withPermits(1)(
-              transactional(adapter.launchStandby({ ...request, reservationId })),
+              checked(adapter.launchStandby({ ...request, reservationId })),
             ),
           readLifecycleFacts: (reservationId, step) =>
             managerActions.withPermits(1)(
-              transactional(adapter.readLifecycleFacts({ ...request, reservationId, step })),
+              checked(adapter.readLifecycleFacts({ ...request, reservationId, step })),
             ),
           advance: (command) =>
             managerActions.withPermits(1)(checked(lifecycle.advance({ ...command, ...request }))),
           cleanupIncumbent: (reservationId) =>
             managerActions.withPermits(1)(
-              transactional(adapter.cleanupIncumbent({ ...request, reservationId })),
+              checked(adapter.cleanupIncumbent({ ...request, reservationId })),
             ),
           wakeCurrentRole: (command) =>
             managerActions.withPermits(1)(
-              transactional(adapter.wakeCurrentRole({ ...command, ...request })),
+              checked(adapter.wakeCurrentRole({ ...command, ...request })),
             ),
           replayAndRecord: (inputCommand) =>
             Effect.gen(function* () {
@@ -658,6 +922,240 @@ const make = Effect.gen(function* () {
         return result;
       }),
     );
+  // Reuse the application scheduler. A reservation is the explicit durable
+  // opt-in; startup never creates daily threads or activates a fleet. Running
+  // after the incumbent turn settles makes quiescence possible without asking
+  // a manager to mutate its own role from inside an active provider turn.
+  const scheduler = yield* Scheduler.Scheduler;
+  const reconcileManagers = managerActions
+    .withPermits(1)(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const trusted = currentPolicy();
+          if (
+            !trusted ||
+            trusted.environmentId !== environmentId ||
+            trusted.allowedProjectIds.length === 0
+          )
+            return;
+          const policyIdentity = stableStringify(trusted);
+          const isCurrent = () => stableStringify(currentPolicy()) === policyIdentity;
+          const rows = yield* sql<{
+            snapshot_json: string;
+          }>`SELECT snapshot_json FROM projection_missions WHERE team_id = ${trusted.teamId} AND authority_environment_id = ${environmentId}`;
+          for (const row of rows) {
+            const mission = yield* decodeMission(row.snapshot_json).pipe(Effect.option);
+            if (
+              Option.isNone(mission) ||
+              mission.value.status !== "active" ||
+              !mission.value.bindings.every((b) => trusted.allowedProjectIds.includes(b.projectId))
+            )
+              continue;
+            // Daily activation is an explicit owner-configured allowlist, separate
+            // from merely installing/registering these consumers.
+            if (
+              approved &&
+              Option.isSome(config) &&
+              config.value.rotation?.missionIds.includes(mission.value.id)
+            ) {
+              for (const role of ["delivery", "retro"] as const) {
+                const owner = mission.value.managers[role];
+                if (!owner?.threadId || owner.epoch === undefined) continue;
+                const memo = yield* Layer.forkMemoMap(parentMemo);
+                const context = yield* Layer.buildWithMemoMap(
+                  RuntimeLayer.layerMissionManagerLifecycle.pipe(
+                    Layer.provide(
+                      Layer.succeed(Lifecycle.MissionManagerLifecycleAuthority, {
+                        teamId: trusted.teamId,
+                        environmentId,
+                        role,
+                        isCurrent,
+                      }),
+                    ),
+                  ),
+                  memo,
+                  yield* Scope.Scope,
+                ).pipe(Effect.provide(startupContext));
+                yield* reserveDueRotation(mission.value.id).pipe(
+                  Effect.provide(Context.merge(startupContext, context)),
+                  Effect.provideService(Transfer.MissionManagerReservationAuthority, {
+                    teamId: trusted.teamId,
+                    environmentId,
+                    controllerThreadId: owner.threadId,
+                    role,
+                    isCurrent,
+                  }),
+                );
+              }
+            }
+            const pending = missionManagerReservations(
+              mission.value.execution ?? emptyMissionExecution(),
+            ).filter((r) => managerReservationState(r) !== "retired");
+            for (const reservation of pending) {
+              if (!isCurrent()) return;
+              const role = reservation.role;
+              const request = {
+                missionId: mission.value.id,
+                role,
+                reservationId: reservation.reservationId,
+              };
+              const memo = yield* Layer.forkMemoMap(parentMemo);
+              const context = yield* Layer.buildWithMemoMap(
+                RuntimeLayer.layerMissionManagerLifecycle.pipe(
+                  Layer.provide(
+                    Layer.succeed(Lifecycle.MissionManagerLifecycleAuthority, {
+                      teamId: trusted.teamId,
+                      environmentId,
+                      role,
+                      isCurrent,
+                    }),
+                  ),
+                ),
+                memo,
+                yield* Scope.Scope,
+              ).pipe(Effect.provide(startupContext));
+              const adapter = Context.get(context, Manager.MissionManagerRuntimeAdapter);
+              const lifecycle = Context.get(context, Lifecycle.MissionManagerLifecycleStore);
+              for (let stepIndex = 0; stepIndex < 6 && isCurrent(); stepIndex += 1) {
+                const latest = yield* sql<{
+                  snapshot_json: string;
+                }>`SELECT snapshot_json FROM projection_missions WHERE mission_id = ${request.missionId} AND team_id = ${trusted.teamId} AND authority_environment_id = ${environmentId}`;
+                if (!latest[0]) break;
+                const canonical = yield* decodeMission(latest[0].snapshot_json);
+                if (canonical.status !== "active") break;
+                const current = missionManagerReservations(
+                  canonical.execution ?? emptyMissionExecution(),
+                ).find((r) => r.reservationId === reservation.reservationId);
+                if (!current) break;
+                const state = managerReservationState(current);
+                if (state === "retired") break;
+                if (state === "reserved") {
+                  const launch = yield* adapter.launchStandby(request);
+                  if (launch.kind === "hold") break;
+                }
+                if (state === "transferred") {
+                  // Reissuing a lost activation wake uses exactly the same epoch/key.
+                  yield* adapter.wakeCurrentRole({
+                    ...request,
+                    wakeKey: `activate:${reservation.reservationId}`,
+                    expectedOwner: {
+                      threadId: current.successorThreadId,
+                      epoch: current.currentEpoch + 1,
+                    },
+                    instruction:
+                      "Adopt the canonical manager role. Reread accepted decisions, attempts, pending reviews and the immutable handoff before acting. Confirm routing with the requested ACK.",
+                  });
+                }
+                if (state === "routing_confirmed") {
+                  const cleanup = yield* adapter.cleanupIncumbent(request);
+                  if (cleanup.kind === "hold") break;
+                }
+                const step =
+                  state === "reserved"
+                    ? "standby"
+                    : state === "standby_ready"
+                      ? "quiesce"
+                      : state === "quiesced"
+                        ? "transfer"
+                        : state === "transferred"
+                          ? "routing"
+                          : "retire";
+                const result = yield* lifecycle.advance({
+                  ...request,
+                  step,
+                  commandId: CommandId.make(
+                    `manager-reconcile:${reservation.reservationId}:${step}`,
+                  ),
+                  expectedRevision: canonical.revision,
+                });
+                if (Result.isFailure(result)) break;
+              }
+            }
+            // Canonical results survive mailbox ACK and parent retirement.
+            // Re-derive their current role every tick; the epoch/key-bound
+            // thread command coalesces repeats without another provider turn.
+            for (const role of ["delivery", "retro"] as const) {
+              if (!isCurrent()) return;
+              const latest = yield* sql<{
+                snapshot_json: string;
+              }>`SELECT snapshot_json FROM projection_missions WHERE mission_id = ${mission.value.id} AND team_id = ${trusted.teamId} AND authority_environment_id = ${environmentId}`;
+              if (!latest[0]) continue;
+              const current = yield* decodeMission(latest[0].snapshot_json);
+              const owner = current.managers[role];
+              if (current.status !== "active" || !owner?.threadId || owner.epoch === undefined)
+                continue;
+              const selectors: MissionCompletionSelector[] =
+                role === "delivery"
+                  ? (current.execution?.results ?? [])
+                      .filter((r) => r.reviewReceipt === undefined)
+                      .map((r) => ({
+                        kind: "task-result",
+                        missionId: current.id,
+                        taskId: r.taskId,
+                        attemptNumber: r.attemptNumber,
+                        resultRevision: r.provenance.resultRevision,
+                      }))
+                  : (current.execution?.retroReportReceipts ?? []).map((r) => ({
+                      kind: "retro-report",
+                      missionId: current.id,
+                      checkpointId: r.checkpointId,
+                      reportRevision: r.reportRevision,
+                    }));
+              if (selectors.length === 0) continue;
+              const memo = yield* Layer.forkMemoMap(parentMemo);
+              const roleAuthority = Layer.succeed(Transfer.MissionManagerReservationAuthority, {
+                teamId: trusted.teamId,
+                environmentId,
+                controllerThreadId: owner.threadId,
+                role,
+                isCurrent,
+              });
+              const context = yield* Layer.buildWithMemoMap(
+                Layer.mergeAll(
+                  Completion.layer.pipe(Layer.provide(roleAuthority)),
+                  RuntimeLayer.layerMissionManagerLifecycle.pipe(
+                    Layer.provide(
+                      Layer.succeed(Lifecycle.MissionManagerLifecycleAuthority, {
+                        teamId: trusted.teamId,
+                        environmentId,
+                        role,
+                        isCurrent,
+                      }),
+                    ),
+                  ),
+                ),
+                memo,
+                yield* Scope.Scope,
+              ).pipe(Effect.provide(startupContext));
+              const resolver = Context.get(context, Completion.MissionCompletionRouteResolver);
+              const adapter = Context.get(context, Manager.MissionManagerRuntimeAdapter);
+              for (const selector of selectors) {
+                const route = yield* resolver.resolve(selector);
+                if (route.kind !== "candidate") continue;
+                yield* adapter.wakeCurrentRole({
+                  missionId: current.id,
+                  role,
+                  wakeKey: route.candidate.notificationId,
+                  expectedOwner: {
+                    threadId: route.candidate.targetThreadId,
+                    epoch: route.candidate.targetEpoch,
+                  },
+                  instruction:
+                    "A canonical completion is awaiting review. Reread the mission and inspect its original producing task/run and exact result before accepting or integrating. Notification: " +
+                    route.candidate.notificationId,
+                });
+              }
+            }
+          }
+        }),
+      ),
+    )
+    .pipe(
+      Effect.catch(() =>
+        Effect.logWarning("Mission manager reconciliation held; durable reservation retained"),
+      ),
+    );
+  yield* scheduler.register("mission-manager-lifecycle", reconcileManagers);
   return CombinedMissionRuntime.of({
     status: Effect.sync(() => ({
       authority:
