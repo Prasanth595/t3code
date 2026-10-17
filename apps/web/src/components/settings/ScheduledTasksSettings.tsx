@@ -202,7 +202,7 @@ export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
  * instant — render "in 5m" style labels for upcoming runs instead of a
  * misleading "just now".
  */
-export function relativeLabel(value: string | null, nowMs: number): string {
+function relativeLabel(value: string | null, nowMs: number): string {
   if (!value) return "Not scheduled";
   const diffMs = new Date(value).getTime() - nowMs;
   if (diffMs <= 0) {
