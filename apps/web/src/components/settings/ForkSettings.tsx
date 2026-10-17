@@ -3,6 +3,7 @@ import type { ComponentType } from "react";
 
 import { Button } from "../ui/button";
 import { AppToggleShortcutsSettingsRow } from "./AppToggleShortcutsSettingsRow";
+import { FocusLevelHighlightSettingsRow } from "./FocusLevelHighlightSettingsRow";
 import { ForkChangelogSettingsRow } from "./ForkChangelogSettingsRow";
 import {
   AgentSessionImportSettingsRows,
@@ -70,6 +71,7 @@ const FORK_SETTING_ROWS: Readonly<Record<ForkSettingRowId, ComponentType>> = {
   "global-scripts": GlobalScriptsSettingsRows,
   "app-toggle-shortcuts": AppToggleShortcutsSettingsRow,
   "terminal-app-shortcuts-first": TerminalAppShortcutsFirstSettingsRow,
+  "focus-level-highlight": FocusLevelHighlightSettingsRow,
   "terminal-close-confirmation": TerminalCloseConfirmationSettingsRow,
   "thread-card-layout": ThreadCardLayoutSettingsRows,
   "thread-link-chips": ThreadLinkChipsSettingsRow,

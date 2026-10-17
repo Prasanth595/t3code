@@ -89,6 +89,7 @@ const FORK_SETTING_GROUPS = [
       { ids: ["global-scripts"] },
       { ids: ["app-toggle-shortcuts"] },
       { ids: ["terminal-app-shortcuts-first"] },
+      { ids: ["focus-level-highlight"] },
       { ids: ["terminal-close-confirmation"] },
     ],
   },

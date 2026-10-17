@@ -8,6 +8,7 @@ import {
   preventTerminalCloseShortcut,
 } from "../../lib/terminalCloseShortcut";
 import { getTerminalFocusOwner, type TerminalFocusOwner } from "../../lib/terminalFocus";
+import { focusLevelOf } from "../focusLevels/focusLevels";
 import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
 
 /** Runs a command. Returning false lets the key event through untouched. */
@@ -63,6 +64,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       if (
         !shortcutContext.terminalFocus &&
         !shortcutContext.modelPickerOpen &&
+        focusLevelOf(event.target) !== "sidebar" &&
         shouldTypeToFocusComposer(event) &&
         current.typeIntoComposer(event.key)
       ) {

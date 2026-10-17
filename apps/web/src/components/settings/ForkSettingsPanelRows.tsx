@@ -4,6 +4,7 @@
  */
 import { isElectron } from "../../env";
 import { AppToggleShortcutsSettingsRow } from "./AppToggleShortcutsSettingsRow";
+import { FocusLevelHighlightSettingsRow } from "./FocusLevelHighlightSettingsRow";
 import { ForkChangelogSettingsRow } from "./ForkChangelogSettingsRow";
 import {
   BackgroundWorkDetailsSettingsRow,
@@ -58,6 +59,8 @@ export function BehaviorRows() {
       <TerminalCloseConfirmationSettingsRow />
 
       <TerminalAppShortcutsFirstSettingsRow />
+
+      <FocusLevelHighlightSettingsRow />
 
       {isElectron ? <AppToggleShortcutsSettingsRow /> : null}
 

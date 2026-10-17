@@ -1247,6 +1247,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                                   setRenamingDevice(surface.id);
                               }}
                               className="cursor-pointer flex min-w-0 items-center"
+                              data-right-panel-tab-activate
                               onClick={() => props.onActivate(surface)}
                             >
                               <span className="truncate">{title}</span>

@@ -120,6 +120,12 @@ export const BEHAVIOR_ITEMS = [
     searchTerms: ["terminal keybindings keyboard shortcuts priority shell focus"],
   },
   {
+    id: "focus-level-highlight",
+    title: "Focus highlight",
+    to: "/settings/general",
+    searchTerms: ["keyboard focus outline flash escape composer timeline sidebar right panel"],
+  },
+  {
     id: "repository-owner-filters",
     title: "Repository owner filters",
     to: "/settings/general",
