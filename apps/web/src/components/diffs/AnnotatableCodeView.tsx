@@ -11,7 +11,7 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { fnv1a32, resolveFileDiffPath } from "~/lib/diffRendering";
+import { fnv1a32, resolveFileDiffPath, resolveFileDiffPreviousPath } from "~/lib/diffRendering";
 import {
   buildDiffReviewComment,
   restoreDiffReviewCommentRange,
@@ -80,8 +80,8 @@ interface AnnotatableCodeViewProps {
     fileVersion: number;
     collapsed: boolean;
   }>;
-  /** Files still in the diff whose patches have not loaded. */
-  pendingFilePaths: ReadonlyArray<string>;
+  /** Files with unavailable patches; placeholder change types are provisional. */
+  pendingFiles: ReadonlyArray<FileDiffMetadata>;
   sectionId: string;
   sectionTitle: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
@@ -107,7 +107,7 @@ interface DiffSelectionContext {
 export function AnnotatableCodeView({
   codeViewKey,
   files,
-  pendingFilePaths,
+  pendingFiles,
   sectionId,
   sectionTitle,
   composerDraftTarget,
@@ -133,6 +133,7 @@ export function AnnotatableCodeView({
   const [draft, setDraft] = useState<{
     fileKey: string;
     filePath: string;
+    previousFilePath: string;
     annotation: DiffCommentLineAnnotation;
   } | null>(null);
   const [draftText, setDraftText] = useState("");
@@ -141,7 +142,11 @@ export function AnnotatableCodeView({
   if (
     draft !== null &&
     !filesByKey.has(draft.fileKey) &&
-    !pendingFilePaths.includes(draft.filePath)
+    !pendingFiles.some(
+      (file) =>
+        resolveFileDiffPath(file) === draft.filePath &&
+        resolveFileDiffPreviousPath(file) === draft.previousFilePath,
+    )
   ) {
     setDraft(null);
     setDraftText("");
@@ -238,6 +243,7 @@ export function AnnotatableCodeView({
     setDraft({
       fileKey: item.id,
       filePath,
+      previousFilePath: resolveFileDiffPreviousPath(item.fileDiff),
       annotation: {
         side: annotationSide(range),
         lineNumber: range.end,

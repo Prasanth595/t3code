@@ -1,10 +1,16 @@
-import type { CodeViewDiffItem, DiffLineAnnotation, SelectedLineRange } from "@pierre/diffs";
+import type {
+  CodeViewDiffItem,
+  DiffLineAnnotation,
+  FileDiffMetadata,
+  SelectedLineRange,
+} from "@pierre/diffs";
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import { act, StrictMode, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { buildFileDiffIdentityKey } from "~/lib/diffRendering";
 
 type Selection = { id: string; range: SelectedLineRange } | null;
 interface ViewerProps {
@@ -44,25 +50,38 @@ const target = DraftId.make("diff-draft-test");
 const range: SelectedLineRange = { start: 1, end: 1, side: "additions" };
 let renderer: ReactTestRenderer;
 
-function file(name: string, fileVersion = 1) {
+function file(
+  name: string,
+  fileVersion = 1,
+  type: FileDiffMetadata["type"] = "change",
+  previousName?: string,
+) {
   const fileDiff = parsePatchFiles(
     `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n@@ -1 +1 @@\n-old\n+new\n`,
     name,
   )[0]!.files[0]!;
-  return { fileDiff, filePath: name, fileKey: name, fileVersion, collapsed: false };
+  fileDiff.type = type;
+  if (previousName) fileDiff.prevName = previousName;
+  return {
+    fileDiff,
+    filePath: name,
+    fileKey: buildFileDiffIdentityKey(fileDiff),
+    fileVersion,
+    collapsed: false,
+  };
 }
 
 function view(
   files: ReturnType<typeof file>[],
   codeViewKey = "scope:initial",
-  pendingFilePaths: string[] = [],
+  pendingFiles: FileDiffMetadata[] = [],
 ) {
   return (
     <StrictMode>
       <AnnotatableCodeView
         codeViewKey={codeViewKey}
         files={files}
-        pendingFilePaths={pendingFilePaths}
+        pendingFiles={pendingFiles}
         sectionId="unstaged"
         sectionTitle="Uncommitted"
         composerDraftTarget={target}
@@ -136,19 +155,51 @@ describe("diff comment drafts", () => {
     act(() => renderer.update(view([file("a.ts", 2)], "scope:refreshed")));
 
     expect(renderer.root.findByType(DiffCommentAnnotation).props.text).toBe("Keep this draft");
-    expect(viewer().selectedLines).toEqual({ id: "a.ts", range });
+    expect(viewer().selectedLines).toEqual({ id: file("a.ts").fileKey, range });
     expect(viewer().options.enableLineSelection).toBe(false);
     expect(viewer().options.enableGutterUtility).toBe(false);
   });
 
-  it("preserves a draft while its file's patch reloads", () => {
+  it.each(["change", "new", "deleted", "rename-pure", "rename-changed"] as const)(
+    "preserves a %s draft while its patch reloads",
+    (type) => {
+      const previousName = type.startsWith("rename") ? "old.ts" : undefined;
+      const original = file("a.ts", 1, type, previousName);
+      act(() => renderer.update(view([original, file("b.ts")])));
+      beginComment();
+      const pending = {
+        ...original.fileDiff,
+        type: previousName ? ("rename-changed" as const) : ("change" as const),
+        hunks: [],
+        cacheKey: "scope:a.ts:pending",
+      };
+
+      act(() => renderer.update(view([file("b.ts")], "scope:loading", [pending])));
+      act(() =>
+        renderer.update(view([file("a.ts", 2, type, previousName), file("b.ts")], "scope:loaded")),
+      );
+
+      expect(renderer.root.findByType(DiffCommentAnnotation).props.text).toBe("Keep this draft");
+      expect(viewer().selectedLines).toEqual({ id: original.fileKey, range });
+      expect(viewer().options.enableGutterUtility).toBe(false);
+    },
+  );
+
+  it("releases a replaced rename's draft when the replacement patch is unavailable", () => {
+    const original = file("shared.ts", 1, "rename-changed", "old.ts");
+    act(() => renderer.update(view([original, file("b.ts")])));
     beginComment();
+    const replacement = file("shared.ts", 2, "rename-changed", "other.ts");
+    const pending = { ...replacement.fileDiff, hunks: [], cacheKey: "scope:shared.ts:pending" };
 
-    act(() => renderer.update(view([file("b.ts")], "scope:loading", ["a.ts"])));
-    act(() => renderer.update(view([file("a.ts", 2), file("b.ts")], "scope:loaded")));
+    // Failed lazy queries retain their placeholder metadata in the pending list.
+    act(() => renderer.update(view([file("b.ts")], "scope:failed", [pending])));
 
-    expect(renderer.root.findByType(DiffCommentAnnotation).props.text).toBe("Keep this draft");
-    expect(viewer().selectedLines).toEqual({ id: "a.ts", range });
-    expect(viewer().options.enableGutterUtility).toBe(false);
+    expect(renderer.root.findAllByType(DiffCommentAnnotation)).toHaveLength(0);
+    expect(viewer().selectedLines).toBeNull();
+    expect(viewer().options.enableLineSelection).toBe(true);
+    expect(viewer().options.enableGutterUtility).toBe(true);
+    act(() => viewer().options.onGutterUtilityClick(range, { item: viewer().items[0]! }));
+    expect(renderer.root.findByType(DiffCommentAnnotation).props.text).toBe("");
   });
 });

@@ -559,9 +559,9 @@ export default function DiffPanel({
     lazySource ? readyFilePaths : null,
     collapsedDiffFileKeys,
   );
-  const pendingFilePaths = renderableFileEntries
+  const pendingFiles = renderableFileEntries
     .filter(({ fileDiff }) => fileDiff.cacheKey?.endsWith(":pending"))
-    .map(({ fileDiff }) => resolveFileDiffPath(fileDiff));
+    .map(({ fileDiff }) => fileDiff);
   const allDiffFilesCollapsed = areAllDiffFilesCollapsed(diffFileKeys, collapsedDiffFileKeys);
   const diffLineStat =
     !selectedTurn && selectedGitSource?.files
@@ -1138,7 +1138,7 @@ export default function DiffPanel({
                     codeViewKey={`${codeViewMountKey}:${lazySource ? filePatchScope : "preview"}`}
                     className="h-full min-h-0 overflow-auto"
                     files={codeViewFiles}
-                    pendingFilePaths={pendingFilePaths}
+                    pendingFiles={pendingFiles}
                     renderCodeViewFooter={renderLoadingBoundary}
                     sectionId={reviewSectionId}
                     sectionTitle={reviewSectionTitle}
