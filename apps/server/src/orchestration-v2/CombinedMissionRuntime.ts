@@ -46,6 +46,8 @@ import * as Runner from "./MissionRetroReplayRunner.ts";
 import * as SkillStore from "./MissionRetroSkillEvaluationStore.ts";
 import * as Missions from "./MissionService.ts";
 import * as Planning from "./MissionPlanningStore.ts";
+import { planningWakeFor } from "./MissionPlanningWake.ts";
+import type { MissionPlanningRow } from "./MissionPlanningProjection.ts";
 import type { ProPlanningEvent } from "../../../../packages/contracts/src/missionProPlanning.ts";
 import type { HostTransportBinding } from "../../../../packages/contracts/src/missionHostProtocol.ts";
 import * as Peer from "./MissionPeerHttp.ts";
@@ -1069,6 +1071,52 @@ const make = Effect.gen(function* () {
                   expectedRevision: canonical.revision,
                 });
                 if (Result.isFailure(result)) break;
+              }
+            }
+            // The existing scheduler also resumes durable planning waits. This
+            // queues only a correlation-bound notification, never a submit or
+            // an automatic GUI acquisition. Current mission/epoch and planning
+            // state are reread again by the adapter/store when it is consumed.
+            if (Option.isSome(planningFacts) && isCurrent()) {
+              const latest = yield* sql<{ snapshot_json: string }>`
+                SELECT snapshot_json FROM projection_missions
+                WHERE mission_id = ${mission.value.id} AND team_id = ${trusted.teamId}
+                  AND authority_environment_id = ${environmentId}
+              `;
+              if (latest[0]) {
+                const current = yield* decodeMission(latest[0].snapshot_json);
+                const plans = yield* sql<MissionPlanningRow>`
+                  SELECT * FROM projection_mission_planning
+                  WHERE mission_id = ${current.id} AND team_id = ${trusted.teamId}
+                    AND authority_environment_id = ${environmentId} AND stage = 'response_pending'
+                `;
+                const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+                const wakes = plans.flatMap((row) => {
+                  const wake = planningWakeFor(current, row, nowMs);
+                  return wake === undefined ? [] : [wake];
+                });
+                if (wakes.length > 0 && isCurrent()) {
+                  const memo = yield* Layer.forkMemoMap(parentMemo);
+                  const context = yield* Layer.buildWithMemoMap(
+                    RuntimeLayer.layerMissionManagerLifecycle.pipe(
+                      Layer.provide(
+                        Layer.succeed(Lifecycle.MissionManagerLifecycleAuthority, {
+                          teamId: trusted.teamId,
+                          environmentId,
+                          role: "delivery",
+                          isCurrent,
+                        }),
+                      ),
+                    ),
+                    memo,
+                    yield* Scope.Scope,
+                  ).pipe(Effect.provide(startupContext));
+                  const adapter = Context.get(context, Manager.MissionManagerRuntimeAdapter);
+                  for (const wake of wakes) {
+                    if (!isCurrent()) break;
+                    yield* adapter.wakeCurrentRole(wake);
+                  }
+                }
               }
             }
             // Canonical results survive mailbox ACK and parent retirement.

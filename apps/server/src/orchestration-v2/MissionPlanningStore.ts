@@ -162,7 +162,16 @@ export class MissionPlanningStore extends Context.Service<
   }
 >()("t3/orchestration-v2/MissionPlanningStore") {}
 
+const MissionPlanningObservationBinding = Schema.Struct({
+  missionRevision: ProPlanningFacts.fields.mission.fields.revision,
+  teamId: ProPlanningFacts.fields.mission.fields.teamId,
+  environmentId: ProPlanningFacts.fields.mission.fields.environmentId,
+  managerThreadId: ProPlanningFacts.fields.mission.fields.managerThreadId,
+  managerEpoch: ProPlanningFacts.fields.mission.fields.managerEpoch,
+});
+
 const Observations = Schema.Struct({
+  binding: Schema.optional(MissionPlanningObservationBinding),
   observedAtMs: ProPlanningFacts.fields.observedAtMs,
   usage: ProPlanningUsageFacts,
   planningApproval: ProPlanningFacts.fields.planningApproval,
@@ -501,6 +510,28 @@ const make = Effect.gen(function* () {
       const loaded = yield* loadMission("commit", command.missionId);
       const prior = yield* replay("commit", command.missionId, requestHash, command.commandId);
       if (prior !== undefined) return Result.succeed(prior);
+
+      // A GUI observation is read before the transaction. Recheck its exact
+      // revision/epoch here so a rotation or mission edit during that I/O cannot
+      // promote the earlier observation into current authority.
+      const binding = observations.binding;
+      if (
+        binding !== undefined &&
+        (binding.missionRevision !== loaded.mission.revision ||
+          binding.teamId !== loaded.mission.teamId ||
+          binding.environmentId !== loaded.mission.authorityEnvironmentId ||
+          binding.managerThreadId !== loaded.deliveryThreadId ||
+          binding.managerEpoch !== loaded.deliveryEpoch)
+      )
+        return hold({
+          kind: "hold",
+          authority: "proposal_only",
+          reasons: ["facts_stale"],
+          action: "refresh_facts",
+          guiLease: "release",
+          pointer: null,
+          record: null,
+        });
 
       const identity = eventIdentity(command.event);
       const matches = yield* loadPlanning(
