@@ -16,6 +16,14 @@ interface WorkspaceNavigation {
   readonly getRootState?: () => NavigationState | undefined;
 }
 
+// A thread opened from another thread (a subagent, fork, or linked thread)
+// sits above it; Back returns there instead of collapsing to the list.
+export function androidWorkspaceBackReturnsToThread(state: NavigationState) {
+  return (
+    state.routes[state.index]?.name === "Thread" && state.routes[state.index - 1]?.name === "Thread"
+  );
+}
+
 export function androidWorkspaceNavigationState(
   state: NavigationState,
   destination?: AndroidWorkspaceDestination,

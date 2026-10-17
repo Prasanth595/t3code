@@ -1,6 +1,7 @@
 import * as NodeModule from "node:module";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  androidWorkspaceBackReturnsToThread,
   androidWorkspaceNavigationState,
   resetAndroidWorkspace,
   type AndroidWorkspaceDestination,
@@ -24,6 +25,7 @@ const options = {
   routeNames: [
     "Home",
     "Thread",
+    "ThreadAgents",
     "ThreadFiles",
     "ThreadTerminal",
     "GitOverview",
@@ -176,6 +178,33 @@ describe("Android workspace navigation", () => {
       params: { ...thread.params, environmentId: "environment-b" },
     });
     expect(state.routes[1]?.key).not.toBe(previous.routes[1]?.key);
+  });
+
+  it.each(["agents sheet", "subagent row"])(
+    "returns from a child thread opened from the %s to its parent, then to the list",
+    (entry) => {
+      const parent = select(router.getInitialState(options), thread);
+      const childParams = { ...thread.params, threadId: "child-a" };
+      const child =
+        entry === "agents sheet"
+          ? apply(
+              apply(parent, StackActions.push("ThreadAgents", thread.params)),
+              StackActions.replace("Thread", childParams),
+            )
+          : apply(parent, StackActions.push("Thread", childParams));
+      expect(names(child)).toEqual(["Home", "Thread", "Thread"]);
+
+      expect(androidWorkspaceBackReturnsToThread(child)).toBe(true);
+      const back = apply(child, StackActions.pop());
+      expect(back.routes[back.index]?.key).toBe(parent.routes[1]?.key);
+
+      expect(androidWorkspaceBackReturnsToThread(back)).toBe(false);
+      expect(names(select(back))).toEqual(["Home"]);
+    },
+  );
+
+  it("still sends a PR above an old chat straight back to its list", () => {
+    expect(androidWorkspaceBackReturnsToThread(legacyHistory())).toBe(false);
   });
 
   it("drops stale detail history on a tab switch while retaining Home", () => {

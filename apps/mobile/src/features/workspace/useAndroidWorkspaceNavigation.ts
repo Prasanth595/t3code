@@ -1,7 +1,10 @@
 import { StackActions, useFocusEffect, useNavigation } from "@react-navigation/native";
 import { useCallback } from "react";
 import { BackHandler, Keyboard, Platform } from "react-native";
-import { resetAndroidWorkspace } from "../../lib/android-workspace-navigation";
+import {
+  androidWorkspaceBackReturnsToThread,
+  resetAndroidWorkspace,
+} from "../../lib/android-workspace-navigation";
 import { useWorkspaceTabs } from "./WorkspaceTabsContext";
 import type { WorkspaceTab } from "./workspace-tabs-state";
 
@@ -10,6 +13,11 @@ export function useWorkspaceListNavigation(tab: WorkspaceTab) {
   const dispatch = useWorkspaceTabs()?.dispatch;
   return useCallback(() => {
     if (Platform.OS === "android") {
+      const state = navigation.getState();
+      if (state && androidWorkspaceBackReturnsToThread(state)) {
+        navigation.goBack();
+        return;
+      }
       dispatch?.({ type: "select", tab });
       resetAndroidWorkspace(navigation);
     } else if (navigation.canGoBack()) navigation.goBack();

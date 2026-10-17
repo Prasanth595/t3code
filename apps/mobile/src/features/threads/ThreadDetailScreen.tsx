@@ -2,7 +2,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
 import { UsageLimitRecoveryCard } from "./UsageLimitRecoveryCard";
-import { useNavigation } from "@react-navigation/native";
+import { StackActions, useNavigation } from "@react-navigation/native";
 import type { WorktreeSetupCardProps } from "./worktree-setup-card";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
@@ -500,10 +500,13 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
         accessibilityLabel: `Open ${childInput.hasPendingApprovals ? "approval" : "question"} from ${childInput.title}`,
         onPress: () => {
           Keyboard.dismiss();
-          navigation.navigate("Thread", {
-            environmentId: props.environmentId,
-            threadId: childInput.id,
-          });
+          // Push so Back returns to this parent; navigate would reuse its route.
+          navigation.dispatch(
+            StackActions.push("Thread", {
+              environmentId: props.environmentId,
+              threadId: childInput.id,
+            }),
+          );
         },
       };
     }
