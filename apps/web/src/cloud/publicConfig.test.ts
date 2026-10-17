@@ -39,7 +39,11 @@ describe("hasCloudPublicConfig", () => {
   it.each([
     ["https://t3.codes", true],
     ["https://app.t3.codes", true],
+    ["https://app.t3.codes:443", true],
     ["https://nightly.app.t3.codes", true],
+    ["http://app.t3.codes", false],
+    ["http://app.t3.codes:443", false],
+    ["https://app.t3.codes:3773", false],
     ["http://localhost:3773", false],
     ["http://127.0.0.1:3773", false],
     ["http://[::1]:3773", false],

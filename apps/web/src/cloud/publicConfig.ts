@@ -92,8 +92,12 @@ export function hasCloudPublicConfig(): boolean {
       /^clerk\./u,
       "",
     );
-    const hostname = window.location.hostname;
-    return hostname === domain || hostname.endsWith(`.${domain}`);
+    const { hostname, protocol, port } = window.location;
+    return (
+      protocol === "https:" &&
+      (port === "" || port === "443") &&
+      (hostname === domain || hostname.endsWith(`.${domain}`))
+    );
   } catch {
     return false;
   }
