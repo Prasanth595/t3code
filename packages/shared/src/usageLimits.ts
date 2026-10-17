@@ -244,36 +244,15 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
       },
     });
   };
-  // One hub can be connected from several environments. A profile read that
-  // failed in one snapshot must not split an account another snapshot identified.
-  const hubWorkspaces = new Map<string, string>();
-  for (const presentation of presentations.values()) {
-    for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
-      for (const account of source.accounts) {
-        if (account.workspaceId)
-          hubWorkspaces.set(`${source.id}:${account.id}`, account.workspaceId);
-      }
-    }
-  }
-  const reconcile = (sources: UsageLimitSourceSnapshots = []) =>
-    sources.map((source) => ({
-      ...source,
-      accounts: source.accounts.map((account) => {
-        const workspaceId = account.workspaceId ?? hubWorkspaces.get(`${source.id}:${account.id}`);
-        return workspaceId ? { ...account, workspaceId } : account;
-      }),
-    }));
   const resolveKey = accountKeyResolver(
     [...presentations.values()].flatMap((presentation) => [
       ...(presentation.serverConfig?.providers ?? [])
         .filter((provider) => provider.enabled)
         .map(nativeReport),
-      ...reconcile(presentation.serverConfig?.usageLimitSources).flatMap(
-        (source) => source.accounts,
-      ),
+      ...(presentation.serverConfig?.usageLimitSources ?? []).flatMap((source) => source.accounts),
     ]),
-    [...presentations.values()].flatMap((presentation) =>
-      reconcile(presentation.serverConfig?.usageLimitSources),
+    [...presentations.values()].flatMap(
+      (presentation) => presentation.serverConfig?.usageLimitSources ?? [],
     ),
   );
   for (const [environmentId, presentation] of presentations) {
@@ -296,7 +275,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
   }
   const labelEnvironment = presentations.size > 1;
   for (const [environmentId, presentation] of presentations) {
-    for (const source of reconcile(presentation.serverConfig?.usageLimitSources)) {
+    for (const source of presentation.serverConfig?.usageLimitSources ?? []) {
       const sourceLabel = labelEnvironment
         ? `${presentation.entry.target.label} · ${source.label}`
         : source.label;

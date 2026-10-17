@@ -584,38 +584,6 @@ describe("pools", () => {
     ]);
   });
 
-  it("identifies a hub credential whose profile read failed from another environment's snapshot", () => {
-    const hubAccount = (id: string, usedPercent: number, workspaceId?: string) => ({
-      id,
-      driver: claude,
-      email: "same@example.com",
-      ...(workspaceId ? { workspaceId } : {}),
-      usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent }] },
-    });
-    const snapshot = (teamWorkspaceId?: string) => ({
-      ...laptop,
-      serverConfig: {
-        providers: [],
-        usageLimitSources: [
-          {
-            ...source,
-            accounts: [
-              hubAccount("max.json", 20, "org-max"),
-              hubAccount("team.json", 80, teamWorkspaceId),
-            ],
-          },
-        ],
-      },
-    });
-    const accounts = collectLimitAccounts(
-      new Map([
-        [EnvironmentId.make("env-a"), snapshot("org-team")],
-        [EnvironmentId.make("env-b"), snapshot()],
-      ]),
-    );
-    expect(accounts.map((account) => account.limits.windows[0]?.usedPercent)).toEqual([20, 80]);
-  });
-
   it.each(["claudeAgent", "codex"] as const)(
     "keeps unidentified same-email %s hub credentials separate in pooled and per-provider limits",
     (driver) => {
