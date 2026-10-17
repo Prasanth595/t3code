@@ -24,9 +24,9 @@ poll_seconds: 60
 max_concurrent_runs: 1
 max_concurrent_gates: 1
 
-# The provider instance and model each issue's agent session runs on.
-model_instance: claudeAgent
-model: claude-fable-5-1
+# There is no model key. Each issue's session runs on the T3 project's default model (the
+# project's settings in T3), falling back to the default model in T3's own Settings. With
+# neither set, nothing launches and the issue goes stuck with that reason.
 
 # A macOS notification when something needs a person. false keeps the list on the
 # Factory page and turns the notification off.

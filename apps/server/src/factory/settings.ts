@@ -14,7 +14,6 @@ import { isMap, isScalar, isSeq, parseDocument, YAMLMap } from "yaml";
 
 import {
   DEFAULT_MAX_CONCURRENT_GATES,
-  DEFAULT_MODEL_INSTANCE,
   DEFAULT_POLL_SECONDS,
   loadMachineConfig,
   parseMachineConfig,
@@ -48,8 +47,6 @@ export interface MachineConfigFields {
   readonly poll_seconds: number;
   readonly max_concurrent_runs: number;
   readonly max_concurrent_gates: number;
-  readonly model_instance: string;
-  readonly model: string;
   readonly repos: ReadonlyArray<{ readonly repo: string; readonly path: string }>;
 }
 
@@ -91,11 +88,13 @@ const EDITABLE_KEYS = [
   "poll_seconds",
   "max_concurrent_runs",
   "max_concurrent_gates",
-  "model_instance",
-  "model",
 ] as const;
 
-/** The keys of the machine config file: the form's, `repos`, and `notify`, which stays a hand edit. */
+/**
+ * The keys of the machine config file: the form's, `repos`, and `notify`, which stays a hand edit.
+ * A key that is not here is dropped by an edit, which is how the retired `model_instance` and
+ * `model` (`RETIRED_MACHINE_KEYS` in `config.ts`) leave a file once it is saved from the page.
+ */
 const KNOWN_KEYS: ReadonlySet<string> = new Set([...EDITABLE_KEYS, "repos", "notify"]);
 
 /** `max_concurrent_runs` has no default in the file (it is required); the form starts at one. */
@@ -106,8 +105,6 @@ const defaults = (): MachineConfigFields => ({
   poll_seconds: DEFAULT_POLL_SECONDS,
   max_concurrent_runs: FORM_MAX_CONCURRENT_RUNS,
   max_concurrent_gates: DEFAULT_MAX_CONCURRENT_GATES,
-  model_instance: DEFAULT_MODEL_INSTANCE,
-  model: "",
   repos: [],
 });
 
@@ -116,8 +113,6 @@ const fieldsOf = (machine: MachineConfig): MachineConfigFields => ({
   poll_seconds: machine.pollSeconds,
   max_concurrent_runs: machine.maxConcurrentRuns,
   max_concurrent_gates: machine.maxConcurrentGates,
-  model_instance: machine.modelInstance,
-  model: machine.model,
   repos: machine.repos.map(({ repo, path }) => ({ repo, path })),
 });
 
@@ -199,7 +194,7 @@ export const readMachineConfigReport = (
         repos: [],
       } satisfies MachineConfigReport;
     }
-    const machine = loaded.success.value;
+    const machine = loaded.success.value.config;
     return {
       file,
       exists: true,

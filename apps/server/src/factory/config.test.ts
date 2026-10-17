@@ -579,12 +579,12 @@ describe("machine config", () => {
     it("machine two unknown keys are two errors, after the field errors", () => {
       const t = edit(MACHINE, (tree) => {
         set(tree, "zzz", "1");
-        remove(tree, "model");
+        remove(tree, "gh_config_dir");
         set(tree, "repos.0.pathh", "x");
       });
       const errs = machineErr(t);
       expect(errs.map(formatConfigError)).toEqual([
-        `${MFILE}: model: is missing`,
+        `${MFILE}: gh_config_dir: is missing`,
         `${MFILE}: unknown key zzz`,
         `${MFILE}: unknown key repos[0].pathh`,
       ]);
@@ -597,11 +597,11 @@ describe("machine config", () => {
 
   it("machine reports all errors together", () => {
     const t = edit(MACHINE, (tree) => {
-      remove(tree, "model");
+      remove(tree, "gh_config_dir");
       set(tree, "poll_seconds", "1");
       set(tree, "max_concurrent_runs", "0");
     });
-    expect(fields(machineErr(t))).toEqual(["poll_seconds", "max_concurrent_runs", "model"]);
+    expect(fields(machineErr(t))).toEqual(["gh_config_dir", "poll_seconds", "max_concurrent_runs"]);
   });
 
   it("machine invalid yaml names the file", () => {
