@@ -41,6 +41,7 @@ import {
   WrongRepoError,
   append,
   checkBinding,
+  checkedOutFor,
   sessionBusy,
   stopOf,
   textStop,
@@ -684,27 +685,30 @@ const buildingMode = (
         const branch = status.branch;
         return {
           attempt,
-          bind: (pull, mustBeDraft) => {
-            const unbound = checkBinding(
-              pull,
-              pr,
-              ctx.project.base,
-              branch,
-              mustBeDraft,
-              seen.resumedFrom,
-            );
-            if (unbound !== null || pull === null) {
-              return stuckUnbound(
-                ctx,
-                out,
-                issue,
-                at,
-                message,
-                unbound ?? { public: `the session reported PR #${pr} but it does not exist` },
+          bind: (pull, mustBeDraft) =>
+            Effect.gen(function* () {
+              const checkedOut = yield* checkedOutFor(ctx.sessions, pull, status, seen.resumedFrom);
+              const unbound = checkBinding(
+                pull,
+                pr,
+                ctx.project.base,
+                branch,
+                mustBeDraft,
+                seen.resumedFrom,
+                checkedOut,
               );
-            }
-            return Effect.succeed(pull);
-          },
+              if (unbound !== null || pull === null) {
+                return yield* stuckUnbound(
+                  ctx,
+                  out,
+                  issue,
+                  at,
+                  message,
+                  unbound ?? { public: `the session reported PR #${pr} but it does not exist` },
+                );
+              }
+              return pull;
+            }),
           // Said once for the run, with who did it when GitHub knows. A failed read only costs
           // the name. The pull request is not stuck: the factory was about to mark it ready itself.
           noteReadyOutside: (pull) =>

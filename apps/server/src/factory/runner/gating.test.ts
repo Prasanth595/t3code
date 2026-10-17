@@ -1541,6 +1541,8 @@ describe("gate: the session's PR becomes ready, or it does not", () => {
     Effect.gen(function* () {
       const rig = yield* readyForGate();
       rig.t3.status = () => statusOf("completed", DONE_MESSAGE, { branch: null });
+      // git has no branch checked out in the worktree either (a detached HEAD).
+      rig.t3.checkedOut = null;
       assertGateStuckOnPr(
         rig,
         yield* gateIn(rig),

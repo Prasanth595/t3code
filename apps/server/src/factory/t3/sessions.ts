@@ -156,6 +156,7 @@ export class SessionsError extends Schema.TaggedError<SessionsError>()("FactoryS
     "send",
     "archive",
     "remove-worktree",
+    "checked-out-branch",
   ]),
   cause: Schema.Defect(),
 }) {
@@ -314,6 +315,14 @@ export class FactorySessions extends Context.Service<
      * left behind (a restart mid-wait) fails, naming the path, for a person.
      */
     readonly removeWorktree: (path: string) => Effect.Effect<void, SessionsError>;
+    /**
+     * The branch git has checked out in the worktree at `path`, which T3's
+     * record of the thread may not match: T3 can rename a thread's branch
+     * after launch, and a session can switch branch. `null` for a detached
+     * HEAD, a path that is not absolute or not a worktree, and one gone from
+     * disk.
+     */
+    readonly checkedOutBranch: (path: string) => Effect.Effect<string | null, SessionsError>;
   }
 >()("t3/factory/t3/sessions/FactorySessions") {}
 
@@ -544,6 +553,24 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.retry(LEFTOVER_REMOVE_ATTEMPTS), Effect.mapError(removeWorktreeFailed));
     });
 
+  const checkedOutBranch: FactorySessions["Service"]["checkedOutBranch"] = (worktreePath) =>
+    Effect.gen(function* () {
+      if (!path.isAbsolute(worktreePath)) return null;
+      const exists = yield* fs.exists(worktreePath);
+      if (!exists) return null;
+      const result = yield* git.execute({
+        operation: "factory.sessions.checkedOutBranch",
+        cwd: worktreePath,
+        args: ["branch", "--show-current"],
+        env: { LC_ALL: "C" },
+        allowNonZeroExit: true,
+      });
+      const branch = result.stdout.trim();
+      return result.exitCode === 0 && branch !== "" ? branch : null;
+    }).pipe(
+      Effect.mapError((cause) => new SessionsError({ operation: "checked-out-branch", cause })),
+    );
+
   return FactorySessions.of({
     findProject,
     launch,
@@ -552,6 +579,7 @@ export const make = Effect.gen(function* () {
     send,
     archive,
     removeWorktree,
+    checkedOutBranch,
   });
 });
 

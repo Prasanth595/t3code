@@ -169,6 +169,8 @@ export interface PassWorld {
   readonly lastPass: (run: RunId) => Effect.Effect<LastPass | null, LedgerError>;
   /** The tip of the repo's base branch, in lower case. */
   readonly baseTip: (repo: Repo) => Effect.Effect<string, PassError>;
+  /** Whether GitHub has the issue closed. */
+  readonly issueClosed: (repo: Repo, issue: number) => Effect.Effect<boolean, PassError>;
   /** The head of the open pull request, in lower case; null for one that is merged, closed or gone. */
   readonly openHead: (repo: Repo, pr: number) => Effect.Effect<string | null, PassError>;
   /** Appends an `error` line to the run's own ledger. */
@@ -184,7 +186,7 @@ export interface PassWorld {
   /** Writes one event to the machine log. */
   readonly record: (event: MachineEvent) => Effect.Effect<void, LedgerError>;
   /** The open attention items: what the pass raises when it needs a person, and what it clears. */
-  readonly attention: Pick<Attention["Service"], "raise" | "clear">;
+  readonly attention: Pick<Attention["Service"], "list" | "raise" | "clear">;
 }
 
 /** What starting a gate did: it runs now, or `max_concurrent_gates` are running already. */
@@ -559,6 +561,7 @@ export const runPass = (
         );
       }
     }
+    yield* closedStuck(world, repos, pass);
     const report = pass.report;
     pass.line(
       `pass done: ${report.runs} runs, ${report.claimed} claimed, ${report.errors} errors, ${report.attention} need attention`,
@@ -572,6 +575,38 @@ export const runPass = (
  * loaded is reported and its issues are left alone; so is one whose tracker login cannot be read,
  * and one that two T3 projects name (`ambiguousRepos`).
  */
+/**
+ * Clears the item of a stuck run whose issue GitHub has closed: a person is done with it, or its
+ * pull request merged and closed it. Only stuck items of the repos loaded this pass are asked
+ * about, one issue read each; an item whose issue cannot be read stays, with an error line.
+ */
+const closedStuck = (
+  world: PassWorld,
+  repos: ReadonlyArray<Loaded>,
+  pass: Pass,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    for (const item of yield* world.attention.list()) {
+      const { repo: name, issue } = item;
+      if (item.kind !== "stuck" || name === null || issue === null) continue;
+      const loaded = repos.find((l) => l.kind === "ready" && sameRepo(l.repo.watched.repo, name));
+      if (loaded === undefined || loaded.kind !== "ready") continue;
+      const closed = yield* Effect.result(world.issueClosed(loaded.repo, issue));
+      if (closed._tag === "Failure") {
+        yield* pass.fail(
+          null,
+          passError(
+            closed.failure.kind,
+            `${name}${mention(issue)}: cannot read whether the issue is closed: `,
+            closed.failure.message,
+          ),
+        );
+      } else if (closed.success) {
+        yield* world.attention.clear((open) => open.id === item.id);
+      }
+    }
+  });
+
 const loadRepos = (
   world: PassWorld,
   watchedRepos: ReadonlyArray<WatchedRepo>,

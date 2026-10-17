@@ -884,6 +884,8 @@ describe("advance: done", () => {
     Effect.gen(function* () {
       const rig = rigFor();
       setStatus(rig, "completed", DONE_MESSAGE, { branch: null });
+      // git has no branch checked out in the worktree either (a detached HEAD).
+      rig.world.checkedOut = null;
       assertStuck(rig, yield* advanceIn(rig), {
         publicReason: "the session reported PR #12 but the session has no branch",
         text: DONE_MESSAGE,

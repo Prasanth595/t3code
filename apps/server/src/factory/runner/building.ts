@@ -47,6 +47,7 @@ import {
   MessageRejectedError,
   ThreadNotFoundError,
   type FactorySessions,
+  type SessionsError,
   type RunStatus,
   type ThreadStatus,
 } from "../t3/sessions.ts";
@@ -134,7 +135,7 @@ export interface BuildingContext extends RunContext {
   >;
   readonly sessions: Pick<
     FactorySessions["Service"],
-    "status" | "thread" | "send" | "archive" | "removeWorktree"
+    "status" | "thread" | "send" | "archive" | "removeWorktree" | "checkedOutBranch"
   >;
   /** Unix epoch milliseconds. */
   readonly clock: () => number;
@@ -523,7 +524,8 @@ export interface Unbound {
 
 /**
  * Binds a pull request to a run: it exists, is in this repo and not a fork, merges into `base`,
- * and has as its head the session's own `branch`, or the branch it `resumedFrom`. The text came from a session that issue text
+ * and has as its head the session's own `branch`, the branch it `resumedFrom`, or the branch
+ * `checkedOut` in its worktree. The text came from a session that issue text
  * can steer, so it must not be able to name someone else's pull request. Whether it is a draft
  * is asked after, so only a bound one is ever put back to draft. `resumedFrom` is the branch a
  * relaunched session was started from: its pull request is the session's too.
@@ -535,6 +537,7 @@ export const checkBinding = (
   branch: string | null,
   mustBeDraft = false,
   resumedFrom: string | null = null,
+  checkedOut: string | null = null,
 ): Unbound | null => {
   const reported = `the session reported PR #${pr} but`;
   if (pull === null) return { public: `${reported} it does not exist` };
@@ -546,13 +549,13 @@ export const checkBinding = (
       detail: `${reported} its base ${prepareSessionText(pull.baseRef)} is not the configured base branch`,
     };
   }
-  if (branch === null && resumedFrom === null) {
+  if (branch === null && resumedFrom === null && checkedOut === null) {
     return { public: `${reported} the session has no branch` };
   }
   // A session relaunched for a failed re-gate pushes to the pull request's branch, which its
   // `session_launched` line names; a resumed run may hold the draft its earlier session opened on
   // the branch it resumed from.
-  if (pull.headRef !== branch && pull.headRef !== resumedFrom) {
+  if (pull.headRef !== branch && pull.headRef !== resumedFrom && pull.headRef !== checkedOut) {
     return {
       public: `${reported} its branch is not this session's branch`,
       detail: `${reported} its branch ${prepareSessionText(pull.headRef)} is not this session's branch`,
@@ -560,6 +563,24 @@ export const checkBinding = (
   }
   return null;
 };
+
+/**
+ * The branch git has checked out in the session's worktree, for `checkBinding`: T3 can rename a
+ * thread's branch after launch, and the session pushes the branch its worktree has. Asked only
+ * when the pull request's head is neither branch the run already knows.
+ */
+export const checkedOutFor = (
+  sessions: Pick<FactorySessions["Service"], "checkedOutBranch">,
+  pull: PullRequest | null,
+  thread: Pick<ThreadStatus, "worktreePath" | "branch">,
+  resumedFrom: string | null,
+): Effect.Effect<string | null, SessionsError> =>
+  pull === null ||
+  thread.worktreePath === null ||
+  pull.headRef === thread.branch ||
+  pull.headRef === resumedFrom
+    ? Effect.succeed(null)
+    : sessions.checkedOutBranch(thread.worktreePath);
 
 const stuckOutcome = (stop: Stop): AdvanceOutcome => ({
   kind: "stuck",
@@ -800,6 +821,7 @@ export const advance = (
         case "done": {
           const { pr, prUrl } = result;
           const pull = yield* ctx.tracker.pullRequest(pr);
+          const checkedOut = yield* checkedOutFor(ctx.sessions, pull, status, seen.resumedFrom);
           const unbound = checkBinding(
             pull,
             pr,
@@ -807,6 +829,7 @@ export const advance = (
             status.branch,
             false,
             seen.resumedFrom,
+            checkedOut,
           );
           if (unbound !== null) {
             return yield* stuck(
