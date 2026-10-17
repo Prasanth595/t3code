@@ -95,7 +95,6 @@ const STATUS_ORIGIN_EXISTS_CACHE_TTL = Duration.minutes(5);
 const GIT_STATUS_FETCH_OBJECT_DIRECTORY = "t3-status-fetch";
 const GIT_STATUS_FETCH_STALE_AGE = Duration.hours(1);
 const GIT_STATUS_FETCH_REF_PREFIX = "refs/t3-status-fetch";
-const GIT_ZERO_OID = "0".repeat(40);
 const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
   GIT_ASKPASS: "",
@@ -1276,13 +1275,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   });
 
   const resolveCurrentUpstream = Effect.fn("resolveCurrentUpstream")(function* (cwd: string) {
+    const currentRef = yield* runGitStdout(
+      "GitVcsDriver.resolveCurrentUpstream.currentRef",
+      cwd,
+      ["symbolic-ref", "--quiet", "HEAD"],
+      true,
+    );
+    if (currentRef.trim().length === 0) return null;
     const upstream = yield* runGitStdout(
       "GitVcsDriver.resolveCurrentUpstream",
       cwd,
       [
         "for-each-ref",
         "--format=%(HEAD)%09%(upstream:short)%09%(upstream)%09%(upstream:remotename)%09%(upstream:remoteref)%09%(upstream:trackshort)",
-        "refs/heads",
+        currentRef.trim(),
       ],
       true,
     ).pipe(
@@ -1339,7 +1345,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
 
       yield* cleanupStaleIsolatedFetches;
-      const operationId = yield* crypto.randomUUIDv4.pipe(
+      const operationId = yield* crypto.randomUUIDv4().pipe(
         Effect.mapError(
           (cause) =>
             new GitCommandError({
@@ -1384,10 +1390,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         );
 
       yield* Effect.gen(function* () {
+        const objectFormat = yield* executeGit(
+          "GitVcsDriver.fetchRemoteForStatus.objectFormat",
+          fetchCwd,
+          ["--git-dir", gitCommonDir, "config", "--get", "extensions.objectFormat"],
+          { allowNonZeroExit: true },
+        ).pipe(Effect.map((result) => result.stdout.trim()));
+        const zeroOid = "0".repeat(objectFormat === "sha256" ? 64 : 40);
         yield* runGit("GitVcsDriver.fetchRemoteForStatus.init", fetchCwd, [
           "init",
           "--bare",
           "--quiet",
+          ...(objectFormat === "sha256" ? ["--object-format=sha256"] : []),
           temporaryRoot,
         ]);
         yield* fileSystem
@@ -1418,7 +1432,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             { allowNonZeroExit: true },
           );
           const expectedTarget =
-            previousTarget.exitCode === 0 ? previousTarget.stdout.trim() : GIT_ZERO_OID;
+            previousTarget.exitCode === 0 ? previousTarget.stdout.trim() : zeroOid;
           // A zero unpack limit bypasses Git's pack-size threshold and can select loose objects.
           // Use one so every nonempty transfer is indexed as a pack in the isolated directory.
           const fetchArgs = [
@@ -1523,7 +1537,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             { allowNonZeroExit: true },
           );
           const currentTargetOid =
-            currentTarget.exitCode === 0 ? currentTarget.stdout.trim() : GIT_ZERO_OID;
+            currentTarget.exitCode === 0 ? currentTarget.stdout.trim() : zeroOid;
           if (currentTargetOid !== expectedTarget) return;
 
           return yield* new GitCommandError({

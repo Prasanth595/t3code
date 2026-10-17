@@ -2681,117 +2681,124 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("keeps isolated fetch refs outside the shared repository", () =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
-          const remote = yield* makeTmpDir("git-vcs-driver-remote-");
-          const updater = yield* makeTmpDir("git-vcs-driver-updater-");
-          const { initialBranch } = yield* initRepoWithCommit(cwd);
-          yield* git(remote, ["init", "--bare"]);
-          yield* git(cwd, ["remote", "add", "origin", remote]);
-          yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+    it.effect.each(["sha1", "sha256"] as const)(
+      "keeps isolated fetch refs outside the shared repository (%s)",
+      (objectFormat) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const cwd = yield* makeTmpDir();
+            const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+            const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+            yield* git(cwd, ["init", `--object-format=${objectFormat}`]);
+            const { initialBranch } = yield* initRepoWithCommit(cwd);
+            yield* git(remote, ["init", "--bare", `--object-format=${objectFormat}`]);
+            yield* git(cwd, ["remote", "add", "origin", remote]);
+            yield* git(cwd, ["push", "-u", "origin", initialBranch]);
 
-          yield* git(updater, ["clone", remote, "."]);
-          yield* git(updater, ["config", "user.email", "test@test.com"]);
-          yield* git(updater, ["config", "user.name", "Test"]);
-          yield* writeTextFile(updater, "remote.txt", "remote\n");
-          yield* git(updater, ["add", "remote.txt"]);
-          yield* git(updater, ["commit", "-m", "remote commit"]);
-          yield* git(updater, ["push", "origin", initialBranch]);
-          const concurrentCommit = yield* git(cwd, [
-            "commit-tree",
-            "HEAD^{tree}",
-            "-p",
-            "HEAD",
-            "-m",
-            "concurrent ref update",
-          ]);
+            yield* git(updater, ["clone", remote, "."]);
+            yield* git(updater, ["config", "user.email", "test@test.com"]);
+            yield* git(updater, ["config", "user.name", "Test"]);
+            yield* writeTextFile(updater, "remote.txt", "remote\n");
+            yield* git(updater, ["add", "remote.txt"]);
+            yield* git(updater, ["commit", "-m", "remote commit"]);
+            yield* git(updater, ["push", "origin", initialBranch]);
+            const concurrentCommit = yield* git(cwd, [
+              "commit-tree",
+              "HEAD^{tree}",
+              "-p",
+              "HEAD",
+              "-m",
+              "concurrent ref update",
+            ]);
 
-          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-          let isolatedFetchCount = 0;
-          const isolatedFetchExited = yield* Deferred.make<void>();
-          const releaseIsolatedFetch = yield* Deferred.make<void>();
-          yield* Effect.addFinalizer(() =>
-            Deferred.succeed(releaseIsolatedFetch, undefined).pipe(Effect.asVoid),
-          );
-          const blockingSpawner = ChildProcessSpawner.make((command) =>
-            Effect.gen(function* () {
-              const handle = yield* delegate.spawn(command);
-              if (
-                !ChildProcess.isStandardCommand(command) ||
-                !command.args.includes("--no-write-fetch-head") ||
-                command.options.env?.GIT_OBJECT_DIRECTORY === undefined
-              ) {
-                return handle;
-              }
-              isolatedFetchCount += 1;
-              return ChildProcessSpawner.makeHandle({
-                pid: handle.pid,
-                exitCode: handle.exitCode.pipe(
-                  Effect.tap(() => Deferred.succeed(isolatedFetchExited, undefined)),
-                  Effect.tap(() => Deferred.await(releaseIsolatedFetch)),
-                ),
-                isRunning: handle.isRunning,
-                kill: handle.kill,
-                unref: handle.unref,
-                stdin: handle.stdin,
-                stdout: handle.stdout,
-                stderr: handle.stderr,
-                all: handle.all,
-                getInputFd: handle.getInputFd,
-                getOutputFd: handle.getOutputFd,
-              });
-            }),
-          );
-          const driver = yield* makeGitVcsDriverCore().pipe(
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, blockingSpawner),
-            Effect.provide(layerServerConfig),
-          );
-          const refresh = yield* driver
-            .statusDetailsRemote(cwd)
-            .pipe(Effect.forkChild({ startImmediately: true }));
+            const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+            let isolatedFetchCount = 0;
+            const isolatedFetchExited = yield* Deferred.make<void>();
+            const releaseIsolatedFetch = yield* Deferred.make<void>();
+            yield* Effect.addFinalizer(() =>
+              Deferred.succeed(releaseIsolatedFetch, undefined).pipe(Effect.asVoid),
+            );
+            const blockingSpawner = ChildProcessSpawner.make((command) =>
+              Effect.gen(function* () {
+                const handle = yield* delegate.spawn(command);
+                if (
+                  !ChildProcess.isStandardCommand(command) ||
+                  !command.args.includes("--no-write-fetch-head") ||
+                  command.options.env?.GIT_OBJECT_DIRECTORY === undefined
+                ) {
+                  return handle;
+                }
+                isolatedFetchCount += 1;
+                return ChildProcessSpawner.makeHandle({
+                  pid: handle.pid,
+                  exitCode: handle.exitCode.pipe(
+                    Effect.tap(() => Deferred.succeed(isolatedFetchExited, undefined)),
+                    Effect.tap(() => Deferred.await(releaseIsolatedFetch)),
+                  ),
+                  isRunning: handle.isRunning,
+                  kill: handle.kill,
+                  unref: handle.unref,
+                  stdin: handle.stdin,
+                  stdout: handle.stdout,
+                  stderr: handle.stderr,
+                  all: handle.all,
+                  getInputFd: handle.getInputFd,
+                  getOutputFd: handle.getOutputFd,
+                });
+              }),
+            );
+            const driver = yield* makeGitVcsDriverCore().pipe(
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, blockingSpawner),
+              Effect.provide(layerServerConfig),
+            );
+            const refresh = yield* driver
+              .statusDetailsRemote(cwd)
+              .pipe(Effect.forkChild({ startImmediately: true }));
 
-          yield* Deferred.await(isolatedFetchExited);
-          const sharedTemporaryRefs = yield* git(cwd, [
-            "for-each-ref",
-            "--format=%(refname)",
-            "refs/t3-status-fetch",
-          ]);
-          const fileSystem = yield* FileSystem.FileSystem;
-          const pathService = yield* Path.Path;
-          const gitCommonDirRaw = yield* git(cwd, ["rev-parse", "--git-common-dir"]);
-          const gitCommonDir = pathService.isAbsolute(gitCommonDirRaw)
-            ? gitCommonDirRaw
-            : pathService.resolve(cwd, gitCommonDirRaw);
-          const isolatedFetchRoot = pathService.join(gitCommonDir, "objects", "t3-status-fetch");
-          const [isolatedGitDir] = yield* fileSystem.readDirectory(isolatedFetchRoot, {
-            recursive: false,
-          });
-          if (isolatedGitDir === undefined) {
-            return yield* Effect.die("expected an isolated Git status fetch directory");
-          }
-          const privateTemporaryRefs = yield* git(cwd, [
-            "--git-dir",
-            pathService.join(isolatedFetchRoot, isolatedGitDir),
-            "for-each-ref",
-            "--format=%(refname)",
-            "refs/t3-status-fetch",
-          ]);
+            yield* Deferred.await(isolatedFetchExited);
+            const sharedTemporaryRefs = yield* git(cwd, [
+              "for-each-ref",
+              "--format=%(refname)",
+              "refs/t3-status-fetch",
+            ]);
+            const fileSystem = yield* FileSystem.FileSystem;
+            const pathService = yield* Path.Path;
+            const gitCommonDirRaw = yield* git(cwd, ["rev-parse", "--git-common-dir"]);
+            const gitCommonDir = pathService.isAbsolute(gitCommonDirRaw)
+              ? gitCommonDirRaw
+              : pathService.resolve(cwd, gitCommonDirRaw);
+            const isolatedFetchRoot = pathService.join(gitCommonDir, "objects", "t3-status-fetch");
+            const [isolatedGitDir] = yield* fileSystem.readDirectory(isolatedFetchRoot, {
+              recursive: false,
+            });
+            if (isolatedGitDir === undefined) {
+              return yield* Effect.die("expected an isolated Git status fetch directory");
+            }
+            const privateTemporaryRefs = yield* git(cwd, [
+              "--git-dir",
+              pathService.join(isolatedFetchRoot, isolatedGitDir),
+              "for-each-ref",
+              "--format=%(refname)",
+              "refs/t3-status-fetch",
+            ]);
 
-          assert.equal(sharedTemporaryRefs, "");
-          assert.match(privateTemporaryRefs, /\/upstream$/u);
+            assert.equal(sharedTemporaryRefs, "");
+            assert.match(privateTemporaryRefs, /\/upstream$/u);
 
-          yield* git(cwd, ["update-ref", `refs/remotes/origin/${initialBranch}`, concurrentCommit]);
-          yield* Deferred.succeed(releaseIsolatedFetch, undefined);
-          const refreshedStatus = yield* Fiber.join(refresh);
-          assert.equal(refreshedStatus.behindCount, 1);
+            yield* git(cwd, [
+              "update-ref",
+              `refs/remotes/origin/${initialBranch}`,
+              concurrentCommit,
+            ]);
+            yield* Deferred.succeed(releaseIsolatedFetch, undefined);
+            const refreshedStatus = yield* Fiber.join(refresh);
+            assert.equal(refreshedStatus.behindCount, 1);
 
-          yield* TestClock.adjust("16 seconds");
-          yield* driver.statusDetailsRemote(cwd);
-          assert.equal(isolatedFetchCount, 2);
-        }),
-      ),
+            yield* TestClock.adjust("16 seconds");
+            yield* driver.statusDetailsRemote(cwd);
+            assert.equal(isolatedFetchCount, 2);
+          }),
+        ),
     );
 
     it.effect("cleans partial packs after repeated status fetch timeouts", () =>
@@ -2869,6 +2876,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const otherPack = path.join(commonDir, "objects", "pack", "tmp_pack_other_operation");
         yield* fs.makeDirectory(path.dirname(otherPack), { recursive: true });
         yield* fs.writeFileString(otherPack, "another operation's data");
+        const oldTime = DateTime.toDateUtc(
+          DateTime.subtractDuration(yield* DateTime.now, Duration.hours(2)),
+        );
+        yield* fs.utimes(otherPack, oldTime, oldTime);
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
 
         for (let attempt = 0; attempt < 3; attempt++) {
@@ -2908,7 +2919,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           );
           const driver = yield* makeGitVcsDriverCore().pipe(
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            Effect.provide(ServerConfigLayer),
+            Effect.provide(layerServerConfig),
           );
           const refresh = yield* driver
             .statusDetailsRemote(cwd)
@@ -3086,7 +3097,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(remote, ["init", "--bare"]);
         yield* git(cwd, ["remote", "add", "origin", remote]);
         yield* git(cwd, ["push", "-u", "origin", "main"]);
-        yield* git(remote, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+        yield* git(remote, ["--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/main"]);
         yield* git(cwd, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
         yield* git(cwd, ["checkout", "-b", "feature/default-refresh"]);
         yield* writeTextFile(cwd, "feature.txt", "feature\n");
@@ -3122,7 +3133,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* git(remote, ["init", "--bare"]);
         yield* git(cwd, ["remote", "add", "origin", remote]);
         yield* git(cwd, ["push", "-u", "origin", "main"]);
-        yield* git(remote, ["symbolic-ref", "HEAD", "refs/heads/main"]);
+        yield* git(remote, ["--git-dir", remote, "symbolic-ref", "HEAD", "refs/heads/main"]);
         yield* git(cwd, [
           "symbolic-ref",
           "refs/remotes/origin/HEAD",
