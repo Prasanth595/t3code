@@ -23,16 +23,13 @@ function expandPattern(pattern: string): string[] {
 // Lint reports most compiler bailouts, but not every one (try/finally, throw
 // inside try). A skipped file still builds, just unmemoized, so check the output.
 describe("React Compiler coverage", () => {
-  it.each(REACT_COMPILED_FILES.flatMap(expandPattern))(
-    "compiles %s",
-    async (file) => {
-      const absolute = NodePath.join(repoRoot, file);
-      const result = await transform(absolute, NodeFS.readFileSync(absolute, "utf8"), {
-        jsx: { runtime: "automatic", development: false, refresh: false },
-        reactCompiler: { reportDiagnostics: true },
-      });
-      const bailouts = result.errors.map((error) => error.codeframe ?? error.message);
-      expect(bailouts).toEqual([]);
-    },
-  );
+  it.each(REACT_COMPILED_FILES.flatMap(expandPattern))("compiles %s", async (file) => {
+    const absolute = NodePath.join(repoRoot, file);
+    const result = await transform(absolute, NodeFS.readFileSync(absolute, "utf8"), {
+      jsx: { runtime: "automatic", development: false, refresh: false },
+      reactCompiler: { reportDiagnostics: true },
+    });
+    const bailouts = result.errors.map((error) => error.codeframe ?? error.message);
+    expect(bailouts).toEqual([]);
+  });
 }, 120_000);
