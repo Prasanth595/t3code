@@ -28,7 +28,7 @@ import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 import { Attention, type AttentionItem } from "../attention.ts";
-import { FactoryLoop, hostName } from "../index.ts";
+import { FactoryLoop, hostName, type RepoConfigReading } from "../index.ts";
 import { makeCause, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { runIdToString, runPath, type RunId } from "../ledger/runId.ts";
@@ -37,7 +37,7 @@ import { formatTs, parseTs } from "../ledger/time.ts";
 import { stopRequestPath } from "../runner/stop.ts";
 import type { FactoryStatus } from "../status.ts";
 import { route } from "./auth.ts";
-import { FactoryRoutes, STATUS_PATH } from "./http.ts";
+import { CONFIG_PATH, FactoryRoutes, STATUS_PATH } from "./http.ts";
 import { FactoryPaths } from "./paths.ts";
 
 const TEST_ROUTE_PATH = "/api/factory/test/settings";
@@ -122,7 +122,13 @@ const attentionItem = (over: Partial<AttentionItem> = {}): AttentionItem => ({
   ...over,
 });
 
-type Call = (method: "GET" | "POST", path: string, token?: string) => Promise<Response>;
+/** A string body is sent as it is, so a test can send what is not JSON; anything else as JSON. */
+type Call = (
+  method: "GET" | "POST" | "PUT",
+  path: string,
+  token?: string,
+  body?: unknown,
+) => Promise<Response>;
 
 interface Tokens {
   readonly read: string;
@@ -136,6 +142,14 @@ interface World {
   readonly attention?: ReadonlyArray<AttentionItem>;
   /** The factory dir; the machine config is `<dir>/config.yml`. */
   readonly dir?: string;
+  /** What the loop last read of each repo's project config. */
+  readonly readings?: ReadonlyMap<string, RepoConfigReading>;
+}
+
+/** What the loop was asked to do: `count` wakes, `reloads` config reloads. */
+interface Calls {
+  count: number;
+  reloads: number;
 }
 
 const attentionWith = (items: ReadonlyArray<AttentionItem>) =>
@@ -151,7 +165,7 @@ const worldContext = (
   auth: EnvironmentAuth.EnvironmentAuth["Service"],
   world: World,
   dir: string,
-  wakes: { count: number },
+  wakes: Calls,
 ) =>
   Context.make(EnvironmentAuth.EnvironmentAuth, auth).pipe(
     Context.add(
@@ -163,8 +177,10 @@ const worldContext = (
         awaitPass: Effect.never,
         passRunning: Effect.succeed(world.passRunning ?? false),
         status: world.status ?? idle,
-        reload: Effect.void,
-        repoConfigs: Effect.succeed(new Map()),
+        reload: Effect.sync(() => {
+          wakes.reloads += 1;
+        }),
+        repoConfigs: Effect.succeed(world.readings ?? new Map()),
       }),
     ),
     Context.add(Attention, attentionWith(world.attention ?? [])),
@@ -184,13 +200,13 @@ const serving = <A>(
   world: World,
   use: (
     call: Call,
-    context: { readonly tokens: Tokens; readonly dir: string; readonly wakes: { count: number } },
+    context: { readonly tokens: Tokens; readonly dir: string; readonly wakes: Calls },
   ) => Promise<A>,
 ) =>
   Effect.gen(function* () {
     const auth = yield* EnvironmentAuth.EnvironmentAuth;
     const dir = world.dir ?? tempDir("factory");
-    const wakes = { count: 0 };
+    const wakes = { count: 0, reloads: 0 };
     const context = worldContext(auth, world, dir, wakes);
     // Issued on the live clock: the handler checks expiry on it, not on the test clock.
     const issue = (scope: AuthEnvironmentScope) =>
@@ -208,11 +224,14 @@ const serving = <A>(
       ({ handler }) =>
         Effect.tryPromise(() =>
           use(
-            (method, path, token) =>
+            (method, path, token, body) =>
               handler(
                 new Request(`http://127.0.0.1${path}`, {
                   method,
                   headers: token === undefined ? {} : { authorization: `Bearer ${token}` },
+                  ...(body === undefined
+                    ? {}
+                    : { body: typeof body === "string" ? body : JSON.stringify(body) }),
                 }),
                 context,
               ),
@@ -238,11 +257,14 @@ const FACTORY_ROUTES = [
   ["POST", `/api/factory/runs/${ID}/stop`],
   ["POST", "/api/factory/claims/pause"],
   ["POST", "/api/factory/claims/resume"],
+  ["GET", "/api/factory/config"],
+  ["PUT", "/api/factory/config"],
 ] as const;
 
 describe("every factory route", () => {
   it("is served at the path the Factory page calls", () => {
     assert.strictEqual(STATUS_PATH, "/api/factory/status");
+    assert.strictEqual(CONFIG_PATH, "/api/factory/config");
   });
 
   it.effect.each(FACTORY_ROUTES)("%s %s answers 401 without credentials", ([method, path]) =>
@@ -264,7 +286,12 @@ describe("every factory route", () => {
 
   it.effect("a GET needs orchestration:read, and a session with only operate is refused", () =>
     serving({}, async (call, { tokens }) => {
-      for (const path of ["/api/factory/status", "/api/factory/runs", `/api/factory/runs/${ID}`]) {
+      for (const path of [
+        "/api/factory/status",
+        "/api/factory/runs",
+        `/api/factory/runs/${ID}`,
+        CONFIG_PATH,
+      ]) {
         for (const token of [tokens.operate, tokens.settingsWrite]) {
           const response = await call("GET", path, token);
           assert.strictEqual(response.status, 403, path);
@@ -796,4 +823,215 @@ describe("an auth failure inside T3", () => {
       assert.isFalse(handled);
     }).pipe(Effect.provide(layerEnvironmentAuth));
   });
+});
+
+describe("/api/factory/config", () => {
+  const COMMENTED = `# the factory on this machine
+gh_config_dir: /gh # login
+poll_seconds: 60
+max_concurrent_runs: 1
+model: claude-sonnet-5-5
+# stays a hand edit
+notify: false
+repos:
+  - repo: rawphp/softfac
+    path: /softfac
+`;
+  const configFile = (dir: string) => NodePath.join(dir, "config.yml");
+  const fileText = (dir: string) => NodeFS.readFileSync(configFile(dir), "utf8");
+  const VALID_BODY = {
+    gh_config_dir: "/gh",
+    poll_seconds: 30,
+    max_concurrent_runs: 2,
+    max_concurrent_gates: 2,
+    model_instance: "claudeAgent",
+    model: "claude-opus-4-8",
+    repos: [{ repo: "a/b", path: "/b" }],
+  };
+
+  it.effect("GET reports a commented file: its values, and that it exists", () =>
+    serving({}, async (call, { tokens, dir }) => {
+      NodeFS.writeFileSync(configFile(dir), COMMENTED);
+      const response = await call("GET", CONFIG_PATH, tokens.read);
+      assert.strictEqual(response.status, 200);
+      assert.deepStrictEqual(await json(response), {
+        file: configFile(dir),
+        exists: true,
+        config: {
+          gh_config_dir: "/gh",
+          poll_seconds: 60,
+          max_concurrent_runs: 1,
+          max_concurrent_gates: 2,
+          model_instance: "claudeAgent",
+          model: "claude-sonnet-5-5",
+          repos: [{ repo: "rawphp/softfac", path: "/softfac" }],
+        },
+        errors: [],
+        repos: [{ repo: "rawphp/softfac", path: "/softfac", factory: null, errors: null }],
+      });
+    }),
+  );
+
+  it.effect("GET with no file reports exists false and the defaults", () =>
+    serving({}, async (call, { tokens, dir }) => {
+      const body = await json(await call("GET", CONFIG_PATH, tokens.read));
+      assert.strictEqual(body.exists, false);
+      assert.strictEqual(body.file, configFile(dir));
+      assert.deepStrictEqual(body.config, {
+        gh_config_dir: "",
+        poll_seconds: 60,
+        max_concurrent_runs: 1,
+        max_concurrent_gates: 2,
+        model_instance: "claudeAgent",
+        model: "",
+        repos: [],
+      });
+      assert.deepStrictEqual(body.errors, []);
+    }),
+  );
+
+  it.effect("GET on an invalid file reports no config and the errors", () =>
+    serving({}, async (call, { tokens, dir }) => {
+      NodeFS.writeFileSync(configFile(dir), COMMENTED.replace("model: claude-sonnet-5-5\n", ""));
+      const body = await json(await call("GET", CONFIG_PATH, tokens.read));
+      assert.strictEqual(body.exists, true);
+      assert.strictEqual(body.config, null);
+      assert.deepStrictEqual(body.errors, [
+        { file: configFile(dir), field: "model", message: "is missing" },
+      ]);
+    }),
+  );
+
+  const project = {
+    instructors: ["i"],
+    base: "main",
+    provision: [],
+    gate: ["g"],
+    requiredChecks: ["ci"],
+    limits: { minutes: 5, gateRetries: 1, regates: 2, checksMinutes: 3, interruptionResumes: 4 },
+    autonomy: "pr",
+  } as const;
+
+  it.effect("GET joins what the loop last read of each repo", () =>
+    serving(
+      {
+        readings: new Map<string, RepoConfigReading>([
+          ["rawphp/softfac", { kind: "ok", project }],
+          ["a/b", { kind: "errors", errors: [{ file: ".dw/config.yml", message: "cannot read" }] }],
+        ]),
+      },
+      async (call, { tokens, dir }) => {
+        NodeFS.writeFileSync(
+          configFile(dir),
+          COMMENTED + "  - repo: a/b\n    path: /b\n  - repo: c/d\n    path: /d\n",
+        );
+        const body = await json(await call("GET", CONFIG_PATH, tokens.read));
+        assert.deepStrictEqual(body.repos, [
+          {
+            repo: "rawphp/softfac",
+            path: "/softfac",
+            factory: {
+              instructors: ["i"],
+              base: "main",
+              provision: [],
+              gate: ["g"],
+              required_checks: ["ci"],
+              limits: {
+                minutes: 5,
+                gate_retries: 1,
+                regates: 2,
+                checks_minutes: 3,
+                interruption_resumes: 4,
+              },
+              autonomy: "pr",
+            },
+            errors: null,
+          },
+          {
+            repo: "a/b",
+            path: "/b",
+            factory: null,
+            errors: [{ file: ".dw/config.yml", message: "cannot read" }],
+          },
+          { repo: "c/d", path: "/d", factory: null, errors: null },
+        ]);
+      },
+    ),
+  );
+
+  it.effect("PUT needs settings:write: read and operate sessions are refused, file untouched", () =>
+    serving({}, async (call, { tokens, dir, wakes }) => {
+      NodeFS.writeFileSync(configFile(dir), COMMENTED);
+      for (const token of [tokens.read, tokens.operate]) {
+        const response = await call("PUT", CONFIG_PATH, token, VALID_BODY);
+        assert.strictEqual(response.status, 403);
+        assert.strictEqual((await json(response)).code, "insufficient_scope");
+      }
+      assert.strictEqual(fileText(dir), COMMENTED);
+      assert.strictEqual(wakes.reloads, 0);
+    }),
+  );
+
+  it.effect(
+    "PUT with an invalid body answers 422 with a field on each error and writes nothing",
+    () =>
+      serving({}, async (call, { tokens, dir, wakes }) => {
+        NodeFS.writeFileSync(configFile(dir), COMMENTED);
+        const response = await call("PUT", CONFIG_PATH, tokens.settingsWrite, {
+          poll_seconds: 5,
+          model: "",
+          repos: [],
+        });
+        assert.strictEqual(response.status, 422);
+        const body = await json(response);
+        assert.strictEqual(body.code, "invalid_config");
+        const errors = body.errors as ReadonlyArray<{ field?: string }>;
+        assert.deepStrictEqual(errors.map((e) => e.field).sort(), [
+          "model",
+          "poll_seconds",
+          "repos",
+        ]);
+        assert.strictEqual(fileText(dir), COMMENTED);
+        assert.strictEqual(wakes.reloads, 0);
+        assert.deepStrictEqual(NodeFS.readdirSync(dir), ["config.yml"]);
+      }),
+  );
+
+  it.effect("PUT with a body that is not a JSON object answers 400", () =>
+    serving({}, async (call, { tokens, dir, wakes }) => {
+      for (const body of ["not json", "[1]", "null", '"x"']) {
+        const response = await call("PUT", CONFIG_PATH, tokens.settingsWrite, body);
+        assert.strictEqual(response.status, 400, body);
+        assert.strictEqual((await json(response)).code, "invalid_body");
+      }
+      assert.isFalse(NodeFS.existsSync(configFile(dir)));
+      assert.strictEqual(wakes.reloads, 0);
+    }),
+  );
+
+  it.effect("PUT on a missing file creates it, reloads the loop and answers the new report", () =>
+    serving({}, async (call, { tokens, dir, wakes }) => {
+      const response = await call("PUT", CONFIG_PATH, tokens.settingsWrite, VALID_BODY);
+      assert.strictEqual(response.status, 200);
+      const body = await json(response);
+      assert.strictEqual(body.exists, true);
+      assert.deepStrictEqual(body.config, VALID_BODY);
+      assert.strictEqual(wakes.reloads, 1);
+      assert.include(fileText(dir), "claude-opus-4-8");
+      assert.deepStrictEqual(NodeFS.readdirSync(dir), ["config.yml"]);
+    }),
+  );
+
+  it.effect("PUT keeps the comments and the keys the form does not edit", () =>
+    serving({}, async (call, { tokens, dir }) => {
+      NodeFS.writeFileSync(configFile(dir), COMMENTED);
+      const response = await call("PUT", CONFIG_PATH, tokens.settingsWrite, { poll_seconds: 90 });
+      assert.strictEqual(response.status, 200);
+      const text = fileText(dir);
+      assert.include(text, "# the factory on this machine");
+      assert.include(text, "# login");
+      assert.include(text, "# stays a hand edit\nnotify: false");
+      assert.include(text, "poll_seconds: 90");
+    }),
+  );
 });
