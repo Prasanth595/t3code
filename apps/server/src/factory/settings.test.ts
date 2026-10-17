@@ -10,12 +10,7 @@ import { describe } from "vite-plus/test";
 
 import { parseMachineConfig } from "./config.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
-import {
-  editMachineConfig,
-  isJsonObject,
-  readMachineConfigReport,
-  writeMachineConfig,
-} from "./settings.ts";
+import { editMachineConfig, isJsonObject, readMachineConfigReport } from "./settings.ts";
 
 const tempDir = useTempDirs();
 
@@ -108,6 +103,68 @@ describe("editMachineConfig", () => {
     ]);
   });
 
+  describe("repos", () => {
+    const TWO = COMMENTED.replace(
+      "# end of file",
+      "  # the second repo\n  - repo: c/d # secondary\n    path: /d\n# end of file",
+    );
+
+    it("matches a repo by name: removing the first leaves the second's comments on it", () => {
+      const text = edited(TWO, { repos: [{ repo: "c/d", path: "/d" }] });
+      assert.include(text, "# the second repo");
+      assert.include(text, "# secondary");
+      assert.notInclude(text, "# primary");
+      assert.notInclude(text, "# the main repo");
+      assert.notInclude(text, "a/b");
+    });
+
+    it("orders the repos as the body does and keeps each one's comments", () => {
+      const text = edited(TWO, {
+        repos: [
+          { repo: "c/d", path: "/d" },
+          { repo: "a/b", path: "/b" },
+        ],
+      });
+      assert.ok(text.indexOf("c/d") < text.indexOf("a/b"), text);
+      assert.ok(text.indexOf("# secondary") < text.indexOf("a/b"), text);
+      assert.ok(text.indexOf("# primary") > text.indexOf("a/b"), text);
+    });
+
+    it("replaces a matched repo's fields wholesale: a missing path is not kept", () => {
+      const result = editMachineConfig(TWO, { repos: [{ repo: "a/b" }] }, FILE);
+      assert.ok(Result.isFailure(result));
+      const errors = Result.isFailure(result) ? result.failure : [];
+      assert.deepStrictEqual(
+        errors.map((e) => e.field),
+        ["repos[0].path"],
+      );
+    });
+  });
+
+  describe("files the page could not fix before", () => {
+    const BODY = {
+      gh_config_dir: "/gh",
+      poll_seconds: 60,
+      max_concurrent_runs: 1,
+      model: "m",
+      repos: [{ repo: "a/b", path: "/b" }],
+    };
+
+    it("drops an unknown top-level key, keeps notify and the comments", () => {
+      const text = edited(COMMENTED + "pol_seconds: 5\n", { poll_seconds: 90 });
+      assert.notInclude(text, "pol_seconds");
+      assert.include(text, "notify: false");
+      assert.include(text, "# notifications stay a hand edit");
+      assert.include(text, "poll_seconds: 90");
+    });
+
+    it("starts from an empty document when the existing file is not YAML", () => {
+      const text = edited("poll_seconds: [unclosed\n  - : :\n", BODY);
+      const parsed = parseMachineConfig(text, FILE);
+      assert.ok(Result.isSuccess(parsed), text);
+    });
+  });
+
   it("refuses an invalid body with the parser's fields", () => {
     const result = editMachineConfig(COMMENTED, { poll_seconds: 5, model: "", repos: [] }, FILE);
     assert.ok(Result.isFailure(result));
@@ -165,18 +222,15 @@ describe("editMachineConfig", () => {
   });
 });
 
-describe("writeMachineConfig", () => {
-  it.effect("writes the text, creates the directory and leaves no temp file", () =>
-    Effect.gen(function* () {
-      const dir = NodePath.join(tempDir("settings"), "nested");
-      const file = NodePath.join(dir, "config.yml");
-      yield* writeMachineConfig(file, "a: 1\n");
-      yield* writeMachineConfig(file, COMMENTED);
-      assert.strictEqual(NodeFS.readFileSync(file, "utf8"), COMMENTED);
-      assert.deepStrictEqual(NodeFS.readdirSync(dir), ["config.yml"]);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-});
+const DEFAULTS = {
+  gh_config_dir: "",
+  poll_seconds: 60,
+  max_concurrent_runs: 1,
+  max_concurrent_gates: 2,
+  model_instance: "claudeAgent",
+  model: "",
+  repos: [],
+};
 
 describe("readMachineConfigReport", () => {
   const report = (text: string | null, readings = new Map()) =>
@@ -192,15 +246,8 @@ describe("readMachineConfigReport", () => {
       assert.deepStrictEqual(r, {
         file,
         exists: false,
-        config: {
-          gh_config_dir: "",
-          poll_seconds: 60,
-          max_concurrent_runs: 1,
-          max_concurrent_gates: 2,
-          model_instance: "claudeAgent",
-          model: "",
-          repos: [],
-        },
+        config: DEFAULTS,
+        defaults: DEFAULTS,
         errors: [],
         repos: [],
       });
@@ -214,6 +261,49 @@ describe("readMachineConfigReport", () => {
       assert.strictEqual(r.config, null);
       assert.ok(r.errors.length > 0);
       assert.deepStrictEqual(r.repos, []);
+    }),
+  );
+
+  it.effect("gives the form its draft: the values an invalid file holds, as written", () =>
+    Effect.gen(function* () {
+      const { report: r } = yield* report(
+        COMMENTED.replace("poll_seconds: 60", "poll_seconds: 5").replace(
+          "model: claude-sonnet-5-5\n",
+          "",
+        ),
+      );
+      assert.strictEqual(r.config, null);
+      assert.deepStrictEqual(r.defaults, DEFAULTS);
+      assert.deepStrictEqual(r.draft, {
+        gh_config_dir: "/gh",
+        poll_seconds: 5,
+        max_concurrent_runs: 1,
+        model_instance: "claudeAgent",
+        repos: [{ repo: "a/b", path: "/b" }],
+      });
+    }),
+  );
+
+  it.effect("copies only what is a string, a number or a repo mapping into the draft", () =>
+    Effect.gen(function* () {
+      const { report: r } = yield* report(
+        "poll_seconds: [1]\nmodel: true\ngh_config_dir: /x\nrepos:\n  - repo: a/b\n    path: 7\n  - nope\n  - {path: /p}\n",
+      );
+      assert.deepStrictEqual(r.draft, {
+        gh_config_dir: "/x",
+        repos: [{ repo: "a/b" }, { path: "/p" }],
+      });
+    }),
+  );
+
+  it.effect("gives an empty draft for a file that is not YAML, and none for a good file", () =>
+    Effect.gen(function* () {
+      const broken = yield* report("poll_seconds: [unclosed\n");
+      assert.strictEqual(broken.report.config, null);
+      assert.deepStrictEqual(broken.report.draft, {});
+      const good = yield* report(COMMENTED);
+      assert.isFalse("draft" in good.report);
+      assert.deepStrictEqual(good.report.defaults, DEFAULTS);
     }),
   );
 
