@@ -84,6 +84,11 @@ export interface WatchedRepo {
   readonly path: string;
 }
 
+/** A watched repo with the title of the T3 project it comes from, for the settings page. */
+export interface WatchedProject extends WatchedRepo {
+  readonly title: string;
+}
+
 export interface MachineConfig {
   readonly ghConfigDir: string;
   readonly pollSeconds: number;
@@ -98,7 +103,6 @@ export interface MachineConfig {
   readonly maxConcurrentGates: number;
   /** Whether a new attention item posts a macOS notification. The list is kept either way. */
   readonly notify: boolean;
-  readonly repos: ReadonlyArray<WatchedRepo>;
 }
 
 type Mapping = Record<string, unknown>;
@@ -374,58 +378,33 @@ const MACHINE_KEYS = [
   "max_concurrent_runs",
   "max_concurrent_gates",
   "notify",
-  "repos",
 ] as const;
 
 /**
- * Keys the factory read before #93 and reads no more: the model comes from the T3 project's
- * default, then the T3 settings default. A file written before the change still loads, with a
- * warning per key, so the factory that builds the upgrade keeps running, and a save from the
+ * Keys the factory read before and reads no more. #93 retired the model keys: the model comes
+ * from the T3 project's default, then the T3 settings default. #106 retired `repos`: the factory
+ * watches the T3 projects of its environment. A file written before the change still loads, with
+ * a warning per key, so the factory that builds the upgrade keeps running, and a save from the
  * settings page keeps them (`settings.ts`) so a rollback to a version that requires them still
- * loads. Remove both from the file by hand once no rollback past #93 is possible.
+ * loads. Remove them from the file by hand once no rollback is possible.
  */
-export const RETIRED_MACHINE_KEYS = ["model_instance", "model"] as const;
+export const RETIRED_MACHINE_KEYS = ["model_instance", "model", "repos"] as const;
 
-const RETIRED_KEY_MESSAGE =
-  "is no longer used: the model comes from the T3 project's default model, then the T3 settings default";
-
-const REPO_KEYS = ["repo", "path"] as const;
-
-const reposFrom = (c: Checker, root: Mapping): ReadonlyArray<WatchedRepo> | undefined => {
-  const value = c.child(root, "", "repos");
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) {
-    c.err("repos", "must be a list");
-    return undefined;
-  }
-  if (value.length === 0) {
-    c.err("repos", "must not be empty");
-    return undefined;
-  }
-  const out: Array<WatchedRepo> = [];
-  let ok = true;
-  value.forEach((item, i) => {
-    const at = `repos[${i}]`;
-    const entry = c.mapping(item, at);
-    const repo = c.nonEmptyString(c.child(entry, at, "repo"), `${at}.repo`);
-    const path = c.nonEmptyString(c.child(entry, at, "path"), `${at}.path`);
-    if (repo === undefined || path === undefined) ok = false;
-    else out.push({ repo, path });
-  });
-  return ok ? out : undefined;
+const RETIRED_KEY_MESSAGES: Record<(typeof RETIRED_MACHINE_KEYS)[number], string> = {
+  model_instance:
+    "is no longer used: the model comes from the T3 project's default model, then the T3 settings default",
+  model:
+    "is no longer used: the model comes from the T3 project's default model, then the T3 settings default",
+  repos:
+    "is no longer used: the factory watches the T3 projects of this environment whose checkout has a .dw/config.yml with a factory block",
 };
 
-/** Unknown keys at any depth, after the known-field errors. Wrong-typed values are skipped. */
+/** Unknown keys at the top level, after the known-field errors; a retired key is a warning. */
 const checkUnknownKeys = (c: Checker, root: Mapping) => {
   for (const key of RETIRED_MACHINE_KEYS) {
-    if (Object.hasOwn(root, key)) c.warn(key, RETIRED_KEY_MESSAGE);
+    if (Object.hasOwn(root, key)) c.warn(key, RETIRED_KEY_MESSAGES[key]);
   }
   c.unknownKeys(root, [...MACHINE_KEYS, ...RETIRED_MACHINE_KEYS], "");
-  const repos = root["repos"];
-  if (!Array.isArray(repos)) return;
-  repos.forEach((item, i) => {
-    if (isMapping(item)) c.unknownKeys(item, REPO_KEYS, `repos[${i}].`);
-  });
 };
 
 const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
@@ -444,7 +423,6 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     1,
   );
   const notify = c.optionalBoolean(root, "", "notify", true);
-  const repos = reposFrom(c, root);
   checkUnknownKeys(c, root);
 
   if (
@@ -452,8 +430,7 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     pollSeconds === undefined ||
     maxConcurrentRuns === undefined ||
     maxConcurrentGates === undefined ||
-    notify === undefined ||
-    repos === undefined
+    notify === undefined
   ) {
     return undefined;
   }
@@ -463,7 +440,6 @@ const machineFrom = (c: Checker, root: Mapping): MachineConfig | undefined => {
     maxConcurrentRuns,
     maxConcurrentGates,
     notify,
-    repos,
   };
 };
 
@@ -475,6 +451,21 @@ export const parseProjectConfig = (
   const parsed = c.root(text);
   if (Result.isFailure(parsed)) return Result.fail(parsed.failure);
   return c.finish(projectFrom(c, parsed.success));
+};
+
+/**
+ * Whether a checkout's `.dw/config.yml` opts the repo into the factory: the root is a mapping and
+ * its `factory` is a mapping. It does not validate the block: `world.project` reads and validates
+ * the GitHub copy, and a block that does not load shows up as that repo's config errors.
+ */
+export const hasFactoryBlock = (text: string): boolean => {
+  let value: unknown;
+  try {
+    value = parse(text, { intAsBigInt: true });
+  } catch {
+    return false;
+  }
+  return isMapping(value) && isMapping(value["factory"]);
 };
 
 export const parseMachineConfig = (
