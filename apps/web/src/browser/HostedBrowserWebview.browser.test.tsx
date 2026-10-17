@@ -9,6 +9,7 @@ import {
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { previewBridge } from "~/components/preview/previewBridge";
 
 const mocks = vi.hoisted(() => ({
   getClientSettings: vi.fn<() => Promise<ClientSettings | null>>(),
@@ -38,7 +39,7 @@ vi.mock(import("~/components/preview/previewBridge"), async (original) => ({
     closeTab: mocks.closeTab,
     registerWebview: mocks.registerWebview,
     getPreviewConfig: mocks.getPreviewConfig,
-  } as unknown as DesktopPreviewBridge,
+  } as unknown as NonNullable<typeof previewBridge>,
 }));
 
 vi.mock(import("~/components/preview/usePreviewBridge"), async (original) => ({
