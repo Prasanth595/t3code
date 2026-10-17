@@ -44,7 +44,6 @@ const reference: PullRequestRef = {
 };
 const paths = ["a.ts", "b.ts"];
 
-/** What the host answers, as a fresh object each time: a read is only a read if it is a new one. */
 function answer(state: "unviewed" | "viewed" | "dismissed"): PullRequestFilesViewedResult {
   return {
     files: [
@@ -70,7 +69,6 @@ function view(): PullRequestFilesViewedView {
   return renderer!.root.findByType(Probe).props.view;
 }
 
-/** The host's next answer landing, which is what a `refresh` ends in. */
 async function reads(state: "unviewed" | "viewed" | "dismissed") {
   host.data = answer(state);
   await act(async () =>
@@ -115,8 +113,6 @@ describe("a mark whose file was pushed to before the read that followed it", () 
     });
     expect(host.refresh).toHaveBeenCalled();
 
-    // The push landed between the write and this read, so the host answers `dismissed` rather
-    // than the `viewed` the press asked for.
     await reads("dismissed");
 
     expect(view().isViewed("a.ts")).toBe(false);
@@ -145,7 +141,6 @@ describe("a mark the host has not answered for yet", () => {
     view().setViewed("a.ts", true);
     await act(async () => vi.advanceTimersByTimeAsync(500));
 
-    // An answer already on its way when the box was ticked must not put it back.
     await reads("unviewed");
     expect(view().isViewed("a.ts")).toBe(true);
 
@@ -157,8 +152,6 @@ describe("a mark the host has not answered for yet", () => {
     view().setViewed("a.ts", true);
     await act(async () => vi.advanceTimersByTimeAsync(500));
 
-    // Pressed again before the post-write read came back. That press is the one on screen, and
-    // the read that answers for the first one says nothing about it.
     view().setViewed("a.ts", true);
     await reads("dismissed");
 
