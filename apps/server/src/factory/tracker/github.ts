@@ -1797,12 +1797,12 @@ export const makeGitHub = (options: GitHubOptions) => {
    * Only a person who is an instructor counts, and nothing that carries the factory's marker. A
    * review is judged by its `submittedAt` and its state: one that asks for changes or comments is
    * feedback; one that approves is feedback only when it has an inline comment, one that was
-   * dismissed only when it has a body or an inline comment; a pending one is not. A review, a conversation comment or an inline comment whose
-   * text was edited counts only when every edit in its history and its last editor are
-   * instructors who are people and the history is whole; an inline comment that fails drops out
-   * of its review and the rest of the review stays. The line of an inline comment is the one it
-   * is on, or the one it was on. A time or id GitHub gives that this cannot read is an error and
-   * not a guess; a pull request that is gone has no feedback.
+   * dismissed only when it has a body or an inline comment; a pending one is not. A review, a
+   * conversation comment or an inline comment whose text was edited counts only when every edit in
+   * its history and its last editor are instructors who are people and the history is whole; an
+   * inline comment that fails drops out of its review and the rest of the review stays. The line of
+   * an inline comment is the one it is on, or the one it was on. A time or id GitHub gives that
+   * this cannot read is an error and not a guess; a pull request that is gone has no feedback.
    */
   const prFeedback = (
     pr: number,

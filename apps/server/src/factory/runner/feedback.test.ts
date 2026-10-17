@@ -1026,8 +1026,8 @@ describe("feedback: the window", () => {
       // A review an instructor wrote at 1h, while the failing re-gate ran, is still new.
       rig.gh.feedback.push({ ...review11(), createdAt: "2026-10-04T11:13:16Z" });
       assert.deepStrictEqual(yield* feedbackIn(rig), relaunched(1));
-      // It is named now, so it is not sent again; the window starts at the relaunch (decided at
-      // the rig's first instant), not at the pass that brings the run back.
+      // It is named now, so it is not sent again; the window stays at the first pass, not at the
+      // one that brings the run back.
       assert.strictEqual(decisions(rig).length, 1);
       assert.deepStrictEqual(decisions(rig)[0]![2], ["review:11"]);
       appendAt(rig, T0 + 4 * hour, [moved("building", "pr-open")]);
@@ -1339,7 +1339,7 @@ describe("feedback: the step", () => {
   );
 
   it.effect(
-    "after a feedback relaunch feedback is read from the relaunch, so a review written while it built is not lost",
+    "after a feedback relaunch feedback is still read from the first pass, so a review written while it built is not lost",
     () =>
       Effect.gen(function* () {
         const rig = yield* prOpenRun();
@@ -1351,9 +1351,9 @@ describe("feedback: the step", () => {
         ]);
         backToPrOpen(rig, T0 + 5_000_000);
         // The review the relaunch sent is still on the pull request, and the instructor wrote
-        // another while the feedback session built. The read goes back to the relaunch: the
-        // first is not sent again, the second starts the next relaunch. softfac starts the
-        // window at the pass instead and never reads the second.
+        // another while the feedback session built. The read still goes back to the first pass:
+        // the first is not sent again, the second starts the next relaunch. softfac starts the
+        // window over at the new pass and never reads the second.
         rig.gh.feedback.push(review11(), {
           ...review11(),
           id: "review:12",
