@@ -173,9 +173,12 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
       yield* fs.symlink(upstream, link);
       const command = yield* commandIn({ home });
       expect((yield* command.state).installedPath).toBeNull();
-      const error = yield* Effect.flip(command.install);
-      expect(error.message).toContain("Another t3 command is already installed");
+      // Install goes to another folder rather than repointing upstream's link.
+      const installed = (yield* command.install).installedPath;
+      expect(installed).not.toBe(link);
+      expect(yield* fs.readLink(link)).toBe(upstream);
       yield* command.uninstall;
+      expect(yield* fs.exists(installed!)).toBe(false);
       expect(yield* fs.readLink(link)).toBe(upstream);
     }).pipe(Effect.scoped),
   );
