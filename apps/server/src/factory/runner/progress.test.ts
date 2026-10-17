@@ -406,6 +406,52 @@ describe("readProgress: a cancelled forward wait", () => {
     }
   });
 
+  it("an idle marker is proven refused only when every send under it has a refused line", () => {
+    const proven = (...steps: ReadonlyArray<string>) =>
+      readProgress(steps.map((text, i) => step(i + 1, text))).refusedForwardWait;
+    // The one send under it has no outcome yet: it may have gone in.
+    assert.strictEqual(proven("forward-wait 2"), null);
+    assert.strictEqual(proven("forward-wait 2", "comment-refused 7"), 2);
+    assert.strictEqual(proven("forward-wait 2", "body-edit-refused x"), 2);
+    // Each further send writes the marker again before it goes out.
+    assert.strictEqual(proven("forward-wait 2", "comment-refused 7", "forward-wait 2"), null);
+    assert.strictEqual(
+      proven("forward-wait 2", "comment-refused 7", "forward-wait 2", "body-edit-refused x"),
+      2,
+    );
+    // A send with no outcome before the next marker stays unknown, whatever follows.
+    assert.strictEqual(proven("forward-wait 2", "forward-wait 2", "comment-refused 8"), null);
+    // A drop notice is not an outcome of a send.
+    assert.strictEqual(proven("forward-wait 2", "comment-dropped 7"), null);
+    assert.strictEqual(
+      readProgress([
+        step(1, "forward-wait 2"),
+        line(2, "comment_forwarded", { comment_id: "5" }),
+        step(3, "comment-refused 7"),
+      ]).refusedForwardWait,
+      null,
+    );
+    assert.strictEqual(
+      proven("forward-wait 2", "comment-refused 7", "forward-wait-cancelled 2"),
+      null,
+    );
+    assert.strictEqual(proven("comment-refused 7"), null);
+  });
+
+  it("a cancel after markers written again restores the wait from before the first", () => {
+    const seen = readProgress([
+      sentBack(1, 1),
+      step(2, "forward-wait 2"),
+      step(3, "comment-refused 7"),
+      step(4, "forward-wait 2"),
+      step(5, "body-edit-refused x"),
+      step(6, "forward-wait-cancelled 2"),
+    ]);
+    assert.strictEqual(seen.waitingAfter, null);
+    assert.strictEqual(seen.lastWait, 1);
+    assert.strictEqual(seen.idleForwardWait, null);
+  });
+
   it("a new session forgets an idle marker", () => {
     const seen = readProgress([step(1, "forward-wait 2"), launched(2)]);
     assert.strictEqual(seen.idleForwardWait, null);

@@ -65,7 +65,9 @@ import {
 import {
   BODY_EDIT_DROPPED,
   BODY_EDIT_FORWARDED,
+  BODY_EDIT_REFUSED,
   COMMENT_DROPPED,
+  COMMENT_REFUSED,
   FORWARD_WAIT,
   FORWARD_WAIT_CANCELLED,
   RESULT_LINE_REMINDED,
@@ -890,10 +892,6 @@ const refusedEditNotice = (editedAt: string): Notice => ({
   reason: "body-edit-dropped",
 });
 
-/** The ordinal of the session's latest run when no run is active, so a message sent now starts a run after it; null while one is. */
-const idleOrdinal = (status: ThreadStatus): number | null =>
-  status.run === null || isTerminal(status.run) ? (status.runOrdinal ?? 0) : null;
-
 /** Cancels the `forward-wait <k>` under which nothing went into the session. */
 const cancelForwardWait = (out: Out, k: number): Effect.Effect<void, BuildingError> =>
   append(
@@ -940,9 +938,14 @@ const tellIssue = (
  * first send: the session counts as working until a run newer than `k` has ended, and `advance`
  * and the gate wait for it instead of judging the old run again. A session that is working has
  * the message steered into its run, which needs no marker. The status is read only when there is
- * something to send, or when a call with nothing to send finds a `forward-wait` nothing went in
- * under (`Seen.idleForwardWait`, left by a call that crashed): it is cancelled while the session
- * is still idle at that ordinal.
+ * something to send.
+ *
+ * Until a send under the marker goes in, each further send writes the marker again before it, and
+ * a refusal is recorded at once (`comment-refused <id>`, `body-edit-refused <edited_at>`). The
+ * ledger then proves a marker started no run when every send under it has its refusal
+ * (`Seen.refusedForwardWait`); a marker that a crashed call left so is cancelled at the start of
+ * the next call, with or without anything to send. A send with no recorded outcome may have gone
+ * in, so its marker keeps waiting.
  *
  * The read also lists the instructors' comments it could not forward (`Activity.dropped`). After
  * the sends, each one the ledger has no `comment-dropped <id>` step for, and that was not
@@ -1008,16 +1011,12 @@ export const forward = (
       );
       const { comments, bodyEdit } = yield* unsent(seen, activity);
       const drops = unreported(seen, activity);
+      // A marker whose every send the ledger shows T3 refused, left by a call that crashed before
+      // its cancel, waits for a run nothing started. It is cancelled first, whatever this call does.
+      if (seen.refusedForwardWait !== null) {
+        yield* cancelForwardWait(out, seen.refusedForwardWait);
+      }
       if (comments.length === 0 && bodyEdit === null) {
-        // A marker a crashed call left idle, whose items have since gone (deleted, or now dropped
-        // by the tracker), waits for a run nothing will start. It is cancelled while the session
-        // is still idle at it; a newer run means something did go in.
-        if (seen.idleForwardWait !== null) {
-          const status = yield* threadStatus(ctx, threadId);
-          if (status !== null && idleOrdinal(status) === seen.idleForwardWait) {
-            yield* cancelForwardWait(out, seen.idleForwardWait);
-          }
-        }
         yield* tellIssue(
           ctx,
           out,
@@ -1031,29 +1030,36 @@ export const forward = (
       // new run, and the gate must wait for that run, not judge the old one again.
       const status = yield* threadStatus(ctx, threadId);
       if (status === null) return skip("no-thread");
-      // The ordinal this call's messages would start a run after.
-      const marker = idleOrdinal(status);
-      let wroteMarker = false;
-      if (marker !== null) {
-        if (seen.lastWait !== marker) {
-          yield* append(
-            out,
-            { event: "step_changed", data: { step: `${FORWARD_WAIT} ${marker}` } },
-            "forward",
-            "forward-waiting",
-          );
-          wroteMarker = true;
-        }
-      }
+      // The ordinal this call's messages would start a run after. An earlier call's marker for it
+      // counts as working once a send under it went in, so this call writes none.
+      const marker =
+        status.run === null || isTerminal(status.run) ? (status.runOrdinal ?? 0) : null;
+      const idleAt =
+        marker !== null && (seen.lastWait !== marker || seen.idleForwardWait === marker)
+          ? marker
+          : null;
+      // An earlier call's marker with a send whose outcome the ledger lacks: it may have started a run.
+      const inheritedOpen = seen.idleForwardWait === idleAt && seen.refusedForwardWait !== idleAt;
       const opened = yield* out.open;
       const at = progressFrom("forward", seen, "building");
       const runName = runIdToString(run);
       const refused: Array<Notice> = [];
       let sent = 0;
+      let editSent = false;
+      // While the session is idle and nothing this call sent went in (the edit is the last send),
+      // each send goes under its own
+      // `forward-wait` line and a refusal is recorded at once, so the ledger proves which sends
+      // started no run (`Seen.refusedForwardWait`), even after a crash.
+      const stepWhileIdle = (step: string, reason: string) =>
+        idleAt !== null && sent === 0
+          ? append(out, { event: "step_changed", data: { step } }, "forward", reason)
+          : Effect.void;
+      const markSend = () => stepWhileIdle(`${FORWARD_WAIT} ${idleAt}`, "forward-waiting");
       for (const comment of comments) {
         const { actions } = yield* Effect.fromResult(
           transition("building", { kind: "instructor-commented", commentId: comment.id }),
         );
+        yield* markSend();
         const result = yield* applyActions(
           ctx,
           issue,
@@ -1072,14 +1078,17 @@ export const forward = (
           Effect.catchIf(isMessageRejected, () => Effect.succeed("refused" as const)),
         );
         if (result === "sent") sent += 1;
-        else refused.push(dropNotice(ctx, issue, { id: comment.id, reason: "refused" }));
+        else {
+          yield* stepWhileIdle(`${COMMENT_REFUSED} ${comment.id}`, "comment-refused");
+          refused.push(dropNotice(ctx, issue, { id: comment.id, reason: "refused" }));
+        }
       }
-      let editSent = false;
       // The edit goes after the comments of this call, which may have been written before it.
       if (bodyEdit !== null) {
         const { actions } = yield* Effect.fromResult(
           transition("building", { kind: "body-edited" }),
         );
+        yield* markSend();
         const result = yield* applyActions(
           ctx,
           issue,
@@ -1099,18 +1108,15 @@ export const forward = (
           Effect.catchIf(isMessageRejected, () => Effect.succeed("refused" as const)),
         );
         if (result === "sent") editSent = true;
-        else refused.push(refusedEditNotice(bodyEdit.editedAt));
+        else {
+          yield* stepWhileIdle(`${BODY_EDIT_REFUSED} ${bodyEdit.editedAt}`, "body-edit-refused");
+          refused.push(refusedEditNotice(bodyEdit.editedAt));
+        }
       }
       // A marker whose every message T3 refused waits for a run nothing started. Cancelled before the
-      // issue is told, so a failed comment call leaves no wait behind. `seen.idleForwardWait` covers a
-      // marker written by a call that crashed between its refusal and this step.
-      if (
-        sent === 0 &&
-        !editSent &&
-        marker !== null &&
-        (wroteMarker || seen.idleForwardWait === marker)
-      ) {
-        yield* cancelForwardWait(out, marker);
+      // issue is told, so a failed comment call leaves no wait behind.
+      if (idleAt !== null && sent === 0 && !editSent && !inheritedOpen) {
+        yield* cancelForwardWait(out, idleAt);
       }
       // Last: telling the issue must not hold back what the session needs.
       yield* tellIssue(ctx, out, issue, [

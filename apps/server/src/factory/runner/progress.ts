@@ -132,10 +132,16 @@ export interface Seen {
   readonly bodyEdits: ReadonlySet<string>;
   /**
    * The ordinal in the newest `forward-wait` step that no `comment_forwarded` line or
-   * `body-edit-forwarded` step follows and that was not cancelled: its sends may all have been
-   * refused, and `forward` cancels it when a call under it sends nothing.
+   * `body-edit-forwarded` step follows and that was not cancelled: nothing sent under it is known
+   * to have gone in.
    */
   readonly idleForwardWait: number | null;
+  /**
+   * `idleForwardWait` when the ledger proves T3 refused every send under it: each send has its
+   * own `forward-wait <k>` line, and each was followed by a `comment-refused` or
+   * `body-edit-refused` step before the next. No run was started, so `forward` cancels it.
+   */
+  readonly refusedForwardWait: number | null;
   /** The id of every comment a `comment-dropped <id>` step names: the issue was told it was not forwarded. */
   readonly dropped: ReadonlySet<string>;
   /** The newest `session_paused` line: a person stopped the session's run in T3, and this is its ordinal. */
@@ -198,6 +204,10 @@ export const RESULT_LINE_REMINDED = "result-line-reminded";
 export const FORWARD_WAIT = "forward-wait";
 /** The ledger step written when every message sent under a `forward-wait <k>` was refused by T3, so no run was started and the wait is over: `forward-wait-cancelled <k>`. */
 export const FORWARD_WAIT_CANCELLED = "forward-wait-cancelled";
+/** The ledger step written as soon as T3 refused a comment sent under an idle `forward-wait`: `comment-refused <id>`. */
+export const COMMENT_REFUSED = "comment-refused";
+/** The ledger step written as soon as T3 refused a body edit sent under an idle `forward-wait`: `body-edit-refused <edited_at>`. */
+export const BODY_EDIT_REFUSED = "body-edit-refused";
 /** The ledger step written once the issue was told that T3 refused an edit of the body: `body-edit-dropped <edited_at>`; the edit counts as handled. */
 export const BODY_EDIT_DROPPED = "body-edit-dropped";
 /** The ledger step written once an edit of the issue body is in the session: `body-edit-forwarded <edited_at>`. */
@@ -276,6 +286,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let waitIsForward = false;
   let lastWait: number | null = null;
   let idleForwardWait: number | null = null;
+  // The newest send under the idle marker has no outcome yet; an earlier one never got one.
+  let idleSendOpen = false;
+  let idleSendLost = false;
   let lastWaitBefore: number | null = null;
   const forwarded = new Set<string>();
   const bodyEdits = new Set<string>();
@@ -337,9 +350,19 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         }
         const forwardRun = stepNumber(step, FORWARD_WAIT);
         if (forwardRun !== null) {
-          lastWaitBefore = lastWait;
-          idleForwardWait = forwardRun;
+          // The same idle marker again is the next send under it.
+          if (idleForwardWait === forwardRun) {
+            if (idleSendOpen) idleSendLost = true;
+          } else {
+            lastWaitBefore = lastWait;
+            idleForwardWait = forwardRun;
+            idleSendLost = false;
+          }
+          idleSendOpen = true;
           awaitRun(forwardRun, true);
+        }
+        if (step.startsWith(`${COMMENT_REFUSED} `) || step.startsWith(`${BODY_EDIT_REFUSED} `)) {
+          idleSendOpen = false;
         }
         const cancelledRun = stepNumber(step, FORWARD_WAIT_CANCELLED);
         if (cancelledRun !== null && idleForwardWait === cancelledRun) {
@@ -586,6 +609,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     waitingAfter,
     lastWait,
     idleForwardWait,
+    refusedForwardWait:
+      idleForwardWait !== null && !idleSendOpen && !idleSendLost ? idleForwardWait : null,
     forwarded,
     bodyEdits,
     dropped,

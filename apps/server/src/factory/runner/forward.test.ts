@@ -1132,6 +1132,13 @@ describe("forward: waiting for the run a message starts", () => {
       assert.deepStrictEqual(yield* forwardIn(done), outcome(0, false));
       assert.deepStrictEqual(done.t3, []);
       assert.strictEqual(linesOf(done).length, STARTED.length + 2);
+      // Nor with an idle marker left by a crash, proven refused or not: the ledger decides.
+      for (const left of [[waitStep(1)], [waitStep(1), refusedStep(101)]]) {
+        const crashed = rigFor([...STARTED, ...left]);
+        crashed.world.statusForbidden = true;
+        assert.deepStrictEqual(yield* forwardIn(crashed), outcome(0, false));
+        assert.deepStrictEqual(crashed.t3, []);
+      }
     }),
   );
 
@@ -1275,6 +1282,8 @@ const refusedEditText =
   "10 The factory did not send the edited issue body to the build session, because T3 refused it. Post the change as a new comment and the factory will send it.";
 const bodyDropped = (editedAt: string) => step(`body-edit-dropped ${editedAt}`);
 const cancelStep = (k: number) => step(`forward-wait-cancelled ${k}`);
+const refusedStep = (id: number) => step(`comment-refused ${id}`);
+const bodyRefused = (editedAt: string) => step(`body-edit-refused ${editedAt}`);
 const commentCmd = (id: number) => `softfac:${RUN}:comment:${id}`;
 const bodyCmd = (editedAt: string) => `softfac:${RUN}:body:${editedAt}`;
 
@@ -1519,8 +1528,11 @@ describe("forward: a send T3 refuses", () => {
         afterStatus(commentSend(101, "rawphp", "one"), bodySend(EDITED, "rawphp", "new")),
       );
       assert.deepStrictEqual(rig.posted, [droppedText(101, REFUSED)]);
+      // Each send under the idle marker has its own marker line, and the refusal its step.
       assert.deepStrictEqual(linesOf(rig), [
         ...STARTED,
+        waitStep(1),
+        refusedStep(101),
         waitStep(1),
         bodyForwarded(EDITED),
         droppedStep(101),
@@ -1545,9 +1557,13 @@ describe("forward: a send T3 refuses", () => {
         rig.t3,
         afterStatus(commentSend(101, "rawphp", "one"), bodySend(EDITED, "rawphp", "new")),
       );
+      // Each refusal is recorded before anything else can fail, and the cancel after the last.
       assert.deepStrictEqual(linesOf(rig), [
         ...BASE_EVENTS,
         waitStep(1),
+        refusedStep(101),
+        waitStep(1),
+        bodyRefused(EDITED),
         cancelStep(1),
         droppedStep(101),
         bodyDropped(EDITED),
@@ -1592,93 +1608,131 @@ describe("forward: a send T3 refuses", () => {
     }),
   );
 
-  it.effect("a marker left idle by a crash is cancelled on the next call", () =>
+  it.effect(
+    "a marker whose refusal was recorded before a crash is cancelled on the next call",
+    () =>
+      Effect.gen(function* () {
+        // The send was refused and recorded, and the call crashed before its cancel. The comment is
+        // still there and is refused again under a fresh marker.
+        const rig = rigFor([...STARTED, waitStep(1), refusedStep(101)]);
+        setRun(rig, "completed", 1);
+        script(rig, [comment(101, "rawphp", "one")]);
+        rig.world.refuse.add(commentCmd(101));
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+        assert.deepStrictEqual(linesOf(rig), [
+          ...STARTED,
+          waitStep(1),
+          refusedStep(101),
+          cancelStep(1),
+          waitStep(1),
+          refusedStep(101),
+          cancelStep(1),
+          droppedStep(101),
+        ]);
+        const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
+        assert.strictEqual(seen.waitingAfter, null);
+        assert.strictEqual(seen.lastWait, null);
+      }),
+  );
+
+  it.effect(
+    "a marker whose refusal was recorded is cancelled when its comment has since gone",
+    () =>
+      Effect.gen(function* () {
+        // The call crashed between the refusal's step and the cancel, and the instructor then
+        // deleted the comment: the next call has nothing to send. The ledger alone proves nothing
+        // went in, so T3 is not asked.
+        const rig = rigFor([...BASE_EVENTS, waitStep(1), refusedStep(101)]);
+        setRun(rig, "completed", 1, DONE_MESSAGE);
+        rig.world.statusForbidden = true;
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+        assert.deepStrictEqual(rig.t3, []);
+        assert.deepStrictEqual(rig.posted, []);
+        assert.deepStrictEqual(linesOf(rig), [
+          ...BASE_EVENTS,
+          waitStep(1),
+          refusedStep(101),
+          cancelStep(1),
+        ]);
+        const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
+        assert.strictEqual(seen.waitingAfter, null);
+        assert.strictEqual(seen.idleForwardWait, null);
+
+        // No run newer than 1 is awaited, so the gate can run.
+        rig.world.statusForbidden = false;
+        rig.ctx = {
+          ...rig.ctx,
+          tracker: { ...rig.ctx.tracker, pullRequest: () => Effect.succeed(draftPr) },
+        };
+        assert.deepStrictEqual(yield* advanceIn(rig), {
+          kind: "ready-for-gate",
+          pr: 12,
+          prUrl: URL12,
+        });
+
+        // Cancelled once: the next call writes nothing.
+        clearCalls(rig);
+        const bytes = bytesOf(rig);
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+        assert.strictEqual(bytesOf(rig), bytes);
+      }),
+  );
+
+  it.effect("a recorded refusal is cancelled before the issue hears its comment was dropped", () =>
     Effect.gen(function* () {
-      // A marker was written, the send was refused, and the call crashed before anything else.
-      const rig = rigFor([...STARTED, waitStep(1)]);
-      setRun(rig, "completed", 1);
-      script(rig, [comment(101, "rawphp", "one")]);
-      rig.world.refuse.add(commentCmd(101));
+      const rig = rigFor([...STARTED, waitStep(1), refusedStep(101)]);
+      rig.world.statusForbidden = true;
+      scriptDropped(rig, [dropOf(101, "edited-by-other")]);
       assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+      assert.deepStrictEqual(rig.posted, [droppedText(101, BY_OTHER)]);
       assert.deepStrictEqual(linesOf(rig), [
         ...STARTED,
         waitStep(1),
+        refusedStep(101),
         cancelStep(1),
         droppedStep(101),
       ]);
     }),
   );
 
-  it.effect("a marker left idle by a crash is cancelled when its comment has since gone", () =>
+  it.effect("a marker with a send whose outcome was never recorded keeps the wait", () =>
     Effect.gen(function* () {
-      // A marker was written, the send was refused, the call crashed, and the instructor then
-      // deleted the comment: the next call has nothing to send.
-      const rig = rigFor([...BASE_EVENTS, waitStep(1)]);
-      setRun(rig, "completed", 1, DONE_MESSAGE);
-      assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
-      assert.deepStrictEqual(rig.t3, ["status thread-1"]);
-      assert.deepStrictEqual(rig.posted, []);
-      assert.deepStrictEqual(linesOf(rig), [...BASE_EVENTS, waitStep(1), cancelStep(1)]);
-      const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
-      assert.strictEqual(seen.waitingAfter, null);
-      assert.strictEqual(seen.idleForwardWait, null);
-
-      // No run newer than 1 is awaited, so the gate can run.
-      rig.ctx = {
-        ...rig.ctx,
-        tracker: { ...rig.ctx.tracker, pullRequest: () => Effect.succeed(draftPr) },
-      };
-      assert.deepStrictEqual(yield* advanceIn(rig), {
-        kind: "ready-for-gate",
-        pr: 12,
-        prUrl: URL12,
-      });
-
-      // Cancelled once: the next call with nothing to send writes nothing and reads no status.
-      clearCalls(rig);
-      rig.world.statusForbidden = true;
-      const bytes = bytesOf(rig);
-      assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
-      assert.deepStrictEqual(rig.t3, []);
-      assert.strictEqual(bytesOf(rig), bytes);
+      // A crash before any line after the marker, and a crash after a refusal while the next send
+      // was out: either send may have gone in. The comments have since gone or been dropped.
+      for (const crashed of [
+        [waitStep(1)],
+        [waitStep(1), refusedStep(101), waitStep(1)],
+        [waitStep(1), commentForwarded(101), refusedStep(102)],
+      ]) {
+        const rig = rigFor([...STARTED, ...crashed]);
+        rig.world.statusForbidden = true;
+        scriptDropped(rig, [dropOf(102, "edited-by-other")]);
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+        assert.deepStrictEqual(rig.posted, [droppedText(102, BY_OTHER)]);
+        assert.deepStrictEqual(linesOf(rig), [...STARTED, ...crashed, droppedStep(102)]);
+        assert.strictEqual(readProgress(readRun(rig.dataDir, rig.run).entries).waitingAfter, 1);
+      }
     }),
   );
 
-  it.effect(
-    "a marker left idle by a crash is cancelled before the issue hears its comment was dropped",
-    () =>
-      Effect.gen(function* () {
-        const rig = rigFor([...STARTED, waitStep(1)]);
-        setRun(rig, "completed", 1);
-        scriptDropped(rig, [dropOf(101, "edited-by-other")]);
-        assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
-        assert.deepStrictEqual(rig.posted, [droppedText(101, BY_OTHER)]);
-        assert.deepStrictEqual(linesOf(rig), [
-          ...STARTED,
-          waitStep(1),
-          cancelStep(1),
-          droppedStep(101),
-        ]);
-      }),
-  );
-
-  it.effect("an idle marker with nothing to send stays once the session has moved on", () =>
+  it.effect("a refusal under a marker a crash left without an outcome keeps the wait", () =>
     Effect.gen(function* () {
-      // A run newer than the marker has started (or ended): something did go in, so the wait is
-      // real, and a thread T3 no longer has is not cancelled either.
-      for (const set of [
-        (rig: Rig) => setRun(rig, "running", 2),
-        (rig: Rig) => setRun(rig, "completed", 2),
-        (rig: Rig) => {
-          rig.world.status = new ThreadNotFoundError({ threadId: "thread-1" });
-        },
-      ]) {
-        const rig = rigFor([...STARTED, waitStep(1)]);
-        set(rig);
-        assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
-        assert.deepStrictEqual(rig.t3, ["status thread-1"]);
-        assert.deepStrictEqual(linesOf(rig), [...STARTED, waitStep(1)]);
-      }
+      // The earlier send under marker 1 may have gone in, so refusing this one proves nothing.
+      const rig = rigFor([...STARTED, waitStep(1)]);
+      setRun(rig, "completed", 1);
+      script(rig, [comment(102, "rawphp", "two")]);
+      rig.world.refuse.add(commentCmd(102));
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        waitStep(1),
+        waitStep(1),
+        refusedStep(102),
+        droppedStep(102),
+      ]);
+      const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
+      assert.strictEqual(seen.waitingAfter, 1);
+      assert.strictEqual(seen.refusedForwardWait, null);
     }),
   );
 
