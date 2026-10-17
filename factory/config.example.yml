@@ -39,7 +39,8 @@ notify: true
 # There is no `repos` key (retired by #106). The factory watches the T3 projects of this
 # server whose checkout has a .dw/config.yml with a `factory` block. To add a repo, add its
 # clone as a project on this server once (the sidebar, or `t3 project add <path>`). The clone
-# is one of its own, never the one the Rust factory uses. Take a repo out of the Rust factory's
+# is one of its own, never the one the Rust factory uses. A clone with an `upstream` remote is
+# not watched, since T3 names it by that remote. Take a repo out of the Rust factory's
 # repos list before adding it here: one factory per repo. A `repos` key left in this file
 # loads with a warning, and a version from before #106 requires one, so keep it in the file
 # until no rollback to such a version is possible.

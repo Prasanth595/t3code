@@ -19,12 +19,19 @@ import {
 /**
  * The repos the factory watches, read from this environment's T3 projects: an active project
  * that is not the scratch project, whose checkout has a `.dw/config.yml` with a `factory` block
- * (the opt-in, so a personal project is never polled), and whose `origin` T3 resolved to a GitHub
- * `owner/name`. Anything else is left out without a word: no error, no attention item.
+ * (the opt-in, so a personal project is never polled), and whose repository T3 resolved to a
+ * GitHub `owner/name` through the `origin` remote. T3 prefers an `upstream` remote when a clone
+ * has one, so such a clone (a fork) is not watched: its identity is the parent's. Those, and a
+ * project that did not opt in, are left out without a word: no error, no attention item.
+ *
+ * What the reader could not settle is reported in `unresolved`, not dropped: a config file that
+ * could not be read for a reason other than its absence, and an opted-in checkout T3 could not
+ * identify (git failed or timed out). The pass keeps its attention items while there are any.
  *
  * The config file is read before the repository identity, so git is not run for the projects
  * that are not factory repos. The file is read from the checkout on disk; the loop still reads
- * the default-branch copy from GitHub for the project config itself.
+ * the default-branch copy from GitHub for the project config itself. A repo that two projects
+ * name appears once per project: the reader reports facts, and the pass decides what to do.
  */
 
 export class WatchedReposError extends Schema.TaggedError<WatchedReposError>()(
@@ -83,7 +90,9 @@ export const make = Effect.gen(function* () {
         unresolved.push(row.workspaceRoot);
         continue;
       }
-      if (identity.provider !== "github") continue;
+      // T3 names a clone by its `upstream` remote when it has one, so only `origin` is the repo
+      // the person cloned and works in.
+      if (identity.provider !== "github" || identity.locator.remoteName !== "origin") continue;
       const { owner, name } = identity;
       if (owner === undefined || name === undefined) continue;
       repos.push({ repo: `${owner}/${name}`, path: row.workspaceRoot, title: row.title });
