@@ -196,7 +196,7 @@ const worldContext = (
   const repoConfigs = Effect.succeed(world.readings ?? new Map<string, RepoConfigReading>());
   const watchedRepos = Effect.succeed({
     repos: world.watched ?? [],
-    present: (world.watched ?? []).map((w) => w.repo),
+    departed: [],
     unresolved: [],
   });
   return Context.make(EnvironmentAuth.EnvironmentAuth, auth).pipe(

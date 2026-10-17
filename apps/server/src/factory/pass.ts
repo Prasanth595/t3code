@@ -521,21 +521,18 @@ export const runPass = (
       yield* pass.fail(null, passError(listed.failure.kind, "", listed.failure.message));
     }
     const listing =
-      listed._tag === "Success" ? listed.success : { repos: [], present: [], unresolved: [] };
+      listed._tag === "Success" ? listed.success : { repos: [], departed: [], unresolved: [] };
     const watched = listing.repos;
-    // A repo no T3 project is a clone of any more has nothing the factory still needs a person
-    // for. One whose project stays but no longer opts in is still `present`, and its items stay:
-    // a `stuck` or `needs-info` item is raised once and never again. A short list does not say a
-    // repo left either: a project that could not be settled may be one of its owners.
+    // A repo whose T3 project was deleted has nothing the factory still needs a person for. Only
+    // the reader's `departed` says so: a repo whose project stays (a branch without the opt-in,
+    // an unreadable checkout) keeps its items, since `stuck` and `needs-info` are raised once.
     if (listed._tag === "Success") {
-      if (listing.unresolved.length === 0) {
-        yield* world.attention.clear(
-          (item) =>
-            item.repo !== null && !listing.present.some((repo) => sameRepo(repo, item.repo!)),
-        );
-      } else {
+      yield* world.attention.clear(
+        (item) => item.repo !== null && listing.departed.some((repo) => sameRepo(repo, item.repo!)),
+      );
+      if (listing.unresolved.length > 0) {
         pass.line(
-          `watched: ${listing.unresolved.length} project(s) could not be settled this pass (${listing.unresolved.map(plain).join(", ")}); no attention item is cleared`,
+          `watched: ${listing.unresolved.length} project(s) could not be settled this pass (${listing.unresolved.map(plain).join(", ")})`,
         );
       }
     }

@@ -97,7 +97,7 @@ const watching = (
       list: (Effect.isEffect(list) ? list : Effect.succeed(list)).pipe(
         Effect.map((repos): WatchedListing => ({
           repos,
-          present: repos.map((r) => r.repo),
+          departed: [],
           unresolved: [],
         })),
       ),
@@ -2099,13 +2099,13 @@ describe("reloading the machine config", () => {
           );
           assert.deepStrictEqual(yield* listing.loop.watchedRepos, {
             repos: [A_B],
-            present: ["a/b"],
+            departed: [],
             unresolved: [],
           });
           yield* Ref.set(projects, [A_B, C_D]);
           assert.deepStrictEqual(yield* listing.loop.watchedRepos, {
             repos: [A_B, C_D],
-            present: ["a/b", "c/d"],
+            departed: [],
             unresolved: [],
           });
           const failing = yield* started(
@@ -2138,7 +2138,7 @@ describe("reloading the machine config", () => {
         yield* Ref.set(projects, [A_B, C_D]);
         assert.deepStrictEqual(yield* loop.watchedRepos, {
           repos: [A_B, C_D],
-          present: ["a/b", "c/d"],
+          departed: [],
           unresolved: [],
         });
         assert.deepStrictEqual(loop.status, {

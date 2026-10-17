@@ -16,6 +16,7 @@ import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import * as ManagedProjectFolders from "../../project/ManagedProjectFolders.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { useTempDirs } from "../ledger/testSupport.ts";
+import { FactoryPaths } from "./paths.ts";
 import * as WatchedRepos from "./watchedRepos.ts";
 
 const tempDir = useTempDirs();
@@ -153,12 +154,23 @@ interface Fixture {
   readonly deleted?: ReadonlyArray<string>;
   /** The git the reader runs for a checkout with no `.dw/config.yml` on disk; the real one by default. */
   readonly runner?: Layer.Layer<ProcessRunner.ProcessRunner>;
+  /** Where the reader keeps its memory; a fresh directory by default. Pass one to read it twice. */
+  readonly factoryDir?: string;
 }
+
+const pathsAt = (factoryDir: string) =>
+  Layer.succeed(FactoryPaths, {
+    baseDir: factoryDir,
+    worktreesDir: NodePath.join(factoryDir, "worktrees"),
+    factoryDir,
+    machineConfigPath: NodePath.join(factoryDir, "config.yml"),
+  });
 
 const listed = (fixture: Fixture) => {
   const layerProjects = ProjectStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory));
   const layer = Layer.effect(WatchedRepos.FactoryWatchedRepos, WatchedRepos.make).pipe(
     Layer.provide(fixture.runner ?? ProcessRunner.layer),
+    Layer.provide(pathsAt(fixture.factoryDir ?? tempDir("factory"))),
     Layer.provideMerge(layerProjects),
     Layer.provide(
       Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
@@ -241,7 +253,7 @@ describe("FactoryWatchedRepos.list", () => {
           [gitlab, { ...WIDGETS, provider: "gitlab" }],
         ]),
       });
-      assert.deepStrictEqual(list, { repos: [], present: [], unresolved: [] });
+      assert.deepStrictEqual(list, { repos: [], departed: [], unresolved: [] });
     }),
   );
 
@@ -336,12 +348,7 @@ describe("FactoryWatchedRepos.list", () => {
         projects: [["p-fork", root]],
         identities: new Map([[root, fork]]),
       });
-      // Both names are present, so neither repo's attention items are cleared for this clone.
-      assert.deepStrictEqual(list, {
-        repos: [],
-        present: ["acme/widgets", "me/widgets"],
-        unresolved: [],
-      });
+      assert.deepStrictEqual(list, { repos: [], departed: [], unresolved: [] });
     }),
   );
 
@@ -353,7 +360,7 @@ describe("FactoryWatchedRepos.list", () => {
         projects: [["p-half", root]],
         identities: new Map([[root, noOwner]]),
       });
-      assert.deepStrictEqual(list, { repos: [], present: [], unresolved: [root] });
+      assert.deepStrictEqual(list, { repos: [], departed: [], unresolved: [root] });
     }),
   );
 
@@ -429,6 +436,7 @@ describe("FactoryWatchedRepos.list", () => {
         const spawned: Array<string> = [];
         const layer = Layer.effect(WatchedRepos.FactoryWatchedRepos, WatchedRepos.make).pipe(
           Layer.provide(runnerAnswering(spawned)),
+          Layer.provide(pathsAt(tempDir("factory"))),
           Layer.provideMerge(ProjectStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
           Layer.provide(
             Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
@@ -468,7 +476,7 @@ describe("FactoryWatchedRepos.list", () => {
           });
           assert.deepStrictEqual(list, {
             repos: [{ repo: "acme/widgets", path: clone, title: "Title of p-switched" }],
-            present: ["acme/widgets"],
+            departed: [],
             unresolved: [],
           });
         }),
@@ -481,8 +489,7 @@ describe("FactoryWatchedRepos.list", () => {
           projects: [["p-never", clone]],
           identities: new Map([[clone, WIDGETS]]),
         });
-        // Not watched, but still a clone of the repo: present, so its items stay.
-        assert.deepStrictEqual(list, { repos: [], present: ["acme/widgets"], unresolved: [] });
+        assert.deepStrictEqual(list, { repos: [], departed: [], unresolved: [] });
       }),
     );
 
@@ -493,7 +500,7 @@ describe("FactoryWatchedRepos.list", () => {
           projects: [["p-plain", clone]],
           identities: new Map([[clone, WIDGETS]]),
         });
-        assert.deepStrictEqual(list, { repos: [], present: ["acme/widgets"], unresolved: [] });
+        assert.deepStrictEqual(list, { repos: [], departed: [], unresolved: [] });
       }),
     );
 
@@ -507,7 +514,7 @@ describe("FactoryWatchedRepos.list", () => {
           identities: new Map([[root, WIDGETS]]),
           runner: runnerAnswering(calls, true),
         });
-        assert.deepStrictEqual(list, { repos: [], present: [], unresolved: [root] });
+        assert.deepStrictEqual(list, { repos: [], departed: [], unresolved: [root] });
         assert.deepStrictEqual(calls, [`git -C ${root} show origin/HEAD:.dw/config.yml`]);
       }),
     );
@@ -530,48 +537,129 @@ describe("FactoryWatchedRepos.list", () => {
               ),
           }),
         });
-        assert.deepStrictEqual(list, { repos: [], present: [], unresolved: [root] });
+        assert.deepStrictEqual(list, { repos: [], departed: [], unresolved: [root] });
       }),
     );
   });
 
-  describe("a checkout that does not opt in", () => {
-    it.effect(
-      "is present under its repo, so a branch without the factory block clears nothing",
-      () =>
-        Effect.gen(function* () {
-          const root = checkout("paused", "tracker:\n  backend: do-work-io\n");
-          NodeFS.mkdirSync(NodePath.join(root, ".git"));
-          const list = yield* listed({
-            projects: [["p-paused", root]],
-            identities: new Map([[root, WIDGETS]]),
-          });
-          assert.deepStrictEqual(list, { repos: [], present: ["acme/widgets"], unresolved: [] });
-        }),
-    );
+  describe("the repos that departed", () => {
+    const watchedOnce = (name: string) => {
+      const root = checkout(name, FACTORY_CONFIG);
+      const factoryDir = tempDir(`${name}-factory`);
+      const identities = new Map([[root, WIDGETS]]);
+      return { root, factoryDir, identities };
+    };
 
-    it.effect("with no remote is unresolved: T3 cannot tell it from a git that failed", () =>
+    it.effect("names a watched repo once the T3 project it was watched from is deleted", () =>
       Effect.gen(function* () {
-        const root = checkout("personal", null);
-        NodeFS.mkdirSync(NodePath.join(root, ".git"));
-        const list = yield* listed({
-          projects: [["p-personal", root]],
-          identities: new Map(),
-          runner: runnerAnswering([]),
+        const { root, factoryDir, identities } = watchedOnce("deleted");
+        const before = yield* listed({ projects: [["p-w", root]], identities, factoryDir });
+        assert.deepStrictEqual(before.departed, []);
+        // A later pass, or a restart: the memory is on disk.
+        const after = yield* listed({
+          projects: [["p-w", root]],
+          identities,
+          factoryDir,
+          deleted: ["p-w"],
         });
-        assert.deepStrictEqual(list, { repos: [], present: [], unresolved: [root] });
+        assert.deepStrictEqual(after, { repos: [], departed: ["acme/widgets"], unresolved: [] });
       }),
     );
 
-    it.effect("on a branch whose file has no factory block, with git failing, is unresolved", () =>
+    it.effect("keeps a repo whose project stays though its checkout no longer opts in", () =>
       Effect.gen(function* () {
-        const root = checkout("paused-no-git", "tracker:\n  backend: do-work-io\n");
-        NodeFS.mkdirSync(NodePath.join(root, ".git"));
-        const list = yield* listed({
-          projects: [["p-paused-no-git", root]],
-          identities: new Map(),
+        const { root, factoryDir, identities } = watchedOnce("opted-out");
+        yield* listed({ projects: [["p-w", root]], identities, factoryDir });
+        NodeFS.writeFileSync(NodePath.join(root, ".dw", "config.yml"), "tracker: {}\n");
+        const after = yield* listed({ projects: [["p-w", root]], identities, factoryDir });
+        assert.deepStrictEqual(after, { repos: [], departed: [], unresolved: [] });
+      }),
+    );
+
+    it.effect("keeps a repo whose checkout has gone missing, as an unmounted volume's has", () =>
+      Effect.gen(function* () {
+        const { root, factoryDir, identities } = watchedOnce("unmounted");
+        yield* listed({ projects: [["p-w", root]], identities, factoryDir });
+        NodeFS.rmSync(root, { recursive: true, force: true });
+        const after = yield* listed({ projects: [["p-w", root]], identities, factoryDir });
+        assert.deepStrictEqual(after.departed, []);
+      }),
+    );
+
+    it.effect(
+      "follows a repo to the project it is added from next, and departs when that goes",
+      () =>
+        Effect.gen(function* () {
+          const { root, factoryDir, identities } = watchedOnce("moved");
+          yield* listed({ projects: [["p-old", root]], identities, factoryDir });
+          const both: ReadonlyArray<readonly [string, string]> = [
+            ["p-old", root],
+            ["p-new", root],
+          ];
+          const moved = yield* listed({
+            projects: both,
+            identities,
+            factoryDir,
+            deleted: ["p-old"],
+          });
+          assert.deepStrictEqual(moved.departed, []);
+          assert.deepStrictEqual(
+            moved.repos.map((r) => r.repo),
+            ["acme/widgets"],
+          );
+          const gone = yield* listed({
+            projects: both,
+            identities,
+            factoryDir,
+            deleted: ["p-old", "p-new"],
+          });
+          assert.deepStrictEqual(gone.departed, ["acme/widgets"]);
+        }),
+    );
+
+    it.effect("leaves a memory it cannot read as it is, so a repo in it still departs later", () =>
+      Effect.gen(function* () {
+        // Root reads a file whatever its mode.
+        if (globalThis.process.getuid?.() === 0) return;
+        const a = checkout("memory-a", FACTORY_CONFIG);
+        const b = checkout("memory-b", FACTORY_CONFIG);
+        const factoryDir = tempDir("memory-factory");
+        const identities = new Map([
+          [a, WIDGETS],
+          [b, GADGETS],
+        ]);
+        const both: ReadonlyArray<readonly [string, string]> = [
+          ["p-a", a],
+          ["p-b", b],
+        ];
+        yield* listed({ projects: [["p-a", a]], identities, factoryDir });
+        const file = NodePath.join(factoryDir, WatchedRepos.MEMORY_FILE);
+        NodeFS.chmodSync(file, 0o000);
+        const unreadable = yield* listed({
+          projects: both,
+          identities,
+          factoryDir,
+          deleted: ["p-a"],
         });
-        assert.deepStrictEqual(list, { repos: [], present: [], unresolved: [root] });
+        NodeFS.chmodSync(file, 0o600);
+        assert.deepStrictEqual(unreadable.departed, []);
+        const later = yield* listed({ projects: both, identities, factoryDir, deleted: ["p-a"] });
+        assert.deepStrictEqual(later.departed, ["acme/widgets"]);
+      }),
+    );
+
+    it.effect("never names a repo it did not watch", () =>
+      Effect.gen(function* () {
+        const root = checkout("personal-project", null);
+        const factoryDir = tempDir("personal-factory");
+        yield* listed({ projects: [["p-personal", root]], identities: new Map(), factoryDir });
+        const after = yield* listed({
+          projects: [["p-personal", root]],
+          identities: new Map(),
+          factoryDir,
+          deleted: ["p-personal"],
+        });
+        assert.deepStrictEqual(after, { repos: [], departed: [], unresolved: [] });
       }),
     );
   });

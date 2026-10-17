@@ -493,21 +493,22 @@ const scenario = (spec: Spec) =>
           });
         }),
       ).pipe(Layer.provide(Process.layer));
+      const paths = Layer.succeed(Paths.FactoryPaths, {
+        baseDir: base,
+        worktreesDir,
+        factoryDir,
+        machineConfigPath,
+      });
       const factory = factoryRuntime({
         restartDelay: "100 millis",
         gateRemoteBase: `file://${remotes}`,
       }).pipe(
         Layer.provide(
           Layer.mergeAll(
-            Layer.succeed(Paths.FactoryPaths, {
-              baseDir: base,
-              worktreesDir,
-              factoryDir,
-              machineConfigPath,
-            }),
+            paths,
             fakeProcess,
             Gate.layer.pipe(Layer.provide(fakeProcess)),
-            Contract.layerWatchedRepos,
+            Contract.layerWatchedRepos.pipe(Layer.provide(paths)),
           ),
         ),
       );

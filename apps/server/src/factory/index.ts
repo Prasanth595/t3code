@@ -937,6 +937,6 @@ export const FactoryLayer = FactoryRuntime.pipe(
   Layer.provide(Gate.layer),
   Layer.provide(Process.layer),
   Layer.provide(T3Sessions.layerLive),
-  Layer.provide(WatchedRepos.layer),
+  Layer.provide(WatchedRepos.layer.pipe(Layer.provide(Paths.layer))),
   Layer.provide(Events.layerLive),
 );

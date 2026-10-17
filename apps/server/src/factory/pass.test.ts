@@ -171,8 +171,8 @@ class Fake implements PassWorld {
   openHeads: Record<string, string | null | "error"> = {};
   /** The repos the T3 projects list as watched; set per pass by `pass`. */
   watched: Array<WatchedProject> = [];
-  /** Every repo a T3 project is a clone of; the watched repos when null. */
-  present: Array<string> | null = null;
+  /** The repos whose every T3 project was deleted since the reader watched them. */
+  departed: Array<string> = [];
   /** Workspace roots the reader could not settle this pass; they are not in `watched`. */
   unresolved: Array<string> = [];
   /** Listing the watched repos fails, as the project store being down does. */
@@ -222,7 +222,7 @@ class Fake implements PassWorld {
         })
       : Effect.succeed({
           repos: this.watched,
-          present: this.present ?? this.watched.map((w) => w.repo),
+          departed: this.departed,
           unresolved: this.unresolved,
         });
   });
@@ -3098,10 +3098,11 @@ describe("attention items", () => {
   );
 
   it.effect(
-    "an item of a repo that left the config is cleared at the pass start, a machine item stays",
+    "an item of a repo whose T3 project was deleted is cleared at the pass start, a machine item stays",
     () =>
       Effect.gen(function* () {
         const fake = new Fake();
+        fake.departed = ["rawphp/gone"];
         fake.items = [
           open({ id: "gone", repo: "rawphp/gone" }),
           open({ id: "kept", repo: REPO, issue: 99 }),
@@ -3113,11 +3114,11 @@ describe("attention items", () => {
   );
 
   it.effect(
-    "an item of a repo whose project stays but no longer opts in is kept: only a repo with no project left",
+    "an item of a repo that is not watched but has not departed is kept: only a deleted project clears",
     () =>
       Effect.gen(function* () {
         const fake = new Fake();
-        fake.present = [REPO, "rawphp/paused"];
+        fake.departed = ["RawPHP/Gone"];
         fake.items = [
           open({ id: "gone", kind: "stuck", repo: "rawphp/gone" }),
           open({ id: "paused", kind: "stuck", repo: "rawphp/paused" }),
@@ -3131,22 +3132,22 @@ describe("attention items", () => {
   );
 
   it.effect(
-    "a project the reader could not identify clears no item and says so in one plain line",
+    "a project the reader could not settle is one plain line, and a departed repo is still cleared",
     () =>
       Effect.gen(function* () {
         const fake = new Fake();
         fake.unresolved = ["/p/a", "/p/b"];
+        fake.departed = ["rawphp/gone"];
         fake.items = [
           open({ id: "gone", kind: "stuck", repo: "rawphp/gone" }),
+          open({ id: "paused", kind: "stuck", repo: "rawphp/paused" }),
           open({ id: "machine", kind: "config", repo: null, issue: null }),
         ];
         const { report, lines } = yield* pass(fake, [REPO], 5);
-        assert.deepEqual(ids(fake), ["gone", "machine"]);
+        assert.deepEqual(ids(fake), ["paused", "machine"]);
         assert.deepEqual(
           lines.filter((l) => l.startsWith("watched:")),
-          [
-            "watched: 2 project(s) could not be settled this pass (/p/a, /p/b); no attention item is cleared",
-          ],
+          ["watched: 2 project(s) could not be settled this pass (/p/a, /p/b)"],
         );
         // A line, not an error: the pass reports none and the machine log has no event for it.
         assert.equal(report.errors, 0);

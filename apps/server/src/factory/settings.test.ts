@@ -208,7 +208,7 @@ const DEFAULTS = {
 describe("readMachineConfigReport", () => {
   /** A listing of these watched projects, none unresolved. */
   const of = (repos: ReadonlyArray<WatchedProject>) =>
-    Result.succeed<WatchedListing>({ repos, present: repos.map((w) => w.repo), unresolved: [] });
+    Result.succeed<WatchedListing>({ repos, departed: [], unresolved: [] });
 
   const report = (
     text: string | null,
@@ -245,7 +245,7 @@ describe("readMachineConfigReport", () => {
           COMMENTED,
           Result.succeed({
             repos: [{ repo: "a/b", path: "/b", title: "Bee" }],
-            present: ["a/b"],
+            departed: [],
             unresolved: ["/slow", "/conflicted"],
           }),
         );
