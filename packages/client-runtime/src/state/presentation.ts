@@ -17,7 +17,7 @@ import {
   type EnvironmentPresentation,
   type EnvironmentServerConfig,
 } from "../connection/presentation.ts";
-import type { EnvironmentCatalogState } from "./connections.ts";
+import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import { hasRelayRoute } from "../connection/routes.ts";
 
 function mapsEqual<K, V>(left: ReadonlyMap<K, V>, right: ReadonlyMap<K, V>): boolean {
@@ -122,6 +122,22 @@ export function createEnvironmentPresentationAtoms<E>(input: {
     return previous;
   }).pipe(Atom.withLabel("environment-presentations"));
 
+  // Enabled environments only, like the full server-configs map, but without providers, so
+  // capability checks on every sidebar row and markdown link skip provider status pushes.
+  const serverConfigsAtom = Atom.make((get) => {
+    const next = new Map<EnvironmentId, EnvironmentServerConfig>();
+    for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
+      const serverConfig = get(presentationAtom(environmentId))?.serverConfig;
+      if (serverConfig != null) {
+        next.set(environmentId, serverConfig);
+      }
+    }
+    const previous = Option.getOrNull(
+      get.self<ReadonlyMap<EnvironmentId, EnvironmentServerConfig>>(),
+    );
+    return previous !== null && mapsEqual(previous, next) ? previous : next;
+  }).pipe(Atom.withLabel("environment-server-configs-without-providers"));
+
   const providersByEnvironmentAtom = Atom.make((get) => {
     const next = new Map<EnvironmentId, ReadonlyArray<ServerProvider>>();
     for (const environmentId of get(input.catalogValueAtom).entries.keys()) {
@@ -161,6 +177,7 @@ export function createEnvironmentPresentationAtoms<E>(input: {
   return {
     presentationAtom,
     presentationsAtom,
+    serverConfigsAtom,
     providersByEnvironmentAtom,
     presentationsWithProvidersAtom,
   };
