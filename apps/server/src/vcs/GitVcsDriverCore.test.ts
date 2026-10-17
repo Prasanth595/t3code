@@ -3315,6 +3315,76 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("backs off default-branch failures without delaying upstream refreshes", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(cwd, ["remote", "set-head", "origin", initialBranch]);
+        yield* git(cwd, ["checkout", "-b", "feature/backoff"]);
+        yield* git(cwd, ["push", "-u", "origin", "feature/backoff"]);
+        yield* git(updater, ["clone", "--branch", "feature/backoff", remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        yield* git(updater, ["commit", "--allow-empty", "-m", "first remote update"]);
+        yield* git(updater, ["push"]);
+
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        let defaultAttempts = 0;
+        let failDefault = true;
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (
+              ChildProcess.isStandardCommand(command) &&
+              command.args.includes("fetch") &&
+              command.args.at(-1)?.startsWith(`+refs/heads/${initialBranch}:`)
+            ) {
+              defaultAttempts += 1;
+              if (failDefault) {
+                return ChildProcessSpawner.makeHandle({
+                  ...makeSuccessfulHandle(""),
+                  exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+                });
+              }
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+        assert.equal((yield* driver.statusDetailsRemote(cwd)).behindCount, 1);
+        assert.equal(defaultAttempts, 1);
+
+        yield* git(updater, ["commit", "--allow-empty", "-m", "second remote update"]);
+        yield* git(updater, ["push"]);
+        yield* TestClock.adjust("16 seconds");
+        assert.equal((yield* driver.statusDetailsRemote(cwd)).behindCount, 2);
+        assert.equal(defaultAttempts, 1);
+        for (const expectedAttempts of [2, 2, 2, 2]) {
+          yield* TestClock.adjust("16 seconds");
+          yield* driver.statusDetailsRemote(cwd);
+          assert.equal(defaultAttempts, expectedAttempts);
+        }
+
+        failDefault = false;
+        yield* TestClock.adjust("16 seconds");
+        yield* driver.statusDetailsRemote(cwd);
+        assert.equal(defaultAttempts, 3);
+        failDefault = true;
+        for (const expectedAttempts of [4, 4, 5]) {
+          yield* TestClock.adjust("16 seconds");
+          yield* driver.statusDetailsRemote(cwd);
+          assert.equal(defaultAttempts, expectedAttempts);
+        }
+      }),
+    );
+
     it.effect("does not start Git auto-maintenance from background upstream fetches", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

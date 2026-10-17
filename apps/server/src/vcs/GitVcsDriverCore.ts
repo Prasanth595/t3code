@@ -1299,6 +1299,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   });
 
   const activeStatusFetchOperationIds = new Set<string>();
+  const optionalStatusFetchFailures = new Map<string, { failures: number; retryAtMs: number }>();
   const fetchRemoteForStatus = (
     gitCommonDir: string,
     remoteName: string,
@@ -1589,15 +1590,41 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         yield* Effect.forEach(
           optionalFetchTargets,
           (fetchTarget) =>
-            fetchAndPromoteTarget(fetchTarget).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("Failed to refresh the default branch during Git status fetch.", {
-                  cause,
-                  remoteName,
-                  defaultBranchName,
-                }),
-              ),
-            ),
+            Effect.gen(function* () {
+              // A healthy upstream must not reset the retry budget for a slow default branch.
+              const key = [gitCommonDir, remoteName, fetchTarget.remoteRef].join("\0");
+              const previousFailure = optionalStatusFetchFailures.get(key);
+              const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+              if (previousFailure !== undefined && nowMs < previousFailure.retryAtMs) return;
+              yield* fetchAndPromoteTarget(fetchTarget).pipe(
+                Effect.tap(() => Effect.sync(() => optionalStatusFetchFailures.delete(key))),
+                Effect.catch((cause) =>
+                  Effect.gen(function* () {
+                    const failures = (optionalStatusFetchFailures.get(key)?.failures ?? 0) + 1;
+                    const failedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+                    optionalStatusFetchFailures.delete(key);
+                    optionalStatusFetchFailures.set(key, {
+                      failures,
+                      retryAtMs:
+                        failedAtMs +
+                        Duration.toMillis(statusUpstreamRefreshFailureCooldown(failures)),
+                    });
+                    if (optionalStatusFetchFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
+                      const oldestKey = optionalStatusFetchFailures.keys().next().value;
+                      if (oldestKey !== undefined) optionalStatusFetchFailures.delete(oldestKey);
+                    }
+                    yield* Effect.logWarning(
+                      "Failed to refresh the default branch during Git status fetch.",
+                      {
+                        cause,
+                        remoteName,
+                        defaultBranchName,
+                      },
+                    );
+                  }),
+                ),
+              );
+            }),
           { concurrency: 1, discard: true },
         );
       }).pipe(Effect.ensuring(cleanupIsolatedFetch));
