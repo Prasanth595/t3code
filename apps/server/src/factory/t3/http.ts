@@ -8,6 +8,17 @@
  *   ends of its file, so the many old runs cost little; only the unfinished ones are read whole.
  * - `GET /api/factory/runs/:id`: `runs show`, every entry of one run.
  *
+ * - `GET /api/factory/config`: the machine config file as the settings page shows it (values, or
+ *   the defaults with no file, or the errors of a file that does not load), with what the loop
+ *   last read of each repo's project config.
+ *
+ * Settings need `settings:write`:
+ * - `PUT /api/factory/config`: applies the keys of the JSON body to the machine config file,
+ *   keeping its comments and the keys the page does not edit, and writes it only when
+ *   `parseMachineConfig` accepts the result (else 422 `invalid_config` with the errors, file
+ *   untouched; a body that is not a JSON object is 400 `invalid_body`). It then reloads the loop
+ *   and answers the new report.
+ *
  * Control needs `orchestration:operate`:
  * - `POST /api/factory/runs/:id/stop`: `runs stop`; leaves a stop request for the next pass, as
  *   `stop-run.sh` does, and wakes the loop. The pass archives the thread and removes the worktree.
@@ -18,12 +29,18 @@
  * id reaches the file system as a path. A ledger error or a failed read or write answers 500
  * `factory_error`, mapped once for every route by `factoryRoute`.
  */
-import { AuthOrchestrationOperateScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
+  AuthSettingsWriteScope,
+} from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import { HttpServerResponse } from "effect/http";
+import * as Result from "effect/Result";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpRouter from "effect/http/HttpRouter";
 
 import packageJson from "../../../package.json" with { type: "json" };
@@ -33,6 +50,12 @@ import { FactoryLoop, hostName } from "../index.ts";
 import { isLedgerError, type LedgerError } from "../ledger/errors.ts";
 import { listRuns, type RunSummary } from "../ledger/listRuns.ts";
 import { runIdToString } from "../ledger/runId.ts";
+import {
+  editMachineConfig,
+  isJsonObject,
+  readMachineConfigReport,
+  writeMachineConfig,
+} from "../settings.ts";
 import { buildStatus } from "../status.ts";
 import { route } from "./auth.ts";
 import { FactoryPaths } from "./paths.ts";
@@ -43,6 +66,7 @@ export const RUN_PATH = "/api/factory/runs/:id";
 export const STOP_PATH = "/api/factory/runs/:id/stop";
 export const PAUSE_PATH = "/api/factory/claims/pause";
 export const RESUME_PATH = "/api/factory/claims/resume";
+export const CONFIG_PATH = "/api/factory/config";
 
 const respond = (body: unknown, status = 200) => HttpServerResponse.jsonUnsafe(body, { status });
 
@@ -71,7 +95,7 @@ const failure = (error: LedgerError | FactoryFileError) => {
 
 /** A route of the factory: `route`, with every ledger or file failure answered by `failure`. */
 const factoryRoute = <R>(
-  method: "GET" | "POST",
+  method: "GET" | "POST" | "PUT",
   path: `/${string}`,
   scope: Parameters<typeof route>[2],
   handler: Effect.Effect<HttpServerResponse.HttpServerResponse, LedgerError | FactoryFileError, R>,
@@ -212,6 +236,49 @@ const resumeRoute = factoryRoute(
   }),
 );
 
+const toFileError = Effect.mapError((cause: unknown) => new FactoryFileError({ cause }));
+
+const configRoute = factoryRoute(
+  "GET",
+  CONFIG_PATH,
+  AuthOrchestrationReadScope,
+  Effect.gen(function* () {
+    const loop = yield* FactoryLoop;
+    const { machineConfigPath } = yield* FactoryPaths;
+    return respond(yield* readMachineConfigReport(machineConfigPath, yield* loop.repoConfigs));
+  }),
+);
+
+const invalidBody = (message: string) => respond({ code: "invalid_body", message }, 400);
+
+const saveConfigRoute = factoryRoute(
+  "PUT",
+  CONFIG_PATH,
+  AuthSettingsWriteScope,
+  Effect.gen(function* () {
+    const loop = yield* FactoryLoop;
+    const { machineConfigPath } = yield* FactoryPaths;
+    const fs = yield* FileSystem.FileSystem;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const body = yield* Effect.result(request.json);
+    if (Result.isFailure(body)) return invalidBody("the body is not valid JSON");
+    if (!isJsonObject(body.success)) return invalidBody("the body must be a JSON object");
+    const existing = yield* fs.readFileString(machineConfigPath).pipe(
+      Effect.catch((cause) =>
+        cause.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(cause),
+      ),
+      toFileError,
+    );
+    const edited = editMachineConfig(existing, body.success, machineConfigPath);
+    if (Result.isFailure(edited)) {
+      return respond({ code: "invalid_config", errors: edited.failure }, 422);
+    }
+    yield* writeMachineConfig(machineConfigPath, edited.success).pipe(toFileError);
+    yield* loop.reload;
+    return respond(yield* readMachineConfigReport(machineConfigPath, yield* loop.repoConfigs));
+  }),
+);
+
 /** The factory's HTTP routes. server.ts merges this into `layerMakeRoutes`. */
 export const FactoryRoutes = Layer.mergeAll(
   statusRoute,
@@ -220,4 +287,6 @@ export const FactoryRoutes = Layer.mergeAll(
   stopRoute,
   pauseRoute,
   resumeRoute,
+  configRoute,
+  saveConfigRoute,
 );

@@ -806,7 +806,7 @@ describe("an auth failure inside T3", () => {
         },
         {},
         tempDir("factory"),
-        { count: 0 },
+        { count: 0, reloads: 0 },
       );
       const layer = failingRoute.pipe(Layer.provideMerge(layerRoutes));
       const response = yield* Effect.acquireUseRelease(
