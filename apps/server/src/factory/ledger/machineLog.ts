@@ -288,10 +288,18 @@ export const serverStartsSince = (dataDir: string, sinceMs: number): Array<numbe
 };
 
 /**
+ * How far before the newest line ahead of a start that start's stop may lie: the old server
+ * writes `server_stopping` as it shuts down, so only lines racing the shutdown come after it.
+ */
+const STOP_SEARCH_MS = 10 * 60 * 1000;
+
+/**
  * The `stopping_at` that belongs to each `server_started` line at or after `sinceMs`: the newest
  * `server_stopping` before that start, back to the start before it, whatever its age. Oldest first.
- * Read backwards (`scanMachineLogBack`) and stopped at the stop the oldest start in the window
- * needs, so a months-old log is not decoded in full. `bytes` is how much was read, for a test.
+ * A start whose stop is not reached before a line ten minutes older than the newest line before
+ * it followed a crash, and has none. Read backwards (`scanMachineLogBack`) and stopped once the oldest start in the window has
+ * its stop or none, so a months-old log is not decoded in full. `bytes` is how much was read, for
+ * a test.
  */
 export const readServerStopsForStarts = (
   dataDir: string,
@@ -300,6 +308,8 @@ export const readServerStopsForStarts = (
 ): { readonly stops: Array<number>; readonly bytes: number } => {
   const newestFirst: Array<number> = [];
   let needStop = false;
+  // The newest line before the start that needs a stop, once read.
+  let lastBeforeStart: number | null = null;
   const bytes = scanMachineLogBack(
     dataDir,
     (entry) => {
@@ -307,6 +317,7 @@ export const readServerStopsForStarts = (
         if (typeof field(entry.data, "started_at") !== "number") return "continue";
         if (entry.ms < sinceMs) return "stop";
         needStop = true;
+        lastBeforeStart = null;
         return "continue";
       }
       if (entry.event === "server_stopping") {
@@ -316,6 +327,10 @@ export const readServerStopsForStarts = (
           needStop = false;
         }
         return "continue";
+      }
+      if (needStop) {
+        if (lastBeforeStart === null) lastBeforeStart = entry.ms;
+        else if (entry.ms < lastBeforeStart - STOP_SEARCH_MS) needStop = false;
       }
       return entry.ms < sinceMs && !needStop ? "stop" : "continue";
     },

@@ -934,6 +934,27 @@ describe("serverStartsSince", () => {
     );
   });
 
+  it("gives up on the stop of a start that followed a crash, so a months-old log is not decoded", () => {
+    const dataDir = tempDir();
+    const line = (ms: number, event: string, data: string) =>
+      `{"ts":"2026-10-04T10:13:16.123Z","ms":${ms},"event":"${event}","data":${data}}\n`;
+    const lines = [
+      line(NOW - 91 * 24 * HOUR, "server_stopping", `{"stopping_at":${NOW - 91 * 24 * HOUR}}`),
+      line(NOW - 90 * 24 * HOUR, "server_started", `{"started_at":${NOW - 90 * 24 * HOUR}}`),
+    ];
+    // Three months of passes, one a minute, then a power cut: no stop line.
+    for (let i = 0; i < 2000; i++) {
+      lines.push(line(NOW - 30 * HOUR - (2000 - i) * MINUTE, "pass_started", `{"note":"n${i}"}`));
+    }
+    lines.push(line(NOW - HOUR, "server_started", `{"started_at":${NOW - HOUR}}`));
+    NodeFS.writeFileSync(NodePath.join(dataDir, "events.jsonl"), lines.join(""));
+    const read = readServerStopsForStarts(dataDir, NOW - 24 * HOUR);
+    expect(read.stops).toEqual([]);
+    expect(read.bytes).toBeLessThan(
+      NodeFS.statSync(NodePath.join(dataDir, "events.jsonl")).size / 2,
+    );
+  });
+
   it("is empty for a missing log, and skips a line whose started_at is not a number", () => {
     expect(serverStartsSince(tempDir(), NOW - HOUR)).toEqual([]);
     const dataDir = tempDir();
