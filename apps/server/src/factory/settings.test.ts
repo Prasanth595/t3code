@@ -140,6 +140,29 @@ describe("editMachineConfig", () => {
     });
   });
 
+  describe("a typo inside a repo block", () => {
+    it("is dropped by an edit, and the comments on the repo stay", () => {
+      const text = [
+        "gh_config_dir: /gh",
+        "poll_seconds: 60",
+        "max_concurrent_runs: 1",
+        "model: m",
+        "repos:",
+        "  # the main repo",
+        "  - repo: a/b # primary",
+        "    paht: /x",
+        "",
+      ].join("\n");
+      const result = editMachineConfig(text, { repos: [{ repo: "a/b", path: "/b" }] }, FILE);
+      assert.ok(Result.isSuccess(result), JSON.stringify(result));
+      const out = Result.isSuccess(result) ? result.success : "";
+      assert.include(out, "# the main repo");
+      assert.include(out, "# primary");
+      assert.notInclude(out, "paht");
+      assert.include(out, "path: /b");
+    });
+  });
+
   describe("files the page could not fix before", () => {
     const BODY = {
       gh_config_dir: "/gh",
