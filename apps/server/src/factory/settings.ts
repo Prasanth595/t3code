@@ -243,6 +243,11 @@ const setRepos = (doc: ReturnType<typeof parseDocument>, root: YAMLMap, value: u
       : -1;
     if (at < 0 || !isJsonObject(item)) return doc.createNode(repoItem(item));
     const node = unmatched.splice(at, 1)[0] as YAMLMap;
+    // A key the factory does not know (a typo) would keep the file invalid for good.
+    node.items = node.items.filter((pair) => {
+      const key = isScalar(pair.key) ? pair.key.value : pair.key;
+      return typeof key === "string" && (REPO_FIELDS as ReadonlyArray<string>).includes(key);
+    });
     for (const field of REPO_FIELDS) {
       if (Object.hasOwn(item, field)) node.set(field, item[field]);
       else node.delete(field);
