@@ -20,6 +20,7 @@ import * as AttentionService from "./attention.ts";
 import { Attention, CONFIG_ITEM_ID, type NewItem, type PassOutcome } from "./attention.ts";
 import { loadHandPause } from "./claims.ts";
 import {
+  DEFAULT_POLL_SECONDS,
   formatConfigError,
   loadMachineConfig,
   parseProjectConfig,
@@ -293,6 +294,16 @@ export const gateDecided = (step: GateStep | null): boolean =>
     step.kind === "ended" ||
     step.kind === "abandoned");
 
+/**
+ * What a world keeps for as long as the factory runs, however often a reload builds a new one:
+ * the claim judgements, and the runs whose gate this process is running now (a gate holds the
+ * run's lock file only while an attempt runs; this covers the whole call).
+ */
+export interface LiveShared {
+  readonly gating: Set<string>;
+  readonly claimMemo: ClaimMemo;
+}
+
 /** The pass over this machine: GitHub through `gh`, the ledger under `dataDir`, the wall clock. */
 export const liveWorld = (
   machine: MachineConfig,
@@ -305,12 +316,9 @@ export const liveWorld = (
   live: LiveGate,
   gateRemoteBase?: string,
   onProject?: (repo: string, reading: RepoConfigReading) => void,
+  // Built once per process by the factory, so a reload's new world goes on from the old one's.
+  { gating, claimMemo }: LiveShared = { gating: new Set(), claimMemo: new ClaimMemo() },
 ): PassWorld => {
-  // Built once per process, so judgements last as long as the factory runs.
-  const claimMemo = new ClaimMemo();
-  // The runs whose gate this process is running now: a gate holds the run's lock file only
-  // while an attempt runs, and this covers the whole call.
-  const gating = new Set<string>();
   const withProcess = <A, E>(effect: Effect.Effect<A, E, FactoryProcess>) =>
     Effect.provideService(effect, FactoryProcess, process);
   const githubFor = (watched: WatchedRepo) =>
@@ -670,6 +678,7 @@ const startFactory = (options: RuntimeOptions) =>
       status: idle("no factory config"),
     };
     const readings = new Map<string, RepoConfigReading>();
+    const shared: LiveShared = { gating: new Set(), claimMemo: new ClaimMemo() };
     // The threads of the unfinished runs, read at start and after every pass: a pass is what
     // launches and finishes sessions, so between passes the set does not change.
     const owned = yield* Ref.make<ReadonlySet<string>>(new Set());
@@ -704,6 +713,7 @@ const startFactory = (options: RuntimeOptions) =>
           (repo, reading) => {
             readings.set(repo, reading);
           },
+          shared,
         );
         state.current = { machine, world };
         state.status = {
@@ -720,9 +730,10 @@ const startFactory = (options: RuntimeOptions) =>
         }
         yield* Effect.logInfo("factory started");
         // The first pass runs at once, on the config just set.
-        const loop = yield* runLoop(onePass, () => state.current?.machine.pollSeconds ?? 60).pipe(
-          Effect.provideService(Scope.Scope, scope),
-        );
+        const loop = yield* runLoop(
+          onePass,
+          () => state.current?.machine.pollSeconds ?? DEFAULT_POLL_SECONDS,
+        ).pipe(Effect.provideService(Scope.Scope, scope));
         state.loop = loop;
         yield* Effect.forkIn(
           wakeOnOwnedThreads(owned, events, loop, options.restartDelay ?? "5 seconds"),
