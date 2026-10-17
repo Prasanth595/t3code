@@ -1,10 +1,10 @@
-import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
+
+import tree from "../routeTree.gen.ts?raw";
 
 // Building the real router in a unit test pulls in the whole app (workers, browser globals), so
 // this pins the generated tree's structure: the run route must not nest under the runs list,
 // which renders no Outlet and would show the list for a run URL.
-const tree = readFileSync(new URL("../routeTree.gen.ts", import.meta.url), "utf8");
 
 describe("factory routes", () => {
   it("hangs the run route off the root route, not the runs list", () => {
