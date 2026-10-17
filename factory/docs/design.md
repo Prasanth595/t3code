@@ -87,8 +87,9 @@ factory/                            repo root: SEAMS, sync/build/install scripts
 6. `apps/web/src/components/settings/SettingsSidebarNav.tsx` (#55): the icon for that page.
 7. `apps/web/src/components/ui/button.tsx` (#61): a `touch` size, 44 px tall below `sm` and the default height from `sm` up.
 8. `apps/web/src/components/ui/input.tsx` (#61): the same `touch` size for inputs.
+9. `apps/web/src/components/sidebar/mainAppLocation.ts` and its test (#28 follow-up, b6bde560b): `/factory` counts as a utility page, so the sidebar shows Back.
 
-Eight entries, all in `factory/SEAMS`. Nothing in `ws.ts`, `rpc.ts`, `packages/contracts` or `Migrations.ts`. Those are the files upstream churns most, and adding an RPC would touch five of them. The factory API is a separate HTTP route layer instead.
+Nine entries, all in `factory/SEAMS`. Nothing in `ws.ts`, `rpc.ts`, `packages/contracts` or `Migrations.ts`. Those are the files upstream churns most, and adding an RPC would touch five of them. The factory API is a separate HTTP route layer instead.
 
 ### Boundary rules, checked by a test
 
