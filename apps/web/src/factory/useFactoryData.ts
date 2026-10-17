@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 
 import { factoryApi, type FactoryRunDetail, type FactoryRunRow, type FactoryStatus } from "./api";
 
@@ -49,10 +49,70 @@ function usePolled<T>(load: () => Promise<T>): FactoryResource<T> {
   return { ...state, refresh };
 }
 
-const loadStatus = () => factoryApi.status();
 const loadRuns = () => factoryApi.runs();
 
-export const useFactoryStatus = (): FactoryResource<FactoryStatus> => usePolled(loadStatus);
+/**
+ * The status is read by the sidebar badge and by the page, so it lives in one module-level store:
+ * one timer while anyone is subscribed, one answer every reader sees, and a refresh from the page
+ * updates the badge too. With the last reader gone the timer stops and the store starts over.
+ */
+const LOADING: Loaded<FactoryStatus> = { status: "loading", data: null, error: null };
+let statusState: Loaded<FactoryStatus> = LOADING;
+let statusTimer: ReturnType<typeof setInterval> | null = null;
+// Bumped when the store stops, so an answer to an earlier subscription is dropped.
+let statusEpoch = 0;
+const statusListeners = new Set<() => void>();
+
+const setStatusState = (next: Loaded<FactoryStatus>) => {
+  statusState = next;
+  statusListeners.forEach((listener) => listener());
+};
+
+const refreshStatus = () => {
+  const epoch = statusEpoch;
+  factoryApi.status().then(
+    (data) => {
+      if (epoch === statusEpoch) setStatusState({ status: "ready", data, error: null });
+    },
+    (cause: unknown) => {
+      if (epoch !== statusEpoch) return;
+      const error = cause instanceof Error ? cause : new Error(String(cause));
+      setStatusState({ status: "error", data: statusState.data, error });
+    },
+  );
+};
+
+const stopStatus = () => {
+  if (statusTimer !== null) clearInterval(statusTimer);
+  statusTimer = null;
+  statusEpoch += 1;
+  statusState = LOADING;
+};
+
+const subscribeStatus = (listener: () => void) => {
+  statusListeners.add(listener);
+  if (statusListeners.size === 1) {
+    refreshStatus();
+    statusTimer = setInterval(refreshStatus, POLL_MS);
+  }
+  return () => {
+    statusListeners.delete(listener);
+    if (statusListeners.size === 0) stopStatus();
+  };
+};
+
+const getStatusState = () => statusState;
+
+/** For tests: drop the shared status store, its timer and its readers. */
+export function __resetFactoryStoresForTests() {
+  statusListeners.clear();
+  stopStatus();
+}
+
+export function useFactoryStatus(): FactoryResource<FactoryStatus> {
+  const state = useSyncExternalStore(subscribeStatus, getStatusState);
+  return { ...state, refresh: refreshStatus };
+}
 
 export const useFactoryRuns = (): FactoryResource<{
   readonly runs: ReadonlyArray<FactoryRunRow>;
