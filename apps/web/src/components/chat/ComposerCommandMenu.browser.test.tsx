@@ -75,6 +75,20 @@ describe("ComposerCommandMenu detail button", () => {
     ).not.toBeNull();
   });
 
+  it("appears on the active command once a narrower menu cuts its description off", async () => {
+    const item = commandItem("narrowed", "A description that fits on one line only in a wide menu");
+    container.style.width = "1600px";
+    expect(await renderActive(item)).toBeNull();
+
+    await act(async () => {
+      container.style.width = "260px";
+      for (let frame = 0; frame < 2; frame++) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      }
+    });
+    expect(container.querySelector('[aria-label^="Show details for /narrowed"]')).not.toBeNull();
+  });
+
   it("appears on every skill, even when its description fits", async () => {
     expect(await renderActive(skillItem("tidy", "Fits"))).not.toBeNull();
   });

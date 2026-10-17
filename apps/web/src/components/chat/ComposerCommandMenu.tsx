@@ -32,6 +32,7 @@ import {
 import { memo, useLayoutEffect, useRef, useState } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -220,7 +221,9 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
   useLayoutEffect(() => {
     const el = descriptionRef.current;
     if (!props.isActive || !el) return;
-    setIsDescriptionTruncated(el.scrollWidth > el.clientWidth);
+    const measure = () => setIsDescriptionTruncated(el.scrollWidth > el.clientWidth);
+    measure();
+    return observeResize(el, measure);
   }, [props.isActive]);
   const showDetailButton =
     props.isActive && (props.item.type === "skill" || isDescriptionTruncated);
