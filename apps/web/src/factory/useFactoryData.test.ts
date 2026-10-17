@@ -122,7 +122,10 @@ describe("useFactoryStatus", () => {
     await settle(120_000);
     expect(fetchStatus).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
-    expect(errors).not.toHaveBeenCalled();
+    // react-test-renderer itself warns that it is deprecated; any other error is a real one.
+    expect(
+      errors.mock.calls.filter(([message]) => !String(message).includes("deprecated")),
+    ).toEqual([]);
     errors.mockRestore();
   });
 });
