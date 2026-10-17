@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 
@@ -31,7 +31,8 @@ export function FactoryPage() {
   };
 
   const failed = status.status === "error" ? status : runs.status === "error" ? runs : null;
-  const nowMs = Date.now();
+  // The age labels move on when a poll lands, not on every render.
+  const nowMs = useMemo(() => Date.now(), [status.data, runs.data]);
   const report = status.data;
   const paused = report?.paused_by_hand ?? null;
 

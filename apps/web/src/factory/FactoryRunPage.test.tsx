@@ -1,4 +1,4 @@
-import { createElement, act } from "react";
+import { createElement, act, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
@@ -15,7 +15,7 @@ vi.mock("@tanstack/react-router", () => ({
   }: {
     to: string;
     params?: Record<string, string>;
-    children?: unknown;
+    children?: ReactNode;
   }) =>
     createElement("a", { "data-to": to, "data-params": JSON.stringify(params ?? {}) }, children),
 }));

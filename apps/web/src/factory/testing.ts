@@ -29,10 +29,13 @@ export async function render(element: ReactElement) {
     /** All rendered text, concatenated. */
     text: () => flatten(renderer.toJSON()),
     /** Host elements of `type` (`a`, `button`, ...). */
-    all: (type: string): ReadonlyArray<ReactTestInstance> => renderer.root.findAllByType(type),
+    all: (type: string): ReadonlyArray<ReactTestInstance> =>
+      renderer.root.findAllByType(type as never),
     /** The `button` whose text is `label`. */
     button: (label: string): ReactTestInstance | undefined =>
-      renderer.root.findAllByType("button").find((b) => flatten(b.children as never) === label),
+      renderer.root
+        .findAllByType("button" as never)
+        .find((b) => flatten(b.children as never) === label),
     unmount: () => act(() => renderer.unmount()),
   };
 }

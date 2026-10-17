@@ -14,21 +14,18 @@ export interface FactoryResource<T> {
 type Loaded<T> = Omit<FactoryResource<T>, "refresh">;
 
 /**
- * Loads on mount and every 30 seconds while mounted. A refresh keeps the last data on screen
- * (`ready`) until the answer lands; an answer that arrives after unmount or after `load` changed
- * is dropped.
+ * Loads on mount and every 30 seconds while mounted. A refresh keeps the last data on screen until
+ * the answer lands; an answer that arrives after unmount is dropped. `load` must be stable: a new
+ * one starts over, so a caller whose input changes remounts (`key`) to show loading again.
  */
-function usePolled<T>(load: () => Promise<T>, key: string): FactoryResource<T> {
+function usePolled<T>(load: () => Promise<T>): FactoryResource<T> {
   const [state, setState] = useState<Loaded<T>>({ status: "loading", data: null, error: null });
   const fetchRef = useRef<() => void>(() => {});
-  const loadRef = useRef(load);
-  loadRef.current = load;
 
   useEffect(() => {
     let alive = true;
-    setState({ status: "loading", data: null, error: null });
     const fetchNow = () => {
-      loadRef.current().then(
+      load().then(
         (data) => {
           if (alive) setState({ status: "ready", data, error: null });
         },
@@ -46,21 +43,23 @@ function usePolled<T>(load: () => Promise<T>, key: string): FactoryResource<T> {
       alive = false;
       clearInterval(timer);
     };
-  }, [key]);
+  }, [load]);
 
   const refresh = useCallback(() => fetchRef.current(), []);
   return { ...state, refresh };
 }
 
-export const useFactoryStatus = (): FactoryResource<FactoryStatus> =>
-  usePolled(() => factoryApi.status(), "status");
+const loadStatus = () => factoryApi.status();
+const loadRuns = () => factoryApi.runs();
+
+export const useFactoryStatus = (): FactoryResource<FactoryStatus> => usePolled(loadStatus);
 
 export const useFactoryRuns = (): FactoryResource<{
   readonly runs: ReadonlyArray<FactoryRunRow>;
-}> => usePolled(() => factoryApi.runs(), "runs");
+}> => usePolled(loadRuns);
 
 export const useFactoryRun = (id: string): FactoryResource<FactoryRunDetail> =>
-  usePolled(() => factoryApi.run(id), `run:${id}`);
+  usePolled(useCallback(() => factoryApi.run(id), [id]));
 
 /** The open attention items, for the sidebar badge: 0 while loading and on any error. */
 export function useFactoryAttentionCount(): number {

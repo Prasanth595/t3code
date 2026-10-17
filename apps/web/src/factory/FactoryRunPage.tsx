@@ -30,6 +30,17 @@ import { useFactoryRun } from "./useFactoryData";
 
 const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
+/** Pairs each item with a key unique within the list, though two rows may read the same. */
+function keyed<T>(items: ReadonlyArray<T>, base: (item: T) => string): Array<[string, T]> {
+  const seen = new Map<string, number>();
+  return items.map((item) => {
+    const name = base(item);
+    const n = seen.get(name) ?? 0;
+    seen.set(name, n + 1);
+    return [`${name}#${n}`, item];
+  });
+}
+
 function GateOutput({ entries }: { entries: ReadonlyArray<FactoryEntry> }) {
   const gate = lastGateOutput(entries);
   const empty = gate.commands.length === 0 && gate.message === null && gate.stuckReason === null;
@@ -47,9 +58,11 @@ function GateOutput({ entries }: { entries: ReadonlyArray<FactoryEntry> }) {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {gate.commands.map((command, index) => (
-              <TableRow key={`${index}:${command.command}`}>
-                <TableCell className="font-mono text-xs">{command.command}</TableCell>
+            {keyed(gate.commands, (command) => command.command).map(([key, command]) => (
+              <TableRow key={key}>
+                <TableCell>
+                  <span className="font-mono text-xs">{command.command}</span>
+                </TableCell>
                 <TableCell>
                   <Badge variant={command.exit_code === 0 ? "success" : "error"}>
                     {command.exit_code}
@@ -98,14 +111,16 @@ function Ledger({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {entries.map((entry, index) => {
+            {keyed(entries, (entry) => `${entry.ts} ${entry.event}`).map(([key, entry]) => {
               const data = JSON.stringify(entry.data);
               return (
-                <TableRow key={`${index}:${entry.ts}`}>
-                  <TableCell className="whitespace-nowrap font-mono text-xs">{entry.ts}</TableCell>
+                <TableRow key={key}>
+                  <TableCell className="whitespace-nowrap">
+                    <span className="font-mono text-xs">{entry.ts}</span>
+                  </TableCell>
                   <TableCell className="whitespace-nowrap">{entry.event}</TableCell>
-                  <TableCell className="max-w-md truncate font-mono text-xs" title={data}>
-                    {data}
+                  <TableCell className="max-w-md">
+                    <span className="block line-clamp-2 break-all font-mono text-xs">{data}</span>
                   </TableCell>
                 </TableRow>
               );
