@@ -31,6 +31,32 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
       }).pipe(Effect.scoped),
     );
 
+    it.effect("reports and deletes only the database from before 0.1.0", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const maintenance = yield* DatabaseMaintenance.DatabaseMaintenance;
+        const userdata = yield* fs.makeTempDirectoryScoped({ prefix: "t3-legacy-" });
+        const dbPath = path.join(userdata, "statev2.sqlite");
+        const legacy = path.join(userdata, "state.sqlite");
+        yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`CREATE TABLE retained_data (value TEXT)`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+        assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
+
+        yield* fs.writeFileString(legacy, "V1 data");
+        yield* fs.writeFileString(`${legacy}-wal`, "V1 log");
+        assert.equal((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes, 7);
+
+        yield* maintenance.removeLegacyDatabase(dbPath);
+        assert.isFalse(yield* fs.exists(legacy));
+        assert.isFalse(yield* fs.exists(`${legacy}-wal`));
+        assert.isTrue(yield* fs.exists(dbPath));
+        assert.isNull((yield* maintenance.inspect(dbPath)).legacyDatabaseBytes);
+      }).pipe(Effect.scoped),
+    );
+
     it.effect("compacts an existing database offline only once its server has stopped", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
