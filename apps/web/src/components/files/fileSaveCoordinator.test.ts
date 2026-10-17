@@ -270,6 +270,32 @@ describe("FileSaveCoordinator", () => {
     expect(onPendingChange.mock.calls.at(-1)).toEqual([false]);
   });
 
+  it("skips a closed editor retry after another edit replaces its draft", async () => {
+    vi.useFakeTimers();
+    let currentDraft = "old";
+    const persist = vi
+      .fn()
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("write failed"))))
+      .mockResolvedValue(AsyncResult.success(undefined));
+    const shouldRetryAfterClose = vi.fn((contents: string) => contents === currentDraft);
+    const coordinator = new FileSaveCoordinator({
+      debounceMs: 500,
+      persist,
+      onPendingChange: vi.fn(),
+      onConfirmed: vi.fn(),
+      shouldRetryAfterClose,
+    });
+
+    coordinator.change("old");
+    coordinator.dispose();
+    await vi.advanceTimersByTimeAsync(0);
+    currentDraft = "new";
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(shouldRetryAfterClose).toHaveBeenCalledWith("old");
+    expect(persist).toHaveBeenCalledExactlyOnceWith("old");
+  });
+
   it("ignores editor changes emitted after disposal", async () => {
     vi.useFakeTimers();
     const persist = vi

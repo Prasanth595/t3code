@@ -3,6 +3,8 @@ import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 export interface FileSaveCoordinatorOptions<A, E> {
   readonly debounceMs: number;
   readonly canPersist?: () => boolean;
+  /** Refuse stale close-time retries after another editor replaces the draft. */
+  readonly shouldRetryAfterClose?: (contents: string) => boolean;
   readonly persist: (contents: string) => Promise<AtomCommandResult<A, E>>;
   readonly onPendingChange: (pending: boolean) => void;
   /** Return false when another editor has newer unsaved contents. */
@@ -17,6 +19,7 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
   private lastChangeAt = 0;
   private saving = false;
   private disposed = false;
+  private closeRetryPending = false;
 
   constructor(private readonly options: FileSaveCoordinatorOptions<A, E>) {}
 
@@ -55,6 +58,14 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
       return;
     }
 
+    if (
+      this.closeRetryPending &&
+      this.options.shouldRetryAfterClose?.(this.latestContents) === false
+    ) {
+      return;
+    }
+    this.closeRetryPending = false;
+
     this.saving = true;
     const contents = this.latestContents;
     const revision = this.latestRevision;
@@ -73,6 +84,7 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
       } else if (!succeeded && this.disposed) {
         // Closing the editor must not discard an edit whose final save failed.
         // Retry after the normal debounce; a successful write stops the retry.
+        this.closeRetryPending = true;
         this.schedule(this.options.debounceMs);
       }
       return;
