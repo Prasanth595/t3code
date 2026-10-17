@@ -76,7 +76,7 @@ async function fixture(options = {}) {
       argv: [
         "exec",
         "--model",
-        "muse-spark-1.3-contributor",
+        "muse-spark-1.3",
         "--workspace",
         dir,
         "--prompt-file",
@@ -114,7 +114,7 @@ test("useful work uses initialized, account identity, pinned model and no-shell 
   );
   assert.match(calls[0].params.clientInfo.name, /^[a-z0-9_]+$/);
   const start = calls.find((m) => m.method === "session/start").params;
-  assert.equal(start.modelId, "muse-spark-1.3-contributor");
+  assert.equal(start.modelId, "muse-spark-1.3");
   assert.equal(start.approvalMode, "allowAll");
   assert.equal(calls.filter((m) => m.method === "turn/start").length, 1);
   assert.equal(
@@ -130,6 +130,28 @@ test("useful work uses initialized, account identity, pinned model and no-shell 
     events.find((e) => e.payload_type === "run.terminal.completed").payload.text,
     "useful answer",
   );
+});
+
+test("catalog model IDs reach session/start unchanged; suffix variants refuse before host startup", async () => {
+  for (const model of [
+    "muse-spark-1.3",
+    "muse-spark-1.2",
+    "muse-wonder-1.0",
+    "muse-wonder-full-1.0",
+  ]) {
+    const { result, calls } = await fixture({ extraArgs: ["--model", model] });
+    assert.equal(result, 0);
+    assert.equal(calls.find((call) => call.method === "session/start").params.modelId, model);
+  }
+  for (const model of [
+    "muse-spark-1.3-contributor",
+    "muse-wonder-1.0-contributor",
+    "muse-wonder-full-1.0-contributor",
+  ]) {
+    const { result, calls } = await fixture({ extraArgs: ["--model", model] });
+    assert.notEqual(result, 0);
+    assert.equal(calls.length, 0);
+  }
 });
 
 test("absent last-observed data never becomes a made-up reading or an extra turn", async () => {

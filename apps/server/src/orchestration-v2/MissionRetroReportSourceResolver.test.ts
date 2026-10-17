@@ -355,7 +355,7 @@ const makeSetup = (sanitize: Manifest.MissionRetroSourceSanitizer) =>
             company: "No Fun",
             accountId: "resolver-account",
             providerInstanceId: "muse-personal" as const,
-            modelId: "muse-spark-1.3-contributor",
+            modelId: "muse-spark-1.3",
             profile: "muse-review",
             observedAtMs: nowMs,
             accountRef: "resolver-account-ref",
@@ -489,7 +489,7 @@ const reportFor = (
     reportRevision: stack.lease.reportRevision,
     assignmentToken: stack.lease.assignmentToken,
     managerEpoch: 4,
-    model: "muse-spark-1.3-contributor",
+    model: "muse-spark-1.3",
     profile: "muse-review",
     sourceRefs: [...stack.sourceRefs],
     // Forged prepared-read refs ride along as worker claims; the resolver

@@ -56,7 +56,7 @@ const sha = (bytes: string | Buffer): string =>
 const ENV = EnvironmentId.make("env");
 const CHILD = ThreadId.make("child-1");
 const INSTANCE = ProviderInstanceId.make("muse-backstage-support");
-const MODEL = "muse-spark-1.3-contributor";
+const MODEL = "muse-spark-1.3";
 const FINGERPRINT = "f".repeat(64);
 const nowIso = "2026-10-14T00:00:00.000Z";
 const decodeMission = Schema.decodeSync(Mission);

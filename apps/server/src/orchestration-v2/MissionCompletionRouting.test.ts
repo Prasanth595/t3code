@@ -64,7 +64,7 @@ const checkpointFixture = (overrides: Record<string, unknown> = {}) =>
   decodeCheckpoint({
     checkpointId: "chk-1", teamId: "team-1", environmentId: "env-1", missionId: "mission-1",
     sourceThreadId: SOURCE_THREAD, sourceRoot: SOURCE_ROOT, trigger: "milestone",
-    requestedReporter: "muse-spark-1.3-contributor", status: "queued_ready", coverage: "full",
+    requestedReporter: "muse-spark-1.3", status: "queued_ready", coverage: "full",
     snapshotFingerprint: FP, coveredFromInclusive: 0, coveredToExclusive: 10,
     sourceRefs: [{ rootRef: SOURCE_ROOT, chunkRef: "chunk-1", chunkHash: hex("08"), coveredFromInclusive: 0, coveredToExclusive: 10 }],
     omissions: [], capturedAt: AT, ...overrides,
@@ -73,7 +73,7 @@ const checkpointFixture = (overrides: Record<string, unknown> = {}) =>
 const leaseFixture = () => ({
   assignmentToken: hex("d4"), reporterChildThreadId: REPORTER_THREAD, reporterRunId: REPORTER_RUN,
   hostId: "host-1", bootId: "boot-1", providerInstanceId: "muse-personal",
-  modelId: "muse-spark-1.3-contributor", profile: "muse-review", company: "No Fun",
+  modelId: "muse-spark-1.3", profile: "muse-review", company: "No Fun",
   accountId: "acct-1", verifiedAccountRef: "account:nofun-verified", verifiedProviderRef: "provider:nofun-verified",
   capacityRef: "capacity-1", hostRef: "host-ref-1", buildRef: "build-1", priorityRef: "priority-1",
   preparedIdentityRef: "prepared-1", claimedAtMs: 1, expiresAtMs: 1000, assignmentRevision: 4, reportRevision: 3,
@@ -95,7 +95,7 @@ const receiptFixture = (overrides: Record<string, unknown> = {}) =>
     coveredFromInclusive: 0, coveredToExclusive: 10, reporterChildThreadId: REPORTER_THREAD,
     reporterRunId: REPORTER_RUN, assignmentToken: hex("d4"), fence: 1, attemptNumber: 1,
     reportRevision: 3, accountId: "acct-1", providerInstanceId: "muse-personal",
-    modelId: "muse-spark-1.3-contributor", profile: "muse-review", company: "No Fun",
+    modelId: "muse-spark-1.3", profile: "muse-review", company: "No Fun",
     originalArtifactRef: "art-orig", originalArtifactSha: hex("e5"), claimedSourceReportHash: SRC,
     sourceReportHash: SRC, normalizedArtifactRef: "art-norm", normalizedArtifactSha: hex("f6"),
     coverageEvidenceRef: "art-cov", coverageEvidenceSha: hex("07"), normalizedReportHash: NORM,
