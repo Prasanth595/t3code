@@ -503,7 +503,7 @@ export const make = Effect.fn("PluginCatalog.make")(function* (
         `${directory} is already installed.`,
         existing.record.installationId,
       );
-    const installationId = PluginInstallationId.make(yield* crypto.randomUUIDv4.pipe(Effect.orDie));
+    const installationId = PluginInstallationId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
     const at = yield* now;
     const record: PluginInstallationRecord = {
       installationId,

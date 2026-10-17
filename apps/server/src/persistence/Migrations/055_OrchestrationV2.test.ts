@@ -13,7 +13,7 @@ layer("055_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 64 }, (_, index) => index + 1),
+        Array.from({ length: 66 }, (_, index) => index + 1),
       );
     }),
   );
@@ -33,9 +33,11 @@ layer("055_OrchestrationV2", (it) => {
         [59, "McpAppModelContext"],
         [60, "ThreadSnapshotWindowIndexes"],
         [61, "PullRequestReviewGuides"],
-        [62, "PluginInstallations"],
-        [63, "PluginEventCursors"],
-        [64, "PluginSettings"],
+        [62, "ThreadFailureLookupIndex"],
+        [63, "DropUnusedV1Projections"],
+        [64, "PluginInstallations"],
+        [65, "PluginEventCursors"],
+        [66, "PluginSettings"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
@@ -63,9 +65,11 @@ layer("055_OrchestrationV2", (it) => {
         { migration_id: 59, name: "McpAppModelContext" },
         { migration_id: 60, name: "ThreadSnapshotWindowIndexes" },
         { migration_id: 61, name: "PullRequestReviewGuides" },
-        { migration_id: 62, name: "PluginInstallations" },
-        { migration_id: 63, name: "PluginEventCursors" },
-        { migration_id: 64, name: "PluginSettings" },
+        { migration_id: 62, name: "ThreadFailureLookupIndex" },
+        { migration_id: 63, name: "DropUnusedV1Projections" },
+        { migration_id: 64, name: "PluginInstallations" },
+        { migration_id: 65, name: "PluginEventCursors" },
+        { migration_id: 66, name: "PluginSettings" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`

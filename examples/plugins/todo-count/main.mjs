@@ -1,4 +1,4 @@
-// Counts TODO and FIXME comments for agents. The tool's name, description and input
+// Counts task markers in comments for agents. The tool's name, description and input
 // schema are declared in t3-plugin.json; the server checks input against that schema
 // before this handler runs.
 import * as NodeFSP from "node:fs/promises";

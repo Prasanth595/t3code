@@ -1,6 +1,9 @@
-import type { ReactElement } from "react";
+// @vitest-environment jsdom
+
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import {
-  AuthAdministrativeScopes,
+  AuthOrchestrationReadScope,
   AuthStandardClientScopes,
   EnvironmentId,
   type PluginInstallation,
@@ -11,29 +14,10 @@ import {
   resolvePluginManageAccess,
 } from "@t3tools/client-runtime/state/pluginPresentation";
 import { AsyncResult } from "effect/reactivity";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
-
-import { visitElements } from "../../test/reactElementTree";
-import { reactHookHarness as hooks } from "../../test/reactHookHarness";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const update = vi.hoisted(() => vi.fn());
 
-vi.mock("react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react")>();
-  const { reactHookHarness } = await import("../../test/reactHookHarness");
-  return {
-    ...actual,
-    useCallback: reactHookHarness.useCallback,
-    useEffect: () => undefined,
-    useMemo: reactHookHarness.useMemo,
-    useRef: reactHookHarness.useRef,
-    useState: reactHookHarness.useState,
-  };
-});
-vi.mock("react/compiler-runtime", async () => {
-  const { reactHookHarness } = await import("../../test/reactHookHarness");
-  return { c: reactHookHarness.useMemoCache };
-});
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () =>
     AsyncResult.success({
@@ -75,49 +59,67 @@ function readOnlyFor(scopes: ReadonlyArray<string>) {
   );
 }
 
-function renderForm(readOnly: boolean) {
-  hooks.beginRender();
-  return PluginSettingsForm({ environmentId, installation, readOnly }) as ReactElement;
+let root: Root;
+let container: HTMLDivElement;
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+});
+afterEach(async () => {
+  await act(async () => root.unmount());
+  container.remove();
+  vi.unstubAllGlobals();
+});
+async function renderForm(readOnly: boolean) {
+  await act(async () =>
+    root.render(
+      <PluginSettingsForm
+        environmentId={environmentId}
+        installation={installation}
+        readOnly={readOnly}
+      />,
+    ),
+  );
 }
 
-function find(tree: ReactElement, match: (props: Record<string, unknown>) => boolean) {
-  const element = visitElements(tree, (candidate) => match(candidate.props));
-  if (!element) throw new Error("Element not found");
-  return element.props;
-}
-
-/** Edits the endpoint, then submits and presses Clear on the saved secret. */
+/** Edits the endpoint, submits through the form, and presses the saved secret's Clear control. */
 async function editAndSave(readOnly: boolean) {
-  (
-    find(renderForm(readOnly), (props) => props.id === "plugin-setting-installation-1-endpoint")
-      .onChange as (event: { target: { value: string } }) => void
-  )({
-    target: { value: "https://new.example.test" },
+  await renderForm(readOnly);
+  const input = document.getElementById("plugin-setting-installation-1-endpoint")!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
+      input,
+      "https://new.example.test",
+    );
+    input.dispatchEvent(new Event("input", { bubbles: true }));
   });
-  (
-    find(renderForm(readOnly), (props) => typeof props.onSubmit === "function").onSubmit as (
-      event: object,
-    ) => void
-  )({ preventDefault: () => undefined });
-  (find(renderForm(readOnly), (props) => props.children === "Clear").onClick as () => void)();
-  await Promise.resolve();
+  await act(async () =>
+    document
+      .querySelector("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+  );
+  const clear = [...document.querySelectorAll("button")].find(
+    (candidate) => candidate.textContent === "Clear",
+  )!;
+  await act(async () => clear.click());
 }
 
 describe("PluginSettingsForm access", () => {
   beforeEach(() => {
-    hooks.reset();
     update.mockReset().mockReturnValue(new Promise(() => undefined));
   });
 
-  it("is read-only for a standard pairing and saves nothing by any path", async () => {
-    const readOnly = readOnlyFor(AuthStandardClientScopes);
+  it("is read-only for a pairing without management access and saves nothing by any path", async () => {
+    const readOnly = readOnlyFor([AuthOrchestrationReadScope]);
     expect(readOnly).toBe(true);
     await editAndSave(readOnly);
     expect(update).not.toHaveBeenCalled();
   });
 
-  it("saves an administrative session's edit", async () => {
-    const readOnly = readOnlyFor(AuthAdministrativeScopes);
+  it("saves a standard session's edit", async () => {
+    const readOnly = readOnlyFor(AuthStandardClientScopes);
     expect(readOnly).toBe(false);
     await editAndSave(readOnly);
     // The submit saves; the form then locks until it settles, so Clear waits.
