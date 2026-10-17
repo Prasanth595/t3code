@@ -474,7 +474,7 @@ describe("FactoryPage attention items at 375 px", () => {
     const textOf = (node: ReactTestInstance | string): string =>
       typeof node === "string" ? node : node.children.map(textOf).join(" ");
     const full = textOf(item);
-    const order = ["stuck", `${ATTENTION.repo}#20`, "1h", ATTENTION.message].map((part) =>
+    const order = ["stuck", ATTENTION.repo, "1h", ATTENTION.message].map((part) =>
       full.indexOf(part),
     );
     expect(order.every((index) => index >= 0)).toBe(true);

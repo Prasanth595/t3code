@@ -260,8 +260,9 @@ export function FactorySettingsPanel() {
     <SettingsPageContainer>
       <div className="flex flex-col gap-2 px-3 text-sm sm:px-4">
         {!report.exists ? (
-          <p className="text-muted-foreground">
-            {`No config file exists at ${report.file}. Saving creates it.`}
+          <p className="min-w-0 text-muted-foreground">
+            No config file exists at <code className="break-all">{report.file}</code>. Saving
+            creates it.
           </p>
         ) : null}
         {!canWrite ? (
