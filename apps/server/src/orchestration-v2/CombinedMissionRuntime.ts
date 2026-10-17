@@ -1026,6 +1026,81 @@ const make = Effect.gen(function* () {
                 if (Result.isFailure(result)) break;
               }
             }
+            // Canonical results survive mailbox ACK and parent retirement.
+            // Re-derive their current role every tick; the epoch/key-bound
+            // thread command coalesces repeats without another provider turn.
+            for (const role of ["delivery", "retro"] as const) {
+              if (!isCurrent()) return;
+              const latest = yield* sql<{
+                snapshot_json: string;
+              }>`SELECT snapshot_json FROM projection_missions WHERE mission_id = ${mission.value.id} AND team_id = ${trusted.teamId} AND authority_environment_id = ${environmentId}`;
+              if (!latest[0]) continue;
+              const current = yield* decodeMission(latest[0].snapshot_json);
+              const owner = current.managers[role];
+              if (current.status !== "active" || !owner?.threadId || owner.epoch === undefined)
+                continue;
+              const selectors: MissionCompletionSelector[] =
+                role === "delivery"
+                  ? (current.execution?.results ?? [])
+                      .filter((r) => r.reviewReceipt === undefined)
+                      .map((r) => ({
+                        kind: "task-result",
+                        missionId: current.id,
+                        taskId: r.taskId,
+                        attemptNumber: r.attemptNumber,
+                        resultRevision: r.provenance.resultRevision,
+                      }))
+                  : (current.execution?.retroReportReceipts ?? []).map((r) => ({
+                      kind: "retro-report",
+                      missionId: current.id,
+                      checkpointId: r.checkpointId,
+                      reportRevision: r.reportRevision,
+                    }));
+              if (selectors.length === 0) continue;
+              const memo = yield* Layer.forkMemoMap(parentMemo);
+              const roleAuthority = Layer.succeed(Transfer.MissionManagerReservationAuthority, {
+                teamId: trusted.teamId,
+                environmentId,
+                controllerThreadId: owner.threadId,
+                role,
+                isCurrent,
+              });
+              const context = yield* Layer.buildWithMemoMap(
+                Layer.mergeAll(
+                  Completion.layer.pipe(Layer.provide(roleAuthority)),
+                  RuntimeLayer.layerMissionManagerLifecycle.pipe(
+                    Layer.provide(
+                      Layer.succeed(Lifecycle.MissionManagerLifecycleAuthority, {
+                        teamId: trusted.teamId,
+                        environmentId,
+                        role,
+                        isCurrent,
+                      }),
+                    ),
+                  ),
+                ),
+                memo,
+                yield* Scope.Scope,
+              ).pipe(Effect.provide(startupContext));
+              const resolver = Context.get(context, Completion.MissionCompletionRouteResolver);
+              const adapter = Context.get(context, Manager.MissionManagerRuntimeAdapter);
+              for (const selector of selectors) {
+                const route = yield* resolver.resolve(selector);
+                if (route.kind !== "candidate") continue;
+                yield* adapter.wakeCurrentRole({
+                  missionId: current.id,
+                  role,
+                  wakeKey: route.candidate.notificationId,
+                  expectedOwner: {
+                    threadId: route.candidate.targetThreadId,
+                    epoch: route.candidate.targetEpoch,
+                  },
+                  instruction:
+                    "A canonical completion is awaiting review. Reread the mission and inspect its original producing task/run and exact result before accepting or integrating. Notification: " +
+                    route.candidate.notificationId,
+                });
+              }
+            }
           }
         }),
       ),
