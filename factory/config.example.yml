@@ -27,8 +27,9 @@ max_concurrent_gates: 1
 # There is no model key. Each issue's session runs on the T3 project's default model (the
 # project's settings in T3), falling back to the default model in T3's own Settings. With
 # neither set, nothing launches and the issue goes stuck with that reason. A version from
-# before #93 needs `model_instance` and `model` here, and a save from /settings/factory
-# removes them: add both back before rolling back to one.
+# before #93 needs `model_instance` and `model` here; the current version warns about them
+# and keeps them through a save from /settings/factory, so a rollback still loads. Delete
+# them by hand once no rollback to such a version is possible.
 
 # A macOS notification when something needs a person. false keeps the list on the
 # Factory page and turns the notification off.

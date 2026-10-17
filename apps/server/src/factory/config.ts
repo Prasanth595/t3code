@@ -380,8 +380,9 @@ const MACHINE_KEYS = [
 /**
  * Keys the factory read before #93 and reads no more: the model comes from the T3 project's
  * default, then the T3 settings default. A file written before the change still loads, with a
- * warning per key, so the factory that builds the upgrade keeps running; a save from the
- * settings page deletes them (`settings.ts`).
+ * warning per key, so the factory that builds the upgrade keeps running, and a save from the
+ * settings page keeps them (`settings.ts`) so a rollback to a version that requires them still
+ * loads. Remove both from the file by hand once no rollback past #93 is possible.
  */
 export const RETIRED_MACHINE_KEYS = ["model_instance", "model"] as const;
 

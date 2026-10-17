@@ -17,6 +17,7 @@ import {
   DEFAULT_POLL_SECONDS,
   loadMachineConfig,
   parseMachineConfig,
+  RETIRED_MACHINE_KEYS,
   type ConfigError,
   type MachineConfig,
   type ProjectConfig,
@@ -91,11 +92,16 @@ const EDITABLE_KEYS = [
 ] as const;
 
 /**
- * The keys of the machine config file: the form's, `repos`, and `notify`, which stays a hand edit.
- * A key that is not here is dropped by an edit, which is how the retired `model_instance` and
- * `model` (`RETIRED_MACHINE_KEYS` in `config.ts`) leave a file once it is saved from the page.
+ * The keys an edit keeps: the form's, `repos`, `notify` (a hand edit), and the retired model keys.
+ * Those two stay so that a rollback to a version that still requires them loads the file; a key
+ * that is not here is dropped by an edit.
  */
-const KNOWN_KEYS: ReadonlySet<string> = new Set([...EDITABLE_KEYS, "repos", "notify"]);
+const KNOWN_KEYS: ReadonlySet<string> = new Set([
+  ...EDITABLE_KEYS,
+  "repos",
+  "notify",
+  ...RETIRED_MACHINE_KEYS,
+]);
 
 /** `max_concurrent_runs` has no default in the file (it is required); the form starts at one. */
 const FORM_MAX_CONCURRENT_RUNS = 1;

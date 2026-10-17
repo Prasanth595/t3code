@@ -97,18 +97,17 @@ describe("editMachineConfig", () => {
     ]);
   });
 
-  // #93 retired the two keys: a save from the page takes them out of the file, so the running
-  // factory stops warning about them, and touches nothing else.
-  it("deletes the retired model_instance and model keys and keeps every other key and comment", () => {
+  // #93 retired the two keys. A save keeps them as written, so a rollback to a version that
+  // still requires them loads the file; the current loader only warns about them.
+  it("keeps the retired model_instance and model keys through a save, with every other key and comment", () => {
     const retired = COMMENTED.replace(
       "# notifications stay a hand edit",
-      "model_instance: claudeAgent\nmodel: claude-sonnet-5-5\n# notifications stay a hand edit",
+      "# the model\nmodel_instance: claudeAgent # old\nmodel: claude-sonnet-5-5\n# notifications stay a hand edit",
     );
     const text = edited(retired, { poll_seconds: 60 });
-    assert.notInclude(text, "model_instance");
-    assert.notInclude(text, "model:");
+    // The YAML library may add a blank line before a trailing comment; the keys and comments are the point.
     const unblank = (value: string) => value.replace(/\n{2,}/g, "\n");
-    assert.strictEqual(unblank(text), unblank(COMMENTED));
+    assert.strictEqual(unblank(text), unblank(retired));
   });
 
   describe("repos", () => {
