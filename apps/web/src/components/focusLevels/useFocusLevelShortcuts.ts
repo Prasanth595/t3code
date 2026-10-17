@@ -116,7 +116,11 @@ export function useFocusLevelShortcuts() {
       }
     };
     const dispatch = (phase: "capture" | "bubble") => (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || isCommandPaletteOpen()) return;
+      // ProseMirror marks every Escape in the composer as handled. A composer menu that uses
+      // Escape also stops it, so in the bubble phase an Escape from the composer is unused.
+      const composerEscape = phase === "bubble" && focusLevelOf(event.target) === "composer";
+      if (event.defaultPrevented && !composerEscape) return;
+      if (event.isComposing || isCommandPaletteOpen()) return;
       const command = resolveShortcutCommand(event, latest.current.keybindings, {
         context: {
           terminalFocus: getTerminalFocusOwner() !== null,

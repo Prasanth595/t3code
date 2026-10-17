@@ -274,10 +274,17 @@ export function TimelineCursor(props: {
           messageId: MessageId.make(messageId),
           ...captured.selector,
         };
-        onCite(
+        const node = scroller();
+        const cited = onCite(
           citation,
           withNote ? { source: captured.source, range: captured.range, viewport } : null,
         );
+        // The composer takes focus on insert. A plain cite returns it, so the next part can be cited.
+        if (cited && !withNote && node) {
+          requestAnimationFrame(() =>
+            requestAnimationFrame(() => node.focus({ preventScroll: true })),
+          );
+        }
         return true;
       };
     const onFocusOut = (event: FocusEvent) => {
