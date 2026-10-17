@@ -637,7 +637,12 @@ const dispatchMessageAwaitingRun = Effect.fn("LegacyV1Cutover.dispatchMessageAwa
       dispatchMode: { type: "start_immediately" },
     });
     yield* worker.drain();
-    yield* terminal;
+    yield* terminal.pipe(
+      Effect.timeoutOrElse({
+        duration: "30 seconds",
+        orElse: () => Effect.die(`No terminal run.updated for ${messageId}`),
+      }),
+    );
     yield* worker.drain();
     return yield* orchestrator.getThreadProjection(input.threadId);
   },
