@@ -1,10 +1,18 @@
-import * as Effect from "effect/Effect";
-import * as ManagedRuntime from "effect/ManagedRuntime";
-import { HttpClient, HttpClientRequest } from "effect/http";
+import type { PreparedConnection } from "@t3tools/client-runtime/connection";
+import * as Option from "effect/Option";
+import { Atom } from "effect/reactivity";
 
-import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
-import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary/target";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
+import { environmentSession } from "~/state/session";
 import { textField } from "./format";
+import {
+  DEFAULT_TIMEOUT_MS,
+  FactoryHttpError,
+  factoryRequest,
+  failureMessage,
+  parseJson,
+} from "./http";
 
 /** The factory's HTTP API as the server serves it (`apps/server/src/factory/t3/http.ts`). */
 
@@ -109,14 +117,10 @@ export interface FactoryApi {
   readonly resumeClaims: () => Promise<FactoryResumeResult>;
 }
 
-let runtime: ManagedRuntime.ManagedRuntime<HttpClient.HttpClient, never> | null = null;
-const getRuntime = () => (runtime ??= ManagedRuntime.make(PrimaryEnvironmentHttpLayer.layer));
-
 /**
  * How long one call may wait for its answer. A server that hangs then fails the call (status 0,
  * code `timeout`) instead of pinning a page on loading and its poll on a request that never ends.
  */
-const DEFAULT_TIMEOUT_MS = 15_000;
 let timeoutMs = DEFAULT_TIMEOUT_MS;
 
 /** For tests: how long a call waits; no argument restores the default. */
@@ -124,12 +128,43 @@ export const __setFactoryTimeoutForTests = (ms?: number): void => {
   timeoutMs = ms ?? DEFAULT_TIMEOUT_MS;
 };
 
-const parseJson = (text: string): unknown => {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
+const connectionOverrideAtom = Atom.make<PreparedConnection | null | undefined>(undefined).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("factory-connection-override"),
+);
+
+/** For tests: the connection every call uses (null: none yet); no argument restores the real one. */
+export const __setFactoryConnectionForTests = (prepared?: PreparedConnection | null): void => {
+  appAtomRegistry.set(connectionOverrideAtom, prepared);
+};
+
+/** The primary environment's prepared connection: the server this page was opened from or paired to. */
+const primaryConnectionAtom = Atom.make((get): PreparedConnection | null => {
+  const override = get(connectionOverrideAtom);
+  if (override !== undefined) return override;
+  const environmentId = get(primaryEnvironmentIdAtom);
+  return environmentId === null
+    ? null
+    : Option.getOrNull(get(environmentSession.preparedConnectionValueAtom(environmentId)));
+}).pipe(Atom.withLabel("factory-primary-connection"));
+
+/** The connection now, or the first one that appears within `ms` (a call can precede startup). */
+const connectionWithin = (ms: number): Promise<PreparedConnection> => {
+  const current = appAtomRegistry.get(primaryConnectionAtom);
+  if (current !== null) return Promise.resolve(current);
+  return new Promise((resolve, reject) => {
+    let unsubscribe = () => {};
+    const timer = setTimeout(() => {
+      unsubscribe();
+      reject(new FactoryApiError(0, "no_connection", "The factory has no server connection yet."));
+    }, ms);
+    unsubscribe = appAtomRegistry.subscribe(primaryConnectionAtom, (prepared) => {
+      if (prepared === null) return;
+      clearTimeout(timer);
+      unsubscribe();
+      resolve(prepared);
+    });
+  });
 };
 
 const call = async <T>(
@@ -137,35 +172,15 @@ const call = async <T>(
   path: string,
   searchParams?: Record<string, string>,
 ): Promise<T> => {
-  const program = Effect.gen(function* () {
-    const client = yield* HttpClient.HttpClient;
-    const url = resolvePrimaryEnvironmentHttpUrl(path, searchParams);
-    const response = yield* client.execute(
-      method === "GET" ? HttpClientRequest.get(url) : HttpClientRequest.post(url),
-    );
-    const text = yield* response.text;
-    return { status: response.status, text };
-  }).pipe(
-    Effect.timeout(timeoutMs),
-    Effect.catchTags({
-      TimeoutError: () =>
-        Effect.fail(
-          new FactoryApiError(
-            0,
-            "timeout",
-            `The factory did not answer within ${Math.round(timeoutMs / 1000)} seconds.`,
-          ),
-        ),
-    }),
-  );
-  let result: { status: number; text: string };
+  let result;
   try {
-    result = await getRuntime().runPromise(program);
+    const prepared = await connectionWithin(timeoutMs);
+    result = await factoryRequest(prepared, { method, path, searchParams, timeoutMs });
   } catch (error) {
     if (error instanceof FactoryApiError) throw error;
     throw new FactoryApiError(
       0,
-      null,
+      error instanceof FactoryHttpError && error.kind === "timeout" ? "timeout" : null,
       error instanceof Error && error.message ? error.message : "The request failed.",
     );
   }
@@ -174,7 +189,7 @@ const call = async <T>(
     throw new FactoryApiError(
       result.status,
       textField(body, "code"),
-      textField(body, "message") ?? `The factory answered ${result.status}.`,
+      failureMessage(result.status, body),
     );
   }
   return body as T;
