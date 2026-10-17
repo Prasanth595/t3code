@@ -45,7 +45,7 @@ const AzureDevOpsPullRequestSchema = Schema.Struct({
   ),
   status: Schema.String,
   isDraft: Schema.optional(Schema.Boolean),
-  /** The fork the head branch lives in. `az` prints `null` for a pull request from the same repo. */
+  /** `az` prints `null` for a pull request from the same repo. */
   forkSource: Schema.optional(Schema.Unknown),
   creationDate: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
   closedDate: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
@@ -84,11 +84,6 @@ function encodeAzureDevOpsPathSegment(segment: string): string {
   return encodeURIComponent(segment);
 }
 
-/**
- * The organization root a REST url belongs to, which is where a browser url has to be hung when
- * Azure answered with neither a web link nor a repository url. Read from what Azure returned
- * rather than from the local remote, whose shape varies.
- */
 function azureDevOpsOrganizationBaseFromRestApiUrl(
   value: string | null | undefined,
 ): string | null {
@@ -121,12 +116,6 @@ function azureDevOpsOrganizationBaseFromRestApiUrl(
   }
 }
 
-/**
- * Where a pull request lives in a browser. Azure answers with a web link when asked for one and
- * otherwise leaves it to be assembled, so all three routes are tried in the order they can be
- * trusted. Takes plain fields so both the source control provider and the pull requests page
- * can share it.
- */
 export function azureDevOpsPullRequestWebUrl(input: {
   readonly pullRequestId: number;
   readonly webLink?: string | null | undefined;
