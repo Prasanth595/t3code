@@ -980,6 +980,18 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
   } = props;
   const showMoreButtonRender = <button type="button" />;
   const showLessButtonRender = <button type="button" />;
+  // A step can unmount the button that was just pressed; hand its focus to the one that remains.
+  const stepThreadList = (event: React.MouseEvent<HTMLElement>, steps: number) => {
+    const button = event.currentTarget;
+    const group = button.parentElement;
+    const hadFocus = button === document.activeElement;
+    setThreadListSteps(projectKey, steps);
+    requestAnimationFrame(() => {
+      if (hadFocus && group?.isConnected && !group.contains(document.activeElement)) {
+        group.querySelector("button")?.focus();
+      }
+    });
+  };
 
   return (
     <SidebarMenuSub
@@ -1039,9 +1051,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
                 render={showMoreButtonRender}
                 data-thread-selection-safe
                 size="sm"
-                onClick={() => {
-                  setThreadListSteps(projectKey, threadListWindow.steps + 1);
-                }}
+                onClick={(event) => stepThreadList(event, threadListWindow.steps + 1)}
               >
                 <span className="flex min-w-0 flex-1 items-center gap-2">
                   {hiddenThreadStatus && <ThreadStatusLabel status={hiddenThreadStatus} compact />}
@@ -1054,9 +1064,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
                 render={showLessButtonRender}
                 data-thread-selection-safe
                 size="sm"
-                onClick={() => {
-                  setThreadListSteps(projectKey, threadListWindow.steps - 1);
-                }}
+                onClick={(event) => stepThreadList(event, threadListWindow.steps - 1)}
               >
                 <span>Show less</span>
               </SidebarMenuSubButton>
