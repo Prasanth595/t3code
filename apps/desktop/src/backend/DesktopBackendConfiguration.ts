@@ -547,6 +547,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
   function* (
     input: SharedBootstrapInput & {
       readonly resourceMonitorPath: Option.Option<string>;
+      readonly peerCAPath: Option.Option<string>;
     },
   ): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
@@ -594,6 +595,10 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       cwd: environment.backendCwd,
       env: {
         ...backendChildEnvPatch(),
+        ...Option.match(input.peerCAPath, {
+          onNone: () => ({}),
+          onSome: (peerCAPath) => ({ NODE_EXTRA_CA_CERTS: peerCAPath }),
+        }),
         ELECTRON_RUN_AS_NODE: "1",
         // DesktopShellEnvironment already put the login-shell PATH into process.env.
         [LOGIN_SHELL_ENV_RESOLVED_ENV]: "1",
@@ -914,7 +919,26 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
-    return yield* resolvePrimaryStartConfig({ ...shared, resourceMonitorPath }).pipe(
+    // Node loads extra roots at process start. Keep this opt-in on the server
+    // child, so Finder launches and backend restarts retain the reviewed peer CA.
+    const peerCAPath = environment.path.join(
+      environment.homeDirectory,
+      "Library",
+      "Application Support",
+      "NoFunPeer",
+      "rootCA.pem",
+    );
+    const hasPeerCA =
+      environment.platform === "darwin" &&
+      (yield* fileSystem
+        .exists(environment.path.join(environment.stateDir, "nofun", "mission-peer.json"))
+        .pipe(Effect.orElseSucceed(() => false))) &&
+      (yield* fileSystem.exists(peerCAPath).pipe(Effect.orElseSucceed(() => false)));
+    return yield* resolvePrimaryStartConfig({
+      ...shared,
+      resourceMonitorPath,
+      peerCAPath: hasPeerCA ? Option.some(peerCAPath) : Option.none(),
+    }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
     );
