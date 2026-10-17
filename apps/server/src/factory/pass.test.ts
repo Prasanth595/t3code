@@ -15,7 +15,7 @@ import type { State } from "./domain/lifecycle.ts";
 import { LedgerIoError } from "./ledger/errors.ts";
 import type { CauseStep, ErrorKind, MachineEvent } from "./ledger/events.ts";
 import type { RunInfo } from "./ledger/listRuns.ts";
-import { MachineLog, t3TroubleSince } from "./ledger/machineLog.ts";
+import { MachineLog, serverStartsSince, t3TroubleSince } from "./ledger/machineLog.ts";
 import { newRunId, runIdToString, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
 import { formatTs } from "./ledger/time.ts";
@@ -126,8 +126,8 @@ class Fake implements PassWorld {
   machineLogFails = false;
   /** When set, `record` appends to the real machine log in this dir and `t3Trouble` reads it, as the live world does. */
   machineLogDir: string | null = null;
-  /** When T3 Code (this server) started: the pass hands it to `interrupted` as evidence. */
-  t3StartedMs = T0 - 60 * 60_000;
+  /** The server starts `t3Starts` answers when there is no real machine log. */
+  t3Starts_: ReadonlyArray<number> = [];
   /** The evidence of the last `interrupted` call. */
   lastEvidence: Evidence | null = null;
   /** What the pass wrote to a run's ledger as an `error` line. */
@@ -371,6 +371,14 @@ class Fake implements PassWorld {
         }
       }),
     );
+  }
+
+  t3Starts() {
+    this.calls.push("t3_starts");
+    if (this.machineLogDir !== null) {
+      return Effect.succeed(serverStartsSince(this.machineLogDir, this.now - 24 * 60 * 60_000));
+    }
+    return Effect.succeed(this.t3Starts_);
   }
 
   t3Trouble() {
@@ -3076,7 +3084,7 @@ describe("sessions that ended badly", () => {
     what,
   });
   const decisions = (fake: Fake) =>
-    fake.calls.filter((c) => /^(advance |interrupted |t3_trouble)/.test(c));
+    fake.calls.filter((c) => /^(advance |interrupted |t3_trouble$)/.test(c));
   const lineFor = (lines: ReadonlyArray<string>, issue: number) =>
     runLine(lines, `rawphp/softfac#${issue} `);
   const twoRuns = () => {
@@ -3143,6 +3151,23 @@ describe("sessions that ended badly", () => {
         );
         assert.ok(!fake.calls.includes("t3_trouble"));
       }),
+  );
+
+  it.effect("every call on T3 itself that fails is a t3 error in the machine log", () =>
+    Effect.gen(function* () {
+      for (const operation of ["find-project", "status", "thread", "send", "archive"] as const) {
+        const fake = new Fake();
+        fake.runIn(12, BUILDING, REPO, true);
+        fake.advances[`${REPO}#12`] = [new SessionsError({ operation, cause: "timed out" })];
+        yield* pass(fake, machine([REPO], 1));
+        assert.deepEqual(recordedErrorKinds(fake), ["t3"], operation);
+        assert.deepEqual(
+          errorEvents(fake).map((e) => (e.data as { run: string }).run),
+          [T3_LINE],
+          operation,
+        );
+      }
+    }),
   );
 
   it.effect("a run's error of another kind stays in its ledger alone", () =>
@@ -3219,9 +3244,11 @@ describe("sessions that ended badly", () => {
         // server's start, which decides it against the run's own times.
         const fake = new Fake();
         fake.machineLogDir = passTempDir();
-        fake.t3StartedMs = T0 - 2 * 60_000;
+        // What the server wrote when it started, two minutes ago.
+        yield* fake.record({ event: "server_started", data: { started_at: T0 - 2 * 60_000 } });
         fake.runIn(12, BUILDING, REPO, true);
         fake.advances[`${REPO}#12`] = [badEnd("cancelled")];
+        fake.events.length = 0;
         const { report } = yield* pass(fake, machine([REPO], 1));
         assert.equal(report.errors, 0);
         assert.deepEqual(errorEvents(fake), []);
@@ -3233,7 +3260,7 @@ describe("sessions that ended badly", () => {
         assert.deepEqual(fake.lastEvidence, {
           t3Error: null,
           endedInPass: 1,
-          t3StartedMs: T0 - 2 * 60_000,
+          t3Starts: [T0 - 2 * 60_000],
         });
       }),
   );

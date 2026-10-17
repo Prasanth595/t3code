@@ -228,23 +228,36 @@ export interface Evidence {
   /** How many runs `advance` said ended badly in this pass, this one included. */
   readonly endedInPass: number;
   /**
-   * When T3 Code, this server, started (its process start). A restart ends every turn that was
-   * running as `cancelled` and no call fails, so the machine log has nothing: a run that started
-   * before this and ended after it was cut off by the restart.
+   * When T3 Code, this server, started, and the servers before it in the last day: the machine
+   * log's `server_started` lines, oldest first. A restart ends every turn that was running as
+   * `cancelled` and no call fails, so the log has no error: a run that was running when one of
+   * these happened was cut off by it.
    */
-  readonly t3StartedMs: number;
+  readonly t3Starts: ReadonlyArray<number>;
 }
 
-/** The `t3_error` recorded for a run the server's start cut off. */
+/** The `t3_error` recorded for a run a server start cut off. */
 const t3Started = (ms: number): string =>
   `T3 Code started at ${DateTime.formatIso(DateTime.makeUnsafe(ms))}`;
 
-/** Whether the session's run was running when the server started, so the restart ended it. */
-const cutByRestart = (status: ThreadStatus, t3StartedMs: number): boolean =>
-  status.runStartedAt !== null &&
-  status.runStartedAt < t3StartedMs &&
-  status.runCompletedAt !== null &&
-  status.runCompletedAt >= t3StartedMs;
+/**
+ * How long before a server start a run may have ended and still be the restart's doing: a
+ * graceful stop (`launchctl`, `install.sh`) marks the running turn `cancelled` as the old process
+ * shuts down, and the new one starts seconds to a minute or two later.
+ */
+const RESTART_GRACE_MS = 10 * 60 * 1000;
+
+/**
+ * The server start that cut the session's run off, or null: the run started before it and ended
+ * at or after it, or within the grace before it. The oldest such start is the one the run's end
+ * matches, so a server started again before any pass decided the run still names the right one.
+ */
+const cutByRestart = (status: ThreadStatus, starts: ReadonlyArray<number>): number | null => {
+  const begun = status.runStartedAt;
+  const ended = status.runCompletedAt;
+  if (begun === null || ended === null) return null;
+  return starts.find((at) => begun < at && ended >= at - RESTART_GRACE_MS) ?? null;
+};
 
 /** What `interrupted` did. */
 export type InterruptOutcome =
@@ -605,7 +618,10 @@ export const advance = (
       if (seen.stopRequested && at.state === "building") {
         if (relaunchDecided(seen) && (yield* endUnbegunRelaunch(ctx, run))) {
           // The issue is the next attempt's now: this run is finished as the relaunch would have
-          // finished it, with no stuck line, label or comment.
+          // finished it, with no stuck line, label or comment. The operator stopped the issue's
+          // work, so the stop is carried over to that attempt, as the line `stop-run.sh` writes,
+          // and the next pass stops it.
+          yield* carryStopToNext(ctx, run);
           const opened = yield* out.open;
           yield* stopSession(ctx, opened, at);
           yield* ledger(() =>
@@ -1410,9 +1426,9 @@ export const interrupted = (
       return { kind: "unchanged", why: "a relaunch is already decided" } as const;
     }
     const limit = ctx.project.limits.interruptionResumes;
-    // The restart counts only against the run's own times, so never for a thread that is gone.
-    const may = (used: number, restarted = false) =>
-      (evidence.t3Error !== null || evidence.endedInPass >= 2 || restarted) && used < limit;
+    // A restart counts only against the run's own times, so never for a thread that is gone.
+    const may = (used: number, cutAt: number | null = null) =>
+      (evidence.t3Error !== null || evidence.endedInPass >= 2 || cutAt !== null) && used < limit;
     const t3Error = evidence.t3Error === null ? null : prepareSessionText(evidence.t3Error);
     const goneStuck = (from: Seen) =>
       stuckEnded(ctx, run, from, "thread-gone", stopOf(THREAD_GONE, null));
@@ -1465,8 +1481,8 @@ export const interrupted = (
       return { kind: "unchanged", why: "its thread has moved on since" } as const;
     }
     const used = yield* resumesUsed(ctx, run, seen);
-    const restarted = cutByRestart(status, evidence.t3StartedMs);
-    if (!may(used, restarted)) {
+    const cutAt = cutByRestart(status, evidence.t3Starts);
+    if (!may(used, cutAt)) {
       return yield* stuckEnded(
         ctx,
         run,
@@ -1486,7 +1502,7 @@ export const interrupted = (
             relaunch: false,
             run_ordinal: status.runOrdinal,
             branch: status.branch,
-            t3_error: t3Error ?? (restarted ? t3Started(evidence.t3StartedMs) : null),
+            t3_error: t3Error ?? (cutAt === null ? null : t3Started(cutAt)),
             ended_in_pass: evidence.endedInPass,
           },
         },
@@ -1577,6 +1593,29 @@ const endUnbegunRelaunch = (
       out.close();
     }
     return false;
+  });
+
+/**
+ * Writes the operator's `stop_requested` into the next attempt's ledger, once: the stop of a run
+ * whose relaunch already started that attempt is meant for the issue's work, which is there now.
+ */
+const carryStopToNext = (ctx: InterruptContext, run: RunId): Effect.Effect<void, BuildingError> =>
+  Effect.gen(function* () {
+    const next: RunId = { ...run, attempt: run.attempt + 1 };
+    const record = yield* ledger(() => readRun(ctx.dataDir, next));
+    const seen = readProgress(record.entries);
+    if (seen.finished || seen.stopRequested) return;
+    const out = yield* ledger(() => Ledger.open(ctx.dataDir, next, { clock: ctx.clock }));
+    try {
+      yield* ledger(() =>
+        out.append(
+          { event: "stop_requested", data: { by: "operator" } },
+          makeCause("advance", "stop-requested"),
+        ),
+      );
+    } finally {
+      out.close();
+    }
   });
 
 /**

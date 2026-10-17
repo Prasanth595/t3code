@@ -31,6 +31,7 @@ import type {
 } from "./runner/building.ts";
 import { unchangedSince, type GateStepError, type LastPass } from "./runner/gating.ts";
 import { mention, type StartError, type StartOutcome } from "./runner/start.ts";
+import type { SessionsError } from "./t3/sessions.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
 import { sanitize } from "./text.ts";
 import { LIST_LIMIT, type Blocker, type Listing, type UnassignedClaim } from "./tracker/github.ts";
@@ -119,8 +120,8 @@ export interface PassWorld {
    * when a session ended badly.
    */
   readonly t3Trouble: () => Effect.Effect<string | null, LedgerError>;
-  /** When T3 Code, this server, started: the rest of the evidence `interrupted` gets. */
-  readonly t3StartedMs: number;
+  /** The server starts recorded in the machine log in the last day (`server_started`), oldest first: the rest of the evidence `interrupted` gets. */
+  readonly t3Starts: () => Effect.Effect<ReadonlyArray<number>, LedgerError>;
   /** Decides about a session `advance` said ended badly, with the pass's evidence: `interrupted`. */
   readonly interrupted: (
     repo: Repo,
@@ -294,7 +295,7 @@ export const errorKind = (error: StartError | BuildingError | GateStepError): Er
  * `t3Trouble` reads. `launch` is left out, as it also fails on the worktree (git, `origin`) and on
  * bad ids, and so is `remove-worktree`, which is git on this machine.
  */
-const T3_OPERATIONS: ReadonlySet<string> = new Set([
+const T3_OPERATIONS: ReadonlySet<SessionsError["operation"]> = new Set([
   "find-project",
   "status",
   "thread",
@@ -682,8 +683,11 @@ const decideInterruptions = (
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
     if (ended.length === 0) return;
-    const trouble = yield* Effect.result(world.t3Trouble());
+    const trouble = yield* Effect.result(
+      Effect.all([world.t3Trouble(), world.t3Starts()], { concurrency: 1 }),
+    );
     let t3Error: string | null = null;
+    let t3Starts: ReadonlyArray<number> = [];
     if (trouble._tag === "Failure") {
       yield* pass.fail(
         null,
@@ -698,13 +702,9 @@ const decideInterruptions = (
       // no log.
       if (ended.length < 2) return;
     } else {
-      t3Error = trouble.success;
+      [t3Error, t3Starts] = trouble.success;
     }
-    const evidence: Evidence = {
-      t3Error,
-      endedInPass: ended.length,
-      t3StartedMs: world.t3StartedMs,
-    };
+    const evidence: Evidence = { t3Error, endedInPass: ended.length, t3Starts };
     for (const { info, repo, what } of ended) {
       const notes = pass.notes(repo.watched.repo, Number(info.id.issue), info.state);
       const why = endedAs(what);

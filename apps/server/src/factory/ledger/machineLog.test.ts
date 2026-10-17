@@ -13,6 +13,7 @@ import {
   MachineLog,
   scanMachineLog,
   machineLogSince,
+  serverStartsSince,
   t3TroubleSince,
   type MachineLogOptions,
 } from "./machineLog.ts";
@@ -48,6 +49,10 @@ const passStarted: MachineEvent = { event: "pass_started", data: {} };
 /** Every machine event, with the exact line it is written as at `T0`. */
 const samples: ReadonlyArray<{ readonly event: MachineEvent; readonly line: string }> = [
   { event: passStarted, line: lineAtT0("pass_started", `{}`) },
+  {
+    event: { event: "server_started", data: { started_at: 1791108790000 } },
+    line: lineAtT0("server_started", `{"started_at":1791108790000}`),
+  },
   {
     event: { event: "pass_finished", data: { runs: 3, claimed: 1, errors: 2, attention: 0 } },
     line: lineAtT0("pass_finished", `{"runs":3,"claimed":1,"errors":2,"attention":0}`),
@@ -426,9 +431,9 @@ describe("append", () => {
       seen.add(event.event);
       expect(readText(logFile(dataDir)), event.event).toBe(expected);
     }
-    // Every one of the 17 event types has at least one exact line.
+    // Every one of the 18 event types has at least one exact line.
     expect([...seen].sort()).toEqual(Object.keys(MACHINE_EVENT_FIELDS).sort());
-    expect(seen.size).toBe(17);
+    expect(seen.size).toBe(18);
   });
 
   it("the claims paused line has a reason and nothing else", () => {
@@ -749,6 +754,15 @@ describe("T3 trouble in the machine log", () => {
   it("is none for a missing machine log", () => {
     expect(t3TroubleSince(tempDir(), NOW)).toBeNull();
   });
+
+  it("is not a server start: that is read apart, by serverStartsSince", () => {
+    const dataDir = tempDir();
+    logWith(dataDir, [
+      NOW - MINUTE,
+      { event: "server_started", data: { started_at: NOW - MINUTE } },
+    ]);
+    expect(t3TroubleSince(dataDir, NOW)).toBeNull();
+  });
   it("stops at the first entry older than the window, so older trouble is not read", () => {
     const dataDir = tempDir();
     const entries: Array<[number, MachineEvent]> = [];
@@ -793,5 +807,47 @@ describe("T3 trouble in the machine log", () => {
     const dataDir = tempDir();
     NodeFS.mkdirSync(NodePath.join(dataDir, "events.jsonl"));
     expect(() => machineLogSince(dataDir, 0)).toThrow(LedgerIoError);
+  });
+});
+
+describe("serverStartsSince", () => {
+  const NOW = 1_800_000_000_000;
+  const MINUTE = 60_000;
+  const HOUR = 60 * MINUTE;
+  const started = (at: number): MachineEvent => ({
+    event: "server_started",
+    data: { started_at: at },
+  });
+  const logWith = (dataDir: string, ...entries: ReadonlyArray<[number, MachineEvent]>) => {
+    for (const [ms, event] of entries) {
+      const log = MachineLog.open(dataDir, { clock: () => ms });
+      try {
+        log.append(event);
+      } finally {
+        log.close();
+      }
+    }
+  };
+
+  it("is every server start recorded in the window, oldest first, by its own started_at", () => {
+    const dataDir = tempDir();
+    logWith(
+      dataDir,
+      [NOW - 30 * HOUR, started(NOW - 30 * HOUR)],
+      [NOW - 3 * HOUR + 5_000, started(NOW - 3 * HOUR)],
+      [NOW - 2 * MINUTE, { event: "pass_started", data: {} }],
+      [NOW - MINUTE + 2_000, started(NOW - MINUTE)],
+    );
+    expect(serverStartsSince(dataDir, NOW - 24 * HOUR)).toEqual([NOW - 3 * HOUR, NOW - MINUTE]);
+  });
+
+  it("is empty for a missing log, and skips a line whose started_at is not a number", () => {
+    expect(serverStartsSince(tempDir(), NOW - HOUR)).toEqual([]);
+    const dataDir = tempDir();
+    logWith(dataDir, [
+      NOW - MINUTE,
+      { event: "server_started", data: { started_at: "soon" } } as unknown as MachineEvent,
+    ]);
+    expect(serverStartsSince(dataDir, NOW - HOUR)).toEqual([]);
   });
 });

@@ -269,7 +269,8 @@ export const machineLogSince = (
  * `preflight_failed` whose check is `t3` (its `why`), or an `error` whose kind is `t3` (its
  * `message`). Only the machine log is read, never a run's ledger, and only its tail
  * (`machineLogSince`). Null for none, and for a log that does not exist yet. A restart of the
- * server leaves nothing here: `interrupted` reads that from the run's own times (`Evidence`).
+ * server is not trouble here: its `server_started` line is read by `serverStartsSince`, and
+ * `interrupted` weighs it against the run's own times (`Evidence`).
  */
 export const t3TroubleSince = (dataDir: string, nowMs: number): string | null => {
   let newest: { readonly ms: number; readonly text: string } | null = null;
@@ -285,4 +286,19 @@ export const t3TroubleSince = (dataDir: string, nowMs: number): string | null =>
     }
   }
   return newest === null ? null : newest.text;
+};
+
+/**
+ * The `started_at` of every `server_started` line at or after `sinceMs`, oldest first: when this
+ * server, and the ones before it, started. A line whose `started_at` is not a number is skipped.
+ * Only the log's tail is read (`machineLogSince`); a missing log has none.
+ */
+export const serverStartsSince = (dataDir: string, sinceMs: number): Array<number> => {
+  const starts: Array<number> = [];
+  for (const entry of machineLogSince(dataDir, sinceMs)) {
+    if (entry.event !== "server_started") continue;
+    const at = field(entry.data, "started_at");
+    if (typeof at === "number") starts.push(at);
+  }
+  return starts;
 };

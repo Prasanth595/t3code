@@ -36,7 +36,7 @@ import { Ledger } from "./ledger/ledger.ts";
 import { listUnfinishedRuns } from "./ledger/listRuns.ts";
 import { readRun } from "./ledger/read.ts";
 import { runIdToString, type RunId } from "./ledger/runId.ts";
-import { MachineLog, t3TroubleSince } from "./ledger/machineLog.ts";
+import { MachineLog, serverStartsSince, t3TroubleSince } from "./ledger/machineLog.ts";
 import { runLoop, type Loop } from "./loop.ts";
 import {
   GATE_PASSED_LINE,
@@ -277,10 +277,14 @@ export const gateDecided = (step: GateStep | null): boolean =>
 
 /** The pass over this machine: GitHub through `gh`, the ledger under `dataDir`, the wall clock. */
 /**
- * When this server's process started, as epoch milliseconds: the T3 Code start `interrupted`
- * compares a run's times with. A restart of the server is what cuts a running session off.
+ * When this server's process started, as epoch milliseconds: what the `server_started` line
+ * records at boot, for `interrupted` to compare a run's times with. A restart of the server is
+ * what cuts a running session off.
  */
 export const serverStartedMs = (): number => Math.round(performance.timeOrigin);
+
+/** How far back `t3Starts` reads server starts: a day, longer than any run's time limit. */
+const SERVER_STARTS_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export const liveWorld = (
   machine: MachineConfig,
@@ -288,8 +292,6 @@ export const liveWorld = (
   process: FactoryProcess["Service"],
   sessions: T3Sessions.FactorySessions["Service"],
   clock: () => number,
-  /** When T3 Code, this server, started: `serverStartedMs()` outside a test. */
-  t3StartedMs: number,
   host: string,
   attention: Pick<Attention["Service"], "raise" | "clear">,
   live: LiveGate,
@@ -501,7 +503,7 @@ export const liveWorld = (
     forward: (repo, run) => forward(buildingContext(repo), run),
     advance: (repo, run) => advance(interruptContext(repo), run),
     t3Trouble: () => ledger(() => t3TroubleSince(dataDir, clock())),
-    t3StartedMs,
+    t3Starts: () => ledger(() => serverStartsSince(dataDir, clock() - SERVER_STARTS_WINDOW_MS)),
     interrupted: (repo, run, evidence) => interrupted(interruptContext(repo), run, evidence),
     gateRunning: (run) =>
       gating.has(runIdToString(run)) || NodeFS.existsSync(gateLockFile(dataDir, run)),
@@ -676,7 +678,6 @@ const startFactory = (options: RuntimeOptions) =>
       process,
       sessions,
       () => Date.now(),
-      serverStartedMs(),
       hostName(),
       attention,
       {
@@ -686,6 +687,15 @@ const startFactory = (options: RuntimeOptions) =>
       },
       options.gateRemoteBase,
     );
+    // This start, for `interrupted` to weigh a session that ended badly against: a restart cut it
+    // off if it was running then. A log that cannot take the line costs that evidence, not the boot.
+    yield* world
+      .record({ event: "server_started", data: { started_at: serverStartedMs() } })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("cannot record the server start in the machine log", cause),
+        ),
+      );
     // The threads of the unfinished runs, read at start and after every pass: a pass is what
     // launches and finishes sessions, so between passes the set does not change.
     const owned = yield* Ref.make<ReadonlySet<string>>(new Set());

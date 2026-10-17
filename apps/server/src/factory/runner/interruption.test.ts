@@ -81,11 +81,11 @@ const INTERRUPTED_WORDS =
 const evidence = (
   t3Error: string | null,
   endedInPass: number,
-  t3StartedMs: number = T0 - 60 * MINUTE,
+  t3Starts: ReadonlyArray<number> = [],
 ): Evidence => ({
   t3Error,
   endedInPass,
-  t3StartedMs,
+  t3Starts,
 });
 /** One session ended badly, and the machine log has a T3 timeout in the last ten minutes. */
 const afterOutage = () => evidence(T3_ERROR, 1);
@@ -979,8 +979,8 @@ const cutShortBeforeTheSend = () => {
 
 /**
  * A restart of the server (this process) ends every turn that was running as `cancelled` and the
- * next status read answers as usual, so no error reaches the machine log: the server's own start
- * is the sign, for a run that was running when it happened.
+ * next status read answers as usual, so no error reaches the machine log: the server starts the
+ * machine log records are the sign, for a run that was running when one happened.
  */
 describe("interrupted: a T3 restart", () => {
   const T3_STARTED = T0 - 5 * MINUTE;
@@ -1000,7 +1000,7 @@ describe("interrupted: a T3 restart", () => {
       endedWith(rig, "cancelled", T0 - 10 * MINUTE, T0 - 4 * MINUTE);
       assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
       clearCalls(rig);
-      const outcome = yield* decide(rig, evidence(null, 1, T3_STARTED));
+      const outcome = yield* decide(rig, evidence(null, 1, [T3_STARTED]));
       assert.strictEqual(outcome.kind, "resumed");
       const line = linesOf(rig).find((entry) => entry.event === "session_interrupted");
       assert.strictEqual(field(line!.data, "t3_error"), T3_STARTED_TEXT);
@@ -1014,9 +1014,45 @@ describe("interrupted: a T3 restart", () => {
       const rig = rigFor();
       endedWith(rig, "cancelled", T0 - 10 * MINUTE, T0 - 4 * MINUTE);
       assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
-      assert.strictEqual((yield* decide(rig, evidence(T3_ERROR, 1, T3_STARTED))).kind, "resumed");
+      assert.strictEqual((yield* decide(rig, evidence(T3_ERROR, 1, [T3_STARTED]))).kind, "resumed");
       const line = linesOf(rig).find((entry) => entry.event === "session_interrupted");
       assert.strictEqual(field(line!.data, "t3_error"), T3_ERROR);
+    }),
+  );
+
+  it.effect("resumes a run a graceful shutdown ended just before the next start", () =>
+    Effect.gen(function* () {
+      // launchctl stops the old process, whose shutdown marks the turn `cancelled` then; the new
+      // process starts seconds later. The run ended before the start, within the grace.
+      const rig = rigFor();
+      endedWith(rig, "cancelled", T0 - 10 * MINUTE, T3_STARTED - 3_000);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
+      assert.strictEqual((yield* decide(rig, evidence(null, 1, [T3_STARTED]))).kind, "resumed");
+      const line = linesOf(rig).find((entry) => entry.event === "session_interrupted");
+      assert.strictEqual(field(line!.data, "t3_error"), T3_STARTED_TEXT);
+    }),
+  );
+
+  it.effect("resumes a run an earlier start cut off when the server has started again since", () =>
+    Effect.gen(function* () {
+      // The first restart cut the run; a rollback restarted the server again before any pass
+      // decided it. The earlier start is still in the machine log.
+      const rig = rigFor();
+      endedWith(rig, "cancelled", T0 - 10 * MINUTE, T3_STARTED);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
+      const outcome = yield* decide(rig, evidence(null, 1, [T3_STARTED, T0 - 2 * MINUTE]));
+      assert.strictEqual(outcome.kind, "resumed");
+      const line = linesOf(rig).find((entry) => entry.event === "session_interrupted");
+      assert.strictEqual(field(line!.data, "t3_error"), T3_STARTED_TEXT);
+    }),
+  );
+
+  it.effect("sends a run that ended more than ten minutes before the start to stuck", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      endedWith(rig, "cancelled", T0 - 30 * MINUTE, T3_STARTED - 10 * MINUTE - 1);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
+      assert.strictEqual((yield* decide(rig, evidence(null, 1, [T3_STARTED]))).kind, "stuck");
     }),
   );
 
@@ -1027,7 +1063,7 @@ describe("interrupted: a T3 restart", () => {
         const rig = rigFor();
         endedWith(rig, "cancelled", T0 - 3 * MINUTE, T0 - MINUTE);
         assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
-        assert.deepStrictEqual(yield* decide(rig, evidence(null, 1, T3_STARTED)), {
+        assert.deepStrictEqual(yield* decide(rig, evidence(null, 1, [T3_STARTED])), {
           kind: "stuck",
           reason: "the session run ended as cancelled",
         });
@@ -1039,9 +1075,9 @@ describe("interrupted: a T3 restart", () => {
   it.effect("sends a run that ended before the server started to stuck", () =>
     Effect.gen(function* () {
       const rig = rigFor();
-      endedWith(rig, "failed", T0 - 10 * MINUTE, T0 - 7 * MINUTE);
+      endedWith(rig, "failed", T0 - 30 * MINUTE, T0 - 20 * MINUTE);
       assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("failed"));
-      assert.deepStrictEqual(yield* decide(rig, evidence(null, 1, T3_STARTED)), {
+      assert.deepStrictEqual(yield* decide(rig, evidence(null, 1, [T3_STARTED])), {
         kind: "stuck",
         reason: "the session run ended as failed",
       });
@@ -1054,7 +1090,7 @@ describe("interrupted: a T3 restart", () => {
       const rig = rigFor();
       threadGone(rig);
       assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
-      assert.deepStrictEqual(yield* decide(rig, evidence(null, 1, T3_STARTED)), {
+      assert.deepStrictEqual(yield* decide(rig, evidence(null, 1, [T3_STARTED])), {
         kind: "stuck",
         reason: THREAD_GONE,
       });
@@ -1615,7 +1651,16 @@ describe("a decided relaunch", () => {
       assert.ok(!lines.some((line) => line.event === "stuck"), JSON.stringify(lines));
       assert.deepStrictEqual(rig.gh, []);
       assert.strictEqual(rig.world.issue.state, "building");
-      assert.strictEqual(bytesOf(rig, run10b), before);
+      // The operator stopped the issue's work: the stop is carried over to the attempt that has
+      // it, as the one line `stop-run.sh` would have written there, and the next pass stops it.
+      const next = linesOf(rig, run10b);
+      assert.strictEqual(next.length, before.split("\n").filter(Boolean).length + 1);
+      assert.deepStrictEqual(next.at(-1), { event: "stop_requested", data: { by: "operator" } });
+      assert.deepStrictEqual(yield* advanceIn(rig, run10b), {
+        kind: "stuck",
+        reason: STOPPED_BY_HAND,
+      });
+      assert.strictEqual(rig.world.issue.state, "stuck");
     }),
   );
 });
