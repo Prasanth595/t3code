@@ -50,9 +50,17 @@ const failure = async (call: Promise<unknown>): Promise<FactoryApiError> => {
 describe("factoryApi over HTTP", () => {
   it("reads with GET and returns the body as JSON", async () => {
     answer(200, '{"runs":[{"id":"o__r__1__1"}]}');
-    expect(await factoryApi.runs()).toEqual({ runs: [{ id: "o__r__1__1" }] });
+    expect(await factoryApi.runs({ all: false })).toEqual({ runs: [{ id: "o__r__1__1" }] });
     expect(sent().method).toBe("GET");
-    expect(new URL(sent().url).pathname).toBe("/api/factory/runs");
+    const url = new URL(sent().url);
+    expect([url.pathname, url.search]).toEqual(["/api/factory/runs", ""]);
+  });
+
+  it("asks for every run with ?all=1", async () => {
+    answer(200, '{"runs":[]}');
+    await factoryApi.runs({ all: true });
+    const url = new URL(sent().url);
+    expect([url.pathname, url.search]).toEqual(["/api/factory/runs", "?all=1"]);
   });
 
   it("stops a run with a POST to its encoded path", async () => {

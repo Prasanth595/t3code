@@ -9,6 +9,7 @@ import {
   useFactoryRun,
   useFactoryRuns,
   useFactoryStatus,
+  useFactorySupported,
   type FactoryResource,
 } from "./useFactoryData";
 
@@ -194,18 +195,32 @@ describe("the poll follows the window", () => {
     expect(fetchStatus).toHaveBeenCalledTimes(2);
   });
 
-  it("joins a read in flight instead of starting another: a tick or a refresh during a slow answer", async () => {
+  it("a tick during a slow answer joins it instead of starting another read", async () => {
     const pending = deferred<ReturnType<typeof status>>();
     const fetchStatus = vi.fn(() => pending.promise);
     __setFactoryApiForTests(api({ status: fetchStatus }));
     const result = await mount(useFactoryStatus);
     await settle(30_000);
-    await act(async () => result.current.refresh());
     expect(fetchStatus).toHaveBeenCalledTimes(1);
     await act(async () => pending.resolve(status(3)));
     expect(result.current.data?.attention).toHaveLength(3);
     await settle(30_000);
     expect(fetchStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("a refresh during a slow answer reads again, and the answer in flight is dropped", async () => {
+    const before = deferred<ReturnType<typeof status>>();
+    const after = deferred<ReturnType<typeof status>>();
+    const calls = [before, after];
+    const fetchStatus = vi.fn(() => calls.shift()!.promise);
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    const result = await mount(useFactoryStatus);
+    await act(async () => result.current.refresh());
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+    await act(async () => before.resolve(status(1)));
+    expect(result.current.status).toBe("loading");
+    await act(async () => after.resolve(status(5)));
+    expect(result.current.data?.attention).toHaveLength(5);
   });
 
   it("reads no more after a 404, which says the server has no factory", async () => {
@@ -229,6 +244,22 @@ describe("useFactoryStatus shared by several readers", () => {
     expect(fetchStatus).toHaveBeenCalledTimes(1);
     await settle(30_000);
     expect(fetchStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads once per 30 seconds for two readers whose timers are out of step", async () => {
+    const fetchStatus = vi.fn(async () => status(0));
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    await mount(useFactoryStatus);
+    await settle(15_000);
+    await mount(useFactoryAttentionCount);
+    await settle(15_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+    await settle(15_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+    await settle(15_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(3);
+    await settle(15_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(3);
   });
 
   it("shows a refresh from one reader to the other", async () => {
@@ -283,16 +314,13 @@ describe("useFactoryRuns and useFactoryRun", () => {
     expect((one.current as FactoryResource<{ skipped: number }>).data?.skipped).toBe(3);
   });
 
-  it("a refresh during a read in flight joins it, and that read's failure is the answer", async () => {
-    const pending = deferred<{ runs: [] }>();
-    const fetchRuns = vi.fn(() => pending.promise);
-    __setFactoryApiForTests(api({ runs: fetchRuns as unknown as FactoryApi["runs"] }));
-    const runs = await mount(useFactoryRuns);
-    await act(async () => runs.current.refresh());
-    expect(fetchRuns).toHaveBeenCalledTimes(1);
-    await act(async () => pending.reject(new Error("late failure")));
-    expect(runs.current.status).toBe("error");
-    expect(runs.current.error?.message).toBe("late failure");
+  it("asks the server for every run only with all", async () => {
+    const fetchRuns = vi.fn(async () => ({ runs: [] }));
+    __setFactoryApiForTests(api({ runs: fetchRuns }));
+    await mount(() => useFactoryRuns());
+    expect(fetchRuns).toHaveBeenLastCalledWith({ all: false });
+    await mount(() => useFactoryRuns(true));
+    expect(fetchRuns).toHaveBeenLastCalledWith({ all: true });
   });
 
   it("reads a run no more after a 404", async () => {
@@ -339,5 +367,33 @@ describe("useFactoryAttentionCount", () => {
     fail = true;
     await settle(30_000);
     expect(count.current).toBe(2);
+  });
+});
+
+describe("useFactorySupported", () => {
+  it("is true before any answer and once the status is ready", async () => {
+    const pending = deferred<ReturnType<typeof status>>();
+    __setFactoryApiForTests(api({ status: () => pending.promise }));
+    const supported = await mount(useFactorySupported);
+    expect(supported.current).toBe(true);
+    await act(async () => pending.resolve(status(0)));
+    expect(supported.current).toBe(true);
+  });
+
+  it("is false once the status answered 404, and true on any other failure", async () => {
+    __setFactoryApiForTests(api({ status: notFound }));
+    const supported = await mount(useFactorySupported);
+    expect(supported.current).toBe(false);
+    unmountAll();
+    __resetFactoryStoresForTests();
+    __setFactoryApiForTests(
+      api({
+        status: async () => {
+          throw new FactoryApiError(503, null, "down");
+        },
+      }),
+    );
+    const down = await mount(useFactorySupported);
+    expect(down.current).toBe(true);
   });
 });

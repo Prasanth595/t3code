@@ -22,39 +22,44 @@ export interface FactoryResource<T> {
 
 type Loaded<T> = Omit<FactoryResource<T>, "refresh">;
 
-type Key = "status" | "runs" | `run:${string}`;
+type Key = "status" | "runs" | "runs:all" | `run:${string}`;
 
 const LOADING: Loaded<never> = { status: "loading", data: null, error: null };
 
 interface Store {
   state: Loaded<unknown>;
+  /** The number of the latest read; an answer is applied only while its read is still the latest. */
+  issued: number;
   inFlight: boolean;
+  /** When the latest read started, so two readers' timers on one key cost one read per POLL_MS. */
+  startedAt: number;
   readonly listeners: Set<() => void>;
 }
 
 /**
  * One store per key while anyone reads it: one answer every reader sees, and a refresh from one
- * reader (the page, after a control) updates the others (the badge). One read at a time: a refresh
- * during a read joins it, so a poll tick never piles up behind a slow server and a late answer can
- * never overwrite a newer one. With the last reader gone the store is dropped, so the next reader
- * starts at loading and an answer still in flight is thrown away.
+ * reader (the page, after a control) updates the others (the badge). A poll tick joins a read in
+ * flight, so ticks never pile up behind a slow server; a refresh a reader asked for starts a new
+ * read whose answer supersedes the one in flight, so what the reader sees after a control always
+ * comes from after it. With the last reader gone the store is dropped, so the next reader starts
+ * at loading and an answer still in flight is thrown away.
  */
 const stores = new Map<Key, Store>();
 
 const load = (key: Key): Promise<unknown> =>
   key === "status"
     ? factoryApi.status()
-    : key === "runs"
-      ? factoryApi.runs()
+    : key === "runs" || key === "runs:all"
+      ? factoryApi.runs({ all: key === "runs:all" })
       : factoryApi.run(key.slice("run:".length));
 
-const refresh = (key: Key): void => {
-  const store = stores.get(key);
-  if (store === undefined || store.inFlight) return;
+const read = (key: Key, store: Store): void => {
+  const n = ++store.issued;
   store.inFlight = true;
+  store.startedAt = Date.now();
   const settle = (next: Loaded<unknown>) => {
+    if (stores.get(key) !== store || n !== store.issued) return;
     store.inFlight = false;
-    if (stores.get(key) !== store) return;
     store.state = next;
     store.listeners.forEach((listener) => listener());
   };
@@ -69,12 +74,25 @@ const refresh = (key: Key): void => {
   );
 };
 
+/** A read the reader asked for: now, superseding one in flight. */
+const refresh = (key: Key): void => {
+  const store = stores.get(key);
+  if (store !== undefined) read(key, store);
+};
+
+/** A poll tick: not while a read is in flight, nor within POLL_MS of the last one starting. */
+const tick = (key: Key): void => {
+  const store = stores.get(key);
+  if (store === undefined || store.inFlight || Date.now() - store.startedAt < POLL_MS) return;
+  read(key, store);
+};
+
 const subscribe = (key: Key, listener: () => void): (() => void) => {
   let store = stores.get(key);
   if (store === undefined) {
-    store = { state: LOADING, inFlight: false, listeners: new Set() };
+    store = { state: LOADING, issued: 0, inFlight: false, startedAt: 0, listeners: new Set() };
     stores.set(key, store);
-    refresh(key);
+    read(key, store);
   }
   const added = store;
   added.listeners.add(listener);
@@ -95,26 +113,37 @@ export function __resetFactoryStoresForTests(): void {
  * The resource behind `key`: read when its first reader mounts, then on the live-refresh policy
  * (every `POLL_MS` while the window shows and the reader is about, and on coming back to the
  * window), and no more after a 404, which says the server has no factory or no such run. Readers
- * of one key share the store and, through the key, the policy's record of the last read, so two
- * readers do not read twice.
+ * of one key share the store, whose `tick` makes their timers one read per `POLL_MS`.
  */
 function useFactoryResource<T>(key: Key): FactoryResource<T> {
   const state = useSyncExternalStore(
     useCallback((listener: () => void) => subscribe(key, listener), [key]),
     useCallback(() => snapshot(key) as Loaded<T>, [key]),
   );
+  const tickNow = useCallback(() => tick(key), [key]);
   const refreshNow = useCallback(() => refresh(key), [key]);
   const gone = state.error instanceof FactoryApiError && state.error.status === 404;
-  useLiveRefresh(refreshNow, { key: `factory:${key}`, intervalMs: POLL_MS, enabled: !gone });
+  useLiveRefresh(tickNow, { key: `factory:${key}`, intervalMs: POLL_MS, enabled: !gone });
   return { ...state, refresh: refreshNow };
 }
 
 export const useFactoryStatus = (): FactoryResource<FactoryStatus> =>
   useFactoryResource<FactoryStatus>("status");
 
-export const useFactoryRuns = (): FactoryResource<{
-  readonly runs: ReadonlyArray<FactoryRunRow>;
-}> => useFactoryResource("runs");
+/** The runs list: the recent window the server lists by default, or every run with `all`. */
+export const useFactoryRuns = (
+  all = false,
+): FactoryResource<{ readonly runs: ReadonlyArray<FactoryRunRow> }> =>
+  useFactoryResource(all ? "runs:all" : "runs");
+
+/**
+ * False once the status answered 404: this server has no factory (an upstream build), so the
+ * sidebar hides the item instead of leading to a page that cannot load. True before any answer.
+ */
+export function useFactorySupported(): boolean {
+  const { error } = useFactoryStatus();
+  return !(error instanceof FactoryApiError && error.status === 404);
+}
 
 export const useFactoryRun = (id: string): FactoryResource<FactoryRunDetail> =>
   useFactoryResource<FactoryRunDetail>(`run:${id}`);

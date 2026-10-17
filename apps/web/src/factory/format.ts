@@ -47,18 +47,6 @@ const numberField = (data: unknown, key: string): number | null => {
   return typeof value === "number" ? value : null;
 };
 
-/**
- * The runs the list shows before "Show all": every unfinished run, and the first `limit` finished
- * ones in the order given (newest first), so the active runs never fall out of the window.
- */
-export function recentWindow<T extends { readonly finished: boolean }>(
-  runs: ReadonlyArray<T>,
-  limit: number,
-): Array<T> {
-  let finished = 0;
-  return runs.filter((run) => !run.finished || finished++ < limit);
-}
-
 /** The `step` of the last `step_changed` entry that has one. */
 export function currentStep(entries: ReadonlyArray<FactoryEntry>): string | null {
   for (let i = entries.length - 1; i >= 0; i--) {

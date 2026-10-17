@@ -7,7 +7,6 @@ import {
   labelForState,
   lastGateOutput,
   parseRunId,
-  recentWindow,
   runIsFinished,
   runState,
   stateBadgeVariant,
@@ -204,19 +203,5 @@ describe("runState and runIsFinished", () => {
     expect(runIsFinished([entry("claimed", {}), entry("finished", { outcome: "stuck" })])).toBe(
       true,
     );
-  });
-});
-
-describe("recentWindow", () => {
-  const run = (id: string, finished: boolean) => ({ id, finished });
-
-  it("keeps every unfinished run and the first finished runs up to the limit", () => {
-    const runs = [run("a", true), run("b", false), run("c", true), run("d", true), run("e", false)];
-    expect(recentWindow(runs, 2).map((r) => r.id)).toEqual(["a", "b", "c", "e"]);
-  });
-
-  it("is the whole list when it holds no more finished runs than the limit", () => {
-    const runs = [run("a", true), run("b", false)];
-    expect(recentWindow(runs, 1)).toEqual(runs);
   });
 });

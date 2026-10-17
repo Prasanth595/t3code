@@ -445,6 +445,33 @@ describe("GET /api/factory/runs", () => {
     }),
   );
 
+  it.effect("leaves out finished runs older than a week unless asked for all", () =>
+    serving({}, async (call, { tokens, dir }) => {
+      seed(dir, run10, [...BUILDING, FINISHED], T0);
+      seed(dir, run11, BUILDING, T0 + 10_000);
+      seed(dir, run12, [...BUILDING, FINISHED], T0 + 20_000);
+      const monthOld = (id: RunId) => {
+        const seconds = (Date.now() - 30 * 86_400_000) / 1000;
+        NodeFS.utimesSync(runPath(dir, id), seconds, seconds);
+      };
+      monthOld(run10);
+      monthOld(run11);
+      const ids = async (path: string) =>
+        (
+          (await json(await call("GET", path, tokens.read))) as { runs: Array<{ id: string }> }
+        ).runs.map((run) => run.id);
+      assert.deepStrictEqual(await ids("/api/factory/runs"), [
+        runIdToString(run11),
+        runIdToString(run12),
+      ]);
+      assert.deepStrictEqual(await ids("/api/factory/runs?all=1"), [
+        ID,
+        runIdToString(run11),
+        runIdToString(run12),
+      ]);
+    }),
+  );
+
   it.effect("lists a run file that cannot be read as unreadable", () =>
     serving({}, async (call, { tokens, dir }) => {
       seed(dir, run10, BUILDING);

@@ -868,4 +868,22 @@ describe("readRuns: skipFinishedBefore", () => {
     age(old, Date.parse("2026-10-17T00:00:00Z"), 30 * DAY);
     expect(readRuns(dataDir).map((read) => read.summary.finished)).toEqual([true]);
   });
+
+  it("listRuns leaves out the same files, and reads an old unfinished one as ever", () => {
+    const dataDir = tempDir();
+    const nowMs = Date.parse("2026-10-17T00:00:00Z");
+    const oldFinished = writeRun(dataDir, rid(1), stateLine("building") + finishedLine);
+    const oldOpen = writeRun(dataDir, rid(2), stateLine("building"));
+    writeRun(dataDir, rid(3), stateLine("building") + finishedLine);
+    age(oldFinished, nowMs, 3 * DAY);
+    age(oldOpen, nowMs, 3 * DAY);
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    const runs = listRuns(dataDir, { skipFinishedBefore: nowMs - DAY });
+    expect(runs.map((run) => [run.id.issue, run.finished])).toEqual([
+      ["2", false],
+      ["3", true],
+    ]);
+    expect(fullReads()).not.toContain(oldFinished);
+    expect(listRuns(dataDir).map((run) => run.id.issue)).toEqual(["1", "2", "3"]);
+  });
 });

@@ -10,6 +10,7 @@ const NOW = Date.parse("2026-10-17T12:00:00.000Z");
 const state = vi.hoisted(() => ({
   status: null as unknown,
   runs: null as unknown,
+  allRuns: null as unknown,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -26,7 +27,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 vi.mock("./useFactoryData", () => ({
   useFactoryStatus: () => state.status,
-  useFactoryRuns: () => state.runs,
+  useFactoryRuns: (all?: boolean) => (all ? state.allRuns : state.runs),
 }));
 
 import { FactoryPage } from "./FactoryPage";
@@ -82,6 +83,7 @@ beforeEach(() => {
   vi.setSystemTime(NOW);
   state.status = resource({ data: statusData() });
   state.runs = resource({ data: { runs: [] } });
+  state.allRuns = state.runs;
 });
 
 afterEach(() => {
@@ -93,8 +95,10 @@ describe("FactoryPage", () => {
   it("says there are no runs yet when the factory has none", async () => {
     const page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("Factory");
-    expect(page.text()).toContain("No runs yet");
+    expect(page.text()).toContain("No runs in the last week");
     expect(page.text()).not.toContain("Needs attention");
+    await act(async () => page.button("Show all runs")!.props.onClick());
+    expect(page.text()).toContain("No runs yet");
   });
 
   it("shows a loading state while either read is loading", async () => {
@@ -103,7 +107,7 @@ describe("FactoryPage", () => {
     expect(
       page.renderer.root.findAll((n) => n.props["aria-label"] === "Loading factory"),
     ).not.toHaveLength(0);
-    expect(page.text()).not.toContain("No runs yet");
+    expect(page.text()).not.toContain("No runs");
   });
 
   it("shows the error and retries both reads", async () => {
@@ -141,21 +145,27 @@ describe("FactoryPage", () => {
     expect(refreshRuns).toHaveBeenCalledTimes(1);
   });
 
-  it("shows every unfinished run and the 50 newest finished ones, then all on request", async () => {
-    const started = (i: number) => new Date(NOW - i * 60_000).toISOString();
-    const finished = Array.from({ length: 60 }, (_, i) =>
-      runRow({ id: `o__r__${i + 100}__1`, started_ts: started(i), finished: true }),
-    );
-    const oldButActive = runRow({ id: "o__r__1__1", started_ts: started(90), finished: false });
-    state.runs = resource({ data: { runs: [...finished, oldButActive] } });
+  it("lists the week the server sent, and every run once asked", async () => {
+    const old = runRow({
+      id: "o__r__1__1",
+      started_ts: "2026-09-01T10:00:00.000Z",
+      finished: true,
+    });
+    state.runs = resource({ data: { runs: [runRow()] } });
+    state.allRuns = resource({ data: { runs: [runRow(), old] } });
     const page = await render(createElement(FactoryPage));
     const runLinks = () => page.all("a").filter((a) => a.props["data-to"] === "/factory/$runId");
-    expect(runLinks()).toHaveLength(51);
+    expect(runLinks()).toHaveLength(1);
+    await act(async () => page.button("Show all runs")!.props.onClick());
+    expect(runLinks()).toHaveLength(2);
     expect(page.text()).toContain("o__r__1__1");
-    expect(page.text()).not.toContain("o__r__159__1");
-    await act(async () => page.button("Show all 61 runs")!.props.onClick());
-    expect(runLinks()).toHaveLength(61);
-    expect(page.button("Show all 61 runs")).toBeUndefined();
+    expect(page.button("Show all runs")).toBeUndefined();
+  });
+
+  it("says when the week holds no runs and still offers every run", async () => {
+    const page = await render(createElement(FactoryPage));
+    expect(page.text()).toContain("No runs in the last week");
+    expect(page.button("Show all runs")).toBeDefined();
   });
 
   it("lists the runs with repo, issue, state, step, age and pull request link", async () => {

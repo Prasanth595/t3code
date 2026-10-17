@@ -4,8 +4,10 @@
  *
  * Reads need `orchestration:read` and answer what softfac prints:
  * - `GET /api/factory/status`: the `status --json` report, with the open attention items.
- * - `GET /api/factory/runs`: `runs list`, one row per run. A finished run is summarised from the
- *   ends of its file, so the many old runs cost little; only the unfinished ones are read whole.
+ * - `GET /api/factory/runs`: `runs list`, one row per run: every unfinished run and the finished
+ *   runs of the last `RECENT_FINISHED_MS`, or every run with `?all=1`. A finished run is summarised
+ *   from the ends of its file, and one older than the window is not read at all, so the many old
+ *   runs cost a stat each; only the unfinished ones are read whole.
  * - `GET /api/factory/runs/:id`: `runs show`, every entry of one run.
  *
  * Control needs `orchestration:operate`:
@@ -23,7 +25,8 @@ import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { HttpServerResponse } from "effect/http";
+import * as Option from "effect/Option";
+import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpRouter from "effect/http/HttpRouter";
 
 import packageJson from "../../../package.json" with { type: "json" };
@@ -43,6 +46,9 @@ export const RUN_PATH = "/api/factory/runs/:id";
 export const STOP_PATH = "/api/factory/runs/:id/stop";
 export const PAUSE_PATH = "/api/factory/claims/pause";
 export const RESUME_PATH = "/api/factory/claims/resume";
+
+/** How far back `GET /api/factory/runs` lists finished runs unless asked for `?all=1`. */
+export const RECENT_FINISHED_MS = 7 * 86_400_000;
 
 const respond = (body: unknown, status = 200) => HttpServerResponse.jsonUnsafe(body, { status });
 
@@ -127,7 +133,12 @@ const runsRoute = factoryRoute(
   AuthOrchestrationReadScope,
   Effect.gen(function* () {
     const { factoryDir } = yield* FactoryPaths;
-    const runs = yield* guarded(() => listRuns(factoryDir));
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const all = Option.getOrUndefined(HttpServerRequest.toURL(request))?.searchParams.get("all");
+    const nowMs = yield* Clock.currentTimeMillis;
+    const runs = yield* guarded(() =>
+      listRuns(factoryDir, all === "1" ? {} : { skipFinishedBefore: nowMs - RECENT_FINISHED_MS }),
+    );
     return respond({
       runs: runs.map((run) => ({
         id: runIdToString(run.id),

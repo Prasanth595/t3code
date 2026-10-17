@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -14,10 +14,7 @@ import {
 } from "~/components/ui/table";
 
 import type { FactoryRunRow } from "./api";
-import { formatAge, labelForState, parseRunId, recentWindow, stateBadgeVariant } from "./format";
-
-/** How many finished runs the table shows before "Show all"; the factory keeps every run ever made. */
-const RECENT_FINISHED = 50;
+import { formatAge, labelForState, parseRunId, stateBadgeVariant } from "./format";
 
 const startedMs = (run: FactoryRunRow) =>
   run.started_ts ? Date.parse(run.started_ts) : Number.NaN;
@@ -36,16 +33,34 @@ const prLabel = (url: string) => {
   return match ? `#${match[1]}` : "PR";
 };
 
-export function RunsTable({ runs, nowMs }: { runs: ReadonlyArray<FactoryRunRow>; nowMs: number }) {
-  const [showAll, setShowAll] = useState(false);
+/**
+ * The runs the server listed: by default every unfinished run and the finished ones of the last
+ * week (`partial`), with a way to ask for every run the factory ever made.
+ */
+export function RunsTable({
+  runs,
+  nowMs,
+  partial,
+  onShowAll,
+}: {
+  runs: ReadonlyArray<FactoryRunRow>;
+  nowMs: number;
+  partial: boolean;
+  onShowAll: () => void;
+}) {
   const sorted = useMemo(() => [...runs].sort(newestFirst), [runs]);
-  const shown = showAll ? sorted : recentWindow(sorted, RECENT_FINISHED);
+  const showAll = partial ? (
+    <Button onClick={onShowAll} size="sm" variant="ghost">
+      Show all runs
+    </Button>
+  ) : null;
   if (runs.length === 0) {
     return (
       <Empty size="compact">
         <EmptyHeader>
-          <EmptyTitle>No runs yet</EmptyTitle>
+          <EmptyTitle>{partial ? "No runs in the last week" : "No runs yet"}</EmptyTitle>
         </EmptyHeader>
+        {showAll}
       </Empty>
     );
   }
@@ -64,7 +79,7 @@ export function RunsTable({ runs, nowMs }: { runs: ReadonlyArray<FactoryRunRow>;
           </TableRow>
         </TableHeader>
         <TableBody>
-          {shown.map((run) => {
+          {sorted.map((run) => {
             const parsed = parseRunId(run.id);
             return (
               <TableRow key={run.id}>
@@ -124,11 +139,7 @@ export function RunsTable({ runs, nowMs }: { runs: ReadonlyArray<FactoryRunRow>;
           })}
         </TableBody>
       </Table>
-      {shown.length < sorted.length ? (
-        <Button onClick={() => setShowAll(true)} size="sm" variant="ghost">
-          Show all {sorted.length} runs
-        </Button>
-      ) : null}
+      {showAll}
     </>
   );
 }

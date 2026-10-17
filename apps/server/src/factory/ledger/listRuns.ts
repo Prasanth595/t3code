@@ -320,29 +320,39 @@ const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
 export const readRuns = (
   dataDir: string,
   options: { readonly skipFinishedBefore?: number } = {},
-): Array<RunRead> => {
-  const { skipFinishedBefore } = options;
-  const skip =
-    skipFinishedBefore === undefined
-      ? undefined
-      : (path: string, mtimeMs: number) => mtimeMs < skipFinishedBefore && lastLineIsFinished(path);
-  return scanRuns(dataDir, { read: (id) => readWhole(dataDir, id), skip }).map((run) => ({
+): Array<RunRead> =>
+  scanRuns(dataDir, {
+    read: (id) => readWhole(dataDir, id),
+    skip: finishedBefore(options.skipFinishedBefore),
+  }).map((run) => ({
     summary: run.read === null ? unreadableSummary(run.id) : summarise(run.id, run.read),
     record: run.read?.record ?? null,
     seen: run.read?.seen ?? null,
   }));
-};
+
+/** The `skip` of a scan with a `skipFinishedBefore` cutoff: a finished file last written before it. */
+const finishedBefore = (cutoffMs: number | undefined) =>
+  cutoffMs === undefined
+    ? undefined
+    : (path: string, mtimeMs: number) => mtimeMs < cutoffMs && lastLineIsFinished(path);
 
 /**
  * `softfac runs list`: every run under `<dir>/runs/`, one summary each, in the order of
  * {@link readRuns}. A finished file is summarised from its ends (see `summariseFinished`) and is
- * never read whole; an unfinished one, one of the few active runs, is read whole.
+ * never read whole; an unfinished one, one of the few active runs, is read whole. With
+ * `skipFinishedBefore` (Unix epoch ms) a finished file last written before it is neither read nor
+ * returned, as in {@link readRuns}, so a page that shows recent runs does not read the ends of
+ * every file the factory ever made.
  */
-export const listRuns = (dataDir: string): Array<RunSummary> =>
+export const listRuns = (
+  dataDir: string,
+  options: { readonly skipFinishedBefore?: number } = {},
+): Array<RunSummary> =>
   scanRuns(dataDir, {
     read: (id, path): FileRead<RunSummary> => {
       if (lastLineIsFinished(path)) return summariseFinished(id, path);
       const whole = readWhole(dataDir, id);
       return { firstMs: whole.firstMs, read: summarise(id, whole.read) };
     },
+    skip: finishedBefore(options.skipFinishedBefore),
   }).map((run) => run.read ?? unreadableSummary(run.id));

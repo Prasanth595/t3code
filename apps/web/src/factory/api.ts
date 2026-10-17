@@ -99,7 +99,10 @@ export class FactoryApiError extends Error {
 
 export interface FactoryApi {
   readonly status: () => Promise<FactoryStatus>;
-  readonly runs: () => Promise<{ readonly runs: ReadonlyArray<FactoryRunRow> }>;
+  /** The recent window the server lists by default (`RECENT_FINISHED_MS`), or every run with `all`. */
+  readonly runs: (options: {
+    readonly all: boolean;
+  }) => Promise<{ readonly runs: ReadonlyArray<FactoryRunRow> }>;
   readonly run: (id: string) => Promise<FactoryRunDetail>;
   readonly stopRun: (id: string) => Promise<FactoryStopResult>;
   readonly pauseClaims: () => Promise<FactoryPauseResult>;
@@ -129,10 +132,14 @@ const parseJson = (text: string): unknown => {
   }
 };
 
-const call = async <T>(method: "GET" | "POST", path: string): Promise<T> => {
+const call = async <T>(
+  method: "GET" | "POST",
+  path: string,
+  searchParams?: Record<string, string>,
+): Promise<T> => {
   const program = Effect.gen(function* () {
     const client = yield* HttpClient.HttpClient;
-    const url = resolvePrimaryEnvironmentHttpUrl(path);
+    const url = resolvePrimaryEnvironmentHttpUrl(path, searchParams);
     const response = yield* client.execute(
       method === "GET" ? HttpClientRequest.get(url) : HttpClientRequest.post(url),
     );
@@ -174,13 +181,14 @@ const call = async <T>(method: "GET" | "POST", path: string): Promise<T> => {
 };
 
 const post = <T>(path: string) => call<T>("POST", path);
-const get = <T>(path: string) => call<T>("GET", path);
+const get = <T>(path: string, searchParams?: Record<string, string>) =>
+  call<T>("GET", path, searchParams);
 
 const runPath = (id: string) => `/api/factory/runs/${encodeURIComponent(id)}`;
 
 const httpApi: FactoryApi = {
   status: () => get("/api/factory/status"),
-  runs: () => get("/api/factory/runs"),
+  runs: ({ all }) => get("/api/factory/runs", all ? { all: "1" } : undefined),
   run: (id) => get(runPath(id)),
   stopRun: (id) => post(`${runPath(id)}/stop`),
   pauseClaims: () => post("/api/factory/claims/pause"),
@@ -197,7 +205,7 @@ export const __setFactoryApiForTests = (api?: FactoryApi): void => {
 /** Delegates on every call, so a swap takes effect for hooks that already hold the object. */
 export const factoryApi: FactoryApi = {
   status: () => (override ?? httpApi).status(),
-  runs: () => (override ?? httpApi).runs(),
+  runs: (options) => (override ?? httpApi).runs(options),
   run: (id) => (override ?? httpApi).run(id),
   stopRun: (id) => (override ?? httpApi).stopRun(id),
   pauseClaims: () => (override ?? httpApi).pauseClaims(),

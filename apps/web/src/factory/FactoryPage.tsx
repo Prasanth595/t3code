@@ -13,7 +13,9 @@ import { useFactoryRuns, useFactoryStatus } from "./useFactoryData";
 
 export function FactoryPage() {
   const status = useFactoryStatus();
-  const runs = useFactoryRuns();
+  // The recent window until the user asks for every run; the switch starts a fresh read.
+  const [allRuns, setAllRuns] = useState(false);
+  const runs = useFactoryRuns(allRuns);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
@@ -68,7 +70,12 @@ export function FactoryPage() {
           </Alert>
         ) : null}
         <AttentionList items={report.attention} nowMs={nowMs} />
-        <RunsTable nowMs={nowMs} runs={runs.data.runs} />
+        <RunsTable
+          nowMs={nowMs}
+          onShowAll={() => setAllRuns(true)}
+          partial={!allRuns}
+          runs={runs.data.runs}
+        />
       </>
     );
   }
