@@ -186,10 +186,6 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
                       cause,
                     }),
                 ),
-                Effect.tapError((cause) =>
-                  Effect.logDebug("Muse workspace skill discovery failed.", { cause }),
-                ),
-                Effect.orElseSucceed(() => []),
               ),
             ]).pipe(Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })));
 

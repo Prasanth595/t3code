@@ -441,7 +441,7 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect("uses skill arguments for active steering without a text part", () =>
+  it.effect("sends text parts without skill dispatch for active steering", () =>
     Effect.gen(function* () {
       const fake = yield* makeFakeMuse();
       const harness = yield* makeHarness(fake);
@@ -456,9 +456,8 @@ describe("MuseAdapterV2", () => {
         message: { ...input.message, text: "$git tidy $nope" },
       });
       const call = yield* fake.takeCall("turn/steer");
-      assert.deepStrictEqual(call.params.input, [
-        { type: "skill", selector: "git", arguments: "$git tidy $nope" },
-      ]);
+      assert.deepStrictEqual(call.params.input, [{ type: "text", text: "$git tidy $nope" }]);
+      assert.isFalse(fake.calls.some((entry) => entry.method === "skill/list"));
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

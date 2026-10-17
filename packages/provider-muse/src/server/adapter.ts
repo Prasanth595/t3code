@@ -1827,6 +1827,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
       const prompt = Effect.fnUntraced(function* (
         message: ProviderAdapter.ProviderAdapterV2TurnMessage,
         runtimeInstructions?: string,
+        dispatchSkill = true,
       ) {
         const parts: SendUserTurnOptions<unknown>["input"] = [];
         const text = providerMessageTextWithAttachmentPaths({
@@ -1836,14 +1837,15 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         });
         if (!text && !message.attachments.some(isProviderNativeImageAttachment))
           return yield* protocolError("Muse needs text or an image");
-        const selectors = !message.text.matchAll(SKILL_MENTION_PATTERN).next().done
-          ? yield* request("skill/list", {}, false).pipe(
-              Effect.flatMap((value) => decode(MuseSkillList, value)),
-              Effect.map((value) => new Set(value.skills.map((skill) => skill.selector))),
-              Effect.timeout(5_000),
-              Effect.orElseSucceed(() => new Set<string>()),
-            )
-          : new Set<string>();
+        const selectors =
+          dispatchSkill && !message.text.matchAll(SKILL_MENTION_PATTERN).next().done
+            ? yield* request("skill/list", {}, false).pipe(
+                Effect.flatMap((value) => decode(MuseSkillList, value)),
+                Effect.map((value) => new Set(value.skills.map((skill) => skill.selector))),
+                Effect.timeout(5_000),
+                Effect.orElseSucceed(() => new Set<string>()),
+              )
+            : new Set<string>();
         const [selector] = museSkillSelectorsInPrompt(message.text, selectors);
         if (selector) {
           // MSP permits one skill plus images, but rejects skill/text mixtures.
@@ -2140,7 +2142,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               turn.compact
             )
               return yield* protocolError("This Muse turn cannot be steered");
-            const parts = yield* prompt(args.message);
+            const parts = yield* prompt(args.message, undefined, false);
             const result = yield* request("turn/steer", {
               expectedTurnId: turn.nativeId,
               input: parts,

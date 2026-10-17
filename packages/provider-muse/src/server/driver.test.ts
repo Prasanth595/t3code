@@ -28,7 +28,7 @@ const layer = Layer.mergeAll(
 
 it.layer(layer)("MuseDriver workspace skills", (it) => {
   it.effect(
-    "uses the workspace catalog and tolerates failed discovery, without probing when disabled",
+    "uses the workspace catalog and propagates failed discovery, without probing when disabled",
     () =>
       Effect.gen(function* () {
         const workspaces: Array<string | undefined> = [];
@@ -89,7 +89,8 @@ it.layer(layer)("MuseDriver workspace skills", (it) => {
             },
           ]);
         }
-        expect((yield* enabled.snapshotForCwd!("/failed")).skills).toEqual([]);
+        const failure = yield* enabled.snapshotForCwd!("/failed").pipe(Effect.flip);
+        expect(failure).toMatchObject({ _tag: "ProviderDriverError", driver: "muse" });
         const disabled = yield* create(false);
         const machine = yield* disabled.snapshot.getSnapshot;
         expect(yield* disabled.snapshotForCwd!("/disabled")).toEqual(machine);
