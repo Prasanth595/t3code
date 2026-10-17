@@ -12,6 +12,7 @@ const legacyTable =
 const legacyReaders = ["orchestration-v2/legacy/", "persistence/Migrations/"] as const;
 const legacyReaderFiles: Record<string, string> = {
   "serverSettings.ts": "one-time provider history for settings migration",
+  "persistence/DatabaseMaintenance.ts": "doctor drops the V1 tables the importer never reads",
 };
 const retiredPaths = [
   "orchestration",
