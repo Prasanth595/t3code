@@ -14,7 +14,6 @@ export function getDesktopUpdateDownloadedVersion(state: DesktopUpdateState): st
   return state.downloadedVersion ?? state.availableVersion;
 }
 
-/** Release notes for an exact downloaded build; nightly suffixes are part of the tag. */
 export function getDesktopUpdateReleaseUrl(version: string | null): string | null {
   const normalizedVersion = version?.trim();
   if (!normalizedVersion) return null;
@@ -73,6 +72,13 @@ export function getArm64IntelBuildWarningDescription(state: DesktopUpdateState):
 export function getDesktopUpdateButtonTooltip(state: DesktopUpdateState): string {
   if (!state.enabled || state.status === "disabled") {
     return state.message ?? "Automatic updates are unavailable on this build.";
+  }
+  if (
+    state.notAppliedVersion !== undefined &&
+    (state.status === "available" || state.status === "downloaded") &&
+    getDesktopUpdateDownloadedVersion(state) === state.notAppliedVersion
+  ) {
+    return `Update ${state.notAppliedVersion} did not apply. Click to retry.`;
   }
   if (state.status === "available") {
     return `Update ${state.availableVersion ?? "available"} ready to download`;
