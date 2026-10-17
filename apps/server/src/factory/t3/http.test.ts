@@ -29,6 +29,7 @@ import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 import { Attention, type AttentionItem } from "../attention.ts";
+import type { WatchedProject } from "../config.ts";
 import { FactoryLoop, hostName, type RepoConfigReading } from "../index.ts";
 import { makeCause, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
@@ -163,6 +164,8 @@ interface World {
   readonly dir?: string;
   /** What the loop last read of each repo's project config. */
   readonly readings?: ReadonlyMap<string, RepoConfigReading>;
+  /** The T3 projects the loop watches. */
+  readonly watched?: ReadonlyArray<WatchedProject>;
 }
 
 /** What the loop was asked to do: `count` wakes, `reloads` config reloads. */
@@ -191,6 +194,7 @@ const worldContext = (
     wakes.reloads += 1;
   });
   const repoConfigs = Effect.succeed(world.readings ?? new Map<string, RepoConfigReading>());
+  const watchedRepos = Effect.succeed(world.watched ?? []);
   return Context.make(EnvironmentAuth.EnvironmentAuth, auth).pipe(
     Context.add(
       ServerExitService.ServerExit,
@@ -213,10 +217,13 @@ const worldContext = (
         reload,
         // The real save, over a loop that counts its reloads: the loop's own is tested in index.test.ts.
         save: (body) =>
-          saveMachineConfig(NodePath.join(dir, "config.yml"), body, { reload, repoConfigs }).pipe(
-            Effect.provide(NodeServices.layer),
-          ),
+          saveMachineConfig(NodePath.join(dir, "config.yml"), body, {
+            reload,
+            repoConfigs,
+            watchedRepos,
+          }).pipe(Effect.provide(NodeServices.layer)),
         repoConfigs,
+        watchedRepos,
       }),
     ),
     Context.add(Attention, attentionWith(world.attention ?? [])),
@@ -960,6 +967,7 @@ poll_seconds: 60
 max_concurrent_runs: 1
 # stays a hand edit
 notify: false
+# retired by #106, and kept as written
 repos:
   - repo: rawphp/softfac
     path: /softfac
@@ -969,7 +977,6 @@ repos:
     poll_seconds: 60,
     max_concurrent_runs: 1,
     max_concurrent_gates: 2,
-    repos: [],
   };
   const configFile = (dir: string) => NodePath.join(dir, "config.yml");
   const fileText = (dir: string) => NodeFS.readFileSync(configFile(dir), "utf8");
@@ -978,7 +985,6 @@ repos:
     poll_seconds: 30,
     max_concurrent_runs: 2,
     max_concurrent_gates: 2,
-    repos: [{ repo: "a/b", path: "/b" }],
   };
 
   it.effect("GET reports a commented file: its values, and that it exists", () =>
@@ -994,11 +1000,10 @@ repos:
           poll_seconds: 60,
           max_concurrent_runs: 1,
           max_concurrent_gates: 2,
-          repos: [{ repo: "rawphp/softfac", path: "/softfac" }],
         },
         defaults: DEFAULTS,
         errors: [],
-        repos: [{ repo: "rawphp/softfac", path: "/softfac", factory: null, errors: null }],
+        repos: [],
       });
     }),
   );
@@ -1023,7 +1028,6 @@ repos:
       assert.deepStrictEqual(body.draft, {
         gh_config_dir: "/gh",
         poll_seconds: 60,
-        repos: [{ repo: "rawphp/softfac", path: "/softfac" }],
       });
       assert.deepStrictEqual(body.errors, [
         { file: configFile(dir), field: "max_concurrent_runs", message: "is missing" },
@@ -1041,24 +1045,27 @@ repos:
     autonomy: "pr",
   } as const;
 
-  it.effect("GET joins what the loop last read of each repo", () =>
+  it.effect("GET lists the watched projects, each with what the loop last read of it", () =>
     serving(
       {
+        watched: [
+          { repo: "rawphp/softfac", path: "/softfac", title: "Softfac" },
+          { repo: "a/b", path: "/b", title: "Bee" },
+          { repo: "c/d", path: "/d", title: "Dee" },
+        ],
         readings: new Map<string, RepoConfigReading>([
           ["rawphp/softfac", { kind: "ok", project }],
           ["a/b", { kind: "errors", errors: [{ file: ".dw/config.yml", message: "cannot read" }] }],
         ]),
       },
       async (call, { tokens, dir }) => {
-        NodeFS.writeFileSync(
-          configFile(dir),
-          COMMENTED + "  - repo: a/b\n    path: /b\n  - repo: c/d\n    path: /d\n",
-        );
+        NodeFS.writeFileSync(configFile(dir), COMMENTED);
         const body = await json(await call("GET", CONFIG_PATH, tokens.read));
         assert.deepStrictEqual(body.repos, [
           {
             repo: "rawphp/softfac",
             path: "/softfac",
+            title: "Softfac",
             factory: {
               instructors: ["i"],
               base: "main",
@@ -1079,10 +1086,11 @@ repos:
           {
             repo: "a/b",
             path: "/b",
+            title: "Bee",
             factory: null,
             errors: [{ file: ".dw/config.yml", message: "cannot read" }],
           },
-          { repo: "c/d", path: "/d", factory: null, errors: null },
+          { repo: "c/d", path: "/d", title: "Dee", factory: null, errors: null },
         ]);
       },
     ),
@@ -1109,7 +1117,6 @@ repos:
         const response = await call("PUT", CONFIG_PATH, tokens.settingsWrite, {
           poll_seconds: 5,
           gh_config_dir: "",
-          repos: [],
         });
         assert.strictEqual(response.status, 422);
         const body = await json(response);
@@ -1118,7 +1125,6 @@ repos:
         assert.deepStrictEqual(errors.map((e) => e.field).sort(), [
           "gh_config_dir",
           "poll_seconds",
-          "repos",
         ]);
         assert.strictEqual(fileText(dir), COMMENTED);
         assert.strictEqual(wakes.reloads, 0);
@@ -1160,6 +1166,10 @@ repos:
       assert.include(text, "# the factory on this machine");
       assert.include(text, "# login");
       assert.include(text, "# stays a hand edit\nnotify: false");
+      assert.include(
+        text,
+        "# retired by #106, and kept as written\nrepos:\n  - repo: rawphp/softfac",
+      );
       assert.include(text, "poll_seconds: 90");
     }),
   );

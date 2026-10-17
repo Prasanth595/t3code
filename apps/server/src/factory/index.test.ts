@@ -23,7 +23,7 @@ import * as Stream from "effect/Stream";
 import { describe } from "vite-plus/test";
 
 import { Attention, type NewItem } from "./attention.ts";
-import { timeLimitOnlyProjectConfig, type MachineConfig } from "./config.ts";
+import { timeLimitOnlyProjectConfig, type MachineConfig, type WatchedProject } from "./config.ts";
 import type { State } from "./domain/lifecycle.ts";
 import {
   factoryRuntime,
@@ -55,6 +55,7 @@ import { FactoryGate } from "./gate.ts";
 import { EventsError, FactoryEvents } from "./t3/events.ts";
 import * as Paths from "./t3/paths.ts";
 import * as Sessions from "./t3/sessions.ts";
+import { FactoryWatchedRepos, WatchedReposError } from "./t3/watchedRepos.ts";
 
 /** A process runner on a machine with no `gh`: every call fails to start. */
 const noGh = Layer.succeed(
@@ -75,6 +76,23 @@ const stubSessions = Sessions.FactorySessions.of({
   removeWorktree: () => Effect.die("not removed"),
 });
 const noSessions = Layer.succeed(Sessions.FactorySessions, stubSessions);
+
+/** A pass world's list of watched repos that nobody reads: the tests of the world's other methods. */
+const watchedNow: PassWorld["watchedRepos"] = Effect.succeed([]);
+
+const A_B: WatchedProject = { repo: "a/b", path: "/b", title: "B" };
+const C_D: WatchedProject = { repo: "c/d", path: "/d", title: "D" };
+
+/** The T3 projects the factory reads its watched repos from: a fixed list, or an effect that answers it afresh each pass. */
+const watching = (
+  list:
+    | ReadonlyArray<WatchedProject>
+    | Effect.Effect<ReadonlyArray<WatchedProject>, WatchedReposError>,
+) =>
+  Layer.succeed(
+    FactoryWatchedRepos,
+    FactoryWatchedRepos.of({ list: Effect.isEffect(list) ? list : Effect.succeed(list) }),
+  );
 
 /** A gate that never runs: the runtime is built without one. */
 const noGate = Layer.succeed(
@@ -132,9 +150,6 @@ const seedReportedRun = (dataDir: string, repo: string): RunId => {
 
 const VALID = `gh_config_dir: /gh
 max_concurrent_runs: 1
-repos:
-  - repo: a/b
-    path: /b
 `;
 
 /** `VALID` with the one required key a file cannot do without taken out. */
@@ -148,6 +163,7 @@ const logsFor = (
     factoryDir: string,
   ) => Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem> = () => Effect.void,
   gh: Layer.Layer<FactoryProcess> = noGh,
+  watched: ReadonlyArray<WatchedProject> = [A_B],
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
@@ -178,6 +194,7 @@ const logsFor = (
             ),
             Layer.provide(gh),
             Layer.provide(noSessions),
+            Layer.provide(watching(watched)),
             Layer.provide(quietEvents),
             Layer.provide(noGate),
           ),
@@ -256,6 +273,24 @@ it.effect("logs one warning per retired model key and still starts", () =>
   }),
 );
 
+// #106 retired the key: a file that still has it starts the factory, which watches T3's projects.
+it.effect("logs one warning for a repos key left in the file and still starts", () =>
+  Effect.gen(function* () {
+    const { logs, machineConfigPath, status } = yield* logsFor(
+      `${VALID}repos:\n  - repo: x/y\n    path: /y\n`,
+    );
+    assert.deepStrictEqual(logs.slice(0, 2), [
+      `${machineConfigPath}: repos: is no longer used: the factory watches the T3 projects of this environment whose checkout has a .dw/config.yml with a factory block`,
+      "factory started",
+    ]);
+    // It watches what T3 lists, not what the file names.
+    assert.deepStrictEqual(status, {
+      state: "running",
+      settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+    });
+  }),
+);
+
 it.effect("logs each config error and does not start for an invalid machine file", () =>
   Effect.gen(function* () {
     // The notification for the config item goes to a runner that accepts it, so it logs nothing.
@@ -321,6 +356,7 @@ describe("attention", () => {
           Layer.provide(Layer.succeed(Paths.FactoryPaths, dirs)),
           Layer.provide(Layer.succeed(FactoryProcess, process)),
           Layer.provide(noSessions),
+          Layer.provide(watching([A_B])),
           Layer.provide(quietEvents),
           Layer.provide(noGate),
         ),
@@ -401,6 +437,7 @@ describe("attention", () => {
             Layer.provide(Layer.succeed(Paths.FactoryPaths, dirs)),
             Layer.provide(Layer.succeed(FactoryProcess, process)),
             Layer.provide(noSessions),
+            Layer.provide(watching([A_B])),
             Layer.provide(quietEvents),
             Layer.provide(noGate),
           ),
@@ -475,13 +512,7 @@ it.effect("logs each pass line as it is decided, so a pass that dies has said wh
         },
       }),
     );
-    const { logs } = yield* logsFor(
-      `${VALID}  - repo: c/d
-    path: /d
-`,
-      () => Effect.void,
-      dying,
-    );
+    const { logs } = yield* logsFor(VALID, () => Effect.void, dying, [A_B, C_D]);
     assert.ok(
       logs.some((line) => line.startsWith("error: a/b: project config not loaded")),
       logs.join("\n"),
@@ -566,6 +597,7 @@ describe("waking the pass when a factory thread's run changes status", () => {
         Layer.provide(Layer.succeed(Paths.FactoryPaths, dirs)),
         Layer.provide(noGh),
         Layer.provide(noSessions),
+        Layer.provide(watching([A_B])),
         Layer.provide(Layer.succeed(FactoryEvents, FactoryEvents.of({ runStatusChanges: events }))),
         Layer.provide(noGate),
       ),
@@ -636,6 +668,7 @@ describe("waking the pass when a factory thread's run changes status", () => {
             ),
             Layer.provide(noGh),
             Layer.provide(noSessions),
+            Layer.provide(watching([A_B])),
             Layer.provide(events),
             Layer.provide(noGate),
           ),
@@ -688,7 +721,6 @@ describe("liveWorld", () => {
     maxConcurrentRuns: 1,
     maxConcurrentGates: 1,
     notify: true,
-    repos: [{ repo: REPO, path: "/p" }],
   };
 
   const worldOf = (process: FactoryProcess["Service"]) =>
@@ -697,6 +729,7 @@ describe("liveWorld", () => {
       "/factory-test/data",
       process,
       stubSessions,
+      watchedNow,
       () => NOW,
       "mac-mini",
       noAttention,
@@ -708,7 +741,7 @@ describe("liveWorld", () => {
     );
 
   const repo: Repo = {
-    watched: machine.repos[0]!,
+    watched: { repo: REPO, path: "/p" },
     project: timeLimitOnlyProjectConfig(),
     trackerUser: "rawphp",
   };
@@ -1088,7 +1121,7 @@ describe("liveWorld", () => {
   it.effect("a project config committed on its own base branch is loaded", () =>
     Effect.gen(function* () {
       const { process } = baseConfigGh("main");
-      const project = yield* worldOf(process).project(machine.repos[0]!);
+      const project = yield* worldOf(process).project({ repo: REPO, path: "/p" });
       assert.strictEqual(project.base, "main");
     }),
   );
@@ -1096,7 +1129,7 @@ describe("liveWorld", () => {
   it.effect("a project config that names another base is a config error naming both", () =>
     Effect.gen(function* () {
       const { process } = baseConfigGh("develop");
-      const error = yield* Effect.flip(worldOf(process).project(machine.repos[0]!));
+      const error = yield* Effect.flip(worldOf(process).project({ repo: REPO, path: "/p" }));
       assert.strictEqual(error.kind, "config");
       assert.include(error.message, "`develop`");
       assert.include(error.message, "`main`");
@@ -1114,6 +1147,7 @@ describe("liveWorld", () => {
         dataDir,
         process,
         stubSessions,
+        watchedNow,
         () => NOW,
         "mac-mini",
         noAttention,
@@ -1145,6 +1179,7 @@ describe("liveWorld", () => {
         dataDir,
         process,
         stubSessions,
+        watchedNow,
         () => NOW,
         "mac-mini",
         noAttention,
@@ -1182,6 +1217,7 @@ describe("liveWorld", () => {
         downDir,
         process,
         stubSessions,
+        watchedNow,
         () => NOW,
         "mac-mini",
         noAttention,
@@ -1269,10 +1305,9 @@ describe("the gate in the background", () => {
     maxConcurrentRuns: 1,
     maxConcurrentGates: 1,
     notify: true,
-    repos: [{ repo: REPO, path: "/p" }],
   } satisfies MachineConfig;
   const backgroundRepo: Repo = {
-    watched: background.repos[0]!,
+    watched: { repo: REPO, path: "/p" },
     project: { ...timeLimitOnlyProjectConfig(), base: "main" },
     trackerUser: "rawphp",
   };
@@ -1300,6 +1335,7 @@ describe("the gate in the background", () => {
           ...stubSessions,
           archive: (threadId) => Effect.sync(() => void archived.push(threadId)),
         }),
+        watchedNow,
         () => 1_000,
         "mac-mini",
         noAttention,
@@ -1350,6 +1386,7 @@ describe("the gate in the background", () => {
           dataDir,
           gh,
           stubSessions,
+          watchedNow,
           () => 1_000,
           "mac-mini",
           noAttention,
@@ -1396,10 +1433,9 @@ describe("the gate in the background", () => {
     maxConcurrentRuns: 1,
     maxConcurrentGates: 1,
     notify: true,
-    repos: [{ repo: REPO, path: "/p" }],
   };
   const gateRepo: Repo = {
-    watched: gateMachine.repos[0]!,
+    watched: { repo: REPO, path: "/p" },
     project: timeLimitOnlyProjectConfig(),
     trackerUser: "rawphp",
   };
@@ -1431,6 +1467,7 @@ describe("the gate in the background", () => {
           dataDir,
           deadGh,
           sessions,
+          watchedNow,
           () => 1_000,
           "mac-mini",
           noAttention,
@@ -1480,6 +1517,7 @@ describe("the gate in the background", () => {
           dataDir,
           deadGh,
           sessions,
+          watchedNow,
           () => 1_000,
           "mac-mini",
           noAttention,
@@ -1506,6 +1544,7 @@ describe("the gate in the background", () => {
           dataDir,
           deadGh,
           sessions,
+          watchedNow,
           () => 1_000,
           "mac-mini",
           noAttention,
@@ -1548,6 +1587,7 @@ describe("the gate in the background", () => {
         dataDir,
         quietGh,
         sessions,
+        watchedNow,
         () => 1_000,
         "mac-mini",
         {
@@ -1597,6 +1637,7 @@ describe("the gate in the background", () => {
         dataDir,
         deadGh,
         sessions,
+        watchedNow,
         () => 1_000,
         "mac-mini",
         noAttention,
@@ -1717,13 +1758,13 @@ describe("the gate in the background", () => {
         maxConcurrentRuns: 1,
         maxConcurrentGates: 1,
         notify: true,
-        repos: [{ repo: REPO, path: "/p" }],
       };
       const world = liveWorld(
         machine,
         dataDir,
         { run: () => Effect.die("no gh") },
         stubSessions,
+        watchedNow,
         () => 2_000,
         "mac-mini",
         noAttention,
@@ -1771,11 +1812,11 @@ describe("the gate in the background", () => {
             maxConcurrentRuns: 1,
             maxConcurrentGates: 1,
             notify: true,
-            repos: [{ repo: REPO, path: "/p" }],
           },
           dataDir,
           { run: () => Effect.die("no gh") },
           stubSessions,
+          watchedNow,
           () => 2_000,
           "mac-mini",
           noAttention,
@@ -1841,6 +1882,7 @@ describe("reloading the machine config", () => {
     process: FactoryProcess["Service"],
     events: Layer.Layer<FactoryEvents> = quietEvents,
     options: RuntimeOptions = {},
+    watched: Layer.Layer<FactoryWatchedRepos> = watching([A_B]),
   ) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1862,6 +1904,7 @@ describe("reloading the machine config", () => {
           ),
           Layer.provide(Layer.succeed(FactoryProcess, process)),
           Layer.provide(noSessions),
+          Layer.provide(watched),
           Layer.provide(events),
           Layer.provide(noGate),
         ),
@@ -1874,9 +1917,7 @@ describe("reloading the machine config", () => {
       };
     });
 
-  const OTHER = VALID.replace("a/b", "c/d")
-    .replace("/b", "/d")
-    .replace("gh_config_dir: /gh", "gh_config_dir: /gh2");
+  const OTHER = VALID.replace("gh_config_dir: /gh", "gh_config_dir: /gh2");
 
   it.effect("goes from idle to running when a valid file appears and is reloaded", () =>
     Effect.scoped(
@@ -1938,14 +1979,24 @@ describe("reloading the machine config", () => {
             "a/b",
             "c/d",
           ]);
-          const { loop, write } = yield* started(VALID, process);
+          // T3's projects change between the passes: the next one is the first to see c/d.
+          const projects = yield* Ref.make<ReadonlyArray<WatchedProject>>([A_B]);
+          const { loop, write } = yield* started(
+            VALID,
+            process,
+            quietEvents,
+            {},
+            watching(Ref.get(projects)),
+          );
           yield* Deferred.await(entered);
           const first = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+          yield* Ref.set(projects, [C_D]);
           yield* write(OTHER);
           yield* loop.reload;
+          // The pass under way listed a/b, and what was listed last is what the status reports.
           assert.deepStrictEqual(loop.status, {
             state: "running",
-            settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["c/d"] },
+            settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
           });
           yield* Deferred.succeed(release, undefined);
           yield* Fiber.join(first);
@@ -1955,6 +2006,10 @@ describe("reloading the machine config", () => {
           const next = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
           yield* Deferred.succeed(second.release, undefined);
           yield* Fiber.join(next);
+          assert.deepStrictEqual(loop.status, {
+            state: "running",
+            settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["c/d"] },
+          });
           const lastOld = calls.findLastIndex((call) => call.includes("a/b"));
           const firstNew = calls.findIndex((call) => call.includes("c/d"));
           assert.ok(lastOld >= 0 && firstNew > lastOld, calls.join("\n"));
@@ -1980,7 +2035,7 @@ describe("reloading the machine config", () => {
             ),
         });
         const worlds: Array<PassWorld> = [];
-        const oneGate = VALID.replace("repos:", "max_concurrent_gates: 1\nrepos:");
+        const oneGate = `${VALID}max_concurrent_gates: 1\n`;
         const { loop, factoryDir, write } = yield* started(oneGate, process, quietEvents, {
           onWorld: (world) => worlds.push(world),
         });
@@ -2031,6 +2086,33 @@ describe("reloading the machine config", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("watchedRepos lists the T3 projects as they are now, and none when listing fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { process } = holdingProcess();
+        const projects = yield* Ref.make<ReadonlyArray<WatchedProject>>([A_B]);
+        const listing = yield* started(
+          VALID,
+          process,
+          quietEvents,
+          {},
+          watching(Ref.get(projects)),
+        );
+        assert.deepStrictEqual(yield* listing.loop.watchedRepos, [A_B]);
+        yield* Ref.set(projects, [A_B, C_D]);
+        assert.deepStrictEqual(yield* listing.loop.watchedRepos, [A_B, C_D]);
+        const failing = yield* started(
+          VALID,
+          process,
+          quietEvents,
+          {},
+          watching(Effect.fail(new WatchedReposError({ cause: new Error("store down") }))),
+        );
+        assert.deepStrictEqual(yield* failing.loop.watchedRepos, []);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("two reloads at once from idle make one loop and one wake stream", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -2077,15 +2159,18 @@ describe("reloading the machine config", () => {
               gh_config_dir: "/gh",
               max_concurrent_runs: 1,
               model: "claude-sonnet-5-5",
-              repos: [{ repo: "a/b", path: "/b" }],
             });
             assert.strictEqual(result.kind, "ok");
             if (result.kind === "ok") {
               assert.strictEqual(result.report.exists, true);
-              assert.deepStrictEqual(result.report.config?.repos, [{ repo: "a/b", path: "/b" }]);
+              assert.strictEqual(result.report.config?.gh_config_dir, "/gh");
             }
             assert.strictEqual(loop.status.state, "running");
-            assert.ok((yield* (yield* FileSystem.FileSystem).readFileString(file)).includes("a/b"));
+            assert.ok(
+              (yield* (yield* FileSystem.FileSystem).readFileString(file)).includes(
+                "gh_config_dir",
+              ),
+            );
           }),
         ).pipe(Effect.provide(NodeServices.layer)),
     );
