@@ -63,7 +63,10 @@ import {
 } from "@t3tools/shared/sourceControl";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { parseGitHubRepositorySelector } from "@t3tools/source-control-github/server/gitHubRepositoryResolution";
+import {
+  parseGitHubRepositorySelector,
+  resolveGitHubRepository,
+} from "@t3tools/source-control-github/server/gitHubRepositoryResolution";
 import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeyOf,
@@ -1382,9 +1385,10 @@ export const make = Effect.gen(function* () {
     gitCore.readConfigValue(cwd, key).pipe(Effect.orElseSucceed(() => null));
 
   // Whether the GitHub provider creates PRs in the only remote. It picks GH_REPO when that
-  // parses, else the `OWNER/REPO` that `gh repo set-default` recorded (gh-resolved), else the
-  // only remote itself, as for gh-resolved `base`. The remote's host is the one the provider's
-  // context gets from the remote URL, so an HTTPS remote keeps a non-default port.
+  // parses, else what resolveGitHubRepository makes of the remote and its gh-resolved mark from
+  // `gh repo set-default`, given the host the provider's context gets from the remote URL. An
+  // HTTPS remote keeps a non-default port there, and the provider then ignores the mark. With no
+  // answer at all, the provider falls back to the remote itself.
   const targetsOnlyRemote = Effect.fn("targetsOnlyRemote")(function* (
     cwd: string,
     remoteName: string,
@@ -1406,8 +1410,13 @@ export const make = Effect.gen(function* () {
       );
     }
     const mark = yield* readConfigValueNullable(cwd, `remote.${remoteName}.gh-resolved`);
-    const [owner, name, ...rest] = (mark ?? "base").toLowerCase().split("/");
-    return !owner || !name || rest.length > 0 || `${owner}/${name}` === repository;
+    const { locator } = resolveGitHubRepository({
+      remotes: remote.remoteUrl === null ? "" : `${remoteName}\t${remote.remoteUrl} (fetch)`,
+      resolved: mark === null ? "" : `remote.${remoteName}.gh-resolved ${mark}`,
+      hostHint: host ?? undefined,
+      defaultHost: host ?? "github.com",
+    });
+    return locator === null || `${locator.owner}/${locator.name}`.toLowerCase() === repository;
   });
 
   const resolveHostingProvider = Effect.fn("resolveHostingProvider")(function* (

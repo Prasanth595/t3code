@@ -4472,18 +4472,37 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
   );
 
   it.effect.each([
-    { remoteUrl: "git@github.com:pingdotgg/codething-mvp.git", ghRepo: null },
+    { remoteUrl: "git@github.com:pingdotgg/codething-mvp.git", ghRepo: null, ghResolved: null },
     {
       remoteUrl: "git@github.com:pingdotgg/codething-mvp.git",
       ghRepo: "https://github.com/pingdotgg/codething-mvp?tab=readme#readme",
+      ghResolved: null,
     },
     {
       remoteUrl: "https://github.example.com:8443/pingdotgg/codething-mvp.git",
       ghRepo: "https://github.example.com:8443/pingdotgg/codething-mvp",
+      ghResolved: null,
+    },
+    // The GitHub resolver finds no repository for this GitLab remote, so the remote decides.
+    {
+      remoteUrl: "https://gitlab.example.com:8443/pingdotgg/codething-mvp.git",
+      ghRepo: null,
+      ghResolved: null,
+    },
+    // With a port on the remote's host the provider ignores gh-resolved and picks the remote.
+    {
+      remoteUrl: "https://github.example.com:8443/pingdotgg/codething-mvp.git",
+      ghRepo: null,
+      ghResolved: "acme/demo",
+    },
+    {
+      remoteUrl: "https://github.example.com:8443/pingdotgg/codething-mvp.git",
+      ghRepo: "base",
+      ghResolved: "acme/demo",
     },
   ] as const)(
-    "reuses the open same-repository PR when the only remote is not named origin (remote $remoteUrl, GH_REPO $ghRepo)",
-    ({ remoteUrl, ghRepo }) =>
+    "reuses the open same-repository PR when the only remote is not named origin (remote $remoteUrl, GH_REPO $ghRepo, gh-resolved $ghResolved)",
+    ({ remoteUrl, ghRepo, ghResolved }) =>
       Effect.gen(function* () {
         const repoDir = yield* makeTempDir("t3code-git-manager-");
         yield* initRepo(repoDir);
@@ -4492,6 +4511,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* runGit(repoDir, ["remote", "add", "fork", remoteDir]);
         yield* runGit(repoDir, ["push", "-u", "fork", "dev"]);
         yield* configureVisibleRemoteUrlWithLocalRewrite(repoDir, "fork", remoteUrl, remoteDir);
+        if (ghResolved !== null) {
+          yield* runGit(repoDir, ["config", "remote.fork.gh-resolved", ghResolved]);
+        }
         NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
 
         const { manager, ghCalls } = yield* makeManager({
@@ -4619,32 +4641,68 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     {
       remoteUrl: "https://github.example.com:8443/contributor/demo.git",
       ghRepo: "https://github.example.com:9443/contributor/demo",
+      ghResolved: null,
       head: "contributor:dev",
     },
     {
       remoteUrl: "https://github.example.com:8443/contributor/demo.git",
       ghRepo: "github.example.com/contributor/demo",
+      ghResolved: null,
       head: "contributor:dev",
     },
     {
       remoteUrl: "https://github.example.com:8443/contributor/demo.git",
       ghRepo: "github.example.com:8443/contributor/demo",
+      ghResolved: null,
       head: "dev",
     },
     {
       remoteUrl: "https://github.example.com/contributor/demo.git",
       ghRepo: "github.example.com:443/contributor/demo",
+      ghResolved: null,
       head: "dev",
     },
     // An SSH port is not part of the host the provider uses.
     {
       remoteUrl: "ssh://git@github.example.com:2222/contributor/demo.git",
       ghRepo: "github.example.com/contributor/demo",
+      ghResolved: null,
       head: "dev",
     },
+    // The provider ignores gh-resolved only when the remote's host carries a port.
+    {
+      remoteUrl: "https://github.example.com:8443/contributor/demo.git",
+      ghRepo: null,
+      ghResolved: "acme/demo",
+      head: "dev",
+    },
+    {
+      remoteUrl: "https://github.example.com/contributor/demo.git",
+      ghRepo: null,
+      ghResolved: "acme/demo",
+      head: "contributor:dev",
+    },
+    {
+      remoteUrl: "https://github.example.com:443/contributor/demo.git",
+      ghRepo: null,
+      ghResolved: "acme/demo",
+      head: "contributor:dev",
+    },
+    {
+      remoteUrl: "git@github.com:contributor/demo.git",
+      ghRepo: null,
+      ghResolved: "acme/demo",
+      head: "contributor:dev",
+    },
+    {
+      remoteUrl: "ssh://git@github.example.com:2222/contributor/demo.git",
+      ghRepo: null,
+      ghResolved: "acme/demo",
+      head: "contributor:dev",
+    },
   ] as const)(
-    "creates the PR with head $head when the only remote is $remoteUrl and GH_REPO is $ghRepo",
-    ({ remoteUrl, ghRepo, head }) =>
+    "creates the PR with head $head when the only remote is $remoteUrl, GH_REPO is $ghRepo and gh-resolved is $ghResolved",
+    ({ remoteUrl, ghRepo, ghResolved, head }) =>
       Effect.gen(function* () {
         const repoDir = yield* makeTempDir("t3code-git-manager-");
         yield* initRepo(repoDir);
@@ -4653,9 +4711,14 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* runGit(repoDir, ["remote", "add", "fork", forkDir]);
         yield* runGit(repoDir, ["push", "-u", "fork", "dev"]);
         yield* configureVisibleRemoteUrlWithLocalRewrite(repoDir, "fork", remoteUrl, forkDir);
+        if (ghResolved !== null) {
+          yield* runGit(repoDir, ["config", "remote.fork.gh-resolved", ghResolved]);
+        }
         NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
 
-        const { manager, ghCalls } = yield* makeManager({ environment: { GH_REPO: ghRepo } });
+        const { manager, ghCalls } = yield* makeManager({
+          environment: ghRepo === null ? {} : { GH_REPO: ghRepo },
+        });
 
         const result = yield* runStackedAction(manager, {
           cwd: repoDir,
