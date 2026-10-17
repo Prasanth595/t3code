@@ -8,13 +8,15 @@ import type { State } from "../domain/lifecycle.ts";
 import { makeCause } from "./events.ts";
 import { Ledger } from "./ledger.ts";
 import { holdsSlot, listRuns, listUnfinishedRuns, readRuns, runInfoOf } from "./listRuns.ts";
+import { lastLineIsFinished } from "./read.ts";
 import { RUNS_DIR, runIdFileName, type RunId } from "./runId.ts";
 import { T0, ticking, useTempDirs } from "./testSupport.ts";
 
-// Records every full-file read; `node:fs` namespaces are frozen, so the module itself is wrapped.
+// Records every full-file read and every chunk read; `node:fs` namespaces are frozen, so the module
+// itself is wrapped.
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
-  return { ...actual, readFileSync: vi.fn(actual.readFileSync) };
+  return { ...actual, readFileSync: vi.fn(actual.readFileSync), readSync: vi.fn(actual.readSync) };
 });
 
 const tempDir = useTempDirs();
@@ -589,6 +591,134 @@ describe("listRuns", () => {
   });
 });
 
+describe("listRuns: a finished run is summarised from the ends of its file", () => {
+  const PR_URL = "https://example.test/pull/4";
+  /** A run with `events` after the claim, finished as `outcome` with the finished line's `prUrl`. */
+  const finishedRun = (
+    dataDir: string,
+    id: RunId,
+    events: ReadonlyArray<{ readonly event: string; readonly data: unknown }>,
+    outcome: "pr-open" | "stuck" | "needs-info",
+    prUrl: string | null,
+  ) => {
+    const ledger = Ledger.create(dataDir, id, {
+      clock: ticking(T0 + Number(id.issue) * 60_000, 1000),
+    });
+    try {
+      ledger.append({ event: "claimed", data: { machine: "m", github_user: "u" } }, cause);
+      for (const event of events) ledger.append(event as never, cause);
+      ledger.finish(outcome, null, prUrl, cause, prUrl === null ? null : "merged");
+    } finally {
+      ledger.close();
+    }
+    return NodePath.join(dataDir, RUNS_DIR, runIdFileName(id));
+  };
+  const moved = (from: string, to: string) => ({ event: "state_changed", data: { from, to } });
+  const opened = (pr: number) => ({
+    event: "pr_opened",
+    data: { pr, url: `https://example.test/pull/${pr}` },
+  });
+  const padding = (n: number) =>
+    Array.from({ length: n }, () => ({ event: "step_changed", data: { step: "x".repeat(1000) } }));
+
+  it("equals the summary of the whole read, and no finished file is read whole", () => {
+    const dataDir = tempDir();
+    const files = [
+      // No pull request at all: the scan reads back to the start.
+      finishedRun(
+        dataDir,
+        rid(1),
+        [moved("ready", "triage"), moved("triage", "building")],
+        "stuck",
+        null,
+      ),
+      // The finished line carries the pull request.
+      finishedRun(
+        dataDir,
+        rid(2),
+        [moved("triage", "building"), opened(3), moved("building", "pr-open")],
+        "pr-open",
+        PR_URL,
+      ),
+      // A stuck run's finished line has none, so the last pr_opened gives it.
+      finishedRun(
+        dataDir,
+        rid(3),
+        [opened(5), opened(6), moved("building", "stuck")],
+        "stuck",
+        null,
+      ),
+      // A pr_opened after the last state change, and a state this build does not know.
+      finishedRun(dataDir, rid(4), [moved("ready", "launching"), opened(7)], "stuck", null),
+      // No state change at all.
+      finishedRun(dataDir, rid(5), [], "needs-info", null),
+    ];
+    const whole = readRuns(dataDir).map((read) => read.summary);
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    const summaries = listRuns(dataDir);
+    expect(summaries).toEqual(whole);
+    for (const file of files) expect(fullReads()).not.toContain(file);
+    expect(summaries.map((run) => [run.state, run.prUrl, run.finished, run.lastEvent])).toEqual([
+      ["building", null, true, "finished"],
+      ["pr-open", PR_URL, true, "finished"],
+      ["stuck", "https://example.test/pull/6", true, "finished"],
+      [null, "https://example.test/pull/7", true, "finished"],
+      [null, null, true, "finished"],
+    ]);
+    expect(summaries.every((run) => run.totalMs !== null && run.startedTs !== null)).toBe(true);
+  });
+
+  it("skips damaged lines at both ends as the whole read does", () => {
+    const dataDir = tempDir();
+    const path = finishedRun(
+      dataDir,
+      rid(1),
+      [opened(2), moved("triage", "building")],
+      "stuck",
+      null,
+    );
+    const bytes = NodeFS.readFileSync(path, "utf8");
+    const finishedAt = bytes.lastIndexOf("\n", bytes.length - 2) + 1;
+    NodeFS.writeFileSync(
+      path,
+      `not json\n\n${bytes.slice(0, finishedAt)}{"cut":\n\r\n${bytes.slice(finishedAt)}`,
+    );
+    expect(lastLineIsFinished(path)).toBe(true);
+    const whole = readRuns(dataDir).map((read) => read.summary);
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    expect(listRuns(dataDir)).toEqual(whole);
+    expect(fullReads()).not.toContain(path);
+    expect(whole[0]).toMatchObject({ state: "building", prUrl: "https://example.test/pull/2" });
+  });
+
+  it("reads only the end of a large finished run whose pull request is near it", () => {
+    const dataDir = tempDir();
+    const path = finishedRun(
+      dataDir,
+      rid(1),
+      [...padding(2000), opened(2), moved("building", "pr-open")],
+      "pr-open",
+      PR_URL,
+    );
+    const size = NodeFS.statSync(path).size;
+    vi.mocked(NodeFS.readSync).mockClear();
+    expect(listRuns(dataDir)[0]).toMatchObject({ state: "pr-open", prUrl: PR_URL, finished: true });
+    const chunked = vi
+      .mocked(NodeFS.readSync)
+      .mock.results.reduce((sum, result) => sum + (result.value as number), 0);
+    expect(size).toBeGreaterThan(1_000_000);
+    expect(chunked).toBeLessThan(100_000);
+  });
+
+  it("still reads an unfinished run whole", () => {
+    const dataDir = tempDir();
+    runAt(dataDir, rid(1), T0, "building");
+    vi.mocked(NodeFS.readFileSync).mockClear();
+    expect(listRuns(dataDir)[0]).toMatchObject({ state: "building", finished: false });
+    expect(fullReads()).toContain(NodePath.join(dataDir, RUNS_DIR, runIdFileName(rid(1))));
+  });
+});
+
 describe("the run scanner", () => {
   it("skips a directory and a symlink named like a run, in both listings", () => {
     const dataDir = tempDir();
@@ -698,20 +828,6 @@ describe("readRuns: skipFinishedBefore", () => {
       ["1", false],
       ["2", false],
     ]);
-  });
-
-  it("listRuns takes the same option: an old finished file is neither read nor listed", () => {
-    const dataDir = tempDir();
-    const nowMs = Date.parse("2026-10-17T00:00:00Z");
-    const oldFinished = writeRun(dataDir, rid(1), stateLine("building") + finishedLine);
-    const oldOpen = writeRun(dataDir, rid(2), stateLine("building"));
-    age(oldFinished, nowMs, 25 * 3_600_000);
-    age(oldOpen, nowMs, 25 * 3_600_000);
-    vi.mocked(NodeFS.readFileSync).mockClear();
-    const runs = listRuns(dataDir, { skipFinishedBefore: nowMs - DAY });
-    expect(runs.map((run) => run.id.issue)).toEqual(["2"]);
-    expect(fullReads()).not.toContain(oldFinished);
-    expect(listRuns(dataDir).map((run) => run.id.issue)).toEqual(["1", "2"]);
   });
 
   it("without the option every file is read, finished and old ones included", () => {

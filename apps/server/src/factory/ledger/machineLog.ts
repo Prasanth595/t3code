@@ -17,7 +17,7 @@ import {
 import { LedgerUnknownEventError, LedgerIoError, errnoCode, isLedgerError } from "./errors.ts";
 import { MACHINE_EVENT_FIELDS, buildData, issueKeyJson, type MachineEvent } from "./events.ts";
 import { NEWLINE } from "./limits.ts";
-import { decodeLine, isBlankLine, lineHead } from "./read.ts";
+import { decodeLine, isBlankLine, lineHead, scanLinesBack } from "./read.ts";
 import { formatTs } from "./time.ts";
 
 /** The file in the data dir that takes the events that belong to no run. */
@@ -199,55 +199,25 @@ export const scanMachineLog = (dataDir: string): Array<MachineEntry> => {
   return entries;
 };
 
-/** How much of the machine log `scanMachineLogBack` reads first; each read after it doubles. */
-const FIRST_CHUNK_BYTES = 64 * 1024;
-
 /**
  * Calls `visit` with the lines of the machine log, newest first, until it answers `"stop"` or the
  * start of the file is reached, and returns how many bytes it read. The log is never rotated, so a
- * reader that needs only its end reads only its end: the file is read backwards in chunks (the
- * first is `firstChunk` bytes, each after it twice the one before), and a line cut by a chunk
- * edge is completed by the next one. The file is opened and a line skipped exactly as
- * {@link scanMachineLog} does it, so the same entries come in the opposite order.
+ * reader that needs only its end reads only its end: the file is read backwards in chunks
+ * (`scanLinesBack`; the first is `firstChunk` bytes). The file is opened and a line skipped
+ * exactly as {@link scanMachineLog} does it, so the same entries come in the opposite order.
  */
 export const scanMachineLogBack = (
   dataDir: string,
   visit: (entry: MachineEntry) => "continue" | "stop",
-  firstChunk: number = FIRST_CHUNK_BYTES,
+  firstChunk?: number,
 ): number =>
-  withLogFd(dataDir, 0, (fd) => {
-    let pos = NodeFS.fstatSync(fd).size;
-    let bytesRead = 0;
-    let chunk = Math.max(1, firstChunk);
-    // The start of a line whose beginning is in an earlier chunk.
-    let head: Buffer = Buffer.alloc(0);
-    const visitLine = (line: Uint8Array): "continue" | "stop" => {
-      const entry = entryOfLine(line);
-      return entry === null ? "continue" : visit(entry);
-    };
-    while (pos > 0) {
-      const size = Math.min(pos, chunk);
-      pos -= size;
-      const bytes = Buffer.alloc(size + head.length);
-      let filled = 0;
-      while (filled < size) {
-        const n = NodeFS.readSync(fd, bytes, filled, size - filled, pos + filled);
-        if (n === 0) break;
-        filled += n;
-      }
-      head.copy(bytes, size);
-      bytesRead += size;
-      chunk *= 2;
-      let end = bytes.length;
-      while (end > 0) {
-        const newline = bytes.lastIndexOf(NEWLINE, end - 1);
-        if (newline === -1) break;
-        if (visitLine(bytes.subarray(newline + 1, end)) === "stop") return bytesRead;
-        end = newline;
-      }
-      head = bytes.subarray(0, end);
-    }
-    // What is left has no line before it: it is the first line of the file.
-    visitLine(head);
-    return bytesRead;
-  });
+  withLogFd(dataDir, 0, (fd) =>
+    scanLinesBack(
+      fd,
+      (line) => {
+        const entry = entryOfLine(line);
+        return entry === null ? "continue" : visit(entry);
+      },
+      firstChunk,
+    ),
+  );

@@ -4,17 +4,22 @@ import * as NodePath from "node:path";
 
 import * as Schema from "effect/Schema";
 
-import { type State } from "../domain/lifecycle.ts";
+import { isState, type State } from "../domain/lifecycle.ts";
 import { readProgress, type Seen } from "../runner/progress.ts";
 import { errnoCode, LedgerIoError, LedgerNotFoundError } from "./errors.ts";
-import { dataText, lastLineIsFinished, readRun, type RunRecord } from "./read.ts";
+import {
+  dataField,
+  dataText,
+  firstEntry,
+  lastLineIsFinished,
+  parseLine,
+  readRun,
+  scanLinesBack,
+  withRunFile,
+  type Entry,
+  type RunRecord,
+} from "./read.ts";
 import { asciiLower, RUNS_DIR, runIdFromFileName, runPath, type RunId } from "./runId.ts";
-
-/**
- * How far back a finished run, or a problem, still counts as recent: the status report's window,
- * and the runs a listing shows by default besides the unfinished ones.
- */
-export const RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /** One unfinished run as the pass sees it: its id, its last state, and whether its file could be read. */
 export interface RunInfo {
@@ -66,13 +71,18 @@ export const runInfoOf = (id: RunId, seen: Seen | null): RunInfo =>
         prReported: seen.prReported,
       };
 
-/** One run file as the scanner read it. `record` and `seen` are null for a file that could not be read. */
-interface Scanned {
+/** One run file as the scanner read it. `read` is null for a file that could not be read. */
+interface Scanned<T> {
   readonly id: RunId;
-  /** The first line's time. */
+  /** The first line's time; null for a file with no readable line. */
   readonly firstMs: number | null;
-  readonly record: RunRecord | null;
-  readonly seen: Seen | null;
+  readonly read: T | null;
+}
+
+/** What a scanner's reader makes of one file: the first line's time, and what it read. */
+interface FileRead<T> {
+  readonly firstMs: number | null;
+  readonly read: T;
 }
 
 const compareText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -90,8 +100,8 @@ const compareIssue = (a: string, b: string) => {
  * readable line, then unreadable ones; ties by repo (code units), issue (numerically when both
  * are numbers) and attempt.
  */
-const byAge = (a: Scanned, b: Scanned) => {
-  const rank = (run: Scanned) => (run.seen === null ? 2 : run.firstMs === null ? 1 : 0);
+const byAge = <T>(a: Scanned<T>, b: Scanned<T>) => {
+  const rank = (run: Scanned<T>) => (run.read === null ? 2 : run.firstMs === null ? 1 : 0);
   return (
     rank(a) - rank(b) ||
     (a.firstMs ?? 0) - (b.firstMs ?? 0) ||
@@ -101,21 +111,35 @@ const byAge = (a: Scanned, b: Scanned) => {
   );
 };
 
+/** A run file read whole: its record and progress. */
+interface WholeRead {
+  readonly record: RunRecord;
+  readonly seen: Seen;
+}
+
+const readWhole = (dataDir: string, id: RunId): FileRead<WholeRead> => {
+  const record = readRun(dataDir, id);
+  return {
+    firstMs: record.entries[0]?.ms ?? null,
+    read: { record, seen: readProgress(record.entries) },
+  };
+};
+
 /**
  * Reads the runs directory once for every caller: the files named like a run that are regular
- * files (a symlink or directory with such a name is not a run, as in softfac), each read whole
- * into its record and progress, oldest first. A regular file that cannot be read is still a row,
- * with no record, so one bad file does not hide the others. `skip` is asked about a file before
- * it is read, with its mtime, and a file it answers true for is left out. A missing runs
- * directory is an empty list.
+ * files (a symlink or directory with such a name is not a run, as in softfac), each read by
+ * `read`, oldest first. A regular file that cannot be read is still a row, with nothing read, so
+ * one bad file does not hide the others. `skip` is asked about a file before it is read, with its
+ * mtime, and a file it answers true for is left out. A missing runs directory is an empty list.
  */
-const scanRuns = (
+const scanRuns = <T>(
   dataDir: string,
   options: {
+    readonly read: (id: RunId, path: string) => FileRead<T>;
     readonly only?: { readonly repo: string; readonly issue: number } | undefined;
     readonly skip?: ((path: string, mtimeMs: number) => boolean) | undefined;
   },
-): Array<Scanned> => {
+): Array<Scanned<T>> => {
   const runsDir = NodePath.join(dataDir, RUNS_DIR);
   let names: Array<string>;
   try {
@@ -124,8 +148,8 @@ const scanRuns = (
     if (errnoCode(error) === "ENOENT") return [];
     throw new LedgerIoError({ path: runsDir, cause: error });
   }
-  const { only, skip } = options;
-  const runs: Array<Scanned> = [];
+  const { read, only, skip } = options;
+  const runs: Array<Scanned<T>> = [];
   for (const name of names) {
     const id = runIdFromFileName(name);
     if (id === null) continue;
@@ -140,18 +164,12 @@ const scanRuns = (
       const stat = NodeFS.lstatSync(path);
       if (!stat.isFile()) continue;
       if (skip?.(path, stat.mtimeMs) === true) continue;
-      const record = readRun(dataDir, id);
-      runs.push({
-        id,
-        firstMs: record.entries[0]?.ms ?? null,
-        record,
-        seen: readProgress(record.entries),
-      });
+      runs.push({ id, ...read(id, path) });
     } catch (error) {
       // Gone between the listing and the read (the lstat's ENOENT, or the read's not-found): not
       // a run any more.
       if (errnoCode(error) === "ENOENT" || Schema.is(LedgerNotFoundError)(error)) continue;
-      runs.push({ id, firstMs: null, record: null, seen: null });
+      runs.push({ id, firstMs: null, read: null });
     }
   }
   return runs.sort(byAge);
@@ -170,9 +188,13 @@ export const listUnfinishedRuns = (
   dataDir: string,
   only?: { readonly repo: string; readonly issue: number },
 ): Array<RunInfo> =>
-  scanRuns(dataDir, { only, skip: (path) => lastLineIsFinished(path) })
-    .filter((run) => run.seen === null || !run.seen.finished)
-    .map((run) => runInfoOf(run.id, run.seen));
+  scanRuns(dataDir, {
+    read: (id) => readWhole(dataDir, id),
+    only,
+    skip: (path) => lastLineIsFinished(path),
+  })
+    .filter((run) => run.read === null || !run.read.seen.finished)
+    .map((run) => runInfoOf(run.id, run.read?.seen ?? null));
 
 /** A run in one row, as `softfac runs list` shows it. */
 export interface RunSummary {
@@ -198,23 +220,27 @@ export interface RunRead {
   readonly seen: Seen | null;
 }
 
-/** The summary of a run: its progress, plus what the progress does not carry. */
-const summarise = (run: Scanned): RunSummary => {
-  const { id, record, seen } = run;
-  if (record === null || seen === null) {
-    return {
-      id,
-      startedTs: null,
-      lastEvent: null,
-      state: null,
-      prUrl: null,
-      finished: false,
-      totalMs: null,
-      unreadable: true,
-    };
-  }
+/** The summary of a file that could not be read: every other field is empty. */
+const unreadableSummary = (id: RunId): RunSummary => ({
+  id,
+  startedTs: null,
+  lastEvent: null,
+  state: null,
+  prUrl: null,
+  finished: false,
+  totalMs: null,
+  unreadable: true,
+});
+
+/** The `total_ms` of a `finished` line, when it is a number. */
+const totalMsOf = (end: Entry | undefined): number | null => {
+  const total = dataField(end?.data, "total_ms");
+  return typeof total === "number" ? total : null;
+};
+
+/** The summary of a run read whole: its progress, plus what the progress does not carry. */
+const summarise = (id: RunId, { record, seen }: WholeRead): RunSummary => {
   const end = record.entries.findLast((entry) => entry.event === "finished");
-  const total = (end?.data as Record<string, unknown> | null | undefined)?.total_ms;
   return {
     id,
     startedTs: record.entries[0]?.ts ?? null,
@@ -222,10 +248,54 @@ const summarise = (run: Scanned): RunSummary => {
     state: seen.state,
     prUrl: (end === undefined ? null : dataText(end.data, "pr_url")) ?? seen.lastPr?.url ?? null,
     finished: seen.finished,
-    totalMs: typeof total === "number" ? total : null,
+    totalMs: totalMsOf(end),
     unreadable: false,
   };
 };
+
+/**
+ * The summary of a finished run file (its last line is `finished`, see `lastLineIsFinished`)
+ * without reading it whole, equal to {@link summarise} of the whole read. A finished file is never
+ * appended to, so its ends say everything the summary needs: the first line its start, and a scan
+ * back from the end the `finished` line, the last `state_changed` and, when the `finished` line has
+ * no pull request URL (a stuck run's never has), the last `pr_opened`. The scan stops once it has
+ * them, so only a finished run that never opened a pull request is read to its start.
+ */
+const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
+  withRunFile(path, (fd) => {
+    const first = firstEntry(fd);
+    let end: Entry | undefined;
+    let state: State | null | undefined;
+    let prUrl: string | null = null;
+    scanLinesBack(fd, (line) => {
+      const entry = parseLine(line);
+      if (entry === null) return "continue";
+      if (entry.event === "finished") {
+        end ??= entry;
+        prUrl ??= dataText(entry.data, "pr_url");
+      } else if (entry.event === "state_changed" && state === undefined) {
+        const to = dataField(entry.data, "to");
+        state = isState(to) ? to : null;
+      } else if (entry.event === "pr_opened" && prUrl === null) {
+        const url = dataField(entry.data, "url");
+        if (typeof dataField(entry.data, "pr") === "number" && typeof url === "string") prUrl = url;
+      }
+      return state !== undefined && prUrl !== null ? "stop" : "continue";
+    });
+    return {
+      firstMs: first?.ms ?? null,
+      read: {
+        id,
+        startedTs: first?.ts ?? null,
+        lastEvent: "finished",
+        state: state ?? null,
+        prUrl,
+        finished: true,
+        totalMs: totalMsOf(end),
+        unreadable: false,
+      },
+    };
+  });
 
 /**
  * Every run under `<dir>/runs/`, finished ones included, oldest first by the first line's time and
@@ -246,15 +316,23 @@ export const readRuns = (
     skipFinishedBefore === undefined
       ? undefined
       : (path: string, mtimeMs: number) => mtimeMs < skipFinishedBefore && lastLineIsFinished(path);
-  return scanRuns(dataDir, { skip }).map((run) => ({
-    summary: summarise(run),
-    record: run.record,
-    seen: run.seen,
+  return scanRuns(dataDir, { read: (id) => readWhole(dataDir, id), skip }).map((run) => ({
+    summary: run.read === null ? unreadableSummary(run.id) : summarise(run.id, run.read),
+    record: run.read?.record ?? null,
+    seen: run.read?.seen ?? null,
   }));
 };
 
-/** {@link readRuns} without the lines: one summary per run, with the same options. */
-export const listRuns = (
-  dataDir: string,
-  options: { readonly skipFinishedBefore?: number } = {},
-): Array<RunSummary> => readRuns(dataDir, options).map((read) => read.summary);
+/**
+ * `softfac runs list`: every run under `<dir>/runs/`, one summary each, in the order of
+ * {@link readRuns}. A finished file is summarised from its ends (see `summariseFinished`) and is
+ * never read whole; an unfinished one, one of the few active runs, is read whole.
+ */
+export const listRuns = (dataDir: string): Array<RunSummary> =>
+  scanRuns(dataDir, {
+    read: (id, path): FileRead<RunSummary> => {
+      if (lastLineIsFinished(path)) return summariseFinished(id, path);
+      const whole = readWhole(dataDir, id);
+      return { firstMs: whole.firstMs, read: summarise(id, whole.read) };
+    },
+  }).map((run) => run.read ?? unreadableSummary(run.id));

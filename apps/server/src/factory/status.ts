@@ -12,13 +12,7 @@ import type { AttentionItem } from "./attention.ts";
 import { loadHandPause } from "./claims.ts";
 import { scanMachineLogBack, type MachineEntry } from "./ledger/machineLog.ts";
 import { dataText } from "./ledger/read.ts";
-import {
-  holdsSlot,
-  readRuns,
-  RECENT_WINDOW_MS,
-  runInfoOf,
-  type RunRead,
-} from "./ledger/listRuns.ts";
+import { holdsSlot, readRuns, runInfoOf, type RunRead } from "./ledger/listRuns.ts";
 import { asciiLower, runIdToString } from "./ledger/runId.ts";
 import { formatTs } from "./ledger/time.ts";
 
@@ -104,12 +98,14 @@ export interface StatusReport {
   }>;
 }
 
+/** How far back a problem still counts as recent. */
+const PROBLEM_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** The most problems the report lists. */
 const PROBLEM_LIMIT = 10;
 /** The last pass is stale when it is older than this many polls. */
 const STALE_POLLS = 3;
 
-const recent = (ms: number, nowMs: number) => ms + RECENT_WINDOW_MS >= nowMs;
+const recent = (ms: number, nowMs: number) => ms + PROBLEM_WINDOW_MS >= nowMs;
 
 type Problem = StatusReport["problems"][number] & { readonly ms: number };
 
@@ -242,7 +238,7 @@ export const buildStatus = (input: {
   const log = readMachineLog(dataDir, nowMs);
   // One read of the runs gives the rows, the slots and the problems. A finished run last written
   // before the window cannot hold a line inside it, so it is not read.
-  const reads = readRuns(dataDir, { skipFinishedBefore: nowMs - RECENT_WINDOW_MS });
+  const reads = readRuns(dataDir, { skipFinishedBefore: nowMs - PROBLEM_WINDOW_MS });
   const open = reads.filter((read) => !read.summary.finished);
 
   // The one place the port follows the fork's pass, not softfac's `holds_slot`: a run counts as
