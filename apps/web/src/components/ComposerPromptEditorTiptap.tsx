@@ -106,8 +106,8 @@ import { getTimelinePageScrollKey } from "./chat/pageScrollController";
 import { ContextChipPopover } from "./contextChipParts";
 import { Button } from "./ui/button";
 import { ContextChip } from "./ContextChip";
+import { ComposerContextActionsContext } from "./composerContextActions";
 import {
-  ComposerContextActionsContext,
   ComposerContextReferenceChip,
   ComposerContextRecordsContext,
 } from "./composerContextPresentation";

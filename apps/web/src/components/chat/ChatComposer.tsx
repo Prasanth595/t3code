@@ -217,8 +217,8 @@ import {
   type ComposerPromptEditorHandle,
   ComposerPromptEditor,
 } from "../ComposerPromptEditor";
+import { ComposerContextActionsContext } from "../composerContextActions";
 import {
-  ComposerContextActionsContext,
   composerContextRecordsFromDraft,
   uploadedContextRecordFromDraft,
 } from "../composerContextPresentation";
