@@ -165,6 +165,7 @@ it.layer(layerTest)("subagent creation lifecycle", (it) => {
         yield* command(["branch", "-m", "generated-branch"]);
         yield* f.lifecycle(operation);
         const parent = yield* f.projections.getThread(f.threadId);
+        assert.isNotNull(operation === "thread.archive" ? parent.archivedAt : parent.deletedAt);
         const stored = yield* f.ingest(offered);
         assert.deepEqual(
           stored.map((entry) => entry.event.type),
