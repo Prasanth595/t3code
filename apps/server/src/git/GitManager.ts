@@ -63,6 +63,7 @@ import {
 } from "@t3tools/shared/sourceControl";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { parseGitHubRepositorySelector } from "@t3tools/source-control-github/server/gitHubRepositoryResolution";
 import {
   normalizeThreadPullRequestKey,
   threadPullRequestKeyOf,
@@ -615,20 +616,6 @@ function headBranchProbe(
       limit: state === "open" ? 1 : 20,
     }
   );
-}
-
-/**
- * Whether gh's target, from GH_REPO (`[HOST/]OWNER/REPO` or a URL) or a gh-resolved value, is
- * `repositoryNameWithOwner`. gh-resolved `base` names the remote itself.
- */
-function isGhTargetRepository(target: string, repositoryNameWithOwner: string | null): boolean {
-  if (target === "base") return true;
-  const ownerAndName = target
-    .replace(/\.git$/iu, "")
-    .split("/")
-    .filter(Boolean)
-    .slice(-2);
-  return ownerAndName.join("/").toLowerCase() === repositoryNameWithOwner?.toLowerCase();
 }
 
 function appendUnique(values: string[], next: string | null | undefined): void {
@@ -1389,6 +1376,25 @@ export const make = Effect.gen(function* () {
   const readConfigValueNullable = (cwd: string, key: string) =>
     gitCore.readConfigValue(cwd, key).pipe(Effect.orElseSucceed(() => null));
 
+  // Whether the GitHub provider creates PRs in the only remote, `remoteUrlKey`. It picks GH_REPO
+  // when that parses, else the `OWNER/REPO` that `gh repo set-default` recorded (gh-resolved), else
+  // the only remote itself, as for gh-resolved `base`.
+  const targetsOnlyRemote = Effect.fn("targetsOnlyRemote")(function* (
+    cwd: string,
+    remoteName: string,
+    remoteUrlKey: string | null,
+  ) {
+    const host = remoteUrlKey?.split("/")[0] ?? "";
+    const fromEnvironment = parseGitHubRepositorySelector(environment.GH_REPO ?? "", host);
+    if (fromEnvironment !== null) {
+      const { host: targetHost, owner, name } = fromEnvironment;
+      return `${targetHost}/${owner}/${name}`.toLowerCase() === remoteUrlKey;
+    }
+    const mark = yield* readConfigValueNullable(cwd, `remote.${remoteName}.gh-resolved`);
+    const [owner, name, ...rest] = (mark ?? "base").toLowerCase().split("/");
+    return !owner || !name || rest.length > 0 || `${host}/${owner}/${name}` === remoteUrlKey;
+  });
+
   const resolveHostingProvider = Effect.fn("resolveHostingProvider")(function* (
     cwd: string,
     branch: string | null,
@@ -1499,11 +1505,7 @@ export const make = Effect.gen(function* () {
           ),
           Effect.orElseSucceed(() => 0),
         )) === 1 &&
-      isGhTargetRepository(
-        environment.GH_REPO?.trim() ||
-          ((yield* readConfigValueNullable(cwd, `remote.${remoteName}.gh-resolved`)) ?? "base"),
-        remoteRepository.repositoryNameWithOwner,
-      );
+      (yield* targetsOnlyRemote(cwd, remoteName, remoteRepository.remoteUrlKey));
     const isForeignRemote = remoteName !== null && remoteName !== "origin" && !isOnlyRemote;
 
     const isCrossRepository =

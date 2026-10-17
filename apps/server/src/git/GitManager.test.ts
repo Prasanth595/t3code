@@ -4471,9 +4471,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     12_000,
   );
 
-  it.effect(
-    "reuses the open same-repository PR when the only remote is not named origin",
-    () =>
+  it.effect.each([
+    { ghRepo: null },
+    { ghRepo: "https://github.com/pingdotgg/codething-mvp?tab=readme#readme" },
+  ] as const)(
+    "reuses the open same-repository PR when the only remote is not named origin (GH_REPO $ghRepo)",
+    ({ ghRepo }) =>
       Effect.gen(function* () {
         const repoDir = yield* makeTempDir("t3code-git-manager-");
         yield* initRepo(repoDir);
@@ -4490,6 +4493,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
 
         const { manager, ghCalls } = yield* makeManager({
+          environment: ghRepo === null ? {} : { GH_REPO: ghRepo },
           ghScenario: {
             prListByHeadSelector: {
               dev: encodeCliJson([
@@ -4560,11 +4564,22 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
   );
 
   it.effect.each([
-    { ghRepo: "acme/demo", head: "contributor:dev" },
-    { ghRepo: "github.com/Contributor/demo", head: "dev" },
+    { ghRepo: "acme/demo", ghResolved: null, head: "contributor:dev" },
+    { ghRepo: "ghe.example.com/contributor/demo", ghResolved: null, head: "contributor:dev" },
+    { ghRepo: "github.com/Contributor/demo", ghResolved: null, head: "dev" },
+    {
+      ghRepo: "https://github.com/contributor/demo?tab=readme#readme",
+      ghResolved: null,
+      head: "dev",
+    },
+    { ghRepo: "contributor/demo", ghResolved: "acme/demo", head: "dev" },
+    { ghRepo: "acme/demo", ghResolved: "base", head: "contributor:dev" },
+    // The provider ignores these GH_REPO values, so gh-resolved decides.
+    { ghRepo: "junk/extra/contributor/demo", ghResolved: "acme/demo", head: "contributor:dev" },
+    { ghRepo: "base", ghResolved: "acme/demo", head: "contributor:dev" },
   ] as const)(
-    "creates the PR with head $head when GH_REPO is $ghRepo and the only remote is contributor/demo",
-    ({ ghRepo, head }) =>
+    "creates the PR with head $head when GH_REPO is $ghRepo, gh-resolved is $ghResolved and the only remote is contributor/demo",
+    ({ ghRepo, ghResolved, head }) =>
       Effect.gen(function* () {
         const repoDir = yield* makeTempDir("t3code-git-manager-");
         yield* initRepo(repoDir);
@@ -4578,6 +4593,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           "https://github.com/contributor/demo.git",
           forkDir,
         );
+        if (ghResolved !== null) {
+          yield* runGit(repoDir, ["config", "remote.fork.gh-resolved", ghResolved]);
+        }
         NodeFS.writeFileSync(NodePath.join(repoDir, "changes.txt"), "change\n");
 
         const { manager, ghCalls } = yield* makeManager({ environment: { GH_REPO: ghRepo } });
