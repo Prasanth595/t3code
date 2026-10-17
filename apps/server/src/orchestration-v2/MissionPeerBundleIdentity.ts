@@ -9,7 +9,7 @@ import * as Stream from "effect/Stream";
 
 export const MANIFEST_FILE_NAME = "mission-peer-bundle.json";
 const MAX_MODULES = 256;
-const MAX_MODULE_BYTES = 64 * 1024 * 1024;
+export const MAX_MODULE_BYTES = 64 * 1024 * 1024;
 const MAX_GRAPH_BYTES = 256 * 1024 * 1024;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 
@@ -37,11 +37,16 @@ const Manifest = Schema.Struct({
   ),
 });
 type Manifest = typeof Manifest.Type;
-const encodeDigestDocument = Schema.encodeSync(Schema.fromJsonString(Schema.Struct({
-  format: Manifest.fields.format,
-  entry: Manifest.fields.entry,
-  modules: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
-})));
+const encodeDigestDocument = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      version: Manifest.fields.version,
+      format: Manifest.fields.format,
+      entry: Manifest.fields.entry,
+      modules: Schema.Array(Schema.Tuple([Schema.String, Schema.String])),
+    }),
+  ),
+);
 
 export class MissionPeerBundleIdentityError extends Schema.TaggedError<MissionPeerBundleIdentityError>()(
   "MissionPeerBundleIdentityError",
@@ -85,20 +90,24 @@ export const makeManifest = (moduleNames: ReadonlyArray<string>) =>
  * for an immutable installation, not an atomic defense against a hostile writer
  * replacing files between realPath/stat/open. No directory discovery is used.
  */
-const readBoundedFile = Effect.fn("MissionPeerBundleIdentity.readBoundedFile")(function* (
+export const readBoundedFile = Effect.fn("MissionPeerBundleIdentity.readBoundedFile")(function* (
   filePath: string,
   maxBytes: number,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  const canonical = yield* fs.realPath(filePath).pipe(
-    Effect.mapError((cause) => new MissionPeerBundleIdentityError({ category: "read", cause })),
-  );
+  const canonical = yield* fs
+    .realPath(filePath)
+    .pipe(
+      Effect.mapError((cause) => new MissionPeerBundleIdentityError({ category: "read", cause })),
+    );
   if (canonical !== filePath) {
     return yield* new MissionPeerBundleIdentityError({ category: "layout" });
   }
-  const info = yield* fs.stat(filePath).pipe(
-    Effect.mapError((cause) => new MissionPeerBundleIdentityError({ category: "read", cause })),
-  );
+  const info = yield* fs
+    .stat(filePath)
+    .pipe(
+      Effect.mapError((cause) => new MissionPeerBundleIdentityError({ category: "read", cause })),
+    );
   if (info.type !== "File") {
     return yield* new MissionPeerBundleIdentityError({ category: "layout" });
   }
@@ -142,13 +151,27 @@ export const rehash = Effect.fn("MissionPeerBundleIdentity.rehash")(function* (
   const path = yield* Path.Path;
   const manifest = yield* Schema.decodeUnknownEffect(Manifest)(graph.manifest, {
     onExcessProperty: "error",
-  }).pipe(
-    Effect.mapError(() => new MissionPeerBundleIdentityError({ category: "layout" })),
-  );
-  const canonicalDirectory = yield* fs.realPath(graph.directory).pipe(
-    Effect.mapError((cause) => new MissionPeerBundleIdentityError({ category: "read", cause })),
-  );
+  }).pipe(Effect.mapError(() => new MissionPeerBundleIdentityError({ category: "layout" })));
+  const canonicalDirectory = yield* fs
+    .realPath(graph.directory)
+    .pipe(
+      Effect.mapError((cause) => new MissionPeerBundleIdentityError({ category: "read", cause })),
+    );
   if (!path.isAbsolute(graph.directory) || canonicalDirectory !== graph.directory) {
+    return yield* new MissionPeerBundleIdentityError({ category: "layout" });
+  }
+  const emittedModules = (yield* fs
+    .readDirectory(graph.directory)
+    .pipe(
+      Effect.mapError((cause) => new MissionPeerBundleIdentityError({ category: "read", cause })),
+    ))
+    .filter((name) => /\.mjs$/i.test(name))
+    .sort();
+  const expectedModules = [...manifest.modules].sort();
+  if (
+    emittedModules.length !== expectedModules.length ||
+    emittedModules.some((name, index) => name !== expectedModules[index])
+  ) {
     return yield* new MissionPeerBundleIdentityError({ category: "layout" });
   }
   const modules: Array<readonly [string, string]> = [];
@@ -162,7 +185,14 @@ export const rehash = Effect.fn("MissionPeerBundleIdentity.rehash")(function* (
     modules.push([fileName, createHash("sha256").update(bytes).digest("hex")]);
   }
   return createHash("sha256")
-    .update(encodeDigestDocument({ format: manifest.format, entry: manifest.entry, modules }))
+    .update(
+      encodeDigestDocument({
+        version: manifest.version,
+        format: manifest.format,
+        entry: manifest.entry,
+        modules,
+      }),
+    )
     .digest("hex");
 });
 
@@ -182,16 +212,17 @@ export const capture = Effect.fn("MissionPeerBundleIdentity.capture")(function* 
     return yield* new MissionPeerBundleIdentityError({ category: "layout" });
   }
   const directory = path.dirname(input.entryPath);
-  const bytes = yield* readBoundedFile(path.join(directory, MANIFEST_FILE_NAME), MAX_MANIFEST_BYTES);
+  const bytes = yield* readBoundedFile(
+    path.join(directory, MANIFEST_FILE_NAME),
+    MAX_MANIFEST_BYTES,
+  );
   const text = yield* Effect.try({
     try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
     catch: () => new MissionPeerBundleIdentityError({ category: "layout" }),
   });
   const manifest = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Manifest))(text, {
     onExcessProperty: "error",
-  }).pipe(
-    Effect.mapError(() => new MissionPeerBundleIdentityError({ category: "layout" })),
-  );
+  }).pipe(Effect.mapError(() => new MissionPeerBundleIdentityError({ category: "layout" })));
   if (!manifest.modules.some((name) => path.join(directory, name) === input.producerPath)) {
     return yield* new MissionPeerBundleIdentityError({ category: "layout" });
   }

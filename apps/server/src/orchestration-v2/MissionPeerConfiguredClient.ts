@@ -49,7 +49,10 @@ export const layer = Layer.unwrap(
         );
       }),
     );
-    if (Option.isNone(yield* readCredential)) return Layer.empty;
+    const initialCredential = yield* readCredential.pipe(Effect.result);
+    if (initialCredential._tag === "Failure" || Option.isNone(initialCredential.success)) {
+      return Layer.empty;
+    }
     const entrypoint = yield* Effect.serviceOption(MissionPeerEntrypoint);
     if (Option.isNone(entrypoint)) {
       return yield* new Bootstrap.MissionPeerBootstrapError({ category: "unsupported_execution" });

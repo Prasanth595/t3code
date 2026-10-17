@@ -26,6 +26,8 @@ export class MissionPeerBootstrapError extends Schema.TaggedError<MissionPeerBoo
       "entrypoint_mismatch",
       "identity_mismatch",
       "invalid_config",
+      "layout",
+      "bounds",
       "read",
     ]),
     cause: Schema.optional(Schema.Defect()),
@@ -82,27 +84,28 @@ const captureLoadedBuild = Effect.fn("MissionPeerBootstrap.captureLoadedBuild")(
     );
   const artifactPath = yield* fromUrl(ownerUrl);
   const producerPath = yield* fromUrl(new URL(import.meta.url));
-  const processEntryPath = yield* fs.realPath(args[1]).pipe(
-    Effect.mapError((cause) => new MissionPeerBootstrapError({ category: "read", cause })),
-  );
+  const processEntryPath = yield* fs
+    .realPath(args[1])
+    .pipe(Effect.mapError((cause) => new MissionPeerBootstrapError({ category: "read", cause })));
   if (artifactPath !== processEntryPath || path.basename(artifactPath) !== "bin.mjs") {
     return yield* new MissionPeerBootstrapError({ category: "entrypoint_mismatch" });
   }
   if (entrypoint.format === "packed-module-graph") {
     return yield* Bundle.capture({ entryPath: artifactPath, producerPath, bootId }).pipe(
       Effect.mapError(
-        (cause) => new MissionPeerBootstrapError({
-          category: cause.category === "read" ? "read" : "unsupported_execution",
-          cause,
-        }),
+        (cause) =>
+          new MissionPeerBootstrapError({
+            category: cause.category,
+            cause,
+          }),
       ),
     );
   }
   if (artifactPath !== producerPath) {
     return yield* new MissionPeerBootstrapError({ category: "entrypoint_mismatch" });
   }
-  const bytes = yield* fs.readFile(artifactPath).pipe(
-    Effect.mapError((cause) => new MissionPeerBootstrapError({ category: "read", cause })),
+  const bytes = yield* Bundle.readBoundedFile(artifactPath, Bundle.MAX_MODULE_BYTES).pipe(
+    Effect.mapError((cause) => new MissionPeerBootstrapError({ category: cause.category, cause })),
   );
   const sha256 = createHash("sha256").update(bytes).digest("hex");
   return { artifactPath, sha256, receiptId: `loaded:${bootId}:sha256:${sha256}` };
@@ -122,12 +125,13 @@ export const layer = (inputs: PeerBootstrapInputs) => {
     Effect.gen(function* () {
       const pin = yield* Schema.decodeUnknownEffect(Handshake.PeerTrustConfig)(approvedPeer, {
         onExcessProperty: "error",
-      }).pipe(
-        Effect.mapError(() => new MissionPeerBootstrapError({ category: "invalid_config" })),
-      );
+      }).pipe(Effect.mapError(() => new MissionPeerBootstrapError({ category: "invalid_config" })));
       const environment = yield* ServerEnvironmentIdentity;
       const environmentId = yield* environment.getEnvironmentId;
-      if (environmentId !== pin.sourceEnvironmentId && environmentId !== pin.receiverEnvironmentId) {
+      if (
+        environmentId !== pin.sourceEnvironmentId &&
+        environmentId !== pin.receiverEnvironmentId
+      ) {
         return yield* new MissionPeerBootstrapError({ category: "identity_mismatch" });
       }
       const boot = yield* Boot.MissionPeerBootIdentity;
@@ -168,7 +172,9 @@ export const layer = (inputs: PeerBootstrapInputs) => {
             },
             catch: () =>
               new Handshake.MissionPeerSigningError({
-                cause: new Error("Existing environment signing key does not match reviewed peer pins."),
+                cause: new Error(
+                  "Existing environment signing key does not match reviewed peer pins.",
+                ),
               }),
           });
           return yield* signRelayJwt({

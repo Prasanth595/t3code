@@ -36,13 +36,19 @@ const make = Effect.gen(function* () {
   const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
   const connect = Effect.gen(function* () {
     const pending = yield* handshake.begin;
-    const response = yield* HttpClientRequest.post(
-      `${pending.origin}${Handshake.MISSION_PEER_HANDSHAKE_PATH}`,
-    ).pipe(
+    const pinnedUrl = `${pending.origin}${Handshake.MISSION_PEER_HANDSHAKE_PATH}`;
+    const response = yield* HttpClientRequest.post(pinnedUrl).pipe(
       HttpClientRequest.setHeader("cache-control", "no-store"),
       HttpClientRequest.bodyJson(pending.request),
       Effect.flatMap(client.execute),
-      Effect.flatMap(HttpClientResponse.schemaBodyJson(PeerProofEnvelope)),
+      Effect.flatMap((response) =>
+        Effect.gen(function* () {
+          if (response.url !== pinnedUrl) {
+            return yield* new Handshake.MissionPeerHandshakeError({ category: "transport" });
+          }
+          return yield* HttpClientResponse.schemaBodyJson(PeerProofEnvelope)(response);
+        }),
+      ),
       Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
       Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(32 * 1024)),
       Effect.timeout("10 seconds"),

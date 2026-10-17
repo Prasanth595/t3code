@@ -77,17 +77,20 @@ export const layer = (inputs: PeerRuntimeInputs | null) =>
           Effect.flatMap(Schema.decodeUnknownEffect(HostProtocolId)),
           Effect.mapError((cause) => new MissionPeerRuntimeFactsError({ category: "read", cause })),
         );
-        const readFailed = (cause: unknown) => new MissionPeerRuntimeFactsError({ category: "read", cause });
-        const readBuildHash = "kind" in build
-          ? Bundle.rehash(build).pipe(
-              Effect.provideService(FileSystem.FileSystem, fs),
-              Effect.provideService(Path.Path, path),
-              Effect.mapError(readFailed),
-            )
-          : fs.readFile(build.artifactPath).pipe(
-              Effect.map((bytes) => createHash("sha256").update(bytes).digest("hex")),
-              Effect.mapError(readFailed),
-            );
+        const readFailed = (cause: unknown) =>
+          new MissionPeerRuntimeFactsError({ category: "read", cause });
+        const readBuildHash =
+          "kind" in build
+            ? Bundle.rehash(build).pipe(
+                Effect.provideService(FileSystem.FileSystem, fs),
+                Effect.provideService(Path.Path, path),
+                Effect.mapError(readFailed),
+              )
+            : Bundle.readBoundedFile(build.artifactPath, Bundle.MAX_MODULE_BYTES).pipe(
+                Effect.provideService(FileSystem.FileSystem, fs),
+                Effect.map((bytes) => createHash("sha256").update(bytes).digest("hex")),
+                Effect.mapError(readFailed),
+              );
         const buildSha256 = yield* readBuildHash;
         if (buildSha256 !== build.sha256) {
           return yield* new MissionPeerRuntimeFactsError({ category: "build_mismatch" });

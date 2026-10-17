@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
 import * as Bootstrap from "./MissionPeerBootstrap.ts";
+import * as Bundle from "./MissionPeerBundleIdentity.ts";
 import * as Handshake from "./MissionPeerHandshake.ts";
 
 /** One reviewed public pin snapshot shared by the receiver and outbound consumer. */
@@ -42,8 +43,11 @@ export const layer = Layer.effect(
       (yield* fs.realPath(filename)) !== filename
     )
       return yield* invalid();
-    const text = yield* fs.readFileString(filename).pipe(Effect.mapError(invalid));
-    if (new TextEncoder().encode(text).byteLength > 65536) return yield* invalid();
+    const bytes = yield* Bundle.readBoundedFile(filename, 65536).pipe(Effect.mapError(invalid));
+    const text = yield* Effect.try({
+      try: () => new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+      catch: invalid,
+    });
     return yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Handshake.PeerTrustConfig))(
       text,
       { onExcessProperty: "error" },
