@@ -130,7 +130,7 @@ function Ledger({
       )}
       {truncated ? (
         <p className="text-xs text-muted-foreground">
-          The ledger is truncated; older entries are not shown.
+          The last line of the ledger was unreadable and was dropped.
         </p>
       ) : null}
       {skipped > 0 ? (
