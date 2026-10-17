@@ -312,7 +312,7 @@ const layerSessions = (
   git: Partial<GitVcsDriver.GitVcsDriver["Service"]> = {},
   // Listed after NodeServices so a stub FileSystem wins over the real one.
   fileSystem: Layer.Layer<FileSystem.FileSystem> = NodeServices.layer,
-  settings: Layer.Layer<ServerSettings.ServerSettingsService> = ServerSettings.layerTest(),
+  settings: ReturnType<typeof ServerSettings.layerTest> = ServerSettings.layerTest(),
 ) =>
   Layer.mergeAll(
     Sessions.layer.pipe(

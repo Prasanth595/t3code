@@ -958,7 +958,6 @@ describe("/api/factory/config", () => {
 gh_config_dir: /gh # login
 poll_seconds: 60
 max_concurrent_runs: 1
-model: claude-sonnet-5-5
 # stays a hand edit
 notify: false
 repos:
@@ -970,8 +969,6 @@ repos:
     poll_seconds: 60,
     max_concurrent_runs: 1,
     max_concurrent_gates: 2,
-    model_instance: "claudeAgent",
-    model: "",
     repos: [],
   };
   const configFile = (dir: string) => NodePath.join(dir, "config.yml");
@@ -981,8 +978,6 @@ repos:
     poll_seconds: 30,
     max_concurrent_runs: 2,
     max_concurrent_gates: 2,
-    model_instance: "claudeAgent",
-    model: "claude-opus-4-8",
     repos: [{ repo: "a/b", path: "/b" }],
   };
 
@@ -999,8 +994,6 @@ repos:
           poll_seconds: 60,
           max_concurrent_runs: 1,
           max_concurrent_gates: 2,
-          model_instance: "claudeAgent",
-          model: "claude-sonnet-5-5",
           repos: [{ repo: "rawphp/softfac", path: "/softfac" }],
         },
         defaults: DEFAULTS,
@@ -1023,18 +1016,17 @@ repos:
 
   it.effect("GET on an invalid file reports no config and the errors", () =>
     serving({}, async (call, { tokens, dir }) => {
-      NodeFS.writeFileSync(configFile(dir), COMMENTED.replace("model: claude-sonnet-5-5\n", ""));
+      NodeFS.writeFileSync(configFile(dir), COMMENTED.replace("max_concurrent_runs: 1\n", ""));
       const body = await json(await call("GET", CONFIG_PATH, tokens.read));
       assert.strictEqual(body.exists, true);
       assert.strictEqual(body.config, null);
       assert.deepStrictEqual(body.draft, {
         gh_config_dir: "/gh",
         poll_seconds: 60,
-        max_concurrent_runs: 1,
         repos: [{ repo: "rawphp/softfac", path: "/softfac" }],
       });
       assert.deepStrictEqual(body.errors, [
-        { file: configFile(dir), field: "model", message: "is missing" },
+        { file: configFile(dir), field: "max_concurrent_runs", message: "is missing" },
       ]);
     }),
   );
@@ -1116,7 +1108,7 @@ repos:
         NodeFS.writeFileSync(configFile(dir), COMMENTED);
         const response = await call("PUT", CONFIG_PATH, tokens.settingsWrite, {
           poll_seconds: 5,
-          model: "",
+          gh_config_dir: "",
           repos: [],
         });
         assert.strictEqual(response.status, 422);
@@ -1124,7 +1116,7 @@ repos:
         assert.strictEqual(body.code, "invalid_config");
         const errors = body.errors as ReadonlyArray<{ field?: string }>;
         assert.deepStrictEqual(errors.map((e) => e.field).sort(), [
-          "model",
+          "gh_config_dir",
           "poll_seconds",
           "repos",
         ]);
@@ -1154,7 +1146,7 @@ repos:
       assert.strictEqual(body.exists, true);
       assert.deepStrictEqual(body.config, VALID_BODY);
       assert.strictEqual(wakes.reloads, 1);
-      assert.include(fileText(dir), "claude-opus-4-8");
+      assert.include(fileText(dir), "poll_seconds: 30");
       assert.deepStrictEqual(NodeFS.readdirSync(dir), ["config.yml"]);
     }),
   );

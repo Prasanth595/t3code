@@ -29,6 +29,7 @@
 import * as NodeFS from "node:fs";
 
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 import type { ProjectConfig } from "../config.ts";
@@ -56,9 +57,9 @@ import {
   type IssueDetail,
 } from "../tracker/github.ts";
 import type {
+  FactoryProject,
   FactorySessions,
   MessageRejectedError,
-  Model,
   SessionsError,
   ThreadNotFoundError,
 } from "../t3/sessions.ts";
@@ -68,6 +69,7 @@ import {
   LAUNCH_FAILED,
   TEXT_CHANGED,
   launchMessage,
+  launchable,
   sessionMayExistNote,
   type EarlierRunResume,
 } from "./messages.ts";
@@ -133,7 +135,6 @@ export interface StartContext {
   readonly repoPath: string;
   /** The `GH_CONFIG_DIR` the launch message names. */
   readonly ghConfigDir: string;
-  readonly model: Model;
   readonly sessions: Sessions;
   /** Unix epoch milliseconds. */
   readonly clock: () => number;
@@ -555,7 +556,7 @@ const begin = (
   detail: IssueDetail,
   run: RunId,
   out: Ledger,
-  project: string | null | undefined,
+  project: FactoryProject | null | undefined,
 ): Effect.Effect<StartOutcome, StartError> =>
   Effect.gen(function* () {
     const seen = readProgress((yield* ledger(() => readRun(ctx.dataDir, run))).entries);
@@ -658,19 +659,21 @@ const launchSession = (
   run: RunId,
   out: Ledger,
   seen: Seen,
-  project: string | null | undefined,
+  found: FactoryProject | null | undefined,
 ): Effect.Effect<Launch, StartError> =>
   Effect.gen(function* () {
     const commandId = `softfac:${runIdToString(run)}:launch`;
-    const projectId =
-      project === undefined ? yield* ctx.sessions.findProject(ctx.repoPath) : project;
-    if (projectId === null) {
-      const missing = "no T3 project for this repo on this machine";
+    const target = launchable(
+      found === undefined ? yield* ctx.sessions.findProject(ctx.repoPath) : found,
+    );
+    if (Result.isFailure(target)) {
+      const missing = target.failure;
       return {
         ok: false,
         detail: seen.launchSent ? sessionMayExistNote(missing, commandId) : missing,
       };
     }
+    const project = target.success;
     const resumed = seen.launchSent
       ? seen.launchResumedFrom === null
         ? null
@@ -693,7 +696,7 @@ const launchSession = (
     const launched = yield* Effect.result(
       ctx.sessions.launch({
         commandId,
-        projectId,
+        projectId: project.id,
         title: `${ctx.repo}#${issue} ${detail.title}`,
         baseRef: resumed === null ? ctx.project.base : resumed.branch,
         startFromOrigin: resumed !== null,
@@ -704,7 +707,7 @@ const launchSession = (
           ctx.ghConfigDir,
           resumed ?? undefined,
         ),
-        model: ctx.model,
+        model: project.model,
       }),
     );
     if (launched._tag === "Failure") {
@@ -722,8 +725,8 @@ const launchSession = (
             thread_id: threadId,
             worktree: worktreePath,
             branch,
-            model_instance: ctx.model.instanceId,
-            model: ctx.model.model,
+            model_instance: project.model.instanceId,
+            model: project.model.model,
             resumed_from:
               resumed === null ? null : { run: runIdToString(resumed.run), branch: resumed.branch },
           },

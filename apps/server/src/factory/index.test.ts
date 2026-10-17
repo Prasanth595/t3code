@@ -131,11 +131,14 @@ const seedReportedRun = (dataDir: string, repo: string): RunId => {
 
 const VALID = `gh_config_dir: /gh
 max_concurrent_runs: 1
-model: claude-sonnet-5-5
 repos:
   - repo: a/b
     path: /b
 `;
+
+/** `VALID` with the one required key a file cannot do without taken out. */
+const INVALID = VALID.replace("max_concurrent_runs: 1\n", "");
+const MISSING = "max_concurrent_runs: is missing";
 
 /** Builds FactoryRuntime over a temp base dir whose factory dir holds `config` (or no file) and returns the log lines. */
 const logsFor = (
@@ -234,21 +237,39 @@ it.effect("logs factory started once for a valid machine file, then runs the fir
   }),
 );
 
+// A file from before #93 still names the model: the factory starts on it and says, once per key,
+// that the key does nothing now.
+it.effect("logs one warning per retired model key and still starts", () =>
+  Effect.gen(function* () {
+    const { logs, machineConfigPath, status } = yield* logsFor(
+      `${VALID}model_instance: claudeAgent\nmodel: claude-sonnet-5-5\n`,
+    );
+    const retired =
+      "is no longer used: the model comes from the T3 project's default model, then the T3 settings default";
+    assert.deepStrictEqual(logs.slice(0, 3), [
+      `${machineConfigPath}: model_instance: ${retired}`,
+      `${machineConfigPath}: model: ${retired}`,
+      "factory started",
+    ]);
+    assert.strictEqual(status.state, "running");
+  }),
+);
+
 it.effect("logs each config error and does not start for an invalid machine file", () =>
   Effect.gen(function* () {
     // The notification for the config item goes to a runner that accepts it, so it logs nothing.
     const { logs, machineConfigPath } = yield* logsFor(
-      VALID.replace("model: claude-sonnet-5-5\n", ""),
+      INVALID,
       () => Effect.void,
       Layer.succeed(FactoryProcess, recordingProcess().process),
     );
-    assert.deepStrictEqual(logs, [`${machineConfigPath}: model: is missing`]);
+    assert.deepStrictEqual(logs, [`${machineConfigPath}: ${MISSING}`]);
   }),
 );
 
 it.effect("reports itself idle, without the config errors, when the machine file is invalid", () =>
   Effect.gen(function* () {
-    const { status } = yield* logsFor(VALID.replace("model: claude-sonnet-5-5\n", ""));
+    const { status } = yield* logsFor(INVALID);
     assert.deepStrictEqual(status, { state: "idle", reason: "factory config failed to load" });
   }),
 );
@@ -305,8 +326,6 @@ describe("attention", () => {
       ).pipe(Effect.flatMap((context) => Context.get(context, Attention).list())),
     );
 
-  const INVALID = VALID.replace("model: claude-sonnet-5-5\n", "");
-
   it.effect("a machine config that does not load raises one config item and one notification", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -317,7 +336,7 @@ describe("attention", () => {
           items.map((item) => [item.id, item.kind, item.repo]),
           [["config", "config", null]],
         );
-        assert.include(items[0]!.message, "model: is missing");
+        assert.include(items[0]!.message, MISSING);
         assert.strictEqual(calls.length, 1);
         assert.strictEqual(calls[0]!.command, "osascript");
         assert.strictEqual(calls[0]!.args![0], "-e");
@@ -1373,8 +1392,6 @@ describe("the gate in the background", () => {
     pollSeconds: 60,
     maxConcurrentRuns: 1,
     maxConcurrentGates: 1,
-    modelInstance: "claudeAgent",
-    model: "claude-sonnet-5-5",
     notify: true,
     repos: [{ repo: REPO, path: "/p" }],
   };
@@ -1696,8 +1713,6 @@ describe("the gate in the background", () => {
         pollSeconds: 60,
         maxConcurrentRuns: 1,
         maxConcurrentGates: 1,
-        modelInstance: "claudeAgent",
-        model: "claude-sonnet-5-5",
         notify: true,
         repos: [{ repo: REPO, path: "/p" }],
       };
@@ -1752,8 +1767,6 @@ describe("the gate in the background", () => {
             pollSeconds: 60,
             maxConcurrentRuns: 1,
             maxConcurrentGates: 1,
-            modelInstance: "claudeAgent",
-            model: "claude-sonnet-5-5",
             notify: true,
             repos: [{ repo: REPO, path: "/p" }],
           },
@@ -1893,7 +1906,7 @@ describe("reloading the machine config", () => {
         const { loop, write } = yield* started(VALID, process);
         yield* Deferred.await(entered);
         yield* Deferred.succeed(release, undefined);
-        yield* write(VALID.replace("model: claude-sonnet-5-5\n", ""));
+        yield* write(INVALID);
         yield* loop.reload;
         assert.deepStrictEqual(loop.status, {
           state: "idle",
@@ -1964,7 +1977,7 @@ describe("reloading the machine config", () => {
             ),
         });
         const worlds: Array<PassWorld> = [];
-        const oneGate = VALID.replace("model:", "max_concurrent_gates: 1\nmodel:");
+        const oneGate = VALID.replace("repos:", "max_concurrent_gates: 1\nrepos:");
         const { loop, factoryDir, write } = yield* started(oneGate, process, quietEvents, {
           onWorld: (world) => worlds.push(world),
         });

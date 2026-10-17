@@ -10,17 +10,19 @@
  * answers with the thread it made.
  */
 import * as Effect from "effect/Effect";
+import * as Result from "effect/Result";
 
 import type { Ledger } from "../ledger/ledger.ts";
 import { ledgerCall as ledger } from "../ledger/errors.ts";
 import { makeCause } from "../ledger/events.ts";
 import { runIdToString, type RunId } from "../ledger/runId.ts";
 import type { IssueDetail } from "../tracker/github.ts";
-import type { FactorySessions, Model } from "../t3/sessions.ts";
+import type { FactorySessions } from "../t3/sessions.ts";
 import {
   END_WITH_DONE,
   LAUNCH_FAILED,
   launchMessage,
+  launchable,
   sessionMayExistNote,
   type ResumeFrom,
 } from "./messages.ts";
@@ -43,7 +45,6 @@ export interface RelaunchContext extends RunContext {
   readonly repoPath: string;
   /** The `GH_CONFIG_DIR` the launch message names. */
   readonly ghConfigDir: string;
-  readonly model: Model;
   readonly sessions: RunContext["sessions"] &
     Pick<FactorySessions["Service"], "findProject" | "launch">;
 }
@@ -72,6 +73,7 @@ export const branchRefused = (branch: string): Stop | null =>
  * project fails as an error with nothing written; a project that is not there, or a launch T3
  * answers with a failure (in-process, every failure of the call is T3's answer after the request
  * went out, and a session may exist), sends the issue `stuck` with the note and the command id.
+ * So does a project with no default model (`launchable`).
  */
 export const relaunchSession = (
   ctx: RelaunchContext,
@@ -91,11 +93,12 @@ export const relaunchSession = (
         yield* goStuck(ctx, issue, out, at, "launch-failed", stop);
         return { kind: "stuck", reason: recordedReason(stop) } as const;
       });
-    const projectId = yield* ctx.sessions.findProject(ctx.repoPath);
-    if (projectId === null) {
-      const missing = "no T3 project for this repo on this machine";
+    const target = launchable(yield* ctx.sessions.findProject(ctx.repoPath));
+    if (Result.isFailure(target)) {
+      const missing = target.failure;
       return yield* refuse(from.earlierCall ? sessionMayExistNote(missing, commandId) : missing);
     }
+    const project = target.success;
     const resumed: ResumeFrom = {
       branch: relaunch.branch,
       prUrl: from.prUrl,
@@ -105,12 +108,12 @@ export const relaunchSession = (
     const launched = yield* Effect.result(
       ctx.sessions.launch({
         commandId,
-        projectId,
+        projectId: project.id,
         title: `${ctx.repo}#${issue} ${detail.title}`,
         baseRef: relaunch.branch,
         startFromOrigin: true,
         message,
-        model: ctx.model,
+        model: project.model,
       }),
     );
     if (launched._tag === "Failure") {
@@ -125,8 +128,8 @@ export const relaunchSession = (
             thread_id: threadId,
             worktree: worktreePath,
             branch,
-            model_instance: ctx.model.instanceId,
-            model: ctx.model.model,
+            model_instance: project.model.instanceId,
+            model: project.model.model,
             resumed_from: { run: runIdToString(run), branch: relaunch.branch },
           },
         },

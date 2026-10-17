@@ -366,7 +366,6 @@ export const liveWorld = (
     tracker: trackerFor(repo.watched),
     repoPath: repo.watched.path,
     ghConfigDir: machine.ghConfigDir,
-    model: { instanceId: machine.modelInstance, model: machine.model },
     sessions,
     clock,
   });
@@ -386,7 +385,6 @@ export const liveWorld = (
     ...buildingContext(repo),
     repoPath: repo.watched.path,
     ghConfigDir: machine.ghConfigDir,
-    model: { instanceId: machine.modelInstance, model: machine.model },
     tracker: trackerFor(repo.watched),
     sessions,
   });
@@ -395,7 +393,6 @@ export const liveWorld = (
     tracker: trackerFor(repo.watched),
     repoPath: repo.watched.path,
     ghConfigDir: machine.ghConfigDir,
-    model: { instanceId: machine.modelInstance, model: machine.model },
     sessions,
     gate: live.gate,
     maxConcurrentGates: machine.maxConcurrentGates,

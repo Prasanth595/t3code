@@ -715,7 +715,6 @@ const rigFor = (events: ReadonlyArray<RunEvent> = STARTED): Rig => {
     dataDir,
     repoPath: "/p/softfac",
     ghConfigDir: "/gh/rawphp",
-    model: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
     tracker: gh.tracker,
     sessions: t3.sessions,
     gate: ws.gate,

@@ -500,7 +500,6 @@ const rigFor = (
     sessions,
     repoPath: "/work/softfac",
     ghConfigDir: "/gh/rawphp",
-    model: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
     clock: () => clock.now,
   };
   return { dataDir, run: run10, world, gh, reads, t3, launches, clock, ctx };

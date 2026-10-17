@@ -34,7 +34,7 @@ import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
 import { makeCause, type RunEvent } from "../ledger/events.ts";
 import { readRun } from "../ledger/read.ts";
 import { asciiLower, runIdToString, type RunId } from "../ledger/runId.ts";
-import type { FactorySessions, Model, ThreadStatus } from "../t3/sessions.ts";
+import type { FactorySessions, ThreadStatus } from "../t3/sessions.ts";
 import { isCommitId, sanitize } from "../text.ts";
 import type { BoundGitHub, CheckStatus, IssueDetail, PullRequest } from "../tracker/github.ts";
 import {
@@ -107,7 +107,6 @@ export interface GateContext extends BuildingContext {
   readonly gateOptions?: GateOptions;
   readonly repoPath: string;
   readonly ghConfigDir: string;
-  readonly model: Model;
   readonly sessions: BuildingContext["sessions"] &
     Pick<FactorySessions["Service"], "findProject" | "launch">;
 }

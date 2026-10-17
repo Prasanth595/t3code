@@ -4,9 +4,12 @@
  * the issues, so it is copied as is.
  */
 
+import * as Result from "effect/Result";
+
 import type { State } from "../domain/lifecycle.ts";
 import type { CommandResult } from "../gate.ts";
 import { runIdToString, type RunId } from "../ledger/runId.ts";
+import type { FactoryProject, Model } from "../t3/sessions.ts";
 import { commandLine, sanitize, shortSha } from "../text.ts";
 import type {
   CheckStatus,
@@ -123,6 +126,32 @@ export const TEXT_CHANGED = "the issue text was changed while the factory was st
 
 /** The public reason when the launch was refused. The detail stays in the ledger. */
 export const LAUNCH_FAILED = "the factory could not launch a session";
+
+/** The ledger detail when the watched repo has no T3 project on this machine. */
+export const NO_PROJECT = "no T3 project for this repo on this machine";
+
+/** The ledger detail when the T3 project and the T3 settings name no default model. */
+export const NO_DEFAULT_MODEL = "no default model: set one on the T3 project or in Settings";
+
+/** A project a session can be launched on: it has a model. */
+export interface LaunchableProject {
+  readonly id: string;
+  readonly model: Model;
+}
+
+/**
+ * What `findProject` answered as a launch target, or the ledger detail that refuses it: no
+ * project, or a project with no model. Both are refused the same way, before anything is sent
+ * to T3, with the detail in the ledger for the person to act on.
+ */
+export const launchable = (
+  project: FactoryProject | null,
+): Result.Result<LaunchableProject, string> =>
+  project === null
+    ? Result.fail(NO_PROJECT)
+    : project.model === null
+      ? Result.fail(NO_DEFAULT_MODEL)
+      : Result.succeed({ id: project.id, model: project.model });
 
 /** The words a stuck run's ledger reason carries when a launch attempt may have started a session. */
 export const SESSION_MAY_EXIST = "a launch attempt may have started a session";
