@@ -2458,8 +2458,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     expect(GitManager.pullRequestRepositoryKey(url)).toBe(expected);
   });
 
-  const holdsPullRequest = (remoteUrl: string | null, url: string) =>
-    GitManager.pullRequestCheckoutMismatch(remoteUrl, {
+  const holdsPullRequest = (remoteUrls: ReadonlyArray<string>, url: string) =>
+    GitManager.pullRequestCheckoutMismatch(remoteUrls, {
       number: 7,
       title: "PR",
       url,
@@ -2495,13 +2495,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     ["http://code.example:3000/acme/app.git", onPort],
     ["https://code.example/forgejo/acme/app.git", belowMount],
     ["https://code.example/forgejo/contributor/app.git", belowMount],
-    // No evidence of a mismatch: a local or relative path, no remote, or an unreadable PR URL.
+    // No evidence of a mismatch: a local or relative path, or an unreadable PR URL.
     ["/tmp/bare-remote", onGitHub],
     ["../mirror/acme/app", onGitHub],
-    [null, onGitHub],
     ["https://github.com/someone/unrelated.git", "https://example.com/acme"],
   ] as const)("lets a checkout whose remote is %s hold the PR at %s", (remoteUrl, url) => {
-    expect(holdsPullRequest(remoteUrl, url)).toBe(true);
+    expect(holdsPullRequest([remoteUrl], url)).toBe(true);
   });
 
   it.each([
@@ -2514,7 +2513,19 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     ["http://code.example:4000/contributor/app.git", onPort],
     ["https://code.example/contributor/app.git", belowMount],
   ] as const)("refuses a checkout whose remote is %s for the PR at %s", (remoteUrl, url) => {
-    expect(holdsPullRequest(remoteUrl, url)).toBe(false);
+    expect(holdsPullRequest([remoteUrl], url)).toBe(false);
+  });
+
+  // Any remote can name the base or the head's fork, and only a hosted one is evidence.
+  it.each([
+    [[], true],
+    [["/tmp/bare-remote", "../mirror/acme/app"], true],
+    [["https://github.com/someone/unrelated.git", "https://github.com/acme/app.git"], true],
+    [["https://github.com/someone/unrelated.git", "git@github.com:contributor/app.git"], true],
+    [["/tmp/bare-remote", "https://github.com/someone/unrelated.git"], false],
+    [["https://github.com/someone/unrelated.git", "https://gitlab.com/acme/app.git"], false],
+  ] as const)("a checkout with the remotes %j holds the PR on GitHub: %s", (remoteUrls, holds) => {
+    expect(holdsPullRequest(remoteUrls, onGitHub)).toBe(holds);
   });
 
   it.effect("distinguishes Enterprise forks with the same head branch", () =>
@@ -5470,8 +5481,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
   const unrelated = "https://github.com/someone/unrelated.git";
   const base = "https://github.com/pingdotgg/codething-mvp.git";
   const someonesFork = "https://github.com/someone/codething-mvp.git";
-  const elsewhere =
-    "Open the pull request from a project that is, or, if the repository was renamed, point this project's remote at its new name.";
 
   it.effect.each([
     {
@@ -5488,42 +5497,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ["origin", base],
       ],
     },
-    // The identity remote is a fork of the base; the base's remote is not named upstream.
+    // A repository of the base's name is not the base.
     {
-      layout: "a fork clone's base remote under another name",
-      remotes: [
-        ["origin", someonesFork],
-        ["acme", base],
-      ],
-      remedy:
-        "Its remote acme names pingdotgg/Codething-MVP; run `git remote rename acme upstream` to open the pull request here.",
-    },
-    // Git accepts shell metacharacters in a remote name, so the advice quotes it.
-    {
-      layout: "a fork clone's base remote named with shell metacharacters",
-      remotes: [
-        ["origin", someonesFork],
-        ["base;printf$IFS'pwned'\"$PPID\"", base],
-      ],
-      remedy:
-        "Its remote base;printf$IFS'pwned'\"$PPID\" names pingdotgg/Codething-MVP; run `git remote rename 'base;printf$IFS'\\''pwned'\\''\"$PPID\"' upstream` to open the pull request here.",
-    },
-    // Git would read a name that starts with `-` as an option, so the advice ends options first.
-    ...(["-lead", "--progress"] as const).map((name) => ({
-      layout: `a fork clone's base remote named ${name}`,
-      remotes: [
-        ["origin", someonesFork],
-        [name, base],
-      ] as const,
-      remedy: `Its remote ${name} names pingdotgg/Codething-MVP; run \`git remote rename -- ${name} upstream\` to open the pull request here.`,
-      rename: ["--", name] as const,
-    })),
-    // A monorepo that pulls the base in as a subtree is no fork of it.
-    {
-      layout: "a subtree remote of the base",
+      layout: "only unrelated remotes",
       remotes: [
         ["origin", unrelated],
-        ["libfoo", base],
+        ["upstream", someonesFork],
       ],
     },
     // A relative path reads like the base's key but names a directory.
@@ -5534,14 +5513,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ["mirror", "github.com/pingdotgg/codething-mvp.git"],
       ],
     },
-    // Renaming the base onto the identity remote's upstream would fail.
-    {
-      layout: "an identity remote already named upstream",
-      remotes: [
-        ["upstream", someonesFork],
-        ["origin", base],
-      ],
-    },
   ] as const)("refuses a checkout with $layout before any write", (row) =>
     Effect.gen(function* () {
       const prepared = yield* prepareInCheckout(row.remotes, "mode" in row ? row.mode : undefined);
@@ -5549,23 +5520,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         _tag: "Failure",
         failure: {
           _tag: "GitManagerError",
-          detail: `This project is not a checkout of pingdotgg/Codething-MVP. ${"remedy" in row ? row.remedy : elsewhere}`,
+          detail:
+            "This project is not a checkout of pingdotgg/Codething-MVP. Open the pull request from a project that is, or, if the repository was renamed, point this project's remote at its new name.",
         },
       });
-      if ("remedy" in row) {
-        // A POSIX shell reads the advice as one git command, and run for real it renames exactly
-        // that remote.
-        const command = /`(git remote rename .+ upstream)`/u.exec(row.remedy)?.[1] ?? "";
-        const script = `git() { printf '%s\\0' "$@"; }; ${command}`;
-        const argv = NodeChildProcess.spawnSync("sh", ["-c", script], { encoding: "utf8" }).stdout;
-        const name = "rename" in row ? row.rename : [row.remotes.at(-1)?.[0]];
-        expect(argv.split("\0")).toEqual(["remote", "rename", ...name, "upstream", ""]);
-        NodeChildProcess.spawnSync("sh", ["-c", command], { cwd: prepared.repoDir });
-        expect((yield* runGit(prepared.repoDir, ["remote"])).stdout.trim().split("\n")).toEqual([
-          "origin",
-          "upstream",
-        ]);
-      }
       expect(prepared.ghCalls.some((call) => call.startsWith("pr checkout"))).toBe(false);
       expect(prepared.remotes).toEqual([...new Set(row.remotes.map(([name]) => name))].toSorted());
       expect(prepared.remoteConfigAfter).toEqual(prepared.remoteConfigBefore);
@@ -5603,6 +5561,16 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ["upstream", base],
       ],
       after: ["contributor", "origin", "upstream"],
+      branch: forkBranch,
+    },
+    // Any remote can name the base, so the fork's identity remote does not decide.
+    {
+      layout: "a fork clone with the base under another name",
+      remotes: [
+        ["origin", "https://github.com/me/codething-mvp.git"],
+        ["acme", base],
+      ],
+      after: ["acme", "contributor", "origin"],
       branch: forkBranch,
     },
   ] as const)("prepares a worktree in a checkout with $layout", ({ remotes, after, branch }) =>
