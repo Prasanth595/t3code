@@ -72,6 +72,12 @@ export interface PassWorld {
     readonly repo: string;
     readonly issue: number;
   }) => Effect.Effect<ReadonlyArray<RunInfo>, LedgerError>;
+  /**
+   * Asks T3 whether the repo has a project (softfac's `check_repo`): a server that cannot answer
+   * is a `t3` error, the sign `t3Trouble` reads from the machine log. No project is no error
+   * here: `start` refuses that launch itself.
+   */
+  readonly checkRepo: (repo: Repo) => Effect.Effect<void, PassError>;
   /** The open `factory:ready` issues nobody is assigned to, and whether the listing was cut. */
   readonly readyIssues: (repo: Repo) => Effect.Effect<Listing<number>, PassError>;
   /** The open `factory:triage` issues the factory's login is the only assignee of. */
@@ -1399,6 +1405,21 @@ const claim = (
       if (loaded.kind !== "ready") continue;
       const repo = loaded.repo;
       const name = repo.watched.repo;
+      // Before the ready issues are read, and on every pass while it holds, so the machine log
+      // shows how long the repo was unclaimable and `t3Trouble` finds the T3 error: the repo's
+      // open runs were already worked above; nothing new is claimed from it.
+      const checked = yield* Effect.result(world.checkRepo(repo));
+      if (checked._tag === "Failure") {
+        yield* pass.fail(
+          null,
+          passError(
+            checked.failure.kind,
+            `${name}: cannot ask T3 Code for the repo's project: `,
+            checked.failure.message,
+          ),
+        );
+        continue;
+      }
       const listing = yield* Effect.result(world.readyIssues(repo));
       if (listing._tag === "Failure") {
         yield* pass.fail(

@@ -42,7 +42,7 @@ import { MachineLog, scanMachineLog } from "./ledger/machineLog.ts";
 import { readRun } from "./ledger/read.ts";
 import { newRunId, runIdToString, runPath, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
-import type { Repo } from "./pass.ts";
+import { runPass, type Repo } from "./pass.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { stopRequestPath } from "./runner/stop.ts";
 import { utcSecond } from "./runner/start.ts";
@@ -1047,6 +1047,74 @@ describe("liveWorld", () => {
   );
 
   const tempDirForLogs = useTempDirs();
+
+  it.effect(
+    "a pass whose T3 cannot answer for the repo's project writes the t3 error t3Trouble then reads",
+    () =>
+      Effect.gen(function* () {
+        const dataDir = tempDirForLogs();
+        // gh answers the config read, the login and every issue listing; T3 answers nothing.
+        const { process } = ghWith((args) => {
+          if (args[0] === "issue" && args[1] === "list") return "[]";
+          if (args[0] !== "api") return null;
+          const path = args[1] ?? "";
+          if (path === "user") return '{"login":"rawphp"}';
+          if (path === `repos/${REPO}`) return '{"default_branch":"main"}';
+          if (path === `repos/${REPO}/git/ref/heads/main`) {
+            return JSON.stringify({ ref: "refs/heads/main", object: { sha: SHA, type: "commit" } });
+          }
+          if (path.startsWith(`repos/${REPO}/contents/`)) {
+            const text = `factory:\n  instructors: [tomkaczocha]\n  base: main\n  provision: []\n  gate: [make]\n  limits: { minutes: 1, gate_retries: 0 }\n  autonomy: pr\n`;
+            return JSON.stringify({
+              name: "config.yml",
+              path: ".dw/config.yml",
+              sha: "abc",
+              size: text.length,
+              type: "file",
+              content: Buffer.from(text).toString("base64"),
+              encoding: "base64",
+            });
+          }
+          return null;
+        });
+        const down = Sessions.FactorySessions.of({
+          ...stubSessions,
+          findProject: () =>
+            Effect.fail(
+              new Sessions.SessionsError({
+                operation: "find-project",
+                cause: "connection refused",
+              }),
+            ),
+        });
+        const world = liveWorld(
+          machine,
+          dataDir,
+          process,
+          down,
+          () => NOW,
+          "mac-mini",
+          noAttention,
+          {
+            gate: { run: () => Effect.succeed({ _tag: "running" as const }) },
+            wake: Effect.void,
+            scope: Scope.makeUnsafe(),
+          },
+        );
+        assert.strictEqual(yield* world.t3Trouble(), null);
+        const lines: Array<string> = [];
+        const report = yield* runPass(world, machine, (line) => lines.push(line));
+        const line = lines.find((l) => l.startsWith(`error: ${REPO}: cannot ask T3 Code`));
+        assert.ok(line !== undefined, lines.join("\n"));
+        assert.ok(report.errors >= 1);
+        // The real machine log has the error with its kind, and the real read finds it.
+        const t3 = scanMachineLog(dataDir).filter(
+          (entry) => entry.event === "error" && (entry.data as { kind: string }).kind === "t3",
+        );
+        assert.strictEqual(t3.length, 1);
+        assert.strictEqual(yield* world.t3Trouble(), line.slice("error: ".length));
+      }),
+  );
 
   it.effect("T3 trouble is the newest t3 error in the machine log within ten minutes", () =>
     Effect.gen(function* () {

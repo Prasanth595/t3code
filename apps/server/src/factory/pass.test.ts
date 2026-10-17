@@ -104,6 +104,8 @@ class Fake implements PassWorld {
   runsError = false;
   ready: Answers<Array<number>> = {};
   readyCut: Array<string> = [];
+  /** Repos whose T3 project check fails, with the error. */
+  repoChecks: Record<string, PassError> = {};
   triage: Answers<Array<number>> = {};
   triageCut: Array<string> = [];
   unassigned: Answers<Array<{ issue: number; state: State }>> = {};
@@ -215,6 +217,12 @@ class Fake implements PassWorld {
     const found = answers[repo.watched.repo];
     if (found === "error") return Effect.fail(trackerFailure());
     return Effect.succeed({ items: found ?? [], cut: cut.includes(repo.watched.repo) });
+  }
+
+  checkRepo(repo: Repo) {
+    this.calls.push("check_repo");
+    const failure = this.repoChecks[repo.watched.repo];
+    return failure === undefined ? Effect.void : Effect.fail(failure);
   }
 
   readyIssues(repo: Repo) {
@@ -3036,6 +3044,95 @@ describe("attention items", () => {
       fake.items = [open({ id: "a", kind: "attention", run: RUN_40 })];
       yield* pass(fake, machine([REPO], 5));
       assert.deepEqual(ids(fake), ["a"]);
+    }),
+  );
+});
+
+// ---- the repo's T3 project check ----
+
+/**
+ * softfac's `check_repo`, the T3 part: before a repo's ready issues are read, T3 is asked for its
+ * project. A server that cannot answer is an error line of kind `t3` in the machine log, on every
+ * pass while it holds, which is the T3 trouble `decideInterruptions` reads; the repo's open runs
+ * go on, and nothing new is claimed from it.
+ */
+describe("the repo's T3 project check", () => {
+  const T3_DOWN: PassError = { kind: "t3", message: "T3 Code: down" };
+  const LINE = "rawphp/softfac: cannot ask T3 Code for the repo's project: T3 Code: down";
+
+  it.effect(
+    "a repo whose T3 cannot answer is a t3 error in the machine log and is not claimed",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.repoChecks[REPO] = T3_DOWN;
+        fake.ready[REPO] = [1];
+        const { report, lines } = yield* pass(fake, machine([REPO], 1));
+        assert.equal(report.errors, 1);
+        assert.deepEqual(starts(fake), []);
+        assert.ok(lines.includes(`error: ${LINE}`), lines.join("\n"));
+        assert.deepEqual(
+          errorEvents(fake).map((e) => e.data),
+          [{ step: "pass", kind: "t3", message: LINE }],
+        );
+        // The repo's ready issues are not even listed.
+        assert.ok(!fake.calls.includes("ready"), fake.calls.join("\n"));
+      }),
+  );
+
+  it.effect(
+    "is made before the ready issues are read, and a repo that passes is claimed from",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.ready[REPO] = [1];
+        fake.pushStart(`${REPO}#1`, started(1));
+        yield* pass(fake, machine([REPO], 1));
+        assert.ok(
+          fake.calls.indexOf("check_repo") < fake.calls.indexOf("ready"),
+          fake.calls.join("\n"),
+        );
+        assert.deepEqual(starts(fake), [`start ${REPO}#1`]);
+        assert.deepEqual(errorEvents(fake), []);
+      }),
+  );
+
+  it.effect("is printed on every pass, even with no ready issue", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.repoChecks[REPO] = T3_DOWN;
+      const config = machine([REPO], 1);
+      const first = yield* pass(fake, config);
+      const second = yield* pass(fake, config);
+      assert.ok(first.lines.includes(`error: ${LINE}`), first.lines.join("\n"));
+      assert.ok(second.lines.includes(`error: ${LINE}`), second.lines.join("\n"));
+      assert.equal(errorEvents(fake).length, 2);
+    }),
+  );
+
+  it.effect("an open run of a repo that fails its check goes on while nothing new is claimed", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.repoChecks[REPO] = T3_DOWN;
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.ready[REPO] = [1];
+      const { lines } = yield* pass(fake, machine([REPO], 2));
+      assert.ok(fake.calls.includes(`advance ${REPO}#12`), fake.calls.join("\n"));
+      assert.deepEqual(starts(fake), []);
+      assert.ok(lines.includes(`error: ${LINE}`), lines.join("\n"));
+    }),
+  );
+
+  it.effect("the other repos are still claimed from", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.repoChecks[REPO] = T3_DOWN;
+      fake.ready[REPO] = [1];
+      fake.ready[OTHER] = [4];
+      fake.pushStart(`${OTHER}#4`, started(4, OTHER));
+      const { report } = yield* pass(fake, machine([REPO, OTHER], 3));
+      assert.equal(report.errors, 1);
+      assert.deepEqual(starts(fake), [`start ${OTHER}#4`]);
     }),
   );
 });
