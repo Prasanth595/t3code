@@ -82,7 +82,7 @@ factory/                            repo root: SEAMS, sync/build/install scripts
 1. `apps/server/src/server.ts`: one line adding `FactoryLayer` to `layerRuntimeCoreDependenciesBase` (#1), and one adding the factory route layer `FactoryRoutes` to `layerMakeRoutes` (#57).
 2. `.gitignore` (#3): `.worktrees/`, so `build.sh` counts a main checkout that holds local worktrees as clean.
 3. One nav link in the web sidebar (#28).
-4. `apps/web/src/routeTree.gen.ts` (#28): generated, so a merge regenerates it instead of resolving it by hand.
+4. `apps/web/src/routeTree.gen.ts` (#28, joins `factory/SEAMS` with #55, the first page to add a route): generated, so a merge regenerates it instead of resolving it by hand. `apps/web/src/routes/settings.factory*` is factory-owned like `routes/factory*`.
 5. `apps/web/src/components/settings/settingsSearch.ts` (#55): the `SettingsPath`, section label, search entry and scope map for the factory settings page.
 6. `apps/web/src/components/settings/SettingsSidebarNav.tsx` (#55): the icon for that page.
 

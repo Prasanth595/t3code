@@ -1,2 +1,5 @@
 .gitignore
 apps/server/src/server.ts
+apps/web/src/components/settings/settingsSearch.ts
+apps/web/src/components/settings/SettingsSidebarNav.tsx
+apps/web/src/routeTree.gen.ts
