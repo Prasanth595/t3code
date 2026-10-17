@@ -433,9 +433,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       return favorites.length > 0 ? "favorites" : props.activeInstanceId;
     },
   );
-  const favoritesSet = (() => {
-    return new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
-  })();
+  const favoritesSet = new Set(favorites.map((fav) => providerModelKey(fav.provider, fav.model)));
   const [expandedLegacyInstances, setExpandedLegacyInstances] = useState(() => {
     // Auto-expand the legacy group only when the active model actually lives
     // there. A favorited legacy model is hoisted into the main list, so
