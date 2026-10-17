@@ -5,14 +5,13 @@
 <dict>
 	<key>Label</key>
 	<string>io.github.rawphp.t3fac</string>
+	<!-- ~/.config/t3fac/env, when it exists, is sourced first: the machine's own PATH and environment
+	     for the tools its repos provision and gate with. The template names no tool. -->
 	<key>ProgramArguments</key>
 	<array>
-		<string>@HOME@/.local/share/t3fac/current/t3</string>
-		<string>serve</string>
-		<string>--base-dir</string>
-		<string>@HOME@/.config/t3fac</string>
-		<string>--port</string>
-		<string>3876</string>
+		<string>/bin/sh</string>
+		<string>-c</string>
+		<string>if [ -f "@HOME@/.config/t3fac/env" ]; then . "@HOME@/.config/t3fac/env"; fi; exec "@HOME@/.local/share/t3fac/current/t3" serve --base-dir "@HOME@/.config/t3fac" --port 3876</string>
 	</array>
 	<key>WorkingDirectory</key>
 	<string>@HOME@</string>

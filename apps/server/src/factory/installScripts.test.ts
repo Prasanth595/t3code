@@ -217,12 +217,8 @@ describe("install.sh and rollback.sh", () => {
     const plist = NodeFS.readFileSync(plistPath(), "utf8");
     expect(plist).not.toContain("@HOME@");
     for (const part of [
-      `${home}/.local/share/t3fac/current/t3`,
-      "<string>serve</string>",
-      "<string>--base-dir</string>",
-      `${home}/.config/t3fac`,
-      "<string>--port</string>",
-      "<string>3876</string>",
+      `if [ -f "${home}/.config/t3fac/env" ]; then . "${home}/.config/t3fac/env"; fi; `,
+      `exec "${home}/.local/share/t3fac/current/t3" serve --base-dir "${home}/.config/t3fac" --port 3876</string>`,
       `${home}/Library/Logs/t3fac/`,
     ]) {
       expect(plist).toContain(part);
