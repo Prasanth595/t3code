@@ -2238,7 +2238,8 @@ const LATER = "2026-10-04T11:00:00Z";
 /** When the issue was written: the oldest entry of the edit history, by its author. */
 const CREATED = "2026-10-04T08:00:00Z";
 
-type Who = string | null;
+/** A person by login, or an App (`Bot`) that carries a login, or no one. */
+type Who = string | { readonly bot: string } | null;
 type Edit = readonly [at: string, who: Who];
 type TimelineNode = Record<string, unknown>;
 
@@ -2257,7 +2258,14 @@ const approvalCall = () => [
   "number=6",
 ];
 
-const actorOf = (who: Who) => (who === null ? null : { __typename: "User", login: who });
+const actorOf = (who: Who) =>
+  who === null
+    ? null
+    : typeof who === "string"
+      ? { __typename: "User", login: who }
+      : { __typename: "Bot", login: who.bot };
+/** A GitHub App whose GraphQL login matches an instructor's. */
+const botOf = (login: string): Who => ({ bot: login });
 
 const labelEvent = (kind: string, at: string, actor: Who, label: string): TimelineNode => ({
   __typename: kind,
@@ -2341,7 +2349,7 @@ const historyCut = (labeledAt: string): Refusal => ({
   kind: "edit-history-incomplete",
   labeledAt,
 });
-const byNonInstructor = (by: Who, labeledAt: string): Refusal => ({
+const byNonInstructor = (by: string | null, labeledAt: string): Refusal => ({
   kind: "labeled-by-non-instructor",
   by,
   labeledAt,
@@ -4210,7 +4218,7 @@ const bodyReplyRaw = (body: string, last: Edit | null, nodes: ReadonlyArray<Edit
         issue: {
           body,
           lastEditedAt: last === null ? null : last[0],
-          editor: last === null || last[1] === null ? null : { login: last[1] },
+          editor: last === null ? null : actorOf(last[1]),
           userContentEdits: editsJson(nodes, total),
         },
       },
@@ -4236,7 +4244,7 @@ const editorReplyRaw = (
         {
           id,
           lastEditedAt: last === null ? null : last[0],
-          editor: last === null || last[1] === null ? null : { login: last[1] },
+          editor: last === null ? null : actorOf(last[1]),
           userContentEdits: editsJson(nodes, total),
         },
       ],
@@ -4294,7 +4302,7 @@ it.effect("activity reads the real shapes and makes both calls", () =>
     const realRest =
       '[{"id":5978910929,"user":{"login":"rawphp","id":1},"created_at":"2026-10-04T10:13:16Z","updated_at":"2026-10-04T10:13:16Z","body":"please use serde"}]';
     const realGraphql =
-      '{"data":{"repository":{"issue":{"body":"Outcome text","lastEditedAt":null,"editor":null,"userContentEdits":{"totalCount":1,"nodes":[{"editedAt":"2026-10-04T09:50:06Z","editor":{"login":"rawphp"}}]}}}}}';
+      '{"data":{"repository":{"issue":{"body":"Outcome text","lastEditedAt":null,"editor":null,"userContentEdits":{"totalCount":1,"nodes":[{"editedAt":"2026-10-04T09:50:06Z","editor":{"__typename":"User","login":"rawphp"}}]}}}}}';
     const t = setup(reply(realRest), reply(realGraphql));
     assert.deepStrictEqual(yield* activityOf(t, ["rawphp"]), {
       comments: [
@@ -4321,7 +4329,7 @@ it.effect(
           '[{"id":5,"node_id":"IC_5","user":{"login":"rawphp"},"created_at":"2026-10-04T10:13:17Z","updated_at":"2026-10-04T10:13:17Z","body":"hi"}]',
         ),
         reply(
-          '{"data":{"repository":{"issue":{"body":"b","lastEditedAt":"2026-10-04T10:13:18Z","editor":{"login":"rawphp"},"userContentEdits":{"totalCount":2,"nodes":[{"editedAt":"2026-10-04T10:13:18Z","editor":{"login":"rawphp"}},{"editedAt":"2026-10-04T10:00:00Z","editor":{"login":"rawphp"}}]}}}}}',
+          '{"data":{"repository":{"issue":{"body":"b","lastEditedAt":"2026-10-04T10:13:18Z","editor":{"__typename":"User","login":"rawphp"},"userContentEdits":{"totalCount":2,"nodes":[{"editedAt":"2026-10-04T10:13:18Z","editor":{"__typename":"User","login":"rawphp"}},{"editedAt":"2026-10-04T10:00:00Z","editor":{"__typename":"User","login":"rawphp"}}]}}}}}',
         ),
       );
       const activity = yield* t.ok(t.github.activitySince(6, "2026-10-04T10:13:16Z", ["rawphp"]));
@@ -4342,7 +4350,15 @@ it.effect(
 );
 
 it("the activity query asks only for the body edit", () => {
-  for (const field of ["body", "lastEditedAt", "editor { login }", "$owner", "$name", "$number"]) {
+  for (const field of [
+    "body",
+    "lastEditedAt",
+    "body lastEditedAt editor { __typename login }",
+    "userContentEdits(first: 100) { totalCount nodes { editedAt editor { __typename login } } }",
+    "$owner",
+    "$name",
+    "$number",
+  ]) {
     assert.include(ACTIVITY_QUERY, field);
   }
   assert.notInclude(ACTIVITY_QUERY, "comments");
@@ -4862,6 +4878,79 @@ it.effect(
         "2026-10-04T10:30:00Z",
       );
     }),
+);
+
+it.effect("a body edit by an App with an instructor's login is not forwarded", () =>
+  Effect.gen(function* () {
+    const bot = botOf("tom");
+    const at = "2026-10-04T10:30:00Z";
+    // The last editor is the App.
+    const lastBot: Edit = [at, bot];
+    const a = setup(
+      reply("[]"),
+      reply(bodyReplyRaw("b", lastBot, newestFirst([[CREATED, "tom"], lastBot]), 2)),
+    );
+    assert.strictEqual((yield* activityOf(a, ["tom"])).bodyEdit, null);
+    // The last editor is the person, but the App edited in between: the whole body is shown.
+    const last: Edit = ["2026-10-04T10:40:00Z", "tom"];
+    const history: Array<Edit> = [[CREATED, "tom"], lastBot, last];
+    const b = setup(reply("[]"), reply(bodyReplyRaw("b", last, newestFirst(history), 3)));
+    assert.strictEqual((yield* activityOf(b, ["tom"])).bodyEdit, null);
+    // An editor that does not say what it is fails closed.
+    const bare = bodyReplyRaw(
+      "b",
+      [at, "tom"],
+      newestFirst([
+        [CREATED, "tom"],
+        [at, "tom"],
+      ]),
+      2,
+    ).replaceAll('"__typename":"User",', "");
+    const c = setup(reply("[]"), reply(bare));
+    assert.strictEqual((yield* activityOf(c, ["tom"])).bodyEdit, null);
+    // The guard on the last editor alone: an App last editor, a history that looks like the person's.
+    const e = setup(
+      reply("[]"),
+      reply(
+        bodyReplyRaw(
+          "b",
+          [at, bot],
+          newestFirst([
+            [CREATED, "tom"],
+            [at, "tom"],
+          ]),
+          2,
+        ),
+      ),
+    );
+    assert.strictEqual((yield* activityOf(e, ["tom"])).bodyEdit, null);
+    // The person alone is still forwarded.
+    const d = setup(reply("[]"), reply(activityBodyReply("b", [at, "tom"])));
+    assert.strictEqual((yield* activityOf(d, ["tom"])).bodyEdit?.editedAt, at);
+  }),
+);
+
+it.effect("a comment edited by an App with an instructor's login is dropped once", () =>
+  Effect.gen(function* () {
+    const bot = botOf("tom");
+    assert.deepStrictEqual(yield* droppedAfter(editorReply([EDIT_AT, bot])), [
+      dropOf("7", "edited-by-other"),
+    ]);
+    // The person edited last, but the App edited in between.
+    const last: Edit = ["2026-10-04T10:25:00Z", "tom"];
+    const history: Array<Edit> = [[CREATED, "tom"], [EDIT_AT, bot], last];
+    assert.deepStrictEqual(yield* droppedAfter(editorReplyHistory(last, history)), [
+      dropOf("7", "edited-by-other"),
+    ]);
+    // The App edited last and the history is cut off: the last editor decides, not the cut-off.
+    const cut: Array<Edit> = [
+      [EDIT_AT, "tom"],
+      [CREATED, "tom"],
+    ];
+    assert.deepStrictEqual(yield* droppedAfter(editorReplyRaw([EDIT_AT, bot], cut, 5)), [
+      dropOf("7", "edited-by-other"),
+    ]);
+  }),
 );
 
 it.effect(

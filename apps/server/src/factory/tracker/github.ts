@@ -16,9 +16,11 @@ import { FactoryProcess } from "../process.ts";
 import { isCommitId } from "../text.ts";
 import {
   APPROVAL_QUERY,
+  Actor,
   ApprovalAnswer,
   HISTORY_PAGE,
   editedSince,
+  isHumanInstructor,
   isInstructor,
   isUtcSecond,
   judgeApproval,
@@ -87,8 +89,8 @@ const MARKER_PREFIX = "<!-- softfac";
 export const ACTIVITY_QUERY =
   "query($owner: String!, $name: String!, $number: Int!) { " +
   "repository(owner: $owner, name: $name) { issue(number: $number) { " +
-  "body lastEditedAt editor { login } " +
-  `userContentEdits(first: ${HISTORY_PAGE}) { totalCount nodes { editedAt editor { login } } } } } }`;
+  "body lastEditedAt editor { __typename login } " +
+  `userContentEdits(first: ${HISTORY_PAGE}) { totalCount nodes { editedAt editor { __typename login } } } } } }`;
 
 /**
  * Who edited comments, by node id, up to 100 ids in one call: the last editor and the last 100
@@ -288,7 +290,7 @@ const ActivityCommentRows = Schema.Array(
 const EditHistory = Schema.Struct({
   totalCount: Schema.Number,
   nodes: Schema.Array(
-    Schema.Struct({ editedAt: Schema.String, editor: Schema.optional(Schema.NullOr(Login)) }),
+    Schema.Struct({ editedAt: Schema.String, editor: Schema.optional(Schema.NullOr(Actor)) }),
   ),
 });
 
@@ -298,7 +300,7 @@ const ActivityAnswer = Schema.Struct({
       issue: Schema.Struct({
         body: OptionalText,
         lastEditedAt: OptionalText,
-        editor: Schema.optional(Schema.NullOr(Login)),
+        editor: Schema.optional(Schema.NullOr(Actor)),
         userContentEdits: EditHistory,
       }),
     }),
@@ -313,7 +315,7 @@ const CommentEditorsAnswer = Schema.Struct({
         Schema.Struct({
           id: Schema.String,
           lastEditedAt: OptionalText,
-          editor: Schema.optional(Schema.NullOr(Login)),
+          editor: Schema.optional(Schema.NullOr(Actor)),
           userContentEdits: EditHistory,
         }),
       ),
@@ -1387,9 +1389,10 @@ export const makeGitHub = (options: GitHubOptions) => {
   /**
    * Whether a comment that was updated after it was written may be trusted, from its entry in
    * {@link commentEditors}: GitHub has no edit of it (the update was not to its body), or every
-   * edit in its history is an instructor's. Unlike a body edit there is no `since` cut-off: the
+   * edit in its history is a person's who is an instructor. Unlike a body edit there is no `since` cut-off: the
    * comment is the instructor's own text from the start, so any other editor at any time
-   * disqualifies it. A deleted account among the editors counts as another editor. An edit by
+   * disqualifies it. A deleted account, or an App (not a `User`) whose login matches an
+   * instructor, among the editors counts as another editor. An edit by
    * someone else that the answer shows is `other` even when the history is also too long to read
    * whole. A history that may hide more is `unverifiable`. No entry (no node id, or a comment
    * that is gone) is `gone`.
@@ -1402,10 +1405,10 @@ export const makeGitHub = (options: GitHubOptions) => {
     const lastOther =
       node.lastEditedAt !== null &&
       node.lastEditedAt !== undefined &&
-      !isInstructor(node.editor, instructors);
+      !isHumanInstructor(node.editor, instructors);
     // Every entry, the creation included (its editor is the author, an instructor).
     const anyOther = node.userContentEdits.nodes.some(
-      (edit) => !isInstructor(edit.editor, instructors),
+      (edit) => !isHumanInstructor(edit.editor, instructors),
     );
     if (lastOther || anyOther) return "other";
     return editsWhole(node.userContentEdits, node.lastEditedAt, node.editor)
@@ -1425,7 +1428,7 @@ export const makeGitHub = (options: GitHubOptions) => {
    * The text of an edited comment is its last editor's, so a comment whose history has anyone
    * else in it is not forwarded but listed in `dropped`, with a reason; one that cannot be
    * looked up or is gone is neither. The body shown is the whole current body, so every edit
-   * after `since` must be an instructor's, not only the last, and the history must be whole:
+   * after `since` must be a person's who is an instructor (not an App), not only the last, and the history must be whole:
    * anything else leaves `bodyEdit` empty.
    */
   const activitySince = (
@@ -1497,7 +1500,7 @@ export const makeGitHub = (options: GitHubOptions) => {
         editsWhole(found.userContentEdits, found.lastEditedAt, found.editor) &&
         found.userContentEdits.nodes
           .filter((edit) => edit.editedAt > since)
-          .every((edit) => isInstructor(edit.editor, instructors));
+          .every((edit) => isHumanInstructor(edit.editor, instructors));
       const lastEditedAt = found.lastEditedAt;
       const bodyEdit: BodyEdit | null =
         onlyInstructors &&
@@ -1506,7 +1509,7 @@ export const makeGitHub = (options: GitHubOptions) => {
         lastEditedAt > since &&
         found.editor !== null &&
         found.editor !== undefined &&
-        isInstructor(found.editor, instructors)
+        isHumanInstructor(found.editor, instructors)
           ? { editedAt: lastEditedAt, editor: found.editor.login, body: found.body ?? "" }
           : null;
       return { comments, bodyEdit, dropped };
