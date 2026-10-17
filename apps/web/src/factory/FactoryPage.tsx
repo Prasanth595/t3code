@@ -73,6 +73,7 @@ export function FactoryPage() {
         <RunsTable
           nowMs={nowMs}
           onShowAll={() => setAllRuns(true)}
+          onShowRecent={() => setAllRuns(false)}
           partial={!allRuns}
           runs={runs.data.runs}
         />

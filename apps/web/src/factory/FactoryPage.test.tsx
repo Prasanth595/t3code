@@ -159,7 +159,10 @@ describe("FactoryPage", () => {
     await act(async () => page.button("Show all runs")!.props.onClick());
     expect(runLinks()).toHaveLength(2);
     expect(page.text()).toContain("o__r__1__1");
+    expect(page.text()).toContain("Every run, read once.");
     expect(page.button("Show all runs")).toBeUndefined();
+    await act(async () => page.button("Show recent runs")!.props.onClick());
+    expect(runLinks()).toHaveLength(1);
   });
 
   it("says when the week holds no runs and still offers every run", async () => {

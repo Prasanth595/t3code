@@ -7,7 +7,7 @@
  * - `GET /api/factory/runs`: `runs list`, one row per run: every unfinished run and the finished
  *   runs of the last `RECENT_FINISHED_MS`, or every run with `?all=1`. A finished run is summarised
  *   from the ends of its file, and one older than the window is not read at all, so the many old
- *   runs cost a stat each; only the unfinished ones are read whole.
+ *   runs cost a stat and a tail read each; only the unfinished ones are read whole.
  * - `GET /api/factory/runs/:id`: `runs show`, every entry of one run.
  *
  * Control needs `orchestration:operate`:

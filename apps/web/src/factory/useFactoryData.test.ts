@@ -246,6 +246,19 @@ describe("useFactoryStatus shared by several readers", () => {
     expect(fetchStatus).toHaveBeenCalledTimes(2);
   });
 
+  it("still reads when the timer fires a few milliseconds before 30 seconds have passed", async () => {
+    const fetchStatus = vi.fn(async () => status(0));
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    const result = await mount(useFactoryStatus);
+    await settle(10);
+    // The wall clock falls 5 ms behind the timer, so the tick sees 29 995 ms since the last start.
+    vi.setSystemTime(day + 5);
+    await act(async () => result.current.refresh());
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+    await settle(29_990);
+    expect(fetchStatus).toHaveBeenCalledTimes(3);
+  });
+
   it("reads once per 30 seconds for two readers whose timers are out of step", async () => {
     const fetchStatus = vi.fn(async () => status(0));
     __setFactoryApiForTests(api({ status: fetchStatus }));
@@ -314,13 +327,17 @@ describe("useFactoryRuns and useFactoryRun", () => {
     expect((one.current as FactoryResource<{ skipped: number }>).data?.skipped).toBe(3);
   });
 
-  it("asks the server for every run only with all", async () => {
-    const fetchRuns = vi.fn(async () => ({ runs: [] }));
+  it("asks the server for every run only with all, and reads that list once, not on the poll", async () => {
+    const fetchRuns = vi.fn<FactoryApi["runs"]>(async () => ({ runs: [] }));
     __setFactoryApiForTests(api({ runs: fetchRuns }));
     await mount(() => useFactoryRuns());
     expect(fetchRuns).toHaveBeenLastCalledWith({ all: false });
     await mount(() => useFactoryRuns(true));
     expect(fetchRuns).toHaveBeenLastCalledWith({ all: true });
+    expect(fetchRuns).toHaveBeenCalledTimes(2);
+    await settle(90_000);
+    expect(fetchRuns).toHaveBeenCalledTimes(5);
+    expect(fetchRuns.mock.calls.slice(2).every(([options]) => options.all === false)).toBe(true);
   });
 
   it("reads a run no more after a 404", async () => {

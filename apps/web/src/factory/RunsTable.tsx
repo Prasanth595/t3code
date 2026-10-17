@@ -35,25 +35,34 @@ const prLabel = (url: string) => {
 
 /**
  * The runs the server listed: by default every unfinished run and the finished ones of the last
- * week (`partial`), with a way to ask for every run the factory ever made.
+ * week (`partial`), kept fresh by the poll, or every run the factory ever made, read once.
  */
 export function RunsTable({
   runs,
   nowMs,
   partial,
   onShowAll,
+  onShowRecent,
 }: {
   runs: ReadonlyArray<FactoryRunRow>;
   nowMs: number;
   partial: boolean;
   onShowAll: () => void;
+  onShowRecent: () => void;
 }) {
   const sorted = useMemo(() => [...runs].sort(newestFirst), [runs]);
   const showAll = partial ? (
     <Button onClick={onShowAll} size="sm" variant="ghost">
       Show all runs
     </Button>
-  ) : null;
+  ) : (
+    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+      <span>Every run, read once.</span>
+      <Button onClick={onShowRecent} size="sm" variant="ghost">
+        Show recent runs
+      </Button>
+    </div>
+  );
   if (runs.length === 0) {
     return (
       <Empty size="compact">

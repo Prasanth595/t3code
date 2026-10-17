@@ -13,6 +13,13 @@ import {
 /** How often an open page or badge reads again, while the window shows and the reader is about. */
 export const POLL_MS = 30_000;
 
+/**
+ * A tick within this of `POLL_MS` since the last read started still reads: the timer that fires a
+ * millisecond early would otherwise skip every other poll. Two readers' timers out of step by more
+ * than this still cost one read per period, since only the first past the gap reads.
+ */
+const TICK_SLACK_MS = 1_000;
+
 export interface FactoryResource<T> {
   readonly status: "loading" | "error" | "ready";
   readonly data: T | null;
@@ -80,10 +87,11 @@ const refresh = (key: Key): void => {
   if (store !== undefined) read(key, store);
 };
 
-/** A poll tick: not while a read is in flight, nor within POLL_MS of the last one starting. */
+/** A poll tick: not while a read is in flight, nor within a period (less slack) of the last start. */
 const tick = (key: Key): void => {
   const store = stores.get(key);
-  if (store === undefined || store.inFlight || Date.now() - store.startedAt < POLL_MS) return;
+  if (store === undefined || store.inFlight) return;
+  if (Date.now() - store.startedAt < POLL_MS - TICK_SLACK_MS) return;
   read(key, store);
 };
 
@@ -113,7 +121,9 @@ export function __resetFactoryStoresForTests(): void {
  * The resource behind `key`: read when its first reader mounts, then on the live-refresh policy
  * (every `POLL_MS` while the window shows and the reader is about, and on coming back to the
  * window), and no more after a 404, which says the server has no factory or no such run. Readers
- * of one key share the store, whose `tick` makes their timers one read per `POLL_MS`.
+ * of one key share the store, whose `tick` makes their timers one read per `POLL_MS`. The full
+ * runs list is read once and never polled: every run the factory ever made, every half minute,
+ * is the cost the recent window exists to avoid.
  */
 function useFactoryResource<T>(key: Key): FactoryResource<T> {
   const state = useSyncExternalStore(
@@ -123,14 +133,15 @@ function useFactoryResource<T>(key: Key): FactoryResource<T> {
   const tickNow = useCallback(() => tick(key), [key]);
   const refreshNow = useCallback(() => refresh(key), [key]);
   const gone = state.error instanceof FactoryApiError && state.error.status === 404;
-  useLiveRefresh(tickNow, { key: `factory:${key}`, intervalMs: POLL_MS, enabled: !gone });
+  const polled = key !== "runs:all" && !gone;
+  useLiveRefresh(tickNow, { key: `factory:${key}`, intervalMs: POLL_MS, enabled: polled });
   return { ...state, refresh: refreshNow };
 }
 
 export const useFactoryStatus = (): FactoryResource<FactoryStatus> =>
   useFactoryResource<FactoryStatus>("status");
 
-/** The runs list: the recent window the server lists by default, or every run with `all`. */
+/** The runs list: the recent window the server lists by default, polled; or every run with `all`, read once. */
 export const useFactoryRuns = (
   all = false,
 ): FactoryResource<{ readonly runs: ReadonlyArray<FactoryRunRow> }> =>
