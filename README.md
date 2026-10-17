@@ -24,7 +24,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Settings and theme sync:** a setting with a shared value syncs to every machine. A change with "All environments" in T3 Settings sets the shared value. Custom themes (the `themes/` folder) and `defaultTheme` sync too.
 - **Settings > Machines:** join or leave the map with a code, and see the machines that this machine can reach.
 - **Desktop app on the map:** the desktop app adds each reachable machine as an environment and applies the shared client settings.
-- **Zoom and pan:** the map zooms, pans and fits all cards, also on phones and small windows.
+- **Zoom and pan:** the map has no edges. Cards stay where they drop, and the map zooms, pans and fits all cards, also on phones and small windows.
 - **Approved clients:** a new browser waits in the Clients view until the owner approves it with a fresh MFA. Each client gets a card and a level per machine.
 - **Client access:** each machine decides which browsers get in through Cloudflare Access. `off` keeps the owner login. `observe` gives a browser of an approved client the level of its arrow, at most `standard`. `enforce` lets in only browsers of approved clients; other browsers wait for approval (`clientAccess`).
 - **Owner-only access changes:** only the owner changes `clientAccess` and `machineMap`, in the portal with the passkey step or in the desktop app of the machine. Agents cannot change them.
@@ -41,6 +41,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Server auto-update:** a headless server that runs as the background service installs each newer fork release when no agent turn runs (`forkAutoUpdate`).
 - **Newer update before install:** before the desktop app installs a downloaded update, it checks for a newer release. If one exists, it asks "Download newer" or "Install this one". Install when idle and the machine map take the newer release (`checkNewerBeforeUpdateInstall`, off by default).
 - **Local deploy:** `scripts/fork-deploy-local.sh <ssh-host>` builds this checkout for a headless Linux server and switches its service to it.
+- **Local Mac build:** `scripts/fork-desktop-mac.sh --install` builds and signs the Mac app from this checkout and replaces the installed app. `--publish` uploads it as a fork prerelease instead.
 - **Changelog:** a timeline of fork releases and commits, also in the update popover for the offered update, the pending upstream commits, a "Start Fork Sync" button and an "Ask agent" menu (`forkChangelogEnabled`, on by default).
 - **Fork Sync:** a daily workflow merges upstream main into fork main. It never rewrites main.
 - **Fork CI:** runs on each push to main and on each pull request to main. Branch protection requires the one check "Fork CI result".
@@ -48,7 +49,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 
 **Agents**
 
-- **Recover interrupted agents:** after a restart, each cut-off thread gets a "Recover and continue" message (`recoverInterruptedTurns`).
+- **Recover interrupted agents:** after a restart, each cut-off thread gets a "Recover and continue" message (`recoverInterruptedTurns`). Recovery stops after three in a row, and a project that turns off "Continue threads after restarts" keeps it off.
 - **Background work details:** background work notifications name their tasks and output files, with a details popover (`backgroundWorkDetails`, on by default).
 - **Pull requests from origin:** a fork checkout lists, reads and watches the pull requests of its fork, not of upstream (`preferOriginRemote`).
 - **Pull request watch remark filter:** select which comments and reviews wake an agent that watches a pull request (`pullRequestWatchRemarkFilter`).
@@ -69,7 +70,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 
 **Scripts and terminal**
 
-- **Global scripts:** scripts for every project, pinned script buttons, floating previews and app overlays (`globalScripts`, `pinnedGlobalScriptIds`, `pinnedProjectScriptIds`).
+- **Global scripts:** scripts for every project, pinned script buttons, floating previews and app overlays (`globalScripts`, `pinnedGlobalScriptIds`, `pinnedProjectScriptIds`). A script can run in the background without opening the terminal drawer (`runInBackground`). A remote client opens an app overlay action in the preview instead.
 - **App toggle shortcuts:** global keys that show and hide the desktop app (`appToggleShortcuts`).
 - **Terminal settings:** app shortcuts first in the terminal, and a confirmation before a terminal closes (`terminalAppShortcutsFirst`; `confirmTerminalClose`, on by default).
 
@@ -92,6 +93,8 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - MCP: `schedule_task`, `t3_project_create` and `t3_project_update` read and write the project model, environment mode, auto-pull and actions through project settings.
 - Desktop updates: the updater never downgrades, so a local build stays installed. The server recovers when quit-and-install does not quit.
 - Worktree launch: a worktree request in Scratch runs in a thread folder. A worktree request outside a Git repository runs in the project folder and says so in the thread. A launch refuses a new worktree branch that already exists.
+- Queue: a resumed queued turn shows after the turns that ran before it. A paused queue shows while a turn runs. Resume waits for an edit and for a usage limit.
+- Machine map: an expired machine arrow ends the sessions that it granted.
 
 ---
 
