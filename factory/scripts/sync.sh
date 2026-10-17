@@ -2,7 +2,7 @@
 # Merges upstream's newest nightly tag into main through a pull request, in two
 # phases that .github/workflows/factory-sync.yml runs as two jobs:
 #
-#   sync.sh prepare <dir>   no token: merge, install, regenerate, check
+#   sync.sh prepare <dir>   no write token: merge, install, regenerate, check
 #   sync.sh publish <dir>   the write token, git and gh only: push, land, file
 #   sync.sh                 both in turn, from one checkout
 #

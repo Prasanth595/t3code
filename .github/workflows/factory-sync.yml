@@ -26,7 +26,9 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          persist-credentials: false
+          # persist-credentials stays on: removing it inside the step runs
+          # `git submodule foreach`, which fails on the gitlinks upstream left
+          # under .repos/ with no .gitmodules entry.
           sparse-checkout: |
             /*
             !/.repos/
@@ -68,8 +70,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          # git push uses gh's credential helper instead.
-          persist-credentials: false
           sparse-checkout: |
             /*
             !/.repos/
