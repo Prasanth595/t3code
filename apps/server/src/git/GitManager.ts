@@ -83,6 +83,7 @@ import { detachStackFrame } from "./detachStackFrame.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
@@ -2641,28 +2642,52 @@ export const make = Effect.gen(function* () {
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
 
       if (input.mode === "local") {
-        yield* ensureNoTrackedChanges(input.cwd, pullRequest.number);
-        yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
+        const root = yield* gitCore.execute({
+          operation: "GitManager.preparePullRequestThread.root",
           cwd: input.cwd,
-          reference: normalizedReference,
+          args: ["rev-parse", "--show-toplevel"],
         });
-        const details = yield* gitCore.statusDetails(input.cwd);
-        yield* configurePullRequestHeadUpstream(
-          input.cwd,
-          {
-            ...pullRequest,
-            ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-          },
-          details.branch ?? pullRequest.headBranch,
+        // All projects in this checkout share the lease, including ones rooted in a subdirectory.
+        return yield* withWorkspaceLease(
+          yield* canonicalizeExistingPath(root.stdout.trim()),
+          Effect.gen(function* () {
+            yield* ensureNoTrackedChanges(input.cwd, pullRequest.number);
+            yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
+              cwd: input.cwd,
+              reference: normalizedReference,
+            });
+            const details = yield* gitCore.statusDetails(input.cwd);
+            yield* configurePullRequestHeadUpstream(
+              input.cwd,
+              {
+                ...pullRequest,
+                ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+              },
+              details.branch ?? pullRequest.headBranch,
+            );
+            return {
+              pullRequest,
+              branch: details.branch ?? pullRequest.headBranch,
+              worktreePath: null,
+              // Unforced checkout leaves a branch that is ahead of, or could not be advanced to, the
+              // pull request where it is, so only the resulting HEAD says whether this is its head.
+              isOnPullRequestHead: yield* gitCore
+                .execute({
+                  operation: "GitManager.preparePullRequestThread.currentBranch",
+                  cwd: input.cwd,
+                  args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
+                  allowNonZeroExit: true,
+                })
+                .pipe(
+                  Effect.flatMap((current) =>
+                    current.stdout.trim() === details.branch
+                      ? moveToPullRequestHead(input.cwd, pullRequestSummary.headSha)
+                      : Effect.succeed(false),
+                  ),
+                ),
+            };
+          }),
         );
-        return {
-          pullRequest,
-          branch: details.branch ?? pullRequest.headBranch,
-          worktreePath: null,
-          // Unforced checkout leaves a branch that is ahead of, or could not be advanced to, the
-          // pull request where it is, so only the resulting HEAD says whether this is its head.
-          isOnPullRequestHead: yield* moveToPullRequestHead(input.cwd, pullRequestSummary.headSha),
-        };
       }
 
       const ensureExistingWorktreeUpstream = Effect.fn("ensureExistingWorktreeUpstream")(function* (
