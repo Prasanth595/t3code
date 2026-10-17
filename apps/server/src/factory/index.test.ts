@@ -187,12 +187,14 @@ it.effect("logs factory started once for a valid machine file, then runs the fir
     );
     assert.strictEqual(logs.at(-1), "pass done: 0 runs, 0 claimed, 1 errors, 0 need attention");
     assert.deepStrictEqual(status, { state: "running" });
-    // The start is recorded before the first pass, for `interrupted` to weigh a cut run against.
+    // The start is recorded before the first pass, and the stop as the scope closes, for
+    // `interrupted` to weigh a run the restart cut off against.
     assert.deepStrictEqual(events, [
       "server_started",
       "pass_started",
       "repo_skipped",
       "pass_finished",
+      "server_stopping",
     ]);
   }),
 );
@@ -1111,6 +1113,10 @@ describe("liveWorld", () => {
         log.close();
       }
       assert.deepStrictEqual(yield* world.t3Starts(), [NOW - 2 * MINUTE]);
+      const stop = MachineLog.open(dataDir, { clock: () => NOW - 3 * MINUTE });
+      stop.append({ event: "server_stopping", data: { stopping_at: NOW - 3 * MINUTE } });
+      stop.close();
+      assert.deepStrictEqual(yield* world.t3Stops(), [NOW - 3 * MINUTE]);
       // A start is not T3 trouble in the log's sense: `interrupted` weighs it against the run.
       assert.strictEqual(yield* world.t3Trouble(), null);
     }),

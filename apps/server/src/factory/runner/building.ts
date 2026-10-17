@@ -234,6 +234,14 @@ export interface Evidence {
    * these happened was cut off by it.
    */
   readonly t3Starts: ReadonlyArray<number>;
+  /**
+   * When those servers began shutting down, oldest first: the machine log's `server_stopping`
+   * lines of the last day. A shutdown marks every running turn `cancelled` about then, so a run
+   * that ended between a stop and the next start was cut off by that restart, however long the
+   * server stayed down. A stop whose line was never written (a crash, a power cut) has no entry,
+   * and the start's grace stands in for it.
+   */
+  readonly t3Stops: ReadonlyArray<number>;
 }
 
 /** The `t3_error` recorded for a run a server start cut off. */
@@ -249,14 +257,26 @@ const RESTART_GRACE_MS = 10 * 60 * 1000;
 
 /**
  * The server start that cut the session's run off, or null: the run started before it and ended
- * at or after it, or within the grace before it. The oldest such start is the one the run's end
- * matches, so a server started again before any pass decided the run still names the right one.
+ * at or after the stop that start follows, with the grace before either. The stop is the newest
+ * `server_stopping` after the start before it; a start with none uses its own time. The oldest
+ * such start is the one the run's end matches, so a server started again before any pass decided
+ * the run still names the right one.
  */
-const cutByRestart = (status: ThreadStatus, starts: ReadonlyArray<number>): number | null => {
+const cutByRestart = (
+  status: ThreadStatus,
+  starts: ReadonlyArray<number>,
+  stops: ReadonlyArray<number>,
+): number | null => {
   const begun = status.runStartedAt;
   const ended = status.runCompletedAt;
   if (begun === null || ended === null) return null;
-  return starts.find((at) => begun < at && ended >= at - RESTART_GRACE_MS) ?? null;
+  let previous = Number.NEGATIVE_INFINITY;
+  for (const at of starts) {
+    const stop = stops.findLast((s) => s > previous && s < at) ?? at;
+    if (begun < at && ended >= stop - RESTART_GRACE_MS) return at;
+    previous = at;
+  }
+  return null;
 };
 
 /** What `interrupted` did. */
@@ -1481,7 +1501,7 @@ export const interrupted = (
       return { kind: "unchanged", why: "its thread has moved on since" } as const;
     }
     const used = yield* resumesUsed(ctx, run, seen);
-    const cutAt = cutByRestart(status, evidence.t3Starts);
+    const cutAt = cutByRestart(status, evidence.t3Starts, evidence.t3Stops);
     if (!may(used, cutAt)) {
       return yield* stuckEnded(
         ctx,

@@ -82,10 +82,12 @@ const evidence = (
   t3Error: string | null,
   endedInPass: number,
   t3Starts: ReadonlyArray<number> = [],
+  t3Stops: ReadonlyArray<number> = [],
 ): Evidence => ({
   t3Error,
   endedInPass,
   t3Starts,
+  t3Stops,
 });
 /** One session ended badly, and the machine log has a T3 timeout in the last ten minutes. */
 const afterOutage = () => evidence(T3_ERROR, 1);
@@ -1047,12 +1049,45 @@ describe("interrupted: a T3 restart", () => {
     }),
   );
 
-  it.effect("sends a run that ended more than ten minutes before the start to stuck", () =>
+  it.effect(
+    "sends a run that ended more than ten minutes before a start with no stop on record to stuck",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor();
+        endedWith(rig, "cancelled", T0 - 30 * MINUTE, T3_STARTED - 10 * MINUTE - 1);
+        assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
+        assert.strictEqual((yield* decide(rig, evidence(null, 1, [T3_STARTED]))).kind, "stuck");
+      }),
+  );
+
+  it.effect("resumes a run the shutdown of a server that stayed down for long cut off", () =>
     Effect.gen(function* () {
+      // The LaunchAgent was unloaded at T0 - 45 min for maintenance and loaded again at T3_STARTED:
+      // the shutdown marked the run cancelled then, and its server_stopping line says when.
       const rig = rigFor();
-      endedWith(rig, "cancelled", T0 - 30 * MINUTE, T3_STARTED - 10 * MINUTE - 1);
+      const stopped = T3_STARTED - 40 * MINUTE;
+      endedWith(rig, "cancelled", T0 - 60 * MINUTE, stopped - 500);
       assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
-      assert.strictEqual((yield* decide(rig, evidence(null, 1, [T3_STARTED]))).kind, "stuck");
+      const outcome = yield* decide(rig, evidence(null, 1, [T3_STARTED], [stopped]));
+      assert.strictEqual(outcome.kind, "resumed");
+      const line = linesOf(rig).find((entry) => entry.event === "session_interrupted");
+      assert.strictEqual(field(line!.data, "t3_error"), T3_STARTED_TEXT);
+    }),
+  );
+
+  it.effect("does not count a stop that belongs to an earlier restart", () =>
+    Effect.gen(function* () {
+      // A stop and start at T0 - 50 and T0 - 45 min, then this start with no stop line: the run
+      // began after that earlier pair and ended more than ten minutes before this start, so the
+      // earlier stop is not this start's.
+      const rig = rigFor();
+      endedWith(rig, "cancelled", T0 - 44 * MINUTE, T0 - 20 * MINUTE);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
+      const outcome = yield* decide(
+        rig,
+        evidence(null, 1, [T0 - 45 * MINUTE, T3_STARTED], [T0 - 50 * MINUTE]),
+      );
+      assert.strictEqual(outcome.kind, "stuck");
     }),
   );
 

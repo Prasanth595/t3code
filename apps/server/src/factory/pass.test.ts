@@ -15,7 +15,12 @@ import type { State } from "./domain/lifecycle.ts";
 import { LedgerIoError } from "./ledger/errors.ts";
 import type { CauseStep, ErrorKind, MachineEvent } from "./ledger/events.ts";
 import type { RunInfo } from "./ledger/listRuns.ts";
-import { MachineLog, serverStartsSince, t3TroubleSince } from "./ledger/machineLog.ts";
+import {
+  MachineLog,
+  serverStartsSince,
+  serverStopsSince,
+  t3TroubleSince,
+} from "./ledger/machineLog.ts";
 import { newRunId, runIdToString, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
 import { formatTs } from "./ledger/time.ts";
@@ -126,8 +131,9 @@ class Fake implements PassWorld {
   machineLogFails = false;
   /** When set, `record` appends to the real machine log in this dir and `t3Trouble` reads it, as the live world does. */
   machineLogDir: string | null = null;
-  /** The server starts `t3Starts` answers when there is no real machine log. */
+  /** The server starts and stops `t3Starts` and `t3Stops` answer when there is no real machine log. */
   t3Starts_: ReadonlyArray<number> = [];
+  t3Stops_: ReadonlyArray<number> = [];
   /** The evidence of the last `interrupted` call. */
   lastEvidence: Evidence | null = null;
   /** What the pass wrote to a run's ledger as an `error` line. */
@@ -379,6 +385,14 @@ class Fake implements PassWorld {
       return Effect.succeed(serverStartsSince(this.machineLogDir, this.now - 24 * 60 * 60_000));
     }
     return Effect.succeed(this.t3Starts_);
+  }
+
+  t3Stops() {
+    this.calls.push("t3_stops");
+    if (this.machineLogDir !== null) {
+      return Effect.succeed(serverStopsSince(this.machineLogDir, this.now - 24 * 60 * 60_000));
+    }
+    return Effect.succeed(this.t3Stops_);
   }
 
   t3Trouble() {
@@ -3244,7 +3258,8 @@ describe("sessions that ended badly", () => {
         // server's start, which decides it against the run's own times.
         const fake = new Fake();
         fake.machineLogDir = passTempDir();
-        // What the server wrote when it started, two minutes ago.
+        // What the old server wrote as it stopped, and the new one when it started two minutes ago.
+        yield* fake.record({ event: "server_stopping", data: { stopping_at: T0 - 3 * 60_000 } });
         yield* fake.record({ event: "server_started", data: { started_at: T0 - 2 * 60_000 } });
         fake.runIn(12, BUILDING, REPO, true);
         fake.advances[`${REPO}#12`] = [badEnd("cancelled")];
@@ -3261,6 +3276,7 @@ describe("sessions that ended badly", () => {
           t3Error: null,
           endedInPass: 1,
           t3Starts: [T0 - 2 * 60_000],
+          t3Stops: [T0 - 3 * 60_000],
         });
       }),
   );

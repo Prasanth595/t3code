@@ -293,12 +293,28 @@ export const t3TroubleSince = (dataDir: string, nowMs: number): string | null =>
  * server, and the ones before it, started. A line whose `started_at` is not a number is skipped.
  * Only the log's tail is read (`machineLogSince`); a missing log has none.
  */
-export const serverStartsSince = (dataDir: string, sinceMs: number): Array<number> => {
-  const starts: Array<number> = [];
+export const serverStartsSince = (dataDir: string, sinceMs: number): Array<number> =>
+  serverTimesSince(dataDir, sinceMs, "server_started", "started_at");
+
+/**
+ * The `stopping_at` of every `server_stopping` line at or after `sinceMs`, oldest first: when a
+ * server began shutting down, which is about when its shutdown marked the running turns
+ * `cancelled`. Read as `serverStartsSince` reads the starts.
+ */
+export const serverStopsSince = (dataDir: string, sinceMs: number): Array<number> =>
+  serverTimesSince(dataDir, sinceMs, "server_stopping", "stopping_at");
+
+const serverTimesSince = (
+  dataDir: string,
+  sinceMs: number,
+  event: "server_started" | "server_stopping",
+  key: "started_at" | "stopping_at",
+): Array<number> => {
+  const times: Array<number> = [];
   for (const entry of machineLogSince(dataDir, sinceMs)) {
-    if (entry.event !== "server_started") continue;
-    const at = field(entry.data, "started_at");
-    if (typeof at === "number") starts.push(at);
+    if (entry.event !== event) continue;
+    const at = field(entry.data, key);
+    if (typeof at === "number") times.push(at);
   }
-  return starts;
+  return times;
 };

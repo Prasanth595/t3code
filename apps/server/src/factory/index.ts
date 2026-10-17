@@ -6,6 +6,7 @@ import * as NodeOS from "node:os";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import type * as Duration from "effect/Duration";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
@@ -36,7 +37,12 @@ import { Ledger } from "./ledger/ledger.ts";
 import { listUnfinishedRuns } from "./ledger/listRuns.ts";
 import { readRun } from "./ledger/read.ts";
 import { runIdToString, type RunId } from "./ledger/runId.ts";
-import { MachineLog, serverStartsSince, t3TroubleSince } from "./ledger/machineLog.ts";
+import {
+  MachineLog,
+  serverStartsSince,
+  serverStopsSince,
+  t3TroubleSince,
+} from "./ledger/machineLog.ts";
 import { runLoop, type Loop } from "./loop.ts";
 import {
   GATE_PASSED_LINE,
@@ -504,6 +510,7 @@ export const liveWorld = (
     advance: (repo, run) => advance(interruptContext(repo), run),
     t3Trouble: () => ledger(() => t3TroubleSince(dataDir, clock())),
     t3Starts: () => ledger(() => serverStartsSince(dataDir, clock() - SERVER_STARTS_WINDOW_MS)),
+    t3Stops: () => ledger(() => serverStopsSince(dataDir, clock() - SERVER_STARTS_WINDOW_MS)),
     interrupted: (repo, run, evidence) => interrupted(interruptContext(repo), run, evidence),
     gateRunning: (run) =>
       gating.has(runIdToString(run)) || NodeFS.existsSync(gateLockFile(dataDir, run)),
@@ -696,6 +703,19 @@ const startFactory = (options: RuntimeOptions) =>
           Effect.logWarning("cannot record the server start in the machine log", cause),
         ),
       );
+    // And the stop, as this scope closes: the server's shutdown marks every running turn
+    // `cancelled` about then, so a run that ended between this line and the next start was cut
+    // off by the restart, however long the server stays down.
+    yield* Effect.addFinalizer(() =>
+      Effect.gen(function* () {
+        const stoppingAt = yield* Clock.currentTimeMillis;
+        yield* world.record({ event: "server_stopping", data: { stopping_at: stoppingAt } });
+      }).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("cannot record the server stop in the machine log", cause),
+        ),
+      ),
+    );
     // The threads of the unfinished runs, read at start and after every pass: a pass is what
     // launches and finishes sessions, so between passes the set does not change.
     const owned = yield* Ref.make<ReadonlySet<string>>(new Set());

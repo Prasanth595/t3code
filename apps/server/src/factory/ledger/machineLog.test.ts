@@ -14,6 +14,7 @@ import {
   scanMachineLog,
   machineLogSince,
   serverStartsSince,
+  serverStopsSince,
   t3TroubleSince,
   type MachineLogOptions,
 } from "./machineLog.ts";
@@ -52,6 +53,10 @@ const samples: ReadonlyArray<{ readonly event: MachineEvent; readonly line: stri
   {
     event: { event: "server_started", data: { started_at: 1791108790000 } },
     line: lineAtT0("server_started", `{"started_at":1791108790000}`),
+  },
+  {
+    event: { event: "server_stopping", data: { stopping_at: 1791108796000 } },
+    line: lineAtT0("server_stopping", `{"stopping_at":1791108796000}`),
   },
   {
     event: { event: "pass_finished", data: { runs: 3, claimed: 1, errors: 2, attention: 0 } },
@@ -431,9 +436,9 @@ describe("append", () => {
       seen.add(event.event);
       expect(readText(logFile(dataDir)), event.event).toBe(expected);
     }
-    // Every one of the 18 event types has at least one exact line.
+    // Every one of the 19 event types has at least one exact line.
     expect([...seen].sort()).toEqual(Object.keys(MACHINE_EVENT_FIELDS).sort());
-    expect(seen.size).toBe(18);
+    expect(seen.size).toBe(19);
   });
 
   it("the claims paused line has a reason and nothing else", () => {
@@ -839,6 +844,22 @@ describe("serverStartsSince", () => {
       [NOW - MINUTE + 2_000, started(NOW - MINUTE)],
     );
     expect(serverStartsSince(dataDir, NOW - 24 * HOUR)).toEqual([NOW - 3 * HOUR, NOW - MINUTE]);
+  });
+
+  it("serverStopsSince is every server_stopping line's stopping_at in the window, oldest first", () => {
+    const dataDir = tempDir();
+    logWith(
+      dataDir,
+      [NOW - 30 * HOUR, { event: "server_stopping", data: { stopping_at: NOW - 30 * HOUR } }],
+      [NOW - 3 * HOUR, { event: "server_stopping", data: { stopping_at: NOW - 3 * HOUR } }],
+      [NOW - 3 * HOUR + 60_000, started(NOW - 3 * HOUR + 60_000)],
+      [
+        NOW - MINUTE,
+        { event: "server_stopping", data: { stopping_at: "now" } } as unknown as MachineEvent,
+      ],
+    );
+    expect(serverStopsSince(dataDir, NOW - 24 * HOUR)).toEqual([NOW - 3 * HOUR]);
+    expect(serverStopsSince(tempDir(), NOW - HOUR)).toEqual([]);
   });
 
   it("is empty for a missing log, and skips a line whose started_at is not a number", () => {
