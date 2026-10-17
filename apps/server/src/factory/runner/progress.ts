@@ -213,10 +213,11 @@ export interface Seen {
   /** How many items the newest `feedback_relaunching` line names. */
   readonly feedbackLastItems: number;
   /**
-   * When the run first reached `pr-open`, in epoch milliseconds: the moment of the gate pass that
-   * took it there. Feedback is read from here, and nothing later moves it: not a feedback
-   * relaunch, a trip through `building` and back, or a re-gate pass on a moved base, so feedback
-   * written while any of those ran is not lost.
+   * When the run first reached `pr-open` since its last feedback relaunch (since it began, when
+   * there is none), in epoch milliseconds: the moment of the gate pass that took it there.
+   * Feedback is read from here. A feedback relaunch resets it to null and the next `pr-open` sets
+   * it. A later trip through `building` and back, or a re-gate pass on a moved base, does not
+   * move it, so feedback written while those ran is not lost.
    */
   readonly prOpenSince: number | null;
 }
@@ -490,7 +491,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         // before it was ready came within the limit and is not charged again.
         if (state === "pr-open" && to === "building") workedMs = 0;
         if (to === "triage" || to === "building") workingSince = entry.ms;
-        // The first time here: the moment of the pass that took the run here, else of this line.
+        // The first time here since the last feedback relaunch: the moment of the pass that took
+        // the run here, else of this line.
         if (to === "pr-open" && prOpenSince === null) prOpenSince = pass?.atMs ?? entry.ms;
         state = isState(to) ? to : null;
         relaunch = null;
@@ -663,9 +665,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (n === null || typeof branch !== "string" || typeof message !== "string") break;
         launchedSinceSending = false;
         relaunch = { fixes: { kind: "feedback", n }, branch, message };
-        // softfac resets `prOpenSince` here and lets the next pass set it, so a review written
-        // between the read that built the relaunch and that pass was never read. This port leaves
-        // it at the first pass; `feedbackSent` keeps what the relaunch sent from being sent again.
+        prOpenSince = null;
         const items = feedbackItems(entry.data);
         for (const id of items) feedbackSent.add(id);
         feedbackRelaunches = Math.max(feedbackRelaunches, n);
