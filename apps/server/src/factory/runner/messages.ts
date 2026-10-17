@@ -7,8 +7,8 @@
 import type { State } from "../domain/lifecycle.ts";
 import type { CommandResult } from "../gate.ts";
 import { runIdToString, type RunId } from "../ledger/runId.ts";
-import { commandLine, sanitize } from "../text.ts";
-import type { DropReason } from "../tracker/github.ts";
+import { commandLine, sanitize, shortSha } from "../text.ts";
+import type { CheckStatus, DropReason } from "../tracker/github.ts";
 
 /** The public reason when a run has no record of what approved it. */
 export const CANNOT_CONFIRM = "the factory could not confirm the issue text was approved";
@@ -272,6 +272,15 @@ export const bodyEditMessage = (
 ): string =>
   `The body of ${repo}#${issue} was edited by ${loginText(editor)}. Go back to your Contract step and work from the new body:\n\n${instructionText(body, repo, issue)}`;
 
+/** Why an instructor's comment was not sent to the session: a tracker drop, or a send T3 refused. */
+export type CommentDropReason = DropReason | "refused";
+
+const DROP_WHY: Record<CommentDropReason, string> = {
+  "edited-by-other": "someone who is not an instructor edited it",
+  unverifiable: "the factory could not check who edited it",
+  refused: "T3 refused it",
+};
+
 /**
  * The comment the factory posts when an instructor's comment was not sent to the session, in its
  * own fixed words. It names the comment by link and quotes nothing from it.
@@ -280,12 +289,9 @@ export const droppedCommentMessage = (
   repo: string,
   issue: number,
   commentId: string,
-  reason: DropReason,
+  reason: CommentDropReason,
 ): string => {
-  const why =
-    reason === "edited-by-other"
-      ? "someone who is not an instructor edited it"
-      : "the factory could not check who edited it";
+  const why = DROP_WHY[reason];
   return `The factory did not send an instructor's comment to the build session, because ${why}.\n\nComment: https://github.com/${repo}/issues/${issue}#issuecomment-${commentId}\n\nPost the instruction as a new comment and the factory will send it.`;
 };
 
@@ -359,5 +365,28 @@ export const mergeConflictMessage = (base: string, paths: ReadonlyArray<string>)
     text += `\n  ${shown}`;
   }
   if (paths.length > MAX_LISTED_PATHS) text += `\n  and ${paths.length - MAX_LISTED_PATHS} more`;
+  return text;
+};
+
+/** The comment the factory posts when T3 refused to take an edit of the issue body. */
+export const REFUSED_BODY_EDIT =
+  "The factory did not send the edited issue body to the build session, because T3 refused it. Post the change as a new comment and the factory will send it.";
+
+/** The public reason when the pull request's head is not the commit the required checks are waited for. */
+export const CHECKS_HEAD_MOVED =
+  "the pull request's head changed while the factory waited for the required checks";
+
+/**
+ * What to tell the session when required checks failed on the commit that was gated. The check
+ * names come from the project config and the rest from GitHub, so all of it is cleaned like
+ * other untrusted text. A check with no result or link has no line for it.
+ */
+export const checksFailureMessage = (sha: string, failed: ReadonlyArray<CheckStatus>): string => {
+  let text = `The factory gate failed. A required check did not pass on commit ${shortSha(sha)}. Fix the cause, commit, push, and reply when done. Do not weaken or skip the check.`;
+  for (const check of failed) {
+    text += `\n\nCheck: ${sanitize(check.name, false)}`;
+    if (check.conclusion !== "") text += `\nResult: ${sanitize(check.conclusion, false)}`;
+    if (check.url !== null) text += `\nDetails: ${sanitize(check.url, false)}`;
+  }
   return text;
 };

@@ -62,6 +62,7 @@ import {
 import * as Process from "./process.ts";
 import { FactoryProcess } from "./process.ts";
 import { readProgress, type Moved } from "./runner/progress.ts";
+import type { FactoryStatus } from "./status.ts";
 import {
   advance,
   forward,
@@ -94,19 +95,11 @@ import {
   type IssueSummary,
 } from "./tracker/github.ts";
 
-/**
- * What the factory is doing: running, or idle for a reason (no config, or one it cannot read).
- * `running` means the pass loop started; it says nothing about whether passes succeed, which the
- * server log records. The reason names no path and no error, as every reading client gets it;
- * the log has the detail.
- */
-export type FactoryStatus =
-  | { readonly state: "running" }
-  | { readonly state: "idle"; readonly reason: string };
+export type { FactoryStatus } from "./status.ts";
 
 /**
  * The running factory, for the code that wakes it (a thread's run changing, a person's request).
- * Its `status` is what `GET /api/factory/status` reports.
+ * Its `status` is what the status report (`status.ts`) is built on.
  */
 export class FactoryLoop extends Context.Service<
   FactoryLoop,
@@ -117,6 +110,7 @@ export class FactoryLoop extends Context.Service<
 const idle = (reason: string): FactoryLoop["Service"] => ({
   wake: Effect.void,
   awaitPass: Effect.never,
+  passRunning: Effect.succeed(false),
   status: { state: "idle", reason },
 });
 
@@ -206,6 +200,8 @@ const gateWords = (run: string, step: GateStep): string => {
       return "the issue is closed, the run is closed";
     case "running":
       return "gate running";
+    case "checks-pending":
+      return "gate passed, waiting for the required checks to finish";
     case "queued":
       return gateQueued(step);
     case "unchanged":
@@ -548,7 +544,7 @@ export const liveWorld = (
   };
 };
 
-const hostName = (): string => {
+export const hostName = (): string => {
   try {
     return NodeOS.hostname() || "unknown";
   } catch {
@@ -733,7 +729,15 @@ const startFactory = (options: RuntimeOptions) =>
     const loop = yield* runLoop(onePass, machine.pollSeconds);
     running = loop;
     yield* Effect.forkScoped(wakeOnOwnedThreads(owned, loop, options.restartDelay ?? "5 seconds"));
-    return { ...loop, status: { state: "running" } } satisfies FactoryLoop["Service"];
+    const status: FactoryStatus = {
+      state: "running",
+      settings: {
+        pollSeconds: machine.pollSeconds,
+        maxConcurrentRuns: machine.maxConcurrentRuns,
+        repos: machine.repos.map((repo) => repo.repo),
+      },
+    };
+    return { ...loop, status } satisfies FactoryLoop["Service"];
   });
 
 /**
@@ -751,7 +755,7 @@ export const FactoryRuntime = factoryRuntime();
 
 /** The factory's root layer. server.ts merges it into the runtime; nothing else imports it. */
 export const FactoryLayer = FactoryRuntime.pipe(
-  Layer.provide(Paths.layer),
+  Layer.provideMerge(Paths.layer),
   Layer.provide(Gate.layer),
   Layer.provide(Process.layer),
   Layer.provide(T3Sessions.layerLive),

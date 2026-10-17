@@ -60,15 +60,21 @@ import {
   TIME_LIMIT,
   WRONG_ACCOUNT,
   WRONG_ACCOUNT_PREFIX,
+  REFUSED_BODY_EDIT,
   bodyEditMessage,
   commentMessage,
+  type CommentDropReason,
   droppedCommentMessage,
   prepareSessionText,
 } from "./messages.ts";
 import {
+  BODY_EDIT_DROPPED,
   BODY_EDIT_FORWARDED,
+  BODY_EDIT_REFUSED,
   COMMENT_DROPPED,
+  COMMENT_REFUSED,
   FORWARD_WAIT,
+  FORWARD_WAIT_CANCELLED,
   INTERRUPTION_SENT,
   RESULT_LINE_REMINDED,
   RESULT_LINE_REMINDING,
@@ -336,7 +342,10 @@ export type SkipReason =
   /** T3 no longer has the session's thread. */
   | "no-thread";
 
-/** What `forward` did: how many comments and whether the edited body went into the session. */
+/**
+ * What `forward` did: how many comments and whether the edited body went into the session. What T3
+ * refused is left out of the counts.
+ */
 export interface ForwardOutcome {
   readonly comments: number;
   readonly bodyEdit: boolean;
@@ -1083,31 +1092,51 @@ const unreported = (seen: Seen, activity: Activity): ReadonlyArray<Dropped> => {
   });
 };
 
-/**
- * Tells the issue, once per dropped comment, that it was not sent to the session: the comment
- * first and the `comment-dropped <id>` step after it, so a crash between them posts it a second
- * time (comments are at-least-once). A failure stops the call and the rest is said on the next one.
- */
-const reportDrops = (
+/** A comment for the issue and the step that records it was posted: the comment first, the step after, so a crash between them posts it again (at-least-once). */
+interface Notice {
+  readonly body: string;
+  readonly step: string;
+  readonly reason: string;
+}
+
+const dropNotice = (
+  ctx: BuildingContext,
+  issue: number,
+  dropped: { readonly id: string; readonly reason: CommentDropReason },
+): Notice => ({
+  body: droppedCommentMessage(ctx.repo, issue, dropped.id, dropped.reason),
+  step: `${COMMENT_DROPPED} ${dropped.id}`,
+  reason: "comment-dropped",
+});
+
+const refusedEditNotice = (editedAt: string): Notice => ({
+  body: REFUSED_BODY_EDIT,
+  step: `${BODY_EDIT_DROPPED} ${editedAt}`,
+  reason: "body-edit-dropped",
+});
+
+/** Cancels the `forward-wait <k>` under which nothing went into the session. */
+const cancelForwardWait = (out: Out, k: number): Effect.Effect<void, BuildingError> =>
+  append(
+    out,
+    { event: "step_changed", data: { step: `${FORWARD_WAIT_CANCELLED} ${k}` } },
+    "forward",
+    "forward-wait-cancelled",
+  );
+
+/** Posts each notice and records it. A failure stops the call and the rest is said on the next one. */
+const tellIssue = (
   ctx: BuildingContext,
   out: Out,
   issue: number,
-  drops: ReadonlyArray<Dropped>,
+  notices: ReadonlyArray<Notice>,
 ): Effect.Effect<void, BuildingError> =>
   Effect.forEach(
-    drops,
-    (dropped) =>
+    notices,
+    (n) =>
       Effect.gen(function* () {
-        yield* ctx.tracker.postComment(
-          issue,
-          droppedCommentMessage(ctx.repo, issue, dropped.id, dropped.reason),
-        );
-        yield* append(
-          out,
-          { event: "step_changed", data: { step: `${COMMENT_DROPPED} ${dropped.id}` } },
-          "forward",
-          "comment-dropped",
-        );
+        yield* ctx.tracker.postComment(issue, n.body);
+        yield* append(out, { event: "step_changed", data: { step: n.step } }, "forward", n.reason);
       }),
     { discard: true },
   );
@@ -1120,8 +1149,12 @@ const reportDrops = (
  * comments go in oldest first, then the edit, which may be the same text the comments came
  * after. A comment goes under the command id `softfac:<run>:comment:<id>` and then
  * `comment_forwarded` is written; an edit under `softfac:<run>:body:<edited_at>`, then its step.
- * A send that fails fails the call: what was sent stays recorded and the rest goes in on the next
- * call under the same ids.
+ * A send that fails (transport, timeout) fails the call, what was sent stays recorded, and the
+ * rest goes in on the next call under the same ids; a send T3 refuses is final (T3 keeps the
+ * refusal under the command id), so the item is dropped: the call goes on with the rest, the
+ * issue is told once in the factory's fixed words (`comment-dropped <id>` / `body-edit-dropped
+ * <edited_at>` after the comment), a refused item is not counted as sent, and a `forward-wait`
+ * that nothing sent under is cancelled with `forward-wait-cancelled <k>`.
  *
  * A session that is idle (its latest run ended, or it has none) starts a new run when it gets a
  * message, so `forward-wait <k>` (`k` the ordinal of the run that ended) is written before the
@@ -1129,6 +1162,15 @@ const reportDrops = (
  * and the gate wait for it instead of judging the old run again. A session that is working has
  * the message steered into its run, which needs no marker. The status is read only when there is
  * something to send.
+ *
+ * Until a send under the marker goes in, each further send writes the marker again before it, and
+ * a refusal is recorded at once (`comment-refused <id>`, `body-edit-refused <edited_at>`). Both
+ * lines name the send's T3 command id in their cause. The ledger then proves a marker started no
+ * run when a refusal names every send under it (`Seen.refusedForwardWait`). T3 keeps one result
+ * per command id, so the refusal of a resend also answers for a send whose outcome was lost to a
+ * crash or a transport failure. A marker that a crashed call left proven is cancelled at the start
+ * of the next call, with or without anything to send. A send no refusal names may have gone in,
+ * so its marker keeps waiting.
  *
  * The read also lists the instructors' comments it could not forward (`Activity.dropped`). After
  * the sends, each one the ledger has no `comment-dropped <id>` step for, and that was not
@@ -1195,8 +1237,18 @@ export const forward = (
       );
       const { comments, bodyEdit } = yield* unsent(seen, activity);
       const drops = unreported(seen, activity);
+      // A marker whose every send the ledger shows T3 refused, left by a call that crashed before
+      // its cancel, waits for a run nothing started. It is cancelled first, whatever this call does.
+      if (seen.refusedForwardWait !== null) {
+        yield* cancelForwardWait(out, seen.refusedForwardWait);
+      }
       if (comments.length === 0 && bodyEdit === null) {
-        yield* reportDrops(ctx, out, issue, drops);
+        yield* tellIssue(
+          ctx,
+          out,
+          issue,
+          drops.map((d) => dropNotice(ctx, issue, d)),
+        );
         return { comments: 0, bodyEdit: false, skipped: null };
       }
 
@@ -1204,25 +1256,37 @@ export const forward = (
       // new run, and the gate must wait for that run, not judge the old one again.
       const status = yield* threadStatus(ctx, threadId);
       if (status === null) return skip("no-thread");
-      if (status.run === null || isTerminal(status.run)) {
-        const k = status.runOrdinal ?? 0;
-        if (seen.lastWait !== k) {
-          yield* append(
-            out,
-            { event: "step_changed", data: { step: `${FORWARD_WAIT} ${k}` } },
-            "forward",
-            "forward-waiting",
-          );
-        }
-      }
+      // The ordinal this call's messages would start a run after. An earlier call's marker for it
+      // counts as working once a send under it went in, so this call writes none.
+      const marker =
+        status.run === null || isTerminal(status.run) ? (status.runOrdinal ?? 0) : null;
+      const idleAt =
+        marker !== null && (seen.lastWait !== marker || seen.idleForwardWait === marker)
+          ? marker
+          : null;
       const opened = yield* out.open;
       const at = progressFrom("forward", seen, "building");
       const runName = runIdToString(run);
+      const refused: Array<Notice> = [];
+      let sent = 0;
+      let editSent = false;
+      // While the session is idle and nothing this call sent has gone in, each send goes under its
+      // own `forward-wait` line and a refusal is recorded at once, both naming the send's command
+      // id, so the ledger proves which sends started no run (`Seen.refusedForwardWait`), even
+      // after a crash.
+      const stepWhileIdle = (step: string, reason: string, commandId: string) =>
+        idleAt !== null && sent === 0
+          ? append(out, { event: "step_changed", data: { step } }, "forward", reason, {
+              command: commandId,
+            })
+          : Effect.void;
       for (const comment of comments) {
         const { actions } = yield* Effect.fromResult(
           transition("building", { kind: "instructor-commented", commentId: comment.id }),
         );
-        yield* applyActions(
+        const commandId = `softfac:${runName}:comment:${comment.id}`;
+        yield* stepWhileIdle(`${FORWARD_WAIT} ${idleAt}`, "forward-waiting", commandId);
+        const result = yield* applyActions(
           ctx,
           issue,
           opened,
@@ -1231,18 +1295,28 @@ export const forward = (
           makeCause("forward", "comment-forwarded"),
           {
             forward: {
-              commandId: `softfac:${runName}:comment:${comment.id}`,
+              commandId,
               text: commentMessage(ctx.repo, issue, comment.author, comment.body),
             },
           },
+        ).pipe(
+          Effect.as("sent" as const),
+          Effect.catchIf(isMessageRejected, () => Effect.succeed("refused" as const)),
         );
+        if (result === "sent") sent += 1;
+        else {
+          yield* stepWhileIdle(`${COMMENT_REFUSED} ${comment.id}`, "comment-refused", commandId);
+          refused.push(dropNotice(ctx, issue, { id: comment.id, reason: "refused" }));
+        }
       }
       // The edit goes after the comments of this call, which may have been written before it.
       if (bodyEdit !== null) {
         const { actions } = yield* Effect.fromResult(
           transition("building", { kind: "body-edited" }),
         );
-        yield* applyActions(
+        const commandId = `softfac:${runName}:body:${bodyEdit.editedAt}`;
+        yield* stepWhileIdle(`${FORWARD_WAIT} ${idleAt}`, "forward-waiting", commandId);
+        const result = yield* applyActions(
           ctx,
           issue,
           opened,
@@ -1251,16 +1325,40 @@ export const forward = (
           makeCause("forward", "body-edit-forwarded"),
           {
             forward: {
-              commandId: `softfac:${runName}:body:${bodyEdit.editedAt}`,
+              commandId,
               text: bodyEditMessage(ctx.repo, issue, bodyEdit.editor, bodyEdit.body),
               step: `${BODY_EDIT_FORWARDED} ${bodyEdit.editedAt}`,
             },
           },
+        ).pipe(
+          Effect.as("sent" as const),
+          Effect.catchIf(isMessageRejected, () => Effect.succeed("refused" as const)),
         );
+        if (result === "sent") editSent = true;
+        else {
+          yield* stepWhileIdle(
+            `${BODY_EDIT_REFUSED} ${bodyEdit.editedAt}`,
+            "body-edit-refused",
+            commandId,
+          );
+          refused.push(refusedEditNotice(bodyEdit.editedAt));
+        }
       }
-      // Last: telling the issue about a dropped comment must not hold back what the session needs.
-      yield* reportDrops(ctx, out, issue, drops);
-      return { comments: comments.length, bodyEdit: bodyEdit !== null, skipped: null };
+      // A marker the ledger now proves T3 refused every send under, an earlier call's included,
+      // waits for a run nothing started. Cancelled before the issue is told, so a failed comment
+      // call leaves no wait behind.
+      if (idleAt !== null) {
+        const after = readProgress((yield* ledger(() => readRun(ctx.dataDir, run))).entries);
+        if (after.refusedForwardWait !== null) {
+          yield* cancelForwardWait(out, after.refusedForwardWait);
+        }
+      }
+      // Last: telling the issue must not hold back what the session needs.
+      yield* tellIssue(ctx, out, issue, [
+        ...refused,
+        ...drops.map((d) => dropNotice(ctx, issue, d)),
+      ]);
+      return { comments: sent, bodyEdit: editSent, skipped: null };
     }),
   );
 

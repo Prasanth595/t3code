@@ -14,10 +14,10 @@ import {
   type AppendIo,
   type SyncDir,
 } from "./appendFile.ts";
-import { LedgerUnknownEventError, LedgerIoError, errnoCode } from "./errors.ts";
+import { LedgerUnknownEventError, LedgerIoError, errnoCode, isLedgerError } from "./errors.ts";
 import { MACHINE_EVENT_FIELDS, buildData, issueKeyJson, type MachineEvent } from "./events.ts";
 import { NEWLINE } from "./limits.ts";
-import { decodeLine, field, isBlankLine, lineHead } from "./read.ts";
+import { decodeLine, field, isBlankLine, lineHead, scanLinesBack } from "./read.ts";
 import { formatTs } from "./time.ts";
 
 /** The file in the data dir that takes the events that belong to no run. */
@@ -145,14 +145,12 @@ export type MachineEntry = {
 };
 
 /**
- * Every line of the machine log, oldest first. A line that is not valid (such as the last one,
- * when a crash cut it off) is skipped, and a last line with no newline is still read if it
- * parses. A missing file is an empty log. A symlink or anything else that is not a regular file
- * is refused, as the log refuses to append to one: the file is opened without following a
- * symlink and without blocking, and checked on the open handle, so a swap after the check is
- * not followed.
+ * Opens the log for reading and runs `use` on the handle, closing it after. A missing file is
+ * `empty`. A symlink or anything else that is not a regular file is refused: the file is opened
+ * without following a symlink and without blocking, and checked on the open handle, so a swap
+ * after the check is not followed.
  */
-export const scanMachineLog = (dataDir: string): Array<MachineEntry> => {
+const withLogFd = <A>(dataDir: string, empty: A, use: (fd: number, path: string) => A): A => {
   const path = NodePath.join(dataDir, MACHINE_LOG);
   let fd: number;
   try {
@@ -161,108 +159,94 @@ export const scanMachineLog = (dataDir: string): Array<MachineEntry> => {
       NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
     );
   } catch (error) {
-    if (errnoCode(error) === "ENOENT") return [];
+    if (errnoCode(error) === "ENOENT") return empty;
     throw new LedgerIoError({ path, cause: error });
   }
-  let bytes: Buffer;
   try {
     if (!NodeFS.fstatSync(fd).isFile()) throw new Error(NOT_REGULAR);
-    bytes = NodeFS.readFileSync(fd);
+    return use(fd, path);
   } catch (error) {
-    throw new LedgerIoError({ path, cause: error });
+    throw isLedgerError(error) ? error : new LedgerIoError({ path, cause: error });
   } finally {
     NodeFS.closeSync(fd);
   }
+};
 
+/** The entry on one line (without its newline), or `null` for a blank or invalid line. */
+const entryOfLine = (line: Uint8Array): MachineEntry | null => {
+  if (isBlankLine(line)) return null;
+  const object = decodeLine(line);
+  return object === null ? null : lineHead(object);
+};
+
+/**
+ * Every line of the machine log, oldest first. A line that is not valid (such as the last one,
+ * when a crash cut it off) is skipped, and a last line with no newline is still read if it
+ * parses. A missing file is an empty log. A symlink or anything else that is not a regular file
+ * is refused, as the log refuses to append to one.
+ */
+export const scanMachineLog = (dataDir: string): Array<MachineEntry> => {
+  const bytes = withLogFd(dataDir, Buffer.alloc(0), (fd) => NodeFS.readFileSync(fd));
   const entries: Array<MachineEntry> = [];
   let start = 0;
   while (start < bytes.length) {
     const newline = bytes.indexOf(NEWLINE, start);
     const end = newline === -1 ? bytes.length : newline;
-    const line = bytes.subarray(start, end);
+    const entry = entryOfLine(bytes.subarray(start, end));
     start = end + 1;
-    if (isBlankLine(line)) continue;
-    const object = decodeLine(line);
-    const head = object === null ? null : lineHead(object);
-    if (head !== null) entries.push(head);
+    if (entry !== null) entries.push(entry);
   }
   return entries;
 };
 
-/** How long T3 trouble in the machine log counts as the cause of a session ending badly: ten minutes, fixed. */
-const T3_TROUBLE_WINDOW_MS = 10 * 60 * 1000;
-
-/** How much of the log one backward read takes at a time. */
-const TAIL_CHUNK_BYTES = 64 * 1024;
+/**
+ * Calls `visit` with the lines of the machine log, newest first, until it answers `"stop"` or the
+ * start of the file is reached, and returns how many bytes it read. The log is never rotated, so a
+ * reader that needs only its end reads only its end: the file is read backwards in chunks
+ * (`scanLinesBack`; the first is `firstChunk` bytes). The file is opened and a line skipped
+ * exactly as {@link scanMachineLog} does it, so the same entries come in the opposite order.
+ */
+export const scanMachineLogBack = (
+  dataDir: string,
+  visit: (entry: MachineEntry) => "continue" | "stop",
+  firstChunk?: number,
+): number =>
+  withLogFd(dataDir, 0, (fd) =>
+    scanLinesBack(
+      fd,
+      (line) => {
+        const entry = entryOfLine(line);
+        return entry === null ? "continue" : visit(entry);
+      },
+      firstChunk,
+    ),
+  );
 
 /**
- * The entries of the machine log at or after `sinceMs`, oldest first, read backwards from the end
- * of the file in chunks of `chunkBytes`: the log is append-only and in time order, so the read
- * stops at the first entry older than `sinceMs` and never decodes the months before it. A line cut
- * by a chunk boundary is joined with the chunk before it. The file is opened and checked as
- * `scanMachineLog` opens it; a missing file is an empty log. A line that is not an entry is
- * skipped, as the full scan skips it.
+ * The entries of the machine log at or after `sinceMs`, oldest first: `scanMachineLogBack` read
+ * until the first entry older than `sinceMs`, so the months before it are never decoded. A missing
+ * log is an empty one. `firstChunk` is passed on, for a test of the chunking.
  */
 export const machineLogSince = (
   dataDir: string,
   sinceMs: number,
-  chunkBytes = TAIL_CHUNK_BYTES,
+  firstChunk?: number,
 ): Array<MachineEntry> => {
-  const path = NodePath.join(dataDir, MACHINE_LOG);
-  let fd: number;
-  try {
-    fd = NodeFS.openSync(
-      path,
-      NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
-    );
-  } catch (error) {
-    if (errnoCode(error) === "ENOENT") return [];
-    throw new LedgerIoError({ path, cause: error });
-  }
-  // Newest first while reading; reversed on the way out.
   const newestFirst: Array<MachineEntry> = [];
-  let older = false;
-  const take = (line: Uint8Array) => {
-    if (isBlankLine(line)) return;
-    const object = decodeLine(line);
-    const head = object === null ? null : lineHead(object);
-    if (head === null) return;
-    if (head.ms < sinceMs) {
-      older = true;
-      return;
-    }
-    newestFirst.push(head);
-  };
-  try {
-    const stat = NodeFS.fstatSync(fd);
-    if (!stat.isFile()) throw new Error(NOT_REGULAR);
-    let end = stat.size;
-    // The start of a line the previous chunk cut: its rest comes with the next chunk.
-    let carry: Buffer = Buffer.alloc(0);
-    while (end > 0 && !older) {
-      const start = Math.max(0, end - chunkBytes);
-      const chunk = Buffer.alloc(end - start);
-      NodeFS.readSync(fd, chunk, 0, chunk.length, start);
-      const bytes = carry.length === 0 ? chunk : Buffer.concat([chunk, carry]);
-      let lineEnd = bytes.length;
-      for (let i = bytes.length - 1; i >= 0 && !older; i -= 1) {
-        if (bytes[i] !== NEWLINE) continue;
-        take(bytes.subarray(i + 1, lineEnd));
-        lineEnd = i;
-      }
-      if (older) break;
-      // What is left before the first newline is a whole line only at the start of the file.
-      if (start === 0) take(bytes.subarray(0, lineEnd));
-      else carry = Buffer.from(bytes.subarray(0, lineEnd));
-      end = start;
-    }
-  } catch (error) {
-    throw new LedgerIoError({ path, cause: error });
-  } finally {
-    NodeFS.closeSync(fd);
-  }
+  scanMachineLogBack(
+    dataDir,
+    (entry) => {
+      if (entry.ms < sinceMs) return "stop";
+      newestFirst.push(entry);
+      return "continue";
+    },
+    firstChunk,
+  );
   return newestFirst.reverse();
 };
+
+/** How long T3 trouble in the machine log counts as the cause of a session ending badly: ten minutes, fixed. */
+const T3_TROUBLE_WINDOW_MS = 10 * 60 * 1000;
 
 /**
  * The newest sign of T3 trouble in the machine log at or after `nowMs` minus ten minutes: a

@@ -5,9 +5,10 @@
  */
 
 import { isState, type State } from "../domain/lifecycle.ts";
-import { field, type Entry } from "../ledger/read.ts";
+import { dataField, type Entry } from "../ledger/read.ts";
 import { runIdToString, type RunId } from "../ledger/runId.ts";
 import { isCommitId } from "../text.ts";
+import type { CheckStatus } from "../tracker/github.ts";
 
 /** A passing attempt as the ledger records it: the commands that ran, and the commit they were gated on. */
 export interface PassRecord {
@@ -96,6 +97,8 @@ export const relaunchCommandId = (relaunch: Relaunch, run: RunId): string =>
 
 export interface Seen {
   readonly claimed: boolean;
+  /** The `github_user` of the first `claimed` line; null when there is none or it is not text. */
+  readonly githubUser: string | null;
   /** The moment in the first `approved <time>` step: when an instructor applied the label the run was approved on. */
   readonly approvedAt: string | null;
   /** The instructor on that step's cause (`actor`), who applied the label; null when the line names none. */
@@ -138,7 +141,8 @@ export interface Seen {
   /**
    * The session is working until a run newer than this ordinal has ended: the reminder's, a
    * forward's or a gate send-back's wait marker. Never goes down. A send-back's marker is dropped
-   * by the next `gate_command`, which shows the gate ran; a forward's only by a newer ended run.
+   * by the next `gate_command`, which shows the gate ran; a forward's only by a newer ended run,
+   * or by `forward-wait-cancelled` when nothing it covered went in.
    */
   readonly waitingAfter: number | null;
   /**
@@ -149,8 +153,22 @@ export interface Seen {
   readonly lastWait: number | null;
   /** The id of every comment a `comment_forwarded` line names: it is in the session. */
   readonly forwarded: ReadonlySet<string>;
-  /** The time of every `body-edit-forwarded <edited_at>` step: that edit of the body is in the session. */
+  /** The time of every `body-edit-forwarded` or `body-edit-dropped` step: that edit is in the session, or the issue was told it was not sent. */
   readonly bodyEdits: ReadonlySet<string>;
+  /**
+   * The ordinal in the newest `forward-wait` step that no `comment_forwarded` line or
+   * `body-edit-forwarded` step follows and that was not cancelled: nothing sent under it is known
+   * to have gone in.
+   */
+  readonly idleForwardWait: number | null;
+  /**
+   * `idleForwardWait` when the ledger proves T3 refused every send under it: each send has its
+   * own `forward-wait <k>` line naming the send's T3 command id in its cause, and a
+   * `comment-refused` or `body-edit-refused` step names the same id. T3 keeps one result per
+   * command id, so the refusal of a resend is the outcome of a send whose own was lost. No run was
+   * started, so `forward` cancels it.
+   */
+  readonly refusedForwardWait: number | null;
   /** The id of every comment a `comment-dropped <id>` step names: the issue was told it was not forwarded. */
   readonly dropped: ReadonlySet<string>;
   /** The newest `session_paused` line: a person stopped the session's run in T3, and this is its ordinal. */
@@ -181,6 +199,21 @@ export interface Seen {
   readonly regates: number;
   /** A `pr_ready_outside` line: someone else marked the pull request ready while a gate ran, and it is noted. */
   readonly readyOutside: boolean;
+  /**
+   * The lower-case sha of the newest `checks_read` line whose checks are non-empty and all
+   * `passed`; null when the newest read decided otherwise, there is none, or a pass was recorded
+   * after it.
+   */
+  readonly checksPassed: string | null;
+  /**
+   * The newest `checks_read` line with a failed check, since the last recorded pass: its
+   * lower-case sha and the checks that failed, with no result or link. The decision that the
+   * pass's checks failed, which a later read does not undo.
+   */
+  readonly checksFailed: {
+    readonly sha: string;
+    readonly failed: ReadonlyArray<CheckStatus>;
+  } | null;
   /** A `gate_regate` line since the run last changed state or posted the results of a pass: a re-gate is under way. */
   readonly regating: boolean;
   /** What the newest `gate_regate` line says moved, compared with the pass on record when it was written. */
@@ -231,6 +264,14 @@ export const RESULT_LINE_REMINDED = "result-line-reminded";
 export const INTERRUPTION_SENT = "interruption-sent";
 /** The ledger step that waits for a run newer than `k` (a forwarded comment); read here for the steps that write it. */
 export const FORWARD_WAIT = "forward-wait";
+/** The ledger step written when every message sent under a `forward-wait <k>` was refused by T3, so no run was started and the wait is over: `forward-wait-cancelled <k>`. */
+export const FORWARD_WAIT_CANCELLED = "forward-wait-cancelled";
+/** The ledger step written as soon as T3 refused a comment sent under an idle `forward-wait`: `comment-refused <id>`. */
+export const COMMENT_REFUSED = "comment-refused";
+/** The ledger step written as soon as T3 refused a body edit sent under an idle `forward-wait`: `body-edit-refused <edited_at>`. */
+export const BODY_EDIT_REFUSED = "body-edit-refused";
+/** The ledger step written once the issue was told that T3 refused an edit of the body: `body-edit-dropped <edited_at>`; the edit counts as handled. */
+export const BODY_EDIT_DROPPED = "body-edit-dropped";
 /** The ledger step written once an edit of the issue body is in the session: `body-edit-forwarded <edited_at>`. */
 export const BODY_EDIT_FORWARDED = "body-edit-forwarded";
 /** The ledger step written once the issue was told that an instructor's comment was not forwarded: `comment-dropped <id>`. */
@@ -289,6 +330,7 @@ const sentInterruption = (interruption: Interruption): Interruption => ({
 
 export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let claimed = false;
+  let githubUser: string | null = null;
   let approvedAt: string | null = null;
   let approvedBy: string | null = null;
   let state: State | null = null;
@@ -310,6 +352,10 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   let waitingAfter: number | null = null;
   let waitIsForward = false;
   let lastWait: number | null = null;
+  let idleForwardWait: number | null = null;
+  // The command ids sent under the idle marker with no outcome yet; null once a marker names none.
+  let idleOpen: Set<string> | null = null;
+  let lastWaitBefore: number | null = null;
   const forwarded = new Set<string>();
   const bodyEdits = new Set<string>();
   const dropped = new Set<string>();
@@ -330,6 +376,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   const cleanupFailed = new Set<string>();
   let regates = 0;
   let readyOutside = false;
+  let checksPassed: string | null = null;
+  let checksFailed: Seen["checksFailed"] = null;
   let regating = false;
   let regateMoved: Moved | null = null;
   let regatePassed = false;
@@ -349,11 +397,16 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   const number = (value: unknown): number | null => (typeof value === "number" ? value : null);
   for (const entry of entries) {
     switch (entry.event) {
-      case "claimed":
+      case "claimed": {
+        if (!claimed) {
+          const user = dataField(entry.data, "github_user");
+          githubUser = typeof user === "string" ? user : null;
+        }
         claimed = true;
         break;
+      }
       case "step_changed": {
-        const step = field(entry.data, "step");
+        const step = dataField(entry.data, "step");
         if (typeof step !== "string") break;
         if (approvedAt === null && step.startsWith("approved ")) {
           approvedAt = step.slice("approved ".length);
@@ -374,7 +427,33 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           awaitRun(remindingRun, true);
         }
         const forwardRun = stepNumber(step, FORWARD_WAIT);
-        if (forwardRun !== null) awaitRun(forwardRun, true);
+        const command = entry.cause?.command;
+        if (forwardRun !== null) {
+          // The same idle marker again is the next send under it.
+          if (idleForwardWait !== forwardRun) {
+            lastWaitBefore = lastWait;
+            idleForwardWait = forwardRun;
+            idleOpen = new Set();
+          }
+          if (typeof command === "string") idleOpen?.add(command);
+          else idleOpen = null;
+          awaitRun(forwardRun, true);
+        }
+        if (
+          typeof command === "string" &&
+          (step.startsWith(`${COMMENT_REFUSED} `) || step.startsWith(`${BODY_EDIT_REFUSED} `))
+        ) {
+          idleOpen?.delete(command);
+        }
+        const cancelledRun = stepNumber(step, FORWARD_WAIT_CANCELLED);
+        if (cancelledRun !== null && idleForwardWait === cancelledRun) {
+          if (waitIsForward && waitingAfter === cancelledRun) {
+            waitingAfter = null;
+            waitIsForward = false;
+          }
+          lastWait = lastWaitBefore;
+          idleForwardWait = null;
+        }
         const sentRun = stepNumber(step, INTERRUPTION_SENT);
         if (
           sentRun !== null &&
@@ -386,6 +465,10 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         }
         if (step.startsWith(`${BODY_EDIT_FORWARDED} `)) {
           bodyEdits.add(step.slice(BODY_EDIT_FORWARDED.length + 1));
+          idleForwardWait = null;
+        }
+        if (step.startsWith(`${BODY_EDIT_DROPPED} `)) {
+          bodyEdits.add(step.slice(BODY_EDIT_DROPPED.length + 1));
         }
         const droppedId = commentDroppedId(step);
         if (droppedId !== null) dropped.add(droppedId);
@@ -406,6 +489,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           // The results of this pass are not posted yet, whatever an earlier one's were.
           resultsPosted = false;
           regates = 0;
+          // A read of the checks is about the pass before it: this one's are read afresh.
+          checksPassed = null;
+          checksFailed = null;
           regatePassed = regating;
           // The step's own cause names the attempt; a ledger from before it did is read by the
           // last command.
@@ -429,7 +515,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         break;
       }
       case "state_changed": {
-        const to = field(entry.data, "to");
+        const to = dataField(entry.data, "to");
         if (workingSince !== null) workedMs += Math.max(0, entry.ms - workingSince);
         workingSince = null;
         // A pull request that was ready and comes back to building starts a new stint: the build
@@ -451,18 +537,18 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         break;
       }
       case "session_launched": {
-        const id = field(entry.data, "thread_id");
+        const id = dataField(entry.data, "thread_id");
         if (typeof id === "string") threadId = id;
-        const path = field(entry.data, "worktree");
+        const path = dataField(entry.data, "worktree");
         worktree = typeof path === "string" ? path : null;
         worktreeDone = false;
         launchedSinceSending = true;
-        const from = field(entry.data, "resumed_from");
-        const fromBranch = field(from, "branch");
+        const from = dataField(entry.data, "resumed_from");
+        const fromBranch = dataField(from, "branch");
         resumedFrom = typeof fromBranch === "string" ? fromBranch : null;
-        const fromRun = field(from, "run");
+        const fromRun = dataField(from, "run");
         resumedFromRun = typeof fromRun === "string" ? fromRun : null;
-        const launchedBranch = field(entry.data, "branch");
+        const launchedBranch = dataField(entry.data, "branch");
         if (typeof launchedBranch === "string") lastBranch = launchedBranch;
         // A resume owed to the old thread is not owed to this one.
         if (interruption !== null) interruption = sentInterruption(interruption);
@@ -470,6 +556,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         waitingAfter = null;
         waitIsForward = false;
         lastWait = null;
+        idleForwardWait = null;
+        lastWaitBefore = null;
         reminding = null;
         reminded = false;
         paused = null;
@@ -480,7 +568,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         worktreeDone = true;
         break;
       case "stuck": {
-        const reason = field(entry.data, "reason");
+        const reason = dataField(entry.data, "reason");
         stuck = typeof reason === "string" ? reason : "";
         break;
       }
@@ -488,16 +576,17 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         stopRequested = true;
         break;
       case "comment_forwarded": {
-        const id = field(entry.data, "comment_id");
+        const id = dataField(entry.data, "comment_id");
         if (typeof id === "string") forwarded.add(id);
+        idleForwardWait = null;
         break;
       }
       case "questions_posted":
         questionsPosted = true;
         break;
       case "pr_opened": {
-        const pr = field(entry.data, "pr");
-        const url = field(entry.data, "url");
+        const pr = dataField(entry.data, "pr");
+        const url = dataField(entry.data, "url");
         if (typeof pr === "number" && typeof url === "string") {
           opened.push(pr);
           lastPr = { pr, url };
@@ -509,12 +598,12 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         readyOutside = true;
         break;
       case "session_interrupted": {
-        const resumes = number(field(entry.data, "resumes"));
-        const ordinal = number(field(entry.data, "run_ordinal"));
-        const branch = field(entry.data, "branch");
+        const resumes = number(dataField(entry.data, "resumes"));
+        const ordinal = number(dataField(entry.data, "run_ordinal"));
+        const branch = dataField(entry.data, "branch");
         if (typeof branch === "string") lastBranch = branch;
         if (resumes === null) break;
-        const relaunch = field(entry.data, "relaunch") === true;
+        const relaunch = dataField(entry.data, "relaunch") === true;
         interruption = {
           resumes,
           relaunch,
@@ -528,13 +617,13 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         break;
       }
       case "session_paused": {
-        const ordinal = field(entry.data, "run_ordinal");
+        const ordinal = dataField(entry.data, "run_ordinal");
         paused = { runOrdinal: typeof ordinal === "number" ? ordinal : null };
         break;
       }
       case "gate_checkout": {
-        const attempt = number(field(entry.data, "attempt"));
-        const baseSha = field(entry.data, "base_sha");
+        const attempt = number(dataField(entry.data, "attempt"));
+        const baseSha = dataField(entry.data, "base_sha");
         if (attempt === null) break;
         // A new run of commands begins at its checkout: the attempt is open again.
         passedAttempts.delete(attempt);
@@ -543,10 +632,10 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         break;
       }
       case "gate_command": {
-        const attempt = number(field(entry.data, "attempt"));
-        const command = field(entry.data, "command");
-        const exitCode = number(field(entry.data, "exit_code"));
-        const durationMs = number(field(entry.data, "duration_ms"));
+        const attempt = number(dataField(entry.data, "attempt"));
+        const command = dataField(entry.data, "command");
+        const exitCode = number(dataField(entry.data, "exit_code"));
+        const durationMs = number(dataField(entry.data, "duration_ms"));
         if (attempt === null) break;
         commandAttempts.add(attempt);
         if (!waitIsForward) waitingAfter = null;
@@ -556,8 +645,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         break;
       }
       case "gate_sent_back": {
-        const attempt = number(field(entry.data, "attempt"));
-        const ordinal = number(field(entry.data, "run_ordinal"));
+        const attempt = number(dataField(entry.data, "attempt"));
+        const ordinal = number(dataField(entry.data, "run_ordinal"));
         if (attempt !== null) {
           sentBackAttempts.add(attempt);
           passedAttempts.delete(attempt);
@@ -572,9 +661,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         break;
       }
       case "gate_regate": {
-        const sha = field(entry.data, "sha");
-        const baseSha = field(entry.data, "base_sha");
-        const previous = field(entry.data, "previous_base_sha");
+        const sha = dataField(entry.data, "sha");
+        const baseSha = dataField(entry.data, "base_sha");
+        const previous = dataField(entry.data, "previous_base_sha");
         // The pass this re-gate replaces is still the one on record here.
         regateMoved = movedSince(
           pass?.sha ?? "",
@@ -588,10 +677,31 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         regateSentBack = false;
         break;
       }
+      case "checks_read": {
+        const sha = dataField(entry.data, "sha");
+        const checks = dataField(entry.data, "checks");
+        if (typeof sha !== "string" || !Array.isArray(checks)) {
+          checksPassed = null;
+          break;
+        }
+        const read: ReadonlyArray<unknown> = checks;
+        checksPassed =
+          read.length > 0 && read.every((check) => dataField(check, "state") === "passed")
+            ? sha.toLowerCase()
+            : null;
+        const failed = read.flatMap((check): Array<CheckStatus> => {
+          const name = dataField(check, "name");
+          if (dataField(check, "state") !== "failed" || typeof name !== "string") return [];
+          // The line records no result or link.
+          return [{ name, state: "failed", conclusion: "", url: null }];
+        });
+        if (failed.length > 0) checksFailed = { sha: sha.toLowerCase(), failed };
+        break;
+      }
       case "regate_relaunching": {
-        const attempt = number(field(entry.data, "attempt"));
-        const branch = field(entry.data, "branch");
-        const message = field(entry.data, "message");
+        const attempt = number(dataField(entry.data, "attempt"));
+        const branch = dataField(entry.data, "branch");
+        const message = dataField(entry.data, "message");
         if (attempt === null || typeof branch !== "string" || typeof message !== "string") break;
         // Its own `gate-sending <attempt> 0`: the new thread has no run yet.
         sending = { attempt, runOrdinal: 0 };
@@ -602,16 +712,16 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
       // No `gate-sending`: it is no gate attempt, and no re-gate. Read only so that a feedback
       // relaunch that is decided and not committed is never gated meanwhile.
       case "feedback_relaunching": {
-        const n = number(field(entry.data, "n"));
-        const branch = field(entry.data, "branch");
-        const message = field(entry.data, "message");
+        const n = number(dataField(entry.data, "n"));
+        const branch = dataField(entry.data, "branch");
+        const message = dataField(entry.data, "message");
         if (n === null || typeof branch !== "string" || typeof message !== "string") break;
         launchedSinceSending = false;
         relaunch = { fixes: { kind: "feedback", n }, branch, message };
         break;
       }
       case "gate_cleanup_failed": {
-        const dir = field(entry.data, "dir");
+        const dir = dataField(entry.data, "dir");
         if (typeof dir === "string") cleanupFailed.add(dir);
         break;
       }
@@ -623,6 +733,7 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   }
   return {
     claimed,
+    githubUser,
     approvedAt,
     approvedBy,
     state,
@@ -643,6 +754,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     reminded,
     waitingAfter,
     lastWait,
+    idleForwardWait,
+    refusedForwardWait:
+      idleForwardWait !== null && idleOpen !== null && idleOpen.size === 0 ? idleForwardWait : null,
     forwarded,
     bodyEdits,
     dropped,
@@ -660,6 +774,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     cleanupFailed,
     regates,
     readyOutside,
+    checksPassed,
+    checksFailed,
     regating,
     regateMoved,
     regatePassed,

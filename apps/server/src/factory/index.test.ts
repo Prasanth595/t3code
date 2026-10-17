@@ -186,7 +186,10 @@ it.effect("logs factory started once for a valid machine file, then runs the fir
       logs.join("\n"),
     );
     assert.strictEqual(logs.at(-1), "pass done: 0 runs, 0 claimed, 1 errors, 0 need attention");
-    assert.deepStrictEqual(status, { state: "running" });
+    assert.deepStrictEqual(status, {
+      state: "running",
+      settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
+    });
     // The start is recorded before the first pass, and the stop as the scope closes, for
     // `interrupted` to weigh a run the restart cut off against.
     assert.deepStrictEqual(events, [
@@ -1519,6 +1522,7 @@ describe("the gate in the background", () => {
     assert.strictEqual(gateDecided({ kind: "not-ready" }), false);
     assert.strictEqual(gateDecided({ kind: "unchanged" }), false);
     assert.strictEqual(gateDecided({ kind: "running" }), false);
+    assert.strictEqual(gateDecided({ kind: "checks-pending" }), false);
     assert.strictEqual(gateDecided({ kind: "queued", running: 2, max: 2 }), false);
     assert.strictEqual(gateDecided(null), false);
   });
@@ -1576,6 +1580,7 @@ describe("the gate in the background", () => {
     assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "passed", pr: 12 }), null);
     assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "sent-back", attempt: 1 }), null);
     assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "ended" }), null);
+    assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "checks-pending" }), null);
     assert.strictEqual(gateItem(REPO, 10, "run-1", null), null);
   });
 

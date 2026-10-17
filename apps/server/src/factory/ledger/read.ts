@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - a run file is read the way softfac reads it: lstat first, then the bytes.
 import * as NodeFS from "node:fs";
 
-import { LedgerNotFoundError, LedgerIoError, errnoCode } from "./errors.ts";
+import { LedgerNotFoundError, LedgerIoError, errnoCode, isLedgerError } from "./errors.ts";
 import { NEWLINE, isU32 } from "./limits.ts";
 import { runPath, type RunId } from "./runId.ts";
 
@@ -42,6 +42,16 @@ const CARRIAGE_RETURN = 0x0d;
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** The value at `key` of an entry's data; undefined when the data is not an object. */
+export const dataField = (data: unknown, key: string): unknown =>
+  typeof data === "object" && data !== null ? (data as Record<string, unknown>)[key] : undefined;
+
+/** The string at `key` of an entry's data, or null when it is not a string. */
+export const dataText = (data: unknown, key: string): string | null => {
+  const value = dataField(data, key);
+  return typeof value === "string" ? value : null;
+};
 
 /**
  * An empty line: nothing, or just the `\r` of a CRLF ending. The repair after a failed write
@@ -87,7 +97,8 @@ const readCause = (value: unknown): ReadCause | null => {
   return value as ReadCause;
 };
 
-const parseLine = (line: Uint8Array): Entry | null => {
+/** One line (without its newline) as an entry, or `null` for a blank or invalid line. */
+export const parseLine = (line: Uint8Array): Entry | null => {
   const object = decodeLine(line);
   const head = object === null ? null : lineHead(object);
   if (object === null || head === null) return null;
@@ -212,4 +223,108 @@ export const lastLineIsFinished = (path: string): boolean => {
     const object = decodeLine(line);
     return object !== null && lineHead(object)?.event === "finished";
   }
+};
+
+/** Reads into `buffer` from `position` until it is full or the file ends; returns the bytes read. */
+const readAt = (fd: number, buffer: Buffer, position: number): number => {
+  let filled = 0;
+  while (filled < buffer.length) {
+    const n = NodeFS.readSync(fd, buffer, filled, buffer.length - filled, position + filled);
+    if (n === 0) break;
+    filled += n;
+  }
+  return filled;
+};
+
+/**
+ * Opens a run file for reading, without following a symlink, and runs `use` on the handle,
+ * closing it after. Errors map as `readRun` maps them: a missing file or anything that is not a
+ * regular file is `LedgerNotFoundError`, any other failure (in `use` too) `LedgerIoError`.
+ */
+export const withRunFile = <A>(path: string, use: (fd: number) => A): A => {
+  requireRegularFile(path);
+  let fd: number;
+  try {
+    fd = NodeFS.openSync(path, NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW);
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") throw new LedgerNotFoundError({ path });
+    throw new LedgerIoError({ path, cause: error });
+  }
+  try {
+    return use(fd);
+  } catch (error) {
+    throw isLedgerError(error) ? error : new LedgerIoError({ path, cause: error });
+  } finally {
+    NodeFS.closeSync(fd);
+  }
+};
+
+/** How much of a file `scanLinesBack` reads first; each read after it doubles. */
+const FIRST_CHUNK_BYTES = 64 * 1024;
+
+/**
+ * Calls `visit` with the lines of an open JSONL file (each without its newline), newest first,
+ * until it answers `"stop"` or the start of the file is reached, and returns how many bytes it
+ * read. The file is read backwards in chunks (the first is `firstChunk` bytes, each after it
+ * twice the one before), and a line cut by a chunk edge is completed by the next one. The bytes
+ * after the last newline come first, as a line; a caller that reads only complete lines skips
+ * them.
+ */
+export const scanLinesBack = (
+  fd: number,
+  visit: (line: Uint8Array) => "continue" | "stop",
+  firstChunk: number = FIRST_CHUNK_BYTES,
+): number => {
+  let pos = NodeFS.fstatSync(fd).size;
+  let bytesRead = 0;
+  let chunk = Math.max(1, firstChunk);
+  // The start of a line whose beginning is in an earlier chunk.
+  let head: Buffer = Buffer.alloc(0);
+  while (pos > 0) {
+    const size = Math.min(pos, chunk);
+    pos -= size;
+    const bytes = Buffer.alloc(size + head.length);
+    readAt(fd, bytes.subarray(0, size), pos);
+    head.copy(bytes, size);
+    bytesRead += size;
+    chunk *= 2;
+    let end = bytes.length;
+    while (end > 0) {
+      const newline = bytes.lastIndexOf(NEWLINE, end - 1);
+      if (newline === -1) break;
+      if (visit(bytes.subarray(newline + 1, end)) === "stop") return bytesRead;
+      end = newline;
+    }
+    head = bytes.subarray(0, end);
+  }
+  // What is left has no line before it: it is the first line of the file.
+  visit(head);
+  return bytesRead;
+};
+
+/**
+ * The first entry of an open run file, as `readRun` would have it first: the file is read forwards
+ * in chunks (the first `firstChunk` bytes, each after it twice the one before) until a complete
+ * line parses. Null when no complete line does.
+ */
+export const firstEntry = (fd: number, firstChunk = 4096): Entry | null => {
+  const size = NodeFS.fstatSync(fd).size;
+  let bytes: Buffer = Buffer.alloc(0);
+  let pos = 0;
+  let start = 0;
+  let chunk = Math.max(1, firstChunk);
+  while (pos < size) {
+    const more = Buffer.alloc(Math.min(chunk, size - pos));
+    const n = readAt(fd, more, pos);
+    if (n === 0) break;
+    pos += n;
+    chunk *= 2;
+    bytes = Buffer.concat([bytes, more.subarray(0, n)]);
+    for (let end = bytes.indexOf(NEWLINE, start); end !== -1; end = bytes.indexOf(NEWLINE, start)) {
+      const entry = parseLine(bytes.subarray(start, end));
+      if (entry !== null) return entry;
+      start = end + 1;
+    }
+  }
+  return null;
 };
