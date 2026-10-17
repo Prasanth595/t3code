@@ -1868,15 +1868,14 @@ export function deriveMessagesTimelineRows(input: {
     !hasActiveCompaction &&
     (!hasActivityRow || latestToolFailed)
   ) {
-    const latestActiveCreatedAt = timelineEntries.reduce<string | null>(
-      (latest, entry) =>
-        runIdIsActiveResponse(
-          entry.kind === "event" ? entry.projectedItem.item.runId : timelineEntryRunId(entry),
-        )
-          ? maxIsoTimestamp(latest, entry.createdAt)
-          : latest,
-      null,
-    );
+    const latestActiveCreatedAt = timelineEntries.reduce<string | null>((latest, entry) => {
+      if (entry.kind === "message" && entry.message.role === "user") return latest;
+      return runIdIsActiveResponse(
+        entry.kind === "event" ? entry.projectedItem.item.runId : timelineEntryRunId(entry),
+      )
+        ? maxIsoTimestamp(latest, entry.createdAt)
+        : latest;
+    }, null);
     const thinkingCreatedAt = maxIsoTimestamp(
       input.activeTurnStartedAt ?? null,
       latestActiveCreatedAt,

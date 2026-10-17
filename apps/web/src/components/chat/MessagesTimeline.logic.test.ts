@@ -2029,6 +2029,60 @@ describe("deriveMessagesTimelineRows", () => {
     ).toMatchObject({ kind: "thinking", createdAt: "2026-01-01T00:00:15Z" });
   });
 
+  it.each([false, true])(
+    "ignores user steers in the runless thinking timestamp (assistant activity: %s)",
+    (hasAssistantActivity) => {
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries: [
+          ...(hasAssistantActivity
+            ? [
+                {
+                  id: "runless-assistant-entry",
+                  kind: "message" as const,
+                  createdAt: "2026-01-01T00:00:10Z",
+                  message: {
+                    id: "runless-assistant" as never,
+                    role: "assistant" as const,
+                    text: "Checking the tests next.",
+                    runId: null,
+                    createdAt: "2026-01-01T00:00:10Z",
+                    updatedAt: "2026-01-01T00:00:12Z",
+                    streaming: false,
+                  },
+                },
+              ]
+            : []),
+          {
+            id: "runless-steer-entry",
+            kind: "message",
+            createdAt: "2026-01-01T00:00:20Z",
+            message: {
+              id: "runless-steer" as never,
+              role: "user",
+              text: "Also check the docs.",
+              runId: null,
+              inputIntent: "steer",
+              createdAt: "2026-01-01T00:00:20Z",
+              updatedAt: "2026-01-01T00:00:20Z",
+              streaming: false,
+            },
+          },
+        ],
+        latestRun: null,
+        runlessWorkActive: true,
+        isWorking: true,
+        activeTurnStartedAt: "2026-01-01T00:00:00Z",
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+
+      expect(rows.at(-1)).toMatchObject({
+        kind: "thinking",
+        createdAt: hasAssistantActivity ? "2026-01-01T00:00:10Z" : "2026-01-01T00:00:00Z",
+      });
+    },
+  );
+
   it("does not fold the active in-progress turn", () => {
     const rows = deriveMessagesTimelineRows({
       timelineEntries: [
