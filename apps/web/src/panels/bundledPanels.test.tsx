@@ -137,6 +137,8 @@ describe("bundled side panels", () => {
 });
 
 const filesProps = {
+  onNavigateFolder: () => undefined,
+  folderTrail: undefined,
   cwd: "/repo",
   projectName: "repo",
   relativePath: null,

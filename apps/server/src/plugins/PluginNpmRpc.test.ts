@@ -1,6 +1,5 @@
 import {
   AuthAccessWriteScope,
-  AuthAdministrativeScopes,
   type AuthEnvironmentScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -86,10 +85,10 @@ const callWrites = (client: Effect.Success<ReturnType<typeof makeClient>>) =>
   ]);
 
 describe("npm plugin RPC scopes", () => {
-  it.effect("lets a standard pairing list npm packages but not install or update them", () =>
+  it.effect("lets a read-only pairing list npm packages but not install or update them", () =>
     Effect.gen(function* () {
       const handled: Array<string> = [];
-      const client = yield* makeClient(AuthStandardClientScopes, handled);
+      const client = yield* makeClient([AuthOrchestrationReadScope], handled);
 
       expect(yield* client[WS_METHODS.pluginsNpmList]({})).toEqual({ packages: [] });
       for (const failure of yield* callWrites(client)) {
@@ -103,10 +102,10 @@ describe("npm plugin RPC scopes", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("lets an administrative pairing install and update from npm", () =>
+  it.effect("lets a standard pairing install and update from npm", () =>
     Effect.gen(function* () {
       const handled: Array<string> = [];
-      const client = yield* makeClient(AuthAdministrativeScopes, handled);
+      const client = yield* makeClient(AuthStandardClientScopes, handled);
 
       for (const failure of yield* callWrites(client)) {
         expect(failure).toMatchObject({ _tag: "PluginCatalogError", reason: "npm-not-found" });

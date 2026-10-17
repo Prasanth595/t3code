@@ -5,7 +5,7 @@ import {
   type ScopedThreadRef,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { act, Suspense, type ReactElement, type ReactNode } from "react";
+import { act, Fragment, Suspense, type ReactElement, type ReactNode } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -20,6 +20,16 @@ const { commands, linksByThread, Wrapper, Trigger } = vi.hoisted(() => ({
       {children}
     </>
   ),
+}));
+// The panel's list behavior is exercised without the virtualizer's browser geometry.
+vi.mock("@legendapp/list/react", () => ({
+  LegendList: <T,>({
+    data,
+    renderItem,
+  }: {
+    data: ReadonlyArray<T>;
+    renderItem: (input: { item: T; index: number }) => ReactNode;
+  }) => data.map((item, index) => <Fragment key={index}>{renderItem({ item, index })}</Fragment>),
 }));
 vi.mock("~/state/entities", () => ({
   // No projects, so rows offer no project-scoped fast actions.
