@@ -1352,7 +1352,6 @@ export function sortScopedProjectsForSidebar<
   );
 }
 
-// --- Sidebar environment filter --------------------------------------------
 // The filter stores the DISABLED environments so a newly connected
 // environment is visible by default and "all enabled" is the empty set. Both
 // helpers return the input set instance when nothing changed so React state
