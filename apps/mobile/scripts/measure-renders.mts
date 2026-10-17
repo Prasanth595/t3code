@@ -149,9 +149,10 @@ const connectServer = Effect.fn("measure.connectServer")(function* (options: Opt
   let projectId = shell.projects.find(
     (project) => project.workspaceRoot === options.projectRoot,
   )?.id;
+  // A project record outlives its folder, and turns fail without it.
+  yield* (yield* FileSystem.FileSystem).makeDirectory(options.projectRoot, { recursive: true });
   if (!projectId) {
     projectId = ProjectId.make(yield* uuid);
-    yield* (yield* FileSystem.FileSystem).makeDirectory(options.projectRoot, { recursive: true });
     yield* http.execute(
       HttpClientRequest.post(`${options.server}/api/projects/mutate`).pipe(
         HttpClientRequest.bodyJsonUnsafe({
