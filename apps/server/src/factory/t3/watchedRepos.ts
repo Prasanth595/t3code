@@ -20,13 +20,13 @@ import {
 /**
  * The repos the factory watches, read from this environment's T3 projects: an active project
  * that is not the scratch project, whose checkout has a `.dw/config.yml` with a `factory` block
- * (the opt-in, so a personal project is never polled), and whose repository T3 resolved to a
+ * (the opt-in, so a personal project's issues are never polled), and whose repository T3 resolved to a
  * GitHub `owner/name` through the `origin` remote. T3 prefers an `upstream` remote when a clone
  * has one, so such a clone (a fork) is not watched: its identity is the parent's. Those, and a
  * project that did not opt in, are left out without a word: no error, no attention item.
  *
  * What the reader could not settle is reported in `unresolved`, not dropped: a config file that
- * could not be read for a reason other than its absence, a config file that does not parse, an
+ * could not be read for a reason other than its absence, a config file that does not parse, a
  * checkout T3 could not name (git failed or timed out, no remote, a GitHub remote with no owner
  * or name), and a git that would not run.
  * The pass keeps its attention items while there are any. Every GitHub repo a checkout is a clone
@@ -34,8 +34,10 @@ import {
  * no project is a clone of it any more, so a working tree that stops opting in (an older branch,
  * a file without the block, an `upstream` remote added) loses nothing.
  *
- * The config file is read before the repository identity, so the identity is not resolved for
- * the projects that are not factory repos. The file is read from the checkout on disk; the loop
+ * The identity is resolved for every git checkout, opted in or not, so that `present` names every
+ * repo a project is a clone of (T3 caches it for a minute); a directory with no `.git` that does
+ * not opt in is not asked about. Only an opted-in checkout is watched, and only a watched repo's
+ * issues reach GitHub. The file is read from the checkout on disk; the loop
  * still reads the default-branch copy from GitHub for the project config itself. A checkout whose
  * working tree has no file is read once more from the copy committed on origin's default branch
  * (`git show origin/HEAD:.dw/config.yml`): a clone switched to an older branch has not left the
