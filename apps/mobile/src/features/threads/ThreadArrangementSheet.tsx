@@ -263,8 +263,11 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     if (saving) return;
     stop();
     setSaving(true);
-    await saveThreadArrangement(drafts);
-    props.onClose();
+    try {
+      if (await saveThreadArrangement(drafts)) props.onClose();
+    } finally {
+      setSaving(false);
+    }
   }
 
   function stop() {
