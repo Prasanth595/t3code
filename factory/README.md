@@ -28,7 +28,13 @@ vp i
 factory/scripts/check.sh
 ```
 
-Build, install and roll back the darwin-arm64 binary (LaunchAgent `io.github.rawphp.t3fac`, port 3876):
+Build and install the darwin-arm64 binary on this Mac (LaunchAgent `io.github.rawphp.t3fac`, port 3876) in one step:
+
+```sh
+factory/scripts/deploy.sh                     # build.sh then install.sh; reuses release/ for this commit, --rebuild to build again, --build-only to stop before install
+```
+
+The steps on their own:
 
 ```sh
 factory/scripts/build.sh                      # clean tree only: build, smoke test, then -> release/t3fac-<version>-darwin-arm64.tar.gz
