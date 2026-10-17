@@ -205,6 +205,11 @@ export interface RunSummary {
   readonly lastEvent: string | null;
   /** The `to` of the last `state_changed`; null before any, or for one this build does not know. */
   readonly state: State | null;
+  /**
+   * The `step` of the last `step_changed`; null before any, for a finished run (its last step is
+   * over, and `lastEvent` says so), and for a file that could not be read.
+   */
+  readonly step: string | null;
   /** The `finished` line's pull request URL, else the last `pr_opened` URL. */
   readonly prUrl: string | null;
   readonly finished: boolean;
@@ -226,6 +231,7 @@ const unreadableSummary = (id: RunId): RunSummary => ({
   startedTs: null,
   lastEvent: null,
   state: null,
+  step: null,
   prUrl: null,
   finished: false,
   totalMs: null,
@@ -246,6 +252,9 @@ const summarise = (id: RunId, { record, seen }: WholeRead): RunSummary => {
     startedTs: record.entries[0]?.ts ?? null,
     lastEvent: record.entries.at(-1)?.event ?? null,
     state: seen.state,
+    step: seen.finished
+      ? null
+      : dataText(record.entries.findLast((entry) => entry.event === "step_changed")?.data, "step"),
     prUrl: (end === undefined ? null : dataText(end.data, "pr_url")) ?? seen.lastPr?.url ?? null,
     finished: seen.finished,
     totalMs: totalMsOf(end),
@@ -289,6 +298,7 @@ const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
         startedTs: first?.ts ?? null,
         lastEvent: "finished",
         state: state ?? null,
+        step: null,
         prUrl,
         finished: true,
         totalMs: totalMsOf(end),
@@ -310,29 +320,39 @@ const summariseFinished = (id: RunId, path: string): FileRead<RunSummary> =>
 export const readRuns = (
   dataDir: string,
   options: { readonly skipFinishedBefore?: number } = {},
-): Array<RunRead> => {
-  const { skipFinishedBefore } = options;
-  const skip =
-    skipFinishedBefore === undefined
-      ? undefined
-      : (path: string, mtimeMs: number) => mtimeMs < skipFinishedBefore && lastLineIsFinished(path);
-  return scanRuns(dataDir, { read: (id) => readWhole(dataDir, id), skip }).map((run) => ({
+): Array<RunRead> =>
+  scanRuns(dataDir, {
+    read: (id) => readWhole(dataDir, id),
+    skip: finishedBefore(options.skipFinishedBefore),
+  }).map((run) => ({
     summary: run.read === null ? unreadableSummary(run.id) : summarise(run.id, run.read),
     record: run.read?.record ?? null,
     seen: run.read?.seen ?? null,
   }));
-};
+
+/** The `skip` of a scan with a `skipFinishedBefore` cutoff: a finished file last written before it. */
+const finishedBefore = (cutoffMs: number | undefined) =>
+  cutoffMs === undefined
+    ? undefined
+    : (path: string, mtimeMs: number) => mtimeMs < cutoffMs && lastLineIsFinished(path);
 
 /**
  * `softfac runs list`: every run under `<dir>/runs/`, one summary each, in the order of
  * {@link readRuns}. A finished file is summarised from its ends (see `summariseFinished`) and is
- * never read whole; an unfinished one, one of the few active runs, is read whole.
+ * never read whole; an unfinished one, one of the few active runs, is read whole. With
+ * `skipFinishedBefore` (Unix epoch ms) a finished file last written before it is neither read nor
+ * returned, as in {@link readRuns}, so a page that shows recent runs does not read the ends of
+ * every file the factory ever made.
  */
-export const listRuns = (dataDir: string): Array<RunSummary> =>
+export const listRuns = (
+  dataDir: string,
+  options: { readonly skipFinishedBefore?: number } = {},
+): Array<RunSummary> =>
   scanRuns(dataDir, {
     read: (id, path): FileRead<RunSummary> => {
       if (lastLineIsFinished(path)) return summariseFinished(id, path);
       const whole = readWhole(dataDir, id);
       return { firstMs: whole.firstMs, read: summarise(id, whole.read) };
     },
+    skip: finishedBefore(options.skipFinishedBefore),
   }).map((run) => run.read ?? unreadableSummary(run.id));

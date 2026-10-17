@@ -1,2 +1,4 @@
 .gitignore
 apps/server/src/server.ts
+apps/web/src/components/sidebar/SidebarChrome.tsx
+apps/web/src/routeTree.gen.ts
