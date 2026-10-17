@@ -20,7 +20,7 @@ const mocks = vi.hoisted(() => ({
   projects: [] as ReadonlyArray<{
     environmentId: string;
     id: string;
-    name: string;
+    title: string;
     workspaceRoot: string;
     isScratch?: boolean;
   }>,
@@ -159,16 +159,16 @@ const populated = report({
 });
 
 const PROJECTS = [
-  { environmentId: "env-1", id: "p1", name: "Alpha", workspaceRoot: "/work/alpha" },
-  { environmentId: "env-1", id: "p2", name: "Beta", workspaceRoot: "/work/beta" },
+  { environmentId: "env-1", id: "p1", title: "Alpha", workspaceRoot: "/work/alpha" },
+  { environmentId: "env-1", id: "p2", title: "Beta", workspaceRoot: "/work/beta" },
   {
     environmentId: "env-1",
     id: "p3",
-    name: "Scratch",
+    title: "Scratch",
     workspaceRoot: "/tmp/scratch",
     isScratch: true,
   },
-  { environmentId: "env-2", id: "p4", name: "Elsewhere", workspaceRoot: "/work/elsewhere" },
+  { environmentId: "env-2", id: "p4", title: "Elsewhere", workspaceRoot: "/work/elsewhere" },
 ];
 
 const ok = (value: MachineConfigReport): FactoryConfigResult => ({ kind: "ok", report: value });
