@@ -29,7 +29,7 @@ import * as ServerEnvironment from "../../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../../persistence/Sqlite.ts";
 import packageJson from "../../../package.json" with { type: "json" };
 import { Attention, type AttentionItem } from "../attention.ts";
-import type { WatchedProject } from "../config.ts";
+import type { WatchedListing, WatchedProject } from "../config.ts";
 import { FactoryLoop, hostName, type RepoConfigReading } from "../index.ts";
 import { makeCause, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
@@ -43,6 +43,7 @@ import { route } from "./auth.ts";
 import * as ServerExitService from "./exit.ts";
 import { CONFIG_PATH, FactoryRoutes, RESTART_PATH, STATUS_PATH } from "./http.ts";
 import { FactoryPaths } from "./paths.ts";
+import { WatchedReposError } from "./watchedRepos.ts";
 
 const TEST_ROUTE_PATH = "/api/factory/test/settings";
 
@@ -166,6 +167,10 @@ interface World {
   readonly readings?: ReadonlyMap<string, RepoConfigReading>;
   /** The T3 projects the loop watches. */
   readonly watched?: ReadonlyArray<WatchedProject>;
+  /** The checkouts the reader could not settle. */
+  readonly unresolved?: ReadonlyArray<string>;
+  /** Listing the T3 projects fails with this cause instead. */
+  readonly watchFails?: string;
 }
 
 /** What the loop was asked to do: `count` wakes, `reloads` config reloads. */
@@ -194,11 +199,14 @@ const worldContext = (
     wakes.reloads += 1;
   });
   const repoConfigs = Effect.succeed(world.readings ?? new Map<string, RepoConfigReading>());
-  const watchedRepos = Effect.succeed({
-    repos: world.watched ?? [],
-    departed: [],
-    unresolved: [],
-  });
+  const watchedRepos =
+    world.watchFails === undefined
+      ? Effect.succeed<WatchedListing>({
+          repos: world.watched ?? [],
+          departed: [],
+          unresolved: world.unresolved ?? [],
+        })
+      : Effect.fail(new WatchedReposError({ cause: new Error(world.watchFails) }));
   return Context.make(EnvironmentAuth.EnvironmentAuth, auth).pipe(
     Context.add(
       ServerExitService.ServerExit,
@@ -990,6 +998,30 @@ repos:
     max_concurrent_runs: 2,
     max_concurrent_gates: 2,
   };
+
+  it.effect(
+    "GET answers a listing that failed as watch_error, still 200 with the file's values",
+    () =>
+      serving({ watchFails: "project store down" }, async (call, { tokens, dir }) => {
+        NodeFS.writeFileSync(configFile(dir), COMMENTED);
+        const response = await call("GET", CONFIG_PATH, tokens.read);
+        assert.strictEqual(response.status, 200);
+        const body = await json(response);
+        assert.strictEqual(body.watch_error, "cannot list the T3 projects: project store down");
+        assert.deepStrictEqual(body.repos, []);
+        assert.deepStrictEqual(body.unresolved, []);
+        assert.strictEqual((body.config as { poll_seconds: number }).poll_seconds, 60);
+      }),
+  );
+
+  it.effect("GET names the checkouts the reader could not settle", () =>
+    serving({ unresolved: ["/slow"] }, async (call, { tokens, dir }) => {
+      NodeFS.writeFileSync(configFile(dir), COMMENTED);
+      const body = await json(await call("GET", CONFIG_PATH, tokens.read));
+      assert.deepStrictEqual(body.unresolved, ["/slow"]);
+      assert.strictEqual(body.watch_error, null);
+    }),
+  );
 
   it.effect("GET reports a commented file: its values, and that it exists", () =>
     serving({}, async (call, { tokens, dir }) => {

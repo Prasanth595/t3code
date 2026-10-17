@@ -715,6 +715,56 @@ describe("FactoryWatchedRepos.list", () => {
       }),
     );
 
+    it.effect("writes the memory as repos folded to lower case, each with its project ids", () =>
+      Effect.gen(function* () {
+        const root = checkout("mixed-case", FACTORY_CONFIG);
+        const factoryDir = tempDir("mixed-case-factory");
+        const identities = new Map([[root, github("Acme", "Widgets")]]);
+        const list = yield* listed({ projects: [["p-w", root]], identities, factoryDir });
+        assert.deepStrictEqual(
+          list.repos.map((r) => r.repo),
+          ["Acme/Widgets"],
+        );
+        const file = NodePath.join(factoryDir, WatchedRepos.MEMORY_FILE);
+        // Read back by the next version: the shape on disk is part of the contract.
+        assert.strictEqual(
+          NodeFS.readFileSync(file, "utf8"),
+          '{"repos":{"acme/widgets":["p-w"]}}\n',
+        );
+        const gone = yield* listed({
+          projects: [["p-w", root]],
+          identities,
+          factoryDir,
+          deleted: ["p-w"],
+        });
+        assert.deepStrictEqual(gone.departed, ["acme/widgets"]);
+        assert.strictEqual(NodeFS.readFileSync(file, "utf8"), '{"repos":{"acme/widgets":[]}}\n');
+      }),
+    );
+
+    it.effect("still lists the watched repos when the memory cannot be written", () =>
+      Effect.gen(function* () {
+        // Root writes into a directory whatever its mode.
+        if (globalThis.process.getuid?.() === 0) return;
+        const { root, factoryDir, identities } = watchedOnce("unwritable-memory");
+        yield* listed({ projects: [["p-old", root]], identities, factoryDir });
+        // The memory reads, but the directory takes no new file, so its next write fails.
+        NodeFS.chmodSync(factoryDir, 0o555);
+        const both: ReadonlyArray<readonly [string, string]> = [
+          ["p-old", root],
+          ["p-new", root],
+        ];
+        const list = yield* listed({ projects: both, identities, factoryDir }).pipe(
+          Effect.ensuring(Effect.sync(() => NodeFS.chmodSync(factoryDir, 0o755))),
+        );
+        assert.deepStrictEqual(
+          list.repos.map((r) => r.repo),
+          ["acme/widgets", "acme/widgets"],
+        );
+        assert.deepStrictEqual(list.departed, []);
+      }),
+    );
+
     it.effect("never names a repo it did not watch", () =>
       Effect.gen(function* () {
         const root = checkout("personal-project", null);
