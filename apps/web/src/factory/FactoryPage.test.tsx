@@ -1,4 +1,5 @@
 import { createElement, act, type ReactNode } from "react";
+import type { ReactTestInstance } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
@@ -451,6 +452,33 @@ describe.each([375, 1280])("FactoryPage at %i px", (width) => {
     const buttons = page.renderer.root.findAllByType(Button);
     expect(buttons.map((b) => b.props.size)).toEqual(buttons.map(() => "touch"));
     expect(buttons.length).toBeGreaterThanOrEqual(3);
+    await page.unmount();
+  });
+});
+
+describe("FactoryPage attention items at 375 px", () => {
+  it("puts the message on its own full-width line after the badge, repo and age", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
+    state.runs = resource({ data: { runs: [runRow()] } });
+    const page = await renderAt(375, createElement(FactoryPage));
+    const section = page
+      .all("section")
+      .find((node) => node.props["aria-label"] === "Needs attention")!;
+    const item = section.findAllByType("li" as never)[0]!;
+    const message = item.findAll(
+      (node) => typeof node.type === "string" && node.children.includes(ATTENTION.message),
+    )[0]!;
+    expect(message.type).toBe("p");
+    expect(String(message.props.className)).toContain("w-full");
+    expect(String(message.props.className)).not.toContain("flex-1");
+    const textOf = (node: ReactTestInstance | string): string =>
+      typeof node === "string" ? node : node.children.map(textOf).join(" ");
+    const full = textOf(item);
+    const order = ["stuck", `${ATTENTION.repo}#20`, "1h", ATTENTION.message].map((part) =>
+      full.indexOf(part),
+    );
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
     await page.unmount();
   });
 });

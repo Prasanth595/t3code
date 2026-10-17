@@ -201,7 +201,8 @@ describe("FactorySettingsPanel", () => {
     mocks.saveFactoryConfig.mockResolvedValue(ok(report({ exists: true })));
     const root = await open();
 
-    expect(textOf(root)).toContain(`No config file exists at ${FILE}`);
+    expect(textOf(root)).toContain("No config file exists at");
+    expect(textOf(root)).toContain(FILE);
     expect(input(root, "Poll seconds").props.value).toBe("60");
     expect(input(root, "Model instance").props.value).toBe("claudeAgent");
 
@@ -390,6 +391,22 @@ describe("FactorySettingsPanel", () => {
     expect(textOf(root)).toContain("read-only");
   });
   describe.each([375, 1280])("at %i px", (width) => {
+    it("lets a long config path break instead of overflowing", async () => {
+      const restore = viewport(width);
+      try {
+        const long = `/Users/someone/${"deeply/".repeat(12)}.t3/factory/config.yml`;
+        mocks.fetchFactoryConfig.mockResolvedValue(ok(report({ exists: false, file: long })));
+        const root = await open();
+        const holder = root.findAll(
+          (node) => typeof node.type === "string" && node.children.includes(long),
+        );
+        expect(holder).toHaveLength(1);
+        expect(String(holder[0]!.props.className)).toContain("break-all");
+      } finally {
+        restore();
+      }
+    });
+
     it("asks for touch-sized inputs and buttons, with Save present", async () => {
       const restore = viewport(width);
       try {
