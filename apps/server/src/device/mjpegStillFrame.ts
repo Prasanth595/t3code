@@ -19,8 +19,9 @@ const MAX_HEADER_BYTES = 16 * 1024;
 type Part = Arr.NonEmptyReadonlyArray<Uint8Array>;
 
 const endsWithCrlf = (part: Part) => {
-  const tail = Buffer.concat(part.slice(-2)).subarray(-2);
-  return tail[0] === 0x0d && tail[1] === 0x0a;
+  const last = Arr.lastNonEmpty(part);
+  const cr = last.length > 1 ? last.at(-2) : part.at(-2)?.at(-1);
+  return cr === 0x0d && last.at(-1) === 0x0a;
 };
 
 /**

@@ -69,6 +69,16 @@ describe("repeatStillFrame", () => {
     }),
   );
 
+  it.effect("recognizes a frame whose final CRLF is split across chunks", () =>
+    Effect.gen(function* () {
+      const { send, finish } = yield* viewer;
+      const first = part("first");
+      yield* send(first.subarray(0, -1), first.subarray(-1));
+      yield* TestClock.adjust(STILL_FRAME_DELAY);
+      expect(yield* finish).toBe(`${first}${first}`);
+    }),
+  );
+
   it.effect("repeats only the newest of several frames in one chunk", () =>
     Effect.gen(function* () {
       const { send, finish } = yield* viewer;
