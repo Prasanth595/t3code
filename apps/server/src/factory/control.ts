@@ -11,7 +11,7 @@ import { isLedgerError } from "./ledger/errors.ts";
 import { readRun, type Entry } from "./ledger/read.ts";
 import { parseRunId, runIdToString, type RunId } from "./ledger/runId.ts";
 import { formatTs } from "./ledger/time.ts";
-import { notBuildingMessage, requestStop } from "./runner/stop.ts";
+import { leaveStopRequest, notBuildingMessage } from "./runner/stop.ts";
 
 /** The id text parsed, or the message of why it is not a run id. Nothing is read from disk. */
 const parseId = (
@@ -75,7 +75,7 @@ export type StopRun =
   | {
       readonly kind: "stopped";
       readonly id: string;
-      /** A stop was already asked for; nothing was written. */
+      /** A stop was already waiting or recorded; nothing was written. */
       readonly already: boolean;
       readonly message: string;
     }
@@ -84,16 +84,17 @@ export type StopRun =
   | { readonly kind: "invalid"; readonly message: string };
 
 /**
- * `softfac runs stop`: records a stop for a building run (the pass then archives its thread and
- * removes its worktree, as for `stop-run.sh`). The caller wakes the loop when the result is
- * `stopped` and not `already`.
+ * `softfac runs stop`: leaves a stop request for a building run, as `stop-run.sh` does, and never
+ * writes the ledger. The next pass takes it, then archives the thread and removes the worktree;
+ * while the gate has the run the request waits for the gate's result. The caller wakes the loop
+ * when the result is `stopped` and not `already`.
  */
-export const stopRun = (dataDir: string, idText: string, clock: () => number): StopRun => {
+export const stopRun = (dataDir: string, idText: string): StopRun => {
   const parsed = parseId(idText);
   if (!parsed.ok) return { kind: "invalid", message: parsed.message };
   const id = runIdToString(parsed.run);
   try {
-    const { outcome, seen } = requestStop(dataDir, parsed.run, clock);
+    const { outcome, seen } = leaveStopRequest(dataDir, parsed.run);
     if (outcome === "recorded") {
       return {
         kind: "stopped",

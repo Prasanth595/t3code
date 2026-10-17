@@ -31,10 +31,10 @@ import { Attention, type AttentionItem } from "../attention.ts";
 import { FactoryLoop, hostName } from "../index.ts";
 import { makeCause, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
-import { readRun } from "../ledger/read.ts";
 import { runIdToString, runPath, type RunId } from "../ledger/runId.ts";
 import { T0, useTempDirs } from "../ledger/testSupport.ts";
 import { formatTs, parseTs } from "../ledger/time.ts";
+import { stopRequestPath } from "../runner/stop.ts";
 import type { FactoryStatus } from "../status.ts";
 import { route } from "./auth.ts";
 import { FactoryRoutes, STATUS_PATH } from "./http.ts";
@@ -552,9 +552,10 @@ describe("POST /api/factory/runs/:id/stop", () => {
   const stop = (call: Call, token: string, id = ID) =>
     call("POST", `/api/factory/runs/${id}/stop`, token);
 
-  it.effect("records the stop of a building run once, and wakes the loop", () =>
+  it.effect("leaves a stop request for a building run once, and wakes the loop", () =>
     serving({}, async (call, { tokens, dir, wakes }) => {
       seed(dir, run10, BUILDING);
+      const bytes = ledgerBytes(dir);
       const response = await stop(call, tokens.operate);
       assert.strictEqual(response.status, 200);
       assert.deepStrictEqual(await response.json(), {
@@ -562,13 +563,11 @@ describe("POST /api/factory/runs/:id/stop", () => {
         already: false,
         message: `stop requested: ${ID}; the issue goes to factory:stuck on the next pass`,
       });
-      const last = readRun(dir, run10).entries.at(-1)!;
-      assert.strictEqual(last.event, "stop_requested");
-      assert.deepStrictEqual(last.data, { by: "operator" });
-      assert.deepStrictEqual(last.cause, { step: "operator", reason: "stop-requested" });
+      const request = stopRequestPath(dir, run10);
+      assert.strictEqual(NodeFS.readFileSync(request, "utf8"), "operator\n");
+      assert.strictEqual(ledgerBytes(dir), bytes, "the route writes no ledger line");
       assert.strictEqual(wakes.count, 1);
 
-      const bytes = ledgerBytes(dir);
       const again = await stop(call, tokens.operate);
       assert.strictEqual(again.status, 200);
       assert.deepStrictEqual(await again.json(), {
@@ -576,8 +575,24 @@ describe("POST /api/factory/runs/:id/stop", () => {
         already: true,
         message: `stop already requested: ${ID}; the issue goes to factory:stuck on the next pass`,
       });
-      assert.strictEqual(ledgerBytes(dir), bytes, "no second line");
+      assert.strictEqual(NodeFS.readFileSync(request, "utf8"), "operator\n");
+      assert.strictEqual(ledgerBytes(dir), bytes, "still no ledger line");
       assert.strictEqual(wakes.count, 1, "no second wake");
+    }),
+  );
+
+  it.effect("refuses a run that left building with a stale stop line, and wakes nothing", () =>
+    serving({}, async (call, { tokens, dir, wakes }) => {
+      seed(dir, run10, [
+        ...BUILDING,
+        { event: "stop_requested", data: { by: "operator" } },
+        moved("building", "pr-open"),
+      ]);
+      const response = await stop(call, tokens.operate);
+      assert.strictEqual(response.status, 409);
+      assert.strictEqual((await json(response)).code, "not_building");
+      assert.isFalse(NodeFS.existsSync(stopRequestPath(dir, run10)));
+      assert.strictEqual(wakes.count, 0);
     }),
   );
 

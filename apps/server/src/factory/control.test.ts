@@ -7,10 +7,10 @@ import { describe, expect, it } from "vite-plus/test";
 import { pauseClaimsNow, resumeClaimsNow, showRun, stopRun } from "./control.ts";
 import { makeCause, type RunEvent } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
-import { readRun } from "./ledger/read.ts";
 import { runPath, type RunId } from "./ledger/runId.ts";
 import { T0, useTempDirs } from "./ledger/testSupport.ts";
 import { formatTs } from "./ledger/time.ts";
+import { stopRequestPath } from "./runner/stop.ts";
 
 const tempDir = useTempDirs();
 
@@ -104,23 +104,20 @@ describe("showRun", () => {
 });
 
 describe("stopRun", () => {
-  it("records the stop of a building run once", () => {
+  it("leaves a stop request for a building run once, and writes no ledger line", () => {
     const dir = tempDir();
     seed(dir, BUILDING);
-    expect(stopRun(dir, ID, () => T0 + 99_000)).toEqual({
+    const bytes = bytesOf(dir);
+    expect(stopRun(dir, ID)).toEqual({
       kind: "stopped",
       id: ID,
       already: false,
       message: `stop requested: ${ID}; the issue goes to factory:stuck on the next pass`,
     });
-    const last = readRun(dir, run10).entries.at(-1)!;
-    expect(last.event).toBe("stop_requested");
-    expect(last.data).toEqual({ by: "operator" });
-    expect(last.ms).toBe(T0 + 99_000);
-    expect(last.cause).toEqual({ step: "operator", reason: "stop-requested" });
+    expect(NodeFS.readFileSync(stopRequestPath(dir, run10), "utf8")).toBe("operator\n");
+    expect(bytesOf(dir)).toBe(bytes);
 
-    const bytes = bytesOf(dir);
-    expect(stopRun(dir, ID, () => T0 + 100_000)).toEqual({
+    expect(stopRun(dir, ID)).toEqual({
       kind: "stopped",
       id: ID,
       already: true,
@@ -129,11 +126,24 @@ describe("stopRun", () => {
     expect(bytesOf(dir)).toBe(bytes);
   });
 
+  it("refuses a run that left building with a stale stop line, instead of answering already", () => {
+    const dir = tempDir();
+    seed(dir, [
+      ...BUILDING,
+      { event: "stop_requested", data: { by: "operator" } },
+      moved("building", "pr-open"),
+    ]);
+    expect(stopRun(dir, ID)).toMatchObject({
+      kind: "refused",
+      message: expect.stringContaining("its state is pr-open"),
+    });
+  });
+
   it("refuses a run waiting on its pull request, and says how it ends", () => {
     const dir = tempDir();
     seed(dir, [...BUILDING, moved("building", "pr-open")]);
     const bytes = bytesOf(dir);
-    expect(stopRun(dir, ID, () => T0)).toEqual({
+    expect(stopRun(dir, ID)).toEqual({
       kind: "refused",
       id: ID,
       message: `run ${ID} is not building: its state is pr-open. Only a building run is stopped this way. It ends when its pull request is merged or closed.`,
@@ -144,14 +154,14 @@ describe("stopRun", () => {
   it("refuses a finished run, and a run in triage with the way to end it", () => {
     const finished = tempDir();
     seed(finished, [...BUILDING, FINISHED]);
-    expect(stopRun(finished, ID, () => T0)).toEqual({
+    expect(stopRun(finished, ID)).toEqual({
       kind: "refused",
       id: ID,
       message: `run ${ID} is not building: it is finished. Only a building run is stopped this way.`,
     });
     const triage = tempDir();
     seed(triage, [CLAIMED, moved("ready", "triage")]);
-    expect(stopRun(triage, ID, () => T0)).toMatchObject({
+    expect(stopRun(triage, ID)).toMatchObject({
       kind: "refused",
       message: expect.stringContaining("To end it, close its issue."),
     });
@@ -159,8 +169,8 @@ describe("stopRun", () => {
 
   it("is not-found for an unknown run and invalid for a bad id", () => {
     const dir = tempDir();
-    expect(stopRun(dir, ID, () => T0)).toEqual({ kind: "not-found", id: ID });
-    expect(stopRun(dir, "../../etc/passwd", () => T0)).toEqual({
+    expect(stopRun(dir, ID)).toEqual({ kind: "not-found", id: ID });
+    expect(stopRun(dir, "../../etc/passwd")).toEqual({
       kind: "invalid",
       message: expect.any(String),
     });

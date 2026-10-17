@@ -8,8 +8,8 @@
  * - `GET /api/factory/runs/:id`: `runs show`, every entry of one run.
  *
  * Control needs `orchestration:operate`:
- * - `POST /api/factory/runs/:id/stop`: `runs stop`; records the stop and wakes the loop, so the
- *   pass archives the thread and removes the worktree as `stop-run.sh` has it.
+ * - `POST /api/factory/runs/:id/stop`: `runs stop`; leaves a stop request for the next pass, as
+ *   `stop-run.sh` does, and wakes the loop. The pass archives the thread and removes the worktree.
  * - `POST /api/factory/claims/pause` and `.../resume`: `claims pause` and `claims resume`.
  *
  * Each handler decodes its input, calls one function (`control.ts`, `status.ts`, the ledger reads)
@@ -166,8 +166,7 @@ const stopRoute = route(
     const loop = yield* FactoryLoop;
     const { factoryDir } = yield* FactoryPaths;
     const idText = yield* idParam;
-    const nowMs = yield* Clock.currentTimeMillis;
-    const stopped = yield* guarded(() => stopRun(factoryDir, idText, () => nowMs));
+    const stopped = yield* guarded(() => stopRun(factoryDir, idText));
     switch (stopped.kind) {
       case "stopped":
         if (!stopped.already) yield* loop.wake;

@@ -15,6 +15,7 @@ import { T0, catchLedgerError, useTempDirs } from "../ledger/testSupport.ts";
 import { readProgress } from "./progress.ts";
 import {
   STOP_REQUESTS_DIR,
+  leaveStopRequest,
   notBuildingMessage,
   requestStop,
   stopRequestPath,
@@ -215,6 +216,72 @@ describe("requestStop", () => {
     assert.strictEqual(seen.state, "pr-open");
     assert.match(notBuildingMessage("id", seen), /its state is pr-open/);
   });
+});
+
+describe("leaveStopRequest", () => {
+  const STOP_LINE: RunEvent = { event: "stop_requested", data: { by: "operator" } };
+  const PR_OPEN: RunEvent = { event: "state_changed", data: { from: "building", to: "pr-open" } };
+
+  it("leaves the request stop-run.sh leaves for a building run, and writes no ledger line", () => {
+    const dataDir = tempDir();
+    seed(dataDir, BUILDING);
+    const bytes = bytesOf(dataDir);
+    assert.strictEqual(leaveStopRequest(dataDir, run10).outcome, "recorded");
+    assert.strictEqual(NodeFS.readFileSync(stopRequestPath(dataDir, run10), "utf8"), "operator\n");
+    assert.strictEqual(bytesOf(dataDir), bytes);
+  });
+
+  it("is already-requested when a request waits, and leaves it as it was", () => {
+    const dataDir = tempDir();
+    seed(dataDir, BUILDING);
+    const path = request(dataDir);
+    NodeFS.writeFileSync(path, "by the script\n");
+    assert.strictEqual(leaveStopRequest(dataDir, run10).outcome, "already-requested");
+    assert.strictEqual(NodeFS.readFileSync(path, "utf8"), "by the script\n");
+  });
+
+  it("is already-requested when a building run's ledger has the stop line, and leaves no file", () => {
+    const dataDir = tempDir();
+    seed(dataDir, [...BUILDING, STOP_LINE]);
+    assert.strictEqual(leaveStopRequest(dataDir, run10).outcome, "already-requested");
+    assert.strictEqual(NodeFS.existsSync(stopRequestPath(dataDir, run10)), false);
+  });
+
+  it("refuses a pr-open run with a stale stop line, as not building", () => {
+    const dataDir = tempDir();
+    seed(dataDir, [...BUILDING, STOP_LINE, PR_OPEN]);
+    const { outcome, seen } = leaveStopRequest(dataDir, run10);
+    assert.strictEqual(outcome, "not-building");
+    assert.match(notBuildingMessage("id", seen), /its state is pr-open/);
+    assert.strictEqual(NodeFS.existsSync(stopRequestPath(dataDir, run10)), false);
+  });
+
+  it("refuses a finished run and a run with no state yet, and leaves no file", () => {
+    const finished = tempDir();
+    seed(finished, [...BUILDING, FINISHED]);
+    assert.strictEqual(leaveStopRequest(finished, run10).outcome, "finished");
+    assert.strictEqual(NodeFS.existsSync(stopRequestPath(finished, run10)), false);
+    const fresh = tempDir();
+    seed(fresh, [BUILDING[0]!]);
+    assert.strictEqual(leaveStopRequest(fresh, run10).outcome, "not-building");
+    assert.strictEqual(NodeFS.existsSync(stopRequestPath(fresh, run10)), false);
+  });
+
+  it("fails for a run with no ledger, and leaves no file", () => {
+    const dataDir = tempDir();
+    catchLedgerError(() => leaveStopRequest(dataDir, run10), LedgerNotFoundError);
+    assert.strictEqual(NodeFS.existsSync(stopRequestPath(dataDir, run10)), false);
+  });
+
+  it.effect("leaves a request the pass takes into the ledger", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      seed(dataDir, BUILDING);
+      leaveStopRequest(dataDir, run10);
+      assert.strictEqual(yield* takeStopRequest(dataDir, run10, () => T0 + 5), "recorded");
+      assert.strictEqual(readRun(dataDir, run10).entries.at(-1)!.event, "stop_requested");
+    }),
+  );
 });
 
 describe("notBuildingMessage", () => {
