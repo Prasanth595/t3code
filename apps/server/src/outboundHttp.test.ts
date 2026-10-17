@@ -136,6 +136,45 @@ describe("ignoreMacosTypeOfServiceEinval", () => {
     expect(withoutTypeOfService).not.toHaveProperty("setTypeOfService");
   });
 
+  // Node 24.15 added setTypeOfService, and the undici 7 it bundles calls it on
+  // every HTTP/1.1 request; undici 8 skips the call by default. A stub that
+  // always throws EINVAL makes the macOS failure deterministic on any platform.
+  // An escaped EINVAL leaves the request hanging, so a short timeout fails fast.
+  it.effect.runIf(
+    typeof (NodeNet.Socket.prototype as { setTypeOfService?: unknown }).setTypeOfService ===
+      "function" && process.versions.undici?.startsWith("7.") === true,
+  )(
+    "keeps built-in fetch working when setTypeOfService throws EINVAL",
+    () => {
+      const socketPrototype = NodeNet.Socket.prototype as NodeNet.Socket & {
+        setTypeOfService?: unknown;
+      };
+      const original = socketPrototype.setTypeOfService;
+      let calls = 0;
+      socketPrototype.setTypeOfService = () => {
+        calls++;
+        throw errnoError("EINVAL");
+      };
+      const uncaught: Array<unknown> = [];
+      const recordUncaught = (error: unknown) => uncaught.push(error);
+      process.on("uncaughtExceptionMonitor", recordUncaught);
+      return Effect.gen(function* () {
+        ignoreMacosTypeOfServiceEinval("darwin");
+        expect(yield* versionViaBuiltinFetch()).toBe("1.1");
+        expect(calls).toBeGreaterThan(0);
+        expect(uncaught).toEqual([]);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            process.off("uncaughtExceptionMonitor", recordUncaught);
+            socketPrototype.setTypeOfService = original;
+          }),
+        ),
+      );
+    },
+    10_000,
+  );
+
   // The reset has to come from another process, as it does from the Adobe,
   // Unity and workerd listeners in the reports. A listener in this process
   // accepts on the client's event loop, so the request is written first.
@@ -161,9 +200,24 @@ describe("ignoreMacosTypeOfServiceEinval", () => {
       return Effect.gen(function* () {
         const port = yield* Effect.promise(
           () =>
-            new Promise<string>((resolve) =>
-              listener.stdout.once("data", (chunk) => resolve(String(chunk).trim())),
-            ),
+            new Promise<string>((resolve, reject) => {
+              const fail = (reason: string) => {
+                clearTimeout(startup);
+                reject(new Error(`resetting listener ${reason} before printing its port`));
+              };
+              // @effect-diagnostics-next-line globalTimers:off -- Bounds listener startup, which takes milliseconds when it works.
+              const startup = setTimeout(() => fail("took over 5 s"), 5_000);
+              listener.once("error", (error) =>
+                fail(`failed to start (${"code" in error ? String(error.code) : error.name})`),
+              );
+              listener.once("exit", (code, signal) =>
+                fail(`exited (code ${code}, signal ${signal})`),
+              );
+              listener.stdout.once("data", (chunk) => {
+                clearTimeout(startup);
+                resolve(String(chunk).trim());
+              });
+            }),
         );
         ignoreMacosTypeOfServiceEinval();
         for (let attempt = 0; attempt < 20; attempt++) {
