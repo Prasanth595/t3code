@@ -156,7 +156,7 @@ The rule is the one softfac already has: one factory per repo.
 | Port         | 3874                                                | 3876                                                         |
 | LaunchAgent  | `io.github.rawphp.softfac`, `com.rawphp.softfac.t3` | `io.github.rawphp.t3fac`, `io.github.rawphp.t3fac.logrotate` |
 | Factory data | `~/.local/share/softfac`                            | `~/.config/t3fac/factory`                                    |
-| Repo clones  | `repos[].path`                                      | separate clones, never the same `path`                       |
+| Repo clones  | `repos[].path`                                      | the T3 project's workspace root                              |
 | Logs         | `~/Library/Logs/softfac`                            | `~/Library/Logs/t3fac`                                       |
 
 `t3fac` is a working name.
@@ -212,7 +212,7 @@ Not built: npm packages, the desktop app, other platforms, notarisation. A secon
 
 ## Who builds the fork
 
-The Rust factory builds the fork until the fork's own factory can build its own repo. After that the fork builds itself. Issues `original-solutions/t3code-factory#1` to `#21` take it up to the handover (#21). The handover is a config switch a person makes: the repo leaves the Rust factory's `repos` list and enters the fork's. Issues #22 to #28 (forwarding, re-gating, feedback, interruptions, required checks, the API and the page), #55 (the settings page) and #61 (phone and tailnet use) stay `factory:proposed` until that switch, and then the fork's factory builds them.
+The Rust factory builds the fork until the fork's own factory can build its own repo. After that the fork builds itself. Issues `original-solutions/t3code-factory#1` to `#21` take it up to the handover (#21). The handover is a config switch a person makes: the repo leaves the Rust factory's `repos` list and becomes a T3 project on the fork's server, with a `.dw/config.yml` factory block. Issues #22 to #28 (forwarding, re-gating, feedback, interruptions, required checks, the API and the page), #55 (the settings page) and #61 (phone and tailnet use) stay `factory:proposed` until that switch, and then the fork's factory builds them.
 
 To begin with, `original-solutions/t3code-factory` becomes one of the Rust factory's repos, with a `.dw/config.yml` factory block whose gate is the fork CI commands above. `.dw/` is a new path, so it is not a seam. The work goes in as issues in this order, each one testable on its own:
 
