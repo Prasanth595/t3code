@@ -1416,9 +1416,9 @@ it.live.each(["agent", "server"] as const)(
         const popups = Array.from({ length: 12 }, () => {
           const popup = makeContext();
           const newCDPSession = popup.newCDPSession;
-          popup.newCDPSession = async () => {
+          popup.newCDPSession = async (target) => {
             await gate.promise;
-            return newCDPSession();
+            return newCDPSession(target);
           };
           return popup;
         });
