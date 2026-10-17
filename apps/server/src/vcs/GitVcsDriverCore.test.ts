@@ -3501,6 +3501,32 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect("refreshes a remote whose name starts with an option prefix", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(cwd, ["remote", "rename", "--", "origin", "--all"]);
+        yield* git(updater, ["clone", "--branch", initialBranch, remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        yield* git(updater, ["commit", "--allow-empty", "-m", "remote update"]);
+        yield* git(updater, ["push"]);
+        const expectedCommit = yield* git(updater, ["rev-parse", "HEAD"]);
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetailsRemote(cwd);
+        assert.equal(status.behindCount, 1);
+        assert.equal(
+          yield* git(cwd, ["rev-parse", `refs/remotes/--all/${initialBranch}`]),
+          expectedCommit,
+        );
+      }),
+    );
+
     it.effect("does not start Git auto-maintenance from background upstream fetches", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

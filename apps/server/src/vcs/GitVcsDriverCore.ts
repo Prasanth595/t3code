@@ -1530,6 +1530,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             "--no-auto-gc",
             "--no-write-fetch-head",
             "--refmap=",
+            "--",
             remoteName,
             `+${fetchTarget.remoteRef}:${fetchTarget.temporaryRef}`,
           ];
