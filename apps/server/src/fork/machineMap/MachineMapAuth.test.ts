@@ -218,7 +218,7 @@ it.layer(NodeServices.layer)("machine map auth hooks", (it) => {
       yield* saveDesired(desiredState({ arrowsIn: [arrow(PEER, SELF, "standard")] }));
       const session = yield* pairAs({ common_name: PEER_TOKEN });
       expect(session?.subject).toBe(`machine:${PEER}`);
-      expect(session?.scopes).toEqual(AuthStandardClientScopes);
+      expect(session?.scopes).toEqual(MACHINE_LEVEL_SCOPES.standard);
     }).pipe(withCertsFetch, Effect.provide(layerAuth("on"))),
   );
 
@@ -255,7 +255,7 @@ it.layer(NodeServices.layer)("machine map auth hooks", (it) => {
         yield* saveDesired(withLaptopAdmin);
         const session = yield* pairAs({ email: "dev@example.com" }, yield* browserProof());
         expect(session?.subject).toBe(`client:${LAPTOP}`);
-        expect(session?.scopes).toEqual(AuthStandardClientScopes);
+        expect(session?.scopes).toEqual(MACHINE_LEVEL_SCOPES.standard);
       }).pipe(withCertsFetch, Effect.provide(layerAuth("on", "observe"))),
   );
 
