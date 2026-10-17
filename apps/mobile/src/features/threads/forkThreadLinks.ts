@@ -72,7 +72,8 @@ export function useForkThreadLinks(environmentId: EnvironmentId) {
 }
 
 const NO_MARKER_TARGETS: ThreadMarkerTargets = new Map();
-const NO_MARKER_TARGETS_ATOM = Atom.make(NO_MARKER_TARGETS);
+// Null, not an empty Map: `Atom.make` reads an iterable as something other than a plain value.
+const NO_MARKER_TARGETS_ATOM = Atom.make<ThreadMarkerTargets | null>(null);
 
 /** Fork: `threadMarkerTargets` of a thread, while its server setting `threadLinkChips` is on. */
 const threadMarkerTargetsAtom = Atom.family((key: string) => {
@@ -99,5 +100,5 @@ export function useForkThreadMarkers(markdown: string, environmentId: Environmen
       ? threadMarkerTargetsAtom(`${environmentId}\u0000${threadId}`)
       : NO_MARKER_TARGETS_ATOM,
   );
-  return linkThreadMarkers(markdown, targets);
+  return targets === null ? markdown : linkThreadMarkers(markdown, targets);
 }

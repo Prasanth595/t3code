@@ -28,6 +28,13 @@ const threadLinkChipsAtom = Atom.family((environmentId: EnvironmentId) =>
   ),
 );
 
+const OFF_ATOM = Atom.make(false);
+
+/** Fork: whether the message environment has `threadLinkChips` on. */
+export function useForkThreadLinkChips(environmentId: EnvironmentId | null): boolean {
+  return useAtomValue(environmentId ? threadLinkChipsAtom(environmentId) : OFF_ATOM);
+}
+
 /**
  * Fork: a `t3-thread://` link in chat. With `threadLinkChips` on it is the attached-thread chip,
  * else the upstream link.
@@ -112,7 +119,8 @@ export function ForkThreadAddressChip(props: {
 }
 
 const NO_MARKER_TARGETS: ThreadMarkerTargets = new Map();
-const NO_MARKER_TARGETS_ATOM = Atom.make(NO_MARKER_TARGETS);
+// Null, not an empty Map: `Atom.make` reads an iterable as something other than a plain value.
+const NO_MARKER_TARGETS_ATOM = Atom.make<ThreadMarkerTargets | null>(null);
 
 /** Fork: `threadMarkerTargets` of a thread, while `threadLinkChips` is on. */
 const threadMarkerTargetsAtom = Atom.family((key: string) => {
@@ -136,5 +144,5 @@ export function useForkThreadMarkers(text: string, threadRef: ScopedThreadRef | 
       ? threadMarkerTargetsAtom(`${threadRef.environmentId}\u0000${threadRef.threadId}`)
       : NO_MARKER_TARGETS_ATOM,
   );
-  return linkThreadMarkers(text, targets);
+  return targets === null ? text : linkThreadMarkers(text, targets);
 }

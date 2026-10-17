@@ -112,6 +112,7 @@ import {
   ForkThreadAddressChip,
   ForkThreadLink,
   useForkKnownThreadAddress,
+  useForkThreadLinkChips,
   useForkThreadMarkers,
 } from "./chat/ForkThreadLink";
 import {
@@ -2279,6 +2280,7 @@ function useChatMarkdownState({
   });
   const pullRequestLinking = usePullRequestLinking(threadRef?.environmentId);
   const environmentId = threadRef?.environmentId ?? explicitEnvironmentId ?? null;
+  const keepThreadAppLinks = useForkThreadLinkChips(environmentId);
   const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const remoteOpen = useRemoteOpenResolution(environmentId);
@@ -2409,7 +2411,7 @@ function useChatMarkdownState({
     if (parseAssistantCitationHref(href)) return href;
     if (parseComposerContextHref(href)) return href;
     if (parseThreadLinkHref(href)) return href;
-    if (serverConfig?.settings.threadLinkChips && parseThreadAddress(href)) return href;
+    if (keepThreadAppLinks && parseThreadAddress(href)) return href;
     if (isWindowsDrivePathHref(href)) return href;
     return rewriteMarkdownFileUriHref(href) ?? defaultUrlTransform(href);
   };
