@@ -33,12 +33,13 @@ import {
   regateWords,
   liveWorld,
   ownedThreads,
+  serverStartedMs,
   wakeOn,
 } from "./index.ts";
 import { isLedgerError } from "./ledger/errors.ts";
 import { makeCause } from "./ledger/events.ts";
 import { Ledger } from "./ledger/ledger.ts";
-import { scanMachineLog } from "./ledger/machineLog.ts";
+import { MachineLog, scanMachineLog } from "./ledger/machineLog.ts";
 import { readRun } from "./ledger/read.ts";
 import { newRunId, runIdToString, runPath, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
@@ -189,7 +190,15 @@ it.effect("logs factory started once for a valid machine file, then runs the fir
       state: "running",
       settings: { pollSeconds: 60, maxConcurrentRuns: 1, repos: ["a/b"] },
     });
-    assert.deepStrictEqual(events, ["pass_started", "repo_skipped", "pass_finished"]);
+    // The start is recorded before the first pass, and the stop as the scope closes, for
+    // `interrupted` to weigh a run the restart cut off against.
+    assert.deepStrictEqual(events, [
+      "server_started",
+      "pass_started",
+      "repo_skipped",
+      "pass_finished",
+      "server_stopping",
+    ]);
   }),
 );
 
@@ -1048,6 +1057,83 @@ describe("liveWorld", () => {
       assert.include(error.message, "`main`");
     }),
   );
+
+  const tempDirForLogs = useTempDirs();
+
+  it.effect("T3 trouble is the newest t3 error in the machine log within ten minutes", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDirForLogs();
+      const { process } = ghWith(() => null);
+      const world = liveWorld(
+        machine,
+        dataDir,
+        process,
+        stubSessions,
+        () => NOW,
+        "mac-mini",
+        noAttention,
+        {
+          gate: { run: () => Effect.succeed({ _tag: "running" as const }) },
+          wake: Effect.void,
+          scope: Scope.makeUnsafe(),
+        },
+      );
+      // No machine log yet: no trouble.
+      assert.strictEqual(yield* world.t3Trouble(), null);
+      const log = MachineLog.open(dataDir, { clock: () => NOW - 20 * MINUTE });
+      log.append({ event: "error", data: { step: "pass", kind: "t3", message: "too old" } });
+      log.close();
+      assert.strictEqual(yield* world.t3Trouble(), null);
+      const recent = MachineLog.open(dataDir, { clock: () => NOW - 2 * MINUTE });
+      recent.append({ event: "error", data: { step: "pass", kind: "t3", message: "timed out" } });
+      recent.close();
+      assert.strictEqual(yield* world.t3Trouble(), "timed out");
+    }),
+  );
+
+  it.effect("the server starts are the machine log's server_started lines of the last day", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDirForLogs();
+      const { process } = ghWith(() => null);
+      const world = liveWorld(
+        machine,
+        dataDir,
+        process,
+        stubSessions,
+        () => NOW,
+        "mac-mini",
+        noAttention,
+        {
+          gate: { run: () => Effect.succeed({ _tag: "running" as const }) },
+          wake: Effect.void,
+          scope: Scope.makeUnsafe(),
+        },
+      );
+      assert.deepStrictEqual(yield* world.t3Starts(), []);
+      for (const at of [NOW - 25 * 60 * MINUTE, NOW - 2 * MINUTE]) {
+        const log = MachineLog.open(dataDir, { clock: () => at });
+        log.append({ event: "server_started", data: { started_at: at } });
+        log.close();
+      }
+      assert.deepStrictEqual(yield* world.t3Starts(), [NOW - 2 * MINUTE]);
+      const stop = MachineLog.open(dataDir, { clock: () => NOW - 3 * MINUTE });
+      stop.append({ event: "server_stopping", data: { stopping_at: NOW - 3 * MINUTE } });
+      stop.close();
+      assert.deepStrictEqual(yield* world.t3Stops(), [NOW - 3 * MINUTE]);
+      // A start is not T3 trouble in the log's sense: `interrupted` weighs it against the run.
+      assert.strictEqual(yield* world.t3Trouble(), null);
+    }),
+  );
+
+  it("serverStartedMs is this process's start, before now", () => {
+    const started = serverStartedMs();
+    assert.ok(
+      Number.isInteger(started) &&
+        started > 0 &&
+        started <= performance.timeOrigin + performance.now(),
+      String(started),
+    );
+  });
 });
 
 describe("the gate in the background", () => {

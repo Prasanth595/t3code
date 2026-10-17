@@ -36,14 +36,25 @@ import { refusalReason, unapprovedComment, type Refusal } from "../domain/approv
 import { InvalidTransition, stateLabel, transition } from "../domain/lifecycle.ts";
 import { gateLockFile } from "../gate.ts";
 import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
-import { makeCause, type Cause, type ClaimRepair, type Outcome } from "../ledger/events.ts";
+import {
+  makeCause,
+  type Cause,
+  type CauseStep,
+  type ClaimRepair,
+  type Outcome,
+} from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { MachineLog } from "../ledger/machineLog.ts";
-import { readRun } from "../ledger/read.ts";
+import { field, readRun, type Entry } from "../ledger/read.ts";
 import { newRunId, nextAttempt, runIdToString, type RunId } from "../ledger/runId.ts";
 import { formatTs } from "../ledger/time.ts";
 import { isUtcSecond } from "../tracker/approvalHistory.ts";
-import type { BoundGitHub, GitHubError, IssueDetail } from "../tracker/github.ts";
+import {
+  isNotFound,
+  type BoundGitHub,
+  type GitHubError,
+  type IssueDetail,
+} from "../tracker/github.ts";
 import type {
   FactorySessions,
   MessageRejectedError,
@@ -58,8 +69,15 @@ import {
   TEXT_CHANGED,
   launchMessage,
   sessionMayExistNote,
+  type EarlierRunResume,
 } from "./messages.ts";
-import { APPROVAL_RECHECKED, LAUNCH_SENDING, readProgress, type Seen } from "./progress.ts";
+import {
+  APPROVAL_RECHECKED,
+  LAUNCH_SENDING,
+  LAUNCH_SENDING_RESUMED,
+  readProgress,
+  type Seen,
+} from "./progress.ts";
 import {
   abandon,
   describe,
@@ -91,6 +109,8 @@ export type Tracker = Pick<
   | "commentOnPr"
   | "pullRequest"
   | "closedBy"
+  | "branchTip"
+  | "textEditedSince"
 >;
 
 /** The subset of `FactorySessions` the claim calls. */
@@ -326,13 +346,7 @@ const startFresh = (
     if (claimed.kind === "skipped-assigned") return skipped(issue, claimed.assignees);
     const out = yield* ledger(() => Ledger.create(ctx.dataDir, run, { clock: ctx.clock }));
     try {
-      // First line of the run: what it was approved on, for the checks that come later.
-      yield* ledger(() =>
-        out.append(
-          { event: "step_changed", data: { step: `approved ${labeledAt}` } },
-          makeCause("start", "approved", labeledBy === "" ? {} : { actor: labeledBy }),
-        ),
-      );
+      yield* recordApproval(out, labeledAt, labeledBy === "" ? null : labeledBy, "start");
       return yield* begin(ctx, issue, detail, run, out, project);
     } finally {
       out.close();
@@ -629,6 +643,13 @@ type Launch =
  * so sending it again returns the thread T3 already made. In-process, every failure of the call
  * is T3's answer after the request went out: it is final, and a session may exist. A launch that
  * was never sent (no project) says so only when an earlier pass did send one.
+ *
+ * What the launch starts from is decided once, before the first call (`resumeFrom`, which asks
+ * GitHub), and the step records it: `launch-sending` for a start from `base`,
+ * `launch-sending resumed-from <branch>` for a resume. A call sent again reuses the recorded
+ * decision and asks GitHub nothing, so every request under the one command id is the same
+ * request, the one T3 acted on, and the ledger's `resumed_from` says what the thread T3 answers
+ * with was really made from.
  */
 const launchSession = (
   ctx: StartContext,
@@ -650,10 +671,21 @@ const launchSession = (
         detail: seen.launchSent ? sessionMayExistNote(missing, commandId) : missing,
       };
     }
+    const resumed = seen.launchSent
+      ? seen.launchResumedFrom === null
+        ? null
+        : yield* recordedResume(ctx, run, seen.launchResumedFrom)
+      : yield* resumeFrom(ctx, run, issue);
     if (!seen.launchSent) {
       yield* ledger(() =>
         out.append(
-          { event: "step_changed", data: { step: LAUNCH_SENDING } },
+          {
+            event: "step_changed",
+            data: {
+              step:
+                resumed === null ? LAUNCH_SENDING : `${LAUNCH_SENDING_RESUMED}${resumed.branch}`,
+            },
+          },
           makeCause("start", "launch-sending"),
         ),
       );
@@ -663,9 +695,15 @@ const launchSession = (
         commandId,
         projectId,
         title: `${ctx.repo}#${issue} ${detail.title}`,
-        baseRef: ctx.project.base,
-        startFromOrigin: false,
-        message: launchMessage(ctx.repo, issue, ctx.trackerUser, ctx.ghConfigDir),
+        baseRef: resumed === null ? ctx.project.base : resumed.branch,
+        startFromOrigin: resumed !== null,
+        message: launchMessage(
+          ctx.repo,
+          issue,
+          ctx.trackerUser,
+          ctx.ghConfigDir,
+          resumed ?? undefined,
+        ),
         model: ctx.model,
       }),
     );
@@ -686,14 +724,143 @@ const launchSession = (
             branch,
             model_instance: ctx.model.instanceId,
             model: ctx.model.model,
-            resumed_from: null,
+            resumed_from:
+              resumed === null ? null : { run: runIdToString(resumed.run), branch: resumed.branch },
           },
         },
-        makeCause("start", "session-launched"),
+        makeCause("start", resumed === null ? "session-launched" : "resumed-from-branch"),
       ),
     );
     return { ok: true, threadId, worktree: worktreePath };
   });
+
+/**
+ * The first line of an attempt's ledger, the `approved <labeled_at>` step: what the attempt was
+ * approved on, for the text checks that come later, with the instructor whose label it was
+ * (`actor` on the cause) when the approval names one. The claim writes it for the run it starts;
+ * a relaunch writes the same line for the next attempt, carrying this run's approval over.
+ */
+export const recordApproval = (
+  out: Ledger,
+  labeledAt: string,
+  labeledBy: string | null,
+  step: CauseStep,
+): Effect.Effect<void, LedgerError> =>
+  ledger(() =>
+    out.append(
+      { event: "step_changed", data: { step: `approved ${labeledAt}` } },
+      makeCause(step, "approved", labeledBy === null ? {} : { actor: labeledBy }),
+    ),
+  );
+
+/** The run before `run` and its ledger lines; null for a first attempt or an earlier run with no ledger. */
+export const previousRun = (
+  ctx: StartContext,
+  run: RunId,
+): Effect.Effect<
+  { readonly id: RunId; readonly entries: ReadonlyArray<Entry> } | null,
+  LedgerError
+> =>
+  Effect.gen(function* () {
+    if (run.attempt < 2) return null;
+    const id = newRunId(run.repo, run.issue, run.attempt - 1);
+    const record = yield* ledger(() => readRun(ctx.dataDir, id)).pipe(
+      Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
+    );
+    return record === null ? null : { id, entries: record.entries };
+  });
+
+/**
+ * The resume a `launch-sending resumed-from <branch>` step decided, for a launch sent again. The
+ * words of the first message are the same as the first send's: what the earlier attempt ended
+ * with is in its ledger, which does not change.
+ */
+const recordedResume = (
+  ctx: StartContext,
+  run: RunId,
+  branch: string,
+): Effect.Effect<EarlierRunResume, LedgerError> =>
+  Effect.gen(function* () {
+    const previous = yield* previousRun(ctx, run);
+    return {
+      run: previous?.id ?? newRunId(run.repo, run.issue, Math.max(1, run.attempt - 1)),
+      branch,
+      after: (previous === null ? null : continuation(previous.entries)?.after) ?? "time-limit",
+    };
+  });
+
+/**
+ * What the new attempt `run` continues from, when the attempt before it stopped at its time limit
+ * or was relaunched after an interruption, and the work it left can be found: the earlier run and
+ * the branch its session worked on (see `continuation`). Null for a plain start from `base`: a
+ * first attempt, a run that stopped for another reason or recorded no branch, one whose branch is
+ * not a plain ref name, one whose issue text was edited or renamed since the earlier run's
+ * approval (the earlier work was built on other words), or one whose branch GitHub does not have.
+ *
+ * `origin` is the only source of the work: the branch must be there (`branchTip`, a commit),
+ * never in a worktree or the local clone, so a resume on another machine of the fleet works the
+ * same. A lookup that fails in any other way, of the text or of the branch, is an error: nothing
+ * is launched, the issue stays in `triage`, and the next pass asks again.
+ */
+const resumeFrom = (
+  ctx: StartContext,
+  run: RunId,
+  issue: number,
+): Effect.Effect<EarlierRunResume | null, StartError> =>
+  Effect.gen(function* () {
+    const previous = yield* previousRun(ctx, run);
+    if (previous === null) return null;
+    const found = continuation(previous.entries);
+    // The branch goes to GitHub's ref path and to T3's git as a ref: only a name that can be one
+    // argument and not an option is resumed from.
+    if (found === null || !isPlainRefName(found.branch)) return null;
+    const approvedAt = readProgress(previous.entries).approvedAt;
+    if (approvedAt === null) return null;
+    if (yield* ctx.tracker.textEditedSince(issue, approvedAt)) return null;
+    const tip = yield* Effect.result(ctx.tracker.branchTip(found.branch));
+    if (tip._tag === "Success") return { run: previous.id, ...found };
+    if (isNotFound(tip.failure)) return null;
+    return yield* tip.failure;
+  });
+
+/** Whether `name` can go into a ref the factory passes to git: not empty, not an option, no whitespace or control character, no `..`. */
+export const isPlainRefName = (name: string): boolean =>
+  name !== "" && !name.startsWith("-") && !name.includes("..") && !/[\s\p{Cc}]/u.test(name);
+
+/**
+ * What the attempt before the new one left for it, from its ledger: the branch its session worked
+ * on and why the next attempt continues from it. Null when it left nothing to continue from: it
+ * did not stop at its time limit and was not relaunched, or it recorded no branch. A launch sent
+ * again reads it too, so the words of both sends are the same.
+ *
+ * A time-limit stop (its `stuck` line has the reason `time-limit`) wins over a relaunch. Its
+ * branch is the one on the `session_launched` line, or, as that line is written when T3 answers
+ * the launch and usually before the worktree exists, the one the `stuck` line recorded from the
+ * thread. A relaunch's branch is the one on its newest `session_interrupted` line, when that is a
+ * relaunch (`Seen.interruption`). An attempt that finished as `needs-info` left nothing to
+ * continue from, whatever it did before: its questions end it, and the next attempt starts from
+ * base.
+ */
+const continuation = (
+  entries: ReadonlyArray<Entry>,
+): { readonly branch: string; readonly after: "time-limit" | "interrupted" } | null => {
+  if (entries.some((e) => e.event === "finished" && field(e.data, "outcome") === "needs-info")) {
+    return null;
+  }
+  const branchOn = (event: string, entry: Entry): string | null => {
+    const branch = entry.event === event ? field(entry.data, "branch") : undefined;
+    return typeof branch === "string" ? branch : null;
+  };
+  if (entries.some((e) => e.event === "stuck" && e.cause?.reason === "time-limit")) {
+    const launched = entries.map((e) => branchOn("session_launched", e)).find((b) => b !== null);
+    const recorded = entries.map((e) => branchOn("stuck", e)).findLast((b) => b !== null);
+    const branch = launched ?? recorded ?? null;
+    return branch === null ? null : { branch, after: "time-limit" };
+  }
+  const relaunch = readProgress(entries).interruption;
+  const branch = relaunch !== null && relaunch.relaunch ? relaunch.branch : null;
+  return branch === null ? null : { branch, after: "interrupted" };
+};
 
 /**
  * The unfinished runs of the issue before attempt `below` that `wanted` keeps, oldest first

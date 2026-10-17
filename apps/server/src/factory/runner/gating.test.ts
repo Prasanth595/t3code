@@ -57,6 +57,7 @@ import {
   type PullRequest,
 } from "../tracker/github.ts";
 import { advance, forward, watch, type AdvanceOutcome } from "./building.ts";
+import { interruptible } from "./testSupport.ts";
 import {
   gate,
   lastPass,
@@ -294,6 +295,8 @@ const statusOf = (
   archived: false,
   run,
   runOrdinal: run === null ? null : 1,
+  runStartedAt: null,
+  runCompletedAt: null,
   lastAssistantMessage: message,
   ...over,
 });
@@ -841,7 +844,7 @@ const rigFor = (events: ReadonlyArray<RunEvent> = STARTED): Rig => {
 };
 
 const gateIn = (rig: Rig) => gate(rig.ctx, rig.run);
-const advanceIn = (rig: Rig) => advance(rig.ctx, rig.run);
+const advanceIn = (rig: Rig) => advance(interruptible(rig.ctx), rig.run);
 
 /** The run's ledger lines, with the directory of each `gate_checkout` blanked. */
 const linesOf = (rig: Rig, id: RunId = rig.run): Array<Line> =>
@@ -1639,6 +1642,34 @@ describe("gate: the session's PR becomes ready, or it does not", () => {
 });
 
 // ---- gate: a failed attempt goes back into the session ------------------------------------------
+
+/** The started run of a session that continued the branch `t3code/old` of the run before it. */
+const RESUMED: ReadonlyArray<RunEvent> = STARTED.map((event) =>
+  event.event === "session_launched"
+    ? {
+        event: "session_launched",
+        data: {
+          ...event.data,
+          resumed_from: { run: "rawphp__softfac__10__1", branch: "t3code/old" },
+        },
+      }
+    : event,
+);
+
+describe("gate: a resumed run's pull request", () => {
+  it.effect("is accepted from the branch the run resumed from", () =>
+    Effect.gen(function* () {
+      // `gate` binds the pull request again just before it trusts it: the resumed-from branch
+      // must pass there too, or the run goes stuck at its first gate. The ledger already holds
+      // the `pr_opened` line, so only the gate's own check is under test.
+      const rig = rigFor([...RESUMED, PR_OPENED]);
+      rig.gh.pr = { ...defaultPr(), headRef: "t3code/old" };
+      setRun(rig, "completed", 1);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+      assert.ok(rig.ws.calls.length > 0, "the gate ran its commands on the pull request");
+    }),
+  );
+});
 
 describe("gate: a failed attempt goes back into the session", () => {
   it.effect("a failed attempt is sent into the session and the next gate waits for a new run", () =>
