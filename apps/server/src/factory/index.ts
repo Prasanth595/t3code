@@ -46,7 +46,7 @@ import { runIdToString, type RunId } from "./ledger/runId.ts";
 import {
   MachineLog,
   serverStartsSince,
-  serverStopsSince,
+  serverStopsForStartsSince,
   t3TroubleSince,
 } from "./ledger/machineLog.ts";
 import { runLoop, type Loop } from "./loop.ts";
@@ -329,7 +329,10 @@ export interface LiveShared {
  */
 export const serverStartedMs = (): number => Math.round(performance.timeOrigin);
 
-/** How far back `t3Starts` reads server starts: a day, longer than any run's time limit. */
+/**
+ * How far back `t3Starts` reads server starts: a day, longer than any run's time limit. The stops
+ * are read by the start they belong to, whatever their age.
+ */
 const SERVER_STARTS_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /** The pass over this machine: GitHub through `gh`, the ledger under `dataDir`, the wall clock. */
@@ -558,7 +561,8 @@ export const liveWorld = (
     advance: (repo, run) => advance(interruptContext(repo), run),
     t3Trouble: () => ledger(() => t3TroubleSince(dataDir, clock())),
     t3Starts: () => ledger(() => serverStartsSince(dataDir, clock() - SERVER_STARTS_WINDOW_MS)),
-    t3Stops: () => ledger(() => serverStopsSince(dataDir, clock() - SERVER_STARTS_WINDOW_MS)),
+    t3Stops: () =>
+      ledger(() => serverStopsForStartsSince(dataDir, clock() - SERVER_STARTS_WINDOW_MS)),
     interrupted: (repo, run, evidence) => interrupted(interruptContext(repo), run, evidence),
     gateRunning: (run) =>
       gating.has(runIdToString(run)) || NodeFS.existsSync(gateLockFile(dataDir, run)),

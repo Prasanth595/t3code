@@ -277,28 +277,53 @@ export const t3TroubleSince = (dataDir: string, nowMs: number): string | null =>
  * server, and the ones before it, started. A line whose `started_at` is not a number is skipped.
  * Only the log's tail is read (`machineLogSince`); a missing log has none.
  */
-export const serverStartsSince = (dataDir: string, sinceMs: number): Array<number> =>
-  serverTimesSince(dataDir, sinceMs, "server_started", "started_at");
-
-/**
- * The `stopping_at` of every `server_stopping` line at or after `sinceMs`, oldest first: when a
- * server began shutting down, which is about when its shutdown marked the running turns
- * `cancelled`. Read as `serverStartsSince` reads the starts.
- */
-export const serverStopsSince = (dataDir: string, sinceMs: number): Array<number> =>
-  serverTimesSince(dataDir, sinceMs, "server_stopping", "stopping_at");
-
-const serverTimesSince = (
-  dataDir: string,
-  sinceMs: number,
-  event: "server_started" | "server_stopping",
-  key: "started_at" | "stopping_at",
-): Array<number> => {
+export const serverStartsSince = (dataDir: string, sinceMs: number): Array<number> => {
   const times: Array<number> = [];
   for (const entry of machineLogSince(dataDir, sinceMs)) {
-    if (entry.event !== event) continue;
-    const at = field(entry.data, key);
+    if (entry.event !== "server_started") continue;
+    const at = field(entry.data, "started_at");
     if (typeof at === "number") times.push(at);
   }
   return times;
 };
+
+/**
+ * The `stopping_at` that belongs to each `server_started` line at or after `sinceMs`: the newest
+ * `server_stopping` before that start, back to the start before it, whatever its age. Oldest first.
+ * Read backwards (`scanMachineLogBack`) and stopped at the stop the oldest start in the window
+ * needs, so a months-old log is not decoded in full. `bytes` is how much was read, for a test.
+ */
+export const readServerStopsForStarts = (
+  dataDir: string,
+  sinceMs: number,
+  firstChunk?: number,
+): { readonly stops: Array<number>; readonly bytes: number } => {
+  const newestFirst: Array<number> = [];
+  let needStop = false;
+  const bytes = scanMachineLogBack(
+    dataDir,
+    (entry) => {
+      if (entry.event === "server_started") {
+        if (typeof field(entry.data, "started_at") !== "number") return "continue";
+        if (entry.ms < sinceMs) return "stop";
+        needStop = true;
+        return "continue";
+      }
+      if (entry.event === "server_stopping") {
+        const at = field(entry.data, "stopping_at");
+        if (needStop && typeof at === "number") {
+          newestFirst.push(at);
+          needStop = false;
+        }
+        return "continue";
+      }
+      return entry.ms < sinceMs && !needStop ? "stop" : "continue";
+    },
+    firstChunk,
+  );
+  return { stops: newestFirst.reverse(), bytes };
+};
+
+/** The stops `readServerStopsForStarts` finds, without the byte count. */
+export const serverStopsForStartsSince = (dataDir: string, sinceMs: number): Array<number> =>
+  readServerStopsForStarts(dataDir, sinceMs).stops;
