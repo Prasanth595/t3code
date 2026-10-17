@@ -79,6 +79,10 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   ...overrides,
 });
 
+/** The design-system `Button` whose text is `label`. */
+const buttonNamed = (page: Awaited<ReturnType<typeof render>>, label: string) =>
+  page.renderer.root.findAllByType(Button).find((b) => b.props.children === label)!;
+
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   vi.setSystemTime(NOW);
@@ -122,6 +126,7 @@ describe("FactoryPage", () => {
     });
     const page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("Missing permission orchestration:read");
+    expect(buttonNamed(page, "Retry").props.size).toBe("touch");
     await act(async () => page.button("Retry")!.props.onClick());
     expect(refreshStatus).toHaveBeenCalledTimes(1);
     expect(refreshRuns).toHaveBeenCalledTimes(1);
@@ -141,6 +146,7 @@ describe("FactoryPage", () => {
     expect(page.text()).toContain("original-solutions/t3code-factory");
     expect(page.text()).toContain("fetch failed");
     expect(page.text()).not.toContain("Could not load the factory");
+    expect(buttonNamed(page, "Retry").props.size).toBe("touch");
     await act(async () => page.button("Retry")!.props.onClick());
     expect(refreshStatus).toHaveBeenCalledTimes(1);
     expect(refreshRuns).toHaveBeenCalledTimes(1);
@@ -162,6 +168,7 @@ describe("FactoryPage", () => {
     expect(page.text()).toContain("o__r__1__1");
     expect(page.text()).toContain("Every run, read once.");
     expect(page.button("Show all runs")).toBeUndefined();
+    expect(buttonNamed(page, "Show recent runs").props.size).toBe("touch");
     await act(async () => page.button("Show recent runs")!.props.onClick());
     expect(runLinks()).toHaveLength(1);
   });

@@ -228,6 +228,7 @@ describe("FactorySettingsPanel", () => {
 
     expect(textOf(root)).toContain("the factory is unreachable");
     expect(root.findAll((node) => node.type === "input")).toHaveLength(0);
+    expect(button(root, "Retry").props.size).toBe("touch");
 
     await click(button(root, "Retry"));
 

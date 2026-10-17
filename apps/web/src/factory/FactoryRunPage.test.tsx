@@ -115,6 +115,10 @@ describe("FactoryRunPage", () => {
     });
     const page = await mount();
     expect(page.text()).toContain("ledger exploded");
+    const retry = page.renderer.root
+      .findAllByType(Button)
+      .find((b) => b.props.children === "Retry");
+    expect(retry!.props.size).toBe("touch");
     await act(async () => page.button("Retry")!.props.onClick());
     expect(refresh).toHaveBeenCalledTimes(1);
   });
