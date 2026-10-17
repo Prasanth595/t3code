@@ -268,6 +268,15 @@ The client setting `appToggleShortcuts` lists global keys that show and hide the
 - Each entry is an Electron accelerator. The settings field rejects a key that Electron cannot name. The ISO section key `§` is one of them: map it to a function key, for example with Karabiner.
 - If another app or feature already holds a key, the desktop app logs a warning and skips it.
 
+## Focus levels
+
+Keyboard focus moves between four levels: the composer, the timeline, the right panel and the sidebar. The commands are normal keybinding commands (`packages/contracts/src/forkKeybindings.ts`), with defaults in `packages/shared/src/forkKeybindings.ts`. The code is in `apps/web/src/components/focusLevels/`.
+
+- The level is the area that holds focus, found through markers that the areas already render. No other state exists.
+- `focus.up` (Escape) runs after menus, popovers and editors handle the key. The other commands run before the focused element handles it.
+- The timeline cursor paints with the CSS Custom Highlight API and cites through the same code as a mouse selection.
+- The client setting `focusLevelHighlight` outlines the area that takes focus. It is on by default.
+
 ## Repository owner filters
 
 The client setting `repositoryOwnerFilters` filters lists by the owner of each repository: a GitHub account or organization. It is on by default. Turn it off in Settings > General > Repository owner filters.

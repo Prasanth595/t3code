@@ -44,6 +44,31 @@ on macOS and Ctrl on Windows and Linux, including GNOME, KDE Plasma, Niri, and
 Hyprland. If a custom desktop shortcut takes the same keys, choose another binding
 in Settings.
 
+## Focus levels
+
+Keyboard focus moves between the composer, the timeline, the right panel and the sidebar.
+
+- Escape moves one level up: from the composer to the timeline, then to the sidebar. An open menu, dialog or find bar closes first.
+- `mod+alt+left` and `mod+alt+right` move between the sidebar, the chat and the right panel.
+- Typing a letter outside a text field still goes to the composer.
+- The area that takes focus shows a short outline. Turn it off in **Settings → General → Focus highlight**.
+
+In the sidebar, Up and Down move between threads, and Enter opens one and focuses its timeline.
+Up from the first thread reaches the group tabs. Left and Right, or `1` to `9`, switch groups.
+`mod+f` focuses sidebar search.
+
+In the timeline, Up and Down move a cursor between messages. Right goes one level deeper:
+blocks such as paragraphs and list items, then sentences or code lines. Left goes back up.
+Shift with Up or Down extends the selection. Enter cites the selection with a note, and
+`alt+enter` cites it without one. Only assistant text can be cited. `mod+down` jumps to the
+latest message.
+
+Thread keys act on the selected sidebar thread, or on the open thread elsewhere:
+`mod+backspace` archives (sidebar and timeline only), `mod+alt+s` snoozes or wakes,
+`mod+alt+r` renames, and `mod+alt+u` marks unread. While an approval waits, `mod+y` approves,
+`mod+shift+y` always allows for the session, and `mod+alt+y` declines.
+`ctrl+tab` and `ctrl+shift+tab` switch right panel tabs. In a browser, `mod+,` opens settings.
+
 ## Copy pull request references
 
 With a PR open in the right panel or on the Pull Requests page, use `mod+shift+c`
@@ -110,7 +135,8 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
 `previewOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`, `composerDraft`,
-`turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
+`turnRunning`, `editableFocus`, `timelineFocus`, `sidebarFocus`, `rightPanelFocus`,
+`approvalPending`, `isWeb`, and `isDesktop`.
 `editableFocus` is true while a text field, the composer, or another editor has
 the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
 desktop app. Unknown keys evaluate to `false`.
