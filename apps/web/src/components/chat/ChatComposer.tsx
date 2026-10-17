@@ -6827,6 +6827,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         : "Ask anything...")}
                 </button>
                 {collapsedComposerImagePreviews}
+                {settings.contextWindowMeterEnabled ? (
+                  <ContextWindowMeter
+                    key={`${environmentId}:${activeThreadId ?? draftId ?? "new"}`}
+                    usage={activeContextWindow}
+                    providerDisplayName={selectedProviderEntry?.displayName ?? null}
+                    modelDisplayName={activeThreadModelDisplayName}
+                    onCompact={compactCommandAvailable ? compactThreadContext : undefined}
+                    compactDisabled={
+                      compactDisabled || noProviderAvailable || isSendBusy || isConnecting
+                    }
+                    compactDisabledReason={resolvedCompactDisabledReason}
+                  />
+                ) : null}
                 <button
                   type="button"
                   data-chat-composer-transition-actions="true"

@@ -149,6 +149,19 @@ export function deriveLatestContextWindowSnapshot(
   return null;
 }
 
+/**
+ * Compaction can clear or replace the live report before the next sample.
+ * Hold the previous reading until that sample arrives.
+ */
+export function retainContextWindowSnapshotWhileCompacting<
+  T extends { readonly sampledAt: string | null },
+>(held: T | null, next: T | null): T | null {
+  if (next?.sampledAt && next.sampledAt !== held?.sampledAt) {
+    return next;
+  }
+  return held;
+}
+
 export function formatContextWindowTokens(value: number | null): string {
   if (value === null || !Number.isFinite(value)) {
     return "—";
