@@ -51,7 +51,9 @@ export const MACHINE_LEVEL_SCOPES: Readonly<Record<MachineLevel, ReadonlyArray<A
   // Upstream pairing grants access and relay management by default. The fork keeps them for `admin`.
   standard: AuthStandardClientScopes.filter(
     (scope) =>
-      scope !== AuthAccessReadScope && scope !== AuthAccessWriteScope && scope !== AuthRelayWriteScope,
+      scope !== AuthAccessReadScope &&
+      scope !== AuthAccessWriteScope &&
+      scope !== AuthRelayWriteScope,
   ),
   admin: AuthStandardClientScopes,
 };
