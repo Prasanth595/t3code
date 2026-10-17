@@ -1,6 +1,7 @@
-import type {
-  OrchestrationV2ContextHandoff,
-  OrchestrationV2ProviderThread,
+import {
+  ProviderDriverKind,
+  type OrchestrationV2ContextHandoff,
+  type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
 import type { ProviderAdapterV2HistoricalContext } from "./ProviderAdapter.ts";
 import * as Effect from "effect/Effect";
@@ -72,7 +73,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     });
     if (historyCost(selected.messages, selected.context) > budget) {
       if (input.deferInline) return { context: "", delivered: Effect.void };
-      return yield* new ContextHandoffBudgetError();
+      return yield* new ContextHandoffBudgetError({ driver: input.providerThread.driver });
     }
     const omittedItemIds = new Set(selected.omittedItemIds);
     const persist = (status: "pending" | "injected" | "inline") =>
@@ -143,9 +144,12 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
 
 export class ContextHandoffBudgetError extends Schema.TaggedError<ContextHandoffBudgetError>()(
   "ContextHandoffBudgetError",
-  {},
+  { driver: Schema.optional(ProviderDriverKind) },
 ) {
   override get message() {
+    if (this.driver === "cursor") {
+      return "Insufficient context allowance for the provider handoff. Cursor does not expose a compaction API. Change this thread to another provider, then retry; its conversation and worktree stay in this thread. T3 has not submitted this turn or truncated the current request.";
+    }
     return "Insufficient context allowance for the provider handoff. Compact the target conversation or use a larger-context model; the current request has not been truncated.";
   }
 }

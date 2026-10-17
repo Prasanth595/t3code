@@ -25,11 +25,13 @@ import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import {
   ProviderAdapterOpenSessionError,
+  ProviderAdapterTurnStartError,
   type ProviderAdapterV2Event,
   type ProviderAdapterV2Shape,
   type ProviderAdapterV2TurnInput,
@@ -993,4 +995,130 @@ it.live.each(["active", "idle", "selection-command", "pooled", "separate-home"] 
         }).pipe(Effect.provide(ProviderReplayHarness.layerWithRegistry({ name }, layerRegistry)));
       }),
     ),
+);
+
+it.live("recovers a handoff budget refusal in the same thread without duplicate submission", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("handoff-budget-recovery");
+      const threadId = ThreadId.make("thread:handoff-budget-recovery");
+      const state = yield* Ref.make<RestartAdapterState>({
+        activeTurn: null,
+        opened: [],
+        started: [],
+        closedSessionCount: 0,
+        failedReplacementOpen: true,
+      });
+      const targetStarts = yield* Ref.make(0);
+      const base = makeRestartAdapter(state, exclusiveCapabilities);
+      const source: ProviderAdapterV2Shape = {
+        ...base,
+        openSession: (input) =>
+          base.openSession(input).pipe(
+            Effect.map((session) => ({
+              ...session,
+              startTurn: (turn) =>
+                Effect.fail(
+                  new ProviderAdapterTurnStartError({
+                    driver,
+                    threadId: turn.threadId,
+                    providerThreadId: turn.providerThread.id,
+                    runId: turn.runId,
+                    cause: new ContextHandoffBudgetError({
+                      driver: ProviderDriverKind.make("cursor"),
+                    }),
+                  }),
+                ),
+            })),
+          ),
+      };
+      const registry = ProviderAdapterRegistry.layerFromAdapters([
+        source,
+        makeCompletingHandoffAdapter(targetStarts),
+      ]);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("handoff-budget:create"),
+          threadId,
+          projectId: ProjectId.make("project:handoff-budget"),
+          title: "Handoff recovery",
+          modelSelection: initialSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "feature/existing-work",
+          worktreePath: cwd,
+        });
+        const dispatch = (
+          step: string,
+          modelSelection: ModelSelection,
+          status: "failed" | "completed",
+        ) =>
+          Effect.gen(function* () {
+            const terminal = yield* orchestrator.streamDomainEvents.pipe(
+              Stream.filter(
+                (event) =>
+                  event.threadId === threadId &&
+                  event.type === "run.updated" &&
+                  event.payload.status === status,
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkScoped,
+            );
+            const command = {
+              type: "message.dispatch" as const,
+              createdBy: "user" as const,
+              creationSource: "web" as const,
+              commandId: CommandId.make(`handoff-budget:${step}`),
+              threadId,
+              messageId: MessageId.make(`handoff-budget:${step}`),
+              text: "Continue the existing task",
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" as const },
+            };
+            yield* orchestrator.dispatch(command);
+            yield* worker.drain();
+            yield* Fiber.join(terminal);
+            yield* worker.drain();
+            // A duplicate delivery must reuse its command receipt, not submit again.
+            yield* orchestrator.dispatch(command);
+            yield* worker.drain();
+            return yield* orchestrator.getThreadProjection(threadId);
+          });
+        const failed = yield* dispatch("refused", initialSelection, "failed");
+        const failureItem = failed.turnItems.find((item) => item.type === "error");
+        assert.equal(
+          failureItem?.type === "error" && failureItem.failure.code,
+          "context_handoff_budget_exceeded",
+        );
+        assert.equal(failed.runs.length, 1);
+        const failedRunId = failed.runs[0]!.id;
+        const failedAttemptId = failed.runs[0]!.activeAttemptId;
+        const recovered = yield* dispatch("recover", handoffSelection, "completed");
+        assert.equal(recovered.thread.id, threadId);
+        assert.equal(recovered.thread.worktreePath, cwd);
+        assert.equal(recovered.thread.branch, "feature/existing-work");
+        assert.equal(recovered.runs.length, 2);
+        assert.equal(recovered.attempts.length, 2);
+        assert.equal(recovered.runs.find((run) => run.id === failedRunId)?.status, "failed");
+        assert.equal(
+          recovered.runs.find((run) => run.id === failedRunId)?.activeAttemptId,
+          failedAttemptId,
+        );
+        assert.equal(recovered.contextHandoffs.length, 1);
+        assert.equal(yield* Ref.get(targetStarts), 1);
+        assert.equal((yield* Ref.get(state)).started.length, 0);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry({ name: "handoff-budget-recovery" }, registry),
+        ),
+      );
+    }),
+  ),
 );

@@ -25,6 +25,7 @@ import {
   historicalMessage,
 } from "./ContextHandoffBudget.ts";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
+import { makeProviderFailure } from "./ProviderFailure.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -458,6 +459,89 @@ describe("handoff delivery", () => {
       assert.deepEqual(decodeHandoff(durable).delivery, durable.delivery);
     }),
   );
+  // Metadata-only fixture from the six 2026-10-17 Cursor incidents. These
+  // are rendered historical UTF-8 bytes, not measured model occupancy.
+  it.effect.each([
+    { itemCount: 458, nativeContextEstimate: 239_126 },
+    { itemCount: 258, nativeContextEstimate: 80_537 },
+    { itemCount: 404, nativeContextEstimate: 109_942 },
+    { itemCount: 466, nativeContextEstimate: 265_379 },
+    { itemCount: 293, nativeContextEstimate: 120_690 },
+    { itemCount: 220, nativeContextEstimate: 201_149 },
+  ])(
+    "recovers an incident-sized Cursor history by handing off the same thread ($itemCount items)",
+    ({ itemCount, nativeContextEstimate }) =>
+      Effect.gen(function* () {
+        const cursorThread = {
+          ...providerThread,
+          driver: ProviderDriverKind.make("cursor"),
+          providerInstanceId: ProviderInstanceId.make("cursor"),
+        };
+        const budget = handoffBudget({
+          tokenCap: 16_000,
+          userText: "Continue",
+          attachments: [],
+          providerThread: cursorThread,
+          nativeContextEstimate,
+        });
+        let writes = 0;
+        let injections = 0;
+        const result = yield* deliverContextHandoffs({
+          handoffs: [handoff],
+          providerThread: cursorThread,
+          budget,
+          alreadyDeliveredItemIds: new Set(),
+          persist: () =>
+            Effect.sync(() => {
+              writes++;
+            }),
+          inject: () =>
+            Effect.sync(() => {
+              injections++;
+              return true;
+            }),
+        }).pipe(Effect.result);
+        if (itemCount !== 258) {
+          assert.equal(result._tag, "Failure");
+          if (result._tag === "Failure") {
+            const failure = makeProviderFailure({ cause: result.failure });
+            assert.equal(failure.code, "context_handoff_budget_exceeded");
+            assert.equal(failure.retryable, false);
+            assert.include(failure.message, "Change this thread to another provider");
+          }
+          assert.equal(writes, 0);
+          assert.equal(injections, 0);
+        } else {
+          // The Notes thread had room and actually reached a second send failure.
+          assert.equal(result._tag, "Success");
+        }
+        let recovered = handoff;
+        const next = yield* deliverContextHandoffs({
+          handoffs: [handoff],
+          providerThread,
+          budget: handoffBudget({
+            tokenCap: 16_000,
+            userText: "Continue",
+            attachments: [],
+            providerThread,
+            nativeContextEstimate: 0,
+          }),
+          alreadyDeliveredItemIds: new Set(),
+          persist: (value) =>
+            Effect.sync(() => {
+              recovered = value;
+            }),
+        });
+        assert.include(next.context, messages[0]!.text);
+        assert.isAtMost(Buffer.byteLength(next.context), 16_000);
+        yield* next.delivered;
+        assert.equal(recovered.threadId, handoff.threadId);
+        assert.equal(recovered.targetRunId, handoff.targetRunId);
+        assert.equal(recovered.delivery?.status, "inline");
+        assert.deepEqual(handoff.history?.messages, messages);
+      }),
+  );
+
   it.effect("loads the history budget only when a handoff needs delivery", () =>
     Effect.gen(function* () {
       let reads = 0;

@@ -781,6 +781,100 @@ it.effect(
     }).pipe(Effect.provide(layerRunExecutionTest)),
 );
 
+it.effect("fails unsupported compaction visibly on the original run without submitting", () =>
+  Effect.gen(function* () {
+    const calls: string[] = [];
+    const writes: OrchestrationV2DomainEvent[] = [];
+    const threadId = ThreadId.make("thread:unsupported-compact");
+    const attemptId = RunAttemptId.make("attempt:unsupported-compact");
+    const layer = RunExecutionService.layer.pipe(
+      Layer.provide(
+        Layer.mergeAll(
+          Layer.mock(CheckpointService.CheckpointServiceV2)({ captureBaseline: () => Effect.void }),
+          Layer.mock(EventSink.EventSinkV2)({
+            writeIfRunCurrent: ({ events }) =>
+              Effect.sync(() => {
+                writes.push(...events);
+                return { committed: true, storedEvents: [] };
+              }),
+          }),
+          IdAllocator.layer,
+          Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+            ingestNormalized: () => Effect.succeed([]),
+          }),
+          ServerSettings.layerTest(),
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+      yield* runExecution.startRootRun({
+        commandId: CommandId.make("command:unsupported-compact"),
+        appThread: { id: threadId } as OrchestrationV2AppThread,
+        providerSessionId: ProviderSessionId.make("session:unsupported-compact"),
+        session: {
+          driver: ProviderDriverKind.make("cursor"),
+          events: Stream.never,
+          startTurn: () =>
+            Effect.sync(() => {
+              calls.push("prompt");
+            }),
+        } as unknown as ProviderAdapterV2SessionRuntime,
+        run: {
+          id: RunId.make("run:unsupported-compact"),
+          threadId,
+          ordinal: 1,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+        } as OrchestrationV2Run,
+        rootNode: {
+          id: NodeId.make("node:unsupported-compact"),
+        } as OrchestrationV2ExecutionNode,
+        checkpointScope: {
+          id: CheckpointScopeId.make("checkpoint:unsupported-compact"),
+        } as OrchestrationV2CheckpointScope,
+        providerThread: {
+          id: ProviderThreadId.make("provider-thread:unsupported-compact"),
+          driver,
+        } as OrchestrationV2ProviderThread,
+        attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
+        attemptId,
+        providerTurnOrdinal: 1,
+        message: {
+          messageId: MessageId.make("message:unsupported-compact"),
+          text: "/compact",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+        },
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimePolicy: {
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+          approvalPolicy: "never",
+          sandboxPolicy: {
+            type: "readOnly",
+            access: { type: "fullAccess" },
+            networkAccess: false,
+          },
+        },
+      });
+    }).pipe(Effect.provide(layer));
+    assert.deepEqual(calls, []);
+    const failed = writes.find((event) => event.type === "run.updated");
+    assert.equal(failed?.type === "run.updated" && failed.payload.status, "failed");
+    assert.equal(failed?.runId, "run:unsupported-compact");
+    assert.equal(failed?.threadId, threadId);
+    const item = writes.find((event) => event.type === "turn-item.updated");
+    assert.isDefined(item);
+    if (item?.type === "turn-item.updated" && item.payload.type === "error") {
+      assert.equal(item.payload.failure.code, "context_compaction_unsupported");
+      assert.equal(item.payload.failure.retryable, false);
+      assert.include(item.payload.failure.message, "Change this thread to another provider");
+    }
+  }),
+);
+
 it.effect("refreshes MCP credential liveness before calling the provider", () =>
   Effect.gen(function* () {
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;

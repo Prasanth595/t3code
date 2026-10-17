@@ -1,17 +1,18 @@
-import type {
-  NodeId,
-  OrchestrationV2ProviderFailure,
-  OrchestrationV2ProviderFailureClass,
-  OrchestrationV2ProviderRetry,
-  OrchestrationV2TurnItem,
+import {
   ProviderDriverKind,
-  ProviderThreadId,
-  ProviderTurnId,
-  RunId,
-  ThreadId,
+  type NodeId,
+  type OrchestrationV2ProviderFailure,
+  type OrchestrationV2ProviderFailureClass,
+  type OrchestrationV2ProviderRetry,
+  type OrchestrationV2TurnItem,
+  type ProviderThreadId,
+  type ProviderTurnId,
+  type RunId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
+import { ProviderAdapterCompactionUnsupportedError } from "./ProviderAdapter.ts";
 
 import type { IdAllocatorV2Shape } from "./IdAllocator.ts";
 import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
@@ -22,9 +23,16 @@ export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 const DEFAULT_PROVIDER_FAILURE_MESSAGE = "Provider turn failed.";
 
 /** Translate known categories without exposing arbitrary provider defect text. */
-function causeMessage(cause: unknown): string | undefined {
+function causeFailure(cause: unknown):
+  | {
+      message: string;
+      code?: string;
+      retryable?: boolean;
+    }
+  | undefined {
   const seen = new Set<unknown>();
   let message: string | undefined;
+  let cursor = false;
   for (let depth = 0; depth < 16 && cause != null && !seen.has(cause); depth++) {
     seen.add(cause);
     try {
@@ -33,13 +41,32 @@ function causeMessage(cause: unknown): string | undefined {
         continue;
       }
       if (typeof cause !== "object") break;
+      cursor ||= stringField(cause, "driver") === "cursor";
       switch ((cause as Record<string, unknown>)._tag) {
         case "ContextHandoffBudgetError":
-          return new ContextHandoffBudgetError().message;
+          return {
+            message: new ContextHandoffBudgetError(
+              cursor ? { driver: ProviderDriverKind.make("cursor") } : {},
+            ).message,
+            code: "context_handoff_budget_exceeded",
+            retryable: false,
+          };
+        case "ProviderAdapterCompactionUnsupportedError":
+          return {
+            message: new ProviderAdapterCompactionUnsupportedError({
+              driver: ProviderDriverKind.make(cursor ? "cursor" : "unknown"),
+            }).message,
+            code: "context_compaction_unsupported",
+            retryable: false,
+          };
         case "ClaudeBackgroundWorkBlocksQueryReplacementError":
-          return stringField(cause, "message");
+          message = stringField(cause, "message");
+          return message === undefined ? undefined : { message };
         case "ContextHandoffDeliveryUncertainError":
-          return "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.";
+          return {
+            message:
+              "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.",
+          };
         case "ProviderAdapterTurnStartError":
           message =
             "The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs.";
@@ -62,10 +89,10 @@ function causeMessage(cause: unknown): string | undefined {
       break;
     }
   }
-  return message;
+  return message === undefined ? undefined : { message };
 }
 
-function stringField(value: unknown, key: "message" | "code"): string | undefined {
+function stringField(value: unknown, key: "message" | "code" | "driver"): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   try {
     const candidate = (value as Record<string, unknown>)[key];
@@ -142,9 +169,10 @@ export function makeProviderFailure(input: {
   readonly retryable?: boolean | null;
   readonly resetAt?: string | null;
 }): OrchestrationV2ProviderFailure {
-  const rawMessage = input.message ?? causeMessage(input.cause) ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
+  const knownFailure = causeFailure(input.cause);
+  const rawMessage = input.message ?? knownFailure?.message ?? DEFAULT_PROVIDER_FAILURE_MESSAGE;
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
-  const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
+  const rawCode = input.code ?? knownFailure?.code ?? stringField(input.cause, "code") ?? null;
   const code =
     rawCode === null ? null : boundedText(rawCode, MAX_PROVIDER_FAILURE_CODE_LENGTH) || null;
 
@@ -152,7 +180,7 @@ export function makeProviderFailure(input: {
     class: input.class ?? "unknown",
     message: message || DEFAULT_PROVIDER_FAILURE_MESSAGE,
     code,
-    retryable: input.retryable ?? null,
+    retryable: input.retryable ?? knownFailure?.retryable ?? null,
     ...(input.class === "usage_limit" &&
     input.resetAt != null &&
     Number.isFinite(Date.parse(input.resetAt))

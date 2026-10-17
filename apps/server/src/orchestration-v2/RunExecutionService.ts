@@ -46,7 +46,7 @@ import type {
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2TurnMessage,
 } from "./ProviderAdapter.ts";
-import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
+import { ProviderAdapterCompactionUnsupportedError } from "./ProviderAdapter.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
@@ -1379,13 +1379,7 @@ export const layer: Layer.Layer<
           const startTurn = compact
             ? (input.session.compactThread?.(turnInput) ??
               Effect.fail(
-                new ProviderAdapterTurnStartError({
-                  driver: input.session.driver,
-                  threadId: input.run.threadId,
-                  providerThreadId: input.providerThread.id,
-                  runId: input.run.id,
-                  cause: "This provider does not support context compaction.",
-                }),
+                new ProviderAdapterCompactionUnsupportedError({ driver: input.session.driver }),
               ))
             : input.session.startTurn(turnInput);
           yield* Effect.andThen(shouldStart, startTurn).pipe(
