@@ -140,6 +140,11 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { isMacPlatform } from "~/lib/utils";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { readLocalApi } from "../localApi";
+import {
+  showThreadActionMenu,
+  type ThreadActionPreset,
+  useSidebarKeyboard,
+} from "./focusLevels/useSidebarKeyboard";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import {
@@ -4190,13 +4195,21 @@ export default function Sidebar() {
   );
 
   const handleThreadContextMenu = useStableCallback(
-    (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
+    (
+      threadRef: ScopedThreadRef,
+      position: { x: number; y: number },
+      keyPreset?: ThreadActionPreset,
+    ) => {
       void (async () => {
         const api = readLocalApi();
         if (!api) return;
         const threadKey = scopedThreadKey(threadRef);
         const selectionState = useThreadSelectionStore.getState();
-        if (selectionState.hasSelection() && selectionState.selectedThreadKeys.has(threadKey)) {
+        if (
+          !keyPreset &&
+          selectionState.hasSelection() &&
+          selectionState.selectedThreadKeys.has(threadKey)
+        ) {
           await handleMultiSelectContextMenu(position);
           return;
         }
@@ -4233,7 +4246,8 @@ export default function Sidebar() {
             ),
           ) ?? null;
         const clicked = await settlePromise(() =>
-          api.contextMenu.show(
+          showThreadActionMenu(
+            api,
             buildThreadActionMenuItems({
               canOperate: readEnvironmentScope(
                 threadRef.environmentId,
@@ -4263,6 +4277,7 @@ export default function Sidebar() {
               snoozePresets,
             }),
             position,
+            keyPreset,
           ),
         );
         if (clicked._tag === "Failure" || clicked.value === null) return;
@@ -4452,6 +4467,11 @@ export default function Sidebar() {
       })();
     },
   );
+  useSidebarKeyboard({
+    routeThreadRef,
+    searchFieldRef: headerSearchRef,
+    runThreadAction: handleThreadContextMenu,
+  });
 
   const routeTerminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
