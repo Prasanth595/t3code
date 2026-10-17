@@ -26,6 +26,9 @@
  * - `POST /api/factory/runs/:id/stop`: `runs stop`; leaves a stop request for the next pass, as
  *   `stop-run.sh` does, and wakes the loop. The pass archives the thread and removes the worktree.
  * - `POST /api/factory/claims/pause` and `.../resume`: `claims pause` and `claims resume`.
+ * - `POST /api/factory/attention/dismiss`: dismisses the open attention items whose ids the body's
+ *   `ids` lists, and answers `{ dismissed }`, the ids it dismissed; an id that is not open is
+ *   ignored. A body without an `ids` array of strings is 400 `invalid_body`.
  *
  * Restart needs `environment:maintain`, the scope T3 gives its own process control
  * (`server.signalProcess`, `server.updateServer`), so an MCP client holding only operate cannot
@@ -73,6 +76,7 @@ export const RUN_PATH = "/api/factory/runs/:id";
 export const STOP_PATH = "/api/factory/runs/:id/stop";
 export const PAUSE_PATH = "/api/factory/claims/pause";
 export const RESUME_PATH = "/api/factory/claims/resume";
+export const DISMISS_PATH = "/api/factory/attention/dismiss";
 export const CONFIG_PATH = "/api/factory/config";
 export const RESTART_PATH = "/api/factory/restart";
 
@@ -257,6 +261,28 @@ const resumeRoute = factoryRoute(
   }),
 );
 
+const invalidBody = (message: string) => respond({ code: "invalid_body", message }, 400);
+
+/** The body's `ids` when it is an array of strings, else `null`. */
+const idsOf = (body: unknown): ReadonlyArray<string> | null => {
+  if (typeof body !== "object" || body === null || Array.isArray(body)) return null;
+  const ids = (body as Record<string, unknown>)["ids"];
+  return Array.isArray(ids) && ids.every((id) => typeof id === "string") ? ids : null;
+};
+
+const dismissRoute = factoryRoute(
+  "POST",
+  DISMISS_PATH,
+  AuthOrchestrationOperateScope,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const body = yield* Effect.result(request.json);
+    const ids = Result.isSuccess(body) ? idsOf(body.success) : null;
+    if (ids === null) return invalidBody("the body must be { ids: [<id>, ...] }");
+    return respond({ dismissed: yield* (yield* Attention).dismiss(ids) });
+  }),
+);
+
 const toFileError = Effect.mapError((cause: unknown) => new FactoryFileError({ cause }));
 
 const configRoute = factoryRoute(
@@ -275,8 +301,6 @@ const configRoute = factoryRoute(
     );
   }),
 );
-
-const invalidBody = (message: string) => respond({ code: "invalid_body", message }, 400);
 
 const saveConfigRoute = factoryRoute(
   "PUT",
@@ -322,6 +346,7 @@ export const FactoryRoutes = Layer.mergeAll(
   stopRoute,
   pauseRoute,
   resumeRoute,
+  dismissRoute,
   configRoute,
   saveConfigRoute,
   restartRoute,

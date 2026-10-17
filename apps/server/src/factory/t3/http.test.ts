@@ -41,7 +41,7 @@ import type { FactoryStatus } from "../status.ts";
 import { saveMachineConfig } from "../settings.ts";
 import { route } from "./auth.ts";
 import * as ServerExitService from "./exit.ts";
-import { CONFIG_PATH, FactoryRoutes, RESTART_PATH, STATUS_PATH } from "./http.ts";
+import { CONFIG_PATH, DISMISS_PATH, FactoryRoutes, RESTART_PATH, STATUS_PATH } from "./http.ts";
 import { FactoryPaths } from "./paths.ts";
 import { WatchedReposError } from "./watchedRepos.ts";
 
@@ -186,6 +186,8 @@ const attentionWith = (items: ReadonlyArray<AttentionItem>) =>
     clear: () => Effect.void,
     passEnded: () => Effect.void,
     setNotify: () => Effect.void,
+    dismiss: (ids) =>
+      Effect.succeed(items.filter((item) => ids.includes(item.id)).map((item) => item.id)),
   });
 
 const worldContext = (
@@ -320,6 +322,7 @@ const FACTORY_ROUTES = [
   ["POST", `/api/factory/runs/${ID}/stop`],
   ["POST", "/api/factory/claims/pause"],
   ["POST", "/api/factory/claims/resume"],
+  ["POST", "/api/factory/attention/dismiss"],
   ["GET", "/api/factory/config"],
   ["PUT", "/api/factory/config"],
   ["POST", "/api/factory/restart"],
@@ -373,6 +376,7 @@ describe("every factory route", () => {
         `/api/factory/runs/${ID}/stop`,
         "/api/factory/claims/pause",
         "/api/factory/claims/resume",
+        "/api/factory/attention/dismiss",
         "/api/factory/restart",
       ]) {
         const response = await call("POST", path, tokens.read);
@@ -922,6 +926,32 @@ describe("claims pause and resume", () => {
       const response = await call("POST", "/api/factory/claims/pause", tokens.operate);
       assert.strictEqual(response.status, 500);
       assert.strictEqual((await json(response)).code, "factory_error");
+    }),
+  );
+});
+
+describe("POST /api/factory/attention/dismiss", () => {
+  it("is served at the path the Factory page calls", () => {
+    assert.strictEqual(DISMISS_PATH, "/api/factory/attention/dismiss");
+  });
+
+  it.effect("answers 200 with the ids it dismissed, ignoring ids that are not open", () =>
+    serving({ attention: [attentionItem()] }, async (call, { tokens }) => {
+      const response = await call("POST", DISMISS_PATH, tokens.operate, {
+        ids: ["stuck:a/b#1", "gone"],
+      });
+      assert.strictEqual(response.status, 200);
+      assert.deepStrictEqual(await response.json(), { dismissed: ["stuck:a/b#1"] });
+    }),
+  );
+
+  it.effect("answers 400 invalid_body without an ids array of strings", () =>
+    serving({ attention: [attentionItem()] }, async (call, { tokens }) => {
+      for (const body of ["{not json", {}, { ids: "stuck:a/b#1" }, { ids: [1] }, ["x"]]) {
+        const response = await call("POST", DISMISS_PATH, tokens.operate, body);
+        assert.strictEqual(response.status, 400, JSON.stringify(body));
+        assert.strictEqual((await json(response)).code, "invalid_body");
+      }
     }),
   );
 });

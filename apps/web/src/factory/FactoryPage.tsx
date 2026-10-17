@@ -3,13 +3,19 @@ import { useMemo, useState } from "react";
 import { Alert, AlertAction, AlertDescription } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 
-import { factoryApi } from "./api";
+import { factoryApi, type FactoryAttentionItem } from "./api";
 import { AttentionList } from "./AttentionList";
 import { FactoryFrame } from "./FactoryFrame";
 import { FactoryError, FactoryLoading } from "./FactoryNotices";
 import { formatAge, messageOf } from "./format";
 import { RunsTable } from "./RunsTable";
 import { useFactoryEnvironmentId, useFactoryRuns, useFactoryStatus } from "./useFactoryData";
+
+/**
+ * An item as raised once: an id the factory clears and raises again comes back with a new
+ * `first_seen`, so a dismissal on this page never hides the new one.
+ */
+const attentionKey = (item: FactoryAttentionItem) => `${item.id}@${item.first_seen}`;
 
 export function FactoryPage() {
   const environmentId = useFactoryEnvironmentId();
@@ -19,11 +25,14 @@ export function FactoryPage() {
   const runs = useFactoryRuns(environmentId, allRuns);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
+  // The attention items dismissed on this page, hidden before the server's next status says so.
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
 
-  const control = async (call: () => Promise<{ readonly message: string }>) => {
+  const control = async (call: () => Promise<{ readonly message?: string }>) => {
     setBusy(true);
     try {
-      setNote((await call()).message);
+      const { message } = await call();
+      if (message !== undefined) setNote(message);
     } catch (error) {
       setNote(messageOf(error));
     } finally {
@@ -44,6 +53,34 @@ export function FactoryPage() {
   const nowMs = useMemo(() => Date.now(), [status.data, runs.data]);
   const report = status.data;
   const paused = report?.paused_by_hand ?? null;
+  const attention = (report?.attention ?? []).filter((item) => !dismissed.has(attentionKey(item)));
+
+  const dismiss = (items: ReadonlyArray<FactoryAttentionItem>) => {
+    if (environmentId === null || items.length === 0) return;
+    const keys = items.map(attentionKey);
+    const change = (hide: boolean) =>
+      setDismissed((current) => {
+        const next = new Set(current);
+        for (const key of keys) {
+          if (hide) next.add(key);
+          else next.delete(key);
+        }
+        return next;
+      });
+    change(true);
+    // Not through `control`: a dismiss that ends must not clear the busy flag of a pause or
+    // resume still in flight.
+    factoryApi
+      .dismissAttention(
+        environmentId,
+        items.map((item) => item.id),
+      )
+      .catch((error: unknown) => {
+        change(false);
+        setNote(messageOf(error));
+      })
+      .finally(() => status.refresh());
+  };
 
   let body;
   if (failed) {
@@ -53,7 +90,7 @@ export function FactoryPage() {
   } else {
     body = (
       <>
-        <AttentionList items={report.attention} nowMs={nowMs} />
+        <AttentionList items={attention} nowMs={nowMs} onDismiss={dismiss} />
         {stale ? (
           <Alert variant="error">
             <AlertDescription>Could not refresh: {messageOf(stale.error)}</AlertDescription>

@@ -1,20 +1,49 @@
+import { Link } from "@tanstack/react-router";
+
 import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
 
 import type { FactoryAttentionItem } from "./api";
 import { formatAge } from "./format";
+import { TouchLink } from "./TouchLink";
 
-/** The open attention items, newest last as the server sends them; nothing when there are none. */
+/** Where an item leads: its run's page, the factory settings for the machine config, or nowhere. */
+function ItemLink({ item }: { item: FactoryAttentionItem }) {
+  if (item.run !== null) {
+    return (
+      <TouchLink render={<Link params={{ runId: item.run }} to="/factory/$runId" />}>
+        View run
+      </TouchLink>
+    );
+  }
+  if (item.kind === "config") {
+    return <TouchLink render={<Link to="/settings/factory" />}>Factory settings</TouchLink>;
+  }
+  return null;
+}
+
+/**
+ * The open attention items, newest last as the server sends them; nothing when there are none.
+ * `onDismiss` gets the items to dismiss: one, or every item shown for Dismiss all.
+ */
 export function AttentionList({
   items,
   nowMs,
+  onDismiss,
 }: {
   items: ReadonlyArray<FactoryAttentionItem>;
   nowMs: number;
+  onDismiss: (items: ReadonlyArray<FactoryAttentionItem>) => void;
 }) {
   if (items.length === 0) return null;
   return (
     <section aria-label="Needs attention" className="flex flex-col gap-2">
-      <h2 className="text-sm font-medium">Needs attention</h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-medium">Needs attention</h2>
+        <Button onClick={() => onDismiss(items)} size="sm" variant="ghost">
+          Dismiss all
+        </Button>
+      </div>
       <ul className="flex flex-col gap-2">
         {items.map((item) => (
           <li
@@ -34,6 +63,14 @@ export function AttentionList({
               </span>
             </div>
             <p className="w-full break-words">{item.message}</p>
+            <div className="flex items-center justify-between gap-3">
+              <ItemLink item={item} />
+              <div className="ml-auto">
+                <Button onClick={() => onDismiss([item])} size="sm" variant="ghost">
+                  Dismiss
+                </Button>
+              </div>
+            </div>
           </li>
         ))}
       </ul>

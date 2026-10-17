@@ -140,6 +140,17 @@ describe("factoryApi over HTTP", () => {
     expect(new URL(sent().url).pathname).toBe("/api/factory/runs/a%2Fb/stop");
   });
 
+  it("dismisses attention items with a POST of their ids as JSON", async () => {
+    answer(200, '{"dismissed":["config"]}');
+    expect(await factoryApi.dismissAttention(ENV_1, ["config", "gone"])).toEqual({
+      dismissed: ["config"],
+    });
+    expect(sent().method).toBe("POST");
+    expect(new URL(sent().url).pathname).toBe("/api/factory/attention/dismiss");
+    expect(sent().headers.get("content-type")).toBe("application/json");
+    expect(await sent().json()).toEqual({ ids: ["config", "gone"] });
+  });
+
   it("maps an error body to the status, code and message", async () => {
     answer(404, '{"code":"run_not_found","message":"no such run"}');
     const error = await failure(factoryApi.run(ENV_1, "x"));
@@ -311,6 +322,7 @@ describe("factoryApi on the given environment", () => {
       () => factoryApi.stopRun(ENV_2, "r"),
       () => factoryApi.pauseClaims(ENV_2),
       () => factoryApi.resumeClaims(ENV_2),
+      () => factoryApi.dismissAttention(ENV_2, ["config"]),
     ];
     for (const call of calls) {
       answer(200, "{}");

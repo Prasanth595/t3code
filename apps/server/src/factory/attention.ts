@@ -37,6 +37,15 @@ export interface AttentionItem {
 
 export type NewItem = Omit<AttentionItem, "firstSeenMs">;
 
+/**
+ * An item as the store keeps it. A dismissed item stays until its condition clears, so a raise
+ * while the condition holds finds it and neither lists nor notifies it again.
+ */
+interface Kept {
+  readonly item: AttentionItem;
+  readonly dismissed: boolean;
+}
+
 /** How a pass ended, for the count of passes that error in a row. */
 export type PassOutcome = { readonly ok: true } | { readonly ok: false; readonly message: string };
 
@@ -44,20 +53,24 @@ export type PassOutcome = { readonly ok: true } | { readonly ok: false; readonly
  * The open attention items: what the factory needs a person for. An item is raised when its
  * condition starts and cleared when the condition ends; a new item posts one macOS notification,
  * and one that stays open is never notified again, because the open items are kept in
- * `<factory dir>/attention.json` and read back at start.
+ * `<factory dir>/attention.json` and read back at start. A person can dismiss an item; it leaves
+ * the list but is kept, dismissed, until its condition clears.
  */
 export class Attention extends Context.Service<
   Attention,
   {
+    /** The open items that are not dismissed. */
     readonly list: () => Effect.Effect<ReadonlyArray<AttentionItem>>;
-    /** Opens the item unless one with its id is open; a new item is persisted, then notified once. Never fails: a file or notifier problem is logged. */
+    /** Opens the item unless one with its id is open, dismissed or not; a new item is persisted, then notified once. Never fails: a file or notifier problem is logged. */
     readonly raise: (item: NewItem) => Effect.Effect<void>;
-    /** Removes every open item `matches` is true for, and persists. */
+    /** Removes every open item `matches` is true for, dismissed or not, and persists. */
     readonly clear: (matches: (item: AttentionItem) => boolean) => Effect.Effect<void>;
     /** Counts erroring passes in a row; the third raises `pass-errors`; a success clears it and resets the count. */
     readonly passEnded: (outcome: PassOutcome) => Effect.Effect<void>;
     /** Whether new items post a notification. Starts true (the machine config may not have loaded). */
     readonly setNotify: (on: boolean) => Effect.Effect<void>;
+    /** Dismisses each listed item and persists; answers the ids it dismissed. Ids not listed are ignored. */
+    readonly dismiss: (ids: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>>;
   }
 >()("t3/factory/attention") {}
 
@@ -113,43 +126,52 @@ const itemFromFile = (entry: unknown): AttentionItem | null => {
   };
 };
 
-type Loaded =
-  | { readonly items: ReadonlyArray<AttentionItem> }
-  | { readonly items: ReadonlyArray<AttentionItem>; readonly warning: string };
+type Loaded = { readonly items: ReadonlyArray<Kept>; readonly warnings: ReadonlyArray<string> };
 
-/** The open items on disk. A missing file is none; a file that is not the expected shape is none, with a warning. */
+/**
+ * The open items on disk. A missing file is none; a file that is not the expected shape is none,
+ * with a warning. An item whose `dismissed` is not a boolean is kept open, with a warning.
+ */
 const readFile = (path: string): Loaded => {
   let text: string;
   try {
     text = NodeFS.readFileSync(path, "utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { items: [] };
-    return { items: [], warning: `cannot read ${path}: ${String(error)}` };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { items: [], warnings: [] };
+    return { items: [], warnings: [`cannot read ${path}: ${String(error)}`] };
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return { items: [], warning: `${path} is not valid JSON, so no attention item is kept` };
+    return { items: [], warnings: [`${path} is not valid JSON, so no attention item is kept`] };
   }
   if (!isRecord(parsed) || !Array.isArray(parsed["items"])) {
-    return { items: [], warning: `${path} has no items list, so no attention item is kept` };
+    return { items: [], warnings: [`${path} has no items list, so no attention item is kept`] };
   }
-  return {
-    items: parsed["items"].flatMap((entry) => {
-      const found = itemFromFile(entry);
-      return found === null ? [] : [found];
-    }),
-  };
+  const warnings: Array<string> = [];
+  const items = parsed["items"].flatMap((entry): Array<Kept> => {
+    const item = itemFromFile(entry);
+    if (item === null) return [];
+    const dismissed = (entry as Record<string, unknown>)["dismissed"];
+    if (dismissed === undefined || typeof dismissed === "boolean") {
+      return [{ item, dismissed: dismissed === true }];
+    }
+    warnings.push(
+      `${path}: attention item ${item.id} has a dismissed that is not a boolean, so it is open`,
+    );
+    return [{ item, dismissed: false }];
+  });
+  return { items, warnings };
 };
 
 /** Writes the items whole or not at all, private to the owner, as the pause file is. */
-const writeFile = (dir: string, items: ReadonlyArray<AttentionItem>): void => {
+const writeFile = (dir: string, items: ReadonlyArray<Kept>): void => {
   ensureDir(dir);
   const path = NodePath.join(dir, ATTENTION_FILE);
   const temp = `${path}.${process.pid}.tmp`;
   const body = JSON.stringify({
-    items: items.map((item) => ({
+    items: items.map(({ item, dismissed }) => ({
       id: item.id,
       kind: item.kind,
       repo: item.repo,
@@ -157,6 +179,7 @@ const writeFile = (dir: string, items: ReadonlyArray<AttentionItem>): void => {
       run: item.run,
       message: item.message,
       first_seen: formatTs(item.firstSeenMs),
+      ...(dismissed ? { dismissed: true } : {}),
     })),
   });
   const fd = NodeFS.openSync(
@@ -193,8 +216,8 @@ const make = (options: { readonly clock?: () => number }) =>
     const path = NodePath.join(factoryDir, ATTENTION_FILE);
 
     const loaded = readFile(path);
-    if ("warning" in loaded) yield* Effect.logWarning(loaded.warning);
-    const items = new Map<string, AttentionItem>(loaded.items.map((item) => [item.id, item]));
+    for (const warning of loaded.warnings) yield* Effect.logWarning(warning);
+    const items = new Map<string, Kept>(loaded.items.map((kept) => [kept.item.id, kept]));
     let notifying = true;
     let notifierDown = false;
     let failedPasses = 0;
@@ -250,7 +273,7 @@ const make = (options: { readonly clock?: () => number }) =>
     const raise = (item: NewItem): Effect.Effect<void> =>
       Effect.gen(function* () {
         if (items.has(item.id)) return;
-        items.set(item.id, { ...item, firstSeenMs: clock() });
+        items.set(item.id, { item: { ...item, firstSeenMs: clock() }, dismissed: false });
         // Saved before it is posted, so a crash between the two cannot notify the item twice.
         yield* persist;
         yield* post(item);
@@ -258,9 +281,9 @@ const make = (options: { readonly clock?: () => number }) =>
 
     const clear = (matches: (item: AttentionItem) => boolean): Effect.Effect<void> =>
       Effect.gen(function* () {
-        const gone = [...items.values()].filter(matches);
+        const gone = [...items.values()].filter(({ item }) => matches(item));
         if (gone.length === 0) return;
-        for (const item of gone) items.delete(item.id);
+        for (const { item } of gone) items.delete(item.id);
         yield* persist;
       });
 
@@ -282,8 +305,24 @@ const make = (options: { readonly clock?: () => number }) =>
         });
       });
 
+    const dismiss = (ids: ReadonlyArray<string>): Effect.Effect<ReadonlyArray<string>> =>
+      Effect.gen(function* () {
+        const dismissed: Array<string> = [];
+        for (const id of ids) {
+          const kept = items.get(id);
+          if (kept === undefined || kept.dismissed) continue;
+          items.set(id, { ...kept, dismissed: true });
+          dismissed.push(id);
+        }
+        if (dismissed.length > 0) yield* persist;
+        return dismissed;
+      });
+
     return Attention.of({
-      list: () => Effect.sync(() => [...items.values()]),
+      list: () =>
+        Effect.sync(() =>
+          [...items.values()].flatMap(({ item, dismissed }) => (dismissed ? [] : [item])),
+        ),
       raise,
       clear,
       passEnded,
@@ -291,6 +330,7 @@ const make = (options: { readonly clock?: () => number }) =>
         Effect.sync(() => {
           notifying = on;
         }),
+      dismiss,
     });
   });
 

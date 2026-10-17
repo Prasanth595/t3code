@@ -79,6 +79,7 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   stopRun: vi.fn(),
   pauseClaims: vi.fn(),
   resumeClaims: vi.fn(),
+  dismissAttention: vi.fn(),
   ...overrides,
 });
 
@@ -550,5 +551,127 @@ describe.each([
     const cards = page.all("ul").filter((ul) => ul.props["data-layout"] === "cards");
     expect(cards).toHaveLength(narrow ? 1 : 0);
     await page.unmount();
+  });
+});
+
+describe("FactoryPage dismissing attention items", () => {
+  const CONFIG = {
+    id: "config",
+    kind: "config",
+    repo: null,
+    issue: null,
+    run: null,
+    message: "the machine config does not load",
+    first_seen: "2026-10-17T11:30:00.000Z",
+  };
+  const PASS = {
+    id: "pass-errors",
+    kind: "pass-errors",
+    repo: null,
+    issue: null,
+    run: null,
+    message: "the pass has failed 3 times in a row",
+    first_seen: "2026-10-17T11:40:00.000Z",
+  };
+  const section = (page: Awaited<ReturnType<typeof render>>) =>
+    page.all("section").find((node) => node.props["aria-label"] === "Needs attention");
+  const itemOf = (page: Awaited<ReturnType<typeof render>>, message: string) =>
+    section(page)
+      ?.findAllByType("li" as never)
+      .find((li) => li.findAll((node) => node.children.includes(message)).length > 0);
+  const dismissIn = (item: ReactTestInstance) =>
+    item
+      .findAllByType("button" as never)
+      .find((button) => button.findAll((node) => node.children.includes("Dismiss")).length > 0)!;
+
+  it("Dismiss removes that item at once and sends its id", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION, CONFIG] }) });
+    let resolve!: (value: { dismissed: ReadonlyArray<string> }) => void;
+    const dismissAttention = vi.fn(
+      () => new Promise<{ dismissed: ReadonlyArray<string> }>((r) => (resolve = r)),
+    );
+    __setFactoryApiForTests(api({ dismissAttention }));
+    const page = await render(createElement(FactoryPage));
+    await act(async () => void dismissIn(itemOf(page, ATTENTION.message)!).props.onClick());
+    expect(dismissAttention).toHaveBeenCalledWith("env-2", [ATTENTION.id]);
+    expect(page.text()).not.toContain(ATTENTION.message);
+    expect(page.text()).toContain(CONFIG.message);
+    await act(async () => resolve({ dismissed: [ATTENTION.id] }));
+    expect(page.text()).not.toContain(ATTENTION.message);
+  });
+
+  it("Dismiss all sends exactly the ids shown, and the section goes", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION, CONFIG, PASS] }) });
+    const dismissAttention = vi.fn(async (_environmentId: string, ids: ReadonlyArray<string>) => ({
+      dismissed: ids,
+    }));
+    __setFactoryApiForTests(api({ dismissAttention }));
+    const page = await render(createElement(FactoryPage));
+    await act(async () => dismissIn(itemOf(page, CONFIG.message)!).props.onClick());
+    await act(async () => page.button("Dismiss all")!.props.onClick());
+    expect(dismissAttention).toHaveBeenLastCalledWith("env-2", [ATTENTION.id, PASS.id]);
+    expect(section(page)).toBeUndefined();
+    expect(page.text()).not.toContain("Needs attention");
+  });
+
+  it("keeps Pause claims disabled when a dismiss finishes while the pause is pending", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
+    const pauseClaims = vi.fn(() => new Promise<never>(() => {}));
+    const dismissAttention = vi.fn(async () => ({ dismissed: [ATTENTION.id] }));
+    __setFactoryApiForTests(api({ pauseClaims, dismissAttention }));
+    const page = await render(createElement(FactoryPage));
+    await act(async () => void page.button("Pause claims")!.props.onClick());
+    await act(async () => dismissIn(itemOf(page, ATTENTION.message)!).props.onClick());
+    expect(dismissAttention).toHaveBeenCalled();
+    expect(page.button("Pause claims")!.props.disabled).toBe(true);
+  });
+
+  it("has no Dismiss all when nothing needs attention", async () => {
+    const page = await render(createElement(FactoryPage));
+    expect(page.button("Dismiss all")).toBeUndefined();
+  });
+
+  it("brings the item back and shows the error when the dismiss fails", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
+    __setFactoryApiForTests(
+      api({
+        dismissAttention: async () => {
+          throw new FactoryApiError(403, null, "Missing permission orchestration:operate");
+        },
+      }),
+    );
+    const page = await render(createElement(FactoryPage));
+    await act(async () => dismissIn(itemOf(page, ATTENTION.message)!).props.onClick());
+    expect(page.text()).toContain(ATTENTION.message);
+    expect(page.text()).toContain("Missing permission orchestration:operate");
+  });
+
+  it("shows an item again when the factory raises it anew after it was dismissed", async () => {
+    state.status = resource({ data: statusData({ attention: [CONFIG] }) });
+    __setFactoryApiForTests(api({ dismissAttention: async () => ({ dismissed: [CONFIG.id] }) }));
+    const page = await render(createElement(FactoryPage));
+    await act(async () => dismissIn(itemOf(page, CONFIG.message)!).props.onClick());
+    expect(page.text()).not.toContain(CONFIG.message);
+    state.status = resource({
+      data: statusData({ attention: [{ ...CONFIG, first_seen: "2026-10-17T11:59:00.000Z" }] }),
+    });
+    await act(async () => page.renderer.update(createElement(FactoryPage)));
+    expect(page.text()).toContain(CONFIG.message);
+  });
+
+  it("links a run item to its run, a config item to the factory settings, and others nowhere", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION, CONFIG, PASS] }) });
+    const page = await render(createElement(FactoryPage));
+    const linksIn = (message: string) => itemOf(page, message)!.findAllByType("a" as never);
+    const [run] = linksIn(ATTENTION.message);
+    expect(run!.props["data-to"]).toBe("/factory/$runId");
+    expect(JSON.parse(run!.props["data-params"])).toEqual({ runId: RUN_ID });
+    const [settings] = linksIn(CONFIG.message);
+    expect(settings!.props["data-to"]).toBe("/settings/factory");
+    expect(linksIn(PASS.message)).toHaveLength(0);
+    // Dismiss is its own control, never inside the link.
+    for (const link of [run!, settings!]) {
+      expect(link.findAllByType("button" as never)).toHaveLength(0);
+    }
   });
 });
