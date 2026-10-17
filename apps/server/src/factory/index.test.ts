@@ -2117,6 +2117,45 @@ describe("reloading the machine config", () => {
       ).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("a pass reads the T3 projects with listAndRemember, the settings page with list", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { process, entered, release } = holdingProcess();
+        const calls = { list: 0, listAndRemember: 0 };
+        const counted = (name: keyof typeof calls) =>
+          Effect.sync((): WatchedListing => {
+            calls[name] += 1;
+            return { repos: [A_B], departed: [], unresolved: [] };
+          });
+        const { loop } = yield* started(
+          VALID,
+          process,
+          quietEvents,
+          {},
+          Layer.succeed(
+            FactoryWatchedRepos,
+            FactoryWatchedRepos.of({
+              list: counted("list"),
+              listAndRemember: counted("listAndRemember"),
+            }),
+          ),
+        );
+        // The first pass has listed and is held at its first call.
+        yield* Deferred.await(entered);
+        assert.deepStrictEqual(calls, { list: 0, listAndRemember: 1 });
+        yield* loop.watchedRepos;
+        assert.deepStrictEqual(calls, { list: 1, listAndRemember: 1 });
+        yield* Deferred.succeed(release, undefined);
+        // A save's report reads as the settings page does; whatever passes the reload starts remember.
+        const remembered = calls.listAndRemember;
+        const saved = yield* loop.save({ poll_seconds: 60 });
+        assert.strictEqual(saved.kind, "ok");
+        assert.strictEqual(calls.list, 2);
+        assert.ok(calls.listAndRemember >= remembered);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("reading watchedRepos for the settings page leaves the status as the pass set it", () =>
     Effect.scoped(
       Effect.gen(function* () {
