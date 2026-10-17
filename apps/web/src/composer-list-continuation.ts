@@ -1,16 +1,6 @@
 import { splitPromptIntoComposerSegments } from "./composer-editor-mentions";
 
-/**
- * List continuation and indentation for the composer.
- *
- * Implemented at the ChatComposer level (store replacement) for plain
- * Markdown markers: Shift+Enter on a list item continues it (renumbering the
- * ordered items below), Enter on an empty item exits the list, and Tab indents
- * the item. Rich text list nodes are split natively by the editor instead.
- */
-
 export interface ComposerListEdit {
-  /** Expanded (plain string) offsets into the prompt. */
   start: number;
   end: number;
   replacement: string;
@@ -56,11 +46,6 @@ function parseListMarker(line: string): { marker: ListMarker; markerEnd: number 
   return null;
 }
 
-/**
- * The ordered marker that follows `3.` or `09)`: one higher, same delimiter,
- * zero padding kept, and a number too large to count left as typed. Shared
- * with the rich editor's native split so both modes count the same way.
- */
 export function nextOrderedMarkerText(marker: string): string {
   const numberText = marker.slice(0, -1);
   const delimiter = marker.slice(-1);
@@ -156,7 +141,6 @@ function segmentSource(
   return segment.source;
 }
 
-/** Expanded offsets of every inline chip in the prompt. */
 function inlineTokenRanges(value: string): Array<{ start: number; end: number }> {
   const ranges: Array<{ start: number; end: number }> = [];
   let offset = 0;
@@ -180,12 +164,6 @@ function currentLine(value: string, cursor: number): { start: number; end: numbe
   return { start, end, text: value.slice(start, end) };
 }
 
-/**
- * Enter on a list item line: continue the list (renumbering the ordered items
- * below), or exit it when the item is empty. Returns null for non-list lines,
- * carets inside the marker, and carets inside an inline chip — all fall
- * through to a plain newline.
- */
 export function listContinuationForEnter(value: string, cursor: number): ComposerListEdit | null {
   if (!Number.isInteger(cursor) || cursor < 0 || cursor > value.length) return null;
   const line = currentLine(value, cursor);
@@ -195,7 +173,6 @@ export function listContinuationForEnter(value: string, cursor: number): Compose
   if (cursor < markerEnd) return null;
   if (isInsideInlineToken(value, cursor)) return null;
   if (value.slice(markerEnd, line.end).trim() === "") {
-    // Empty item: Enter exits the list by removing the marker.
     return {
       start: line.start,
       end: Math.max(cursor, markerEnd),
@@ -212,8 +189,6 @@ export function listContinuationForEnter(value: string, cursor: number): Compose
       ? renumberFollowingItems(value, line.end, marker, number + 2)
       : null;
     if (renumbered) {
-      // The caret splits the current line, so its remainder is re-emitted
-      // after the new marker, followed by the renumbered lines below.
       return {
         start: cursor,
         end: renumbered.end,
@@ -225,11 +200,6 @@ export function listContinuationForEnter(value: string, cursor: number): Compose
   return { start: cursor, end: cursor, replacement: insertion, cursorAfter };
 }
 
-/**
- * Tab on a list item line: indent by two spaces. Ranged selections, non-list
- * lines, and carets inside an inline chip fall through (Shift+Tab stays the
- * plan-mode toggle and is handled before this is consulted).
- */
 export function listIndentForTab(
   value: string,
   start: number,
