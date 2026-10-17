@@ -1,8 +1,17 @@
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
-import { factoryApi, type FactoryRunDetail, type FactoryRunRow, type FactoryStatus } from "./api";
+import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 
-const POLL_MS = 30_000;
+import {
+  FactoryApiError,
+  factoryApi,
+  type FactoryRunDetail,
+  type FactoryRunRow,
+  type FactoryStatus,
+} from "./api";
+
+/** How often an open page or badge reads again, while the window shows and the reader is about. */
+export const POLL_MS = 30_000;
 
 export interface FactoryResource<T> {
   readonly status: "loading" | "error" | "ready";
@@ -13,132 +22,105 @@ export interface FactoryResource<T> {
 
 type Loaded<T> = Omit<FactoryResource<T>, "refresh">;
 
-/**
- * Loads on mount and every 30 seconds while mounted. A refresh keeps the last data on screen until
- * the answer lands; an answer that arrives after unmount is dropped. `load` must be stable: a new
- * one starts over, so a caller whose input changes remounts (`key`) to show loading again.
- */
-function usePolled<T>(load: () => Promise<T>): FactoryResource<T> {
-  const [state, setState] = useState<Loaded<T>>({ status: "loading", data: null, error: null });
-  const fetchRef = useRef<() => void>(() => {});
+type Key = "status" | "runs" | `run:${string}`;
 
-  useEffect(() => {
-    let alive = true;
-    // Requests are numbered; an answer older than one already applied is dropped.
-    let issued = 0;
-    let applied = 0;
-    const fetchNow = () => {
-      const n = ++issued;
-      load().then(
-        (data) => {
-          if (!alive || n < applied) return;
-          applied = n;
-          setState({ status: "ready", data, error: null });
-        },
-        (cause: unknown) => {
-          if (!alive || n < applied) return;
-          applied = n;
-          const error = cause instanceof Error ? cause : new Error(String(cause));
-          setState((previous) => ({ status: "error", data: previous.data, error }));
-        },
-      );
-    };
-    fetchRef.current = fetchNow;
-    fetchNow();
-    const timer = setInterval(fetchNow, POLL_MS);
-    return () => {
-      alive = false;
-      clearInterval(timer);
-    };
-  }, [load]);
+const LOADING: Loaded<never> = { status: "loading", data: null, error: null };
 
-  const refresh = useCallback(() => fetchRef.current(), []);
-  return { ...state, refresh };
+interface Store {
+  state: Loaded<unknown>;
+  inFlight: boolean;
+  readonly listeners: Set<() => void>;
 }
 
-const loadRuns = () => factoryApi.runs();
-
 /**
- * The status is read by the sidebar badge and by the page, so it lives in one module-level store:
- * one timer while anyone is subscribed, one answer every reader sees, and a refresh from the page
- * updates the badge too. With the last reader gone the timer stops and the store starts over.
+ * One store per key while anyone reads it: one answer every reader sees, and a refresh from one
+ * reader (the page, after a control) updates the others (the badge). One read at a time: a refresh
+ * during a read joins it, so a poll tick never piles up behind a slow server and a late answer can
+ * never overwrite a newer one. With the last reader gone the store is dropped, so the next reader
+ * starts at loading and an answer still in flight is thrown away.
  */
-const LOADING: Loaded<FactoryStatus> = { status: "loading", data: null, error: null };
-let statusState: Loaded<FactoryStatus> = LOADING;
-let statusTimer: ReturnType<typeof setInterval> | null = null;
-// Bumped when the store stops, so an answer to an earlier subscription is dropped.
-let statusEpoch = 0;
-// Requests are numbered like in `usePolled`; an answer older than one already applied is dropped.
-let statusIssued = 0;
-let statusApplied = 0;
-const statusListeners = new Set<() => void>();
+const stores = new Map<Key, Store>();
 
-const setStatusState = (next: Loaded<FactoryStatus>) => {
-  statusState = next;
-  statusListeners.forEach((listener) => listener());
-};
+const load = (key: Key): Promise<unknown> =>
+  key === "status"
+    ? factoryApi.status()
+    : key === "runs"
+      ? factoryApi.runs()
+      : factoryApi.run(key.slice("run:".length));
 
-const refreshStatus = () => {
-  const epoch = statusEpoch;
-  const n = ++statusIssued;
-  factoryApi.status().then(
-    (data) => {
-      if (epoch !== statusEpoch || n < statusApplied) return;
-      statusApplied = n;
-      setStatusState({ status: "ready", data, error: null });
-    },
-    (cause: unknown) => {
-      if (epoch !== statusEpoch || n < statusApplied) return;
-      statusApplied = n;
-      const error = cause instanceof Error ? cause : new Error(String(cause));
-      setStatusState({ status: "error", data: statusState.data, error });
-    },
+const refresh = (key: Key): void => {
+  const store = stores.get(key);
+  if (store === undefined || store.inFlight) return;
+  store.inFlight = true;
+  const settle = (next: Loaded<unknown>) => {
+    store.inFlight = false;
+    if (stores.get(key) !== store) return;
+    store.state = next;
+    store.listeners.forEach((listener) => listener());
+  };
+  load(key).then(
+    (data) => settle({ status: "ready", data, error: null }),
+    (cause: unknown) =>
+      settle({
+        status: "error",
+        data: store.state.data,
+        error: cause instanceof Error ? cause : new Error(String(cause)),
+      }),
   );
 };
 
-const stopStatus = () => {
-  if (statusTimer !== null) clearInterval(statusTimer);
-  statusTimer = null;
-  statusEpoch += 1;
-  statusIssued = 0;
-  statusApplied = 0;
-  statusState = LOADING;
-};
-
-const subscribeStatus = (listener: () => void) => {
-  statusListeners.add(listener);
-  if (statusListeners.size === 1) {
-    refreshStatus();
-    statusTimer = setInterval(refreshStatus, POLL_MS);
+const subscribe = (key: Key, listener: () => void): (() => void) => {
+  let store = stores.get(key);
+  if (store === undefined) {
+    store = { state: LOADING, inFlight: false, listeners: new Set() };
+    stores.set(key, store);
+    refresh(key);
   }
+  const added = store;
+  added.listeners.add(listener);
   return () => {
-    statusListeners.delete(listener);
-    if (statusListeners.size === 0) stopStatus();
+    added.listeners.delete(listener);
+    if (added.listeners.size === 0 && stores.get(key) === added) stores.delete(key);
   };
 };
 
-const getStatusState = () => statusState;
+const snapshot = (key: Key): Loaded<unknown> => stores.get(key)?.state ?? LOADING;
 
-/** For tests: drop the shared status store, its timer and its readers. */
-export function __resetFactoryStoresForTests() {
-  statusListeners.clear();
-  stopStatus();
+/** For tests: drop every store, so the next reader starts over. */
+export function __resetFactoryStoresForTests(): void {
+  stores.clear();
 }
 
-export function useFactoryStatus(): FactoryResource<FactoryStatus> {
-  const state = useSyncExternalStore(subscribeStatus, getStatusState);
-  return { ...state, refresh: refreshStatus };
+/**
+ * The resource behind `key`: read when its first reader mounts, then on the live-refresh policy
+ * (every `POLL_MS` while the window shows and the reader is about, and on coming back to the
+ * window), and no more after a 404, which says the server has no factory or no such run. Readers
+ * of one key share the store and, through the key, the policy's record of the last read, so two
+ * readers do not read twice.
+ */
+function useFactoryResource<T>(key: Key): FactoryResource<T> {
+  const state = useSyncExternalStore(
+    useCallback((listener: () => void) => subscribe(key, listener), [key]),
+    useCallback(() => snapshot(key) as Loaded<T>, [key]),
+  );
+  const refreshNow = useCallback(() => refresh(key), [key]);
+  const gone = state.error instanceof FactoryApiError && state.error.status === 404;
+  useLiveRefresh(refreshNow, { key: `factory:${key}`, intervalMs: POLL_MS, enabled: !gone });
+  return { ...state, refresh: refreshNow };
 }
+
+export const useFactoryStatus = (): FactoryResource<FactoryStatus> =>
+  useFactoryResource<FactoryStatus>("status");
 
 export const useFactoryRuns = (): FactoryResource<{
   readonly runs: ReadonlyArray<FactoryRunRow>;
-}> => usePolled(loadRuns);
+}> => useFactoryResource("runs");
 
 export const useFactoryRun = (id: string): FactoryResource<FactoryRunDetail> =>
-  usePolled(useCallback(() => factoryApi.run(id), [id]));
+  useFactoryResource<FactoryRunDetail>(`run:${id}`);
 
-/** The open attention items, for the sidebar badge: 0 while loading and on any error. */
+/** The open attention items, for the sidebar badge: the last count known, 0 before any answer. */
 export function useFactoryAttentionCount(): number {
-  const { status, data } = useFactoryStatus();
-  return status === "ready" && data !== null ? data.attention.length : 0;
+  const { data } = useFactoryStatus();
+  return data?.attention.length ?? 0;
 }

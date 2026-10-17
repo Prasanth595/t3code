@@ -42,7 +42,7 @@ This is an experiment. The Rust softfac keeps running and keeps building its rep
 │  server.ts  +1 line: FactoryLayer ──────────► factory/index.ts ─► pass loop      │
 │  server.ts  +1 line: FactoryRoutes ─────────► factory/http.ts      (60s + wakes) │
 │                                                                                  │
-│  web: routes/factory.tsx, routes/factory.$runId.tsx  ◄── /api/factory/*          │
+│  web: routes/factory.tsx, routes/factory_.$runId.tsx  ◄── /api/factory/*         │
 └──────────────────────────────────────────────────────────────────────────────────┘
          │ gh CLI (GH_CONFIG_DIR)                     │ JSONL ledger
          ▼                                            ▼
@@ -69,7 +69,7 @@ apps/server/src/factory/
   pass.ts           one pass: claims, ordering, slots, then advance each run
   config.ts         <base>/factory/config.yml and the repo's .dw/config.yml factory block
   http.ts           /api/factory/status, /runs, /runs/:id, /runs/:id/stop, /claims/pause
-apps/web/src/routes/factory.tsx, factory.$runId.tsx
+apps/web/src/routes/factory.tsx, factory_.$runId.tsx   the underscore keeps the run route out of the runs list's tree
 apps/web/src/factory/               page components
 factory/                            repo root: SEAMS, sync/build/install scripts, docs
 .github/workflows/factory-*.yml     the fork's own CI, sync and release
@@ -81,12 +81,12 @@ factory/                            repo root: SEAMS, sync/build/install scripts
 
 1. `apps/server/src/server.ts`: one line adding `FactoryLayer` to `layerRuntimeCoreDependenciesBase` (#1), and one adding the factory route layer `FactoryRoutes` to `layerMakeRoutes` (#57).
 2. `.gitignore` (#3): `.worktrees/`, so `build.sh` counts a main checkout that holds local worktrees as clean.
-3. One nav link in the web sidebar (#28).
+3. One nav link in the web sidebar, `apps/web/src/components/sidebar/SidebarChrome.tsx` (#28).
 4. `apps/web/src/routeTree.gen.ts` (#28): generated, so a merge regenerates it instead of resolving it by hand.
 5. `apps/web/src/components/settings/settingsSearch.ts` (#55): the `SettingsPath`, section label, search entry and scope map for the factory settings page.
 6. `apps/web/src/components/settings/SettingsSidebarNav.tsx` (#55): the icon for that page.
 
-Six entries, of which the first two are in `factory/SEAMS` today and the rest join it with the issue that adds each. Nothing in `ws.ts`, `rpc.ts`, `packages/contracts` or `Migrations.ts`. Those are the files upstream churns most, and adding an RPC would touch five of them. The factory API is a separate HTTP route layer instead.
+Six entries, of which the first four (`server.ts`, `.gitignore`, the sidebar nav link in `SidebarChrome.tsx` and `routeTree.gen.ts`) are in `factory/SEAMS` today and the rest join it with the issue that adds each. Nothing in `ws.ts`, `rpc.ts`, `packages/contracts` or `Migrations.ts`. Those are the files upstream churns most, and adding an RPC would touch five of them. The factory API is a separate HTTP route layer instead.
 
 ### Boundary rules, checked by a test
 

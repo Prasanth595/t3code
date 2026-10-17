@@ -43,6 +43,20 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   ...overrides,
 });
 
+const notFound = async () => {
+  throw new FactoryApiError(404, null, "Not found");
+};
+
+const deferred = <T>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (error: Error) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
 let renderers: Array<ReactTestRenderer> = [];
 const unmountAll = () => {
   act(() => renderers.forEach((r) => r.unmount()));
@@ -64,25 +78,44 @@ const mount = async <T>(useHook: () => T) => {
 
 const settle = (ms = 0) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
 
+// The live-refresh policy reads the window the hooks poll through.
+const document = Object.assign(new EventTarget(), { visibilityState: "visible" });
+const window = new EventTarget();
+const show = (visible: boolean) =>
+  act(async () => {
+    document.visibilityState = visible ? "visible" : "hidden";
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+
+// The policy remembers when each key was last read, across tests, so every test starts a day
+// after the one before it: a stale stamp would otherwise swallow the first tick.
+let day = Date.parse("2026-10-17T00:00:00.000Z");
+
 beforeEach(() => {
   vi.useFakeTimers();
+  day += 86_400_000;
+  vi.setSystemTime(day);
+  document.visibilityState = "visible";
+  vi.stubGlobal("document", document);
+  vi.stubGlobal("window", window);
 });
 
 afterEach(() => {
   unmountAll();
   __setFactoryApiForTests();
   __resetFactoryStoresForTests();
+  vi.unstubAllGlobals();
   vi.useRealTimers();
 });
 
 describe("useFactoryStatus", () => {
   it("is loading, then ready with the fetched status", async () => {
-    let resolve!: (value: ReturnType<typeof status>) => void;
-    __setFactoryApiForTests(api({ status: () => new Promise((r) => (resolve = r)) }));
+    const pending = deferred<ReturnType<typeof status>>();
+    __setFactoryApiForTests(api({ status: () => pending.promise }));
     const result = await mount(useFactoryStatus);
     expect(result.current.status).toBe("loading");
     expect(result.current.data).toBeNull();
-    await act(async () => resolve(status(2)));
+    await act(async () => pending.resolve(status(2)));
     expect(result.current.status).toBe("ready");
     expect(result.current.data?.attention).toHaveLength(2);
   });
@@ -100,6 +133,23 @@ describe("useFactoryStatus", () => {
     expect(result.current.error?.message).toBe("forbidden");
   });
 
+  it("keeps the last data when a later fetch fails", async () => {
+    let fail = false;
+    __setFactoryApiForTests(
+      api({
+        status: async () => {
+          if (fail) throw new Error("down");
+          return status(2);
+        },
+      }),
+    );
+    const result = await mount(useFactoryStatus);
+    fail = true;
+    await settle(30_000);
+    expect(result.current.status).toBe("error");
+    expect(result.current.data?.attention).toHaveLength(2);
+  });
+
   it("fetches again every 30 seconds and on refresh, and not in between", async () => {
     const fetchStatus = vi.fn(async () => status(0));
     __setFactoryApiForTests(api({ status: fetchStatus }));
@@ -114,13 +164,13 @@ describe("useFactoryStatus", () => {
   });
 
   it("stops polling when unmounted, and ignores an answer that arrives after", async () => {
-    let resolve!: (value: ReturnType<typeof status>) => void;
-    const fetchStatus = vi.fn(() => new Promise<ReturnType<typeof status>>((r) => (resolve = r)));
+    const pending = deferred<ReturnType<typeof status>>();
+    const fetchStatus = vi.fn(() => pending.promise);
     __setFactoryApiForTests(api({ status: fetchStatus }));
     const errors = vi.spyOn(console, "error").mockImplementation(() => {});
     await mount(useFactoryStatus);
     unmountAll();
-    await act(async () => resolve(status(1)));
+    await act(async () => pending.resolve(status(1)));
     await settle(120_000);
     expect(fetchStatus).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
@@ -129,6 +179,44 @@ describe("useFactoryStatus", () => {
       errors.mock.calls.filter(([message]) => !String(message).includes("deprecated")),
     ).toEqual([]);
     errors.mockRestore();
+  });
+});
+
+describe("the poll follows the window", () => {
+  it("does not tick while the window is hidden, and reads on coming back to it", async () => {
+    const fetchStatus = vi.fn(async () => status(0));
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    await mount(useFactoryStatus);
+    await show(false);
+    await settle(90_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
+    await show(true);
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("joins a read in flight instead of starting another: a tick or a refresh during a slow answer", async () => {
+    const pending = deferred<ReturnType<typeof status>>();
+    const fetchStatus = vi.fn(() => pending.promise);
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    const result = await mount(useFactoryStatus);
+    await settle(30_000);
+    await act(async () => result.current.refresh());
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
+    await act(async () => pending.resolve(status(3)));
+    expect(result.current.data?.attention).toHaveLength(3);
+    await settle(30_000);
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads no more after a 404, which says the server has no factory", async () => {
+    const fetchStatus = vi.fn(notFound);
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    const result = await mount(useFactoryStatus);
+    expect(result.current.status).toBe("error");
+    await settle(90_000);
+    await show(false);
+    await show(true);
+    expect(fetchStatus).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -154,11 +242,11 @@ describe("useFactoryStatus shared by several readers", () => {
     expect(badge.current).toBe(2);
   });
 
-  it("clears its timer once both readers are gone", async () => {
+  it("stops every timer once both readers are gone", async () => {
     __setFactoryApiForTests(api({}));
     await mount(useFactoryStatus);
     await mount(useFactoryStatus);
-    expect(vi.getTimerCount()).toBe(1);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
     unmountAll();
     expect(vi.getTimerCount()).toBe(0);
   });
@@ -194,74 +282,26 @@ describe("useFactoryRuns and useFactoryRun", () => {
     expect(run).toHaveBeenCalledWith("o__r__1__1");
     expect((one.current as FactoryResource<{ skipped: number }>).data?.skipped).toBe(3);
   });
-});
 
-describe("answers that arrive out of order", () => {
-  const deferred = <T>() => {
-    let resolve!: (value: T) => void;
-    let reject!: (error: Error) => void;
-    const promise = new Promise<T>((res, rej) => {
-      resolve = res;
-      reject = rej;
-    });
-    return { promise, resolve, reject };
-  };
-
-  it("keeps the newer runs answer when an older request lands last", async () => {
-    const older = deferred<{ runs: [] }>();
-    const newer = deferred<{ runs: [] }>();
-    const calls = [older, newer];
-    __setFactoryApiForTests(
-      api({ runs: vi.fn(() => calls.shift()!.promise) as unknown as FactoryApi["runs"] }),
-    );
+  it("a refresh during a read in flight joins it, and that read's failure is the answer", async () => {
+    const pending = deferred<{ runs: [] }>();
+    const fetchRuns = vi.fn(() => pending.promise);
+    __setFactoryApiForTests(api({ runs: fetchRuns as unknown as FactoryApi["runs"] }));
     const runs = await mount(useFactoryRuns);
     await act(async () => runs.current.refresh());
-    await act(async () => newer.resolve({ runs: [] }));
-    expect(runs.current.status).toBe("ready");
-    await act(async () => older.resolve({ runs: [{ id: "stale" }] } as never));
-    expect(runs.current.data?.runs).toEqual([]);
+    expect(fetchRuns).toHaveBeenCalledTimes(1);
+    await act(async () => pending.reject(new Error("late failure")));
+    expect(runs.current.status).toBe("error");
+    expect(runs.current.error?.message).toBe("late failure");
   });
 
-  it("keeps the newer status answer when an older request lands last", async () => {
-    const older = deferred<ReturnType<typeof status>>();
-    const newer = deferred<ReturnType<typeof status>>();
-    const calls = [older, newer];
-    __setFactoryApiForTests(api({ status: vi.fn(() => calls.shift()!.promise) }));
-    const result = await mount(useFactoryStatus);
-    await act(async () => result.current.refresh());
-    await act(async () => newer.resolve(status(1)));
-    await act(async () => older.resolve(status(5)));
-    expect(result.current.data?.attention).toHaveLength(1);
-  });
-
-  it("drops a runs request that fails after a newer one succeeded", async () => {
-    const older = deferred<{ runs: [] }>();
-    const newer = deferred<{ runs: [] }>();
-    const calls = [older, newer];
-    __setFactoryApiForTests(
-      api({ runs: vi.fn(() => calls.shift()!.promise) as unknown as FactoryApi["runs"] }),
-    );
-    const runs = await mount(useFactoryRuns);
-    await act(async () => runs.current.refresh());
-    await act(async () => newer.resolve({ runs: [] }));
-    await act(async () => older.reject(new Error("late failure")));
-    expect(runs.current.status).toBe("ready");
-    expect(runs.current.error).toBeNull();
-    expect(runs.current.data?.runs).toEqual([]);
-  });
-
-  it("drops a status request that fails after a newer one succeeded", async () => {
-    const older = deferred<ReturnType<typeof status>>();
-    const newer = deferred<ReturnType<typeof status>>();
-    const calls = [older, newer];
-    __setFactoryApiForTests(api({ status: vi.fn(() => calls.shift()!.promise) }));
-    const result = await mount(useFactoryStatus);
-    await act(async () => result.current.refresh());
-    await act(async () => newer.resolve(status(1)));
-    await act(async () => older.reject(new Error("late failure")));
-    expect(result.current.status).toBe("ready");
-    expect(result.current.error).toBeNull();
-    expect(result.current.data?.attention).toHaveLength(1);
+  it("reads a run no more after a 404", async () => {
+    const run = vi.fn(notFound);
+    __setFactoryApiForTests(api({ run }));
+    const one = await mount(() => useFactoryRun("o__r__9__1"));
+    expect((one.current.error as FactoryApiError).status).toBe(404);
+    await settle(90_000);
+    expect(run).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -278,19 +318,13 @@ describe("useFactoryAttentionCount", () => {
     expect(count.current).toBe(3);
   });
 
-  it("is 0 on any error, such as an upstream server without the factory", async () => {
-    __setFactoryApiForTests(
-      api({
-        status: async () => {
-          throw new FactoryApiError(404, null, "Not found");
-        },
-      }),
-    );
+  it("is 0 when the first read fails, such as on a server without the factory", async () => {
+    __setFactoryApiForTests(api({ status: notFound }));
     const count = await mount(useFactoryAttentionCount);
     expect(count.current).toBe(0);
   });
 
-  it("drops back to 0 when a later fetch fails", async () => {
+  it("keeps the last count when a later fetch fails", async () => {
     let fail = false;
     __setFactoryApiForTests(
       api({
@@ -304,6 +338,6 @@ describe("useFactoryAttentionCount", () => {
     expect(count.current).toBe(2);
     fail = true;
     await settle(30_000);
-    expect(count.current).toBe(0);
+    expect(count.current).toBe(2);
   });
 });

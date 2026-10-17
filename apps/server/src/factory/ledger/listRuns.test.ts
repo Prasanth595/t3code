@@ -541,12 +541,13 @@ describe("listRuns", () => {
     expect(listRuns(dataDir)[0]?.step).toBe("gate-passed");
   });
 
-  it("a finished run summarised from the ends of its file has no step", () => {
+  it("a finished run has no step, read whole or from the ends of its file", () => {
     const dataDir = tempDir();
     const ledger = Ledger.create(dataDir, rid(8), { clock: ticking(T0, 1000) });
     handles.push(ledger);
     ledger.append({ event: "step_changed", data: { step: "gate-passed" } }, cause);
     ledger.finish("stuck", null, null, cause);
+    expect(readRuns(dataDir)[0]?.summary).toMatchObject({ finished: true, step: null });
     expect(listRuns(dataDir)[0]).toMatchObject({ finished: true, step: null });
   });
 
@@ -638,6 +639,7 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
     return NodePath.join(dataDir, RUNS_DIR, runIdFileName(id));
   };
   const moved = (from: string, to: string) => ({ event: "state_changed", data: { from, to } });
+  const stepped = (step: string) => ({ event: "step_changed", data: { step } });
   const opened = (pr: number) => ({
     event: "pr_opened",
     data: { pr, url: `https://example.test/pull/${pr}` },
@@ -652,15 +654,20 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
       finishedRun(
         dataDir,
         rid(1),
-        [moved("ready", "triage"), moved("triage", "building")],
+        [stepped("launch-sending"), moved("ready", "triage"), moved("triage", "building")],
         "stuck",
         null,
       ),
-      // The finished line carries the pull request.
+      // The finished line carries the pull request; a step after the last state change.
       finishedRun(
         dataDir,
         rid(2),
-        [moved("triage", "building"), opened(3), moved("building", "pr-open")],
+        [
+          moved("triage", "building"),
+          opened(3),
+          moved("building", "pr-open"),
+          stepped("gate-passed"),
+        ],
         "pr-open",
         PR_URL,
       ),
@@ -690,6 +697,7 @@ describe("listRuns: a finished run is summarised from the ends of its file", () 
       [null, null, true, "finished"],
     ]);
     expect(summaries.every((run) => run.totalMs !== null && run.startedTs !== null)).toBe(true);
+    expect(summaries.every((run) => run.step === null)).toBe(true);
   });
 
   it("skips damaged lines at both ends as the whole read does", () => {

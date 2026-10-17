@@ -30,7 +30,12 @@ export function parseRunId(id: string): ParsedRunId | null {
   return { owner, repo, issue, attempt: Number(attemptText) };
 }
 
-const textField = (data: unknown, key: string): string | null => {
+/** An error's message, or the value as text, for a notice. */
+export const messageOf = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+/** The string at `key` of an object, null for anything else. */
+export const textField = (data: unknown, key: string): string | null => {
   if (typeof data !== "object" || data === null) return null;
   const value = (data as Record<string, unknown>)[key];
   return typeof value === "string" ? value : null;
@@ -41,6 +46,18 @@ const numberField = (data: unknown, key: string): number | null => {
   const value = (data as Record<string, unknown>)[key];
   return typeof value === "number" ? value : null;
 };
+
+/**
+ * The runs the list shows before "Show all": every unfinished run, and the first `limit` finished
+ * ones in the order given (newest first), so the active runs never fall out of the window.
+ */
+export function recentWindow<T extends { readonly finished: boolean }>(
+  runs: ReadonlyArray<T>,
+  limit: number,
+): Array<T> {
+  let finished = 0;
+  return runs.filter((run) => !run.finished || finished++ < limit);
+}
 
 /** The `step` of the last `step_changed` entry that has one. */
 export function currentStep(entries: ReadonlyArray<FactoryEntry>): string | null {

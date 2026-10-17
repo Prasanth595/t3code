@@ -141,6 +141,23 @@ describe("FactoryPage", () => {
     expect(refreshRuns).toHaveBeenCalledTimes(1);
   });
 
+  it("shows every unfinished run and the 50 newest finished ones, then all on request", async () => {
+    const started = (i: number) => new Date(NOW - i * 60_000).toISOString();
+    const finished = Array.from({ length: 60 }, (_, i) =>
+      runRow({ id: `o__r__${i + 100}__1`, started_ts: started(i), finished: true }),
+    );
+    const oldButActive = runRow({ id: "o__r__1__1", started_ts: started(90), finished: false });
+    state.runs = resource({ data: { runs: [...finished, oldButActive] } });
+    const page = await render(createElement(FactoryPage));
+    const runLinks = () => page.all("a").filter((a) => a.props["data-to"] === "/factory/$runId");
+    expect(runLinks()).toHaveLength(51);
+    expect(page.text()).toContain("o__r__1__1");
+    expect(page.text()).not.toContain("o__r__159__1");
+    await act(async () => page.button("Show all 61 runs")!.props.onClick());
+    expect(runLinks()).toHaveLength(61);
+    expect(page.button("Show all 61 runs")).toBeUndefined();
+  });
+
   it("lists the runs with repo, issue, state, step, age and pull request link", async () => {
     state.runs = resource({
       data: {

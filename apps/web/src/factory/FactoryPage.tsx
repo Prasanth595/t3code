@@ -1,16 +1,15 @@
 import { useMemo, useState } from "react";
 
+import { Alert, AlertAction, AlertDescription } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
 
 import { factoryApi } from "./api";
 import { AttentionList } from "./AttentionList";
 import { FactoryFrame } from "./FactoryFrame";
 import { FactoryError, FactoryLoading } from "./FactoryNotices";
-import { formatAge } from "./format";
+import { formatAge, messageOf } from "./format";
 import { RunsTable } from "./RunsTable";
 import { useFactoryRuns, useFactoryStatus } from "./useFactoryData";
-
-const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 export function FactoryPage() {
   const status = useFactoryStatus();
@@ -52,22 +51,21 @@ export function FactoryPage() {
     body = (
       <>
         {stale ? (
-          <div
-            className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm text-muted-foreground"
-            role="alert"
-          >
-            <span className="min-w-0 flex-1 truncate">
-              Could not refresh: {messageOf(stale.error)}
-            </span>
-            <Button onClick={retry} size="sm" variant="outline">
-              Retry
-            </Button>
-          </div>
+          <Alert variant="error">
+            <AlertDescription>Could not refresh: {messageOf(stale.error)}</AlertDescription>
+            <AlertAction>
+              <Button onClick={retry} size="sm" variant="outline">
+                Retry
+              </Button>
+            </AlertAction>
+          </Alert>
         ) : null}
         {report.state === "idle" ? (
-          <p className="rounded-lg border bg-card px-3 py-2 text-sm text-muted-foreground">
-            The factory is idle{report.reason ? `: ${report.reason}` : "."}
-          </p>
+          <Alert variant="info">
+            <AlertDescription>
+              The factory is idle{report.reason ? `: ${report.reason}` : "."}
+            </AlertDescription>
+          </Alert>
         ) : null}
         <AttentionList items={report.attention} nowMs={nowMs} />
         <RunsTable nowMs={nowMs} runs={runs.data.runs} />

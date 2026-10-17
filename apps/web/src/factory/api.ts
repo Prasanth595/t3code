@@ -4,6 +4,7 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 
 import * as PrimaryEnvironmentHttpLayer from "../environments/primary/httpLayer";
 import { resolvePrimaryEnvironmentHttpUrl } from "../environments/primary/target";
+import { textField } from "./format";
 
 /** The factory's HTTP API as the server serves it (`apps/server/src/factory/t3/http.ts`). */
 
@@ -108,18 +109,24 @@ export interface FactoryApi {
 let runtime: ManagedRuntime.ManagedRuntime<HttpClient.HttpClient, never> | null = null;
 const getRuntime = () => (runtime ??= ManagedRuntime.make(PrimaryEnvironmentHttpLayer.layer));
 
+/**
+ * How long one call may wait for its answer. A server that hangs then fails the call (status 0,
+ * code `timeout`) instead of pinning a page on loading and its poll on a request that never ends.
+ */
+const DEFAULT_TIMEOUT_MS = 15_000;
+let timeoutMs = DEFAULT_TIMEOUT_MS;
+
+/** For tests: how long a call waits; no argument restores the default. */
+export const __setFactoryTimeoutForTests = (ms?: number): void => {
+  timeoutMs = ms ?? DEFAULT_TIMEOUT_MS;
+};
+
 const parseJson = (text: string): unknown => {
   try {
     return JSON.parse(text);
   } catch {
     return null;
   }
-};
-
-const field = (body: unknown, key: string): string | null => {
-  if (typeof body !== "object" || body === null) return null;
-  const value = (body as Record<string, unknown>)[key];
-  return typeof value === "string" ? value : null;
 };
 
 const call = async <T>(method: "GET" | "POST", path: string): Promise<T> => {
@@ -131,11 +138,24 @@ const call = async <T>(method: "GET" | "POST", path: string): Promise<T> => {
     );
     const text = yield* response.text;
     return { status: response.status, text };
-  });
+  }).pipe(
+    Effect.timeout(timeoutMs),
+    Effect.catchTags({
+      TimeoutError: () =>
+        Effect.fail(
+          new FactoryApiError(
+            0,
+            "timeout",
+            `The factory did not answer within ${Math.round(timeoutMs / 1000)} seconds.`,
+          ),
+        ),
+    }),
+  );
   let result: { status: number; text: string };
   try {
     result = await getRuntime().runPromise(program);
   } catch (error) {
+    if (error instanceof FactoryApiError) throw error;
     throw new FactoryApiError(
       0,
       null,
@@ -146,8 +166,8 @@ const call = async <T>(method: "GET" | "POST", path: string): Promise<T> => {
   if (result.status < 200 || result.status >= 300) {
     throw new FactoryApiError(
       result.status,
-      field(body, "code"),
-      field(body, "message") ?? `The factory answered ${result.status}.`,
+      textField(body, "code"),
+      textField(body, "message") ?? `The factory answered ${result.status}.`,
     );
   }
   return body as T;

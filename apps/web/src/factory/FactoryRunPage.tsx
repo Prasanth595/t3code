@@ -21,14 +21,13 @@ import {
   currentStep,
   labelForState,
   lastGateOutput,
+  messageOf,
   runIsFinished,
   runState,
   stateBadgeVariant,
   threadIdOf,
 } from "./format";
 import { useFactoryRun } from "./useFactoryData";
-
-const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /** Pairs each item with a key unique within the list, though two rows may read the same. */
 function keyed<T>(items: ReadonlyArray<T>, base: (item: T) => string): Array<[string, T]> {

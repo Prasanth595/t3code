@@ -1,6 +1,8 @@
 import { Link } from "@tanstack/react-router";
+import { useMemo, useState } from "react";
 
 import { Badge } from "~/components/ui/badge";
+import { Button } from "~/components/ui/button";
 import { Empty, EmptyHeader, EmptyTitle } from "~/components/ui/empty";
 import {
   Table,
@@ -12,7 +14,10 @@ import {
 } from "~/components/ui/table";
 
 import type { FactoryRunRow } from "./api";
-import { formatAge, labelForState, parseRunId, stateBadgeVariant } from "./format";
+import { formatAge, labelForState, parseRunId, recentWindow, stateBadgeVariant } from "./format";
+
+/** How many finished runs the table shows before "Show all"; the factory keeps every run ever made. */
+const RECENT_FINISHED = 50;
 
 const startedMs = (run: FactoryRunRow) =>
   run.started_ts ? Date.parse(run.started_ts) : Number.NaN;
@@ -32,6 +37,9 @@ const prLabel = (url: string) => {
 };
 
 export function RunsTable({ runs, nowMs }: { runs: ReadonlyArray<FactoryRunRow>; nowMs: number }) {
+  const [showAll, setShowAll] = useState(false);
+  const sorted = useMemo(() => [...runs].sort(newestFirst), [runs]);
+  const shown = showAll ? sorted : recentWindow(sorted, RECENT_FINISHED);
   if (runs.length === 0) {
     return (
       <Empty size="compact">
@@ -42,78 +50,85 @@ export function RunsTable({ runs, nowMs }: { runs: ReadonlyArray<FactoryRunRow>;
     );
   }
   return (
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Repo</TableHead>
-          <TableHead>Issue</TableHead>
-          <TableHead>State</TableHead>
-          <TableHead>Step</TableHead>
-          <TableHead>Age</TableHead>
-          <TableHead>Pull request</TableHead>
-          <TableHead>Run</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {[...runs].sort(newestFirst).map((run) => {
-          const parsed = parseRunId(run.id);
-          return (
-            <TableRow key={run.id}>
-              <TableCell>{parsed ? `${parsed.owner}/${parsed.repo}` : "—"}</TableCell>
-              <TableCell>
-                {parsed ? (
-                  /^[0-9]+$/.test(parsed.issue) ? (
+    <>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Repo</TableHead>
+            <TableHead>Issue</TableHead>
+            <TableHead>State</TableHead>
+            <TableHead>Step</TableHead>
+            <TableHead>Age</TableHead>
+            <TableHead>Pull request</TableHead>
+            <TableHead>Run</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {shown.map((run) => {
+            const parsed = parseRunId(run.id);
+            return (
+              <TableRow key={run.id}>
+                <TableCell>{parsed ? `${parsed.owner}/${parsed.repo}` : "—"}</TableCell>
+                <TableCell>
+                  {parsed ? (
+                    /^[0-9]+$/.test(parsed.issue) ? (
+                      <a
+                        className="underline-offset-2 hover:underline"
+                        href={`https://github.com/${parsed.owner}/${parsed.repo}/issues/${parsed.issue}`}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        #{parsed.issue}
+                      </a>
+                    ) : (
+                      parsed.issue
+                    )
+                  ) : (
+                    "—"
+                  )}
+                </TableCell>
+                <TableCell>
+                  {run.unreadable ? (
+                    <Badge variant="error">unreadable</Badge>
+                  ) : (
+                    <Badge variant={stateBadgeVariant(run.state)}>{labelForState(run.state)}</Badge>
+                  )}
+                </TableCell>
+                <TableCell>{run.step ?? run.last_event ?? "—"}</TableCell>
+                <TableCell>{formatAge(startedMs(run), nowMs)}</TableCell>
+                <TableCell>
+                  {run.pr_url?.startsWith("https://github.com/") ? (
                     <a
                       className="underline-offset-2 hover:underline"
-                      href={`https://github.com/${parsed.owner}/${parsed.repo}/issues/${parsed.issue}`}
+                      href={run.pr_url}
                       rel="noreferrer"
                       target="_blank"
                     >
-                      #{parsed.issue}
+                      {prLabel(run.pr_url)}
                     </a>
                   ) : (
-                    parsed.issue
-                  )
-                ) : (
-                  "—"
-                )}
-              </TableCell>
-              <TableCell>
-                {run.unreadable ? (
-                  <Badge variant="error">unreadable</Badge>
-                ) : (
-                  <Badge variant={stateBadgeVariant(run.state)}>{labelForState(run.state)}</Badge>
-                )}
-              </TableCell>
-              <TableCell>{run.step ?? run.last_event ?? "—"}</TableCell>
-              <TableCell>{formatAge(startedMs(run), nowMs)}</TableCell>
-              <TableCell>
-                {run.pr_url?.startsWith("https://github.com/") ? (
-                  <a
-                    className="underline-offset-2 hover:underline"
-                    href={run.pr_url}
-                    rel="noreferrer"
-                    target="_blank"
+                    run.pr_url || "—"
+                  )}
+                </TableCell>
+                <TableCell>
+                  <Link
+                    className="font-mono text-xs underline-offset-2 hover:underline"
+                    params={{ runId: run.id }}
+                    to="/factory/$runId"
                   >
-                    {prLabel(run.pr_url)}
-                  </a>
-                ) : (
-                  run.pr_url || "—"
-                )}
-              </TableCell>
-              <TableCell>
-                <Link
-                  className="font-mono text-xs underline-offset-2 hover:underline"
-                  params={{ runId: run.id }}
-                  to="/factory/$runId"
-                >
-                  {run.id}
-                </Link>
-              </TableCell>
-            </TableRow>
-          );
-        })}
-      </TableBody>
-    </Table>
+                    {run.id}
+                  </Link>
+                </TableCell>
+              </TableRow>
+            );
+          })}
+        </TableBody>
+      </Table>
+      {shown.length < sorted.length ? (
+        <Button onClick={() => setShowAll(true)} size="sm" variant="ghost">
+          Show all {sorted.length} runs
+        </Button>
+      ) : null}
+    </>
   );
 }
