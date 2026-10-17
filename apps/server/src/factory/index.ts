@@ -655,6 +655,8 @@ export interface RuntimeOptions {
   readonly restartDelay?: Duration.Input;
   /** Where the gate fetches `<owner>/<name>.git` from. Default `https://github.com`; a test passes a `file://` base. */
   readonly gateRemoteBase?: string;
+  /** Called with each world a start or reload builds, right after `liveWorld` returns: for a test that needs the pass world a reload built. */
+  readonly onWorld?: (world: PassWorld) => void;
 }
 
 /** A pass of a factory with no config to run on. */
@@ -725,6 +727,7 @@ const startFactory = (options: RuntimeOptions) =>
           },
           shared,
         );
+        options.onWorld?.(world);
         state.current = { machine, world };
         state.status = {
           state: "running",

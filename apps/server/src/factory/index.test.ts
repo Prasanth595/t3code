@@ -35,6 +35,7 @@ import {
   liveWorld,
   ownedThreads,
   wakeOn,
+  type RuntimeOptions,
 } from "./index.ts";
 import { isLedgerError } from "./ledger/errors.ts";
 import { makeCause } from "./ledger/events.ts";
@@ -43,7 +44,7 @@ import { scanMachineLog } from "./ledger/machineLog.ts";
 import { readRun } from "./ledger/read.ts";
 import { newRunId, runIdToString, runPath, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
-import type { Repo } from "./pass.ts";
+import type { PassWorld, Repo } from "./pass.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { stopRequestPath } from "./runner/stop.ts";
 import { utcSecond } from "./runner/start.ts";
@@ -95,6 +96,36 @@ const quietEvents = Layer.succeed(
 const messageText = (message: unknown): string => {
   const first = Array.isArray(message) ? message[0] : message;
   return typeof first === "string" ? first : String(first);
+};
+
+/** A building run whose session reported its pull request: the gate reads the issue, then the thread. */
+const seedReportedRun = (dataDir: string, repo: string): RunId => {
+  const run = newRunId(repo, "10", 1);
+  const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
+  ledger.append(
+    {
+      event: "session_launched",
+      data: {
+        thread_id: "thread-1",
+        worktree: null,
+        branch: null,
+        model_instance: null,
+        model: null,
+        resumed_from: null,
+      },
+    },
+    makeCause("start", "seed"),
+  );
+  ledger.append(
+    { event: "state_changed", data: { from: "triage", to: "building" } },
+    makeCause("start", "seed"),
+  );
+  ledger.append(
+    { event: "pr_opened", data: { pr: 12, url: `https://github.com/${repo}/pull/12` } },
+    makeCause("advance", "seed"),
+  );
+  ledger.close();
+  return run;
 };
 
 const VALID = `gh_config_dir: /gh
@@ -1232,34 +1263,7 @@ describe("the gate in the background", () => {
     } satisfies RunResult);
 
   /** A building run whose session reported its pull request: the gate reads the issue, then the thread. */
-  const reportedRun = (dataDir: string): RunId => {
-    const run = newRunId(REPO, "10", 1);
-    const ledger = Ledger.create(dataDir, run, { clock: () => 1_000 });
-    ledger.append(
-      {
-        event: "session_launched",
-        data: {
-          thread_id: "thread-1",
-          worktree: null,
-          branch: null,
-          model_instance: null,
-          model: null,
-          resumed_from: null,
-        },
-      },
-      makeCause("start", "seed"),
-    );
-    ledger.append(
-      { event: "state_changed", data: { from: "triage", to: "building" } },
-      makeCause("start", "seed"),
-    );
-    ledger.append(
-      { event: "pr_opened", data: { pr: 12, url: "https://github.com/rawphp/softfac/pull/12" } },
-      makeCause("advance", "seed"),
-    );
-    ledger.close();
-    return run;
-  };
+  const reportedRun = (dataDir: string): RunId => seedReportedRun(dataDir, REPO);
 
   const gateMachine: MachineConfig = {
     ghConfigDir: "/gh/rawphp",
@@ -1683,6 +1687,8 @@ describe("reloading the machine config", () => {
   /** A fake `gh` that records the argv of every call and holds the first call naming each of `repos` until released. */
   const holdingProcess = (repos: ReadonlyArray<string> = ["a/b"]) => {
     const calls: Array<string> = [];
+    /** The `GH_CONFIG_DIR` of each call, in the order of `calls`. */
+    const ghDirs: Array<string | undefined> = [];
     const holds = new Map(
       repos.map((repo) => [
         repo,
@@ -1694,6 +1700,7 @@ describe("reloading the machine config", () => {
         Effect.gen(function* () {
           const call = [input.command, ...(input.args ?? [])].join(" ");
           calls.push(call);
+          ghDirs.push(input.env?.["GH_CONFIG_DIR"]);
           const hold = [...holds].find(([repo]) => call.includes(repo))?.[1];
           if (hold !== undefined && !hold.held) {
             hold.held = true;
@@ -1706,7 +1713,7 @@ describe("reloading the machine config", () => {
         }),
     });
     const first = holds.get(repos[0]!)!;
-    return { calls, process, holds, entered: first.entered, release: first.release };
+    return { calls, ghDirs, process, holds, entered: first.entered, release: first.release };
   };
 
   /** The runtime over a temp base dir holding `config` (or no file); `write` replaces the file. */
@@ -1714,6 +1721,7 @@ describe("reloading the machine config", () => {
     config: string | undefined,
     process: FactoryProcess["Service"],
     events: Layer.Layer<FactoryEvents> = quietEvents,
+    options: RuntimeOptions = {},
   ) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1724,7 +1732,7 @@ describe("reloading the machine config", () => {
       const machineConfigPath = join(factoryDir, "config.yml");
       if (config !== undefined) yield* fs.writeFileString(machineConfigPath, config);
       const context = yield* Layer.build(
-        FactoryRuntime.pipe(
+        factoryRuntime(options).pipe(
           Layer.provide(
             Layer.succeed(Paths.FactoryPaths, {
               baseDir,
@@ -1741,12 +1749,15 @@ describe("reloading the machine config", () => {
       );
       return {
         loop: Context.get(context, FactoryLoop),
+        factoryDir,
         file: machineConfigPath,
         write: (text: string) => fs.writeFileString(machineConfigPath, text),
       };
     });
 
-  const OTHER = VALID.replace("a/b", "c/d").replace("/b", "/d");
+  const OTHER = VALID.replace("a/b", "c/d")
+    .replace("/b", "/d")
+    .replace("gh_config_dir: /gh", "gh_config_dir: /gh2");
 
   it.effect("goes from idle to running when a valid file appears and is reloaded", () =>
     Effect.scoped(
@@ -1804,7 +1815,10 @@ describe("reloading the machine config", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const { calls, process, holds, entered, release } = holdingProcess(["a/b", "c/d"]);
+          const { calls, ghDirs, process, holds, entered, release } = holdingProcess([
+            "a/b",
+            "c/d",
+          ]);
           const { loop, write } = yield* started(VALID, process);
           yield* Deferred.await(entered);
           const first = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
@@ -1825,8 +1839,55 @@ describe("reloading the machine config", () => {
           const lastOld = calls.findLastIndex((call) => call.includes("a/b"));
           const firstNew = calls.findIndex((call) => call.includes("c/d"));
           assert.ok(lastOld >= 0 && firstNew > lastOld, calls.join("\n"));
+          // The world follows the config too: the pass under way keeps its login, the next one has the new.
+          calls.forEach((call, at) => {
+            if (call.includes("a/b")) assert.strictEqual(ghDirs[at], "/gh", call);
+            if (call.includes("c/d")) assert.strictEqual(ghDirs[at], "/gh2", call);
+          });
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("a reload's world sees the gates the world before it started", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const hold = yield* Deferred.make<void>();
+        const process = FactoryProcess.of({
+          run: () =>
+            Deferred.await(hold).pipe(
+              Effect.andThen(
+                Effect.fail(new RunSpawnError({ shell: false, cause: new Error("gh not found") })),
+              ),
+            ),
+        });
+        const worlds: Array<PassWorld> = [];
+        const oneGate = VALID.replace("model:", "max_concurrent_gates: 1\nmodel:");
+        const { loop, factoryDir, write } = yield* started(oneGate, process, quietEvents, {
+          onWorld: (world) => worlds.push(world),
+        });
+        const repo: Repo = {
+          watched: { repo: "a/b", path: "/b" },
+          project: timeLimitOnlyProjectConfig(),
+          trackerUser: "rawphp",
+        };
+        const run = seedReportedRun(factoryDir, "a/b");
+        const other = newRunId("a/b", "11", 1);
+        const worldA = worlds[0]!;
+        // The gate holds on its first gh call, so it is running when the file changes.
+        assert.deepStrictEqual(yield* worldA.gate(repo, run), { kind: "started" });
+        yield* write(oneGate.replace("gh_config_dir", "poll_seconds: 30\ngh_config_dir"));
+        yield* loop.reload;
+        const worldB = worlds[1]!;
+        assert.notStrictEqual(worldB, worldA);
+        assert.strictEqual(worldB.gateRunning(run), true);
+        assert.deepStrictEqual(yield* worldB.gate(repo, other), {
+          kind: "queued",
+          running: 1,
+          max: 1,
+        });
+        yield* Deferred.succeed(hold, undefined);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("repoConfigs holds the errors of a repo whose project config could not be read", () =>
