@@ -19,7 +19,8 @@ import {
 import { useNavigation } from "@react-navigation/native";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { useThreadShell } from "../../state/entities";
-import { useRemoteEnvironmentRuntime } from "../../state/use-remote-environment-registry";
+import { useAtomValue } from "@effect/atom-react";
+import { serverEnvironment } from "../../state/server";
 
 import { useCallback, useMemo } from "react";
 import { useEnvironmentScope } from "../../state/session";
@@ -124,12 +125,13 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     AuthSourceControlWriteScope,
   );
   const threadId = props.threadId;
-  const environment = useRemoteEnvironmentRuntime(EnvironmentId.make(String(environmentId)));
+  const settings = useAtomValue(
+    serverEnvironment.lastKnownSettingsValueAtom(EnvironmentId.make(String(environmentId))),
+  );
   const thread = useThreadShell({
     environmentId: EnvironmentId.make(String(environmentId)),
     threadId: ThreadId.make(String(threadId)),
   });
-  const settings = environment?.serverConfig?.settings;
   const pullRequestCreationEnabled = settings
     ? resolveProjectSettings(settings, thread?.projectId ?? null).settings
         .pullRequestCreationEnabled === true

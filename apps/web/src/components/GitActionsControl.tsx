@@ -1007,6 +1007,9 @@ export default function GitActionsControl({
   );
   const canOperateThread = useEnvironmentScope(activeEnvironmentId, AuthOrchestrationOperateScope);
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(activeEnvironmentId));
+  const sourceControlSettings = useAtomValue(
+    serverEnvironment.lastKnownSettingsValueAtom(activeEnvironmentId),
+  );
   const openInPreferredEditor = useOpenInPreferredEditor(
     activeEnvironmentId,
     serverConfig?.availableEditors ?? [],
@@ -1137,9 +1140,9 @@ export default function GitActionsControl({
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
   const gitStatusForActions = gitStatus;
   const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
-  const pullRequestCreationEnabled = serverConfig?.settings
+  const pullRequestCreationEnabled = sourceControlSettings
     ? resolveProjectSettings(
-        serverConfig.settings,
+        sourceControlSettings,
         activeServerThread?.projectId ?? activeDraftThread?.projectId ?? null,
       ).settings.pullRequestCreationEnabled === true
     : false;
@@ -1287,10 +1290,10 @@ export default function GitActionsControl({
       const canRunAction = (candidate: GitStackedAction) => {
         if (candidate !== "create_pr" && candidate !== "commit_push_pr") return true;
         const currentSettings = appAtomRegistry.get(
-          serverEnvironment.configValueAtom(activeEnvironmentId),
-        )?.settings;
+          serverEnvironment.lastKnownSettingsValueAtom(activeEnvironmentId),
+        );
         return (
-          currentSettings !== undefined &&
+          currentSettings !== null &&
           resolveProjectSettings(
             currentSettings,
             activeServerThread?.projectId ?? activeDraftThread?.projectId ?? null,

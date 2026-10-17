@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
   }[],
   toasts: [] as { type?: string; description?: string; actionProps?: { onClick: () => void } }[],
   settings: undefined as ServerSettings | undefined,
+  currentConfigAvailable: true,
   toastCta: undefined as GitRunStackedActionToastCta | undefined,
   afterAction: undefined as (() => void) | undefined,
   openedPrs: [] as string[],
@@ -29,9 +30,11 @@ vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: unknown) =>
     atom === "vcs-state"
       ? { isRunning: false }
-      : atom === "server-config"
-        ? { settings: state.settings }
-        : null,
+      : atom === "last-known-settings"
+        ? (state.settings ?? null)
+        : atom === "server-config" && state.currentConfigAvailable
+          ? { settings: state.settings }
+          : null,
 }));
 vi.mock("~/state/entities", () => ({
   useThreadProjection: () => null,
@@ -49,10 +52,20 @@ vi.mock("~/state/session", () => ({
 }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
 vi.mock("~/state/server", () => ({
-  serverEnvironment: { configValueAtom: () => "server-config" },
+  serverEnvironment: {
+    configValueAtom: () => "server-config",
+    lastKnownSettingsValueAtom: () => "last-known-settings",
+  },
 }));
 vi.mock("~/rpc/atomRegistry", () => ({
-  appAtomRegistry: { get: () => ({ settings: state.settings }) },
+  appAtomRegistry: {
+    get: (atom: unknown) =>
+      atom === "last-known-settings"
+        ? (state.settings ?? null)
+        : state.currentConfigAvailable
+          ? { settings: state.settings }
+          : null,
+  },
 }));
 vi.mock("~/state/sourceControl", () => ({ sourceControlEnvironment: { discovery: () => null } }));
 vi.mock("~/state/vcs", () => ({
@@ -217,6 +230,7 @@ beforeEach(() => {
   state.actions = [];
   state.toasts = [];
   state.settings = { ...DEFAULT_SERVER_SETTINGS };
+  state.currentConfigAvailable = true;
   state.toastCta = {
     kind: "run_action",
     label: "Push & create PR",
@@ -316,7 +330,7 @@ describe("PR creation in result notifications", () => {
   );
 
   it.each(["create_pr", "commit_push_pr"] as const)(
-    "blocks a retained %s action while current settings are unavailable",
+    "blocks a retained %s action when there are no known settings",
     async (kind) => {
       state.toastCta = { kind: "run_action", label: "Create PR", action: { kind } };
       const renderer = await renderActions("first", "/first");
@@ -327,6 +341,26 @@ describe("PR creation in result notifications", () => {
       const previousActionCount = state.actions.length;
       await act(async () => toast.actionProps!.onClick());
       expect(state.actions).toHaveLength(previousActionCount);
+    },
+  );
+
+  it.each([true, false])(
+    "keeps the last known PR preference (%s) while current configuration reloads",
+    async (enabled) => {
+      state.settings = { ...DEFAULT_SERVER_SETTINGS, pullRequestCreationEnabled: enabled };
+      const renderer = await renderActions("first", "/first");
+      state.currentConfigAvailable = false;
+      await act(async () => {
+        renderer.update(createElement(MemoGitActionsControl, props("first", "/first")));
+      });
+      await clickQuickAction(renderer);
+      expect(state.actions.at(-1)?.input.action).toBe(enabled ? "commit_push_pr" : "commit_push");
+      expect(Boolean(state.toasts.at(-1)?.actionProps)).toBe(enabled);
+      if (enabled) {
+        await act(async () => state.toasts.at(-1)!.actionProps!.onClick());
+        expect(state.actions).toHaveLength(2);
+        expect(state.actions.at(-1)?.input.action).toBe("commit_push_pr");
+      }
     },
   );
 
@@ -344,7 +378,7 @@ describe("PR creation in result notifications", () => {
     expect(state.actions.at(-1)?.input.action).toBe("commit_push_pr");
   });
 
-  it("omits a PR notification if settings disappear while an action runs", async () => {
+  it("omits a PR notification if there are no known settings when an action finishes", async () => {
     state.afterAction = () => {
       state.settings = undefined;
     };

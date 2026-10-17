@@ -1,3 +1,5 @@
+import { useAtomValue } from "@effect/atom-react";
+import { serverEnvironment } from "../../../state/server";
 import * as Dialog from "../../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../../native/useOpenPullRequest";
 import {
@@ -88,7 +90,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
       ),
     [selectedThread?.pullRequests, supportsLinkedPrSnapshots],
   );
-  const settings = selectedEnvironmentRuntime?.serverConfig?.settings;
+  const settings = useAtomValue(serverEnvironment.lastKnownSettingsValueAtom(environmentId));
   const pullRequestCreationEnabled = settings
     ? resolveProjectSettings(settings, selectedThread?.projectId ?? null).settings
         .pullRequestCreationEnabled === true

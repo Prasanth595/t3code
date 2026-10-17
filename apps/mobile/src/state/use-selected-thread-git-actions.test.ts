@@ -60,10 +60,15 @@ vi.mock("./queries", () => ({
 }));
 vi.mock("./use-atom-command", () => ({ useAtomCommand: (command: unknown) => command }));
 vi.mock("./atom-registry", () => ({
-  appAtomRegistry: { get: () => (state.settings ? { settings: state.settings } : null) },
+  appAtomRegistry: {
+    get: (atom: unknown) => (atom === "last-known-settings" ? (state.settings ?? null) : null),
+  },
 }));
 vi.mock("./server", () => ({
-  serverEnvironment: { configValueAtom: (environmentId: unknown) => environmentId },
+  serverEnvironment: {
+    configValueAtom: () => "current-settings",
+    lastKnownSettingsValueAtom: () => "last-known-settings",
+  },
 }));
 vi.mock("./use-remote-environment-registry", () => ({ setPendingConnectionError: () => {} }));
 vi.mock("./use-vcs-action-state", () => ({
@@ -298,7 +303,7 @@ describe("thread Git mutation permissions", () => {
   });
 
   it.each(["create_pr", "commit_push_pr"] as const)(
-    "rechecks settings before dispatching a retained %s action",
+    "rechecks the last known settings before dispatching a retained %s action",
     async (action) => {
       const actions = useSelectedThreadGitActions();
       state.settings = { ...DEFAULT_SERVER_SETTINGS, pullRequestCreationEnabled: false };

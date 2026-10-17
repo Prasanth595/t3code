@@ -382,8 +382,8 @@ export function useSelectedThreadGitActions() {
     async (input: GitActionRequestInput): Promise<GitRunStackedActionResult | null> => {
       if (input.action === "create_pr" || input.action === "commit_push_pr") {
         const currentSettings = appAtomRegistry.get(
-          serverEnvironment.configValueAtom(selectedThread?.environmentId ?? null),
-        )?.settings;
+          serverEnvironment.lastKnownSettingsValueAtom(selectedThread?.environmentId ?? null),
+        );
         if (
           !currentSettings ||
           resolveProjectSettings(currentSettings, selectedThread?.projectId ?? null).settings
