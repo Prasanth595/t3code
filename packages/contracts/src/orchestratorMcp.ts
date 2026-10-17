@@ -38,6 +38,8 @@ import {
 } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
+import { ServerProviderUsageWindow } from "./providerUsageLimits.ts";
+
 const OrchestratorMcpPrompt = TrimmedNonEmptyString.check(Schema.isMaxLength(120_000)).annotate({
   description: "Complete task or message text for the target agent.",
 });
@@ -539,6 +541,46 @@ export const OrchestratorMcpThreadInterruptResult = Schema.Struct({
 });
 export type OrchestratorMcpThreadInterruptResult = typeof OrchestratorMcpThreadInterruptResult.Type;
 
+/** Successful observation time stays distinct from the passive inventory read. */
+const OrchestratorMcpUsageHeadroom = Schema.Struct({
+  headroom: Schema.Literals(["ok", "low", "exhausted", "unknown"]),
+  summary: Schema.String,
+  observedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  ageMs: Schema.optional(Schema.NullOr(Schema.Number)),
+  windows: Schema.optional(Schema.Array(ServerProviderUsageWindow)),
+  source: Schema.optional(Schema.Literals(["provider", "muse", "unavailable"])),
+  readCost: Schema.optional(Schema.Literal("passive")),
+});
+
+export const OrchestratorMcpHostCapacity = Schema.Struct({
+  observedAtMs: Schema.Number,
+  hostId: Schema.String,
+  bootId: Schema.NullOr(Schema.String),
+  cpu: Schema.Struct({
+    utilization: Schema.NullOr(Schema.Number),
+    count: Schema.Number,
+    loadAverage1m: Schema.Number,
+    saturated: Schema.NullOr(Schema.Boolean),
+  }),
+  memory: Schema.Struct({
+    totalBytes: Schema.Number,
+    availableBytes: Schema.NullOr(Schema.Number),
+    pressure: Schema.Literals(["normal", "warning", "critical", "unknown"]),
+  }),
+  disk: Schema.Struct({
+    path: Schema.String,
+    availableBytes: Schema.NullOr(Schema.Number),
+    floorBytes: Schema.Number,
+  }),
+  buildLock: Schema.Struct({
+    path: Schema.String,
+    state: Schema.Literals(["available", "held", "unknown"]),
+  }),
+  ready: Schema.Boolean,
+  reasons: Schema.Array(Schema.String),
+});
+export type OrchestratorMcpHostCapacity = typeof OrchestratorMcpHostCapacity.Type;
+
 export const OrchestratorMcpProviderCapability = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   driverKind: ProviderDriverKind,
@@ -549,6 +591,8 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
       label: Schema.NullOr(Schema.String),
       /** Model options a target may select (for example reasoning effort). */
       options: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
+      /** Live windows applicable to this model; provider usage stays aggregate. */
+      usage: Schema.optional(OrchestratorMcpUsageHeadroom),
     }),
   ),
   canRunChildTask: Schema.Boolean,
@@ -559,12 +603,7 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
    * `low` keeps it for work only it can do, `exhausted` skips it until reset.
    * Optional so clients can decode responses from older servers.
    */
-  usage: Schema.optional(
-    Schema.Struct({
-      headroom: Schema.Literals(["ok", "low", "exhausted", "unknown"]),
-      summary: Schema.String,
-    }),
-  ),
+  usage: Schema.optional(OrchestratorMcpUsageHeadroom),
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
 
@@ -577,6 +616,7 @@ export const OrchestratorMcpCapabilitiesResult = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   providers: Schema.Array(OrchestratorMcpProviderCapability),
+  hostCapacity: Schema.optional(OrchestratorMcpHostCapacity),
   features: Schema.Struct({
     appOwnedSubagents: Schema.Boolean,
     asyncPolling: Schema.Boolean,

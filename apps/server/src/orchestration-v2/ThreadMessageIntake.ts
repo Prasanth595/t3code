@@ -17,6 +17,7 @@ function dispatchWasNotAccepted(
   error: Orchestrator.OrchestratorV2Error | ThreadManagement.ThreadManagementError,
 ) {
   switch (error._tag) {
+    case "AdmissionDrainingError":
     case "OrchestratorCommandRejectedError":
     case "OrchestratorProjectionError":
     case "OrchestratorProviderAdapterError":

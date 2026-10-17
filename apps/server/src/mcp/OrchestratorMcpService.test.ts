@@ -1504,8 +1504,12 @@ describe("OrchestratorMcpService provider resolution", () => {
         >,
       ) =>
         effect.pipe(
-          Effect.provide(git),
-          Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))),
+          Effect.provide(
+            Layer.mergeAll(
+              git,
+              OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies)),
+            ),
+          ),
         );
       return { dispatched, worktrees, projectLookups, probes, worktreeScope, run };
     };

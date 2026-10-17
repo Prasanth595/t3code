@@ -418,8 +418,7 @@ const harness = (world: World, role: Role, artifactDirectory: string, options: H
         RuntimeAdapter.layerFactsPort.pipe(Layer.provide(layerAdapter)),
         PersistedEvents.layer,
         PersistedReceipts.layer,
-        layerDatabase,
-      ),
+      ).pipe(Layer.provideMerge(layerDatabase)),
     ),
   );
   const layerTransfer = TransferStore.layer.pipe(
@@ -447,8 +446,7 @@ const harness = (world: World, role: Role, artifactDirectory: string, options: H
         Artifacts.layerFilesystemManagerHandoffArtifactPort(artifactDirectory),
         PersistedEvents.layer,
         PersistedReceipts.layer,
-        layerDatabase,
-      ),
+      ).pipe(Layer.provideMerge(layerDatabase)),
     ),
   );
   const layerMissions = MissionService.layer.pipe(
@@ -461,8 +459,7 @@ const harness = (world: World, role: Role, artifactDirectory: string, options: H
           environmentId: EnvironmentId.make("env-1"),
           controllerThreadId: INCUMBENT,
         }),
-        layerDatabase,
-      ),
+      ).pipe(Layer.provideMerge(layerDatabase)),
     ),
   );
   return Layer.mergeAll(

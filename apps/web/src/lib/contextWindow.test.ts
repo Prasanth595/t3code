@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
-import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "./contextWindow";
+import {
+  deriveLatestContextWindowSnapshot,
+  formatContextWindowTokens,
+  retainContextWindowSnapshotWhileCompacting,
+} from "./contextWindow";
 
 describe("V2 context window presentation", () => {
   it("keeps unreported usage unknown", () => {
@@ -91,5 +95,35 @@ describe("live provider-turn usage (#8144)", () => {
     });
     expect(snapshot?.maxTokens).toBeNull();
     expect(snapshot?.usedPercentage).toBeNull();
+  });
+});
+
+describe("retainContextWindowSnapshotWhileCompacting", () => {
+  const held: { usedPercentage: number | null; sampledAt: string | null } = {
+    usedPercentage: 32,
+    sampledAt: "2026-08-27T00:00:00.000Z",
+  };
+
+  it("keeps the last reading when compaction has no new sample", () => {
+    expect(
+      retainContextWindowSnapshotWhileCompacting(held, {
+        usedPercentage: 8,
+        sampledAt: null,
+      }),
+    ).toEqual(held);
+  });
+
+  it("accepts a newer usage sample", () => {
+    const next = { usedPercentage: 8, sampledAt: "2026-08-27T00:01:00.000Z" };
+    expect(retainContextWindowSnapshotWhileCompacting(held, next)).toEqual(next);
+  });
+
+  it("stays unknown when usage was never reported", () => {
+    expect(
+      retainContextWindowSnapshotWhileCompacting(null, {
+        usedPercentage: null,
+        sampledAt: null,
+      }),
+    ).toBeNull();
   });
 });

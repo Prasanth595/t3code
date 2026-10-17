@@ -1,10 +1,5 @@
 /** Offline acceptance only. No listener, installed runtime, provider CLI, or credential store. */
 import * as NodeAssert from "node:assert";
-import * as NodeChildProcess from "node:child_process";
-import * as NodeCrypto from "node:crypto";
-import * as NodeFSP from "node:fs/promises";
-import * as NodeFS from "node:fs";
-import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
@@ -21,6 +16,11 @@ import {
   TeamId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -55,7 +55,11 @@ import * as MissionService from "../MissionService.ts";
 import * as Orchestrator from "../Orchestrator.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectStore from "../ProjectStore.ts";
-import type { ProviderAdapterV2Event, ProviderAdapterV2Shape } from "../ProviderAdapter.ts";
+import {
+  ProviderAdapterTurnStartError,
+  type ProviderAdapterV2Event,
+  type ProviderAdapterV2Shape,
+} from "../ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
 import * as ProviderRuntimeRecoveryService from "../ProviderRuntimeRecoveryService.ts";
 import * as RuntimePolicy from "../RuntimePolicy.ts";
@@ -64,8 +68,6 @@ import * as ProviderReplayHarness from "./ProviderReplayHarness.ts";
 
 export const I89_BYTES = "No Fun I89 offline fixture v1\n";
 export const I89_SHA256 = "6109fd2957d82793fa1f5b610049509a5df8c8c7da8f7f9abe101fee8a84d829";
-const hash = (bytes: string | Uint8Array) =>
-  NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 const baseCommit = "8850dc58c78ce38f5e9cce7526e4b2d9f3581ddf";
 const missionId = MissionId.make("combined-i89-offline-v1");
 const projectId = ProjectId.make("i89-project");
@@ -80,6 +82,11 @@ const authority = { teamId, environmentId, controllerThreadId: manager };
 const authorityRef = { source: "mission-council", ref: "i89-offline-fixture-v1" } as const;
 const decodeMission = Schema.decodeUnknownSync(Mission);
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const encodePrettyJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown, { space: 2 }));
+const decodeMissionJson = Schema.decodeUnknownSync(Schema.fromJsonString(Mission));
+const decodeFailureJson = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ code: Schema.String })),
+);
 const client = McpSchema.McpServerClient.of({
   clientId: 1,
   protocolVersion: "2025-06-18",
@@ -110,53 +117,57 @@ const issue = (threadId: ThreadId) =>
     return scope;
   });
 const body = <A>(result: McpSchema.CallToolResult): A => {
-  NodeAssert.strict.equal(result.isError, false, JSON.stringify(result));
+  NodeAssert.strict.equal(result.isError, false, encodeJson(result));
   return result.structuredContent as A;
 };
 const failureCode = (result: McpSchema.CallToolResult) => {
   NodeAssert.strict.equal(result.isError, true);
   const item = result.content[0];
   NodeAssert.strict(item?.type === "text");
-  return (JSON.parse(item.text) as { code: string }).code;
+  return decodeFailureJson(item.text).code;
 };
 
 /** Requires an existing owner-selected evidence directory; refuses symlinks and runtime homes. */
-export async function runI89OfflineFixture(laneDirectory: string) {
-  const lane = NodePath.resolve(laneDirectory);
+export const runI89OfflineFixture = Effect.fnUntraced(function* (laneDirectory: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const crypto = yield* Crypto.Crypto;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const hash = (bytes: string | Uint8Array) =>
+    crypto
+      .digest("SHA-256", typeof bytes === "string" ? new TextEncoder().encode(bytes) : bytes)
+      .pipe(Effect.map((digest) => Buffer.from(digest).toString("hex")));
+  const lane = path.resolve(laneDirectory);
   NodeAssert.strict.equal(
-    await NodeFSP.realpath(lane),
+    yield* fs.realPath(lane),
     lane,
     "Lane must be a real directory, not a symlink",
   );
   NodeAssert.strict(!/(^|\/)\.(?:t3|nofun-t3)(\/|$)/.test(lane), "Runtime homes are forbidden");
-  const directory = await NodeFSP.mkdtemp(NodePath.join(lane, "run-"));
-  const workspace = NodePath.join(directory, "scratch");
-  await NodeFSP.mkdir(workspace);
-  const output = NodePath.join(workspace, "result.txt");
-  const executor = NodePath.join(directory, "executor.cjs");
-  const executorBytes = `const fs = require("node:fs");\nfs.writeFileSync(process.argv[2], ${JSON.stringify(I89_BYTES)}, { flag: "wx", mode: 0o600 });\n`;
-  await NodeFSP.writeFile(executor, executorBytes, { mode: 0o600 });
-  const executable = await NodeFSP.realpath(process.execPath);
+  const directory = yield* fs.makeTempDirectory({ directory: lane, prefix: "run-" });
+  const workspace = path.join(directory, "scratch");
+  yield* fs.makeDirectory(workspace);
+  const output = path.join(workspace, "result.txt");
+  const executor = path.join(directory, "executor.cjs");
+  const executorBytes = `const fs = require("node:fs");\nfs.writeFileSync(process.argv[2], ${encodeJson(I89_BYTES)}, { flag: "wx", mode: 0o600 });\n`;
+  yield* fs.writeFileString(executor, executorBytes, { mode: 0o600 });
+  const executable = yield* fs.realPath(process.execPath);
   const config = {
     kind: "deterministic_executable",
     executable,
-    executableSha256: hash(await NodeFSP.readFile(executable)),
+    executableSha256: yield* hash(yield* fs.readFile(executable)),
     args: [executor, output],
-    scriptSha256: hash(executorBytes),
+    scriptSha256: yield* hash(executorBytes),
     timeoutMs: 10000,
     maxOutputBytes: 65536,
     environment: {},
     expectedSha256: I89_SHA256,
   };
-  await NodeFSP.writeFile(
-    NodePath.join(directory, "executor.json"),
-    JSON.stringify(config, null, 2),
-    {
-      mode: 0o600,
-    },
-  );
-  const policyFile = NodePath.join(directory, "mission-mcp-policy.json");
-  await NodeFSP.writeFile(
+  yield* fs.writeFileString(path.join(directory, "executor.json"), encodePrettyJson(config), {
+    mode: 0o600,
+  });
+  const policyFile = path.join(directory, "mission-mcp-policy.json");
+  yield* fs.writeFileString(
     policyFile,
     encodeJson({
       company: "nofun",
@@ -170,7 +181,7 @@ export async function runI89OfflineFixture(laneDirectory: string) {
     }),
     { mode: 0o600 },
   );
-  const databasePath = NodePath.join(directory, "statev2.sqlite");
+  const databasePath = path.join(directory, "statev2.sqlite");
   let workerStarts = 0;
   let childThreadId: ThreadId | undefined;
   let admissionRequest: MissionAdmissionRequest | undefined;
@@ -184,7 +195,9 @@ export async function runI89OfflineFixture(laneDirectory: string) {
   const record = (step: string, value: unknown) => {
     receipts.push({ step, value });
   };
-  const now = Date.now();
+  const instant = yield* DateTime.now;
+  const now = DateTime.toEpochMillis(instant);
+  const nowIso = DateTime.formatIso(instant);
   const facts = (): MissionAdmissionStore.MissionAdmissionTrustedFacts => ({
     taskNecessary: true,
     nowMs: now,
@@ -209,7 +222,7 @@ export async function runI89OfflineFixture(laneDirectory: string) {
       supportedModelIds: [selection.model],
     },
     usageLimits: {
-      checkedAt: new Date(now).toISOString(),
+      checkedAt: nowIso,
       windows: [{ id: "five_hour", kind: "session", label: "fixture", usedPercent: 0 }],
     },
     usageMaxObservationAgeMs: 30000,
@@ -318,19 +331,49 @@ export async function runI89OfflineFixture(laneDirectory: string) {
                 if (turn.threadId === manager) return; // synthetic parent stays open; no executor or model
                 NodeAssert.strict.equal(turn.threadId, childThreadId);
                 NodeAssert.strict.equal(++workerStarts, 1, "Worker must execute once");
-                NodeAssert.strict.equal(hash(NodeFS.readFileSync(executor)), config.scriptSha256);
                 NodeAssert.strict.equal(
-                  hash(NodeFS.readFileSync(executable)),
+                  yield* hash(yield* fs.readFile(executor)),
+                  config.scriptSha256,
+                );
+                NodeAssert.strict.equal(
+                  yield* hash(yield* fs.readFile(executable)),
                   config.executableSha256,
                 );
-                NodeChildProcess.execFileSync(executable, config.args, {
-                  cwd: workspace,
-                  env: {},
-                  timeout: config.timeoutMs,
-                  maxBuffer: config.maxOutputBytes,
-                  stdio: "pipe",
-                });
-                NodeAssert.strict.equal(hash(NodeFS.readFileSync(output)), I89_SHA256);
+                yield* Effect.scoped(
+                  Effect.gen(function* () {
+                    const child = yield* spawner.spawn(
+                      ChildProcess.make(executable, config.args, {
+                        cwd: workspace,
+                        env: config.environment,
+                        extendEnv: false,
+                        stdin: "ignore",
+                        stdout: "pipe",
+                        stderr: "pipe",
+                        forceKillAfter: "1 second",
+                      }),
+                    );
+                    const drain = (stream: typeof child.stdout) =>
+                      Stream.runFoldEffect(
+                        stream,
+                        () => 0,
+                        (size, chunk) =>
+                          Effect.sync(() => {
+                            const total = size + chunk.byteLength;
+                            NodeAssert.strict(
+                              total <= config.maxOutputBytes,
+                              "Executor output limit exceeded",
+                            );
+                            return total;
+                          }),
+                      );
+                    const [, , code] = yield* Effect.all(
+                      [drain(child.stdout), drain(child.stderr), child.exitCode],
+                      { concurrency: "unbounded" },
+                    );
+                    NodeAssert.strict.equal(code, 0, "Executor must exit successfully");
+                  }),
+                ).pipe(Effect.timeout(config.timeoutMs));
+                NodeAssert.strict.equal(yield* hash(yield* fs.readFile(output)), I89_SHA256);
                 yield* Queue.offer(events, {
                   type: "message.updated",
                   driver,
@@ -342,7 +385,7 @@ export async function runI89OfflineFixture(laneDirectory: string) {
                     role: "assistant",
                     createdBy: "agent",
                     creationSource: "provider",
-                    text: `result.txt sha256:${hash(NodeFS.readFileSync(output))}`,
+                    text: `result.txt sha256:${yield* hash(yield* fs.readFile(output))}`,
                     attachments: [],
                     streaming: false,
                     createdAt: date,
@@ -379,7 +422,18 @@ export async function runI89OfflineFixture(laneDirectory: string) {
                   failure: null,
                   threadDisposition: "reusable",
                 });
-              }),
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterTurnStartError({
+                      driver,
+                      threadId: turn.threadId,
+                      providerThreadId: turn.providerThread.id,
+                      runId: turn.runId,
+                      cause,
+                    }),
+                ),
+              ),
             steerTurn: () => Effect.void,
             interruptTurn: () => Effect.void,
             respondToRuntimeRequest: () => Effect.void,
@@ -394,7 +448,7 @@ export async function runI89OfflineFixture(laneDirectory: string) {
       ProviderAdapterRegistry.layerFromAdapters([adapter]),
       {
         databaseLayer: database,
-        baseDirectory: NodePath.join(directory, "server"),
+        baseDirectory: path.join(directory, "server"),
         runEffectWorker: false,
       },
     ).pipe(
@@ -412,7 +466,7 @@ export async function runI89OfflineFixture(laneDirectory: string) {
         ),
       ),
     );
-    const configLayer = ServerConfig.layerTest(workspace, NodePath.join(directory, "server")).pipe(
+    const configLayer = ServerConfig.layerTest(workspace, path.join(directory, "server")).pipe(
       Layer.provide(NodeServices.layer),
     );
     const infrastructure = Layer.mergeAll(
@@ -476,389 +530,378 @@ export async function runI89OfflineFixture(laneDirectory: string) {
   });
   let originalCreate: Record<string, unknown> | undefined;
   let acceptedRevision = 0;
-  await Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        const projects = yield* ProjectStore.ProjectStoreV2;
-        yield* projects.apply({
-          sequence: 1,
-          eventId: EventId.make("i89-project-created"),
-          aggregateKind: "project",
-          aggregateId: projectId,
-          occurredAt: new Date(now).toISOString(),
-          commandId: null,
-          causationEventId: null,
-          correlationId: null,
-          metadata: {},
-          type: "project.created",
-          payload: {
-            projectId,
-            title: "I89 offline only",
-            workspaceRoot: workspace,
-            defaultModelSelection: null,
-            scripts: [],
-            createdAt: new Date(now).toISOString(),
-            updatedAt: new Date(now).toISOString(),
-          },
-        });
-        const threads = yield* ThreadManagementService.ThreadManagementService;
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        for (const threadId of [manager, outsider])
-          yield* threads.dispatch({
-            type: "thread.create",
-            commandId: CommandId.make(`create:${threadId}`),
-            threadId,
-            projectId,
-            title: threadId,
-            modelSelection: selection,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: workspace,
-            createdBy: "user",
-            creationSource: "web",
-          });
-        const scope = yield* issue(manager);
-        record("mission_get:missing", body(yield* call(scope, "mission_get", { id: missionId })));
-        const mission = decodeMission({
-          schemaVersion: 1,
-          id: missionId,
-          revision: 0,
-          teamId,
-          authorityEnvironmentId: environmentId,
-          bindings: [{ projectId, workspaceRoot: workspace, baseCommit, ancestry: [baseCommit] }],
-          intent: {
-            outcome: "Produce one exact scratch file offline",
-            scope: [workspace],
-            exclusions: ["installed runtime", "network", "models", "credentials"],
-            authorityRefs: [authorityRef],
-            acceptanceCriteria: [{ id: "exact-hash", text: `result.txt SHA-256 ${I89_SHA256}` }],
-            decisions: [],
-          },
-          integrationTarget: { summary: "Scratch output only; no integration or install" },
-          managers: { delivery: { threadId: manager, epoch: 1 } },
-          status: "active",
-          tasks: [
-            {
-              id: "one",
-              projectId,
-              title: "Write exact fixture bytes",
-              specHash: hash(I89_BYTES),
-              dependencyHashes: [],
-              dependencies: [],
-              acceptanceIds: ["exact-hash"],
-              updatedAt: new Date(now).toISOString(),
-            },
-          ],
-          updatedAt: new Date(now).toISOString(),
-        });
-        originalCreate = { type: "mission.create", commandId: "i89:create", mission };
-        record(
-          "mission_execute:create",
-          body(yield* call(scope, "mission_execute", originalCreate)),
-        );
-        const beforeReplay = yield* counts;
-        const replay = body<{ committed: boolean }>(
-          yield* call(scope, "mission_execute", originalCreate),
-        );
-        NodeAssert.strict.equal(replay.committed, false);
-        NodeAssert.strict.deepEqual(yield* counts, beforeReplay);
-        record("mission_execute:exact-replay", replay);
-        const beforeDenial = yield* counts;
-        const outsiderScope = yield* issue(outsider);
-        const denial = failureCode(yield* call(outsiderScope, "mission_get", { id: missionId }));
-        NodeAssert.strict.equal(denial, "scope_denied");
-        NodeAssert.strict.deepEqual(yield* counts, beforeDenial);
-        record("unrelated-thread:denied", { code: denial });
+  yield* Effect.scoped(
+    Effect.gen(function* () {
+      const projects = yield* ProjectStore.ProjectStoreV2;
+      yield* projects.apply({
+        sequence: 1,
+        eventId: EventId.make("i89-project-created"),
+        aggregateKind: "project",
+        aggregateId: projectId,
+        occurredAt: nowIso,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+        type: "project.created",
+        payload: {
+          projectId,
+          title: "I89 offline only",
+          workspaceRoot: workspace,
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        },
+      });
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      for (const threadId of [manager, outsider])
         yield* threads.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make("i89:parent"),
-          threadId: manager,
-          messageId: MessageId.make("i89:parent-message"),
-          text: "Offline synthetic parent; admit exactly one child",
-          attachments: [],
-          dispatchMode: { type: "start_immediately" },
-          createdBy: "user",
-          creationSource: "web",
-        });
-        const parent = yield* threads.getThreadProjection(manager);
-        const parentRun = parent.runs[0]!;
-        delegatedCommand = {
-          type: "delegated_task.request",
-          commandId: CommandId.make("i89:delegate"),
-          parentThreadId: manager,
-          parentRunId: parentRun.id,
-          parentNodeId: parentRun.rootNodeId!,
-          task: "Write the pinned I89 fixture bytes to result.txt only",
+          type: "thread.create",
+          commandId: CommandId.make(`create:${threadId}`),
+          threadId,
+          projectId,
+          title: threadId,
           modelSelection: selection,
           runtimeMode: "full-access",
           interactionMode: "default",
-          createdBy: "agent",
-          creationSource: "mcp",
-          workspaceBinding: { branch: "i89-offline", worktreePath: workspace },
-        };
-        admissionRequest = {
-          mission,
-          taskId: "one",
-          specHash: hash(I89_BYTES),
-          dependencyHashes: [],
-          attempt: { attemptNumber: 1, operation: "write" },
-          proposedAccountId: "offline-fixture-account",
-          proposedProviderInstanceId: instanceId,
-          proposedBillingMode: "subscription",
-          modelId: selection.model,
-          profile: "default",
-          promptHash: "bound-by-dispatch",
-          optionsHash: "bound-by-dispatch",
-          workspaceRoot: workspace,
-          privilege: "full-access",
-          rejectedRoutes: [],
-        };
-        const dispatched = yield* threads.dispatch(delegatedCommand, {
-          missionAdmissionRequest: admissionRequest,
+          branch: null,
+          worktreePath: workspace,
+          createdBy: "user",
+          creationSource: "web",
         });
-        const after = yield* threads.getThreadProjection(manager);
-        const childTask = after.subagents[0]!;
-        childThreadId = childTask.childThreadId!;
-        NodeAssert.strict(childThreadId);
-        let canonical = yield* readMission(scope);
-        NodeAssert.strict.equal(canonical.execution?.admissions.length, 1);
-        record("worker:admitted", {
-          dispatch: dispatched,
-          admission: canonical.execution!.admissions[0],
-          childTaskId: childTask.id,
-          childThreadId,
-        });
-        const terminal = yield* orchestrator.streamDomainEvents.pipe(
-          Stream.filter(
-            (event) =>
-              event.type === "run-attempt.updated" &&
-              event.threadId === childThreadId &&
-              event.payload.status === "completed",
-          ),
-          Stream.take(1),
-          Stream.runDrain,
-          Effect.forkScoped,
-        );
-        yield* worker.drain();
-        yield* Fiber.join(terminal);
-        yield* worker.drain();
-        yield* orchestrator.recoverDelegatedTasks;
-        canonical = yield* readMission(scope);
-        NodeAssert.strict.equal(
-          canonical.execution?.results?.length,
-          1,
-          "Production finalizer must record the admitted worker result without fixture initialization",
-        );
-        const child = yield* threads.getThreadProjection(childThreadId);
-        const run = child.runs[0]!;
-        NodeAssert.strict.equal(run.status, "completed");
-        NodeAssert.strict.equal(workerStarts, 1);
-        const admission = canonical.execution!.admissions[0]!;
-        record("worker:completed", {
-          run,
-          output,
-          sha256: hash(NodeFS.readFileSync(output)),
-          workerStarts,
-        });
-        const resultStore = yield* MissionResultStore.MissionResultStore;
-        NodeAssert.strict.equal(canonical.execution!.results![0]!.state, "delivered");
-        NodeAssert.strict.equal(
-          canonical.execution!.results![0]!.summaryText,
-          `result.txt sha256:${I89_SHA256}`,
-        );
-        NodeAssert.strict.deepEqual(canonical.execution!.results![0]!.provenance.commitSet, []);
-        const parentDelivery = yield* threads.getThreadProjection(manager);
-        NodeAssert.strict(
-          parentDelivery.contextTransfers.some(
-            (transfer) =>
-              transfer.type === "subagent_result" && transfer.sourceThreadId === childThreadId,
-          ),
-        );
-        record("result:production-delivered", canonical.execution!.results![0]);
-        yield* threads.dispatch({
-          type: "delegated_task.completion-delivery.acknowledge",
-          commandId: CommandId.make("i89:consumer-ack"),
-          parentThreadId: manager,
-          taskId: childTask.id,
-          observedByRunId: parentRun.id,
-        });
-        const observed = yield* readMission(scope);
-        NodeAssert.strict.equal(observed.execution!.results![0]!.state, "observed");
-        NodeAssert.strict.equal(observed.execution!.results![0]!.mailboxAcked, true);
-        record("result:consumer-acknowledged", observed.execution!.results![0]);
-        const beforeInvalidResult = yield* counts;
-        for (const invalid of [
-          { missionId: "i89-foreign-mission" },
-          { taskId: "foreign-task" },
-          { dispatchKey: "foreign-dispatch" },
-          { deliveryEpoch: 2 },
-        ]) {
-          const denied = yield* resultStore
-            .execute({
-              commandId: CommandId.make("i89:forged-result"),
-              missionId,
-              expectedRevision: observed.revision,
-              deliveryEpoch: 1,
-              taskId: "one",
-              dispatchKey: admission.dispatchKey,
-              action: "observe",
-              ...invalid,
-            })
-            .pipe(Effect.result);
-          NodeAssert.strict(
-            Result.isFailure(denied),
-            "Unbound result selector must fail before a receipt write",
-          );
-          NodeAssert.strict.deepEqual(yield* counts, beforeInvalidResult);
-        }
-        record("result:foreign-bindings-denied", { count: 4, counts: yield* counts });
-        for (const action of ["review", "accept"] as const) {
-          canonical = yield* readMission(scope);
-          const command: MissionResultStore.MissionResultCommand = {
-            commandId: CommandId.make(`i89:result:${action}`),
+      const scope = yield* issue(manager);
+      record("mission_get:missing", body(yield* call(scope, "mission_get", { id: missionId })));
+      const mission = decodeMission({
+        schemaVersion: 1,
+        id: missionId,
+        revision: 0,
+        teamId,
+        authorityEnvironmentId: environmentId,
+        bindings: [{ projectId, workspaceRoot: workspace, baseCommit, ancestry: [baseCommit] }],
+        intent: {
+          outcome: "Produce one exact scratch file offline",
+          scope: [workspace],
+          exclusions: ["installed runtime", "network", "models", "credentials"],
+          authorityRefs: [authorityRef],
+          acceptanceCriteria: [{ id: "exact-hash", text: `result.txt SHA-256 ${I89_SHA256}` }],
+          decisions: [],
+        },
+        integrationTarget: { summary: "Scratch output only; no integration or install" },
+        managers: { delivery: { threadId: manager, epoch: 1 } },
+        status: "active",
+        tasks: [
+          {
+            id: "one",
+            projectId,
+            title: "Write exact fixture bytes",
+            specHash: yield* hash(I89_BYTES),
+            dependencyHashes: [],
+            dependencies: [],
+            acceptanceIds: ["exact-hash"],
+            updatedAt: nowIso,
+          },
+        ],
+        updatedAt: nowIso,
+      });
+      originalCreate = { type: "mission.create", commandId: "i89:create", mission };
+      record("mission_execute:create", body(yield* call(scope, "mission_execute", originalCreate)));
+      const beforeReplay = yield* counts;
+      const replay = body<{ committed: boolean }>(
+        yield* call(scope, "mission_execute", originalCreate),
+      );
+      NodeAssert.strict.equal(replay.committed, false);
+      NodeAssert.strict.deepEqual(yield* counts, beforeReplay);
+      record("mission_execute:exact-replay", replay);
+      const beforeDenial = yield* counts;
+      const outsiderScope = yield* issue(outsider);
+      const denial = failureCode(yield* call(outsiderScope, "mission_get", { id: missionId }));
+      NodeAssert.strict.equal(denial, "scope_denied");
+      NodeAssert.strict.deepEqual(yield* counts, beforeDenial);
+      record("unrelated-thread:denied", { code: denial });
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("i89:parent"),
+        threadId: manager,
+        messageId: MessageId.make("i89:parent-message"),
+        text: "Offline synthetic parent; admit exactly one child",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const parent = yield* threads.getThreadProjection(manager);
+      const parentRun = parent.runs[0]!;
+      delegatedCommand = {
+        type: "delegated_task.request",
+        commandId: CommandId.make("i89:delegate"),
+        parentThreadId: manager,
+        parentRunId: parentRun.id,
+        parentNodeId: parentRun.rootNodeId!,
+        task: "Write the pinned I89 fixture bytes to result.txt only",
+        modelSelection: selection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+        workspaceBinding: { branch: "i89-offline", worktreePath: workspace },
+      };
+      admissionRequest = {
+        mission,
+        taskId: "one",
+        specHash: yield* hash(I89_BYTES),
+        dependencyHashes: [],
+        attempt: { attemptNumber: 1, operation: "write" },
+        proposedAccountId: "offline-fixture-account",
+        proposedProviderInstanceId: instanceId,
+        proposedBillingMode: "subscription",
+        modelId: selection.model,
+        profile: "default",
+        promptHash: "bound-by-dispatch",
+        optionsHash: "bound-by-dispatch",
+        workspaceRoot: workspace,
+        privilege: "full-access",
+        rejectedRoutes: [],
+      };
+      const dispatched = yield* threads.dispatch(delegatedCommand, {
+        missionAdmissionRequest: admissionRequest,
+      });
+      const after = yield* threads.getThreadProjection(manager);
+      const childTask = after.subagents[0]!;
+      childThreadId = childTask.childThreadId!;
+      NodeAssert.strict(childThreadId);
+      let canonical = yield* readMission(scope);
+      NodeAssert.strict.equal(canonical.execution?.admissions.length, 1);
+      record("worker:admitted", {
+        dispatch: dispatched,
+        admission: canonical.execution!.admissions[0],
+        childTaskId: childTask.id,
+        childThreadId,
+      });
+      const terminal = yield* orchestrator.streamDomainEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.type === "run-attempt.updated" &&
+            event.threadId === childThreadId &&
+            event.payload.status === "completed",
+        ),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* worker.drain();
+      yield* Fiber.join(terminal);
+      yield* worker.drain();
+      yield* orchestrator.recoverDelegatedTasks;
+      canonical = yield* readMission(scope);
+      NodeAssert.strict.equal(
+        canonical.execution?.results?.length,
+        1,
+        "Production finalizer must record the admitted worker result without fixture initialization",
+      );
+      const child = yield* threads.getThreadProjection(childThreadId);
+      const run = child.runs[0]!;
+      NodeAssert.strict.equal(run.status, "completed");
+      NodeAssert.strict.equal(workerStarts, 1);
+      const admission = canonical.execution!.admissions[0]!;
+      record("worker:completed", {
+        run,
+        output,
+        sha256: yield* hash(yield* fs.readFile(output)),
+        workerStarts,
+      });
+      const resultStore = yield* MissionResultStore.MissionResultStore;
+      NodeAssert.strict.equal(canonical.execution!.results![0]!.state, "delivered");
+      NodeAssert.strict.equal(
+        canonical.execution!.results![0]!.summaryText,
+        `result.txt sha256:${I89_SHA256}`,
+      );
+      NodeAssert.strict.deepEqual(canonical.execution!.results![0]!.provenance.commitSet, []);
+      const parentDelivery = yield* threads.getThreadProjection(manager);
+      NodeAssert.strict(
+        parentDelivery.contextTransfers.some(
+          (transfer) =>
+            transfer.type === "subagent_result" && transfer.sourceThreadId === childThreadId,
+        ),
+      );
+      record("result:production-delivered", canonical.execution!.results![0]);
+      yield* threads.dispatch({
+        type: "delegated_task.completion-delivery.acknowledge",
+        commandId: CommandId.make("i89:consumer-ack"),
+        parentThreadId: manager,
+        taskId: childTask.id,
+        observedByRunId: parentRun.id,
+      });
+      const observed = yield* readMission(scope);
+      NodeAssert.strict.equal(observed.execution!.results![0]!.state, "observed");
+      NodeAssert.strict.equal(observed.execution!.results![0]!.mailboxAcked, true);
+      record("result:consumer-acknowledged", observed.execution!.results![0]);
+      const beforeInvalidResult = yield* counts;
+      for (const invalid of [
+        { missionId: "i89-foreign-mission" },
+        { taskId: "foreign-task" },
+        { dispatchKey: "foreign-dispatch" },
+        { deliveryEpoch: 2 },
+      ]) {
+        const denied = yield* resultStore
+          .execute({
+            commandId: CommandId.make("i89:forged-result"),
             missionId,
-            expectedRevision: canonical.revision,
+            expectedRevision: observed.revision,
             deliveryEpoch: 1,
             taskId: "one",
             dispatchKey: admission.dispatchKey,
-            action,
-            ...(action === "review" || action === "accept"
-              ? {
-                  receipt: {
-                    kind: action === "review" ? ("review" as const) : ("acceptance" as const),
-                    revision: 1,
-                    commitSet: [],
-                    evidenceKind: "check_pass",
-                    evidenceRef: `sha256:${I89_SHA256}`,
-                    decidedBy: manager,
-                    decidedAt: new Date(now).toISOString(),
-                  },
-                }
-              : {}),
-          };
-          const result = yield* resultStore.execute(command);
-          NodeAssert.strict(Result.isSuccess(result), JSON.stringify(result));
-          record(`result:${action}`, result.success);
-        }
-        const accepted = yield* readMission(scope);
-        NodeAssert.strict.equal(accepted.execution!.results![0]!.state, "accepted");
-        const roleCommand = {
-          type: "mission.replace",
-          commandId: "i89:grant-retro",
-          expectedRevision: accepted.revision,
-          epoch: 1,
-          authority: authorityRef,
-          mission: {
-            ...JSON.parse(encodeJson(accepted)),
-            revision: accepted.revision + 1,
-            managers: { ...accepted.managers, retro: { threadId: childThreadId, epoch: 1 } },
-          },
+            action: "observe",
+            ...invalid,
+          })
+          .pipe(Effect.result);
+        NodeAssert.strict(
+          Result.isFailure(denied),
+          "Unbound result selector must fail before a receipt write",
+        );
+        NodeAssert.strict.deepEqual(yield* counts, beforeInvalidResult);
+      }
+      record("result:foreign-bindings-denied", { count: 4, counts: yield* counts });
+      for (const action of ["review", "accept"] as const) {
+        canonical = yield* readMission(scope);
+        const command: MissionResultStore.MissionResultCommand = {
+          commandId: CommandId.make(`i89:result:${action}`),
+          missionId,
+          expectedRevision: canonical.revision,
+          deliveryEpoch: 1,
+          taskId: "one",
+          dispatchKey: admission.dispatchKey,
+          action,
+          ...(action === "review" || action === "accept"
+            ? {
+                receipt: {
+                  kind: action === "review" ? ("review" as const) : ("acceptance" as const),
+                  revision: 1,
+                  commitSet: [],
+                  evidenceKind: "check_pass",
+                  evidenceRef: `sha256:${I89_SHA256}`,
+                  decidedBy: manager,
+                  decidedAt: nowIso,
+                },
+              }
+            : {}),
         };
-        const workerScope = yield* issue(childThreadId);
-        NodeAssert.strict.equal(
-          failureCode(yield* call(workerScope, "mission_execute", roleCommand)),
-          "scope_denied",
-        );
-        record("role:grant-retro", body(yield* call(scope, "mission_execute", roleCommand)));
-        const retroRoute = body<{ status: string }>(
-          yield* call(workerScope, "mission_completion_route_read", {
-            selector: {
-              kind: "retro-report",
-              missionId,
-              checkpointId: "i89-no-report",
-              reportRevision: 1,
-            },
-          }),
-        );
-        NodeAssert.strict.equal(retroRoute.status, "hold");
-        record("role:child-authorized-for-retro", retroRoute);
-        acceptedRevision = (yield* readMission(scope)).revision;
-        record("before-restart", { revision: acceptedRevision, counts: yield* counts });
-      }).pipe(Effect.provide(makeLayer())),
-    ),
+        const result = yield* resultStore.execute(command);
+        NodeAssert.strict(Result.isSuccess(result), encodeJson(result));
+        record(`result:${action}`, result.success);
+      }
+      const accepted = yield* readMission(scope);
+      NodeAssert.strict.equal(accepted.execution!.results![0]!.state, "accepted");
+      const roleCommand = {
+        type: "mission.replace",
+        commandId: "i89:grant-retro",
+        expectedRevision: accepted.revision,
+        epoch: 1,
+        authority: authorityRef,
+        mission: {
+          ...decodeMissionJson(encodeJson(accepted)),
+          revision: accepted.revision + 1,
+          managers: { ...accepted.managers, retro: { threadId: childThreadId, epoch: 1 } },
+        },
+      };
+      const workerScope = yield* issue(childThreadId);
+      NodeAssert.strict.equal(
+        failureCode(yield* call(workerScope, "mission_execute", roleCommand)),
+        "scope_denied",
+      );
+      record("role:grant-retro", body(yield* call(scope, "mission_execute", roleCommand)));
+      const retroRoute = body<{ status: string }>(
+        yield* call(workerScope, "mission_completion_route_read", {
+          selector: {
+            kind: "retro-report",
+            missionId,
+            checkpointId: "i89-no-report",
+            reportRevision: 1,
+          },
+        }),
+      );
+      NodeAssert.strict.equal(retroRoute.status, "hold");
+      record("role:child-authorized-for-retro", retroRoute);
+      acceptedRevision = (yield* readMission(scope)).revision;
+      record("before-restart", { revision: acceptedRevision, counts: yield* counts });
+    }).pipe(Effect.provide(makeLayer())),
   );
 
   // A new scope, registry, SQL connection, orchestrator and provider manager over the same file.
-  await Effect.runPromise(
-    Effect.scoped(
-      Effect.gen(function* () {
-        const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
-        record("restart:runtime-recovery", yield* recovery.recover);
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        yield* orchestrator.recoverDelegatedTasks;
-        const scope = yield* issue(manager);
-        const before = yield* readMission(scope);
-        NodeAssert.strict.equal(before.revision, acceptedRevision);
-        const beforeReplay = yield* counts;
-        NodeAssert.strict(originalCreate && admissionRequest && delegatedCommand && childThreadId);
-        const createReplay = body<{ committed: boolean }>(
-          yield* call(scope, "mission_execute", originalCreate),
-        );
-        NodeAssert.strict.equal(createReplay.committed, false);
-        record("restart:mission-create-replay", createReplay);
-        const threads = yield* ThreadManagementService.ThreadManagementService;
-        yield* threads.dispatch(delegatedCommand, { missionAdmissionRequest: admissionRequest });
-        const results = yield* MissionWorkerResults.MissionWorkerResults;
-        yield* results.reconcile(childThreadId);
-        yield* results.recover;
-        NodeAssert.strict.deepEqual(yield* counts, beforeReplay);
-        NodeAssert.strict.deepEqual(yield* readMission(scope), before);
-        NodeAssert.strict.equal(workerStarts, 1);
-        record("restart:lost-reply-replays", {
-          result: before.execution!.results![0],
-          counts: yield* counts,
-          workerStarts,
-          revision: before.revision,
-        });
-        const drift = yield* threads
-          .dispatch(
-            { ...delegatedCommand, task: "Changed task must not execute" },
-            { missionAdmissionRequest: admissionRequest },
-          )
-          .pipe(Effect.result);
-        NodeAssert.strict(Result.isFailure(drift));
-        NodeAssert.strict.deepEqual(yield* counts, beforeReplay);
-        record("restart:changed-command-denied", { denied: true });
-        const childScope = yield* issue(childThreadId);
-        const childDenial = failureCode(yield* call(childScope, "mission_get", { id: missionId }));
-        NodeAssert.strict.equal(childDenial, "scope_denied");
-        record("worker:bootstrap-not-inherited", { childThreadId, code: childDenial });
-        const selector = {
-          kind: "task-result",
-          missionId,
-          taskId: "one",
-          attemptNumber: 1,
-          resultRevision: 1,
-        };
-        const route = body<{ status: string; holdReason: string }>(
-          yield* call(scope, "mission_completion_route_read", { selector }),
-        );
-        NodeAssert.strict.equal(route.status, "candidate", JSON.stringify(route));
-        record("delivery-manager:completion-route", route);
-        record("final-mission", before);
-        const sql = yield* SqlClient.SqlClient;
-        record(
-          "durable-receipts",
-          yield* sql`SELECT command_id, aggregate_kind, aggregate_id, command_type, result_sequence, status, request_hash FROM orchestration_command_receipts ORDER BY command_id`,
-        );
-        NodeAssert.strict.equal(workerStarts, 1);
-      }).pipe(Effect.provide(makeLayer())),
-    ),
+  yield* Effect.scoped(
+    Effect.gen(function* () {
+      const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+      record("restart:runtime-recovery", yield* recovery.recover);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      yield* orchestrator.recoverDelegatedTasks;
+      const scope = yield* issue(manager);
+      const before = yield* readMission(scope);
+      NodeAssert.strict.equal(before.revision, acceptedRevision);
+      const beforeReplay = yield* counts;
+      NodeAssert.strict(originalCreate && admissionRequest && delegatedCommand && childThreadId);
+      const createReplay = body<{ committed: boolean }>(
+        yield* call(scope, "mission_execute", originalCreate),
+      );
+      NodeAssert.strict.equal(createReplay.committed, false);
+      record("restart:mission-create-replay", createReplay);
+      const threads = yield* ThreadManagementService.ThreadManagementService;
+      yield* threads.dispatch(delegatedCommand, { missionAdmissionRequest: admissionRequest });
+      const results = yield* MissionWorkerResults.MissionWorkerResults;
+      yield* results.reconcile(childThreadId);
+      yield* results.recover;
+      NodeAssert.strict.deepEqual(yield* counts, beforeReplay);
+      NodeAssert.strict.deepEqual(yield* readMission(scope), before);
+      NodeAssert.strict.equal(workerStarts, 1);
+      record("restart:lost-reply-replays", {
+        result: before.execution!.results![0],
+        counts: yield* counts,
+        workerStarts,
+        revision: before.revision,
+      });
+      const drift = yield* threads
+        .dispatch(
+          { ...delegatedCommand, task: "Changed task must not execute" },
+          { missionAdmissionRequest: admissionRequest },
+        )
+        .pipe(Effect.result);
+      NodeAssert.strict(Result.isFailure(drift));
+      NodeAssert.strict.deepEqual(yield* counts, beforeReplay);
+      record("restart:changed-command-denied", { denied: true });
+      const childScope = yield* issue(childThreadId);
+      const childDenial = failureCode(yield* call(childScope, "mission_get", { id: missionId }));
+      NodeAssert.strict.equal(childDenial, "scope_denied");
+      record("worker:bootstrap-not-inherited", { childThreadId, code: childDenial });
+      const selector = {
+        kind: "task-result",
+        missionId,
+        taskId: "one",
+        attemptNumber: 1,
+        resultRevision: 1,
+      };
+      const route = body<{ status: string; holdReason: string }>(
+        yield* call(scope, "mission_completion_route_read", { selector }),
+      );
+      NodeAssert.strict.equal(route.status, "candidate", encodeJson(route));
+      record("delivery-manager:completion-route", route);
+      record("final-mission", before);
+      const sql = yield* SqlClient.SqlClient;
+      record(
+        "durable-receipts",
+        yield* sql`SELECT command_id, aggregate_kind, aggregate_id, command_type, result_sequence, status, request_hash FROM orchestration_command_receipts ORDER BY command_id`,
+      );
+      NodeAssert.strict.equal(workerStarts, 1);
+    }).pipe(Effect.provide(makeLayer())),
   );
-  await NodeFSP.writeFile(
-    NodePath.join(directory, "fixture-inputs.json"),
-    JSON.stringify(
-      {
-        originalCreate,
-        delegatedCommand,
-        admissionRequest,
-        syntheticFacts: facts(),
-      },
-      null,
-      2,
-    ),
+  yield* fs.writeFileString(
+    path.join(directory, "fixture-inputs.json"),
+    encodePrettyJson({
+      originalCreate,
+      delegatedCommand,
+      admissionRequest,
+      syntheticFacts: facts(),
+    }),
     { mode: 0o600 },
   );
   const receipt = {
@@ -868,7 +911,7 @@ export async function runI89OfflineFixture(laneDirectory: string) {
     directory,
     databasePath,
     baseCommit,
-    fixtureSourceSha256: hash(await NodeFSP.readFile(import.meta.filename)),
+    fixtureSourceSha256: yield* hash(yield* fs.readFile(import.meta.filename)),
     limits: [
       "Synthetic admission facts and deterministic adapter; no subscription identity or quota proof",
       "Mailbox ACK is driven by the real delegated completion acknowledgement command, not a model-read claim",
@@ -879,12 +922,8 @@ export async function runI89OfflineFixture(laneDirectory: string) {
     workerStarts,
     receipts,
   };
-  await NodeFSP.writeFile(
-    NodePath.join(directory, "receipts.json"),
-    JSON.stringify(receipt, null, 2),
-    {
-      mode: 0o600,
-    },
-  );
+  yield* fs.writeFileString(path.join(directory, "receipts.json"), encodePrettyJson(receipt), {
+    mode: 0o600,
+  });
   return receipt;
-}
+});

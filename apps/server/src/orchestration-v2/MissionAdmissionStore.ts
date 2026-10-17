@@ -35,6 +35,9 @@ import {
   type MissionAdmissionReceipt,
   type MissionAdmissionRequest,
 } from "./MissionAdmission.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { makeProviderCapacityReader } from "./ProviderCapacity.ts";
+import { readExecutionCapacity, withExecutionCapacity } from "./ExecutionCapacity.ts";
 import { MissionAuthority } from "./MissionService.ts";
 
 /**
@@ -163,10 +166,7 @@ export const normalizeScopeClaim = (scope: string): string | null => {
 const sameStringArray = (a: ReadonlyArray<string>, b: ReadonlyArray<string>): boolean =>
   a.length === b.length && a.every((value, index) => value === b[index]);
 
-const sameBindings = (
-  a: Mission["bindings"],
-  b: Mission["bindings"],
-): boolean =>
+const sameBindings = (a: Mission["bindings"], b: Mission["bindings"]): boolean =>
   a.length === b.length &&
   a.every(
     (binding, index) =>
@@ -234,8 +234,7 @@ const toRecord = (receipt: MissionAdmissionReceipt): MissionExecutionAdmission =
 const reject = (
   code: MissionAdmissionRejection["code"],
   message: string,
-): MissionAdmissionReserveResult =>
-  Result.fail(new MissionAdmissionRejection({ code, message }));
+): MissionAdmissionReserveResult => Result.fail(new MissionAdmissionRejection({ code, message }));
 
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -243,6 +242,8 @@ const make = Effect.gen(function* () {
   const events = yield* EventStore.OrchestrationEventStore;
   const receipts = yield* Receipts.OrchestrationCommandReceiptRepository;
   const factsPort = yield* MissionAdmissionFactsPort;
+  const providers = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
+  const readProviderCapacity = yield* makeProviderCapacityReader;
 
   const toStoreError = (cause: unknown): MissionAdmissionStoreError =>
     isStoreError(cause)
@@ -274,10 +275,7 @@ const make = Effect.gen(function* () {
         category: "persistence",
       });
     }
-    if (
-      trusted.teamId !== authority.teamId ||
-      trusted.environmentId !== authority.environmentId
-    ) {
+    if (trusted.teamId !== authority.teamId || trusted.environmentId !== authority.environmentId) {
       return yield* new MissionAdmissionStoreError({
         operation: "reserve",
         category: "scope_denied",
@@ -336,14 +334,21 @@ const make = Effect.gen(function* () {
       for (const claim of snapshot.execution?.writerClaims ?? []) {
         if (claim.dispatchKey === dispatchKey) continue;
         const normalized = normalizeScopeClaim(claim.scope);
-        if (normalized === null) return yield* new MissionAdmissionStoreError({ operation: "reserve", category: "persistence" });
+        if (normalized === null)
+          return yield* new MissionAdmissionStoreError({
+            operation: "reserve",
+            category: "persistence",
+          });
         canonicalWriterScopes.push(normalized);
       }
     }
     if (prior !== undefined && request.attempt.operation === "write") {
       const owned = execution.writerClaims.filter((claim) => claim.dispatchKey === dispatchKey);
       if (owned.length !== 1 || normalizeScopeClaim(owned[0]!.scope) !== normalizedWriter) {
-        return reject("digest_conflict", "Replay writer scope differs from its canonical reservation.");
+        return reject(
+          "digest_conflict",
+          "Replay writer scope differs from its canonical reservation.",
+        );
       }
     }
 
@@ -364,7 +369,10 @@ const make = Effect.gen(function* () {
         : { state: "none", attemptNumber: null, cancelRequested: false, leaseExpired: false };
 
     if (prior === undefined && unsettled.length > 0) {
-      return reject("lease_uncertain", "A canonical unsettled reservation blocks another operation or attempt.");
+      return reject(
+        "lease_uncertain",
+        "A canonical unsettled reservation blocks another operation or attempt.",
+      );
     }
 
     const facts: MissionAdmissionFacts = {
@@ -482,8 +490,7 @@ const make = Effect.gen(function* () {
         });
       }
       const authorized = trusted.unknownUsageException;
-      const allowed =
-        authorized?.remainingAssignments ?? (authorized?.unused === true ? 1 : 0);
+      const allowed = authorized?.remainingAssignments ?? (authorized?.unused === true ? 1 : 0);
       let used = 0;
       for (const snapshot of scoped) {
         for (const consumed of snapshot.execution?.consumedExceptionIds ?? []) {
@@ -599,7 +606,22 @@ const make = Effect.gen(function* () {
     // the clock before observations so slow preparation cannot extend freshness.
     const preparedAtMs = yield* Clock.currentTimeMillis;
     const boundRequest = structuredClone(request);
-    const trusted = structuredClone(yield* factsPort.readFacts(boundRequest));
+    let trusted = structuredClone(yield* factsPort.readFacts(boundRequest));
+    // Live admission owns local capacity observations; the authority port still
+    // owns account identity, source ancestry and build/toolchain qualification.
+    // A deliberately injected offline facts port remains usable without a live registry.
+    if (Option.isSome(providers)) {
+      const observations = yield* readProviderCapacity(yield* providers.value.getProviders);
+      const sampledAtMs = yield* Clock.currentTimeMillis;
+      const capacity = yield* Effect.promise(() =>
+        readExecutionCapacity(trusted.repository.workspaceRootRealpath, sampledAtMs),
+      );
+      trusted = {
+        ...trusted,
+        usageLimits: observations.get(trusted.route.providerInstanceId)?.limits,
+        host: withExecutionCapacity(trusted.host, capacity),
+      };
+    }
     const reserve = Effect.gen(function* () {
       const runOnce = () =>
         sql
@@ -631,7 +653,15 @@ const make = Effect.gen(function* () {
       }
       return first.success;
     });
-    return { [preparedAdmission]: true, sqlClient: sql, commandHashes: Object.freeze({ promptHash: boundRequest.promptHash, optionsHash: boundRequest.optionsHash }), reserve };
+    return {
+      [preparedAdmission]: true,
+      sqlClient: sql,
+      commandHashes: Object.freeze({
+        promptHash: boundRequest.promptHash,
+        optionsHash: boundRequest.optionsHash,
+      }),
+      reserve,
+    };
   });
 
   const reserve = Effect.fn("MissionAdmissionStore.reserve")(function* (

@@ -1,4 +1,5 @@
 // HTTP boundary for structural activity snapshots and owner-scoped list_events readback.
+import * as Effect from "effect/Effect";
 import { z } from "zod";
 import {
   ActivityConflictError,
@@ -47,6 +48,12 @@ const receiptSchema = z.object({
   verdict: z.enum(["accept", "replay_duplicate"]),
   stamp: stampSchema,
   payloadHash: z.string().min(1).max(64),
+});
+// The deployed POST-only bridge acknowledges its durable compare/exchange but
+// predates acceptance events. An empty ID records that distinction locally;
+// readback pages still require real event IDs.
+const postReceiptSchema = receiptSchema.extend({
+  eventId: receiptSchema.shape.eventId.optional().default(""),
 });
 const conflictSchema = z.object({
   verdict: z.enum(["reject_stale", "reject_conflict", "reject_epoch_reset_required"]),
@@ -110,15 +117,16 @@ export function makeStudioActivityHttpSink(options: {
     allowConflict = false,
   ): Promise<{ value: unknown; status: number; text: string }> => {
     const controller = new AbortController();
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadlineController = new AbortController();
     let activeReader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let status: number | null = null;
     let text = "";
-    const deadline = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => {
-        controller.abort();
-        reject(new StudioActivityTransportError("timeout", status, excerpt(text)));
-      }, timeoutMs);
+    // One cancellable deadline covers both fetching and reading the response body.
+    const deadline = Effect.runPromise(Effect.sleep(timeoutMs), {
+      signal: deadlineController.signal,
+    }).then(() => {
+      controller.abort();
+      throw new StudioActivityTransportError("timeout", status, excerpt(text));
     });
     try {
       return await Promise.race([
@@ -177,11 +185,12 @@ export function makeStudioActivityHttpSink(options: {
         excerpt(text),
       );
     } finally {
-      clearTimeout(timer);
+      deadlineController.abort();
       controller.abort();
       if (activeReader) void activeReader.cancel().catch(() => {});
     }
   };
+  let supportsReadback = true;
   return {
     send: async (input) => {
       const response = await request(url, { method: "POST", body: JSON.stringify(input) }, true);
@@ -195,7 +204,7 @@ export function makeStudioActivityHttpSink(options: {
           );
         throw new ActivityConflictError(conflict.data.stamp, conflict.data.payloadHash);
       }
-      const parsed = receiptSchema.safeParse(response.value);
+      const parsed = postReceiptSchema.safeParse(response.value);
       if (
         !parsed.success ||
         canonicalActivityJson(parsed.data.stamp) !== canonicalActivityJson(input.stamp) ||
@@ -215,7 +224,22 @@ export function makeStudioActivityHttpSink(options: {
         limit: "100",
       });
       if (cursor !== null) query.set("cursor", cursor);
-      const response = await request(`${url}?${query}`, { method: "GET" });
+      const response = supportsReadback
+        ? await request(`${url}?${query}`, { method: "GET" }).catch((error: unknown) => {
+            if (
+              error instanceof StudioActivityTransportError &&
+              error.kind === "http" &&
+              error.status === 405
+            ) {
+              supportsReadback = false;
+              return null;
+            }
+            throw error;
+          })
+        : null;
+      // Older bridge deployments expose POST only. Preserve the cursor and
+      // rely on validated POST receipts; never manufacture a replay event.
+      if (response === null) return { events: [], cursor, has_more: false, watermark: null };
       const parsed = pageSchema.safeParse(response.value);
       if (!parsed.success)
         throw new StudioActivityTransportError(

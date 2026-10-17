@@ -30,6 +30,8 @@ export const ServerProviderUsageWindow = Schema.Struct({
    * gates every model. Optional so older clients keep decoding windows.
    */
   appliesToModel: Schema.optional(TrimmedNonEmptyString),
+  /** Cursor reports two fallback allowances and a combined display statistic. */
+  routingPool: Schema.optional(Schema.Literals(["cursor", "api", "aggregate"])),
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 

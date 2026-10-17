@@ -35,6 +35,51 @@ export class CursorAgentSdkRunnerError extends Schema.TaggedError<CursorAgentSdk
   }
 }
 
+/**
+ * Stable reason surfaced when Cursor's local host will not attach a run.
+ * The host exposes no numeric session limit and sends no refusal frame: it
+ * accepts `agent.open`, then `agent.send` never resolves and no
+ * `run.started` ever arrives (provider logs, 2026-10-17T18:12:53Z stall).
+ */
+export const CURSOR_LOCAL_CONCURRENCY_CODE = "cursor_local_concurrency_limit";
+export const CURSOR_LOCAL_CONCURRENCY_REASON =
+  `${CURSOR_LOCAL_CONCURRENCY_CODE}: Cursor local host did not attach a run; ` +
+  "concurrent local sessions appear capped (no numeric limit is exposed by the Cursor SDK) " +
+  "and the run never started";
+export const CURSOR_RUN_START_TIMEOUT_MS = 120_000;
+
+export class CursorLocalSessionLimitError extends Schema.TaggedError<CursorLocalSessionLimitError>()(
+  "CursorLocalSessionLimitError",
+  {
+    code: Schema.String,
+  },
+) {
+  override get message(): string {
+    return CURSOR_LOCAL_CONCURRENCY_REASON;
+  }
+}
+
+const CURSOR_CONCURRENCY_REFUSAL_PATTERN =
+  /concurren|too many (?:local )?(?:sessions|agents|runs)|maximum (?:number of )?(?:local )?(?:sessions|agents|runs)|session limit|local session/i;
+
+export function isCursorLocalConcurrencyRefusal(cause: unknown): boolean {
+  let current: unknown = cause;
+  const seen = new Set<object>();
+  while (typeof current === "object" && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const message = Reflect.get(current, "message");
+    if (typeof message === "string" && CURSOR_CONCURRENCY_REFUSAL_PATTERN.test(message)) {
+      return true;
+    }
+    current = Reflect.get(current, "cause");
+  }
+  return typeof current === "string" && CURSOR_CONCURRENCY_REFUSAL_PATTERN.test(current);
+}
+
+export function cursorLocalSessionLimitError(): CursorLocalSessionLimitError {
+  return new CursorLocalSessionLimitError({ code: CURSOR_LOCAL_CONCURRENCY_CODE });
+}
+
 const isCursorAgentSdkRunnerError = Schema.is(CursorAgentSdkRunnerError);
 
 export interface CursorAgentSdkOpenInput {
@@ -337,7 +382,9 @@ function primeCursorSandboxSupport(options: AgentOptions): Promise<void> {
  */
 export function makeCursorAgentSdkRunner(
   protocolLoggerFor: (input: CursorAgentSdkOpenInput) => CursorAgentSdkProtocolLogger | undefined,
+  options?: { readonly runStartTimeoutMs?: number },
 ): CursorAgentSdkRunnerShape {
+  const runStartTimeoutMs = options?.runStartTimeoutMs ?? CURSOR_RUN_START_TIMEOUT_MS;
   return CursorAgentSdkRunner.of({
     open: Effect.fn("CursorAgentSdkRunner.open")(function* (input) {
       if (input.options.local?.sandboxOptions?.enabled === false) {
@@ -363,7 +410,11 @@ export function makeCursorAgentSdkRunner(
           input.operation === "create"
             ? Agent.create(input.options)
             : Agent.resume(input.agentId!, input.options),
-        catch: (cause) => runnerError(cause, `agent.${input.operation}`),
+        catch: (cause) =>
+          runnerError(
+            isCursorLocalConcurrencyRefusal(cause) ? cursorLocalSessionLimitError() : cause,
+            `agent.${input.operation}`,
+          ),
       });
 
       yield* log({
@@ -442,9 +493,19 @@ export function makeCursorAgentSdkRunner(
                     await dispatchUpdate(update);
                   },
                 }),
-              catch: (cause) => runnerError(cause, "run.start"),
+              catch: (cause) =>
+                runnerError(
+                  isCursorLocalConcurrencyRefusal(cause)
+                    ? cursorLocalSessionLimitError()
+                    : cause,
+                  "run.start",
+                ),
             });
           const run = yield* startRun().pipe(
+            Effect.timeoutOrElse({
+              duration: runStartTimeoutMs,
+              orElse: () => Effect.fail(runnerError(cursorLocalSessionLimitError(), "run.start")),
+            }),
             Effect.catchIf(
               (error) => abandonedRunRecoveryAvailable && isActiveRunConflict(error.cause),
               (error) =>

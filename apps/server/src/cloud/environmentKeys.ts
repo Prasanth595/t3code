@@ -52,6 +52,24 @@ const readEnvironmentKeyPair = Effect.fn("readEnvironmentKeyPair")(function* (
   return Option.some(decoded);
 });
 
+/** Read current or legacy signing material without generating, migrating or persisting keys. */
+export const getExistingEnvironmentKeyPairFromSecretStore = Effect.fn(function* (
+  secrets: ServerSecretStore.ServerSecretStore["Service"],
+) {
+  const existing = yield* readEnvironmentKeyPair(secrets);
+  if (Option.isSome(existing)) return existing;
+
+  const existingPrivate = yield* secrets.get(CLOUD_LINK_PRIVATE_KEY);
+  const existingPublic = yield* secrets.get(CLOUD_LINK_PUBLIC_KEY);
+  if (Option.isNone(existingPrivate) || Option.isNone(existingPublic)) {
+    return Option.none<EnvironmentKeyPair>();
+  }
+  return Option.some({
+    privateKey: bytesToString(existingPrivate.value),
+    publicKey: bytesToString(existingPublic.value),
+  });
+});
+
 const persistEnvironmentKeyPair = Effect.fn("persistEnvironmentKeyPair")(function* (
   secrets: ServerSecretStore.ServerSecretStore["Service"],
   keyPair: EnvironmentKeyPair,

@@ -1,3 +1,5 @@
+import * as Admission from "./Admission.ts";
+import * as Option from "effect/Option";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -185,11 +187,13 @@ export const make = Effect.gen(function* () {
   const eventSink = yield* EventSink.EventSinkV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
   const outbox = yield* EffectOutbox.EffectOutboxV2;
+  const admission = yield* Effect.serviceOption(Admission.Admission);
   const reconcileProjection = Effect.fn("ProviderRuntimeRecoveryService.reconcileProjection")(
     function* (
       projection: ProjectionStore.ProjectionRuntimeRecoveryState,
       trigger: "startup" | "shutdown",
       continueAfterRestart: boolean,
+      preserveQueued: boolean,
     ) {
       const now = yield* DateTime.now;
       const runs = [] as Array<OrchestrationV2ThreadProjection["runs"][number]>;
@@ -285,8 +289,9 @@ export const make = Effect.gen(function* () {
         }
       };
       // Queued runs have not started provider work. Preserve their execution
-      // identities and order, but require explicit consent before draining them.
-      for (const run of projection.runs) {
+      // identities and order, but hold them after an ordinary restart. A fenced,
+      // fully drained operator restart can preserve an already unheld queue.
+      for (const run of preserveQueued ? [] : projection.runs) {
         if (run.status !== "queued" || run.queueHeld === true) continue;
         events.push({
           id: yield* allocateEventId(),
@@ -722,6 +727,15 @@ export const make = Effect.gen(function* () {
 
   const reconcile = (trigger: "startup" | "shutdown") =>
     Effect.gen(function* () {
+      const preserveQueued = Option.isSome(admission)
+        ? yield* admission.value
+            .preserveQueuedOnRestart(trigger)
+            .pipe(
+              Effect.mapError(
+                (cause) => new ProviderRuntimeRecoveryError({ operation: "reconcile", cause }),
+              ),
+            )
+        : false;
       const continueAfterRestart = yield* settings.getSettings.pipe(
         Effect.orElseSucceed(() => null),
       );
@@ -751,7 +765,7 @@ export const make = Effect.gen(function* () {
           continueAfterRestart !== null &&
           resolveProjectSettings(continueAfterRestart, projection.thread.projectId).settings
             .continueThreadsAfterServerUpdate;
-        const result = yield* reconcileProjection(projection, trigger, enabled);
+        const result = yield* reconcileProjection(projection, trigger, enabled, preserveQueued);
         terminalizedRuns += result.terminalizedRuns;
         stoppedSessions += result.stoppedSessions;
         closedRequests += result.closedRequests;

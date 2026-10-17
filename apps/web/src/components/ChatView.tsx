@@ -493,7 +493,12 @@ import {
   hasDismissedResumeCompaction,
   shouldOfferResumeCompaction,
 } from "./chat/ContextWindowMeter.logic";
-import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "../lib/contextWindow";
+import {
+  deriveLatestContextWindowSnapshot,
+  formatContextWindowTokens,
+  retainContextWindowSnapshotWhileCompacting,
+  type ContextWindowSnapshot,
+} from "../lib/contextWindow";
 import {
   DRAFT_HERO_TRANSITION_ANIMATION_ID,
   DRAFT_HERO_TRANSITION_EASING,
@@ -3587,7 +3592,7 @@ export default function ChatView(props: ChatViewProps) {
     isConnecting ||
     isCompacting ||
     runlessWorkStartedAt !== null;
-  const activeContextWindow = useMemo(
+  const derivedContextWindow = useMemo(
     () =>
       deriveLatestContextWindowSnapshot(
         serverVisibleTurnItems ?? [],
@@ -3598,6 +3603,31 @@ export default function ChatView(props: ChatViewProps) {
       ),
     [activeThreadLiveTokenUsage, serverVisibleTurnItems, serverProjection],
   );
+  const contextWindowThreadId = activeThread?.id ?? null;
+  const [contextWindowReading, setContextWindowReading] = useState<{
+    threadId: string | null;
+    compacting: boolean;
+    displayed: ContextWindowSnapshot | null;
+  }>({ threadId: null, compacting: false, displayed: null });
+  const sameContextWindowThread = contextWindowReading.threadId === contextWindowThreadId;
+  const activeContextWindow =
+    isCompacting && sameContextWindowThread
+      ? retainContextWindowSnapshotWhileCompacting(
+          contextWindowReading.displayed,
+          derivedContextWindow,
+        )
+      : derivedContextWindow;
+  if (
+    contextWindowReading.threadId !== contextWindowThreadId ||
+    contextWindowReading.compacting !== isCompacting ||
+    contextWindowReading.displayed !== activeContextWindow
+  ) {
+    setContextWindowReading({
+      threadId: contextWindowThreadId,
+      compacting: isCompacting,
+      displayed: activeContextWindow,
+    });
+  }
   const pendingBackgroundTasks = useMemo(() => {
     if (serverProjection === null || serverProjection === undefined) {
       return [];
@@ -7537,13 +7567,15 @@ export default function ChatView(props: ChatViewProps) {
     pendingUserInputs.length > 0 ||
     showPlanFollowUpPrompt;
   const compactDisabled = compactThreadUnavailable;
-  const compactDisabledReason = compactDisabled
-    ? !activeProject
-      ? "Choose a project before compacting"
-      : !manualCompactionProviderAvailable
-        ? "Compaction is unavailable for this provider"
-        : "Compacting is unavailable right now"
-    : null;
+  const compactDisabledReason = isCompacting
+    ? "The harness is compacting."
+    : compactDisabled
+      ? !activeProject
+        ? "Choose a project before compacting"
+        : !manualCompactionProviderAvailable
+          ? "Compaction is unavailable for this provider"
+          : "Compacting is unavailable right now"
+      : null;
   const resumeCompactionBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (
       !activeThread ||

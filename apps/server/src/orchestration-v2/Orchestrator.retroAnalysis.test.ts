@@ -118,7 +118,7 @@ const facts = (
     company: "No Fun",
     accountId: "account",
     providerInstanceId: "muse-personal",
-    modelId: "muse-spark-1.3-contributor",
+    modelId: "muse-spark-1.3",
     profile: "muse-review",
     verified: true,
     observedAtMs: nowMs,
@@ -149,7 +149,7 @@ const facts = (
 
 const selection = {
   instanceId: ProviderInstanceId.make("muse-personal"),
-  model: "muse-spark-1.3-contributor",
+  model: "muse-spark-1.3",
   options: [{ id: "profile", value: "muse-review" }],
 };
 const sourceId = CommandId.make("retro-source");

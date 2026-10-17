@@ -227,6 +227,34 @@ const withPackagedWslHarness = <A, E, R>(
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer));
 
 describe("DesktopBackendConfiguration", () => {
+  it.effect("primary restarts load the peer CA only with configured peer", () =>
+    withHarness(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fs = yield* FileSystem.FileSystem;
+        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+        const parentCA = process.env.NODE_EXTRA_CA_CERTS;
+        assert.isUndefined((yield* configuration.resolvePrimary).env.NODE_EXTRA_CA_CERTS);
+        const ca = environment.path.join(
+          environment.homeDirectory,
+          "Library",
+          "Application Support",
+          "NoFunPeer",
+          "rootCA.pem",
+        );
+        const config = environment.path.join(environment.stateDir, "nofun", "mission-peer.json");
+        yield* fs.makeDirectory(environment.path.dirname(ca), { recursive: true });
+        yield* fs.writeFileString(ca, "public CA fixture");
+        assert.isUndefined((yield* configuration.resolvePrimary).env.NODE_EXTRA_CA_CERTS);
+        yield* fs.makeDirectory(environment.path.dirname(config), { recursive: true });
+        yield* fs.writeFileString(config, "{}");
+        assert.equal((yield* configuration.resolvePrimary).env.NODE_EXTRA_CA_CERTS, ca);
+        assert.equal((yield* configuration.resolvePrimary).env.NODE_EXTRA_CA_CERTS, ca);
+        assert.equal(process.env.NODE_EXTRA_CA_CERTS, parentCA);
+      }),
+    ),
+  );
+
   it.effect("resolvePrimary produces a stable scoped bootstrap token", () =>
     withHarness(
       Effect.gen(function* () {

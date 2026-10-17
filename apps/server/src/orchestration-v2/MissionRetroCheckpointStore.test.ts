@@ -82,7 +82,7 @@ const readyCapacity = (): MissionRetroCheckpointStore.MissionRetroCapacityFacts 
   state: "ready",
   accountId: "acct-1",
   company: "No Fun",
-  reporterIdentity: "muse-spark-1.3-contributor",
+  reporterIdentity: "muse-spark-1.3",
   exhausted: false,
   lowReserve: false,
   profile: "muse-review",
@@ -231,7 +231,7 @@ it.effect("captures a ready checkpoint with event, projection, and receipt", () 
     assert.isFalse(out.recovered);
     assert.strictEqual(out.checkpoint.status, "queued_ready");
     assert.strictEqual(out.checkpoint.coverage, "full");
-    assert.strictEqual(out.checkpoint.requestedReporter, "muse-spark-1.3-contributor");
+    assert.strictEqual(out.checkpoint.requestedReporter, "muse-spark-1.3");
     assert.strictEqual(out.checkpoint.sourceThreadId, "thread-origin");
     assert.strictEqual(yield* eventCount("mission-1"), 2);
     const canonical = yield* currentMission("mission-1");

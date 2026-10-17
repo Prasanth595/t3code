@@ -225,6 +225,19 @@ export class ThreadManagementNoSteerableRunError extends Schema.TaggedError<Thre
   }
 }
 
+export class ThreadManagementMuseSteerRejectedError extends Schema.TaggedError<ThreadManagementMuseSteerRejectedError>()(
+  "ThreadManagementMuseSteerRejectedError",
+  {
+    threadId: ThreadId,
+    runId: RunId,
+    mode: Schema.Literals(["auto", "steer", "restart"]),
+  },
+) {
+  override get message(): string {
+    return `Steering a running Muse thread would replace its task, so this send was rejected and nothing was dispatched. Wait until thread ${this.threadId} is terminal, then call delegate_task again with the full brief, the current state, and the change.`;
+  }
+}
+
 export class ThreadManagementThreadNotInterruptibleError extends Schema.TaggedError<ThreadManagementThreadNotInterruptibleError>()(
   "ThreadManagementThreadNotInterruptibleError",
   {
@@ -279,6 +292,7 @@ export const ThreadManagementError = Schema.Union([
   ThreadManagementRunNotFoundError,
   ThreadManagementThreadArchivedError,
   ThreadManagementNoSteerableRunError,
+  ThreadManagementMuseSteerRejectedError,
   ThreadManagementThreadNotInterruptibleError,
   ThreadManagementProjectionLoadError,
   ThreadManagementProjectThreadsListError,
@@ -398,6 +412,26 @@ export function latestActiveRun(
   return projection.runs
     .filter(isActiveRun)
     .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+}
+
+const MUSE_PROVIDER_INSTANCE_IDS: ReadonlySet<string> = new Set([
+  "muse-personal",
+  "muse-backstage-support",
+]);
+
+/**
+ * A selection routes to Muse when its provider instance is one of the Muse
+ * accounts, or when it names a `muse-*` model (the ACP Muse driver serves
+ * Muse models). Checked against the thread, its active run, and the send's
+ * own selection so a Muse target cannot slip through under any one of them.
+ */
+export function isMuseModelSelection(
+  selection: { readonly instanceId: string; readonly model: string } | undefined,
+): boolean {
+  if (selection === undefined) return false;
+  return (
+    MUSE_PROVIDER_INSTANCE_IDS.has(selection.instanceId) || selection.model.startsWith("muse-")
+  );
 }
 
 function latestSteerableRun(
@@ -754,6 +788,38 @@ const make = Effect.gen(function* () {
         dispatchMode = {
           type: input.mode === "queue" ? "queue_after_active" : "start_immediately",
         };
+      }
+
+      // Fail closed for Muse: steering or restarting a running Muse child
+      // replaces its whole task (observed on both Muse accounts, T3 0.0.46).
+      // Reject before dispatch so the original brief stays untouched. A Muse
+      // thread with no steerable run (terminal/idle) still receives messages
+      // through the start/queue paths above. Cursor and Codex steer normally.
+      if (
+        (dispatchMode.type === "steer_active" || dispatchMode.type === "restart_active") &&
+        steerableRun !== undefined &&
+        (isMuseModelSelection({
+          instanceId: target.thread.providerInstanceId,
+          model: target.thread.modelSelection.model,
+        }) ||
+          isMuseModelSelection(target.thread.modelSelection) ||
+          isMuseModelSelection({
+            instanceId: steerableRun.providerInstanceId,
+            model: steerableRun.modelSelection.model,
+          }) ||
+          isMuseModelSelection(steerableRun.modelSelection) ||
+          isMuseModelSelection(input.modelSelection))
+      ) {
+        return yield* new ThreadManagementMuseSteerRejectedError({
+          threadId: input.threadId,
+          runId: steerableRun.id,
+          mode:
+            dispatchMode.type === "restart_active"
+              ? "restart"
+              : input.mode === "steer"
+                ? "steer"
+                : "auto",
+        });
       }
 
       const dispatch = yield* orchestrator.dispatch({

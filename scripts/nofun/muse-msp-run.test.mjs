@@ -27,6 +27,7 @@ const { appendFileSync } = await import('node:fs');
 const { createInterface } = await import('node:readline');
 if(process.env.MSP_LAUNCH) appendFileSync(process.env.MSP_LAUNCH,JSON.stringify({argv:process.argv.slice(2),config:process.env.XDG_CONFIG_HOME,data:process.env.XDG_DATA_HOME,backend:process.env.TBH_CREDENTIAL_BACKEND}));
 let initialized = false;
+let observedUsage;
 const send = m => process.stdout.write(JSON.stringify({jsonrpc:'2.0',...m})+'\\n');
 createInterface({input:process.stdin}).on('line', line => {
  const m=JSON.parse(line); appendFileSync(log, JSON.stringify(m)+'\\n');
@@ -36,24 +37,32 @@ createInterface({input:process.stdin}).on('line', line => {
  if(m.method==='account/read') return send({id:m.id,result:{state:process.env.MSP_STATE??'accountLogin',label:process.env.MSP_LOGIN??'owner@example.test',credentialRequired:true}});
  if(m.method==='session/start') return send({id:m.id,result:{session:{sessionId:'s'},viewCursor:''}});
  if(m.method==='turn/interrupt') return send({id:m.id,result:{status:'accepted'}});
- if(m.method==='usage/read') return send({id:m.id,result:{}});
+ if(m.method==='usage/read') return send({id:m.id,result:process.env.MSP_STAMP_ONLY && observedUsage ? {usage:{...observedUsage,observedAtMs:Date.now()}} : {}});
  if(m.method==='turn/start') {
   send({id:m.id,result:{status:'accepted',turnId:'t',disposition:'started',startedNewTurn:true}});
   if(process.env.MSP_LIMIT) for(let n=0;n<80;n++) send({method:'session/tokenUsage',params:{sessionId:'s',viewCursor:'token-'+n}});
   if(process.env.MSP_CHANGE) send({method:'account/changed',params:{state:'accountLogin',label:'other@example.test'}});
   const usage={window:{usedPercent:0,resetsAtMs:Date.now()+100000,windowDurationMins:300},weekly:{usedPercent:100,resetsAtMs:Date.now()+200000},tier:'pro',observedAtMs:Date.now()};
+  if(process.env.MSP_STAMP_ONLY) usage.observedAtMs=1;
+  observedUsage=usage;
   if(!process.env.MSP_ABSENT) send({method:'usage/changed',params:{...usage,SENTINEL_SECRET:'do not retain'}});
   send({method:'item/started',params:{sessionId:'s',item:{itemId:'a',kind:'agentMessage',status:'inProgress',revision:0}}});
-  send({method:'item/delta',params:{sessionId:'s',itemId:'a',delta:'useful answer'}});
   const cursor = process.env.MSP_SHARED_CURSOR ? {viewCursor:'same-transaction'} : {};
+  const delta={method:'item/delta',params:{...cursor,sessionId:'s',itemId:'a',delta:process.env.MSP_SHARED_CURSOR ? 'useful ' : 'useful answer'}};
+  send(delta);
+  if(process.env.MSP_SHARED_CURSOR) {
+   send(delta); // Exact replay is still duplicate.
+   send({method:'item/delta',params:{...cursor,sessionId:'s',itemId:'a',delta:'answer'}});
+  }
   send({method:'item/completed',params:{...cursor,sessionId:'s',item:{itemId:'a',kind:'agentMessage',status:'completed',revision:1,text:'useful answer'}}});
+  if(process.env.MSP_SHARED_CURSOR) send({method:'turn/completed',params:{...cursor,sessionId:'s',turnId:'other-turn',terminal:'failed'}});
   send({method:'turn/completed',params:{...cursor,sessionId:'s',turnId:'t',terminal:'completed'}});
   if(process.env.MSP_SHARED_CURSOR) setTimeout(() => process.exit(0),500);
  }
 });`;
 
 async function fixture(options = {}) {
-  const { extraArgs = [], ...hostEnv } = options;
+  const { extraArgs = [], readOnly = true, ...hostEnv } = options;
   const dir = mkdtempSync(join(tmpdir(), "msp-fixture-"));
   try {
     const cli = join(dir, "muse");
@@ -67,7 +76,7 @@ async function fixture(options = {}) {
       argv: [
         "exec",
         "--model",
-        "muse-spark-1.3-contributor",
+        "muse-spark-1.3",
         "--workspace",
         dir,
         "--prompt-file",
@@ -77,8 +86,7 @@ async function fixture(options = {}) {
         "--reasoning-effort",
         "high",
         "--disable-approval",
-        "--disable-write",
-        "--disable-shell",
+        ...(readOnly ? ["--disable-write", "--disable-shell"] : []),
         "--json",
         ...extraArgs,
       ],
@@ -105,7 +113,7 @@ test("useful work uses initialized, account identity, pinned model and no-shell 
   );
   assert.match(calls[0].params.clientInfo.name, /^[a-z0-9_]+$/);
   const start = calls.find((m) => m.method === "session/start").params;
-  assert.equal(start.modelId, "muse-spark-1.3-contributor");
+  assert.equal(start.modelId, "muse-spark-1.3");
   assert.equal(start.approvalMode, "allowAll");
   assert.equal(calls.filter((m) => m.method === "turn/start").length, 1);
   assert.equal(
@@ -123,6 +131,43 @@ test("useful work uses initialized, account identity, pinned model and no-shell 
   );
 });
 
+test("catalog model IDs reach session/start unchanged; suffix variants refuse before host startup", async () => {
+  for (const model of ["muse-spark-1.3", "muse-wonder-1.0", "muse-wonder-full-1.0"]) {
+    const { result, calls } = await fixture({ extraArgs: ["--model", model] });
+    assert.equal(result, 0);
+    assert.equal(calls.find((call) => call.method === "session/start").params.modelId, model);
+  }
+  for (const model of [
+    "muse-spark-1.2",
+    "muse-spark-1.3-contributor",
+    "muse-wonder-1.0-contributor",
+    "muse-wonder-full-1.0-contributor",
+  ]) {
+    const { result, calls } = await fixture({ extraArgs: ["--model", model] });
+    assert.notEqual(result, 0);
+    assert.equal(calls.length, 0);
+  }
+});
+
+test("Contributor mode is forced at host launch and off refuses before startup", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "msp-launch-"));
+  try {
+    const launch = join(dir, "launch.json");
+    const { result } = await fixture({
+      MSP_LAUNCH: launch,
+      extraArgs: ["--contributor-mode", "on"],
+    });
+    assert.equal(result, 0);
+    const args = JSON.parse(readFileSync(launch, "utf8")).argv;
+    assert.equal(args[args.indexOf("--contributor-mode") + 1], "on");
+    const refused = await fixture({ extraArgs: ["--contributor-mode", "off"] });
+    assert.equal(refused.result, 1);
+    assert.deepEqual(refused.calls, []);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("absent last-observed data never becomes a made-up reading or an extra turn", async () => {
   const { events, calls, result } = await fixture({ MSP_ABSENT: "1" });
   assert.equal(result, 0);
@@ -130,10 +175,28 @@ test("absent last-observed data never becomes a made-up reading or an extra turn
   assert.equal(calls.filter((m) => m.method === "turn/start").length, 1);
 });
 
-test("different projected events sharing a cursor do not hide turn completion", async () => {
+test("different projected events and turns sharing a cursor do not hide turn completion", async () => {
   const { result, events } = await fixture({ MSP_SHARED_CURSOR: "1" });
   assert.equal(result, 0);
   assert.ok(events.some((e) => e.payload_type === "run.terminal.completed"));
+  assert.equal(
+    events
+      .filter((e) => e.payload_type === "run.output.delta")
+      .map((e) => e.payload.text)
+      .join(""),
+    "useful answer",
+  );
+});
+
+test("a stamp-only final usage read refreshes quota without another model turn", async () => {
+  const { result, events, calls } = await fixture({ MSP_STAMP_ONLY: "1" });
+  assert.equal(result, 0);
+  const observed = events.find((e) => e.payload_type === "t3.muse.usage").payload.usage;
+  assert.ok(observed.observedAtMs > 1);
+  assert.equal(observed.window.usedPercent, 0);
+  assert.equal(observed.weekly.usedPercent, 100);
+  assert.equal(calls.filter((m) => m.method === "turn/start").length, 1);
+  assert.equal(calls.filter((m) => m.method === "usage/read").length, 2);
 });
 
 test("wrong login or API billing lane stops before useful inference", async () => {
@@ -288,8 +351,32 @@ test("native completion guard interrupts at the launcher's step bound and does n
   assert.ok(!events.some((e) => e.payload_type === "run.terminal.completed"));
 });
 
+test("full-access posture reaches the MSP host without disabling shell or writes", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "msp-full-access-"));
+  try {
+    const launch = join(dir, "launch");
+    const { result, calls } = await fixture({
+      readOnly: false,
+      MSP_LAUNCH: launch,
+      extraArgs: ["--disable-sandbox", "--trust-workspace", "--disable-request-user-input"],
+    });
+    assert.equal(result, 0);
+    const args = JSON.parse(readFileSync(launch, "utf8")).argv;
+    for (const flag of ["--disable-sandbox", "--trust-workspace", "--disable-request-user-input"])
+      assert.ok(args.includes(flag), flag);
+    assert.ok(!args.includes("--disable-shell"));
+    assert.ok(!args.includes("--disable-write"));
+    assert.equal(
+      calls.find((call) => call.method === "session/start").params.approvalMode,
+      "allowAll",
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("an unknown launcher constraint refuses the run instead of dropping the flag", async () => {
-  const { result, calls } = await fixture({ extraArgs: ["--disable-sandbox"] });
+  const { result, calls } = await fixture({ extraArgs: ["--not-a-real-constraint"] });
   assert.equal(result, 1);
   assert.deepEqual(calls, []);
 });

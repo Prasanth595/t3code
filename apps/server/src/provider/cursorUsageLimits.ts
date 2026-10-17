@@ -50,6 +50,8 @@ export function cursorUsageResponseToLimits(
         kind: "monthly",
         label,
         usedPercent: clampPercent(usedPercent),
+        routingPool:
+          id === "autoPercentUsed" ? "cursor" : id === "apiPercentUsed" ? "api" : "aggregate",
         ...(resetsAt ? { resetsAt } : {}),
       });
     }

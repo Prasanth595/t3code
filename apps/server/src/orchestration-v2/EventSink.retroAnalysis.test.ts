@@ -122,7 +122,7 @@ const facts = (
     company: "No Fun",
     accountId: "account",
     providerInstanceId: "muse-personal",
-    modelId: "muse-spark-1.3-contributor",
+    modelId: "muse-spark-1.3",
     profile: "muse-review",
     verified: true,
     observedAtMs: nowMs,
@@ -343,10 +343,10 @@ const harness = (
                   accountId: "account",
                   providerInstanceId: "muse-personal",
                   billingMode: "subscription",
-                  modelId: "muse-spark-1.3-contributor",
+                  modelId: "muse-spark-1.3",
                   profile: "muse-review",
                   capability: "read_only" as const,
-                  supportedModelIds: ["muse-spark-1.3-contributor"],
+                  supportedModelIds: ["muse-spark-1.3"],
                 },
                 usageLimits: {
                   checkedAt: "1970-01-01T00:00:00.000Z",
@@ -428,7 +428,7 @@ const thread: OrchestrationV2AppThread = {
   createdBy: "user",
   creationSource: "web",
   providerInstanceId,
-  modelSelection: { instanceId: providerInstanceId, model: "muse-spark-1.3-contributor" },
+  modelSelection: { instanceId: providerInstanceId, model: "muse-spark-1.3" },
   runtimeMode: "full-access",
   interactionMode: "default",
   branch: null,
@@ -552,7 +552,7 @@ const withRun = (
     entry.type === "run.created" ? { ...entry, payload: { ...entry.payload, ...update } } : entry,
   ),
 });
-const parentFrame = (model = "muse-spark-1.3-contributor"): OrchestrationV2DomainEvent => ({
+const parentFrame = (model = "muse-spark-1.3"): OrchestrationV2DomainEvent => ({
   id: EventId.make("parent-reporter-frame"),
   threadId: retro.controllerThreadId,
   type: "turn-item.updated",
@@ -579,7 +579,7 @@ const parentFrame = (model = "muse-spark-1.3-contributor"): OrchestrationV2Domai
     targetModel: model,
   },
 });
-const parentSubagent = (model = "muse-spark-1.3-contributor"): OrchestrationV2DomainEvent => ({
+const parentSubagent = (model = "muse-spark-1.3"): OrchestrationV2DomainEvent => ({
   id: EventId.make("parent-reporter-subagent"),
   threadId: retro.controllerThreadId,
   type: "subagent.updated",
@@ -767,7 +767,7 @@ describe("EventSink prepared retro analysis", () => {
         );
         const excessSelection = {
           instanceId: providerInstanceId,
-          model: "muse-spark-1.3-contributor",
+          model: "muse-spark-1.3",
           profile: "muse-focused",
         };
         yield* denied(prepare(cp, withRun(original, { modelSelection: excessSelection })));
@@ -1003,7 +1003,7 @@ describe("EventSink prepared retro analysis", () => {
           proposedAccountId: "account",
           proposedProviderInstanceId: "muse-personal",
           proposedBillingMode: "subscription",
-          modelId: "muse-spark-1.3-contributor",
+          modelId: "muse-spark-1.3",
           profile: "muse-review",
           promptHash: "prompt",
           optionsHash: "options",
@@ -1111,7 +1111,7 @@ describe("EventSink prepared retro analysis", () => {
         );
         assert.strictEqual(
           (yield* current()).execution!.retroAnalyses![0]!.lease!.modelId,
-          "muse-spark-1.3-contributor",
+          "muse-spark-1.3",
         );
         assert.strictEqual(
           (yield* current()).execution!.retroAnalyses![0]!.lease!.reporterRunId,
