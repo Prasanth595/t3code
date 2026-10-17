@@ -365,7 +365,8 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   // keyboard library's height AND visibility then stay frozen open, so gating the sticky
   // translation on visibility alone still strands the composer after resume. An input that kept
   // focus through the switch is exempt: Android restores its keyboard unchanged, so no keyboard
-  // or focus event would ever lift the quarantine. The stranded case always starts with a blur.
+  // or focus event would ever lift the quarantine. Hiding the keyboard with Back keeps focus, so
+  // Back then Home mid-hide takes the exemption and can still strand the composer.
   const [keyboardStateSuspect, setKeyboardStateSuspect] = useState(false);
   const ownedInputFocusedRef = useRef(false);
   useEffect(() => {
