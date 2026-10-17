@@ -31,6 +31,7 @@ import {
   environmentRpcKey,
   createAtomCommandScheduler,
   createEnvironmentQueryAtomFamily,
+  selectEnvironmentQueryData,
   createEnvironmentSubscriptionAtomFamily,
   createRuntimeCommand,
   scheduleAtomCommandEffect,
@@ -391,6 +392,40 @@ describe("environment query lifecycle", () => {
         const changed = yield* readEnvironmentQuery(registry, harness.atom);
         expect(changed).not.toBe(first);
         expect(changed.checks[0]?.status).toBe("failed");
+      }),
+    ),
+  );
+
+  it.effect("does not notify a data-only reader when a refetch returns equal content", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let status = "passed";
+        const execute = Effect.sync(() => ({ checks: [{ name: "ci", status }] }));
+        const harness = yield* makeEnvironmentQueryHarness(execute);
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+        yield* readEnvironmentQuery(registry, harness.atom);
+
+        const data = Atom.map(harness.atom, selectEnvironmentQueryData);
+        const seen: Array<unknown> = [];
+        let resultNotifications = 0;
+        const unsubscribeData = registry.subscribe(data, (value) => seen.push(value), {
+          immediate: true,
+        });
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribeData));
+        const unsubscribeResult = registry.subscribe(harness.atom, () => resultNotifications++);
+        yield* Effect.addFinalizer(() => Effect.sync(unsubscribeResult));
+
+        registry.refresh(harness.atom);
+        yield* readEnvironmentQuery(registry, harness.atom);
+        // The result itself still moves (timestamp, `waiting`), which SWR relies on.
+        expect(resultNotifications).toBeGreaterThan(0);
+        expect(seen).toHaveLength(1);
+
+        status = "failed";
+        registry.refresh(harness.atom);
+        yield* readEnvironmentQuery(registry, harness.atom);
+        expect(seen).toHaveLength(2);
+        expect(seen[1]).toEqual({ checks: [{ name: "ci", status: "failed" }] });
       }),
     ),
   );
