@@ -371,7 +371,10 @@ const layerProjectCloneTracker = ProjectCloneTracker.layer.pipe(
   Layer.provide(layerSourceControlRepositoryService),
 );
 
-const layerKnownWorkspaces = KnownWorkspaces.layer.pipe(Layer.provide(ProjectStore.layer));
+const layerKnownWorkspaces = KnownWorkspaces.layer.pipe(
+  Layer.provide(ProjectStore.layer),
+  Layer.provide(GitVcsDriver.layer),
+);
 
 const layerReview = ReviewService.layer.pipe(
   Layer.provideMerge(layerKnownWorkspaces),

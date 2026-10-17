@@ -30,7 +30,7 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { isFilesystemRoot, managedWorktreesDirectories } from "../worktreesDirectory.ts";
+import { makeIsManagedWorktreePath } from "../worktreesDirectory.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
@@ -118,57 +118,7 @@ export const layer: Layer.Layer<
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
     const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
     const runtimePolicy = yield* RuntimePolicy.RuntimePolicyV2;
-
-    // Where git would create `target`: the real path of its nearest existing
-    // ancestor plus the missing rest, since git follows symlinks on the way.
-    const realLocation = (target: string): Effect.Effect<string> =>
-      fileSystem.realPath(target).pipe(
-        Effect.catch(() => {
-          const parent = path.dirname(target);
-          return parent === target
-            ? Effect.succeed(target)
-            : Effect.map(realLocation(parent), (real) => path.join(real, path.basename(target)));
-        }),
-      );
-
-    // A thread's path and branch can come from a client, so turn start only
-    // recreates a missing worktree where the server would have put it:
-    // `<managed worktrees folder>/<repo>/<branch>`, compared by real path.
-    const isManagedWorktreePath = Effect.fn("orchestrationV2.providerTurnStart.isManagedWorktree")(
-      function* (worktreePath: string) {
-        // git resolves a relative path against the project, not the server cwd.
-        if (!path.isAbsolute(worktreePath)) return false;
-        // Server-made paths are normalized. A `..` would be applied after git
-        // follows a symlink but before realPath does, so the two disagree.
-        if (path.resolve(worktreePath) !== worktreePath) return false;
-        const settings = yield* serverSettings.getSettings.pipe(
-          Effect.orElseSucceed(() => ({
-            worktreesDirectory: "",
-            previousWorktreesDirectories: [],
-          })),
-        );
-        const roots = yield* Effect.forEach(
-          managedWorktreesDirectories(
-            settings,
-            serverConfig.worktreesDir,
-            path,
-            yield* HostProcess.HomeDirectory,
-          ),
-          realLocation,
-        );
-        const candidate = yield* realLocation(worktreePath);
-        return roots.some((root) => {
-          if (isFilesystemRoot(root, path)) return false;
-          const relative = path.relative(root, candidate);
-          const segments = relative.split(path.sep);
-          return (
-            !path.isAbsolute(relative) &&
-            segments.length === 2 &&
-            segments.every((segment) => segment !== "" && segment !== "..")
-          );
-        });
-      },
-    );
+    const isManagedWorktreePath = yield* makeIsManagedWorktreePath;
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.

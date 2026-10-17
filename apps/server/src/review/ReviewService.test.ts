@@ -24,6 +24,8 @@ function layer(input: {
   readonly previousWorktreesDirectories?: ReadonlyArray<string>;
   readonly projectRoots?: ReadonlyArray<string> | "unavailable";
   readonly threadWorktrees?: ReadonlyArray<{ worktreePath: string; deleted?: boolean }>;
+  /** What `git worktree list` reports for every project. */
+  readonly gitWorktrees?: ReadonlyArray<string>;
 }) {
   const projectRoots = input.projectRoots ?? [];
   return ReviewService.layer.pipe(
@@ -79,7 +81,11 @@ function layer(input: {
           }),
       }),
     ),
-    Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+    Layer.provide(
+      Layer.mock(GitVcsDriver.GitVcsDriver)({
+        listWorktreePaths: () => Effect.succeed([...(input.gitWorktrees ?? [])]),
+      }),
+    ),
     Layer.provide(
       ServerSettings.ServerSettingsService.layerTest({
         worktreesDirectory: input.worktreesDirectory ?? "",
@@ -228,6 +234,8 @@ describe("ReviewService", () => {
       const bound = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-bound-" });
       const deleted = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-deleted-" });
       const unbound = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-unbound-" });
+      // A client can set a thread's path to any folder; git doesn't list this one.
+      const claimed = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-claimed-" });
       yield* fs.makeDirectory(`${bound}/sub`);
 
       const review = (cwd: string) =>
@@ -240,8 +248,10 @@ describe("ReviewService", () => {
               workspaceRoot,
               baseDir,
               projectRoots: [project],
+              gitWorktrees: [project, bound, deleted],
               threadWorktrees: [
                 { worktreePath: bound },
+                { worktreePath: claimed },
                 { worktreePath: deleted, deleted: true },
                 // A relative path would resolve against the server's own cwd.
                 { worktreePath: "t3-review-relative" },
@@ -255,7 +265,7 @@ describe("ReviewService", () => {
       for (const cwd of [bound, `${bound}/sub`]) {
         assert.strictEqual((yield* review(cwd)).cwd, cwd);
       }
-      for (const cwd of [deleted, unbound, `${process.cwd()}/t3-review-relative`]) {
+      for (const cwd of [deleted, unbound, claimed, `${process.cwd()}/t3-review-relative`]) {
         const error = yield* review(cwd).pipe(Effect.flip);
         assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
       }
