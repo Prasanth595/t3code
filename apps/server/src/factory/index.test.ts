@@ -1616,27 +1616,33 @@ describe("the gate in the background", () => {
 });
 
 describe("reloading the machine config", () => {
-  /** A fake `gh` that records the argv of every call and holds the first one until released. */
-  const holdingProcess = () => {
+  /** A fake `gh` that records the argv of every call and holds the first call naming each of `repos` until released. */
+  const holdingProcess = (repos: ReadonlyArray<string> = ["a/b"]) => {
     const calls: Array<string> = [];
-    const entered = Deferred.makeUnsafe<void>();
-    const release = Deferred.makeUnsafe<void>();
-    let first = true;
+    const holds = new Map(
+      repos.map((repo) => [
+        repo,
+        { held: false, entered: Deferred.makeUnsafe<void>(), release: Deferred.makeUnsafe<void>() },
+      ]),
+    );
     const process = FactoryProcess.of({
       run: (input) =>
         Effect.gen(function* () {
-          calls.push([input.command, ...(input.args ?? [])].join(" "));
-          if (first) {
-            first = false;
-            yield* Deferred.succeed(entered, undefined);
-            yield* Deferred.await(release);
+          const call = [input.command, ...(input.args ?? [])].join(" ");
+          calls.push(call);
+          const hold = [...holds].find(([repo]) => call.includes(repo))?.[1];
+          if (hold !== undefined && !hold.held) {
+            hold.held = true;
+            yield* Deferred.succeed(hold.entered, undefined);
+            yield* Deferred.await(hold.release);
           }
           return yield* Effect.fail(
             new RunSpawnError({ shell: false, cause: new Error("gh not found") }),
           );
         }),
     });
-    return { calls, process, entered, release };
+    const first = holds.get(repos[0]!)!;
+    return { calls, process, holds, entered: first.entered, release: first.release };
   };
 
   /** The runtime over a temp base dir holding `config` (or no file); `write` replaces the file. */
@@ -1729,7 +1735,7 @@ describe("reloading the machine config", () => {
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          const { calls, process, entered, release } = holdingProcess();
+          const { calls, process, holds, entered, release } = holdingProcess(["a/b", "c/d"]);
           const { loop, write } = yield* started(VALID, process);
           yield* Deferred.await(entered);
           const first = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
@@ -1741,19 +1747,15 @@ describe("reloading the machine config", () => {
           });
           yield* Deferred.succeed(release, undefined);
           yield* Fiber.join(first);
-          const firstPass = calls.length;
-          const second = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
-          yield* Fiber.join(second);
-          assert.ok(
-            calls.slice(0, firstPass).every((call) => call.includes("a/b")),
-            calls.join("\n"),
-          );
-          const next = calls.slice(firstPass);
-          assert.ok(next.length > 0);
-          assert.ok(
-            next.every((call) => call.includes("c/d") && !call.includes("a/b")),
-            next.join("\n"),
-          );
+          // The next pass follows at once, on the new config: it is held at its first call.
+          const second = holds.get("c/d")!;
+          yield* Deferred.await(second.entered);
+          const next = yield* Effect.forkChild(loop.awaitPass, { startImmediately: true });
+          yield* Deferred.succeed(second.release, undefined);
+          yield* Fiber.join(next);
+          const lastOld = calls.findLastIndex((call) => call.includes("a/b"));
+          const firstNew = calls.findIndex((call) => call.includes("c/d"));
+          assert.ok(lastOld >= 0 && firstNew > lastOld, calls.join("\n"));
         }),
       ).pipe(Effect.provide(NodeServices.layer)),
   );

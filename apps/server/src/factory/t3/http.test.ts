@@ -163,6 +163,8 @@ const worldContext = (
         awaitPass: Effect.never,
         passRunning: Effect.succeed(world.passRunning ?? false),
         status: world.status ?? idle,
+        reload: Effect.void,
+        repoConfigs: Effect.succeed(new Map()),
       }),
     ),
     Context.add(Attention, attentionWith(world.attention ?? [])),

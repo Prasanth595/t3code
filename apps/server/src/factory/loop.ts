@@ -31,10 +31,13 @@ export interface Loop {
  */
 export const PASS_TIMEOUT = Duration.minutes(30);
 
-/** Runs `onePass` on the loop's schedule in a fiber of the scope. The first pass starts at once. */
+/**
+ * Runs `onePass` on the loop's schedule in a fiber of the scope. The first pass starts at once.
+ * `pollSeconds` is read before each wait, so a changed interval applies after the pass that ends.
+ */
 export const runLoop = (
   onePass: Effect.Effect<Report>,
-  pollSeconds: number,
+  pollSeconds: () => number,
 ): Effect.Effect<Loop, never, Scope.Scope> =>
   Effect.gen(function* () {
     const latch = yield* Latch.make(false);
@@ -59,7 +62,7 @@ export const runLoop = (
         const finished = next.done;
         next.done = yield* Deferred.make<Report | null>();
         yield* Deferred.succeed(finished, report);
-        yield* Effect.raceFirst(Effect.sleep(Duration.seconds(pollSeconds)), latch.await);
+        yield* Effect.raceFirst(Effect.sleep(Duration.seconds(pollSeconds())), latch.await);
       }
     });
     yield* Effect.forkScoped(loop, { startImmediately: true });

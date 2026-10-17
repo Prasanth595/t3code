@@ -9,9 +9,10 @@ import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
-import type * as Scope from "effect/Scope";
+import * as Scope from "effect/Scope";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
@@ -23,8 +24,10 @@ import {
   loadMachineConfig,
   parseProjectConfig,
   PROJECT_CONFIG_PATH,
+  type ConfigError,
   type MachineConfig,
   type ProjectConfig,
+  type RepoConfigReading,
   type WatchedRepo,
 } from "./config.ts";
 import * as Gate from "./gate.ts";
@@ -89,22 +92,28 @@ import {
 
 export type { FactoryStatus } from "./status.ts";
 
+export type { RepoConfigReading } from "./config.ts";
+
 /**
  * The running factory, for the code that wakes it (a thread's run changing, a person's request).
- * Its `status` is what the status report (`status.ts`) is built on.
+ * Its `status` is what the status report (`status.ts`) is built on, and follows `reload`.
  */
 export class FactoryLoop extends Context.Service<
   FactoryLoop,
-  Loop & { readonly status: FactoryStatus }
+  Loop & {
+    readonly status: FactoryStatus;
+    /**
+     * Reads the machine config again and applies it: the next pass runs on it, and a pass under
+     * way finishes on the config it started with. A config that is missing or does not load
+     * leaves the factory idle.
+     */
+    readonly reload: Effect.Effect<void>;
+    /** What the passes last read of each repo's project config, by repo name. */
+    readonly repoConfigs: Effect.Effect<ReadonlyMap<string, RepoConfigReading>>;
+  }
 >()("t3/factory/FactoryLoop") {}
 
-/** A loop that does nothing: the factory has no config, or one it cannot read. */
-const idle = (reason: string): FactoryLoop["Service"] => ({
-  wake: Effect.void,
-  awaitPass: Effect.never,
-  passRunning: Effect.succeed(false),
-  status: { state: "idle", reason },
-});
+const idle = (reason: string): FactoryStatus => ({ state: "idle", reason });
 
 /**
  * How long an issue must have sat in `factory:triage` or `factory:building` with no assignee
@@ -136,31 +145,46 @@ const assignedOnlyTo = (items: ReadonlyArray<IssueSummary>, user: string) =>
     .map((item) => item.number)
     .sort(byNumber);
 
+/** A project config that could not be had: the pass's error, and the same problems per field. */
+interface ProjectReadError extends PassError {
+  readonly errors: ReadonlyArray<ConfigError>;
+}
+
 /**
  * The project config of a repo: `.dw/config.yml` at the tip of the default branch on GitHub.
  * The config must name that branch as its `base`: it is committed on its own base branch.
  */
 const projectFromBase = (
   github: ReturnType<typeof makeGitHub>,
-): Effect.Effect<ProjectConfig, PassError, FactoryProcess> =>
+): Effect.Effect<ProjectConfig, ProjectReadError, FactoryProcess> =>
   Effect.gen(function* () {
-    const found = yield* github
-      .baseConfig()
-      .pipe(
-        Effect.mapError(asPassError("config", `cannot read ${PROJECT_CONFIG_PATH} from GitHub: `)),
-      );
+    const found = yield* github.baseConfig().pipe(
+      Effect.mapError((error): ProjectReadError => ({
+        kind: "config",
+        message: `cannot read ${PROJECT_CONFIG_PATH} from GitHub: ${error.message}`,
+        errors: [
+          {
+            file: PROJECT_CONFIG_PATH,
+            message: `cannot read ${PROJECT_CONFIG_PATH} from GitHub: ${error.message}`,
+          },
+        ],
+      })),
+    );
     const file = `${found.branch}:${PROJECT_CONFIG_PATH}`;
     const parsed = parseProjectConfig(found.text, file);
     if (Result.isFailure(parsed)) {
-      return yield* Effect.fail<PassError>({
+      return yield* Effect.fail<ProjectReadError>({
         kind: "config",
         message: parsed.failure.map(formatConfigError).join("; "),
+        errors: parsed.failure,
       });
     }
     if (parsed.success.base !== found.branch) {
-      return yield* Effect.fail<PassError>({
+      const message = `${file} names base \`${parsed.success.base}\`, but the repo's default branch is \`${found.branch}\`: the config must be committed on its own base branch`;
+      return yield* Effect.fail<ProjectReadError>({
         kind: "config",
-        message: `${file} names base \`${parsed.success.base}\`, but the repo's default branch is \`${found.branch}\`: the config must be committed on its own base branch`,
+        message,
+        errors: [{ file, field: "factory.base", message }],
       });
     }
     return parsed.success;
@@ -280,6 +304,7 @@ export const liveWorld = (
   attention: Pick<Attention["Service"], "raise" | "clear">,
   live: LiveGate,
   gateRemoteBase?: string,
+  onProject?: (repo: string, reading: RepoConfigReading) => void,
 ): PassWorld => {
   // Built once per process, so judgements last as long as the factory runs.
   const claimMemo = new ClaimMemo();
@@ -405,7 +430,16 @@ export const liveWorld = (
       return { kind: "started" } as const;
     });
   return {
-    project: (watched) => withProcess(projectFromBase(githubFor(watched))),
+    project: (watched) =>
+      withProcess(projectFromBase(githubFor(watched))).pipe(
+        Effect.tap((project) =>
+          Effect.sync(() => onProject?.(watched.repo, { kind: "ok", project })),
+        ),
+        Effect.tapError((error) =>
+          Effect.sync(() => onProject?.(watched.repo, { kind: "errors", errors: error.errors })),
+        ),
+        Effect.mapError((error): PassError => ({ kind: error.kind, message: error.message })),
+      ),
     trackerUser: (watched) =>
       withProcess(githubFor(watched).login()).pipe(Effect.mapError(asPassError("tracker"))),
     unfinishedRuns: (only) => ledger(() => listUnfinishedRuns(dataDir, only)),
@@ -572,17 +606,15 @@ export const wakeOn = (
  */
 const wakeOnOwnedThreads = (
   owned: Ref.Ref<ReadonlySet<string>>,
+  events: Events.FactoryEvents["Service"],
   loop: Loop,
   restartDelay: Duration.Input,
 ) =>
-  Effect.gen(function* () {
-    const events = yield* Events.FactoryEvents;
-    return yield* wakeOn(owned, events.runStatusChanges, loop.wake).pipe(
-      Effect.catch((error) => Effect.logWarning("factory events stream failed, restarting", error)),
-      Effect.andThen(Effect.sleep(restartDelay)),
-      Effect.forever,
-    );
-  });
+  wakeOn(owned, events.runStatusChanges, loop.wake).pipe(
+    Effect.catch((error) => Effect.logWarning("factory events stream failed, restarting", error)),
+    Effect.andThen(Effect.sleep(restartDelay)),
+    Effect.forever,
+  );
 
 /** How a pass ended, for the count of passes that error in a row. */
 const outcomeOf = (exit: Exit.Exit<Report>, lastError: () => string | null): PassOutcome => {
@@ -608,82 +640,137 @@ export interface RuntimeOptions {
   readonly gateRemoteBase?: string;
 }
 
+/** A pass of a factory with no config to run on. */
+const NO_PASS: Report = { runs: 0, claimed: 0, errors: 0, attention: 0 };
+
+/** The config a pass runs on, with the world built for it. */
+interface Current {
+  readonly machine: MachineConfig;
+  readonly world: PassWorld;
+}
+
 const startFactory = (options: RuntimeOptions) =>
   Effect.gen(function* () {
     const { factoryDir, machineConfigPath } = yield* Paths.FactoryPaths;
     const attention = yield* Attention;
-    // Gates run inside this server, so a lock file left from an earlier run belongs to a dead gate.
-    const cleared = yield* clearGateLocks(factoryDir);
-    if (cleared > 0) yield* Effect.logInfo(`cleared ${cleared} gate lock(s)`);
-    const loaded = yield* Effect.result(loadMachineConfig(machineConfigPath));
-    if (Result.isFailure(loaded)) {
-      for (const error of loaded.failure.errors) {
-        yield* Effect.logError(formatConfigError(error));
-      }
-      yield* attention.raise({
-        id: CONFIG_ITEM_ID,
-        kind: "config",
-        repo: null,
-        issue: null,
-        run: null,
-        message: `machine config not loaded: ${loaded.failure.errors.map(formatConfigError).join("; ")}`,
-      });
-      return idle("factory config failed to load");
-    }
-    yield* attention.clear((item) => item.id === CONFIG_ITEM_ID);
-    if (Option.isNone(loaded.success)) {
-      yield* Effect.logInfo(`no factory config at ${machineConfigPath}`);
-      return idle("no factory config");
-    }
-    const machine = loaded.success.value;
-    yield* attention.setNotify(machine.notify);
-    yield* Effect.logInfo("factory started");
+    const fileSystem = yield* FileSystem.FileSystem;
     const process = yield* FactoryProcess;
     const sessions = yield* T3Sessions.FactorySessions;
     const gate = yield* FactoryGate;
-    // The loop is made after the world, so a gate that ends wakes whatever loop there is then.
-    let running: Loop | null = null;
-    const world = liveWorld(
-      machine,
-      factoryDir,
-      process,
-      sessions,
-      () => Date.now(),
-      hostName(),
-      attention,
-      {
-        gate,
-        wake: Effect.suspend(() => running?.wake ?? Effect.void),
-        scope: yield* Effect.scope,
-      },
-      options.gateRemoteBase,
-    );
+    const events = yield* Events.FactoryEvents;
+    const scope = yield* Effect.scope;
+    // Gates run inside this server, so a lock file left from an earlier run belongs to a dead gate.
+    const cleared = yield* clearGateLocks(factoryDir);
+    if (cleared > 0) yield* Effect.logInfo(`cleared ${cleared} gate lock(s)`);
+
+    // What `reload` changes and the loop reads: a pass takes `current` once, at its start.
+    const state: { current: Current | null; loop: Loop | null; status: FactoryStatus } = {
+      current: null,
+      loop: null,
+      status: idle("no factory config"),
+    };
+    const readings = new Map<string, RepoConfigReading>();
     // The threads of the unfinished runs, read at start and after every pass: a pass is what
     // launches and finishes sessions, so between passes the set does not change.
     const owned = yield* Ref.make<ReadonlySet<string>>(new Set());
     yield* refreshOwned(factoryDir, owned);
+
     const onePass = Effect.gen(function* () {
+      const current = state.current;
+      if (current === null) return NO_PASS;
       // Each line is logged as it is decided, so a pass that hangs or dies has said what it did.
       const context = yield* Effect.context<never>();
       const log = Effect.runSyncWith(context);
       let lastError: string | null = null;
-      return yield* runPass(world, machine, (line) => {
+      return yield* runPass(current.world, current.machine, (line) => {
         if (line.startsWith("error: ")) lastError = line;
         log(Effect.logInfo(line));
       }).pipe(Effect.onExit((exit) => attention.passEnded(outcomeOf(exit, () => lastError))));
     }).pipe(Effect.ensuring(refreshOwned(factoryDir, owned)));
-    const loop = yield* runLoop(onePass, machine.pollSeconds);
-    running = loop;
-    yield* Effect.forkScoped(wakeOnOwnedThreads(owned, loop, options.restartDelay ?? "5 seconds"));
-    const status: FactoryStatus = {
-      state: "running",
-      settings: {
-        pollSeconds: machine.pollSeconds,
-        maxConcurrentRuns: machine.maxConcurrentRuns,
-        repos: machine.repos.map((repo) => repo.repo),
+
+    const start = (machine: MachineConfig) =>
+      Effect.gen(function* () {
+        // The loop is made after the world, so a gate that ends wakes whatever loop there is then.
+        const world = liveWorld(
+          machine,
+          factoryDir,
+          process,
+          sessions,
+          () => Date.now(),
+          hostName(),
+          attention,
+          { gate, wake: Effect.suspend(() => state.loop?.wake ?? Effect.void), scope },
+          options.gateRemoteBase,
+          (repo, reading) => {
+            readings.set(repo, reading);
+          },
+        );
+        state.current = { machine, world };
+        state.status = {
+          state: "running",
+          settings: {
+            pollSeconds: machine.pollSeconds,
+            maxConcurrentRuns: machine.maxConcurrentRuns,
+            repos: machine.repos.map((repo) => repo.repo),
+          },
+        };
+        if (state.loop !== null) {
+          yield* Effect.logInfo("factory config reloaded");
+          return yield* state.loop.wake;
+        }
+        yield* Effect.logInfo("factory started");
+        // The first pass runs at once, on the config just set.
+        const loop = yield* runLoop(onePass, () => state.current?.machine.pollSeconds ?? 60).pipe(
+          Effect.provideService(Scope.Scope, scope),
+        );
+        state.loop = loop;
+        yield* Effect.forkIn(
+          wakeOnOwnedThreads(owned, events, loop, options.restartDelay ?? "5 seconds"),
+          scope,
+        );
+      });
+
+    const reload = Effect.gen(function* () {
+      const loaded = yield* Effect.result(loadMachineConfig(machineConfigPath));
+      if (Result.isFailure(loaded)) {
+        for (const error of loaded.failure.errors) {
+          yield* Effect.logError(formatConfigError(error));
+        }
+        yield* attention.raise({
+          id: CONFIG_ITEM_ID,
+          kind: "config",
+          repo: null,
+          issue: null,
+          run: null,
+          message: `machine config not loaded: ${loaded.failure.errors.map(formatConfigError).join("; ")}`,
+        });
+        state.current = null;
+        state.status = idle("factory config failed to load");
+        return;
+      }
+      yield* attention.clear((item) => item.id === CONFIG_ITEM_ID);
+      if (Option.isNone(loaded.success)) {
+        yield* Effect.logInfo(`no factory config at ${machineConfigPath}`);
+        state.current = null;
+        state.status = idle("no factory config");
+        return;
+      }
+      const machine = loaded.success.value;
+      yield* attention.setNotify(machine.notify);
+      yield* start(machine);
+    }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
+
+    yield* reload;
+    return {
+      wake: Effect.suspend(() => state.loop?.wake ?? Effect.void),
+      awaitPass: Effect.suspend(() => state.loop?.awaitPass ?? Effect.never),
+      passRunning: Effect.suspend(() => state.loop?.passRunning ?? Effect.succeed(false)),
+      get status() {
+        return state.status;
       },
-    };
-    return { ...loop, status } satisfies FactoryLoop["Service"];
+      reload,
+      repoConfigs: Effect.sync(() => new Map(readings)),
+    } satisfies FactoryLoop["Service"];
   });
 
 /**
