@@ -253,8 +253,6 @@ it.effect("reports itself idle, without the config errors, when the machine file
   }),
 );
 
-// ---- attention ----
-
 /** A process runner that records each call: osascript succeeds and every other command fails to start. */
 const recordingProcess = () => {
   const calls: Array<RunInput> = [];
@@ -472,8 +470,6 @@ it.effect("logs each pass line as it is decided, so a pass that dies has said wh
   }),
 );
 
-// ---- the wake ----
-
 describe("waking the pass when a factory thread's run changes status", () => {
   /** Writes an unfinished run of issue `issue` whose session is `threadId`. */
   const seedRun = (factoryDir: string, issue: number, threadId: string, finished = false) => {
@@ -639,8 +635,6 @@ describe("waking the pass when a factory thread's run changes status", () => {
     ).pipe(Effect.provide(NodeServices.layer)),
   );
 });
-
-// ---- the live world over gh ----
 
 describe("liveWorld", () => {
   const REPO = "rawphp/softfac";

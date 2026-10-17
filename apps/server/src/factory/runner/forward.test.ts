@@ -57,8 +57,6 @@ const SINCE_FIRST = "2026-10-04T10:13:16Z";
 const EDITED = "2026-10-04T10:15:00Z";
 const HEAD = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
 
-// ---- the ledger -----------------------------------------------------------------------------------
-
 type Line = { readonly event: string; readonly data: unknown };
 
 const step = (text: string): RunEvent => ({ event: "step_changed", data: { step: text } });
@@ -120,8 +118,6 @@ const commentForwarded = (id: number): RunEvent => ({
 });
 const bodyForwarded = (editedAt: string) => step(`body-edit-forwarded ${editedAt}`);
 
-// ---- what the session is sent, written out independently of the code under test ---------------------
-
 const sendOf = (commandId: string, text: string) => `send thread-1 ${commandId} ${text}`;
 const commentSend = (id: number, author: string, text: string) =>
   sendOf(
@@ -135,8 +131,6 @@ const bodySend = (editedAt: string, editor: string, text: string) =>
   );
 /** What `forward` asks T3 when it has something to send: the thread's status once, then the sends. */
 const afterStatus = (...sends: ReadonlyArray<string>) => ["status thread-1", ...sends];
-
-// ---- the fakes ----------------------------------------------------------------------------------------
 
 const ghFailure = () => new GitHubFailed({ args: ["api", "graphql"], status: 1, stderr: "boom" });
 const sessionsFailure = (operation: "status" | "send" = "send") =>
@@ -415,8 +409,6 @@ const instructorActivity = (rig: Rig) => {
   script(rig, [comment(101, "rawphp", "one")], edit(EDITED, "rawphp", "new"));
 };
 
-// ---- forwarding: comments ------------------------------------------------------------------------------
-
 describe("forward: comments", () => {
   it.effect("sends each new comment once, in order, and records it", () =>
     Effect.gen(function* () {
@@ -544,8 +536,6 @@ describe("forward: comments", () => {
   );
 });
 
-// ---- forwarding: what applyActions does for the two actions -----------------------------------------------
-
 describe("forward: the actions", () => {
   /** A run file with no lines, a `Progress` for it, and the rig's context. */
   const bare = (threadId: string | null) => {
@@ -642,8 +632,6 @@ describe("forward: the actions", () => {
     }),
   );
 });
-
-// ---- forwarding: a body edit ------------------------------------------------------------------------------
 
 describe("forward: a body edit", () => {
   it.effect("is sent once with its exact message and step", () =>
@@ -747,8 +735,6 @@ describe("forward: a body edit", () => {
     }),
   );
 });
-
-// ---- forwarding: guards and failures --------------------------------------------------------------------------
 
 /** A rig whose ledger holds `events` and whose GitHub would hand back a comment and a body edit, so a missing guard would send them. */
 const guarded = (events: ReadonlyArray<RunEvent>) => {
@@ -1034,8 +1020,6 @@ describe("forward: a closed issue", () => {
   );
 });
 
-// ---- forwarding: waiting for the run a message starts -------------------------------------------------------------
-
 describe("forward: waiting for the run a message starts", () => {
   it.effect(
     "an idle session gets a wait marker before the send, and advance waits for a newer run",
@@ -1279,8 +1263,6 @@ const draftPr = {
   headSha: HEAD,
 };
 
-// ---- forwarding: dropped comments ---------------------------------------------------------------------
-
 const dropOf = (id: number, reason: Dropped["reason"]): Dropped => ({ id: String(id), reason });
 
 /** What `activitySince` reports as dropped from now on. */
@@ -1499,8 +1481,6 @@ describe("forward: dropped comments", () => {
       }),
   );
 });
-
-// ---- a send T3 refuses (#74) ---------------------------------------------------------------------------
 
 describe("forward: a send T3 refuses", () => {
   it.effect(

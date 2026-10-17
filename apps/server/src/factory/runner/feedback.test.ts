@@ -85,8 +85,6 @@ const CHANGED_DURING_BUILD_TEXT =
 const END_WITH_DONE =
   "When you have fixed this, end your reply with the line FACTORY-DONE: <PR URL> as before.";
 
-// ---- the ledger ---------------------------------------------------------------------------------
-
 type Line = { readonly event: string; readonly data: unknown };
 
 const step = (text: string): RunEvent => ({ event: "step_changed", data: { step: text } });
@@ -156,8 +154,6 @@ const regateLine = (previous: string, base: string): Line => ({
 const worktreeRemoved: Line = { event: "worktree_removed", data: { path: "/t3/wt" } };
 
 const UNCHANGED_READ = `textCheck 10 ${LABELED} rawphp`;
-
-// ---- the fakes ----------------------------------------------------------------------------------
 
 const ghFailure = () => new GitHubFailed({ args: ["issue"], status: 1, stderr: "boom" });
 const ghRateLimit = () => new GitHubRateLimited({ args: ["issue"], stderr: "rate limit" });
@@ -656,8 +652,6 @@ class FakeGate {
   }
 }
 
-// ---- the rig ------------------------------------------------------------------------------------
-
 interface Rig {
   readonly dataDir: string;
   readonly run: RunId;
@@ -781,8 +775,6 @@ const failFirst = (rig: Rig, n: number) => {
     call < n ? failingLast(commands, 101, "boom\n") : passing(commands);
 };
 
-// ---- gate: the retries run out --------------------------------------------------------------------
-
 /** Fails `retries` attempts into the session, with a new finished run each time; the lines they wrote. */
 const sendBackAttempts = (rig: Rig, retries: number) =>
   Effect.gen(function* () {
@@ -805,7 +797,6 @@ const sendBackAttempts = (rig: Rig, retries: number) =>
     assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
     return middle;
   });
-// ---- gate: the base branch moves --------------------------------------------------------------------
 
 const MOVED = "9f8e7d6c5b4a39281706f5e4d3c2b1a098765432";
 
@@ -892,10 +883,6 @@ const mergedPull = (): PullRequest => ({
   merged: true,
   isDraft: false,
 });
-
-// ---- the first message and the ledger's view of feedback are in messages.test.ts and progress.test.ts
-
-// ---- the step -------------------------------------------------------------------------------
 
 const feedbackIn = (rig: Rig) => feedback(rig.ctx, rig.run);
 const NONE: FeedbackStep = { kind: "none" };

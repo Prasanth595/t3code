@@ -37,7 +37,6 @@ const GIT_TAIL_BYTES = 1024 * 1024;
 /** The `gate_command` line of an attempt that ran no command because the head conflicts with the base. */
 const MERGE_COMMAND = "softfac: merge the base branch into the head";
 
-// ---- errors ---------------------------------------------------------------------------------
 // The messages are the ones softfac's `WorkspaceError` and `GateError` print.
 
 const causeText = (cause: unknown): string =>
@@ -132,8 +131,6 @@ export class GateRecordError extends Schema.TaggedError<GateRecordError>()("Gate
  */
 export type GateError = WorkspaceError | GateCommandSpawnError | GateRecordError | LedgerError;
 
-// ---- text -----------------------------------------------------------------------------------
-
 /**
  * `command` as one line in a code span for a table cell: the span's backticks are longer than any
  * run in the command, and `|` is escaped so it does not end the cell.
@@ -193,8 +190,6 @@ export const regateResultsComment = (
   headSha: string,
   baseSha: string,
 ): string => resultsComment("passed again", results, attempt, headSha, baseSha);
-
-// ---- types ----------------------------------------------------------------------------------
 
 export interface GateOptions {
   /** Where repositories are fetched from: `<remoteBase>/<owner>/<name>.git`. Default `https://github.com`; tests pass `file:///…`. */
@@ -282,8 +277,6 @@ export interface Checkout {
   readonly head: string;
   readonly merge: Merge;
 }
-
-// ---- paths and locks ------------------------------------------------------------------------
 
 const gatesDir = (dataDir: string) => NodePath.join(dataDir, "gates");
 
@@ -444,8 +437,6 @@ const releaseLock = (outcome: LockOutcome) =>
       // Already gone.
     }
   });
-
-// ---- the checkout ---------------------------------------------------------------------------
 
 type Runner = {
   readonly run: (input: RunInput) => Effect.Effect<RunResult, RunSpawnError>;
@@ -739,8 +730,6 @@ export const makeWorkspace = (runner: Runner, options: GateOptions = {}) => {
 
   return { checkout, remove };
 };
-
-// ---- the gate -------------------------------------------------------------------------------
 
 const runGate = (runner: Runner, input: GateInput): Effect.Effect<GateResult, GateError> => {
   const options = input.options ?? {};
