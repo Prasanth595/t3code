@@ -2801,6 +2801,156 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         ),
     );
 
+    it.effect("refreshes status without a second upload-pack process", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+        yield* git(updater, ["clone", remote, "."]);
+        yield* git(updater, ["config", "user.email", "test@test.com"]);
+        yield* git(updater, ["config", "user.name", "Test"]);
+        yield* writeTextFile(updater, "remote.txt", "remote\n");
+        yield* git(updater, ["add", "remote.txt"]);
+        yield* git(updater, ["commit", "-m", "remote commit"]);
+        yield* git(updater, ["push", "origin", initialBranch]);
+        const remoteCommit = yield* git(updater, ["rev-parse", "HEAD"]);
+
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const blockedPromotion = yield* Deferred.make<void>();
+        const releasePromotion = yield* Deferred.make<void>();
+        const finished = yield* Deferred.make<void>();
+        const spawner = ChildProcessSpawner.make((command) =>
+          Effect.gen(function* () {
+            if (
+              ChildProcess.isStandardCommand(command) &&
+              command.args.includes("--no-write-fetch-head") &&
+              command.options.env?.GIT_OBJECT_DIRECTORY === undefined
+            ) {
+              yield* Deferred.succeed(blockedPromotion, undefined);
+              yield* Deferred.await(releasePromotion);
+            }
+            return yield* delegate.spawn(command);
+          }),
+        );
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+        const refresh = yield* driver.statusDetailsRemote(cwd).pipe(
+          Effect.tap(() => Deferred.succeed(finished, undefined)),
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Effect.race(Deferred.await(blockedPromotion), Deferred.await(finished));
+        yield* TestClock.adjust("30 seconds");
+        const completedWithoutPromotion = yield* Deferred.isDone(finished);
+        // Release the injected stall before asserting so a red run cannot leak a blocked fiber.
+        yield* Deferred.succeed(releasePromotion, undefined);
+        const status = yield* Fiber.join(refresh);
+        assert.isTrue(completedWithoutPromotion);
+        assert.equal(status.behindCount, 1);
+        assert.equal(
+          yield* git(cwd, ["rev-parse", `refs/remotes/origin/${initialBranch}`]),
+          remoteCommit,
+        );
+        yield* git(cwd, ["fsck", "--full", "--no-dangling"]);
+      }),
+    );
+
+    it.effect.each(["cancel", "failure", "already published"] as const)(
+      "preserves repository integrity during pack publication (%s)",
+      (outcome) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+          const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* git(remote, ["init", "--bare"]);
+          yield* git(cwd, ["remote", "add", "origin", remote]);
+          yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+          const originalCommit = yield* git(cwd, ["rev-parse", "HEAD"]);
+          yield* git(updater, ["clone", remote, "."]);
+          yield* git(updater, ["config", "user.email", "test@test.com"]);
+          yield* git(updater, ["config", "user.name", "Test"]);
+          yield* writeTextFile(updater, "remote.txt", "remote\n");
+          yield* git(updater, ["add", "remote.txt"]);
+          yield* git(updater, ["commit", "-m", "remote commit"]);
+          yield* git(updater, ["push", "origin", initialBranch]);
+          const remoteCommit = yield* git(updater, ["rev-parse", "HEAD"]);
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const commonDir = yield* fs.realPath(
+            path.resolve(cwd, yield* git(cwd, ["rev-parse", "--git-common-dir"])),
+          );
+          const packDirectory = path.join(commonDir, "objects", "pack");
+          const publishedPack = yield* Deferred.make<string>();
+          const releasePublication = yield* Deferred.make<void>();
+          yield* Effect.addFinalizer(() => Deferred.succeed(releasePublication, undefined));
+          const publicationFileSystem = FileSystem.FileSystem.of({
+            ...fs,
+            rename: (source, destination) =>
+              Effect.gen(function* () {
+                if (path.dirname(destination) !== packDirectory || !destination.endsWith(".pack")) {
+                  return yield* fs.rename(source, destination);
+                }
+                if (outcome === "failure") {
+                  return yield* PlatformError.systemError({
+                    _tag: "PermissionDenied",
+                    module: "FileSystem",
+                    method: "rename",
+                    pathOrDescriptor: destination,
+                  });
+                }
+                yield* fs.rename(source, destination);
+                if (outcome === "already published") {
+                  return yield* PlatformError.systemError({
+                    _tag: "AlreadyExists",
+                    module: "FileSystem",
+                    method: "rename",
+                    pathOrDescriptor: destination,
+                  });
+                }
+                yield* Deferred.succeed(publishedPack, destination);
+                yield* Deferred.await(releasePublication);
+              }),
+          });
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(FileSystem.FileSystem, publicationFileSystem),
+            Effect.provide(layerServerConfig),
+          );
+          if (outcome === "cancel") {
+            const refresh = yield* driver
+              .statusDetailsRemote(cwd)
+              .pipe(Effect.forkChild({ startImmediately: true }));
+            const pack = yield* Deferred.await(publishedPack);
+            const interruption = yield* Fiber.interrupt(refresh).pipe(
+              Effect.forkChild({ startImmediately: true }),
+            );
+            yield* Deferred.succeed(releasePublication, undefined);
+            yield* Fiber.join(interruption);
+            assert.isTrue(yield* fs.exists(pack.replace(/\.pack$/u, ".idx")));
+            yield* git(cwd, ["cat-file", "-e", remoteCommit]);
+          } else {
+            const status = yield* driver.statusDetailsRemote(cwd);
+            assert.equal(status.behindCount, outcome === "failure" ? 0 : 1);
+          }
+          assert.equal(
+            yield* git(cwd, ["rev-parse", `refs/remotes/origin/${initialBranch}`]),
+            outcome === "already published" ? remoteCommit : originalCommit,
+          );
+          assert.deepStrictEqual(
+            yield* fs.readDirectory(path.join(commonDir, "objects", "t3-status-fetch")),
+            [],
+          );
+          if (outcome === "failure")
+            assert.deepStrictEqual(yield* fs.readDirectory(packDirectory), []);
+          yield* git(cwd, ["fsck", "--full", "--no-dangling"]);
+        }),
+    );
+
     it.effect("cleans partial packs after repeated status fetch timeouts", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

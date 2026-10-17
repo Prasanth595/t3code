@@ -1491,29 +1491,58 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             },
           ).pipe(Effect.map((resolveResult) => resolveResult.stdout.trim()));
 
-          // Let Git install the complete pack set into the shared object store. This second fetch is
-          // local-only and uninterruptible so cancellation cannot strand a partially promoted pack.
-          yield* runGit(
-            "GitVcsDriver.fetchRemoteForStatus.promoteObjects",
-            fetchCwd,
-            [
-              "--git-dir",
-              gitCommonDir,
-              "-c",
-              "fetch.unpackLimit=1",
-              "fetch",
-              "--quiet",
-              "--no-tags",
-              "--no-auto-gc",
-              "--no-write-fetch-head",
-              "--refmap=",
-              temporaryRoot,
-              fetchTarget.temporaryRef,
-            ],
-            {
-              timeoutMs: null,
-            },
-          ).pipe(Effect.uninterruptible);
+          // The successful fetch has already indexed complete packs. Publish those files with
+          // same-filesystem renames instead of starting another upload-pack/index-pack pipeline.
+          // Like Git, install each index last; only these short metadata operations are masked
+          // against cancellation, not a subprocess that can stall indefinitely.
+          yield* Effect.gen(function* () {
+            const sourcePackDirectory = path.join(temporaryObjectDirectory, "pack");
+            const destinationPackDirectory = path.join(objectDirectory, "pack");
+            const entries = yield* fileSystem.readDirectory(sourcePackDirectory);
+            yield* fileSystem.makeDirectory(destinationPackDirectory, { recursive: true });
+            for (const entry of entries) {
+              if (!/^pack-(?:[a-f0-9]{40}|[a-f0-9]{64})\.idx$/u.test(entry)) continue;
+              const basename = entry.slice(0, -4);
+              yield* Effect.gen(function* () {
+                for (const extension of ["pack", "rev", "promisor", "idx"]) {
+                  const source = path.join(sourcePackDirectory, `${basename}.${extension}`);
+                  const destination = path.join(
+                    destinationPackDirectory,
+                    `${basename}.${extension}`,
+                  );
+                  if (
+                    extension !== "pack" &&
+                    extension !== "idx" &&
+                    !(yield* fileSystem.exists(source))
+                  ) {
+                    continue;
+                  }
+                  if (yield* fileSystem.exists(destination)) continue;
+                  yield* fileSystem.rename(source, destination).pipe(
+                    // Another fetch may have installed the same content-addressed file first.
+                    Effect.catch((cause) =>
+                      fileSystem
+                        .exists(destination)
+                        .pipe(
+                          Effect.flatMap((exists) => (exists ? Effect.void : Effect.fail(cause))),
+                        ),
+                    ),
+                  );
+                }
+              }).pipe(Effect.uninterruptible);
+            }
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new GitCommandError({
+                  operation: "GitVcsDriver.fetchRemoteForStatus.promoteObjects",
+                  command: "filesystem.rename",
+                  cwd: fetchCwd,
+                  detail: "Failed to publish completed Git status packs.",
+                  cause,
+                }),
+            ),
+          );
           const promoteRefArgs = [
             "--git-dir",
             gitCommonDir,
