@@ -161,10 +161,11 @@ describe("FactoryRunPage", () => {
     expect(page.all("b")).toHaveLength(0);
   });
 
-  it("notes a truncated ledger and skipped lines", async () => {
+  it("notes a dropped last line and skipped lines", async () => {
     state.run = resource({ data: detail(BUILDING, { truncated: true, skipped: 4 }) });
     const text = (await mount()).text();
-    expect(text).toContain("truncated");
+    expect(text).toContain("The last line of the ledger was unreadable and was dropped.");
+    expect(text).not.toContain("older entries");
     expect(text).toContain("4 unreadable lines skipped");
   });
 
