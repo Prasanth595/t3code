@@ -8,13 +8,13 @@ describe("resolveAlertDismissal", () => {
   it("dismisses only cancelable alerts outright", () => {
     expect(
       resolveAlertDismissal({
-          buttons: [cancel, confirm],
+        buttons: [cancel, confirm],
         options: { cancelable: true },
       }),
     ).toEqual({ kind: "dismiss" });
-    expect(
-      resolveAlertDismissal({ buttons: [confirm], options: { cancelable: false } }),
-    ).toEqual({ kind: "ignore" });
+    expect(resolveAlertDismissal({ buttons: [confirm], options: { cancelable: false } })).toEqual({
+      kind: "ignore",
+    });
   });
 
   it("treats dismissal as the cancel button, or the only button", () => {
@@ -26,8 +26,8 @@ describe("resolveAlertDismissal", () => {
       kind: "press",
       button: confirm,
     });
-    expect(
-      resolveAlertDismissal({ buttons: [{ text: "Retry" }, { text: "Undo" }] }),
-    ).toEqual({ kind: "ignore" });
+    expect(resolveAlertDismissal({ buttons: [{ text: "Retry" }, { text: "Undo" }] })).toEqual({
+      kind: "ignore",
+    });
   });
 });

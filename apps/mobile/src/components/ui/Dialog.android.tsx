@@ -16,7 +16,7 @@ import { useScaledTextRole } from "../../features/settings/appearance/useScaledT
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { themeColorWithContrast } from "../../lib/mobileTheme";
-import type { Alert, AlertButton } from "react-native";
+import { Alert, type AlertButton } from "react-native";
 import type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
 import { resolveAlertDismissal } from "./dialog-alert";
 
@@ -37,6 +37,10 @@ type DialogRequest =
 let presentRequest: ((request: DialogRequest) => void) | null = null;
 
 export function alert(...[title, message, buttons, options]: Parameters<typeof Alert.alert>): void {
+  if (!presentRequest) {
+    Alert.alert(title, message, buttons, options);
+    return;
+  }
   const actions = buttons?.length ? buttons.slice(0, 3) : [{ text: "OK" }];
   const normalized = actions.map((action, index) =>
     index === actions.length - 1 ? { ...action, text: action.text || "OK" } : action,
@@ -73,12 +77,15 @@ export function Host() {
   }, []);
 
   // The native dialog lingers until the next render, so a double tap must not run an action twice.
-  const close = useCallback((then?: () => void) => {
-    if (!presented || closedId.current === presented.id) return;
-    closedId.current = presented.id;
-    setQueue((current) => current.filter((dialog) => dialog.id !== presented.id));
-    then?.();
-  }, [presented]);
+  const close = useCallback(
+    (then?: () => void) => {
+      if (!presented || closedId.current === presented.id) return;
+      closedId.current = presented.id;
+      setQueue((current) => current.filter((dialog) => dialog.id !== presented.id));
+      then?.();
+    },
+    [presented],
+  );
 
   const handleCancel = useCallback(() => {
     if (presented?.kind === "alert") {
@@ -87,7 +94,7 @@ export function Host() {
         options: presented.request.options,
       });
       if (dismissal.kind === "dismiss") close(presented.request.options?.onDismiss);
-      else if (dismissal.kind === "press") close(dismissal.button.onPress);
+      else if (dismissal.kind === "press") close(() => dismissal.button.onPress?.());
     } else {
       close(presented?.request.onCancel);
     }
@@ -121,7 +128,7 @@ export function Host() {
         }}
         alertActions={actions}
         dismissable={dismissal.kind !== "ignore"}
-        onAlertAction={(action) => close(action.onPress)}
+        onAlertAction={(action) => close(() => action.onPress?.())}
         onCancel={handleCancel}
         onConfirm={handleConfirm}
       />
