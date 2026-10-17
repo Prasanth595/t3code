@@ -749,36 +749,6 @@ describe("T3 trouble in the machine log", () => {
   it("is none for a missing machine log", () => {
     expect(t3TroubleSince(tempDir(), NOW)).toBeNull();
   });
-  // A T3 restart ends every turn that was running as `cancelled` and writes no error anywhere
-  // the factory reads, so the server's own start time is the sign of that trouble.
-  it("is a T3 start within the window, with nothing in the log", () => {
-    const started = NOW - 3 * MINUTE;
-    const dataDir = tempDir();
-    logWith(dataDir, [NOW - MINUTE, passStarted]);
-    expect(t3TroubleSince(dataDir, NOW, started)).toBe(
-      `T3 Code started at ${new Date(started).toISOString()}`,
-    );
-    expect(t3TroubleSince(tempDir(), NOW, started)).toBe(
-      `T3 Code started at ${new Date(started).toISOString()}`,
-    );
-  });
-
-  it("is not a T3 start older than ten minutes", () => {
-    expect(t3TroubleSince(tempDir(), NOW, NOW - 10 * MINUTE - 1)).toBeNull();
-    expect(t3TroubleSince(tempDir(), NOW, NOW - 10 * MINUTE)).toBe(
-      `T3 Code started at ${new Date(NOW - 10 * MINUTE).toISOString()}`,
-    );
-  });
-
-  it("names the newer of a T3 start and an error in the log", () => {
-    const dataDir = tempDir();
-    logWith(dataDir, [NOW - 5 * MINUTE, t3Error("timed out")]);
-    expect(t3TroubleSince(dataDir, NOW, NOW - 8 * MINUTE)).toBe("timed out");
-    expect(t3TroubleSince(dataDir, NOW, NOW - 2 * MINUTE)).toBe(
-      `T3 Code started at ${new Date(NOW - 2 * MINUTE).toISOString()}`,
-    );
-  });
-
   it("stops at the first entry older than the window, so older trouble is not read", () => {
     const dataDir = tempDir();
     const entries: Array<[number, MachineEvent]> = [];

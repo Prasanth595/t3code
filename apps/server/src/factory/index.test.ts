@@ -33,6 +33,7 @@ import {
   regateWords,
   liveWorld,
   ownedThreads,
+  serverStartedMs,
   wakeOn,
 } from "./index.ts";
 import { isLedgerError } from "./ledger/errors.ts";
@@ -602,6 +603,8 @@ describe("liveWorld", () => {
   const REPO = "rawphp/softfac";
   const NOW = Date.UTC(2026, 9, 8, 2, 0, 0);
   const MINUTE = 60 * 1000;
+  /** When the server started, for a world under test: long before anything it looks at. */
+  const T3_STARTED = NOW - 60 * MINUTE;
 
   /** A process that answers gh by its arguments and records every call. */
   const ghWith = (answer: (args: ReadonlyArray<string>) => string | null) => {
@@ -641,6 +644,7 @@ describe("liveWorld", () => {
       process,
       stubSessions,
       () => NOW,
+      T3_STARTED,
       "mac-mini",
       noAttention,
       {
@@ -1058,6 +1062,7 @@ describe("liveWorld", () => {
         process,
         stubSessions,
         () => NOW,
+        T3_STARTED,
         "mac-mini",
         noAttention,
         {
@@ -1079,35 +1084,39 @@ describe("liveWorld", () => {
     }),
   );
 
-  it.effect("T3 trouble is the server's own start within ten minutes, with no error logged", () =>
+  it.effect("the world carries the server's start for the pass to hand to interrupted", () =>
     Effect.gen(function* () {
-      const dataDir = tempDirForLogs();
       const { process } = ghWith(() => null);
-      const worldStartedAt = (t3StartedMs: number) =>
-        liveWorld(
-          machine,
-          dataDir,
-          process,
-          stubSessions,
-          () => NOW,
-          "mac-mini",
-          noAttention,
-          {
-            gate: { run: () => Effect.succeed({ _tag: "running" as const }) },
-            wake: Effect.void,
-            scope: Scope.makeUnsafe(),
-          },
-          { t3StartedMs },
-        );
-      // A restart cancels every turn that was running and leaves no error behind: the start is
-      // the sign. An older start is not.
-      assert.strictEqual(
-        yield* worldStartedAt(NOW - 2 * MINUTE).t3Trouble(),
-        "T3 Code started at 2026-10-08T01:58:00.000Z",
+      const world = liveWorld(
+        machine,
+        tempDirForLogs(),
+        process,
+        stubSessions,
+        () => NOW,
+        NOW - 2 * MINUTE,
+        "mac-mini",
+        noAttention,
+        {
+          gate: { run: () => Effect.succeed({ _tag: "running" as const }) },
+          wake: Effect.void,
+          scope: Scope.makeUnsafe(),
+        },
       );
-      assert.strictEqual(yield* worldStartedAt(NOW - 11 * MINUTE).t3Trouble(), null);
+      assert.strictEqual(world.t3StartedMs, NOW - 2 * MINUTE);
+      // The machine log alone says whether T3 was in trouble; the start is its own evidence.
+      assert.strictEqual(yield* world.t3Trouble(), null);
     }),
   );
+
+  it("serverStartedMs is this process's start, before now", () => {
+    const started = serverStartedMs();
+    assert.ok(
+      Number.isInteger(started) &&
+        started > 0 &&
+        started <= performance.timeOrigin + performance.now(),
+      String(started),
+    );
+  });
 });
 
 describe("the gate in the background", () => {
@@ -1204,6 +1213,7 @@ describe("the gate in the background", () => {
           archive: (threadId) => Effect.sync(() => void archived.push(threadId)),
         }),
         () => 1_000,
+        0,
         "mac-mini",
         noAttention,
         {
@@ -1254,6 +1264,7 @@ describe("the gate in the background", () => {
           gh,
           stubSessions,
           () => 1_000,
+          0,
           "mac-mini",
           noAttention,
           {
@@ -1364,6 +1375,7 @@ describe("the gate in the background", () => {
           deadGh,
           sessions,
           () => 1_000,
+          0,
           "mac-mini",
           noAttention,
           {
@@ -1417,6 +1429,7 @@ describe("the gate in the background", () => {
         quietGh,
         sessions,
         () => 1_000,
+        0,
         "mac-mini",
         {
           raise: (item) => Effect.sync(() => void raised.push(item)),
@@ -1466,6 +1479,7 @@ describe("the gate in the background", () => {
         deadGh,
         sessions,
         () => 1_000,
+        0,
         "mac-mini",
         noAttention,
         {
@@ -1593,6 +1607,7 @@ describe("the gate in the background", () => {
         { run: () => Effect.die("no gh") },
         stubSessions,
         () => 2_000,
+        0,
         "mac-mini",
         noAttention,
         {
@@ -1647,6 +1662,7 @@ describe("the gate in the background", () => {
           { run: () => Effect.die("no gh") },
           stubSessions,
           () => 2_000,
+          0,
           "mac-mini",
           noAttention,
           {

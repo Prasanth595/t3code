@@ -95,6 +95,10 @@ export interface ThreadStatus extends Thread {
   readonly run: RunStatus | null;
   /** The `ordinal` of that same run; `null` when the thread has no run. */
   readonly runOrdinal: number | null;
+  /** When that same run started, as epoch milliseconds; `null` when it never started, or the thread has no run. */
+  readonly runStartedAt: number | null;
+  /** When that same run ended, as epoch milliseconds; `null` while it runs, or when the thread has no run. */
+  readonly runCompletedAt: number | null;
   /** The text of the last assistant message of that same run; `null` when the run has none. */
   readonly lastAssistantMessage: string | null;
 }
@@ -148,6 +152,8 @@ export interface ThreadSnapshot {
     readonly status: RunStatus;
     /** Absent for a run that never started. */
     readonly startedAt?: unknown;
+    /** Absent for a run that has not ended. */
+    readonly completedAt?: unknown;
   }>;
   readonly messages: ReadonlyArray<{
     readonly role: string;
@@ -189,6 +195,26 @@ export const latestRun = <Run extends ThreadSnapshot["runs"][number]>(
 ): Run | undefined =>
   highestOrdinal(runs.filter((run) => !isCancelledUnstarted(run))) ?? highestOrdinal(runs);
 
+/**
+ * A time as T3 records it, an ISO string or a `DateTime` (`epochMilliseconds`), as epoch
+ * milliseconds; `null` for a missing one, and for anything else.
+ */
+const msOf = (value: unknown): number | null => {
+  if (typeof value === "string") {
+    const ms = Date.parse(value);
+    return Number.isNaN(ms) ? null : ms;
+  }
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "epochMilliseconds" in value &&
+    typeof value.epochMilliseconds === "number"
+  ) {
+    return value.epochMilliseconds;
+  }
+  return null;
+};
+
 export const threadStatusOf = (snapshot: ThreadSnapshot): ThreadStatus => {
   const latest = latestRun(snapshot.runs);
   // Only the reported run's own message: a run that ended quietly must not be
@@ -203,6 +229,8 @@ export const threadStatusOf = (snapshot: ThreadSnapshot): ThreadStatus => {
   return {
     run: latest?.status ?? null,
     runOrdinal: latest?.ordinal ?? null,
+    runStartedAt: latest === undefined ? null : msOf(latest.startedAt),
+    runCompletedAt: latest === undefined ? null : msOf(latest.completedAt),
     lastAssistantMessage,
     ...threadOf(snapshot.thread),
   };

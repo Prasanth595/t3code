@@ -293,6 +293,8 @@ const statusOf = (
   archived: false,
   run,
   runOrdinal: run === null ? null : 1,
+  runStartedAt: null,
+  runCompletedAt: null,
   lastAssistantMessage: message,
   ...over,
 });

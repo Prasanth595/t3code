@@ -78,9 +78,14 @@ const RESUME_MESSAGE =
 const INTERRUPTED_WORDS =
   "A previous attempt of this issue (rawphp__softfac__10__1) was interrupted when T3 Code lost its session. The worktree already holds its commits: continue from them, do not start over.";
 
-const evidence = (t3Error: string | null, endedInPass: number): Evidence => ({
+const evidence = (
+  t3Error: string | null,
+  endedInPass: number,
+  t3StartedMs: number = T0 - 60 * MINUTE,
+): Evidence => ({
   t3Error,
   endedInPass,
+  t3StartedMs,
 });
 /** One session ended badly, and the machine log has a T3 timeout in the last ten minutes. */
 const afterOutage = () => evidence(T3_ERROR, 1);
@@ -248,6 +253,8 @@ const statusOf = (
   archived: false,
   run,
   runOrdinal: run === null ? null : 1,
+  runStartedAt: null,
+  runCompletedAt: null,
   lastAssistantMessage: message,
   ...over,
 });
@@ -968,6 +975,94 @@ const cutShortBeforeTheSend = () => {
   return rig;
 };
 
+// ---- a T3 restart ---------------------------------------------------------------------------------
+
+/**
+ * A restart of the server (this process) ends every turn that was running as `cancelled` and the
+ * next status read answers as usual, so no error reaches the machine log: the server's own start
+ * is the sign, for a run that was running when it happened.
+ */
+describe("interrupted: a T3 restart", () => {
+  const T3_STARTED = T0 - 5 * MINUTE;
+  const T3_STARTED_TEXT = "T3 Code started at 2026-10-04T10:08:16.123Z";
+  const endedWith = (rig: Rig, status: RunStatus, startedAt: number, completedAt: number) => {
+    rig.world.status = () =>
+      statusOf(status, null, {
+        runOrdinal: 1,
+        runStartedAt: startedAt,
+        runCompletedAt: completedAt,
+      });
+  };
+
+  it.effect("resumes a lone cancelled run that was running when the server started", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      endedWith(rig, "cancelled", T0 - 10 * MINUTE, T0 - 4 * MINUTE);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
+      clearCalls(rig);
+      const outcome = yield* decide(rig, evidence(null, 1, T3_STARTED));
+      assert.strictEqual(outcome.kind, "resumed");
+      const line = linesOf(rig).find((entry) => entry.event === "session_interrupted");
+      assert.strictEqual(field(line!.data, "t3_error"), T3_STARTED_TEXT);
+      assert.strictEqual(sends(rig).length, 1);
+      assert.strictEqual(rig.world.issue.state, "building");
+    }),
+  );
+
+  it.effect("records the machine log's error over the start when it has one", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      endedWith(rig, "cancelled", T0 - 10 * MINUTE, T0 - 4 * MINUTE);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
+      assert.strictEqual((yield* decide(rig, evidence(T3_ERROR, 1, T3_STARTED))).kind, "resumed");
+      const line = linesOf(rig).find((entry) => entry.event === "session_interrupted");
+      assert.strictEqual(field(line!.data, "t3_error"), T3_ERROR);
+    }),
+  );
+
+  it.effect(
+    "sends a run that started after the server did to stuck: a person or the provider ended it",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor();
+        endedWith(rig, "cancelled", T0 - 3 * MINUTE, T0 - MINUTE);
+        assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
+        assert.deepStrictEqual(yield* decide(rig, evidence(null, 1, T3_STARTED)), {
+          kind: "stuck",
+          reason: "the session run ended as cancelled",
+        });
+        assert.deepStrictEqual(sends(rig), []);
+        assert.strictEqual(rig.world.issue.state, "stuck");
+      }),
+  );
+
+  it.effect("sends a run that ended before the server started to stuck", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      endedWith(rig, "failed", T0 - 10 * MINUTE, T0 - 7 * MINUTE);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("failed"));
+      assert.deepStrictEqual(yield* decide(rig, evidence(null, 1, T3_STARTED)), {
+        kind: "stuck",
+        reason: "the session run ended as failed",
+      });
+      assert.deepStrictEqual(sends(rig), []);
+    }),
+  );
+
+  it.effect("does not relaunch a thread that is gone on the start alone", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      assert.deepStrictEqual(yield* decide(rig, evidence(null, 1, T3_STARTED)), {
+        kind: "stuck",
+        reason: THREAD_GONE,
+      });
+      assert.deepStrictEqual(rig.launches, []);
+    }),
+  );
+});
+
 describe("interrupted: a send cut short", () => {
   it.effect("is sent again under the same command id", () =>
     Effect.gen(function* () {
@@ -1513,7 +1608,13 @@ describe("a decided relaunch", () => {
       seed(rig.dataDir, run10b, STARTED);
       const before = bytesOf(rig, run10b);
       assert.deepStrictEqual(yield* advanceIn(rig), { kind: "stuck", reason: STOPPED_BY_HAND });
-      assert.deepStrictEqual(linesOf(rig).at(-1), FINISHED);
+      // The issue is the next attempt's now: this run is finished as the relaunch would have
+      // finished it, with no stuck line and nothing written on the issue.
+      const lines = linesOf(rig);
+      assert.deepStrictEqual(lines.at(-1), FINISHED);
+      assert.ok(!lines.some((line) => line.event === "stuck"), JSON.stringify(lines));
+      assert.deepStrictEqual(rig.gh, []);
+      assert.strictEqual(rig.world.issue.state, "building");
       assert.strictEqual(bytesOf(rig, run10b), before);
     }),
   );

@@ -126,8 +126,10 @@ class Fake implements PassWorld {
   machineLogFails = false;
   /** When set, `record` appends to the real machine log in this dir and `t3Trouble` reads it, as the live world does. */
   machineLogDir: string | null = null;
-  /** When T3 Code (this server) started, for `t3Trouble` to read with the machine log. */
-  t3StartedMs: number | null = null;
+  /** When T3 Code (this server) started: the pass hands it to `interrupted` as evidence. */
+  t3StartedMs = T0 - 60 * 60_000;
+  /** The evidence of the last `interrupted` call. */
+  lastEvidence: Evidence | null = null;
   /** What the pass wrote to a run's ledger as an `error` line. */
   runErrors: Array<{ run: RunId; step: string; kind: ErrorKind; message: string }> = [];
   /** The next run ledger writes fail: the run's ledger is finished, or cannot be written. */
@@ -374,7 +376,7 @@ class Fake implements PassWorld {
   t3Trouble() {
     this.calls.push("t3_trouble");
     if (this.machineLogDir !== null)
-      return Effect.succeed(t3TroubleSince(this.machineLogDir, this.now, this.t3StartedMs));
+      return Effect.succeed(t3TroubleSince(this.machineLogDir, this.now));
     const answer = this.t3Trouble_;
     return typeof answer === "object" && answer !== null
       ? Effect.fail(
@@ -388,6 +390,7 @@ class Fake implements PassWorld {
     this.calls.push(
       `interrupted ${runIdToString(run)} t3=${evidence.t3Error ?? "none"} ended=${evidence.endedInPass}`,
     );
+    this.lastEvidence = evidence;
     const answer = this.interrupts[`${repo.watched.repo}#${run.issue}`]?.shift() ?? {
       kind: "resumed" as const,
       resumes: 1,
@@ -3208,28 +3211,30 @@ describe("sessions that ended badly", () => {
   );
 
   it.effect(
-    "a lone run cancelled by a T3 restart is resumed with the start as the evidence, with no failure before it",
+    "a lone run cancelled by a T3 restart is decided with the server's start as evidence, with no failure before it",
     () =>
       Effect.gen(function* () {
         // The restart ends the turn as `cancelled` and the next pass's status read answers fine:
-        // nothing fails, so no error reaches the machine log. The server's start is the sign.
+        // nothing fails and no error reaches the machine log. The pass hands `interrupted` the
+        // server's start, which decides it against the run's own times.
         const fake = new Fake();
         fake.machineLogDir = passTempDir();
         fake.t3StartedMs = T0 - 2 * 60_000;
         fake.runIn(12, BUILDING, REPO, true);
         fake.advances[`${REPO}#12`] = [badEnd("cancelled")];
-        const { report, lines } = yield* pass(fake, machine([REPO], 1));
+        const { report } = yield* pass(fake, machine([REPO], 1));
         assert.equal(report.errors, 0);
         assert.deepEqual(errorEvents(fake), []);
         assert.deepEqual(decisions(fake), [
           `advance ${REPO}#12`,
           "t3_trouble",
-          `interrupted ${T3_LINE} t3=T3 Code started at 2026-10-07T13:31:20.000Z ended=1`,
+          `interrupted ${T3_LINE} t3=none ended=1`,
         ]);
-        assert.equal(
-          lineFor(lines, 12),
-          "rawphp/softfac#12 building: session ended as cancelled; interrupted, sent it a resume (1 of 2)",
-        );
+        assert.deepEqual(fake.lastEvidence, {
+          t3Error: null,
+          endedInPass: 1,
+          t3StartedMs: T0 - 2 * 60_000,
+        });
       }),
   );
 
@@ -3268,6 +3273,15 @@ describe("sessions that ended badly", () => {
       notT3Down(
         new SessionsError({ operation: "remove-worktree", cause: "Directory not empty" }),
         "remove-worktree",
+      ),
+  );
+
+  it.effect(
+    "a launch that fails is not T3 trouble: the worktree, origin or the ids can be at fault",
+    () =>
+      notT3Down(
+        new SessionsError({ operation: "launch", cause: "fetch from origin failed" }),
+        "launch",
       ),
   );
 

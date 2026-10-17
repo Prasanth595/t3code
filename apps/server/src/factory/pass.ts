@@ -119,6 +119,8 @@ export interface PassWorld {
    * when a session ended badly.
    */
   readonly t3Trouble: () => Effect.Effect<string | null, LedgerError>;
+  /** When T3 Code, this server, started: the rest of the evidence `interrupted` gets. */
+  readonly t3StartedMs: number;
   /** Decides about a session `advance` said ended badly, with the pass's evidence: `interrupted`. */
   readonly interrupted: (
     repo: Repo,
@@ -287,6 +289,19 @@ export const errorKind = (error: StartError | BuildingError | GateStepError): Er
   }
 };
 
+/**
+ * The sessions operations that are a call on T3 itself: one that fails is T3 in trouble, the sign
+ * `t3Trouble` reads. `launch` is left out, as it also fails on the worktree (git, `origin`) and on
+ * bad ids, and so is `remove-worktree`, which is git on this machine.
+ */
+const T3_OPERATIONS: ReadonlySet<string> = new Set([
+  "find-project",
+  "status",
+  "thread",
+  "send",
+  "archive",
+]);
+
 /** Repos match as run ids do: `owner/name` folded with `asciiLower`. */
 const sameRepo = (a: string, b: string) => asciiLower(a) === asciiLower(b);
 
@@ -429,9 +444,7 @@ class Pass {
       step,
       kind: errorKind(error),
       message: error.message,
-      // A sessions call that failed is T3 in trouble, except the worktree removal: that is git on
-      // this machine, and a directory it cannot empty says nothing about T3.
-      t3Down: error._tag === "FactorySessionsError" && error.operation !== "remove-worktree",
+      t3Down: error._tag === "FactorySessionsError" && T3_OPERATIONS.has(error.operation),
     });
   }
 
@@ -687,7 +700,11 @@ const decideInterruptions = (
     } else {
       t3Error = trouble.success;
     }
-    const evidence: Evidence = { t3Error, endedInPass: ended.length };
+    const evidence: Evidence = {
+      t3Error,
+      endedInPass: ended.length,
+      t3StartedMs: world.t3StartedMs,
+    };
     for (const { info, repo, what } of ended) {
       const notes = pass.notes(repo.watched.repo, Number(info.id.issue), info.state);
       const why = endedAs(what);

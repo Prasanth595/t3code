@@ -80,6 +80,8 @@ describe("threadStatusOf", () => {
     assert.deepStrictEqual(Sessions.threadStatusOf(snapshot.projection), {
       run: "completed",
       runOrdinal: 1,
+      runStartedAt: 1791106575242,
+      runCompletedAt: 1791106579470,
       lastAssistantMessage: "READY",
       worktreePath: "/tmp/t3-spike-home/worktrees/t3-spike-repo/t3code-618ff943",
       branch: "t3code/618ff943",
@@ -171,6 +173,25 @@ describe("threadStatusOf", () => {
     const status = statusOf([{ id: "run-2", ordinal: 2, status: "cancelled" }, run(1, "running")]);
     assert.strictEqual(status.run, "running");
     assert.strictEqual(status.runOrdinal, 1);
+  });
+
+  it("reads the run's start and end as epoch milliseconds, from a string or a DateTime, null when absent", () => {
+    const timed = statusOf([
+      {
+        id: "run-1",
+        ordinal: 1,
+        status: "cancelled",
+        startedAt: "2026-10-04T09:36:15.242Z",
+        completedAt: { epochMilliseconds: 1791106579470 },
+      },
+    ]);
+    assert.strictEqual(timed.runStartedAt, 1791106575242);
+    assert.strictEqual(timed.runCompletedAt, 1791106579470);
+    const running = statusOf([run(1, "running")]);
+    assert.strictEqual(running.runStartedAt, 1791182378376);
+    assert.strictEqual(running.runCompletedAt, null);
+    assert.strictEqual(statusOf([unstartedRun(1, "cancelled")]).runStartedAt, null);
+    assert.strictEqual(statusOf([]).runStartedAt, null);
   });
 
   it("reports the ordinal of the run it describes", () => {
@@ -547,6 +568,8 @@ describe("FactorySessions.status and thread", () => {
       assert.deepStrictEqual(yield* sessions.status(threadId), {
         run: "completed",
         runOrdinal: 2,
+        runStartedAt: 1791182378376,
+        runCompletedAt: null,
         lastAssistantMessage: "FACTORY-DONE: https://example.test/pr/1",
         worktreePath: "/tmp/wt/t3-abc",
         branch: "t3/abc",

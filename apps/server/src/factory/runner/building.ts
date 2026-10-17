@@ -14,6 +14,7 @@
  * resumes whatever an earlier call left half done. A failure of the tracker or of T3 is an
  * error, with nothing final written, and the next call decides again.
  */
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -226,7 +227,24 @@ export interface Evidence {
   readonly t3Error: string | null;
   /** How many runs `advance` said ended badly in this pass, this one included. */
   readonly endedInPass: number;
+  /**
+   * When T3 Code, this server, started (its process start). A restart ends every turn that was
+   * running as `cancelled` and no call fails, so the machine log has nothing: a run that started
+   * before this and ended after it was cut off by the restart.
+   */
+  readonly t3StartedMs: number;
 }
+
+/** The `t3_error` recorded for a run the server's start cut off. */
+const t3Started = (ms: number): string =>
+  `T3 Code started at ${DateTime.formatIso(DateTime.makeUnsafe(ms))}`;
+
+/** Whether the session's run was running when the server started, so the restart ended it. */
+const cutByRestart = (status: ThreadStatus, t3StartedMs: number): boolean =>
+  status.runStartedAt !== null &&
+  status.runStartedAt < t3StartedMs &&
+  status.runCompletedAt !== null &&
+  status.runCompletedAt >= t3StartedMs;
 
 /** What `interrupted` did. */
 export type InterruptOutcome =
@@ -585,7 +603,16 @@ export const advance = (
       // `stuck` as stopped by hand.
       // Only a building run: a line that is there for a run past `building` is stale.
       if (seen.stopRequested && at.state === "building") {
-        if (relaunchDecided(seen)) yield* endUnbegunRelaunch(ctx, run);
+        if (relaunchDecided(seen) && (yield* endUnbegunRelaunch(ctx, run))) {
+          // The issue is the next attempt's now: this run is finished as the relaunch would have
+          // finished it, with no stuck line, label or comment.
+          const opened = yield* out.open;
+          yield* stopSession(ctx, opened, at);
+          yield* ledger(() =>
+            opened.finish("stuck", null, null, makeCause("advance", "stop-requested")),
+          );
+          return stuckOutcome({ reason: STOPPED_BY_HAND });
+        }
         return yield* stuck("stop-requested", { reason: STOPPED_BY_HAND });
       }
       // A relaunch is decided once, in `interrupted`, and carried out from the ledger: this is the
@@ -1383,8 +1410,9 @@ export const interrupted = (
       return { kind: "unchanged", why: "a relaunch is already decided" } as const;
     }
     const limit = ctx.project.limits.interruptionResumes;
-    const may = (used: number) =>
-      (evidence.t3Error !== null || evidence.endedInPass >= 2) && used < limit;
+    // The restart counts only against the run's own times, so never for a thread that is gone.
+    const may = (used: number, restarted = false) =>
+      (evidence.t3Error !== null || evidence.endedInPass >= 2 || restarted) && used < limit;
     const t3Error = evidence.t3Error === null ? null : prepareSessionText(evidence.t3Error);
     const goneStuck = (from: Seen) =>
       stuckEnded(ctx, run, from, "thread-gone", stopOf(THREAD_GONE, null));
@@ -1437,7 +1465,8 @@ export const interrupted = (
       return { kind: "unchanged", why: "its thread has moved on since" } as const;
     }
     const used = yield* resumesUsed(ctx, run, seen);
-    if (!may(used)) {
+    const restarted = cutByRestart(status, evidence.t3StartedMs);
+    if (!may(used, restarted)) {
       return yield* stuckEnded(
         ctx,
         run,
@@ -1457,7 +1486,7 @@ export const interrupted = (
             relaunch: false,
             run_ordinal: status.runOrdinal,
             branch: status.branch,
-            t3_error: t3Error,
+            t3_error: t3Error ?? (restarted ? t3Started(evidence.t3StartedMs) : null),
             ended_in_pass: evidence.endedInPass,
           },
         },
@@ -1525,26 +1554,29 @@ const relaunchBranchOf = (
  * operator stopped this run: the stop wins (`advance`), so that ledger, which `resume` never began
  * (no claim, no state), is finished too. Left unfinished it would count as an active run and hold
  * a slot until a person ended it. A next attempt that has begun is a run of its own and is left
- * alone. Safe to repeat: this run stays `building` until its own stuck path has run.
+ * alone: that is answered `true`, and the issue is its from then on. Safe to repeat: this run
+ * stays `building` until its own end has run.
  */
 const endUnbegunRelaunch = (
   ctx: InterruptContext,
   run: RunId,
-): Effect.Effect<void, BuildingError> =>
+): Effect.Effect<boolean, BuildingError> =>
   Effect.gen(function* () {
     const next: RunId = { ...run, attempt: run.attempt + 1 };
     const existing = yield* ledger(() => readRun(ctx.dataDir, next)).pipe(
       Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
     );
-    if (existing === null) return;
+    if (existing === null) return false;
     const seen = readProgress(existing.entries);
-    if (seen.finished || seen.claimed || seen.state !== null) return;
+    if (seen.claimed || seen.state !== null) return true;
+    if (seen.finished) return false;
     const out = yield* ledger(() => Ledger.open(ctx.dataDir, next, { clock: ctx.clock }));
     try {
       yield* ledger(() => out.finish("stuck", null, null, makeCause("advance", "stop-requested")));
     } finally {
       out.close();
     }
+    return false;
   });
 
 /**

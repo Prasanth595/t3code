@@ -264,29 +264,16 @@ export const machineLogSince = (
   return newestFirst.reverse();
 };
 
-/** The text `t3TroubleSince` gives for a T3 start, as the `t3_error` of a `session_interrupted` line. */
-export const t3Started = (ms: number): string => `T3 Code started at ${new Date(ms).toISOString()}`;
-
 /**
- * The newest sign of T3 trouble at or after `nowMs` minus ten minutes: in the machine log, a
- * `preflight_failed` whose check is `t3` (its `why`) or an `error` whose kind is `t3` (its
- * `message`); or T3 Code itself having started then (`t3StartedMs`, this server's start). A
- * restart ends every turn that was running as `cancelled` and the next status read answers as
- * usual, so no error reaches the log: the start is the only sign. Only the machine log is read,
- * never a run's ledger, and only its tail (`machineLogSince`). Null for none, and for a log that
- * does not exist yet.
+ * The newest sign of T3 trouble in the machine log at or after `nowMs` minus ten minutes: a
+ * `preflight_failed` whose check is `t3` (its `why`), or an `error` whose kind is `t3` (its
+ * `message`). Only the machine log is read, never a run's ledger, and only its tail
+ * (`machineLogSince`). Null for none, and for a log that does not exist yet. A restart of the
+ * server leaves nothing here: `interrupted` reads that from the run's own times (`Evidence`).
  */
-export const t3TroubleSince = (
-  dataDir: string,
-  nowMs: number,
-  t3StartedMs: number | null = null,
-): string | null => {
-  const since = nowMs - T3_TROUBLE_WINDOW_MS;
-  let newest: { readonly ms: number; readonly text: string } | null =
-    t3StartedMs !== null && t3StartedMs >= since
-      ? { ms: t3StartedMs, text: t3Started(t3StartedMs) }
-      : null;
-  for (const entry of machineLogSince(dataDir, since)) {
+export const t3TroubleSince = (dataDir: string, nowMs: number): string | null => {
+  let newest: { readonly ms: number; readonly text: string } | null = null;
+  for (const entry of machineLogSince(dataDir, nowMs - T3_TROUBLE_WINDOW_MS)) {
     const text =
       entry.event === "preflight_failed" && field(entry.data, "check") === "t3"
         ? field(entry.data, "why")
