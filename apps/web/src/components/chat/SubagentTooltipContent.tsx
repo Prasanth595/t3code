@@ -37,7 +37,6 @@ export function SubagentTooltipContent(props: {
   origin: OrchestrationV2Subagent["origin"];
   modelSelection?: OrchestrationV2Subagent["modelSelection"];
   provider?: ServerProvider | undefined;
-  /** The environment's instances; with several accounts on one provider, the card names this one. */
   providers?: ReadonlyArray<ServerProvider> | undefined;
   driver?: ProviderDriverKind | undefined;
   elapsed?: ReactNode;
@@ -130,7 +129,6 @@ export function SubagentTooltipContent(props: {
             icon={entry?.icon ?? props.provider?.icon}
             badgeLabel={entry?.badgeLabel ?? props.provider?.badgeLabel}
             acpRegistryIconUrl={props.provider?.iconUrl}
-            // Same treatment as the sidebar card: accent dot, account in the label.
             showBadge={showInstanceBadge && entry?.accentColor !== undefined}
             badgeContent="none"
             badgeClassName="h-2 min-w-2 px-0"

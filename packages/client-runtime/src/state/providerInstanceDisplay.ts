@@ -14,11 +14,6 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 
-/**
- * Title-case a slug: splits on `_` / `-` and camelCase boundaries, so
- * `codex_personal` becomes "Codex Personal" and `myCustomInstance` becomes
- * "My Custom Instance".
- */
 function humanizeSlug(slug: string): string {
   return slug
     .replace(/([a-z])([A-Z])/g, "$1 $2")
@@ -27,16 +22,6 @@ function humanizeSlug(slug: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
-/**
- * Resolve an instance's label with a tiered priority:
- *
- *   1. A snapshot `displayName` that differs from the driver's brand label —
- *      the server has explicitly named this instance, trust it.
- *   2. For non-default instances, a humanized `instanceId` — the server fell
- *      back to the driver-level label (the same for every instance of that
- *      kind), so the slug is what keeps "Codex" and "Codex Personal" apart.
- *   3. The snapshot's `displayName`, or the brand label from contracts.
- */
 export function resolveProviderInstanceDisplayName(
   snapshot: Pick<ServerProvider, "instanceId" | "driver" | "displayName">,
 ): string {
@@ -50,11 +35,6 @@ export function resolveProviderInstanceDisplayName(
   return trimmedSnapshotName || kindLabel;
 }
 
-/**
- * Turn a display name into up to two initials for the badge: the first two
- * characters of a single word, or the first character of each of the first
- * two words. Iterates by code point so an emoji never splits into surrogates.
- */
 export function providerInstanceInitials(label: string): string {
   const words = label.replace(/[_-]+/g, " ").split(/\s+/u).filter(Boolean);
   if (words.length === 0) return "";
