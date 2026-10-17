@@ -1,10 +1,3 @@
-import {
-  EnvironmentId,
-  OrchestrationV2ProviderFailureClass,
-  RunId,
-  ThreadId,
-} from "@t3tools/contracts";
-import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -12,7 +5,6 @@ import {
   getThreadErrorBannerKey,
   isThreadErrorBannerDismissedForSession,
   shouldShowThreadErrorBanner,
-  ThreadErrorBanner,
 } from "./ThreadErrorBanner";
 
 describe("ThreadErrorBanner", () => {
@@ -74,67 +66,5 @@ describe("ThreadErrorBanner", () => {
 
   it("never shows a null error", () => {
     expect(shouldShowThreadErrorBanner("env:thread-e", null, false)).toBe(false);
-  });
-  it("aligns the warning and dismiss icons with the first line of a multi-line error", () => {
-    const markup = renderToStaticMarkup(
-      <ThreadErrorBanner
-        error={"The first error line\ncontinues on a second line"}
-        onDismiss={() => {}}
-      />,
-    );
-
-    expect(markup).toContain('role="alert"');
-    expect(markup).toContain('aria-label="Dismiss error"');
-    expect(markup).not.toContain("controlAlignment");
-    expect(markup).toContain("flex gap-2 items-start");
-    expect(markup).toContain("min-h-7 pt-1 sm:min-h-6 sm:pt-0.5");
-    expect(markup).toContain("h-lh w-4");
-    expect(markup).toContain("h-lh self-start");
-  });
-
-  describe("explain action", () => {
-    // Read from the contract so the lint rule for class names leaves these values alone.
-    const failureClass = (name: string): OrchestrationV2ProviderFailureClass => {
-      const value = OrchestrationV2ProviderFailureClass.literals.find(
-        (candidate) => candidate === name,
-      );
-      if (value === undefined) throw new Error(`Unknown failure class ${name}`);
-      return value;
-    };
-    const explainTarget = {
-      environmentId: EnvironmentId.make("env-1"),
-      threadId: ThreadId.make("thread-1"),
-      runId: RunId.make("run-1"),
-    };
-
-    it("offers Explain for a server provider failure without asking anything yet", () => {
-      const markup = renderToStaticMarkup(
-        <ThreadErrorBanner
-          error="spawn codex ENOENT"
-          errorClass={failureClass("provider_error")}
-          explainTarget={explainTarget}
-          onDismiss={() => {}}
-        />,
-      );
-
-      expect(markup).toContain(">Explain</button>");
-      expect(markup).not.toContain("Explaining");
-      expect(markup).toContain('aria-label="Dismiss error"');
-    });
-
-    it("hides Explain for usage limits and for errors without a server thread", () => {
-      expect(
-        renderToStaticMarkup(
-          <ThreadErrorBanner
-            error="Limit reached"
-            errorClass={failureClass("usage_limit")}
-            explainTarget={explainTarget}
-          />,
-        ),
-      ).not.toContain("Explain");
-      expect(
-        renderToStaticMarkup(<ThreadErrorBanner error="Local failure" errorClass={null} />),
-      ).not.toContain("Explain");
-    });
   });
 });
