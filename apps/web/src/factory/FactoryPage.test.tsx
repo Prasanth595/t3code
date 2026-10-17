@@ -12,6 +12,7 @@ const state = vi.hoisted(() => ({
   status: null as unknown,
   runs: null as unknown,
   allRuns: null as unknown,
+  environmentId: "env-2" as string | null,
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -27,8 +28,10 @@ vi.mock("@tanstack/react-router", () => ({
     createElement("a", { "data-to": to, "data-params": JSON.stringify(params ?? {}) }, children),
 }));
 vi.mock("./useFactoryData", () => ({
+  useFactoryEnvironmentId: () => state.environmentId,
   useFactoryStatus: () => state.status,
-  useFactoryRuns: (all?: boolean) => (all ? state.allRuns : state.runs),
+  useFactoryRuns: (_environmentId: string | null, all?: boolean) =>
+    all ? state.allRuns : state.runs,
 }));
 
 import { FactoryPage } from "./FactoryPage";
@@ -85,6 +88,7 @@ beforeEach(() => {
   state.status = resource({ data: statusData() });
   state.runs = resource({ data: { runs: [] } });
   state.allRuns = state.runs;
+  state.environmentId = "env-2";
 });
 
 afterEach(() => {
@@ -293,6 +297,7 @@ describe("FactoryPage", () => {
     expect(page.button("Resume claims")).toBeUndefined();
     await act(async () => page.button("Pause claims")!.props.onClick());
     expect(pauseClaims).toHaveBeenCalledTimes(1);
+    expect(pauseClaims).toHaveBeenCalledWith("env-2");
     expect(page.text()).toContain("claims paused");
     expect(refreshStatus).toHaveBeenCalled();
   });
@@ -314,6 +319,7 @@ describe("FactoryPage", () => {
     expect(page.button("Pause claims")).toBeUndefined();
     await act(async () => page.button("Resume claims")!.props.onClick());
     expect(resumeClaims).toHaveBeenCalledTimes(1);
+    expect(resumeClaims).toHaveBeenCalledWith("env-2");
     expect(page.text()).toContain("claims resumed");
   });
 
