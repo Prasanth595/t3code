@@ -4155,6 +4155,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           assert.isNull(yield* fetchBase("upstream/topic"));
 
           assert.isNull(yield* fetchBase("no-such-branch"));
+
+          // A branch deleted on the remote is not resolved from its stale
+          // tracking ref.
+          yield* pushToSource("doomed");
+          yield* git(cwd, ["fetch", "upstream"]);
+          yield* git(peer, ["push", "origin", "--delete", "doomed"]);
+          assert.isNull(yield* fetchBase("upstream/doomed"));
         }),
     );
 

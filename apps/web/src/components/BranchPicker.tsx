@@ -242,8 +242,8 @@ export function BranchPicker({
                 }
               />
               <TooltipPopup side="top" className="max-w-72 whitespace-normal">
-                Creates the worktree from the latest fetched commit of the base branch's remote
-                instead of your local branch.
+                Creates the worktree from the latest commit of the base branch on its remote. Uses
+                your local branch when the remote doesn't have it.
               </TooltipPopup>
             </Tooltip>
           ) : null}

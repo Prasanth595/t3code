@@ -2937,7 +2937,7 @@ export function GeneralSettingsPanel() {
           serverScoped
           settingKeys={["newWorktreesStartFromOrigin"]}
           {...searchableSetting("start-from-origin")}
-          description="Creates the worktree from the latest fetched commit of the base branch's remote instead of your local branch."
+          description="Creates the worktree from the latest commit of the base branch on its remote. Uses your local branch when the remote doesn't have it."
           resetAction={
             settings.newWorktreesStartFromOrigin !==
             DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin ? (

@@ -3739,6 +3739,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           .split(/\r?\n/)
           .includes(`fatal: couldn't find remote ref refs/heads/${branch}`)
       ) {
+        // The branch is gone from the remote, and a fetch without --prune
+        // keeps its tracking ref, which would still resolve to the old commit.
+        yield* executeGit(
+          "GitVcsDriver.fetchRemote",
+          input.cwd,
+          ["update-ref", "-d", `refs/remotes/${input.remoteName}/${branch}`],
+          { allowNonZeroExit: true },
+        );
         return yield* fetchAll.pipe(Effect.asVoid);
       }
       return yield* new GitCommandError({
