@@ -18,7 +18,7 @@ import type { RunInfo } from "./ledger/listRuns.ts";
 import {
   MachineLog,
   serverStartsSince,
-  serverStopsSince,
+  serverStopsForStartsSince,
   t3TroubleSince,
 } from "./ledger/machineLog.ts";
 import { newRunId, runIdToString, type RunId } from "./ledger/runId.ts";
@@ -403,7 +403,9 @@ class Fake implements PassWorld {
   t3Stops() {
     this.calls.push("t3_stops");
     if (this.machineLogDir !== null) {
-      return Effect.succeed(serverStopsSince(this.machineLogDir, this.now - 24 * 60 * 60_000));
+      return Effect.succeed(
+        serverStopsForStartsSince(this.machineLogDir, this.now - 24 * 60 * 60_000),
+      );
     }
     return Effect.succeed(this.t3Stops_);
   }

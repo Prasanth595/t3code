@@ -1148,10 +1148,37 @@ describe("liveWorld", () => {
         log.close();
       }
       assert.deepStrictEqual(yield* world.t3Starts(), [NOW - 2 * MINUTE]);
-      const stop = MachineLog.open(dataDir, { clock: () => NOW - 3 * MINUTE });
-      stop.append({ event: "server_stopping", data: { stopping_at: NOW - 3 * MINUTE } });
-      stop.close();
-      assert.deepStrictEqual(yield* world.t3Stops(), [NOW - 3 * MINUTE]);
+      // The stop of the newest start is the newest stop before it: none is written yet.
+      assert.deepStrictEqual(yield* world.t3Stops(), []);
+      // A stop older than a day is read for the start of the last day it belongs to.
+      const downDir = tempDirForLogs();
+      for (const [event, at] of [
+        ["server_stopping", NOW - 50 * 60 * MINUTE],
+        ["server_started", NOW - 2 * MINUTE],
+      ] as const) {
+        const log = MachineLog.open(downDir, { clock: () => at });
+        log.append(
+          event === "server_stopping"
+            ? { event, data: { stopping_at: at } }
+            : { event, data: { started_at: at } },
+        );
+        log.close();
+      }
+      const downWorld = liveWorld(
+        machine,
+        downDir,
+        process,
+        stubSessions,
+        () => NOW,
+        "mac-mini",
+        noAttention,
+        {
+          gate: { run: () => Effect.succeed({ _tag: "running" as const }) },
+          wake: Effect.void,
+          scope: Scope.makeUnsafe(),
+        },
+      );
+      assert.deepStrictEqual(yield* downWorld.t3Stops(), [NOW - 50 * 60 * MINUTE]);
       // A start is not T3 trouble in the log's sense: `interrupted` weighs it against the run.
       assert.strictEqual(yield* world.t3Trouble(), null);
     }),

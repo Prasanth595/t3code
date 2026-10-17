@@ -15,7 +15,8 @@ import {
   machineLogSince,
   scanMachineLogBack,
   serverStartsSince,
-  serverStopsSince,
+  readServerStopsForStarts,
+  serverStopsForStartsSince,
   t3TroubleSince,
   type MachineEntry,
   type MachineLogOptions,
@@ -825,6 +826,10 @@ describe("serverStartsSince", () => {
     event: "server_started",
     data: { started_at: at },
   });
+  const stopping = (at: number): MachineEvent => ({
+    event: "server_stopping",
+    data: { stopping_at: at },
+  });
   const logWith = (dataDir: string, ...entries: ReadonlyArray<[number, MachineEvent]>) => {
     for (const [ms, event] of entries) {
       const log = MachineLog.open(dataDir, { clock: () => ms });
@@ -848,20 +853,77 @@ describe("serverStartsSince", () => {
     expect(serverStartsSince(dataDir, NOW - 24 * HOUR)).toEqual([NOW - 3 * HOUR, NOW - MINUTE]);
   });
 
-  it("serverStopsSince is every server_stopping line's stopping_at in the window, oldest first", () => {
+  it("serverStopsForStartsSince is the newest stop before each start in the window, whatever its age", () => {
     const dataDir = tempDir();
     logWith(
       dataDir,
-      [NOW - 30 * HOUR, { event: "server_stopping", data: { stopping_at: NOW - 30 * HOUR } }],
-      [NOW - 3 * HOUR, { event: "server_stopping", data: { stopping_at: NOW - 3 * HOUR } }],
-      [NOW - 3 * HOUR + 60_000, started(NOW - 3 * HOUR + 60_000)],
+      [NOW - 60 * HOUR, stopping(NOW - 60 * HOUR)],
+      [NOW - 30 * HOUR, stopping(NOW - 30 * HOUR)],
+      [NOW - 2 * HOUR + 5_000, started(NOW - 2 * HOUR)],
+    );
+    expect(serverStopsForStartsSince(dataDir, NOW - 24 * HOUR)).toEqual([NOW - 30 * HOUR]);
+  });
+
+  it("pairs each start of the window with the stop before it, oldest first", () => {
+    const dataDir = tempDir();
+    logWith(
+      dataDir,
+      [NOW - 40 * HOUR, stopping(NOW - 40 * HOUR)],
+      [NOW - 20 * HOUR, started(NOW - 20 * HOUR)],
+      [NOW - 10 * HOUR, stopping(NOW - 11 * HOUR)],
+      [NOW - 9 * HOUR, stopping(NOW - 9 * HOUR)],
+      [NOW - 8 * HOUR, started(NOW - 8 * HOUR)],
+      [NOW - 2 * HOUR, stopping(NOW - 2 * HOUR)],
+    );
+    // The stop after the newest start belongs to no start in the window; the older start has none.
+    expect(serverStopsForStartsSince(dataDir, NOW - 24 * HOUR)).toEqual([
+      NOW - 40 * HOUR,
+      NOW - 9 * HOUR,
+    ]);
+  });
+
+  it("does not pair a stop that lies before an older start with a start in the window", () => {
+    const dataDir = tempDir();
+    logWith(
+      dataDir,
+      [NOW - 50 * HOUR, stopping(NOW - 50 * HOUR)],
+      [NOW - 49 * HOUR, started(NOW - 49 * HOUR)],
+      [NOW - 2 * HOUR, started(NOW - 2 * HOUR)],
+    );
+    expect(serverStopsForStartsSince(dataDir, NOW - 24 * HOUR)).toEqual([]);
+  });
+
+  it("skips a stop whose stopping_at is not a number, is empty for a missing log, and ignores a stop after the newest start", () => {
+    expect(serverStopsForStartsSince(tempDir(), NOW - HOUR)).toEqual([]);
+    const dataDir = tempDir();
+    logWith(
+      dataDir,
+      [NOW - 5 * HOUR, stopping(NOW - 5 * HOUR)],
       [
-        NOW - MINUTE,
+        NOW - 4 * HOUR,
         { event: "server_stopping", data: { stopping_at: "now" } } as unknown as MachineEvent,
       ],
+      [NOW - 3 * HOUR, started(NOW - 3 * HOUR)],
+      [NOW - HOUR, stopping(NOW - HOUR)],
     );
-    expect(serverStopsSince(dataDir, NOW - 24 * HOUR)).toEqual([NOW - 3 * HOUR]);
-    expect(serverStopsSince(tempDir(), NOW - HOUR)).toEqual([]);
+    expect(serverStopsForStartsSince(dataDir, NOW - 24 * HOUR)).toEqual([NOW - 5 * HOUR]);
+  });
+
+  it("stops reading at the stop the oldest start needs, so a months-old log is not decoded", () => {
+    const dataDir = tempDir();
+    const line = (ms: number, event: string, data: string) =>
+      `{"ts":"2026-10-04T10:13:16.123Z","ms":${ms},"event":"${event}","data":${data}}\n`;
+    const lines = Array.from({ length: 2000 }, (_, i) =>
+      line(NOW - 90 * 24 * HOUR + i, "pass_started", `{"note":"n${i}"}`),
+    );
+    lines.push(line(NOW - 30 * HOUR, "server_stopping", `{"stopping_at":${NOW - 30 * HOUR}}`));
+    lines.push(line(NOW - 2 * HOUR, "server_started", `{"started_at":${NOW - 2 * HOUR}}`));
+    NodeFS.writeFileSync(NodePath.join(dataDir, "events.jsonl"), lines.join(""));
+    const read = readServerStopsForStarts(dataDir, NOW - 24 * HOUR);
+    expect(read.stops).toEqual([NOW - 30 * HOUR]);
+    expect(read.bytes).toBeLessThan(
+      NodeFS.statSync(NodePath.join(dataDir, "events.jsonl")).size / 2,
+    );
   });
 
   it("is empty for a missing log, and skips a line whose started_at is not a number", () => {
