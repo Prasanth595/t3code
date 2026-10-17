@@ -19,7 +19,7 @@ vi.mock("~/components/ThreadTerminalDrawer", () => ({
 }));
 vi.mock("~/state/entities", () => {
   const project = { workspaceRoot: "/repo" };
-  return { useThreadShell: () => thread, useProject: () => project };
+  return { useQuietThreadShell: () => thread, useProject: () => project };
 });
 const terminalSessions = vi.hoisted(
   () =>
