@@ -798,6 +798,7 @@ function ArtifactTemplateCard(props: {
 const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly markdown: string;
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
   readonly markdownStyles: MarkdownStyleSet;
   readonly linkHandlers: MarkdownLinkHandlers;
   readonly onUseArtifactTemplate?: ((template: CodexArtifactTemplate) => void) | undefined;
@@ -805,7 +806,7 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill> | undefined;
 }) {
   const liveMarkdown = useLiveThreadLinkLabels(
-    useForkThreadMarkers(props.markdown, props.environmentId),
+    useForkThreadMarkers(props.markdown, props.environmentId, props.threadId),
     props.environmentId,
   );
   const segments = useMemo(() => splitCodexArtifactTemplateMarkdown(liveMarkdown), [liveMarkdown]);
@@ -1376,6 +1377,7 @@ function renderFeedEntry(
             <AssistantMarkdownContent
               markdown={renderedText}
               environmentId={props.environmentId}
+              threadId={props.threadId}
               markdownStyles={styles}
               linkHandlers={props.markdownLinkHandlers}
               onUseArtifactTemplate={props.onUseArtifactTemplate}
@@ -1989,6 +1991,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       <AssistantMarkdownContent
         markdown={text}
         environmentId={props.environmentId}
+        threadId={props.threadId}
         markdownStyles={markdownStyles.assistant}
         linkHandlers={markdownLinkHandlers}
         renderImage={renderMarkdownImage}

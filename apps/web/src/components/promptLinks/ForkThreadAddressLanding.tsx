@@ -38,6 +38,10 @@ const START = openedFromOutside() ? parseThreadAddress(window.location.href) : n
  *
  * Known limit: when the desktop app is not running, the link that starts it is lost (upstream
  * #18613). Revisit when #18422 merges upstream.
+ *
+ * Known limit: with `threadLinkChips` off, a thread address clicked in T3 web chat opens a new tab
+ * with `rel="noopener noreferrer"`, so this page reads it as a link from outside and hands it to the
+ * desktop app. Revisit if users keep `threadLinkChips` off while this setting is on.
  */
 export function useForkThreadAddressLanding(): ReactNode | null {
   const enabled = usePrimarySettings((settings) => settings.threadLinksOpenDesktopApp);

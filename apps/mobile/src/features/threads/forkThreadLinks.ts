@@ -3,7 +3,7 @@ import { useNavigation } from "@react-navigation/native";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { formatComposerContextHref } from "@t3tools/shared/composerContextReferences";
-import { parseThreadAddress } from "@t3tools/shared/threadAddress";
+import { parseKnownThreadAddress } from "@t3tools/shared/threadAddress";
 import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
 import {
   linkThreadMarkers,
@@ -21,7 +21,6 @@ import type { MarkdownLinkCustomization } from "../../native/SelectableMarkdownT
 import { useEnvironmentServerConfig } from "../../state/entities";
 import { serverEnvironment } from "../../state/server";
 import { environmentThreadDetails } from "../../state/threads";
-import { useThreadSelection } from "../../state/use-thread-selection";
 
 // The pill of an attached thread with no record, so both looks stay one.
 const threadPill = enrichedContextLinkPresentation(
@@ -40,8 +39,7 @@ export function useForkThreadLinks(environmentId: EnvironmentId) {
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const knownThreadAddress = useCallback(
     (href: string) => {
-      const address = chips ? parseThreadAddress(href) : null;
-      return address && catalog.entries.has(address.environmentId) ? address : null;
+      return chips ? parseKnownThreadAddress(href, (id) => catalog.entries.has(id)) : null;
     },
     [catalog, chips],
   );
@@ -89,14 +87,17 @@ const threadMarkerTargetsAtom = Atom.family((key: string) => {
 });
 
 /**
- * Fork: `markdown` of the selected thread with each `[Thread: …; ref=…]` marker that an agent copied
- * turned into a thread app link, which `useForkThreadLinks` then shows as a pill. Only text with
- * `ref=` reads the thread's messages.
+ * Fork: `markdown` of a message in thread `threadId` with each `[Thread: …; ref=…]` marker that an
+ * agent copied turned into a thread app link, which `useForkThreadLinks` then shows as a pill. Only
+ * text with `ref=` reads the thread's messages.
  */
-export function useForkThreadMarkers(markdown: string, environmentId: EnvironmentId): string {
-  const threadId = useThreadSelection().selectedThread?.id;
+export function useForkThreadMarkers(
+  markdown: string,
+  environmentId: EnvironmentId,
+  threadId: ThreadId,
+): string {
   const targets = useAtomValue(
-    threadId !== undefined && markdown.includes("ref=")
+    markdown.includes("ref=")
       ? threadMarkerTargetsAtom(`${environmentId}\u0000${threadId}`)
       : NO_MARKER_TARGETS_ATOM,
   );

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseThreadAddress } from "./threadAddress.ts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+
+import { parseKnownThreadAddress, parseThreadAddress } from "./threadAddress.ts";
 import { linkThreadMarkers } from "./threadMarkers.ts";
 
 describe("parseThreadAddress", () => {
@@ -26,13 +28,29 @@ describe("parseThreadAddress", () => {
   });
 });
 
+describe("parseKnownThreadAddress", () => {
+  it("reads a page with the same path shape as a thread only for a known environment", () => {
+    const known = (id: string) => id === "env-1";
+    expect(parseKnownThreadAddress("https://github.com/owner/repo", known)).toBeNull();
+    expect(parseKnownThreadAddress("https://t3.example.com/env-1/thread-1", known)).toEqual({
+      environmentId: "env-1",
+      threadId: "thread-1",
+    });
+  });
+});
+
 describe("linkThreadMarkers", () => {
   it("links markers of attached threads outside code and keeps the rest", () => {
-    const targets = new Map([["ctx_1", { environmentId: "env-1", threadId: "thread-1" }]] as const);
+    const targets = new Map([
+      [
+        "ctx_1",
+        { environmentId: EnvironmentId.make("env-1"), threadId: ThreadId.make("thread-1") },
+      ],
+    ]);
     expect(
       linkThreadMarkers(
         "See [Thread: Fix; ref=ctx_1], `[Thread: Fix; ref=ctx_1]`, [Thread: Old; ref=ctx_9].",
-        targets as never,
+        targets,
       ),
     ).toBe(
       "See [Fix](t3code://threads/env-1/thread-1), `[Thread: Fix; ref=ctx_1]`, [Thread: Old; ref=ctx_9].",
