@@ -5,9 +5,9 @@ import { AsyncResult } from "effect/reactivity";
 
 import { FileSaveCoordinator } from "./fileSaveCoordinator";
 
-function deferred() {
-  let resolve!: (result: AtomCommandResult<void, never>) => void;
-  const promise = new Promise<AtomCommandResult<void, never>>((resolvePromise) => {
+function deferred<E = never>() {
+  let resolve!: (result: AtomCommandResult<void, E>) => void;
+  const promise = new Promise<AtomCommandResult<void, E>>((resolvePromise) => {
     resolve = resolvePromise;
   });
   return { promise, resolve };
@@ -207,6 +207,67 @@ describe("FileSaveCoordinator", () => {
     await Promise.resolve();
     expect(onPendingChange).toHaveBeenCalledWith(true);
     expect(onPendingChange).not.toHaveBeenCalledWith(false);
+  });
+
+  it("retries a close-time flush when the in-flight write fails", async () => {
+    vi.useFakeTimers();
+    const inFlight = deferred<Error>();
+    const persist = vi
+      .fn()
+      .mockReturnValueOnce(inFlight.promise)
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("write failed"))))
+      .mockResolvedValue(AsyncResult.success(undefined));
+    const onPendingChange = vi.fn();
+    const onConfirmed = vi.fn();
+    const coordinator = new FileSaveCoordinator({
+      debounceMs: 500,
+      persist,
+      onPendingChange,
+      onConfirmed,
+    });
+
+    coordinator.change("only");
+    await vi.advanceTimersByTimeAsync(500);
+    expect(persist).toHaveBeenCalledTimes(1);
+
+    // The editor closes while the write is still in flight; the write then fails.
+    coordinator.dispose();
+    inFlight.resolve(AsyncResult.failure(Cause.fail(new Error("write failed"))));
+    await vi.advanceTimersByTimeAsync(500);
+    // The failed close-time flush must be retried, not dropped.
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(persist).toHaveBeenLastCalledWith("only");
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(persist).toHaveBeenCalledTimes(3);
+    expect(onConfirmed).toHaveBeenCalledWith("only");
+    expect(onPendingChange.mock.calls.at(-1)).toEqual([false]);
+  });
+
+  it("retries a dispose-time flush that fails after the editor closes", async () => {
+    vi.useFakeTimers();
+    const persist = vi
+      .fn()
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("write failed"))))
+      .mockResolvedValueOnce(AsyncResult.failure(Cause.fail(new Error("write failed"))))
+      .mockResolvedValue(AsyncResult.success(undefined));
+    const onPendingChange = vi.fn();
+    const onConfirmed = vi.fn();
+    const coordinator = new FileSaveCoordinator({
+      debounceMs: 500,
+      persist,
+      onPendingChange,
+      onConfirmed,
+    });
+
+    coordinator.change("unsaved");
+    coordinator.dispose();
+    await vi.runAllTimersAsync();
+    // First dispose flush failed; it must be retried instead of dropping the edit.
+    expect(persist.mock.calls.length).toBeGreaterThanOrEqual(2);
+    expect(persist).toHaveBeenLastCalledWith("unsaved");
+    expect(onConfirmed).toHaveBeenCalledWith("unsaved");
+    expect(onPendingChange.mock.calls.at(-1)).toEqual([false]);
   });
 
   it("ignores editor changes emitted after disposal", async () => {

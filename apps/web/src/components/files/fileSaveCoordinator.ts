@@ -68,7 +68,13 @@ export class FileSaveCoordinator<A = unknown, E = unknown> {
 
     this.saving = false;
     if (revision === this.latestRevision) {
-      if (confirmed) this.options.onPendingChange(false);
+      if (confirmed) {
+        this.options.onPendingChange(false);
+      } else if (!succeeded && this.disposed) {
+        // Closing the editor must not discard an edit whose final save failed.
+        // Retry after the normal debounce; a successful write stops the retry.
+        this.schedule(this.options.debounceMs);
+      }
       return;
     }
 
