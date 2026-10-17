@@ -244,7 +244,7 @@ export function parseGitHubRepositoryNameWithOwnerFromRemoteUrl(url: string | nu
   return repositoryNameWithOwner.length > 0 ? repositoryNameWithOwner : null;
 }
 
-function deriveLocalBranchNameCandidatesFromRemoteRef(
+export function deriveLocalBranchNameCandidatesFromRemoteRef(
   branchName: string,
   remoteName?: string,
 ): ReadonlyArray<string> {

@@ -4,7 +4,13 @@ import {
   type AtomCommandResult,
   mapAtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import type { VcsSwitchRefInput, VcsSwitchRefResult } from "@t3tools/contracts";
+import type {
+  VcsListRefsInput,
+  VcsListRefsResult,
+  VcsSwitchRefInput,
+  VcsSwitchRefResult,
+} from "@t3tools/contracts";
+import { deriveLocalBranchNameCandidatesFromRemoteRef } from "@t3tools/shared/git";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 
@@ -14,6 +20,10 @@ export async function checkoutNewTaskBranch<E>(input: {
   readonly branch: VcsRef;
   readonly project: Pick<EnvironmentProject, "environmentId" | "workspaceRoot"> | null;
   readonly workspaceMode: "local" | "worktree";
+  readonly readRefs: (request: {
+    readonly environmentId: EnvironmentProject["environmentId"];
+    readonly input: VcsListRefsInput;
+  }) => Promise<AtomCommandResult<VcsListRefsResult, E>>;
   readonly switchRef: (request: {
     readonly environmentId: EnvironmentProject["environmentId"];
     readonly input: VcsSwitchRefInput;
@@ -32,6 +42,27 @@ export async function checkoutNewTaskBranch<E>(input: {
     })
   ) {
     return AsyncResult.success(input.branch);
+  }
+
+  // A thread's remembered location and the cached picker list can both be out
+  // of date, and a remote ref never carries its local branch's worktree. Git
+  // refuses to check out a branch another worktree holds, so reuse that one.
+  const localNames = input.branch.isRemote
+    ? deriveLocalBranchNameCandidatesFromRemoteRef(input.branch.name, input.branch.remoteName)
+    : [input.branch.name];
+  for (const localName of localNames) {
+    const refs = await input.readRefs({
+      environmentId: input.project.environmentId,
+      input: {
+        cwd: input.project.workspaceRoot,
+        query: localName,
+        refKind: "local",
+        refresh: true,
+      },
+    });
+    if (refs._tag === "Failure") return AsyncResult.failure(refs.cause);
+    const local = refs.value.refs.find((ref) => ref.name === localName);
+    if (local?.current || local?.worktreePath) return AsyncResult.success(local);
   }
 
   const result = await input.switchRef({
