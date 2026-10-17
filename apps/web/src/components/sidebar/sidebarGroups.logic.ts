@@ -27,7 +27,15 @@ import {
 export const DEFAULT_SIDEBAR_GROUP_ID = "default";
 export const DEFAULT_SIDEBAR_GROUP_NAME = "Threads";
 
-type SidebarGroupThread = Pick<
+/** The name of the first tab: the user's name for it, or "Threads". */
+export const sidebarDefaultTabName = (settings: Pick<SidebarGroups, "defaultTab">) =>
+  settings.defaultTab.name ?? DEFAULT_SIDEBAR_GROUP_NAME;
+
+/** Whether the first tab shows every thread, not only the threads in no group. */
+const defaultTabShowsAll = (settings: Pick<SidebarGroups, "defaultTab">) =>
+  settings.defaultTab.show === "all";
+
+export type SidebarGroupThread = Pick<
   SidebarThreadSummary,
   | "environmentId"
   | "id"
@@ -105,6 +113,7 @@ interface CompiledSidebarGroup {
  */
 interface CompiledSidebarGroups {
   readonly assignments: SidebarGroups["assignments"];
+  readonly defaultShowsAll: boolean;
   /** In tab order, which is the order rules claim threads in. */
   readonly groups: readonly CompiledSidebarGroup[];
   readonly byId: ReadonlyMap<string, CompiledSidebarGroup>;
@@ -118,6 +127,7 @@ export function compileSidebarGroups(settings: SidebarGroups): CompiledSidebarGr
   });
   return {
     assignments: settings.assignments,
+    defaultShowsAll: defaultTabShowsAll(settings),
     groups,
     byId: new Map(groups.map((group) => [group.id, group])),
   };
@@ -217,7 +227,7 @@ export function sidebarGroupShowsThread(input: {
   readonly projects: SidebarGroupProjectLookup;
 }): boolean {
   if (input.tabId === DEFAULT_SIDEBAR_GROUP_ID) {
-    return input.threadGroupId === DEFAULT_SIDEBAR_GROUP_ID;
+    return input.compiled.defaultShowsAll || input.threadGroupId === DEFAULT_SIDEBAR_GROUP_ID;
   }
   const group = input.compiled.byId.get(input.tabId);
   if (group === undefined) return false;
@@ -296,7 +306,7 @@ export function deleteSidebarGroup(settings: SidebarGroups, groupId: string): Si
           : rule,
       ),
     }));
-  return { groups, assignments };
+  return { ...settings, groups, assignments };
 }
 
 export function updateSidebarGroup(
@@ -308,6 +318,13 @@ export function updateSidebarGroup(
     ...settings,
     groups: settings.groups.map((group) => (group.id === groupId ? update(group) : group)),
   };
+}
+
+export function updateSidebarDefaultTab(
+  settings: SidebarGroups,
+  update: (tab: SidebarGroups["defaultTab"]) => SidebarGroups["defaultTab"],
+): SidebarGroups {
+  return { ...settings, defaultTab: update(settings.defaultTab) };
 }
 
 /** Moves a group to a new tab position, counted among the groups (the default tab is fixed). */
@@ -467,7 +484,7 @@ export function buildSidebarGroupRuleOptions(input: {
   switch (input.field) {
     case "group":
       return [
-        { value: DEFAULT_SIDEBAR_GROUP_ID, label: DEFAULT_SIDEBAR_GROUP_NAME },
+        { value: DEFAULT_SIDEBAR_GROUP_ID, label: sidebarDefaultTabName(input.settings) },
         ...input.settings.groups
           .filter((group) => group.id !== input.groupId && !isSidebarGroupView(group))
           .map((group) => ({ value: group.id, label: group.name })),

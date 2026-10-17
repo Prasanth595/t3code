@@ -3,27 +3,19 @@ import type { ThreadCardInfo } from "@t3tools/client-runtime/thread-card-info";
 import type { SlotLayout, ThreadCardElement } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
-  AlarmClockIcon,
   BotIcon,
   CalendarIcon,
-  CircleAlertIcon,
-  CircleCheckIcon,
-  CircleDashedIcon,
-  CircleDotDashedIcon,
   ClockIcon,
   GitForkIcon,
   LayersIcon,
   ListTodoIcon,
-  MessageCircleQuestionIcon,
   MessageSquareIcon,
-  ShieldQuestionIcon,
   TargetIcon,
-  type LucideIcon,
 } from "lucide-react";
 import type { ComponentType, ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
-import type { SidebarV2TopStatusKind } from "../Sidebar.logic";
+import { AppIcon } from "../AppIcon";
 import { formatRelativeTimeLabel, formatShortTimestamp } from "../../timestampFormat";
 import { runtimeModeConfig } from "../chat/runtimeModeConfig";
 import { SlotLayoutView } from "../SlotLayoutView";
@@ -61,21 +53,6 @@ type ThreadCardStatusIcon =
   | "done"
   | "woke";
 
-/**
- * The icon of each thread status. The sidebar group tabs use it too. A row shows no icon for
- * Woke, which has its own button, and it draws Limited with the Failed icon.
- */
-export const THREAD_STATUS_ICONS: Record<SidebarV2TopStatusKind, LucideIcon> = {
-  working: CircleDashedIcon,
-  waiting: CircleDotDashedIcon,
-  input: MessageCircleQuestionIcon,
-  approval: ShieldQuestionIcon,
-  failed: CircleAlertIcon,
-  limited: CircleAlertIcon,
-  woke: AlarmClockIcon,
-  done: CircleCheckIcon,
-};
-
 export interface ThreadCardStatus {
   readonly label: string;
   readonly icon: ThreadCardStatusIcon | null;
@@ -85,11 +62,11 @@ export interface ThreadCardStatus {
 /** The status label inside the `data-sidebar-status` element, for every status but Woke. */
 export function ThreadCardStatusBadge(props: { status: ThreadCardStatus; trailing?: ReactNode }) {
   const { status } = props;
-  const Icon =
-    status.icon === null || status.icon === "woke" ? null : THREAD_STATUS_ICONS[status.icon];
   return (
     <span className={cn("inline-flex items-center gap-1 font-medium", status.className)}>
-      {Icon === null ? null : <Icon aria-hidden className="size-4 shrink-0" />}
+      {status.icon === null || status.icon === "woke" ? null : (
+        <AppIcon slot={`status.${status.icon}`} />
+      )}
       {/* The label alone is the live region: a role="status" wrapper around a
           ticking duration would make screen readers announce every second. */}
       <span role="status">{status.label}</span>

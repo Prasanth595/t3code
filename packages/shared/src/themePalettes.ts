@@ -113,7 +113,14 @@ export type ThemeVariants = Readonly<Partial<Record<ThemeAppearance, ThemeColors
 export type ThemeStyle = Readonly<
   Pick<
     EnvironmentTheme,
-    "radius" | "borderWidth" | "shadow" | "fonts" | "canvasPattern" | "canvasPatternColor" | "css"
+    | "radius"
+    | "borderWidth"
+    | "shadow"
+    | "fonts"
+    | "canvasPattern"
+    | "canvasPatternColor"
+    | "css"
+    | "icons"
   >
 >;
 export type ThemeDefinition = Readonly<{

@@ -48,6 +48,7 @@ function publishedThemeStyle(theme: EnvironmentTheme): ThemeStyle | undefined {
       ? { canvasPatternColor: theme.canvasPatternColor }
       : {}),
     ...(theme.css !== undefined ? { css: theme.css } : {}),
+    ...(theme.icons !== undefined ? { icons: theme.icons } : {}),
   };
   return Object.keys(style).length > 0 ? style : undefined;
 }

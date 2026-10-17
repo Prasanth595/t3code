@@ -98,7 +98,6 @@ import {
   EyeIcon,
   FolderIcon,
   GitBranchIcon,
-  ListFilterIcon,
   PinIcon,
   PinOffIcon,
   PlusIcon,
@@ -4746,7 +4745,7 @@ export default function Sidebar() {
                         <ProjectFavicon project={scopedProjectGroup} className="size-4" />
                       </span>
                     ) : (
-                      <ListFilterIcon className="size-4" />
+                      <ForkSidebar.ProjectScopeIcon />
                     )}
                   </ComboboxTrigger>
                   <ComboboxPopup

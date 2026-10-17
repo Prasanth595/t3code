@@ -1,9 +1,11 @@
 /**
- * Fork parts of the sidebar thread list header (`Sidebar.tsx`): the repository owner filter and
- * the thread group tabs. The sidebar imports this module once and keeps one line per hook.
+ * Fork parts of the sidebar thread list header (`Sidebar.tsx`): the repository owner filter, the
+ * thread group tabs and the theme icon of the project scope button. The sidebar imports this
+ * module once and keeps one line per hook.
  */
 import type { ComponentProps } from "react";
 
+import { AppIcon } from "../AppIcon";
 import { SidebarGroupTabs } from "./SidebarGroupTabs";
 import { SidebarOwnerFilterMenu, SidebarOwnerFilterNotice } from "./SidebarOwnerFilter";
 import type { useSidebarOwnerFilter } from "./useSidebarOwnerFilter";
@@ -21,6 +23,11 @@ type OwnerFilterState = Pick<
   | "ownerHiddenThreadsNeedingUser"
   | "setOwnerFilter"
 >;
+
+/** The project scope button's icon while no project is picked. Theme icon packs can replace it. */
+export function ProjectScopeIcon() {
+  return <AppIcon slot="sidebar.filter" />;
+}
 
 /** The owner menu in the header, while `repositoryOwnerFilters` is on. */
 export function OwnerFilterMenu({ owner }: { readonly owner: OwnerFilterState }) {

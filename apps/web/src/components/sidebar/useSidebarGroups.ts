@@ -41,7 +41,8 @@ import {
   buildSidebarGroupRuleOptions,
   createSidebarGroup,
   DEFAULT_SIDEBAR_GROUP_ID,
-  DEFAULT_SIDEBAR_GROUP_NAME,
+  sidebarDefaultTabName,
+  updateSidebarDefaultTab,
   deleteSidebarGroup,
   compileSidebarGroups,
   moveSidebarGroup,
@@ -67,6 +68,9 @@ export interface SidebarGroupTab {
   readonly name: string;
   readonly isDefault: boolean;
   readonly isView: boolean;
+  /** An id of the group icon set, `none`, or undefined for the default dot. */
+  readonly icon: string | undefined;
+  readonly showName: boolean;
   /** Threads that the tab shows, without the settled ones. */
   readonly threadCount: number;
   /** The status of the most urgent thread that is not asleep. */
@@ -76,7 +80,7 @@ export interface SidebarGroupTab {
   readonly singleThread: SidebarThreadSummary | null;
 }
 
-const EMPTY_SETTINGS: SidebarGroups = { groups: [], assignments: {} };
+const EMPTY_SETTINGS: SidebarGroups = { groups: [], assignments: {}, defaultTab: {} };
 
 export function useSidebarGroups(input: {
   /** Every thread shell, before any filter. */
@@ -195,7 +199,12 @@ export function useSidebarGroups(input: {
           (lastVisitedAt === undefined || Date.parse(lastVisitedAt) < Date.parse(wokeAt)),
       };
     });
-    const describe = (id: string, name: string, group: SidebarGroup | null): SidebarGroupTab => {
+    const describe = (
+      id: string,
+      name: string,
+      group: SidebarGroup | null,
+      look: { readonly icon?: string | undefined; readonly showName?: boolean | undefined },
+    ): SidebarGroupTab => {
       const shown = states.filter((state) => showsThread(id, state.thread));
       const open = shown.filter((state) => !state.settled);
       const kind = resolveSidebarGroupTabStatus(shown.filter((state) => !state.asleep));
@@ -204,6 +213,8 @@ export function useSidebarGroups(input: {
         name,
         isDefault: group === null,
         isView: group !== null && compiled.byId.get(group.id)?.isView === true,
+        icon: look.icon,
+        showName: look.showName !== false,
         threadCount: open.length,
         status: kind === null ? null : sidebarGroupTabStatus(kind),
         needsAttention: kind !== null && SIDEBAR_GROUP_ATTENTION_STATUSES.has(kind),
@@ -212,14 +223,19 @@ export function useSidebarGroups(input: {
       };
     };
     return [
-      describe(DEFAULT_SIDEBAR_GROUP_ID, DEFAULT_SIDEBAR_GROUP_NAME, null),
-      ...settings.groups.map((group) => describe(group.id, group.name, group)),
+      describe(
+        DEFAULT_SIDEBAR_GROUP_ID,
+        sidebarDefaultTabName(settings),
+        null,
+        settings.defaultTab,
+      ),
+      ...settings.groups.map((group) => describe(group.id, group.name, group, group)),
     ];
   }, [
     compiled,
     enabled,
     localLastVisitedAt,
-    settings.groups,
+    settings,
     showsThread,
     singleThreadOpens,
     snoozeWakeTick,
@@ -408,6 +424,16 @@ export function useSidebarGroups(input: {
       update((current) => updateSidebarGroup(current, groupId, (group) => ({ ...group, rules }))),
     [update],
   );
+  const setDefaultTab = useCallback(
+    (change: (tab: SidebarGroups["defaultTab"]) => SidebarGroups["defaultTab"]) =>
+      update((current) => updateSidebarDefaultTab(current, change)),
+    [update],
+  );
+  const setGroupLook = useCallback(
+    (groupId: string, look: { readonly icon?: string; readonly showName?: boolean }) =>
+      update((current) => updateSidebarGroup(current, groupId, (group) => ({ ...group, ...look }))),
+    [update],
+  );
   const deleteGroup = useCallback(
     (groupId: string) => update((current) => deleteSidebarGroup(current, groupId)),
     [update],
@@ -436,6 +462,8 @@ export function useSidebarGroups(input: {
     createGroup,
     renameGroup,
     setGroupRules,
+    setGroupLook,
+    setDefaultTab,
     deleteGroup,
     moveGroup,
   };

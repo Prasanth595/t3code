@@ -48,11 +48,22 @@ export type SidebarGroupStoredRule = typeof SidebarGroupStoredRule.Type;
 
 export const isKnownSidebarGroupRule = Schema.is(SidebarGroupRule);
 
+/**
+ * How a tab looks. `icon` is an id of the group icon set, or `none`; without it the tab shows a
+ * dot. An id from a newer version decodes as a string, and the tab then shows the dot.
+ * `showName: false` hides the name on the tab; its tooltip keeps it.
+ */
+const SidebarGroupTabLook = {
+  icon: Schema.optional(Schema.String),
+  showName: Schema.optional(Schema.Boolean),
+};
+
 /** A group. A thread matches the group when it matches every known rule. */
 export const SidebarGroup = Schema.Struct({
   id: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
   rules: Schema.Array(SidebarGroupStoredRule).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  ...SidebarGroupTabLook,
 });
 export type SidebarGroup = typeof SidebarGroup.Type;
 
@@ -62,10 +73,19 @@ export const SidebarGroups = Schema.Struct({
   /**
    * Thread key (`environmentId:threadId`) to the group that the user dragged the thread into.
    * The id `default` keeps a thread in the default tab when a group rule matches it. Clients
-   * drop an entry when its thread is gone or archived, or when the rules give the same group.
+   * drop an entry when its thread is gone or archived, or when its group cannot hold threads.
    */
   assignments: Schema.Record(TrimmedNonEmptyString, TrimmedNonEmptyString).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  /**
+   * The first tab. `show` is `ungrouped` (the threads in no group, the default) or `all` (every
+   * thread). An unknown value from a newer version reads as `ungrouped`.
+   */
+  defaultTab: Schema.Struct({
+    name: Schema.optional(TrimmedNonEmptyString),
+    show: Schema.optional(Schema.String),
+    ...SidebarGroupTabLook,
+  }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type SidebarGroups = typeof SidebarGroups.Type;
