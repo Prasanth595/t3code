@@ -230,7 +230,7 @@ it.layer(NodeServices.layer)("machine map auth hooks", (it) => {
       // MM-308: no arrow removes the owner login.
       const owner = yield* pairAs({ email: "dev@example.com" });
       expect(owner?.subject).toBe("one-time-token");
-      expect(owner?.scopes).toEqual(AuthStandardClientScopes);
+      expect(owner?.scopes).toEqual(MACHINE_LEVEL_SCOPES.standard);
     }).pipe(withCertsFetch, Effect.provide(layerAuth("on"))),
   );
 
@@ -280,7 +280,7 @@ it.layer(NodeServices.layer)("machine map auth hooks", (it) => {
       yield* saveDesired(withLaptopAdmin);
       const session = yield* pairAs({ email: "dev@example.com" }, yield* browserProof());
       expect(session?.subject).toBe("one-time-token");
-      expect(session?.scopes).toEqual(AuthStandardClientScopes);
+      expect(session?.scopes).toEqual(MACHINE_LEVEL_SCOPES.standard);
     }).pipe(withCertsFetch, Effect.provide(layerAuth("on", "off"))),
   );
 

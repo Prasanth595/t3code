@@ -3,7 +3,7 @@
  * peer origins. `EnvironmentAuth.ts` keeps one-line hooks into this file.
  */
 import {
-  AuthStandardClientScopes,
+  MACHINE_LEVEL_SCOPES,
   type AuthEnvironmentScope,
   type AuthPairingCredentialResult,
 } from "@t3tools/contracts";
@@ -124,7 +124,9 @@ export const makeIssueCloudflareAccessPairingCredential = (input: {
                             ...(access._tag === "client"
                               ? access.grant
                               : {
-                                  scopes: AuthStandardClientScopes,
+                                  // A Cloudflare Access cookie must not mint pairing links or relay
+                                  // grants that outlive it (MM-922), so no upstream default here.
+                                  scopes: MACHINE_LEVEL_SCOPES.standard,
                                   subject: "one-time-token",
                                   label: `cloudflare-access ${identity.subject}`,
                                 }),
