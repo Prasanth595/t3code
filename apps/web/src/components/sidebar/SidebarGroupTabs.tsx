@@ -19,6 +19,7 @@ import { DndContext, PointerSensor, useSensor, useSensors, type DragEndEvent } f
 import { restrictToHorizontalAxis, restrictToParentElement } from "@dnd-kit/modifiers";
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { showContextMenuFallback } from "~/contextMenuFallback";
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
@@ -348,7 +349,7 @@ function useTabWidths(tabIds: readonly string[]) {
 
 export function SidebarGroupTabs(props: {
   groups: SidebarGroupsState;
-  /** A thread drag is in progress, so the "New group" button takes a drop. */
+  /** A thread drag is in progress, so the bar shows a "+" that takes a drop for a new group. */
   dragging: boolean;
   routeThreadKey: string | null;
   projectFor: (thread: SidebarThreadSummary) => EnvironmentProject | null;
@@ -417,8 +418,31 @@ export function SidebarGroupTabs(props: {
   };
 
   const newGroupTarget = state.dropTargetId === SIDEBAR_GROUP_DROP_NEW;
+  const openBarMenu = async (position: { x: number; y: number }) => {
+    const clicked = await showContextMenuFallback(
+      [{ id: "new", label: "New group", disabled: !state.ready }],
+      position,
+    );
+    if (clicked !== "new") return;
+    const id = state.createGroup([]);
+    // The new tab renders on the next frame; anchor the editor to the bar until then.
+    if (id !== null && barRef.current !== null) {
+      setEditing({ groupId: id, anchor: barRef.current });
+    }
+  };
   return (
-    <div ref={barRef} className="flex items-center gap-1 px-2 pb-1.5">
+    <div
+      ref={barRef}
+      className="flex items-center gap-1 px-2 pb-1.5"
+      // No "+" button: it read as "new thread". A right-click on the bar, outside a tab, makes a
+      // group, and so does a thread dropped on the "+" that a drag shows.
+      onContextMenu={(event) => {
+        // A tab opens its own editor and marks the event handled.
+        if (event.defaultPrevented) return;
+        event.preventDefault();
+        void openBarMenu({ x: event.clientX, y: event.clientY });
+      }}
+    >
       <div
         ref={setListElement}
         role="tablist"
@@ -486,16 +510,8 @@ export function SidebarGroupTabs(props: {
           </span>
         </div>
       </div>
-      {selected !== null ? (
-        <SidebarHeaderIconButton
-          label={`Edit group ${selected.name}`}
-          onClick={(event) => setEditing({ groupId: selected.id, anchor: event.currentTarget })}
-        >
-          <AppIcon slot="groups.edit" />
-        </SidebarHeaderIconButton>
-      ) : null}
-      {/* Outside the tabs, so it stays in view. During a drag the same slot takes a drop for a
-          new group, at the same size, so the tabs do not reflow. */}
+      {/* During a thread drag the edit button's slot takes a drop for a new group, at the same
+          size, so the tabs do not reflow. */}
       {props.dragging ? (
         <div
           aria-label="Drop here for a new group"
@@ -509,21 +525,14 @@ export function SidebarGroupTabs(props: {
         >
           <AppIcon slot="groups.new" />
         </div>
-      ) : (
+      ) : selected !== null ? (
         <SidebarHeaderIconButton
-          label="New group"
-          disabled={!state.ready}
-          onClick={() => {
-            const id = state.createGroup([]);
-            // The new tab renders on the next frame; anchor the editor to the bar until then.
-            if (id !== null && barRef.current !== null) {
-              setEditing({ groupId: id, anchor: barRef.current });
-            }
-          }}
+          label={`Edit group ${selected.name}`}
+          onClick={(event) => setEditing({ groupId: selected.id, anchor: event.currentTarget })}
         >
-          <AppIcon slot="groups.new" />
+          <AppIcon slot="groups.edit" />
         </SidebarHeaderIconButton>
-      )}
+      ) : null}
       <Popover
         open={editing !== null && (editingGroup !== null || editingDefault)}
         onOpenChange={(open) => {
