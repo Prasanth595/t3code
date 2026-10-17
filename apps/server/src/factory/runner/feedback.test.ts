@@ -1839,6 +1839,27 @@ describe("feedback: the step", () => {
       return rig;
     });
 
+  it.effect("a pending re-gate relaunch holds feedback back without a re-gate on record", () =>
+    Effect.gen(function* () {
+      const rig = yield* reviewedRun();
+      appendAt(rig, T0, [
+        {
+          event: "regate_relaunching",
+          data: { attempt: 2, branch: "t3code/abc", message: "boom" },
+        },
+      ]);
+      const seen = progressOf(rig);
+      assert.isFalse(seen.regating, "only the relaunch holds the step back");
+      assert.strictEqual(seen.relaunch?.fixes.kind, "regate");
+      clearCalls(rig);
+      const bytes = bytesOf(rig);
+      assert.deepStrictEqual(yield* feedbackIn(rig), NONE);
+      assert.deepStrictEqual(rig.gh.calls, []);
+      assert.deepStrictEqual(rig.t3.launches, []);
+      assert.strictEqual(bytesOf(rig), bytes, "nothing is written");
+    }),
+  );
+
   it.effect("a re-gate relaunch with no session recorded is left to the gate", () =>
     Effect.gen(function* () {
       const rig = yield* cutRegateRelaunch((r) => {
