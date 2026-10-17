@@ -88,6 +88,11 @@ export interface FactoryPauseResult {
   readonly message: string;
 }
 
+export interface FactoryDismissResult {
+  /** The ids the server dismissed; an id that was not open is left out. */
+  readonly dismissed: ReadonlyArray<string>;
+}
+
 export interface FactoryResumeResult {
   readonly paused: false;
   readonly already: boolean;
@@ -117,6 +122,10 @@ export interface FactoryApi {
   readonly stopRun: (environmentId: EnvironmentId, id: string) => Promise<FactoryStopResult>;
   readonly pauseClaims: (environmentId: EnvironmentId) => Promise<FactoryPauseResult>;
   readonly resumeClaims: (environmentId: EnvironmentId) => Promise<FactoryResumeResult>;
+  readonly dismissAttention: (
+    environmentId: EnvironmentId,
+    ids: ReadonlyArray<string>,
+  ) => Promise<FactoryDismissResult>;
 }
 
 /**
@@ -178,6 +187,7 @@ const call = async <T>(
   method: "GET" | "POST",
   path: string,
   searchParams?: Record<string, string>,
+  requestBody?: unknown,
 ): Promise<T> => {
   // One deadline for the whole call: the request gets what the wait for a connection left.
   const deadline = Date.now() + timeoutMs;
@@ -191,6 +201,7 @@ const call = async <T>(
       method,
       path,
       searchParams,
+      body: requestBody,
       timeoutMs: remainingMs,
     });
   } catch (error) {
@@ -213,8 +224,8 @@ const call = async <T>(
   return body as T;
 };
 
-const post = <T>(environmentId: EnvironmentId, path: string) =>
-  call<T>(environmentId, "POST", path);
+const post = <T>(environmentId: EnvironmentId, path: string, body?: unknown) =>
+  call<T>(environmentId, "POST", path, undefined, body);
 const get = <T>(
   environmentId: EnvironmentId,
   path: string,
@@ -231,6 +242,8 @@ const httpApi: FactoryApi = {
   stopRun: (environmentId, id) => post(environmentId, `${runPath(id)}/stop`),
   pauseClaims: (environmentId) => post(environmentId, "/api/factory/claims/pause"),
   resumeClaims: (environmentId) => post(environmentId, "/api/factory/claims/resume"),
+  dismissAttention: (environmentId, ids) =>
+    post(environmentId, "/api/factory/attention/dismiss", { ids }),
 };
 
 let override: FactoryApi | undefined;
@@ -248,4 +261,6 @@ export const factoryApi: FactoryApi = {
   stopRun: (environmentId, id) => (override ?? httpApi).stopRun(environmentId, id),
   pauseClaims: (environmentId) => (override ?? httpApi).pauseClaims(environmentId),
   resumeClaims: (environmentId) => (override ?? httpApi).resumeClaims(environmentId),
+  dismissAttention: (environmentId, ids) =>
+    (override ?? httpApi).dismissAttention(environmentId, ids),
 };
