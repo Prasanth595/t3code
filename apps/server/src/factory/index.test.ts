@@ -1433,6 +1433,7 @@ describe("the gate in the background", () => {
     assert.strictEqual(gateDecided({ kind: "not-ready" }), false);
     assert.strictEqual(gateDecided({ kind: "unchanged" }), false);
     assert.strictEqual(gateDecided({ kind: "running" }), false);
+    assert.strictEqual(gateDecided({ kind: "checks-pending" }), false);
     assert.strictEqual(gateDecided({ kind: "queued", running: 2, max: 2 }), false);
     assert.strictEqual(gateDecided(null), false);
   });
@@ -1490,6 +1491,7 @@ describe("the gate in the background", () => {
     assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "passed", pr: 12 }), null);
     assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "sent-back", attempt: 1 }), null);
     assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "ended" }), null);
+    assert.strictEqual(gateItem(REPO, 10, "run-1", { kind: "checks-pending" }), null);
     assert.strictEqual(gateItem(REPO, 10, "run-1", null), null);
   });
 

@@ -201,10 +201,9 @@ describe("project config", () => {
     const CHECKS = "factory.required_checks";
     const CHECKS_MINUTES = "factory.limits.checks_minutes";
 
-    it("project required checks are not supported yet: a non-empty list is one error", () => {
-      const errs = projectErr(edit(PROJECT, (t) => set(t, CHECKS, '[gate, "build (linux)"]')));
-      assertOne(errs, CHECKS, PFILE);
-      expect(errs[0]!.message).toBe("required_checks is not supported yet");
+    it("project required checks are kept as given", () => {
+      const c = project(edit(PROJECT, (t) => set(t, CHECKS, '[gate, "build (linux)"]')));
+      expect(c.requiredChecks).toEqual(["gate", "build (linux)"]);
     });
 
     it("project required checks may be an empty list", () => {
@@ -217,10 +216,6 @@ describe("project config", () => {
         const errs = projectErr(edit(PROJECT, (t) => set(t, CHECKS, bad)));
         expect(errs.length, bad).toBeGreaterThan(0);
         for (const e of errs) expect(e.field?.startsWith(CHECKS), `${bad}: ${e.field}`).toBe(true);
-        expect(
-          errs.some((e) => e.message === "required_checks is not supported yet"),
-          bad,
-        ).toBe(false);
       }
       const errs = projectErr(edit(PROJECT, (t) => set(t, CHECKS, '[gate, ""]')));
       assertOne(errs, "factory.required_checks[1]", PFILE);

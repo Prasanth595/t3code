@@ -6,8 +6,8 @@
 
 import type { State } from "../domain/lifecycle.ts";
 import type { CommandResult } from "../gate.ts";
-import { commandLine, sanitize } from "../text.ts";
-import type { DropReason } from "../tracker/github.ts";
+import { commandLine, sanitize, shortSha } from "../text.ts";
+import type { CheckStatus, DropReason } from "../tracker/github.ts";
 
 /** The public reason when a run has no record of what approved it. */
 export const CANNOT_CONFIRM = "the factory could not confirm the issue text was approved";
@@ -343,3 +343,22 @@ export const mergeConflictMessage = (base: string, paths: ReadonlyArray<string>)
 /** The comment the factory posts when T3 refused to take an edit of the issue body. */
 export const REFUSED_BODY_EDIT =
   "The factory did not send the edited issue body to the build session, because T3 refused it. Post the change as a new comment and the factory will send it.";
+
+/** The public reason when the pull request's head is not the commit the required checks are waited for. */
+export const CHECKS_HEAD_MOVED =
+  "the pull request's head changed while the factory waited for the required checks";
+
+/**
+ * What to tell the session when required checks failed on the commit that was gated. The check
+ * names come from the project config and the rest from GitHub, so all of it is cleaned like
+ * other untrusted text. A check with no result or link has no line for it.
+ */
+export const checksFailureMessage = (sha: string, failed: ReadonlyArray<CheckStatus>): string => {
+  let text = `The factory gate failed. A required check did not pass on commit ${shortSha(sha)}. Fix the cause, commit, push, and reply when done. Do not weaken or skip the check.`;
+  for (const check of failed) {
+    text += `\n\nCheck: ${sanitize(check.name, false)}`;
+    if (check.conclusion !== "") text += `\nResult: ${sanitize(check.conclusion, false)}`;
+    if (check.url !== null) text += `\nDetails: ${sanitize(check.url, false)}`;
+  }
+  return text;
+};
