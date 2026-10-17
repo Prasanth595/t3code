@@ -15,6 +15,7 @@ import {
   ProfileStore,
   GitHubRoutingPermissions,
   makeGitHubRoutingPermissions,
+  RequestHeaderStore,
 } from "@t3tools/client-runtime/connection";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -22,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import * as CatalogStore from "./catalog-store";
+import { makeRequestHeaderStore } from "./requestHeaders";
 
 function targetPersistenceError(
   operation:
@@ -155,6 +157,7 @@ export const layer = Layer.effectContext(
       Context.add(ProfileStore.ConnectionProfileStore, profileStore),
       Context.add(CredentialStore.ConnectionCredentialStore, credentialStore),
       Context.add(TokenStore.RemoteDpopAccessTokenStore, remoteTokenStore),
+      Context.add(RequestHeaderStore, makeRequestHeaderStore(catalog)),
     );
   }),
 );

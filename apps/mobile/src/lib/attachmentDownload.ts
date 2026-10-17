@@ -2,6 +2,7 @@ import type { ChatFileAttachment } from "@t3tools/contracts";
 import type { Directory } from "expo-file-system";
 import type { SharingOptions } from "expo-sharing";
 
+import { requestHeadersRecord } from "../connection/requestHeaders";
 import { beginForegroundHandoff } from "./foreground-handoff";
 import { uuidv4 } from "./uuid";
 
@@ -180,7 +181,10 @@ export async function openAttachmentInViewer(input: {
     if (/^(file|content):/.test(input.uri)) {
       await new File(input.uri).copy(cached.file);
     } else {
-      await File.downloadFileAsync(input.uri, cached.file, { signal: input.signal });
+      await File.downloadFileAsync(input.uri, cached.file, {
+        signal: input.signal,
+        headers: requestHeadersRecord(input.uri),
+      });
     }
     if (input.signal.aborted) return;
     const endHandoff = beginForegroundHandoff();
@@ -214,7 +218,10 @@ export async function downloadAttachmentForPreview(input: {
       cached.preview.dispose();
       return null;
     }
-    await File.downloadFileAsync(input.url, cached.file, { signal: input.signal });
+    await File.downloadFileAsync(input.url, cached.file, {
+      signal: input.signal,
+      headers: requestHeadersRecord(input.url),
+    });
     if (input.signal.aborted) {
       cached.preview.dispose();
       return null;

@@ -28,7 +28,7 @@ import {
   StoredGitHubRoutingPermission,
   gitHubRoutingConnectionKey,
   gitHubRoutingPermissionFor,
-  type RequestHeader,
+  RequestHeaderStore,
 } from "@t3tools/client-runtime/connection";
 import { EnvironmentId, ServerConfig, ThreadId, VcsListRefsResult } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -497,24 +497,6 @@ export const makeCatalogStore = Effect.fn("web.connectionStorage.makeCatalogStor
 
   return { read, update } satisfies CatalogStore;
 });
-
-/**
- * Extra request headers per origin, kept in the connection catalog. Only the
- * desktop app applies them; see `ElectronRequestHeaders` in apps/desktop.
- */
-export class RequestHeaderStore extends Context.Service<
-  RequestHeaderStore,
-  {
-    readonly get: (
-      origin: string,
-    ) => Effect.Effect<ReadonlyArray<RequestHeader>, ConnectionTransientError>;
-    /** Replaces the headers of `origin`. An empty list removes them. */
-    readonly set: (
-      origin: string,
-      headers: ReadonlyArray<RequestHeader>,
-    ) => Effect.Effect<void, ConnectionTransientError>;
-  }
->()("@t3tools/web/connection/storage/RequestHeaderStore") {}
 
 const GITHUB_ROUTING_KEY_PREFIX = "t3code:github-routing:";
 const GITHUB_ROUTING_CHANGED = "t3code:github-routing-changed";

@@ -12,6 +12,7 @@ import { loadLocalAttachmentPreview } from "./localAttachmentPreview";
 import { downloadAndShareAttachment, shareLocalAttachment } from "./attachmentDownload";
 import { useRefreshAssetUrl } from "../state/assets";
 import { attachmentDocumentPresentation } from "./attachmentDocumentPresentation";
+import { requestHeadersRecord } from "../connection/requestHeaders";
 
 const isLocalUri = (uri: string) => /^(file|content):/.test(uri);
 
@@ -145,6 +146,7 @@ export function useAttachmentDocument(input: {
           return fetch(target, {
             signal: controller.signal,
             headers: {
+              ...requestHeadersRecord(target),
               ...(sizeBytes > 0 ? { Range: `bytes=0-${FILE_TEXT_PREVIEW_MAX_BYTES}` } : {}),
               ...(revision > 0 ? { "Cache-Control": "no-cache" } : {}),
             },

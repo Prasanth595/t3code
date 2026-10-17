@@ -21,6 +21,7 @@ import {
   resolveMarkdownImageDisplaySize,
   resolveSvgImageSize,
 } from "./markdownImageSize";
+import { requestHeadersRecord, withRequestHeaders } from "../../connection/requestHeaders";
 
 /**
  * Width the feed lays markdown out in. The feed already knows this from its
@@ -170,7 +171,7 @@ function ThreadMarkdownImageRequest(props: {
         />
       ) : (
         <Image
-          source={{ uri: props.uri }}
+          source={withRequestHeaders({ uri: props.uri })}
           contentFit="contain"
           cachePolicy="memory-disk"
           accessible={false}
@@ -215,7 +216,10 @@ function ThreadMarkdownSvg(props: {
             )
           : content;
       }
-      const response = await fetch(props.uri, { signal: controller.signal });
+      const response = await fetch(props.uri, {
+        signal: controller.signal,
+        headers: requestHeadersRecord(props.uri),
+      });
       if (!response.ok && !(response.status === 0 && props.uri.startsWith("file://")))
         throw new Error(`SVG request failed: ${response.status}`);
       return response.text();

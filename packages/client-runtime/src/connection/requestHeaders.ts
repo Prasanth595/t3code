@@ -1,4 +1,8 @@
+import * as Context from "effect/Context";
+import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+
+import type { ConnectionTransientError } from "./model.ts";
 
 /**
  * Extra request headers that the desktop app adds to every request to one
@@ -170,3 +174,64 @@ export function isCloudflareAccessChallenge(
   }
   return false;
 }
+
+/** A Cloudflare Access service token, as the two headers that carry it. */
+export interface CloudflareAccessServiceToken {
+  readonly clientId: string;
+  readonly clientSecret: string;
+}
+
+function isHeaderName(header: RequestHeader, name: string): boolean {
+  return header.name.toLowerCase() === name.toLowerCase();
+}
+
+/** The service token in `headers`, or null when either of its headers is missing. */
+export function cloudflareAccessServiceToken(
+  headers: ReadonlyArray<RequestHeader>,
+): CloudflareAccessServiceToken | null {
+  const clientId = headers.find((header) =>
+    isHeaderName(header, CLOUDFLARE_ACCESS_CLIENT_ID_HEADER),
+  )?.value;
+  const clientSecret = headers.find((header) =>
+    isHeaderName(header, CLOUDFLARE_ACCESS_CLIENT_SECRET_HEADER),
+  )?.value;
+  return clientId === undefined || clientSecret === undefined ? null : { clientId, clientSecret };
+}
+
+/** `headers` with their service token replaced by `token`. A null token removes it. */
+export function withCloudflareAccessServiceToken(
+  headers: ReadonlyArray<RequestHeader>,
+  token: CloudflareAccessServiceToken | null,
+): ReadonlyArray<RequestHeader> {
+  const others = headers.filter(
+    (header) =>
+      !isHeaderName(header, CLOUDFLARE_ACCESS_CLIENT_ID_HEADER) &&
+      !isHeaderName(header, CLOUDFLARE_ACCESS_CLIENT_SECRET_HEADER),
+  );
+  return token === null
+    ? others
+    : [
+        { name: CLOUDFLARE_ACCESS_CLIENT_ID_HEADER, value: token.clientId },
+        { name: CLOUDFLARE_ACCESS_CLIENT_SECRET_HEADER, value: token.clientSecret },
+        ...others,
+      ];
+}
+
+/**
+ * Extra request headers per origin, kept in the connection catalog. The desktop
+ * app applies them in its main process (`ElectronRequestHeaders`); the mobile
+ * app applies them in its fetch and WebSocket constructor.
+ */
+export class RequestHeaderStore extends Context.Service<
+  RequestHeaderStore,
+  {
+    readonly get: (
+      origin: string,
+    ) => Effect.Effect<ReadonlyArray<RequestHeader>, ConnectionTransientError>;
+    /** Replaces the headers of `origin`. An empty list removes them. */
+    readonly set: (
+      origin: string,
+      headers: ReadonlyArray<RequestHeader>,
+    ) => Effect.Effect<void, ConnectionTransientError>;
+  }
+>()("@t3tools/client-runtime/connection/requestHeaders/RequestHeaderStore") {}

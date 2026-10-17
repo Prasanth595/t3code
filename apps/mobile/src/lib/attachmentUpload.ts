@@ -33,6 +33,7 @@ import {
 } from "./composerImages";
 import { imageMimeType } from "@t3tools/shared/image";
 import { uuidv4 } from "./uuid";
+import { requestHeadersRecord } from "../connection/requestHeaders";
 
 export type UploadedMobileAttachment =
   | UploadChatImageAttachment
@@ -261,7 +262,10 @@ async function uploadFileBytes(
     const result = await file.upload(url, {
       httpMethod: "POST",
       uploadType: UploadType.BINARY_CONTENT,
-      headers: { "Content-Type": composerAttachmentWireMimeType(attachment) },
+      headers: {
+        "Content-Type": composerAttachmentWireMimeType(attachment),
+        ...requestHeadersRecord(url),
+      },
       signal,
       ...(onProgress
         ? {

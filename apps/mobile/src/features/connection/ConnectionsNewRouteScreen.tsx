@@ -23,6 +23,7 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { AppText as Text, AppTextInput, type AppTextInputProps } from "../../components/ui/AppText";
 import { FrostedCutout } from "../../components/ui/FrostedCutout";
 import { buildPairingUrl, extractPairingUrlFromQrPayload, parsePairingUrl } from "./pairing";
+import { useAddEnvironmentCloudflareAccess } from "./CloudflareAccessFields";
 import {
   setPendingConnectionError,
   useRemoteConnections,
@@ -68,6 +69,11 @@ export function ConnectionsNewRouteScreen({
   // A good scan parks the camera so it can't re-read the code over later edits.
   const [scanComplete, setScanComplete] = useState(false);
   const attemptedAutoConnectRef = useRef<string | null>(null);
+  const access = useAddEnvironmentCloudflareAccess({
+    pairingUrl: buildPairingUrl(hostInput, codeInput),
+    failure: pairingConnectionError,
+    disabled: isSubmitting,
+  });
 
   const headerIconColor = useUniwindTheme()["--color-icon"];
 
@@ -155,7 +161,7 @@ export function ConnectionsNewRouteScreen({
   );
 
   const connectAndClose = useCallback(
-    async (pairingUrl: string, replaceWithHome: boolean) => {
+    async (pairingUrl: string, replaceWithHome: boolean): Promise<boolean> => {
       setIsSubmitting(true);
       onChangeConnectionPairingUrl(pairingUrl);
       try {
@@ -172,6 +178,7 @@ export function ConnectionsNewRouteScreen({
             navigation.goBack();
           }
         }
+        return AsyncResult.isSuccess(result);
       } finally {
         setIsSubmitting(false);
       }
@@ -180,8 +187,15 @@ export function ConnectionsNewRouteScreen({
   );
 
   const handleSubmit = useCallback(async () => {
-    await connectAndClose(buildPairingUrl(hostInput, codeInput), false);
-  }, [codeInput, connectAndClose, hostInput]);
+    const pairingUrl = buildPairingUrl(hostInput, codeInput);
+    setIsSubmitting(true);
+    const staged = await access.stage();
+    if ("error" in staged) {
+      setIsSubmitting(false);
+      return setPendingConnectionError(staged.error);
+    }
+    if (!(await connectAndClose(pairingUrl, false))) await staged.undo();
+  }, [access, codeInput, connectAndClose, hostInput]);
 
   useEffect(() => {
     if (!shouldAutoConnect || attemptedAutoConnectRef.current === routePairingUrl) {
@@ -265,10 +279,13 @@ export function ConnectionsNewRouteScreen({
                 pairingConnectionError ? "text-danger-foreground" : "text-foreground-muted",
               )}
             >
-              {pairingConnectionError ??
+              {access.message ??
+                pairingConnectionError ??
                 "For machines on your local network or tailnet. The machine keeps its own provider credentials."}
             </Text>
           </View>
+
+          {access.section}
 
           {hasCloudPublicConfig() ? <T3ConnectSection /> : null}
         </View>

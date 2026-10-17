@@ -26,6 +26,7 @@ import {
   markProjectFaviconFailed,
   markProjectFaviconLoaded,
 } from "../lib/projectFaviconRequests";
+import { withRequestHeaders } from "../connection/requestHeaders";
 
 const EMPTY_FAVICON_URL = Atom.make<string | null>(null);
 
@@ -192,7 +193,10 @@ function ProjectFaviconImage(props: {
           source={
             faviconRequest.faviconUrl.startsWith("data:")
               ? { uri: faviconRequest.faviconUrl }
-              : { uri: faviconRequest.faviconUrl, cacheKey: faviconRequest.cacheKey }
+              : withRequestHeaders({
+                  uri: faviconRequest.faviconUrl,
+                  cacheKey: faviconRequest.cacheKey,
+                })
           }
           cachePolicy={faviconRequest.faviconUrl.startsWith("data:") ? "memory" : "memory-disk"}
           recyclingKey={faviconRequest.cacheKey}
