@@ -141,8 +141,6 @@ export const cleanupFixture = (
         "--colocate",
         "--name",
         workspaceNameForRef("feature"),
-        "-m",
-        "t3:feature",
         "-r",
         "feature",
         worktree,
@@ -162,6 +160,7 @@ export const cleanupFixture = (
     let openSessionCwd: string | null = null;
     let sessionLive = true;
     let fullStatusCalls = 0;
+    let gitExecuteCalls = 0;
     let snapshotReads = 0;
     let events: Stream.Stream<OrchestrationV2DomainEvent> = Stream.empty;
     const activated = yield* Deferred.make<void>();
@@ -170,7 +169,11 @@ export const cleanupFixture = (
         ...git,
         execute: (input) =>
           Effect.gen(function* () {
-            if (editBeforeRemoval && (input.args.includes("remove") || input.args.includes("--porcelain")))
+            gitExecuteCalls++;
+            if (
+              editBeforeRemoval &&
+              (input.args.includes("remove") || input.args.includes("--porcelain"))
+            )
               yield* fs.writeFileString(`${worktree}/tracked.txt`, "late edit\n");
             return yield* git.execute(input);
           }),
@@ -248,13 +251,16 @@ export const cleanupFixture = (
                 },
               ]
             : strings.join("").includes("deleted_at IS NOT NULL")
-              ? deletedThreads.map((thread) => ({ payload_json: JSON.stringify(thread), workspaceRoot: repo }))
-            : strings.join("").includes('AS "worktreePath"')
-              ? [
-                  ...threads.flatMap((thread) => thread.worktreePath ?? []),
-                  ...storedWorktreePaths,
-                ].map((worktreePath) => ({ worktreePath }))
-              : [],
+              ? deletedThreads.map((thread) => ({
+                  payload_json: JSON.stringify(thread),
+                  workspaceRoot: repo,
+                }))
+              : strings.join("").includes('AS "worktreePath"')
+                ? [
+                    ...threads.flatMap((thread) => thread.worktreePath ?? []),
+                    ...storedWorktreePaths,
+                  ].map((worktreePath) => ({ worktreePath }))
+                : [],
         )) as unknown as SqlClient.SqlClient),
       Effect.provideService(GitManager.GitManager, {
         invalidateStatus: () => Effect.void,
@@ -303,7 +309,9 @@ export const cleanupFixture = (
           },
         };
       },
-      setDeletedThreads: (next: OrchestrationV2ThreadShell[]) => { deletedThreads = next; },
+      setDeletedThreads: (next: OrchestrationV2ThreadShell[]) => {
+        deletedThreads = next;
+      },
       setThreads: (next: typeof threads) => {
         threads = next;
       },
@@ -320,6 +328,7 @@ export const cleanupFixture = (
         openSessionCwd = cwd;
       },
       fullStatusCalls: () => fullStatusCalls,
+      gitExecuteCalls: () => gitExecuteCalls,
       snapshotReads: () => snapshotReads,
       activate: (domainEvents: Stream.Stream<OrchestrationV2DomainEvent>) => {
         events = domainEvents;
