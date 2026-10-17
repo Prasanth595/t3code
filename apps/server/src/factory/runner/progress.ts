@@ -526,20 +526,20 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         break;
       }
       case "checks_read": {
-        const sha = field(entry.data, "sha");
-        const checks = field(entry.data, "checks");
+        const sha = dataField(entry.data, "sha");
+        const checks = dataField(entry.data, "checks");
         if (typeof sha !== "string" || !Array.isArray(checks)) {
           checksPassed = null;
           break;
         }
         const read: ReadonlyArray<unknown> = checks;
         checksPassed =
-          read.length > 0 && read.every((check) => field(check, "state") === "passed")
+          read.length > 0 && read.every((check) => dataField(check, "state") === "passed")
             ? sha.toLowerCase()
             : null;
         const failed = read.flatMap((check): Array<CheckStatus> => {
-          const name = field(check, "name");
-          if (field(check, "state") !== "failed" || typeof name !== "string") return [];
+          const name = dataField(check, "name");
+          if (dataField(check, "state") !== "failed" || typeof name !== "string") return [];
           // The line records no result or link.
           return [{ name, state: "failed", conclusion: "", url: null }];
         });
