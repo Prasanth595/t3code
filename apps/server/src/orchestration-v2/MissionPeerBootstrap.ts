@@ -13,6 +13,7 @@ import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { getExistingEnvironmentKeyPairFromSecretStore } from "../cloud/environmentKeys.ts";
 import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
 import * as Boot from "./MissionPeerBootIdentity.ts";
+import * as Bundle from "./MissionPeerBundleIdentity.ts";
 import * as Handshake from "./MissionPeerHandshake.ts";
 import * as Store from "./MissionPeerHandshakeStore.ts";
 import * as Facts from "./MissionPeerRuntimeFacts.ts";
@@ -39,18 +40,17 @@ export class MissionPeerBootstrapError extends Schema.TaggedError<MissionPeerBoo
 export interface PeerBootstrapInputs {
   readonly approvedPeer: Handshake.PeerTrustConfig;
   readonly entrypoint: {
-    /** The owner must supply this only for a pack output with the server in one ESM file. */
-    readonly format: "single-file-bundle";
+    /** Graph mode requires the manifest emitted from the complete vp pack chunk output. */
+    readonly format: "packed-module-graph" | "single-file-bundle";
     /** import.meta.url of bin.ts as evaluated in that bundle, not a caller-selected file path. */
     readonly moduleUrl: string;
   };
 }
 
 /**
- * Capture the actual process entry bundle once at bootstrap. vp pack has a bin
- * entry and a separate history worker; source execution and a split server graph
- * are not a single-file build receipt. Requiring this module in the entry file
- * also rejects a thin bin wrapper importing the server from another chunk.
+ * Capture the actual process build once at bootstrap. Normal vp pack is a thin
+ * bin plus server/shared chunks; graph mode binds those through its build-time
+ * manifest. Legacy single-file mode still requires the producer in bin itself.
  */
 const captureLoadedBuild = Effect.fn("MissionPeerBootstrap.captureLoadedBuild")(function* (
   entrypoint: PeerBootstrapInputs["entrypoint"],
@@ -61,7 +61,11 @@ const captureLoadedBuild = Effect.fn("MissionPeerBootstrap.captureLoadedBuild")(
   const args = yield* HostProcessArguments;
   const executable = yield* HostProcessIsExecutable;
   // SEA needs its own executable-byte receipt; do not hash its build-time module URL.
-  if (executable || entrypoint.format !== "single-file-bundle" || !args[1]) {
+  if (
+    executable ||
+    (entrypoint.format !== "single-file-bundle" && entrypoint.format !== "packed-module-graph") ||
+    !args[1]
+  ) {
     return yield* new MissionPeerBootstrapError({ category: "unsupported_execution" });
   }
   const ownerUrl = yield* Effect.try({
@@ -81,11 +85,20 @@ const captureLoadedBuild = Effect.fn("MissionPeerBootstrap.captureLoadedBuild")(
   const processEntryPath = yield* fs.realPath(args[1]).pipe(
     Effect.mapError((cause) => new MissionPeerBootstrapError({ category: "read", cause })),
   );
-  if (
-    artifactPath !== processEntryPath ||
-    artifactPath !== producerPath ||
-    path.basename(artifactPath) !== "bin.mjs"
-  ) {
+  if (artifactPath !== processEntryPath || path.basename(artifactPath) !== "bin.mjs") {
+    return yield* new MissionPeerBootstrapError({ category: "entrypoint_mismatch" });
+  }
+  if (entrypoint.format === "packed-module-graph") {
+    return yield* Bundle.capture({ entryPath: artifactPath, producerPath, bootId }).pipe(
+      Effect.mapError(
+        (cause) => new MissionPeerBootstrapError({
+          category: cause.category === "read" ? "read" : "unsupported_execution",
+          cause,
+        }),
+      ),
+    );
+  }
+  if (artifactPath !== producerPath) {
     return yield* new MissionPeerBootstrapError({ category: "entrypoint_mismatch" });
   }
   const bytes = yield* fs.readFile(artifactPath).pipe(

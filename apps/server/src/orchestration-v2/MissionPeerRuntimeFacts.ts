@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import { HostProtocolId } from "../../../../packages/contracts/src/missionHostProtocol.ts";
 import { PeerRuntimeAttestation } from "../../../../packages/contracts/src/missionPeerHandshake.ts";
 import { ServerEnvironmentIdentity } from "../environment/ServerEnvironment.ts";
+import * as Bundle from "./MissionPeerBundleIdentity.ts";
 
 export class MissionPeerRuntimeFactsError extends Schema.TaggedError<MissionPeerRuntimeFactsError>()(
   "MissionPeerRuntimeFactsError",
@@ -31,11 +32,13 @@ export class MissionPeerRuntimeFactsError extends Schema.TaggedError<MissionPeer
 export interface PeerRuntimeInputs {
   readonly environmentId: string;
   readonly readBootIdentity: Effect.Effect<string, MissionPeerRuntimeFactsError>;
-  readonly loadedBuild: {
-    readonly artifactPath: string;
-    readonly sha256: string;
-    readonly receiptId: string;
-  };
+  readonly loadedBuild:
+    | Bundle.LoadedBundleGraph
+    | {
+        readonly artifactPath: string;
+        readonly sha256: string;
+        readonly receiptId: string;
+      };
 }
 
 export class MissionPeerRuntimeFacts extends Context.Service<
@@ -52,7 +55,13 @@ export const layer = (inputs: PeerRuntimeInputs | null) =>
       const fs = yield* FileSystem.FileSystem;
       const environment = yield* ServerEnvironmentIdentity;
       // Capture immutable metadata; never let a later caller replace the build pin.
-      const build = inputs === null ? null : { ...inputs.loadedBuild };
+      const loaded = inputs?.loadedBuild;
+      const build: PeerRuntimeInputs["loadedBuild"] | null =
+        loaded === undefined
+          ? null
+          : "kind" in loaded
+            ? { ...loaded, manifest: { ...loaded.manifest, modules: [...loaded.manifest.modules] } }
+            : { ...loaded };
       const environmentId = inputs?.environmentId;
       const boot = inputs?.readBootIdentity;
       const attest = Effect.gen(function* () {
@@ -66,14 +75,14 @@ export const layer = (inputs: PeerRuntimeInputs | null) =>
           Effect.flatMap(Schema.decodeUnknownEffect(HostProtocolId)),
           Effect.mapError((cause) => new MissionPeerRuntimeFactsError({ category: "read", cause })),
         );
-        const bytes = yield* fs
-          .readFile(build.artifactPath)
-          .pipe(
-            Effect.mapError(
-              (cause) => new MissionPeerRuntimeFactsError({ category: "read", cause }),
-            ),
-          );
-        const buildSha256 = createHash("sha256").update(bytes).digest("hex");
+        const readBuildHash = "kind" in build
+          ? Bundle.rehash(build)
+          : fs.readFile(build.artifactPath).pipe(
+              Effect.map((bytes) => createHash("sha256").update(bytes).digest("hex")),
+            );
+        const buildSha256 = yield* readBuildHash.pipe(
+          Effect.mapError((cause) => new MissionPeerRuntimeFactsError({ category: "read", cause })),
+        );
         if (buildSha256 !== build.sha256) {
           return yield* new MissionPeerRuntimeFactsError({ category: "build_mismatch" });
         }
