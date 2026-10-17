@@ -122,6 +122,25 @@ describe("FactoryPage", () => {
     expect(refreshRuns).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the page when a later poll fails, with the error as a notice and a Retry", async () => {
+    const refreshStatus = vi.fn();
+    const refreshRuns = vi.fn();
+    state.status = resource({ data: statusData(), refresh: refreshStatus });
+    state.runs = resource({
+      status: "error",
+      data: { runs: [runRow()] },
+      error: new Error("fetch failed"),
+      refresh: refreshRuns,
+    });
+    const page = await render(createElement(FactoryPage));
+    expect(page.text()).toContain("original-solutions/t3code-factory");
+    expect(page.text()).toContain("fetch failed");
+    expect(page.text()).not.toContain("Could not load the factory");
+    await act(async () => page.button("Retry")!.props.onClick());
+    expect(refreshStatus).toHaveBeenCalledTimes(1);
+    expect(refreshRuns).toHaveBeenCalledTimes(1);
+  });
+
   it("lists the runs with repo, issue, state, step, age and pull request link", async () => {
     state.runs = resource({
       data: {
