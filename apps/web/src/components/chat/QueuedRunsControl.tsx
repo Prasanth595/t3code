@@ -233,14 +233,12 @@ export function QueuedRunsControl({
       return;
     }
     setResuming(true);
-    try {
-      await resumeQueue({
-        environmentId: props.environmentId,
-        input: { threadId: props.threadId },
-      });
-    } finally {
-      setResuming(false);
-    }
+    // An atom command settles into a result, so the cleanup follows the await.
+    await resumeQueue({
+      environmentId: props.environmentId,
+      input: { threadId: props.threadId },
+    });
+    setResuming(false);
   };
 
   return (

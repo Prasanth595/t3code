@@ -54,8 +54,8 @@ export function GlobalScriptsSettingsRows() {
     transform: (current: readonly ProjectScript[]) => readonly ProjectScript[],
     removedId: string | null = null,
   ): Promise<ProjectScriptActionResult> {
-    setSaving(true);
-    try {
+    // An atom command settles into a result, so the cleanup follows the await.
+    const saveAll = async (): Promise<ProjectScriptActionResult> => {
       for (const candidate of targets) {
         const result = await updateSettings({
           environmentId: candidate.environmentId,
@@ -76,9 +76,11 @@ export function GlobalScriptsSettingsRows() {
         if (result._tag === "Failure") return mapAtomCommandResult(result, () => undefined);
       }
       return AsyncResult.success(undefined);
-    } finally {
-      setSaving(false);
-    }
+    };
+    setSaving(true);
+    const result = await saveAll();
+    setSaving(false);
+    return result;
   }
 
   function submit(scriptId: string | null, input: NewProjectScriptInput) {

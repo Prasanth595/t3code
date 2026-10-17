@@ -165,6 +165,28 @@ const inFlight = new Set<string>();
 // Per sibling: no attempt before `atMs`; `failures` grows the backoff.
 const nextAttempt = new Map<string, { readonly atMs: number; readonly failures: number }>();
 
+/**
+ * Pairs with one sibling and returns the error, or null when it paired. It lives outside the
+ * hooks because the React Compiler skips a hook with `throw` inside `try`.
+ */
+export async function pairSiblingOrigin(
+  origin: string,
+  connectPairing: (input: {
+    readonly host: string;
+    readonly pairingCode: string;
+  }) => Promise<{ readonly _tag: string }>,
+  credentials: RequestCredentials = "include",
+): Promise<unknown> {
+  try {
+    const pairingCode = await requestSiblingPairingCredential(origin, credentials);
+    const result = await connectPairing({ host: origin, pairingCode });
+    if (result._tag === "Failure") throw new Error(`Pairing with ${origin} failed.`);
+    return null;
+  } catch (error) {
+    return error ?? new Error(`Pairing with ${origin} failed.`);
+  }
+}
+
 const delayAfter = (issue: SiblingIssue, failures: number): number => {
   if (issue === "waiting") return WAITING_CHECK_MS;
   if (issue === "paused") return RETRY_MAX_MS;
@@ -196,21 +218,18 @@ export function useSiblingEnvironmentAutoPair(): void {
     await Promise.all(
       due.map(async (origin) => {
         inFlight.add(origin);
-        try {
-          const pairingCode = await requestSiblingPairingCredential(origin);
-          const result = await connectPairing({ host: origin, pairingCode });
-          if (result._tag === "Failure") throw new Error(`Pairing with ${origin} failed.`);
+        const error = await pairSiblingOrigin(origin, connectPairing);
+        inFlight.delete(origin);
+        if (error === null) {
           next.delete(origin);
           nextAttempt.set(origin, { atMs: Date.now() + AFTER_SUCCESS_MS, failures: 0 });
-        } catch (error) {
-          const issue = issueOf(error);
-          const failures = (nextAttempt.get(origin)?.failures ?? 0) + 1;
-          console.warn("Could not pair sibling environment.", origin, issue, error);
-          next.set(origin, issue);
-          nextAttempt.set(origin, { atMs: Date.now() + delayAfter(issue, failures), failures });
-        } finally {
-          inFlight.delete(origin);
+          return;
         }
+        const issue = issueOf(error);
+        const failures = (nextAttempt.get(origin)?.failures ?? 0) + 1;
+        console.warn("Could not pair sibling environment.", origin, issue, error);
+        next.set(origin, issue);
+        nextAttempt.set(origin, { atMs: Date.now() + delayAfter(issue, failures), failures });
       }),
     );
     setIssues(next);

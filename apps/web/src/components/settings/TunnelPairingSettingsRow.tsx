@@ -78,24 +78,27 @@ export function TunnelPairingSettingsRow() {
     )
       return;
     setIsUpdatingTunnelPairing(true);
-    try {
-      await desktopBridge.setTunnelPairing(input);
+    // A promise handler, not try/finally: the React Compiler skips a component with `finally`.
+    const error = await desktopBridge.setTunnelPairing(input).then(
+      () => null,
+      (cause: unknown) => cause ?? new Error("Failed to update tunnel pairing."),
+    );
+    setIsUpdatingTunnelPairing(false);
+    if (error === null) {
       refreshDesktopNetworkAccessState();
       setTunnelPairingUrlInput(null);
       setTrustedOriginsInput(null);
       setCloudflareAccessInputs({});
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to update tunnel pairing.";
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not update tunnel pairing",
-          description: message,
-        }),
-      );
-    } finally {
-      setIsUpdatingTunnelPairing(false);
+      return;
     }
+    const message = error instanceof Error ? error.message : "Failed to update tunnel pairing.";
+    toastManager.add(
+      stackedThreadToast({
+        type: "error",
+        title: "Could not update tunnel pairing",
+        description: message,
+      }),
+    );
   };
 
   if (!canManageLocalBackend || !desktopBridge) return null;
