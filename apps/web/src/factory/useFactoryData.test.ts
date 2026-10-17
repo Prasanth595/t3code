@@ -545,7 +545,7 @@ describe("useFactoryEnvironmentId", () => {
 
   it("is the primary even before the catalog lists it as connected", async () => {
     environments.connected = [ENV_2];
-    const fetchStatus = vi.fn(async () => status(0, "idle"));
+    const fetchStatus = vi.fn(async (_env: EnvironmentId) => status(0, "idle"));
     __setFactoryApiForTests(api({ status: fetchStatus }));
     const id = await mount(useFactoryEnvironmentId);
     expect(id.current).toBe(ENV_1);

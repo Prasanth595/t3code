@@ -9,13 +9,14 @@ import { FactoryFrame } from "./FactoryFrame";
 import { FactoryError, FactoryLoading } from "./FactoryNotices";
 import { formatAge, messageOf } from "./format";
 import { RunsTable } from "./RunsTable";
-import { useFactoryRuns, useFactoryStatus } from "./useFactoryData";
+import { useFactoryEnvironmentId, useFactoryRuns, useFactoryStatus } from "./useFactoryData";
 
 export function FactoryPage() {
-  const status = useFactoryStatus();
+  const environmentId = useFactoryEnvironmentId();
+  const status = useFactoryStatus(environmentId);
   // The recent window until the user asks for every run; the switch starts a fresh read.
   const [allRuns, setAllRuns] = useState(false);
-  const runs = useFactoryRuns(allRuns);
+  const runs = useFactoryRuns(environmentId, allRuns);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
@@ -99,10 +100,15 @@ export function FactoryPage() {
           {report ? (
             <Button
               className="ml-auto shrink-0"
-              disabled={busy}
-              onClick={() =>
-                void control(() => (paused ? factoryApi.resumeClaims() : factoryApi.pauseClaims()))
-              }
+              disabled={busy || environmentId === null}
+              onClick={() => {
+                if (environmentId === null) return;
+                void control(() =>
+                  paused
+                    ? factoryApi.resumeClaims(environmentId)
+                    : factoryApi.pauseClaims(environmentId),
+                );
+              }}
               size="sm"
               variant="outline"
             >

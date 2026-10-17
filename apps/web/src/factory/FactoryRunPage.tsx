@@ -13,7 +13,6 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
-import { usePrimaryEnvironmentId } from "~/state/environments";
 
 import { FactoryApiError, factoryApi, type FactoryEntry } from "./api";
 import { FactoryFrame } from "./FactoryFrame";
@@ -29,7 +28,7 @@ import {
   threadIdOf,
 } from "./format";
 import { TouchLink } from "./TouchLink";
-import { useFactoryRun } from "./useFactoryData";
+import { useFactoryEnvironmentId, useFactoryRun } from "./useFactoryData";
 
 /** Pairs each item with a key unique within the list, though two rows may read the same. */
 function keyed<T>(items: ReadonlyArray<T>, base: (item: T) => string): Array<[string, T]> {
@@ -179,15 +178,17 @@ function Ledger({
 }
 
 export function FactoryRunPage({ runId }: { runId: string }) {
-  const run = useFactoryRun(runId);
-  const environmentId = usePrimaryEnvironmentId() ?? PRIMARY_LOCAL_ENVIRONMENT_ID;
+  const factoryEnvironmentId = useFactoryEnvironmentId();
+  const run = useFactoryRun(factoryEnvironmentId, runId);
+  const environmentId = factoryEnvironmentId ?? PRIMARY_LOCAL_ENVIRONMENT_ID;
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
 
   const stop = async () => {
+    if (factoryEnvironmentId === null) return;
     setBusy(true);
     try {
-      setNote((await factoryApi.stopRun(runId)).message);
+      setNote((await factoryApi.stopRun(factoryEnvironmentId, runId)).message);
     } catch (error) {
       setNote(messageOf(error));
     } finally {
