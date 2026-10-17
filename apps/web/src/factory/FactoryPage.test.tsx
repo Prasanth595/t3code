@@ -477,6 +477,30 @@ describe("FactoryPage run cards at 375 px", () => {
     await page.unmount();
   });
 
+  it("links the issue and the pull request outside the card's own link", async () => {
+    state.runs = resource({ data: { runs: [runRow()] } });
+    const page = await renderAt(375, createElement(FactoryPage));
+    const hrefs = page
+      .all("a")
+      .filter((a) => typeof a.props.href === "string")
+      .map((a) => a.props.href);
+    expect(hrefs).toEqual([
+      "https://github.com/original-solutions/t3code-factory/issues/20",
+      PR_URL,
+    ]);
+    const card = page.all("a").find((a) => a.props["data-to"] === "/factory/$runId")!;
+    expect(card.findAllByType("a" as never)).toHaveLength(1);
+    await page.unmount();
+  });
+
+  it("leaves a non-GitHub pull request URL as text on the card", async () => {
+    state.runs = resource({ data: { runs: [runRow({ pr_url: "https://example.com/pr/1" })] } });
+    const page = await renderAt(375, createElement(FactoryPage));
+    expect(page.all("a").map((a) => a.props.href)).not.toContain("https://example.com/pr/1");
+    expect(page.text()).toContain("https://example.com/pr/1");
+    await page.unmount();
+  });
+
   it("keeps the newest first, the empty state and the Show all runs control", async () => {
     state.runs = resource({
       data: {
