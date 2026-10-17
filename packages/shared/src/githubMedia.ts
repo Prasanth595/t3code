@@ -8,6 +8,8 @@ const RAW_HOST = "raw.githubusercontent.com";
 const LFS_HOST = "media.githubusercontent.com";
 const ATTACHMENT_PATH_PATTERN = /^\/user-attachments\/assets\/[\w-]+$/u;
 const LEGACY_ATTACHMENT_PATH_PATTERN = /^\/[^/]+\/[^/]+\/assets\/\d+\/[\w-]+$/u;
+const RELEASE_DOWNLOAD_PATTERN =
+  /^https:\/\/github\.com\/([^/?#]+)\/([^/?#]+)\/releases\/download\/([^/?#]+)\/([^/?#]+)(?:[?#].*)?$/u;
 /** `blob` and `raw` both address file bytes; `raw` is the one the token is honoured on. */
 const REPOSITORY_FILE_PATTERN = /^\/([^/]+)\/([^/]+)\/(?:raw|blob)\/(.*[^/])$/u;
 
@@ -32,10 +34,40 @@ export function githubMediaFetchUrl(source: string): string | null {
   ) {
     return `https://github.com${url.pathname}`;
   }
+  if (githubReleaseAsset(source) !== null) return `https://github.com${url.pathname}`;
   const repositoryFile = REPOSITORY_FILE_PATTERN.exec(url.pathname);
   return repositoryFile
     ? `https://${RAW_HOST}/${repositoryFile[1]}/${repositoryFile[2]}/${repositoryFile[3]}`
     : null;
+}
+
+interface GitHubReleaseAsset {
+  readonly owner: string;
+  readonly repo: string;
+  readonly tag: string;
+  readonly name: string;
+}
+
+export function githubReleaseAsset(source: string): GitHubReleaseAsset | null {
+  const match = RELEASE_DOWNLOAD_PATTERN.exec(source);
+  if (match === null) return null;
+  try {
+    const owner = decodeURIComponent(match[1]!);
+    const repo = decodeURIComponent(match[2]!);
+    const tag = decodeURIComponent(match[3]!);
+    const name = decodeURIComponent(match[4]!);
+    if (
+      [owner, repo, tag, name].some((part) => part === "." || part === "..") ||
+      !/^[\w.-]+$/u.test(owner) ||
+      !/^[\w.-]+$/u.test(repo) ||
+      /[\p{Cc}\p{Cf}\\/]/u.test(tag) ||
+      /[\p{Cc}\p{Cf}\\/]/u.test(name)
+    )
+      return null;
+    return { owner, repo, tag, name };
+  } catch {
+    return null;
+  }
 }
 
 export function githubMediaFileName(fetchUrl: string): string {

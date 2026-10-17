@@ -36,6 +36,7 @@ import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
+import * as GitHubRest from "@t3tools/source-control-github/server/GitHubRest";
 import { githubMediaResponse } from "./GitHubMediaFetch.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -194,7 +195,10 @@ describe("AssetAccess", () => {
       expect(lookups).toBe(3);
       expect(authorizations).toEqual([undefined, "Bearer signed-in", "Bearer signed-in"]);
     }).pipe(
-      Effect.provide(
+      Effect.provide([
+        Layer.mock(GitHubRest.GitHubRest)({
+          rest: () => Effect.die("Raw media must not look up a release"),
+        }),
         Layer.mock(GitHubCredentials.GitHubCredentials)({
           get: (host) =>
             ++lookups === 1
@@ -206,7 +210,7 @@ describe("AssetAccess", () => {
                   fingerprint: "fingerprint",
                 }),
         }),
-      ),
+      ]),
       Effect.provideService(
         HttpClient.HttpClient,
         HttpClient.make((request) => {
