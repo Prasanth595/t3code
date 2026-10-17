@@ -1,5 +1,7 @@
-CLAUDE.md
 .gitignore
+CLAUDE.md
+apps/desktop/scripts/electron-launcher.mjs
+apps/desktop/scripts/electron-launcher.test.mjs
 apps/desktop/src/app/DesktopApp.test.ts
 apps/desktop/src/app/DesktopApp.ts
 apps/desktop/src/app/DesktopAppIdentity.test.ts
@@ -32,13 +34,13 @@ apps/web/src/components/sidebar/SidebarChrome.tsx
 apps/web/src/components/sidebar/mainAppLocation.test.ts
 apps/web/src/components/sidebar/mainAppLocation.ts
 apps/web/src/routeTree.gen.ts
+packages/shared/package.json
 packages/shared/src/codexAuthHandoff.test.ts
 packages/shared/src/codexAuthHandoff.ts
+packages/shared/src/forkIdentity.ts
 packages/shared/src/promptLinks.test.ts
 packages/shared/src/promptLinks.ts
 packages/shared/src/providerAuthReturnUrl.test.ts
 packages/shared/src/providerAuthReturnUrl.ts
-packages/shared/tsconfig.json
 scripts/build-desktop-artifact.test.ts
 scripts/build-desktop-artifact.ts
-scripts/lib/fork-identity.ts

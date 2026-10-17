@@ -8,7 +8,7 @@ import {
   FORK_APP_DATA_FOLDER,
   FORK_DEV_APP_DATA_FOLDER,
   FORK_LEGACY_APP_DATA_FOLDERS,
-} from "../../../../scripts/lib/fork-identity.ts";
+} from "@t3tools/shared/forkIdentity";
 
 export class DesktopUserDataInitializationError extends Schema.TaggedError<DesktopUserDataInitializationError>()(
   "DesktopUserDataInitializationError",
@@ -65,6 +65,8 @@ export const resolveUserDataPath = Effect.fn("desktop.userData.resolveUserDataPa
     const destinationState = path.join(destinationPath, "Local State");
     if (yield* inspect(destinationState)) return destinationPath;
     let sourceState: string | null = null;
+    // Unreachable in the fork: FORK_LEGACY_APP_DATA_FOLDERS is empty. The loop
+    // stays so this file keeps upstream's shape for the daily sync.
     for (const name of FORK_LEGACY_APP_DATA_FOLDERS) {
       const candidate = path.join(input.appDataDirectory, name, "Local State");
       if (yield* inspect(candidate)) {

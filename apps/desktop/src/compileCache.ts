@@ -2,7 +2,11 @@
 import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { FORK_COMPILE_CACHE_DIR_NAME } from "../../../scripts/lib/fork-identity.ts";
+
+// Mirrors FORK_COMPILE_CACHE_DIR_NAME in @t3tools/shared/forkIdentity. This
+// preload is bundled on its own with no module resolution
+// (main-process-bundle.test.mjs), so it cannot import the identity module.
+const FORK_COMPILE_CACHE_DIR_NAME = "t3code-factory";
 
 // Linux uses the user's cache dir because /tmp is shared between users; the macOS and Windows
 // temp dirs are already per user. Skipped under AppImage: it mounts the app at a new

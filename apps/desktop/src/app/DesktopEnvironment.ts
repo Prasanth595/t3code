@@ -21,7 +21,7 @@ import {
   FORK_DESKTOP_APP_ID,
   FORK_DESKTOP_DEV_APP_ID,
   FORK_PRODUCT_NAME,
-} from "../../../../scripts/lib/fork-identity.ts";
+} from "@t3tools/shared/forkIdentity";
 
 export interface MakeDesktopEnvironmentInput {
   readonly dirname: string;

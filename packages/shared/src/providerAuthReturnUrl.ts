@@ -1,12 +1,13 @@
+import { FORK_DESKTOP_DEV_SCHEME, FORK_DESKTOP_SCHEME } from "./forkIdentity.ts";
 import { isLoopbackHost } from "./preview.ts";
+
+const DESKTOP_PROTOCOLS = new Set([`${FORK_DESKTOP_SCHEME}:`, `${FORK_DESKTOP_DEV_SCHEME}:`]);
 
 export function providerAuthReturnUrl(value: string | undefined): string | undefined {
   if (!value) return undefined;
   try {
     const url = new URL(value);
-    const desktop =
-      ["t3code:", "t3code-dev:", "t3code-factory:", "t3code-factory-dev:"].includes(url.protocol) &&
-      url.host === "app";
+    const desktop = DESKTOP_PROTOCOLS.has(url.protocol) && url.host === "app";
     const web =
       ["http:", "https:"].includes(url.protocol) &&
       (isLoopbackHost(url.hostname) || url.origin === "https://app.t3.codes");

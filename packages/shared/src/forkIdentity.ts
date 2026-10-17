@@ -3,11 +3,13 @@
 // Every value here is what keeps the fork's app from sharing state with
 // upstream T3 Code or with the fork's LaunchAgent server: bundle id, name,
 // app data folder, T3 home, URL scheme, backend port, compile cache and the
-// service launchd label. The desktop app, scripts/build-desktop-artifact.ts and
-// apps/server/src/cloud/bootService.ts all import from here.
+// service launchd label. The desktop app, scripts/build-desktop-artifact.ts,
+// apps/server/src/cloud/bootService.ts and the dev launcher all import from
+// here. apps/desktop/src/compileCache.ts cannot: it must bundle on its own
+// (see main-process-bundle.test.mjs), so it mirrors FORK_COMPILE_CACHE_DIR_NAME.
 //
-// Plain constants and pure functions only: compileCache.ts imports this before
-// any Effect runtime exists.
+// Plain constants only, so the dev launcher can import this file under Node
+// without a build step.
 
 export const FORK_DESKTOP_APP_ID = "io.github.original-solutions.t3code-factory";
 export const FORK_DESKTOP_DEV_APP_ID = `${FORK_DESKTOP_APP_ID}.dev`;

@@ -27,7 +27,7 @@ import {
   FORK_DESKTOP_SCHEME,
   FORK_NIGHTLY_PRODUCT_NAME,
   FORK_PRODUCT_NAME,
-} from "./lib/fork-identity.ts";
+} from "@t3tools/shared/forkIdentity";
 import gnomeCaptureBundle from "../apps/desktop/gnome-extension/bundle.json" with { type: "json" };
 import serverPackageJson from "../apps/server/package.json" with { type: "json" };
 

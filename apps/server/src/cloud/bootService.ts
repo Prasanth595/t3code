@@ -15,7 +15,7 @@ import * as Schema from "effect/Schema";
 import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
 import * as ProcessRunner from "../processRunner.ts";
-import { FORK_BOOT_SERVICE_LAUNCHD_LABEL } from "../../../../scripts/lib/fork-identity.ts";
+import { FORK_BOOT_SERVICE_LAUNCHD_LABEL } from "@t3tools/shared/forkIdentity";
 import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimeCommand,

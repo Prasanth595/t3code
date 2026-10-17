@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
-import { FORK_PRODUCT_NAME } from "../../../../scripts/lib/fork-identity.ts";
+import { FORK_PRODUCT_NAME } from "@t3tools/shared/forkIdentity";
 
 // An AppImage mounts somewhere new each run, so its launcher mounts the
 // AppImage itself instead of pointing into it.

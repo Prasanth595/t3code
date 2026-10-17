@@ -5,6 +5,13 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import { ensureElectronRuntime } from "./ensure-electron-runtime.mjs";
+import {
+  FORK_DESKTOP_APP_ID,
+  FORK_DESKTOP_DEV_APP_ID,
+  FORK_DESKTOP_DEV_SCHEME,
+  FORK_DESKTOP_SCHEME,
+  FORK_PRODUCT_NAME,
+} from "../../../packages/shared/src/forkIdentity.ts";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
 const __dirname = NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
@@ -13,12 +20,16 @@ const repoRoot = NodePath.resolve(desktopDir, "..", "..");
 const devBundleIdSuffix = NodePath.basename(repoRoot)
   .toLowerCase()
   .replaceAll(/[^a-z0-9]+/g, "");
-const APP_DISPLAY_NAME = isDevelopment ? "T3 Code (Dev)" : "T3 Code (Beta)";
-const APP_BUNDLE_ID = isDevelopment
-  ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
-  : "com.t3tools.t3code";
-const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
-const LAUNCHER_VERSION = 20;
+const APP_DISPLAY_NAME = isDevelopment
+  ? `${FORK_PRODUCT_NAME} (Dev)`
+  : `${FORK_PRODUCT_NAME} (Beta)`;
+export const APP_BUNDLE_ID = isDevelopment
+  ? `${FORK_DESKTOP_DEV_APP_ID}.${devBundleIdSuffix || "local"}`
+  : FORK_DESKTOP_APP_ID;
+export const APP_PROTOCOL_SCHEMES = isDevelopment
+  ? [FORK_DESKTOP_DEV_SCHEME]
+  : [FORK_DESKTOP_SCHEME];
+const LAUNCHER_VERSION = 21;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",

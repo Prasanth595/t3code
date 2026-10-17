@@ -12,10 +12,7 @@ import * as Scope from "effect/Scope";
 
 import * as Electron from "electron";
 
-import {
-  FORK_DESKTOP_DEV_SCHEME,
-  FORK_DESKTOP_SCHEME,
-} from "../../../../scripts/lib/fork-identity.ts";
+import { FORK_DESKTOP_DEV_SCHEME, FORK_DESKTOP_SCHEME } from "@t3tools/shared/forkIdentity";
 
 export const DESKTOP_HOST = "app";
 const DESKTOP_PRODUCTION_SCHEME = FORK_DESKTOP_SCHEME;

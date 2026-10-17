@@ -1,6 +1,6 @@
 import * as Option from "effect/Option";
 
-import { FORK_T3_HOME_DIR_NAME } from "../../../../scripts/lib/fork-identity.ts";
+import { FORK_T3_HOME_DIR_NAME } from "@t3tools/shared/forkIdentity";
 
 export type JoinPath = (first: string, ...segments: string[]) => string;
 

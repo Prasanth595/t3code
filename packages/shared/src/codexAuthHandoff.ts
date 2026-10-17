@@ -1,9 +1,6 @@
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import {
-  FORK_DESKTOP_DEV_SCHEME,
-  FORK_DESKTOP_SCHEME,
-} from "../../../scripts/lib/fork-identity.ts";
+import { FORK_DESKTOP_DEV_SCHEME, FORK_DESKTOP_SCHEME } from "./forkIdentity.ts";
 import { providerAuthReturnUrl } from "./providerAuthReturnUrl.ts";
 
 export const CodexAuthHandoff = Schema.Struct({

@@ -490,6 +490,10 @@
     "./PtyAdapter": {
       "types": "./src/PtyAdapter.ts",
       "import": "./src/PtyAdapter.ts"
+    },
+    "./forkIdentity": {
+      "types": "./src/forkIdentity.ts",
+      "import": "./src/forkIdentity.ts"
     }
   },
   "scripts": {

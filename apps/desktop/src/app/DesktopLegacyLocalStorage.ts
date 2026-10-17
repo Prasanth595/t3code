@@ -9,7 +9,7 @@ import * as Ref from "effect/Ref";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import { readChromiumLocalStorage } from "./chromiumLocalStorage.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
-import { FORK_LEGACY_APP_DATA_FOLDERS } from "../../../../scripts/lib/fork-identity.ts";
+import { FORK_LEGACY_APP_DATA_FOLDERS } from "@t3tools/shared/forkIdentity";
 
 /**
  * The V1 profile is only read, never opened by Chromium, so this works while V1
