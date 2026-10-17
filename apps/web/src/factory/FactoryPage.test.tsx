@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
 import type { FactoryResource } from "./useFactoryData";
-import { render } from "./testing";
+import { Button } from "~/components/ui/button";
+import { render, renderAt } from "./testing";
 
 const NOW = Date.parse("2026-10-17T12:00:00.000Z");
 
@@ -371,5 +372,128 @@ describe("FactoryPage", () => {
     const page = await render(createElement(FactoryPage));
     await act(async () => page.button("Pause claims")!.props.onClick());
     expect(page.text()).toContain("Missing permission orchestration:operate");
+  });
+});
+
+const ATTENTION = {
+  id: "stuck:20",
+  kind: "stuck",
+  repo: "original-solutions/t3code-factory",
+  issue: 20,
+  run: RUN_ID,
+  message: "run ended stuck: the gate failed",
+  first_seen: "2026-10-17T11:00:00.000Z",
+};
+
+describe.each([375, 1280])("FactoryPage at %i px", (width) => {
+  const narrow = width < 640;
+  const populate = () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
+    state.runs = resource({
+      status: "error",
+      error: new Error("fetch failed"),
+      data: {
+        runs: [runRow(), runRow({ id: "acme__old__3__1", started_ts: "2026-10-16T12:00:00.000Z" })],
+      },
+    });
+  };
+
+  it(narrow ? "lists the runs as cards, not a table" : "lists the runs in a table", async () => {
+    populate();
+    const page = await renderAt(width, createElement(FactoryPage));
+    expect(page.all("table")).toHaveLength(narrow ? 0 : 1);
+    const cards = page.all("ul").filter((ul) => ul.props["data-layout"] === "cards");
+    expect(cards).toHaveLength(narrow ? 1 : 0);
+    await page.unmount();
+  });
+
+  it("puts the attention items above the runs", async () => {
+    populate();
+    const page = await renderAt(width, createElement(FactoryPage));
+    const text = page.text();
+    expect(text.indexOf("run ended stuck")).toBeGreaterThan(-1);
+    expect(text.indexOf("run ended stuck")).toBeLessThan(text.indexOf("launch-sending"));
+    expect(text.indexOf("Could not refresh")).toBeGreaterThan(text.indexOf("run ended stuck"));
+    expect(text.indexOf("Could not refresh")).toBeLessThan(text.indexOf("launch-sending"));
+    await page.unmount();
+  });
+
+  it("shows a control's answer in the body, below the attention items", async () => {
+    populate();
+    __setFactoryApiForTests(
+      api({
+        pauseClaims: async () => ({
+          paused: true as const,
+          already: false,
+          since: "2026-10-17T12:00:00.000Z",
+          message: "claims paused",
+        }),
+      }),
+    );
+    const page = await renderAt(width, createElement(FactoryPage));
+    await act(async () => page.button("Pause claims")!.props.onClick());
+    const text = page.text();
+    expect(text.indexOf("claims paused")).toBeGreaterThan(text.indexOf("run ended stuck"));
+    expect(text.indexOf("claims paused")).toBeLessThan(text.indexOf("launch-sending"));
+    await page.unmount();
+  });
+
+  it("asks for touch-sized buttons", async () => {
+    populate();
+    const page = await renderAt(width, createElement(FactoryPage));
+    const buttons = page.renderer.root.findAllByType(Button);
+    expect(buttons.map((b) => b.props.size)).toEqual(buttons.map(() => "touch"));
+    expect(buttons.length).toBeGreaterThanOrEqual(3);
+    await page.unmount();
+  });
+});
+
+describe("FactoryPage run cards at 375 px", () => {
+  it("shows each run's repo, issue, state, step, age and pull request, and links to the run", async () => {
+    state.runs = resource({ data: { runs: [runRow()] } });
+    const page = await renderAt(375, createElement(FactoryPage));
+    const link = page
+      .all("a")
+      .find(
+        (a) => a.props["data-to"] === "/factory/$runId" && a.props["data-params"].includes(RUN_ID),
+      );
+    expect(link).toBeDefined();
+    const text = link!
+      .findAll(() => true)
+      .flatMap((n) => n.children.filter((c) => typeof c === "string"))
+      .join(" ");
+    for (const part of [
+      "original-solutions/t3code-factory",
+      "#20",
+      "building",
+      "launch-sending",
+      "2h",
+      "#30",
+    ]) {
+      expect(text).toContain(part);
+    }
+    // A card is one link: nothing inside it is another link.
+    expect(link!.findAllByType("a" as never)).toHaveLength(1);
+    await page.unmount();
+  });
+
+  it("keeps the newest first, the empty state and the Show all runs control", async () => {
+    state.runs = resource({
+      data: {
+        runs: [runRow({ id: "acme__old__3__1", started_ts: "2026-10-16T12:00:00.000Z" }), runRow()],
+      },
+    });
+    const page = await renderAt(375, createElement(FactoryPage));
+    const text = page.text();
+    expect(text.indexOf("original-solutions/t3code-factory")).toBeLessThan(
+      text.indexOf("acme/old"),
+    );
+    expect(page.button("Show all runs")).toBeDefined();
+    await page.unmount();
+    state.runs = resource({ data: { runs: [] } });
+    const empty = await renderAt(375, createElement(FactoryPage));
+    expect(empty.text()).toContain("No runs in the last week");
+    expect(empty.button("Show all runs")).toBeDefined();
+    await empty.unmount();
   });
 });
