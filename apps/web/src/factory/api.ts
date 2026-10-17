@@ -1,9 +1,9 @@
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
+import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 import { environmentSession } from "~/state/session";
 import { textField } from "./format";
 import {
@@ -107,15 +107,16 @@ export class FactoryApiError extends Error {
 }
 
 export interface FactoryApi {
-  readonly status: () => Promise<FactoryStatus>;
+  readonly status: (environmentId: EnvironmentId) => Promise<FactoryStatus>;
   /** The recent window the server lists by default (`RECENT_FINISHED_MS`), or every run with `all`. */
-  readonly runs: (options: {
-    readonly all: boolean;
-  }) => Promise<{ readonly runs: ReadonlyArray<FactoryRunRow> }>;
-  readonly run: (id: string) => Promise<FactoryRunDetail>;
-  readonly stopRun: (id: string) => Promise<FactoryStopResult>;
-  readonly pauseClaims: () => Promise<FactoryPauseResult>;
-  readonly resumeClaims: () => Promise<FactoryResumeResult>;
+  readonly runs: (
+    environmentId: EnvironmentId,
+    options: { readonly all: boolean },
+  ) => Promise<{ readonly runs: ReadonlyArray<FactoryRunRow> }>;
+  readonly run: (environmentId: EnvironmentId, id: string) => Promise<FactoryRunDetail>;
+  readonly stopRun: (environmentId: EnvironmentId, id: string) => Promise<FactoryStopResult>;
+  readonly pauseClaims: (environmentId: EnvironmentId) => Promise<FactoryPauseResult>;
+  readonly resumeClaims: (environmentId: EnvironmentId) => Promise<FactoryResumeResult>;
 }
 
 /**
@@ -140,19 +141,22 @@ export const __setFactoryConnectionForTests = (prepared?: PreparedConnection | n
   appAtomRegistry.set(connectionOverrideAtom, prepared);
 };
 
-/** The primary environment's prepared connection: the server this page was opened from or paired to. */
-const primaryConnectionAtom = Atom.make((get): PreparedConnection | null => {
-  const override = get(connectionOverrideAtom);
-  if (override !== undefined) return override;
-  const environmentId = get(primaryEnvironmentIdAtom);
-  return environmentId === null
-    ? null
-    : Option.getOrNull(get(environmentSession.preparedConnectionValueAtom(environmentId)));
-}).pipe(Atom.withLabel("factory-primary-connection"));
+/** One environment's prepared connection: the server that environment points at. */
+const connectionAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): PreparedConnection | null => {
+    const override = get(connectionOverrideAtom);
+    if (override !== undefined) return override;
+    return Option.getOrNull(get(environmentSession.preparedConnectionValueAtom(environmentId)));
+  }).pipe(Atom.withLabel(`factory-connection:${environmentId}`)),
+);
 
 /** The connection now, or the first one that appears within `ms` (a call can precede startup). */
-const connectionWithin = (ms: number): Promise<PreparedConnection> => {
-  const current = appAtomRegistry.get(primaryConnectionAtom);
+const connectionWithin = (
+  environmentId: EnvironmentId,
+  ms: number,
+): Promise<PreparedConnection> => {
+  const atom = connectionAtom(environmentId);
+  const current = appAtomRegistry.get(atom);
   if (current !== null) return Promise.resolve(current);
   return new Promise((resolve, reject) => {
     let unsubscribe = () => {};
@@ -160,7 +164,7 @@ const connectionWithin = (ms: number): Promise<PreparedConnection> => {
       unsubscribe();
       reject(new FactoryApiError(0, "no_connection", "The factory has no server connection yet."));
     }, ms);
-    unsubscribe = appAtomRegistry.subscribe(primaryConnectionAtom, (prepared) => {
+    unsubscribe = appAtomRegistry.subscribe(atom, (prepared) => {
       if (prepared === null) return;
       clearTimeout(timer);
       unsubscribe();
@@ -170,6 +174,7 @@ const connectionWithin = (ms: number): Promise<PreparedConnection> => {
 };
 
 const call = async <T>(
+  environmentId: EnvironmentId,
   method: "GET" | "POST",
   path: string,
   searchParams?: Record<string, string>,
@@ -179,7 +184,7 @@ const call = async <T>(
   const timedOut = () => new FactoryApiError(0, "timeout", timeoutMessage(timeoutMs));
   let result;
   try {
-    const prepared = await connectionWithin(timeoutMs);
+    const prepared = await connectionWithin(environmentId, timeoutMs);
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) throw timedOut();
     result = await factoryRequest(prepared, {
@@ -208,19 +213,24 @@ const call = async <T>(
   return body as T;
 };
 
-const post = <T>(path: string) => call<T>("POST", path);
-const get = <T>(path: string, searchParams?: Record<string, string>) =>
-  call<T>("GET", path, searchParams);
+const post = <T>(environmentId: EnvironmentId, path: string) =>
+  call<T>(environmentId, "POST", path);
+const get = <T>(
+  environmentId: EnvironmentId,
+  path: string,
+  searchParams?: Record<string, string>,
+) => call<T>(environmentId, "GET", path, searchParams);
 
 const runPath = (id: string) => `/api/factory/runs/${encodeURIComponent(id)}`;
 
 const httpApi: FactoryApi = {
-  status: () => get("/api/factory/status"),
-  runs: ({ all }) => get("/api/factory/runs", all ? { all: "1" } : undefined),
-  run: (id) => get(runPath(id)),
-  stopRun: (id) => post(`${runPath(id)}/stop`),
-  pauseClaims: () => post("/api/factory/claims/pause"),
-  resumeClaims: () => post("/api/factory/claims/resume"),
+  status: (environmentId) => get(environmentId, "/api/factory/status"),
+  runs: (environmentId, { all }) =>
+    get(environmentId, "/api/factory/runs", all ? { all: "1" } : undefined),
+  run: (environmentId, id) => get(environmentId, runPath(id)),
+  stopRun: (environmentId, id) => post(environmentId, `${runPath(id)}/stop`),
+  pauseClaims: (environmentId) => post(environmentId, "/api/factory/claims/pause"),
+  resumeClaims: (environmentId) => post(environmentId, "/api/factory/claims/resume"),
 };
 
 let override: FactoryApi | undefined;
@@ -232,10 +242,10 @@ export const __setFactoryApiForTests = (api?: FactoryApi): void => {
 
 /** Delegates on every call, so a swap takes effect for hooks that already hold the object. */
 export const factoryApi: FactoryApi = {
-  status: () => (override ?? httpApi).status(),
-  runs: (options) => (override ?? httpApi).runs(options),
-  run: (id) => (override ?? httpApi).run(id),
-  stopRun: (id) => (override ?? httpApi).stopRun(id),
-  pauseClaims: () => (override ?? httpApi).pauseClaims(),
-  resumeClaims: () => (override ?? httpApi).resumeClaims(),
+  status: (environmentId) => (override ?? httpApi).status(environmentId),
+  runs: (environmentId, options) => (override ?? httpApi).runs(environmentId, options),
+  run: (environmentId, id) => (override ?? httpApi).run(environmentId, id),
+  stopRun: (environmentId, id) => (override ?? httpApi).stopRun(environmentId, id),
+  pauseClaims: (environmentId) => (override ?? httpApi).pauseClaims(environmentId),
+  resumeClaims: (environmentId) => (override ?? httpApi).resumeClaims(environmentId),
 };

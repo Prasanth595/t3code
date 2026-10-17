@@ -19,8 +19,10 @@ vi.mock("@tanstack/react-router", () => ({
   }) =>
     createElement("a", { "data-to": to, "data-params": JSON.stringify(params ?? {}) }, children),
 }));
-vi.mock("~/state/environments", () => ({ usePrimaryEnvironmentId: () => state.environmentId }));
-vi.mock("./useFactoryData", () => ({ useFactoryRun: () => state.run }));
+vi.mock("./useFactoryData", () => ({
+  useFactoryEnvironmentId: () => state.environmentId,
+  useFactoryRun: () => state.run,
+}));
 
 import { FactoryRunPage } from "./FactoryRunPage";
 
@@ -147,6 +149,16 @@ describe("FactoryRunPage", () => {
     expect(text).toContain("thread-9");
   });
 
+  it("links the thread on the factory environment", async () => {
+    state.environmentId = "env-2";
+    const page = await mount();
+    const thread = page.all("a").find((a) => a.props["data-to"] === "/$environmentId/$threadId");
+    expect(JSON.parse(thread!.props["data-params"])).toEqual({
+      environmentId: "env-2",
+      threadId: "thread-9",
+    });
+  });
+
   it("falls back to the primary environment id", async () => {
     state.environmentId = null;
     const page = await mount();
@@ -181,7 +193,7 @@ describe("FactoryRunPage", () => {
     const page = await mount();
     expect(page.button("Stop")!.props.disabled).toBeFalsy();
     await act(async () => page.button("Stop")!.props.onClick());
-    expect(stopRun).toHaveBeenCalledWith(RUN_ID);
+    expect(stopRun).toHaveBeenCalledWith("env-1", RUN_ID);
     expect(page.text()).toContain("stop requested");
     expect(refresh).toHaveBeenCalled();
   });

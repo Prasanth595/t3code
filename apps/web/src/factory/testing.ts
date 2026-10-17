@@ -32,7 +32,8 @@ let restoreViewport: (() => void) | null = null;
 
 /**
  * Gives the code under test a `window` whose `matchMedia` answers for a viewport `widthPx` wide,
- * until `restore` (or the next `viewport`, which restores first). Nothing else of a window exists.
+ * until `restore` (or the next `viewport`, which restores first). Nothing else of a window exists
+ * but an event target, which the live-refresh policy listens on.
  */
 export function viewport(widthPx: number): () => void {
   restoreViewport?.();
@@ -41,14 +42,14 @@ export function viewport(widthPx: number): () => void {
   Object.defineProperty(globalThis, "window", {
     configurable: true,
     writable: true,
-    value: {
+    value: Object.assign(new EventTarget(), {
       matchMedia: (query: string) => ({
         matches: matchesWidth(query, widthPx),
         media: query,
         addEventListener: () => {},
         removeEventListener: () => {},
       }),
-    },
+    }),
   });
   const restore = () => {
     if (restoreViewport !== restore) return;

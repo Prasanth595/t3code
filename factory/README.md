@@ -105,6 +105,10 @@ The Factory pages work on a phone. They run in the fork's own web, so open the f
 
 The pages use the paired session, so there is no factory token to set. Pause, resume and stop need the `orchestration:operate` scope that a normal pairing carries. A connection through T3 Connect (the relay) does not reach the Factory pages yet; pair directly as above.
 
+### Desktop app
+
+The fork's desktop app has its own built-in server, which runs no factory. To see the factory there, pair the LaunchAgent server (port 3876) as an environment in Settings, Connections, using a pairing link from the same `t3 pair` command: with `--tailscale` for a link over the tailnet, or without it on the Mac itself. The Factory pages then show that server's runs and controls, and the sidebar badge counts its attention items. One factory runs per machine, so the pages pick the first connected environment that reports a running factory, the primary first.
+
 ## Stopping a run by hand
 
 ```sh
