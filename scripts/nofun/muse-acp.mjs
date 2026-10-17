@@ -43,12 +43,17 @@ const { fileURLToPath } = NodeURL;
 // (nofun-skills scripts/muse-worker.sh). Verified against Muse Code model/list
 // 2026-10-17: Contributor mode is a setting, not part of these model IDs.
 const MODELS = [
-  { value: "muse-spark-1.3", name: "Muse Spark 1.3" },
-  { value: "muse-spark-1.2", name: "Muse Spark 1.2" },
-  { value: "muse-wonder-1.0", name: "Muse Wonder" },
-  { value: "muse-wonder-full-1.0", name: "Muse Wonder Full" },
+  { value: "muse-spark-1.3", name: "Muse Spark 1.3 Contributor" },
+  { value: "muse-wonder-1.0", name: "Muse Wonder Contributor" },
+  { value: "muse-wonder-full-1.0", name: "Muse Wonder Full Contributor" },
 ];
 const PROFILES = [
+  {
+    value: "muse-full",
+    name: "Full local access",
+    description:
+      "Shell, filesystem, network and configured MCPs; use an isolated worktree for writes.",
+  },
   { value: "muse-review", name: "Review (read-only)", description: "No writes, no shell." },
   { value: "muse-focused", name: "Focused (writes in place)", description: "Edits the workspace." },
   { value: "muse-build", name: "Build (new worktree)", description: "Starts a fresh worktree." },
@@ -65,6 +70,11 @@ const flag = (name) => {
   return index === -1 ? undefined : args[index + 1];
 };
 const accountId = flag("--account");
+const defaultProfile = flag("--default-profile") ?? "muse-full";
+if (!PROFILES.some((profile) => profile.value === defaultProfile)) {
+  process.stderr.write("Unknown default Muse worker profile.\n");
+  process.exit(2);
+}
 const accountsPath =
   flag("--accounts") ?? NodePath.join(NodeOS.homedir(), ".nofun-t3", "muse-accounts.json");
 const expandHome = (value) =>
@@ -417,7 +427,7 @@ function handle(message) {
       const session = {
         cwd: params.cwd ?? process.cwd(),
         model: MODELS[0].value,
-        profile: "muse-review",
+        profile: defaultProfile,
         history: [],
         required: new Map(),
         run: null,
