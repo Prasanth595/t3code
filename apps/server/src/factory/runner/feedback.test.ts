@@ -1824,6 +1824,55 @@ describe("feedback: the step", () => {
     }),
   );
 
+  /** A pr-open run with feedback on it whose re-gate failed and decided a relaunch that was cut short where `cut` says. */
+  const cutRegateRelaunch = (cut: (rig: Rig) => void) =>
+    Effect.gen(function* () {
+      const rig = yield* reviewedRun();
+      baseMoved(rig, 0);
+      passThenFail(rig);
+      cut(rig);
+      assert.isTrue(Exit.isFailure(yield* Effect.exit(regateIn(rig))));
+      rig.t3.dieAfterLaunch = false;
+      rig.gh.markDraftFails = false;
+      assert.strictEqual(eventsOf(rig, "regate_relaunching").length, 1);
+      clearCalls(rig);
+      return rig;
+    });
+
+  it.effect("a re-gate relaunch with no session recorded is left to the gate", () =>
+    Effect.gen(function* () {
+      const rig = yield* cutRegateRelaunch((r) => {
+        r.t3.dieAfterLaunch = true;
+      });
+      assert.strictEqual(eventsOf(rig, "session_launched").length, 1, "only the first session");
+      const bytes = bytesOf(rig);
+      const launches = rig.t3.launches.length;
+      assert.deepStrictEqual(yield* feedbackIn(rig), NONE);
+      assert.deepStrictEqual(rig.gh.calls, []);
+      assert.strictEqual(rig.t3.launches.length, launches, "no second session");
+      assert.strictEqual(bytesOf(rig), bytes, "nothing is written");
+    }),
+  );
+
+  it.effect("a re-gate relaunch whose session is recorded is left to the gate", () =>
+    Effect.gen(function* () {
+      const rig = yield* cutRegateRelaunch((r) => {
+        r.gh.markDraftFails = true;
+      });
+      assert.strictEqual(
+        eventsOf(rig, "session_launched").length,
+        2,
+        "the new session is recorded",
+      );
+      const bytes = bytesOf(rig);
+      const launches = rig.t3.launches.length;
+      assert.deepStrictEqual(yield* feedbackIn(rig), NONE);
+      assert.deepStrictEqual(rig.gh.calls, []);
+      assert.strictEqual(rig.t3.launches.length, launches, "no second session");
+      assert.strictEqual(bytesOf(rig), bytes, "nothing is written");
+    }),
+  );
+
   it.effect(
     "a feedback relaunch is no gate attempt and the session is waited for like any other",
     () =>

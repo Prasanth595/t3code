@@ -32,6 +32,7 @@ import { formatTs } from "../ledger/time.ts";
 import { isUtcSecond } from "../tracker/approvalHistory.ts";
 import {
   GitHubParse,
+  issueCommentFeedbackId,
   type Activity,
   type BoundGitHub,
   type Dropped,
@@ -847,7 +848,7 @@ const unsent = (seen: Seen, activity: Activity) =>
     const told = new Set([...seen.forwarded, ...seen.dropped]);
     const comments = activity.comments.filter((comment) => {
       // Nor one that went into the session as instructor feedback, when the run was waiting for review.
-      if (told.has(comment.id) || seen.feedbackSent.has(`issue-comment:${comment.id}`))
+      if (told.has(comment.id) || seen.feedbackSent.has(issueCommentFeedbackId(comment.id)))
         return false;
       told.add(comment.id);
       return true;
@@ -868,7 +869,7 @@ const unreported = (seen: Seen, activity: Activity): ReadonlyArray<Dropped> => {
   return activity.dropped.filter((dropped) => {
     if (
       seen.forwarded.has(dropped.id) ||
-      seen.feedbackSent.has(`issue-comment:${dropped.id}`) ||
+      seen.feedbackSent.has(issueCommentFeedbackId(dropped.id)) ||
       told.has(dropped.id)
     )
       return false;

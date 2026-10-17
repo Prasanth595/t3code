@@ -5407,6 +5407,20 @@ describe("pr feedback", () => {
       }),
   );
 
+  it.effect("a comment and a commented review that only say LGTM are still feedback", () =>
+    Effect.gen(function* () {
+      // The factory's login opens the pull requests, so an instructor acting as it can only
+      // comment: only an approval's body is left unread.
+      const got = yield* readFeedback(
+        feedbackReply(
+          [reviewNode(11, "COMMENTED", "looks good", "2026-10-04T11:00:00Z", "rawphp")],
+          [prCommentNode(21, "LGTM, merging after the release", "2026-10-04T11:01:00Z", "rawphp")],
+        ),
+      );
+      assert.deepStrictEqual(feedbackIds(got), ["review:11", "pr-comment:21"]);
+    }),
+  );
+
   it.effect("a review that is still pending or has no submission time is not feedback", () =>
     Effect.gen(function* () {
       const got = yield* readFeedback(

@@ -631,6 +631,9 @@ export interface Feedback {
   readonly inlineUnread: number;
 }
 
+/** The `Feedback` id of the issue comment `id`, as the ledger names an item sent as feedback. */
+export const issueCommentFeedbackId = (id: string): string => `issue-comment:${id}`;
+
 export interface IssueDetail {
   readonly number: number;
   readonly title: string;
@@ -1906,8 +1909,11 @@ export const makeGitHub = (options: GitHubOptions) => {
             body: c.body ?? "",
           });
         }
-        // softfac also counts an approval with a body, so approving with "LGTM!" would send the
-        // pull request back to draft and the issue back to building. This port does not.
+        // Only an approval's body is not read: softfac also counts it, so approving with "LGTM!"
+        // would send the pull request back to draft and the issue back to building. A comment and
+        // a `COMMENTED` review always count, whatever they say: the factory's login opens the pull
+        // requests, so an instructor acting as it cannot approve or request changes, and its
+        // comments are its only way to ask (softfac `docs/lifecycle.md`, "Instructor feedback").
         const counts =
           review.state === "CHANGES_REQUESTED" || review.state === "COMMENTED"
             ? true

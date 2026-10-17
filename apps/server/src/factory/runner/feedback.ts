@@ -21,7 +21,7 @@ import { makeCause } from "../ledger/events.ts";
 import { readRun } from "../ledger/read.ts";
 import { asciiLower, feedbackReadFile, type RunId } from "../ledger/runId.ts";
 import { formatTs } from "../ledger/time.ts";
-import type { BoundGitHub, Feedback } from "../tracker/github.ts";
+import { issueCommentFeedbackId, type BoundGitHub, type Feedback } from "../tracker/github.ts";
 import { WrongRepoError, textStop, withLedger, type BuildingError, type Out } from "./building.ts";
 import type { GateContext } from "./gating.ts";
 import { feedbackMessage } from "./messages.ts";
@@ -352,7 +352,7 @@ const newFeedback = (
     const fromIssue = activity.comments
       .filter((c) => !seen.forwarded.has(c.id) && !seen.dropped.has(c.id))
       .map((c): Feedback => ({
-        id: `issue-comment:${c.id}`,
+        id: issueCommentFeedbackId(c.id),
         author: c.author,
         kind: { kind: "issue-comment" },
         createdAt: c.createdAt,
