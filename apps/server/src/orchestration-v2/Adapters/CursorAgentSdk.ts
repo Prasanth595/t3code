@@ -35,17 +35,11 @@ export class CursorAgentSdkRunnerError extends Schema.TaggedError<CursorAgentSdk
   }
 }
 
-/**
- * Stable reason surfaced when Cursor's local host will not attach a run.
- * The host exposes no numeric session limit and sends no refusal frame: it
- * accepts `agent.open`, then `agent.send` never resolves and no
- * `run.started` ever arrives (provider logs, 2026-10-17T18:12:53Z stall).
- */
+/** Only explicit SDK concurrency/session refusals use this diagnosis. */
 export const CURSOR_LOCAL_CONCURRENCY_CODE = "cursor_local_concurrency_limit";
 export const CURSOR_LOCAL_CONCURRENCY_REASON =
-  `${CURSOR_LOCAL_CONCURRENCY_CODE}: Cursor local host did not attach a run; ` +
-  "concurrent local sessions appear capped (no numeric limit is exposed by the Cursor SDK) " +
-  "and the run never started";
+  `${CURSOR_LOCAL_CONCURRENCY_CODE}: Cursor reported a local session/concurrency refusal. ` +
+  "The SDK exposes no numeric limit.";
 export const CURSOR_RUN_START_TIMEOUT_MS = 120_000;
 
 export class CursorLocalSessionLimitError extends Schema.TaggedError<CursorLocalSessionLimitError>()(
@@ -56,6 +50,20 @@ export class CursorLocalSessionLimitError extends Schema.TaggedError<CursorLocal
 ) {
   override get message(): string {
     return CURSOR_LOCAL_CONCURRENCY_REASON;
+  }
+}
+
+/** A timeout cannot prove refusal or cancellation: SDK send has no AbortSignal. */
+export class CursorRunAttachmentUnconfirmedError extends Schema.TaggedError<CursorRunAttachmentUnconfirmedError>()(
+  "CursorRunAttachmentUnconfirmedError",
+  {},
+) {
+  override get message(): string {
+    return (
+      "cursor_run_attachment_unconfirmed: Cursor did not confirm attachment before the deadline. " +
+      "The request may still start; cancellation is not confirmed. Inspect the existing Cursor agent before retrying. " +
+      "This session refuses another send to avoid a duplicate submission."
+    );
   }
 }
 
@@ -436,10 +444,14 @@ export function makeCursorAgentSdkRunner(
         ...(input.options.local?.store === undefined ? {} : { store: input.options.local.store }),
       };
       let abandonedRunRecoveryAvailable = input.operation === "resume";
+      let attachmentUnconfirmed = false;
 
       return {
         agentId: agent.agentId,
         send: Effect.fn("CursorAgentSdkSession.send")(function* (sendInput) {
+          if (attachmentUnconfirmed) {
+            return yield* runnerError(new CursorRunAttachmentUnconfirmedError(), "run.start");
+          }
           const context = yield* Effect.context();
           yield* log({
             direction: "outgoing",
@@ -452,6 +464,7 @@ export function makeCursorAgentSdkRunner(
           });
 
           let callbacksReady = false;
+          let startAbandoned = false;
           const pendingUpdates: Array<InteractionUpdate> = [];
           let callbackFailure: { readonly cause: unknown } | undefined;
           let callbackChain = Promise.resolve();
@@ -482,29 +495,46 @@ export function makeCursorAgentSdkRunner(
 
           const startRun = () =>
             Effect.tryPromise({
-              try: () =>
-                agent.send(sendInput.message, {
+              try: async () => {
+                const started = await agent.send(sendInput.message, {
                   ...sendInput.options,
                   onDelta: async ({ update }) => {
+                    if (startAbandoned) return;
                     if (!callbacksReady) {
                       pendingUpdates.push(update);
                       return;
                     }
                     await dispatchUpdate(update);
                   },
-                }),
+                });
+                if (startAbandoned) {
+                  // A late run is still owned by this send. Attempt cancellation,
+                  // never promote it or submit again; failure remains unconfirmed.
+                  try {
+                    await started.cancel();
+                  } catch {
+                    /* no cancellation ACK */
+                  }
+                }
+                return started;
+              },
               catch: (cause) =>
                 runnerError(
-                  isCursorLocalConcurrencyRefusal(cause)
-                    ? cursorLocalSessionLimitError()
-                    : cause,
+                  isCursorLocalConcurrencyRefusal(cause) ? cursorLocalSessionLimitError() : cause,
                   "run.start",
                 ),
             });
           const run = yield* startRun().pipe(
             Effect.timeoutOrElse({
               duration: runStartTimeoutMs,
-              orElse: () => Effect.fail(runnerError(cursorLocalSessionLimitError(), "run.start")),
+              orElse: () => {
+                startAbandoned = true;
+                attachmentUnconfirmed = true;
+                pendingUpdates.length = 0;
+                return Effect.fail(
+                  runnerError(new CursorRunAttachmentUnconfirmedError(), "run.start"),
+                );
+              },
             }),
             Effect.catchIf(
               (error) => abandonedRunRecoveryAvailable && isActiveRunConflict(error.cause),

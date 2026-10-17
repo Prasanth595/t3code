@@ -34,6 +34,7 @@ function causeMessage(cause: unknown): string | undefined {
       }
       if (typeof cause !== "object") break;
       switch ((cause as Record<string, unknown>)._tag) {
+        case "CursorRunAttachmentUnconfirmedError":
         case "CursorLocalSessionLimitError":
           return stringField(cause, "message") ?? undefined;
         case "ContextHandoffBudgetError":

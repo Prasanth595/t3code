@@ -13,7 +13,8 @@ const cursorSdkMock = vi.hoisted(() => {
   const runOperations: Array<string> = [];
   let agentCloseFailure: unknown;
   let staleRunActive = false;
-  let sendBehavior: "ok" | "refuse" | "hang" = "ok";
+  let sendBehavior: "ok" | "refuse" | "hang" | "late" = "ok";
+  let releaseLateSend: (() => void) | undefined;
   const runWait = vi.fn(async () => ({
     id: "run-cursor-agent-sdk-test",
     requestId: "request-cursor-agent-sdk-test",
@@ -40,6 +41,11 @@ const cursorSdkMock = vi.hoisted(() => {
       }
       if (sendBehavior === "hang") {
         await new Promise(() => {});
+      }
+      if (sendBehavior === "late") {
+        await new Promise<void>((resolve) => {
+          releaseLateSend = resolve;
+        });
       }
       if (staleRunActive) {
         throw new Error("Agent agent-cursor-agent-sdk-test already has active run");
@@ -96,7 +102,8 @@ const cursorSdkMock = vi.hoisted(() => {
     setStaleRunActive: (active: boolean) => {
       staleRunActive = active;
     },
-    setSendBehavior: (behavior: "ok" | "refuse" | "hang") => {
+    releaseLateSend: () => releaseLateSend?.(),
+    setSendBehavior: (behavior: "ok" | "refuse" | "hang" | "late") => {
       sendBehavior = behavior;
     },
   };
@@ -341,28 +348,77 @@ describe("CursorAgentSdkRunner", () => {
     }),
   );
 
-  it.live("fails fast with the concurrency reason when no Cursor run ever attaches", () =>
-    Effect.gen(function* () {
-      cursorSdkMock.setSendBehavior("hang");
-      try {
-        const runner = CursorAgentSdk.makeCursorAgentSdkRunner(() => undefined, {
-          runStartTimeoutMs: 50,
+  it.live(
+    "reports unconfirmed attachment and blocks another send when no Cursor run attaches",
+    () =>
+      Effect.gen(function* () {
+        cursorSdkMock.setSendBehavior("hang");
+        try {
+          const runner = CursorAgentSdk.makeCursorAgentSdkRunner(() => undefined, {
+            runStartTimeoutMs: 50,
+          });
+          const session = yield* runner.open({
+            operation: "create",
+            options: { model: { id: "default" }, mode: "agent", local: { cwd: process.cwd() } },
+            threadId: ThreadId.make("thread-cursor-agent-sdk-hang-test"),
+            providerSessionId: ProviderSessionId.make("provider-session-cursor-hang-test"),
+          });
+          const error = yield* Effect.flip(session.send({ message: "hello" }));
+          assert.instanceOf(error, CursorAgentSdk.CursorAgentSdkRunnerError);
+          assert.include(
+            String((error as { cause?: unknown }).cause),
+            "cursor_run_attachment_unconfirmed",
+          );
+          const sent = cursorSdkMock.send.mock.calls.length;
+          const second = yield* Effect.flip(session.send({ message: "do not duplicate" }));
+          assert.include(String(second.cause), "cursor_run_attachment_unconfirmed");
+          assert.equal(cursorSdkMock.send.mock.calls.length, sent);
+        } finally {
+          cursorSdkMock.setSendBehavior("ok");
+        }
+      }),
+  );
+  it.live(
+    "cancels a late attachment without submitting a replacement or delivering stale deltas",
+    () =>
+      Effect.gen(function* () {
+        cursorSdkMock.setSendBehavior("late");
+        let acknowledgeCancel!: () => void;
+        const cancelled = new Promise<void>((resolve) => {
+          acknowledgeCancel = resolve;
         });
-        const session = yield* runner.open({
-          operation: "create",
-          options: { model: { id: "default" }, mode: "agent", local: { cwd: process.cwd() } },
-          threadId: ThreadId.make("thread-cursor-agent-sdk-hang-test"),
-          providerSessionId: ProviderSessionId.make("provider-session-cursor-hang-test"),
+        cursorSdkMock.runCancel.mockImplementationOnce(async () => {
+          acknowledgeCancel();
         });
-        const error = yield* Effect.flip(session.send({ message: "hello" }));
-        assert.instanceOf(error, CursorAgentSdk.CursorAgentSdkRunnerError);
-        assert.include(
-          String((error as { cause?: unknown }).cause),
-          CursorAgentSdk.CURSOR_LOCAL_CONCURRENCY_CODE,
-        );
-      } finally {
-        cursorSdkMock.setSendBehavior("ok");
-      }
-    }),
+        let delivered = 0;
+        const sent = cursorSdkMock.send.mock.calls.length;
+        try {
+          const runner = CursorAgentSdk.makeCursorAgentSdkRunner(() => undefined, {
+            runStartTimeoutMs: 50,
+          });
+          const session = yield* runner.open({
+            operation: "create",
+            options: { model: { id: "default" }, mode: "agent", local: { cwd: process.cwd() } },
+            threadId: ThreadId.make("thread-cursor-late-attachment"),
+            providerSessionId: ProviderSessionId.make("session-cursor-late-attachment"),
+          });
+          const error = yield* Effect.flip(
+            session.send({
+              message: "one request",
+              onDelta: () =>
+                Effect.sync(() => {
+                  delivered += 1;
+                }),
+            }),
+          );
+          assert.include(String(error.cause), "cursor_run_attachment_unconfirmed");
+          cursorSdkMock.releaseLateSend();
+          yield* Effect.promise(() => cancelled);
+          assert.equal(delivered, 0);
+          assert.equal(cursorSdkMock.send.mock.calls.length, sent + 1);
+        } finally {
+          cursorSdkMock.setSendBehavior("ok");
+        }
+      }),
   );
 });
