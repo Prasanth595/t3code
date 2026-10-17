@@ -36,6 +36,7 @@ import { T0, useTempDirs } from "../ledger/testSupport.ts";
 import { formatTs, parseTs } from "../ledger/time.ts";
 import { stopRequestPath } from "../runner/stop.ts";
 import type { FactoryStatus } from "../status.ts";
+import { saveMachineConfig } from "../settings.ts";
 import { route } from "./auth.ts";
 import { CONFIG_PATH, FactoryRoutes, STATUS_PATH } from "./http.ts";
 import { FactoryPaths } from "./paths.ts";
@@ -166,8 +167,12 @@ const worldContext = (
   world: World,
   dir: string,
   wakes: Calls,
-) =>
-  Context.make(EnvironmentAuth.EnvironmentAuth, auth).pipe(
+) => {
+  const reload = Effect.sync(() => {
+    wakes.reloads += 1;
+  });
+  const repoConfigs = Effect.succeed(world.readings ?? new Map<string, RepoConfigReading>());
+  return Context.make(EnvironmentAuth.EnvironmentAuth, auth).pipe(
     Context.add(
       FactoryLoop,
       FactoryLoop.of({
@@ -177,10 +182,13 @@ const worldContext = (
         awaitPass: Effect.never,
         passRunning: Effect.succeed(world.passRunning ?? false),
         status: world.status ?? idle,
-        reload: Effect.sync(() => {
-          wakes.reloads += 1;
-        }),
-        repoConfigs: Effect.succeed(world.readings ?? new Map()),
+        reload,
+        // The real save, over a loop that counts its reloads: the loop's own is tested in index.test.ts.
+        save: (body) =>
+          saveMachineConfig(NodePath.join(dir, "config.yml"), body, { reload, repoConfigs }).pipe(
+            Effect.provide(NodeServices.layer),
+          ),
+        repoConfigs,
       }),
     ),
     Context.add(Attention, attentionWith(world.attention ?? [])),
@@ -191,6 +199,7 @@ const worldContext = (
       machineConfigPath: NodePath.join(dir, "config.yml"),
     }),
   );
+};
 
 /**
  * Runs `use` against the factory's routes behind T3's auth, with a loop reporting the world's

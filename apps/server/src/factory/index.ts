@@ -12,7 +12,9 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Path from "effect/Path";
 import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
 
@@ -60,6 +62,7 @@ import {
 import * as Process from "./process.ts";
 import { FactoryProcess } from "./process.ts";
 import { readProgress, type Moved } from "./runner/progress.ts";
+import { saveMachineConfig, type SaveError, type SaveResult } from "./settings.ts";
 import type { FactoryStatus } from "./status.ts";
 import {
   advance,
@@ -109,6 +112,12 @@ export class FactoryLoop extends Context.Service<
      * leaves the factory idle.
      */
     readonly reload: Effect.Effect<void>;
+    /**
+     * Applies a request body to the machine config file and reloads (see `saveMachineConfig`).
+     * Saves and reloads run one at a time, and a save is not cut short once it has begun, so the
+     * file on disk and the config the loop runs on do not part.
+     */
+    readonly save: (body: unknown) => Effect.Effect<SaveResult, SaveError>;
     /** What the passes last read of each repo's project config, by repo name. */
     readonly repoConfigs: Effect.Effect<ReadonlyMap<string, RepoConfigReading>>;
   }
@@ -662,6 +671,7 @@ const startFactory = (options: RuntimeOptions) =>
     const { factoryDir, machineConfigPath } = yield* Paths.FactoryPaths;
     const attention = yield* Attention;
     const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const process = yield* FactoryProcess;
     const sessions = yield* T3Sessions.FactorySessions;
     const gate = yield* FactoryGate;
@@ -741,7 +751,7 @@ const startFactory = (options: RuntimeOptions) =>
         );
       });
 
-    const reload = Effect.gen(function* () {
+    const reloadNow = Effect.gen(function* () {
       const loaded = yield* Effect.result(loadMachineConfig(machineConfigPath));
       if (Result.isFailure(loaded)) {
         for (const error of loaded.failure.errors) {
@@ -771,6 +781,25 @@ const startFactory = (options: RuntimeOptions) =>
       yield* start(machine);
     }).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
 
+    // One reload or save at a time, and none cut short half way: two at once from idle would
+    // make two loops, and a save cut short after the write leaves the loop on the old config.
+    const lock = yield* Semaphore.make(1);
+    const reload = lock.withPermits(1)(Effect.uninterruptible(reloadNow));
+    const save = (body: unknown) =>
+      lock
+        .withPermits(1)(
+          Effect.uninterruptible(
+            saveMachineConfig(machineConfigPath, body, {
+              reload: reloadNow,
+              repoConfigs: Effect.sync(() => new Map(readings)),
+            }),
+          ),
+        )
+        .pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        );
+
     yield* reload;
     return {
       wake: Effect.suspend(() => state.loop?.wake ?? Effect.void),
@@ -780,6 +809,7 @@ const startFactory = (options: RuntimeOptions) =>
         return state.status;
       },
       reload,
+      save,
       repoConfigs: Effect.sync(() => new Map(readings)),
     } satisfies FactoryLoop["Service"];
   });

@@ -37,7 +37,6 @@ import {
 import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -50,12 +49,7 @@ import { FactoryLoop, hostName } from "../index.ts";
 import { isLedgerError, type LedgerError } from "../ledger/errors.ts";
 import { listRuns, type RunSummary } from "../ledger/listRuns.ts";
 import { runIdToString } from "../ledger/runId.ts";
-import {
-  editMachineConfig,
-  isJsonObject,
-  readMachineConfigReport,
-  writeMachineConfig,
-} from "../settings.ts";
+import { readMachineConfigReport } from "../settings.ts";
 import { buildStatus } from "../status.ts";
 import { route } from "./auth.ts";
 import { FactoryPaths } from "./paths.ts";
@@ -257,25 +251,18 @@ const saveConfigRoute = factoryRoute(
   AuthSettingsWriteScope,
   Effect.gen(function* () {
     const loop = yield* FactoryLoop;
-    const { machineConfigPath } = yield* FactoryPaths;
-    const fs = yield* FileSystem.FileSystem;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const body = yield* Effect.result(request.json);
     if (Result.isFailure(body)) return invalidBody("the body is not valid JSON");
-    if (!isJsonObject(body.success)) return invalidBody("the body must be a JSON object");
-    const existing = yield* fs.readFileString(machineConfigPath).pipe(
-      Effect.catch((cause) =>
-        cause.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(cause),
-      ),
-      toFileError,
-    );
-    const edited = editMachineConfig(existing, body.success, machineConfigPath);
-    if (Result.isFailure(edited)) {
-      return respond({ code: "invalid_config", errors: edited.failure }, 422);
+    const saved = yield* loop.save(body.success).pipe(toFileError);
+    switch (saved.kind) {
+      case "invalid-body":
+        return invalidBody("the body must be a JSON object");
+      case "invalid":
+        return respond({ code: "invalid_config", errors: saved.errors }, 422);
+      case "ok":
+        return respond(saved.report);
     }
-    yield* writeMachineConfig(machineConfigPath, edited.success).pipe(toFileError);
-    yield* loop.reload;
-    return respond(yield* readMachineConfigReport(machineConfigPath, yield* loop.repoConfigs));
   }),
 );
 

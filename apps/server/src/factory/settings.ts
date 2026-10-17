@@ -4,11 +4,11 @@
  * the comments and the keys it does not know (`notify`) stay as written. The edited text is
  * checked with `parseMachineConfig`, the rules the factory itself loads the file by.
  */
+import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
-import * as Random from "effect/Random";
+import type * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import { isMap, isScalar, isSeq, parseDocument, YAMLMap } from "yaml";
 
@@ -23,6 +23,7 @@ import {
   type ProjectConfig,
   type RepoConfigReading,
 } from "./config.ts";
+import { writeFileAtomically } from "./t3/files.ts";
 
 /** A project config as the report shows it: the YAML field names. */
 export interface ProjectBlock {
@@ -290,18 +291,43 @@ export const editMachineConfig = (
   return Result.isSuccess(parsed) ? Result.succeed(text) : Result.fail(parsed.failure);
 };
 
+/** What `saveMachineConfig` made of a request body. */
+export type SaveResult =
+  | { readonly kind: "ok"; readonly report: MachineConfigReport }
+  | { readonly kind: "invalid"; readonly errors: ReadonlyArray<ConfigError> }
+  | { readonly kind: "invalid-body" };
+
+/** The file could not be read or written; the file is as it was or whole, never half written. */
+export class SaveError extends Data.TaggedError("SaveError")<{ readonly cause: unknown }> {}
+
 /**
- * Writes `text` to `file` whole: into a temp file beside it, then renamed over it, so a reader
- * (the loop's reload, the status report) never sees half a file. The temp file goes on failure.
+ * Saves a request body into the machine config file: reads the file (none is an empty start),
+ * applies the body (`editMachineConfig`), writes the text whole only when the parser accepts it,
+ * then `reload`s the loop and reports the file as it is now. A body that is not a JSON object is
+ * `invalid-body`, and an edit the parser refuses is `invalid`, with the file untouched.
  */
-export const writeMachineConfig = (file: string, text: string) =>
+export const saveMachineConfig = (
+  file: string,
+  body: unknown,
+  loop: {
+    readonly reload: Effect.Effect<void>;
+    readonly repoConfigs: Effect.Effect<ReadonlyMap<string, RepoConfigReading>>;
+  },
+): Effect.Effect<SaveResult, SaveError, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
+    if (!isJsonObject(body)) return { kind: "invalid-body" } as const;
     const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    yield* fs.makeDirectory(path.dirname(file), { recursive: true });
-    const temp = `${file}.${(yield* Random.nextInt).toString(36)}.tmp`;
-    yield* fs.writeFileString(temp, text).pipe(
-      Effect.andThen(fs.rename(temp, file)),
-      Effect.tapError(() => Effect.ignore(fs.remove(temp, { force: true }))),
-    );
-  });
+    const existing = yield* fs
+      .readFileString(file)
+      .pipe(
+        Effect.catch((cause) =>
+          cause.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(cause),
+        ),
+      );
+    const edited = editMachineConfig(existing, body, file);
+    if (Result.isFailure(edited)) return { kind: "invalid", errors: edited.failure } as const;
+    yield* writeFileAtomically(file, edited.success);
+    yield* loop.reload;
+    const report = yield* readMachineConfigReport(file, yield* loop.repoConfigs);
+    return { kind: "ok", report } as const;
+  }).pipe(Effect.mapError((cause) => new SaveError({ cause })));
