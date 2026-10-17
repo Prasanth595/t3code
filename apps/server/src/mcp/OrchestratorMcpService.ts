@@ -72,8 +72,10 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import * as MuseUsage from "../nofun/MuseUsage.ts";
-import { usageHeadroom } from "./usageHeadroom.ts";
+import { usageHeadroomObservation } from "./usageHeadroom.ts";
+import { makeProviderCapacityReader } from "../orchestration-v2/ProviderCapacity.ts";
+import { readExecutionCapacity } from "../orchestration-v2/ExecutionCapacity.ts";
+import * as ServerConfig from "../config.ts";
 import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import {
   subagentResultForRun,
@@ -826,6 +828,8 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+  const readProviderCapacity = yield* makeProviderCapacityReader;
+  const capacityConfig = yield* Effect.serviceOption(ServerConfig.ServerConfig);
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const projects = yield* ProjectService.ProjectService;
@@ -1824,14 +1828,12 @@ const make = Effect.gen(function* () {
         const providers = yield* loadProviders;
         const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
         const worktreeService = yield* Effect.serviceOption(GitWorkflowService.GitWorkflowService);
-        // Muse accounts report quota through the No Fun usage service, keyed
-        // `muse:<account id>`, which is also their provider instance id.
-        const museUsage = yield* Effect.serviceOption(MuseUsage.MuseUsage);
-        const museLimits = new Map(
-          (Option.isSome(museUsage) ? yield* museUsage.value.current : []).flatMap((source) =>
-            source.accounts[0]
-              ? [[source.id.replace(/^muse:/, ""), source.accounts[0].usageLimits]]
-              : [],
+        const observations = yield* readProviderCapacity(providers);
+        const sampledAtMs = yield* Clock.currentTimeMillis;
+        const hostCapacity = yield* Effect.promise(() =>
+          readExecutionCapacity(
+            Option.isSome(capacityConfig) ? capacityConfig.value.baseDir : process.cwd(),
+            sampledAtMs,
           ),
         );
         const nowMs = yield* Clock.currentTimeMillis;
@@ -1841,12 +1843,14 @@ const make = Effect.gen(function* () {
           inheritedModel: parent?.thread.modelSelection.model ?? null,
           runtimeMode: limits.runtimeMode,
           interactionMode: limits.interactionMode,
+          hostCapacity,
           providers: providers.map((provider) => {
             const constraints = providerConstraints(
               provider,
               orchestrationCapableInstanceIds.has(provider.instanceId),
             );
-            const usageLimits = provider.usageLimits ?? museLimits.get(String(provider.instanceId));
+            const observation = observations.get(provider.instanceId);
+            const usageLimits = observation?.limits;
             return {
               providerInstanceId: provider.instanceId,
               driverKind: provider.driver,
@@ -1855,7 +1859,10 @@ const make = Effect.gen(function* () {
                 provider?.models.map((model) => ({
                   id: model.slug,
                   label: model.name ?? null,
-                  usage: usageHeadroom(usageLimits, nowMs, { model: model.slug }),
+                  usage: {
+                    ...usageHeadroomObservation(usageLimits, nowMs, { model: model.slug }),
+                    source: observation?.source ?? "unavailable",
+                  },
                   ...(model.capabilities?.optionDescriptors === undefined
                     ? {}
                     : { options: model.capabilities.optionDescriptors }),
@@ -1863,7 +1870,10 @@ const make = Effect.gen(function* () {
               canRunChildTask: constraints.length === 0,
               canRunCrossProviderChildTask: constraints.length === 0,
               constraints: [...constraints],
-              usage: usageHeadroom(usageLimits, nowMs),
+              usage: {
+                ...usageHeadroomObservation(usageLimits, nowMs),
+                source: observation?.source ?? "unavailable",
+              },
             };
           }),
           features: {

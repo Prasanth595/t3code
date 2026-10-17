@@ -21,7 +21,7 @@ export interface UsageHeadroomOptions {
    */
   readonly model?: string;
   /** Admission may use a stricter observation budget; this never refreshes usage. */
-  readonly maxObservationAgeMs?: number;
+  readonly maxObservationAgeMs?: number | undefined;
 }
 
 /** Below this share left, a window is worth preserving. */
@@ -70,13 +70,44 @@ function modelScopeApplies(scope: string, selected: string): boolean {
  * typed (`appliesToModel`): unscoped windows gate every model, and without
  * a selected model every window gates. Labels are never inspected.
  */
-function gatingWindows(limits: ServerProviderUsageLimits, model: string | undefined) {
-  return limits.windows.filter(
+function gatingWindows(
+  limits: ServerProviderUsageLimits,
+  model: string | undefined,
+  nowMs: number,
+  maxAge?: number,
+) {
+  let windows = limits.windows.filter(
     (window) =>
       window.appliesToModel === undefined ||
       model === undefined ||
       modelScopeApplies(window.appliesToModel, model),
   );
+  if (!windows.some((window) => window.routingPool !== undefined)) return windows;
+  // Cursor's overall percentage is a display aggregate, not a third limit.
+  windows = windows.filter((window) => window.routingPool !== "aggregate");
+  if (model === undefined) return windows;
+  const selected = normalizeModel(model);
+  const hasCursorFallback = /^(?:grok|composer)(?:_|$)/.test(selected);
+  const apiOnly = /^(?:claude|gpt|gemini|o[134])(?:_|$)/.test(selected);
+  const unpooled = windows.filter((window) => window.routingPool === undefined);
+  if (apiOnly) return [...unpooled, ...windows.filter((window) => window.routingPool === "api")];
+  // Auto and unrecognized model routes can draw either pool. Keep both
+  // applicable rather than guessing which allowance the provider will charge.
+  if (!hasCursorFallback) return windows;
+  const primary = windows.filter((window) => window.routingPool === "cursor");
+  const verdict = usageHeadroom(
+    { ...limits, windows: primary.map(({ routingPool: _pool, ...row }) => row) },
+    nowMs,
+    { maxObservationAgeMs: maxAge },
+  );
+  // Grok/Composer consume Cursor Models first, then Other Models. A low or
+  // unknown primary cannot become healthy just because the fallback has room.
+  return [
+    ...unpooled,
+    ...(verdict.headroom === "exhausted"
+      ? windows.filter((window) => window.routingPool === "api")
+      : primary),
+  ];
 }
 
 export function usageHeadroom(
@@ -98,12 +129,23 @@ export function usageHeadroom(
   ) {
     return { headroom: "unknown", summary: "usage observation is stale or unavailable" };
   }
-  const windows = gatingWindows(fresh, model);
+  const windows = gatingWindows(fresh, model, nowMs, maxAge);
   if (windows.length === 0) {
     if (fresh.windows.length > 0) {
       return { headroom: "unknown", summary: `no usage windows apply to ${model}` };
     }
     return { headroom: "unknown", summary: "usage not reported" };
+  }
+  if (
+    windows.some(
+      (window) =>
+        !Number.isFinite(window.usedPercent) ||
+        window.usedPercent < 0 ||
+        window.usedPercent > 100 ||
+        (window.resetsAt !== undefined && !Number.isFinite(Date.parse(window.resetsAt))),
+    )
+  ) {
+    return { headroom: "unknown", summary: "usage window is malformed" };
   }
   // A reset that passed since the last observation leaves stale numbers: the
   // window may have replenished, or the provider may not have reset it. Read
@@ -140,4 +182,22 @@ export function usageHeadroom(
     return `${name} ${left}% left${reset}`;
   });
   return { headroom, summary: parts.join(" · ") };
+}
+
+/** A passive read of the real windows, with their original successful timestamp. */
+export function usageHeadroomObservation(
+  limits: ServerProviderUsageLimits | undefined,
+  nowMs: number,
+  options?: UsageHeadroomOptions,
+) {
+  const observed = limits && !limits.unavailable ? Date.parse(limits.checkedAt) : NaN;
+  return {
+    ...usageHeadroom(limits, nowMs, options),
+    observedAt: Number.isFinite(observed) ? limits!.checkedAt : null,
+    ageMs: Number.isFinite(observed) && observed <= nowMs ? nowMs - observed : null,
+    windows: limits
+      ? gatingWindows(limits, options?.model, nowMs, options?.maxObservationAgeMs)
+      : [],
+    readCost: "passive" as const,
+  };
 }
