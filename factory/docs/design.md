@@ -85,8 +85,10 @@ factory/                            repo root: SEAMS, sync/build/install scripts
 4. `apps/web/src/routeTree.gen.ts` (#28): generated, so a merge regenerates it instead of resolving it by hand. `apps/web/src/routes/settings.factory*` is factory-owned like `routes/factory*`.
 5. `apps/web/src/components/settings/settingsSearch.ts` (#55): the `SettingsPath`, section label, search entry and scope map for the factory settings page.
 6. `apps/web/src/components/settings/SettingsSidebarNav.tsx` (#55): the icon for that page.
+7. `apps/web/src/components/ui/button.tsx` (#61): a `touch` size, 44 px tall below `sm` and the default height from `sm` up.
+8. `apps/web/src/components/ui/input.tsx` (#61): the same `touch` size for inputs.
 
-Six entries, all in `factory/SEAMS`. Nothing in `ws.ts`, `rpc.ts`, `packages/contracts` or `Migrations.ts`. Those are the files upstream churns most, and adding an RPC would touch five of them. The factory API is a separate HTTP route layer instead.
+Eight entries, all in `factory/SEAMS`. Nothing in `ws.ts`, `rpc.ts`, `packages/contracts` or `Migrations.ts`. Those are the files upstream churns most, and adding an RPC would touch five of them. The factory API is a separate HTTP route layer instead.
 
 ### Boundary rules, checked by a test
 
