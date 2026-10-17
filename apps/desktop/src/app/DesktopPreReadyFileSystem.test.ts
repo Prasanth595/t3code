@@ -27,7 +27,7 @@ it.layer(NodeServices.layer)("DesktopPreReadyFileSystem", (it) => {
 
       const userData = yield* resolveWindowsUserData(root);
 
-      assert.equal(userData, path.join(root, "t3factory"));
+      assert.equal(userData, path.join(root, "t3code-factory"));
       assert.isFalse(yield* fileSystem.exists(path.join(userData, "Local State")));
     }),
   );

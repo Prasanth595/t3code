@@ -7,9 +7,9 @@ import * as Path from "effect/Path";
 import { resolveUserDataPath } from "./DesktopUserData.ts";
 
 it.effect.each([
-  { isDevelopment: false, platform: "darwin", folder: "t3factory" },
-  { isDevelopment: true, platform: "darwin", folder: "t3factory-dev" },
-  { isDevelopment: false, platform: "linux", folder: "t3factory" },
+  { isDevelopment: false, platform: "darwin", folder: "t3code-factory" },
+  { isDevelopment: true, platform: "darwin", folder: "t3code-factory-dev" },
+  { isDevelopment: false, platform: "linux", folder: "t3code-factory" },
 ] as const)("uses the $folder profile folder", ({ isDevelopment, platform, folder }) =>
   Effect.gen(function* () {
     const userData = yield* resolveUserDataPath({
@@ -42,8 +42,8 @@ it.effect.each(["t3code", "t3code-v2", "T3 Code (Alpha)", "T3 Code (Dev)"])(
         platform: "win32",
       });
 
-      assert.equal(windows, path.join(directory, "t3factory"));
-      assert.equal(development, path.join(directory, "t3factory-dev"));
+      assert.equal(windows, path.join(directory, "t3code-factory"));
+      assert.equal(development, path.join(directory, "t3code-factory-dev"));
       assert.isFalse(yield* fs.exists(path.join(windows, "Local State")));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
@@ -53,7 +53,7 @@ it.effect("keeps an existing Windows profile's Local State", () =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-fork-profile-" });
-    const destination = path.join(directory, "t3factory");
+    const destination = path.join(directory, "t3code-factory");
     yield* fs.makeDirectory(destination, { recursive: true });
     yield* fs.writeFileString(path.join(destination, "Local State"), "fork state");
 

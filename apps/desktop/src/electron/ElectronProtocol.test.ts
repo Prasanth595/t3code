@@ -25,10 +25,10 @@ const layerProtocol = ElectronProtocol.layer.pipe(Layer.provide(NodeServices.lay
 
 describe("ElectronProtocol", () => {
   it("serves the renderer from the fork's own scheme, never upstream's t3code", () => {
-    assert.equal(ElectronProtocol.getDesktopScheme(false), "t3factory");
-    assert.equal(ElectronProtocol.getDesktopScheme(true), "t3factory-dev");
-    assert.equal(ElectronProtocol.getDesktopUrl(false), "t3factory://app/");
-    assert.equal(ElectronProtocol.getDesktopUrl(true), "t3factory-dev://app/");
+    assert.equal(ElectronProtocol.getDesktopScheme(false), "t3code-factory");
+    assert.equal(ElectronProtocol.getDesktopScheme(true), "t3code-factory-dev");
+    assert.equal(ElectronProtocol.getDesktopUrl(false), "t3code-factory://app/");
+    assert.equal(ElectronProtocol.getDesktopUrl(true), "t3code-factory-dev://app/");
   });
 
   beforeEach(() => {
