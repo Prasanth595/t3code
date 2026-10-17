@@ -1,11 +1,3 @@
-/**
- * ExternalLauncher - external application launch service interface.
- *
- * Owns process launch helpers for browser URLs and workspace paths
- * in configured editor integrations.
- *
- * @module ExternalLauncher
- */
 import {
   EDITORS,
   ExternalLauncherError,
@@ -39,11 +31,6 @@ import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { makeStaleWhileRevalidate } from "../environment/staleWhileRevalidate.ts";
-
-// ==============================
-// Definitions
-// ==============================
-
 export {
   ExternalLauncherError,
   ExternalLauncherBrowserSpawnError,
@@ -59,6 +46,7 @@ interface EditorLaunch {
   readonly target: string;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  readonly detached?: boolean;
 }
 
 interface ProcessLaunch {
@@ -89,6 +77,11 @@ const POWERSHELL_ARGUMENTS_PREFIX = [
   "Bypass",
   "-EncodedCommand",
 ] as const;
+
+// Windows PowerShell started with DETACHED_PROCESS exits 0 without running its
+// command, so native Windows launches through it stay attached. WSL interop
+// PowerShell starts from a Linux process and keeps the detached launch.
+const WINDOWS_POWERSHELL_DETACHED = false;
 
 const DETACHED_IGNORE_STDIO_OPTIONS = {
   detached: true,
@@ -216,7 +209,11 @@ function shouldUseWindowsHostFromWsl(
   );
 }
 
-function resolveWindowsBrowserLaunch(target: string, command: string): ProcessLaunch {
+function resolveWindowsBrowserLaunch(
+  target: string,
+  command: string,
+  detached: boolean,
+): ProcessLaunch {
   const encodedCommand = encodeUtf16LeBase64(
     `$ProgressPreference = 'SilentlyContinue'; Start ${escapePowerShellStringLiteral(target)}`,
   );
@@ -224,7 +221,7 @@ function resolveWindowsBrowserLaunch(target: string, command: string): ProcessLa
     command,
     args: [...POWERSHELL_ARGUMENTS_PREFIX, encodedCommand],
     options: {
-      detached: true,
+      detached,
       shell: false,
       stdin: "ignore",
       stdout: "ignore",
@@ -258,14 +255,12 @@ function fileManagerCommandForPlatform(
 
 // A graphical session variable plus an executable `xdg-open` does not prove
 // that opening a directory does anything: without an `inode/directory` MIME
-// handler, `xdg-open` exits nonzero after the launcher has already detached,
-// so the client would see a silent no-op. Require the handler before
-// advertising the file manager on Linux.
-//
-// The probe carries its own timeout well inside the scan timeout
-// `server.getConfig` applies to editor discovery: that outer timeout degrades
-// to an empty editor list, so a hung `xdg-mime` (broken D-Bus or desktop
-// session) must cost only the file manager, not every discovered editor.
+// handler, `xdg-open` exits nonzero after the launcher has already detached, so
+// the client would see a silent no-op. The probe carries its own timeout well
+// inside the scan timeout `server.getConfig` applies to editor discovery: that
+// outer timeout degrades to an empty editor list, so a hung `xdg-mime` (broken
+// D-Bus or desktop session) must cost only the file manager, not every
+// discovered editor.
 const LINUX_DIRECTORY_HANDLER_PROBE_TIMEOUT = "2 seconds";
 
 const hasUsableLinuxDirectoryHandler = Effect.fn("externalLauncher.hasUsableLinuxDirectoryHandler")(
@@ -318,11 +313,10 @@ const isUsableFileManagerCommand = Effect.fn("externalLauncher.isUsableFileManag
   },
 );
 
-// The file-manager command a launch can actually run, not just the platform
-// preference. WSL hosts prefer the Windows Explorer bridge, but interop can
-// exist without `explorer.exe` on PATH (appendWindowsPath=false) or without a
-// distro name while WSLg still provides a working Linux file manager, so they
-// keep the `xdg-open` fallback instead of losing the editor entirely.
+// WSL hosts prefer the Windows Explorer bridge, but interop can exist without
+// `explorer.exe` on PATH (appendWindowsPath=false) or without a distro name
+// while WSLg still provides a working Linux file manager, so they keep the
+// `xdg-open` fallback instead of losing the editor entirely.
 const resolveUsableFileManagerCommand = Effect.fn(
   "externalLauncher.resolveUsableFileManagerCommand",
 )(function* (
@@ -404,11 +398,15 @@ function buildBrowserLaunch(
   }
 
   if (platform === "win32") {
-    return resolveWindowsBrowserLaunch(target, resolvePowerShellPath(env));
+    return resolveWindowsBrowserLaunch(
+      target,
+      resolvePowerShellPath(env),
+      WINDOWS_POWERSHELL_DETACHED,
+    );
   }
 
   if (shouldUseWindowsHostFromWsl(platform, env)) {
-    return resolveWindowsBrowserLaunch(target, resolveWslPowerShellPath());
+    return resolveWindowsBrowserLaunch(target, resolveWslPowerShellPath(), true);
   }
 
   return {
@@ -467,41 +465,22 @@ const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileMana
   },
 );
 
-// Editor and file-manager discovery walk PATH and spawn probes, and run for
-// every client connect (the server config embeds both). Callers share one scan
-// that their timeouts and disconnects cannot cancel, and once a scan has
-// succeeded a connect never waits on a rescan: see makeStaleWhileRevalidate.
 const EDITOR_DISCOVERY_CACHE_TTL = "60 seconds";
 
-/**
- * ExternalLauncher - Service tag for browser/editor launch operations.
- */
 export class ExternalLauncher extends Context.Service<
   ExternalLauncher,
   {
     readonly resolveAvailableEditors: () => Effect.Effect<ReadonlyArray<EditorId>>;
     /**
-     * Reveal kind for the host, or undefined when the executable a reveal
-     * actually spawns is unavailable. Only meaningful when
-     * `resolveAvailableEditors` includes "file-manager": on Linux that
-     * availability check also carries the directory-handler probe this
-     * capability relies on.
+     * Only meaningful when `resolveAvailableEditors` includes "file-manager":
+     * on Linux that availability check also carries the directory-handler probe
+     * this capability relies on.
      */
     readonly resolveFileManagerRevealKind: () => Effect.Effect<FileManagerRevealKind | undefined>;
-    /** Launch a URL target in the default browser. */
     readonly launchBrowser: (target: string) => Effect.Effect<void, ExternalLauncherError>;
-    /**
-     * Launch a workspace path in a selected editor integration.
-     *
-     * Launches the editor as a detached process so server startup is not blocked.
-     */
     readonly launchEditor: (input: LaunchEditorInput) => Effect.Effect<void, ExternalLauncherError>;
   }
 >()("t3/process/externalLauncher") {}
-
-// ==============================
-// Implementations
-// ==============================
 
 const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   input: LaunchEditorInput,
@@ -563,20 +542,13 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 });
 
 /**
- * PowerShell source that launches File Explorer with its raw selection
- * switch. Explorer's contract is the single argument `/select,"<path>"` with
- * only the path quoted; Node's default spawn quoting wraps the whole argument
- * when the path has spaces and Explorer misparses it, silently opening a
- * fallback folder. A single `-ArgumentList` string in Windows PowerShell 5.1
- * reaches the child's command line verbatim, preserving the raw switch.
- *
- * Exported so the Windows smoke test can drive the identical source through a
- * real PowerShell against a recording stub instead of Explorer.
+ * Explorer's contract is the single argument `/select,"<path>"` with only the
+ * path quoted; Node's default spawn quoting wraps the whole argument when the
+ * path has spaces and Explorer misparses it, silently opening a fallback
+ * folder. A single `-ArgumentList` string in Windows PowerShell 5.1 reaches the
+ * child's command line verbatim, preserving the raw switch.
  */
-export function buildFileExplorerRevealPowerShellSource(
-  explorerCommand: string,
-  target: string,
-): string {
+function buildFileExplorerRevealPowerShellSource(explorerCommand: string, target: string): string {
   return `$ProgressPreference = 'SilentlyContinue'; Start-Process ${escapePowerShellStringLiteral(explorerCommand)} -ArgumentList ('/select,"' + ${escapePowerShellStringLiteral(target)} + '"')`;
 }
 
@@ -604,8 +576,6 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
   target: string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
-  // The command resolveUsableFileManagerCommand picked; a WSL host that fell
-  // back to the Linux file manager must reveal through it as well.
   command: string,
 ): Effect.fn.Return<
   EditorLaunch,
@@ -617,11 +587,14 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
   }
 
   if (platform === "win32") {
-    return fileExplorerRevealLaunch(
-      target,
-      normalizeWindowsFileManagerPath(target),
-      resolvePowerShellPath(env),
-    );
+    return {
+      ...fileExplorerRevealLaunch(
+        target,
+        normalizeWindowsFileManagerPath(target),
+        resolvePowerShellPath(env),
+      ),
+      detached: WINDOWS_POWERSHELL_DETACHED,
+    };
   }
 
   if (
@@ -646,15 +619,10 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
       }
       return fileExplorerRevealLaunch(target, explorerTarget, WSL_POWERSHELL_COMMAND);
     }
-    // Without interop PowerShell the capability advertised the Linux "files"
-    // kind when it advertised anything at all, so the reveal must open the
-    // Linux file manager the label promised, not File Explorer.
     if (hasGraphicalLinuxSession(env) && (yield* isUsableFileManagerCommand("xdg-open", env))) {
       const path = yield* Path.Path;
       return { editor: "file-manager", target, command: "xdg-open", args: [path.dirname(target)] };
     }
-    // Nothing was advertised here; open the parent in File Explorer as the
-    // best remaining effort for a stale client.
     const path = yield* Path.Path;
     return {
       editor: "file-manager",
@@ -725,7 +693,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
       command: spawnCommand.command,
       args: spawnCommand.args,
       options: {
-        detached: true,
+        detached: launch.detached ?? true,
         shell: spawnCommand.shell,
         stdin: "ignore",
         stdout: "ignore",
