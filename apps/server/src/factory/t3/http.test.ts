@@ -646,6 +646,27 @@ describe("POST /api/factory/runs/:id/stop", () => {
     }),
   );
 
+  // Root writes into a read-only directory, so the failure cannot be set up that way as root.
+  it.effect.skipIf(process.getuid?.() === 0)(
+    "answers 500 factory_error, wakes nothing and leaves no request when the write is refused",
+    () =>
+      serving({}, async (call, { tokens, dir, wakes }) => {
+        seed(dir, run10, BUILDING);
+        const requests = NodePath.join(dir, "stop-requests");
+        NodeFS.mkdirSync(requests);
+        NodeFS.chmodSync(requests, 0o500);
+        try {
+          const response = await stop(call, tokens.operate);
+          assert.strictEqual(response.status, 500);
+          assert.strictEqual((await json(response)).code, "factory_error");
+          assert.strictEqual(wakes.count, 0);
+          assert.isFalse(NodeFS.existsSync(stopRequestPath(dir, run10)));
+        } finally {
+          NodeFS.chmodSync(requests, 0o700);
+        }
+      }),
+  );
+
   it.effect("answers 404 for an unknown run and 400 for a bad id", () =>
     serving({}, async (call, { tokens, wakes }) => {
       const unknown = await stop(call, tokens.operate);

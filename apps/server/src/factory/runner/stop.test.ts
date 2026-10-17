@@ -295,6 +295,24 @@ describe("leaveStopRequest", () => {
     assert.strictEqual(bytesOf(dataDir), bytes);
   });
 
+  // Root writes into a read-only directory, so the failure cannot be set up that way as root.
+  it.skipIf(process.getuid?.() === 0)(
+    "fails with LedgerIoError when the requests directory exists but cannot be written, and leaves no request",
+    () => {
+      const dataDir = tempDir();
+      seed(dataDir, BUILDING);
+      const dir = NodePath.join(dataDir, STOP_REQUESTS_DIR);
+      NodeFS.mkdirSync(dir);
+      NodeFS.chmodSync(dir, 0o500);
+      try {
+        catchLedgerError(() => leaveStopRequest(dataDir, run10), LedgerIoError);
+        assert.strictEqual(NodeFS.existsSync(stopRequestPath(dataDir, run10)), false);
+      } finally {
+        NodeFS.chmodSync(dir, 0o700);
+      }
+    },
+  );
+
   it.effect("leaves a request the pass takes into the ledger", () =>
     Effect.gen(function* () {
       const dataDir = tempDir();
