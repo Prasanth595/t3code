@@ -86,7 +86,7 @@ factory/                            repo root: SEAMS, sync/build/install scripts
 5. `apps/web/src/components/settings/settingsSearch.ts` (#55): the `SettingsPath`, section label, search entry and scope map for the factory settings page.
 6. `apps/web/src/components/settings/SettingsSidebarNav.tsx` (#55): the icon for that page.
 
-Six entries, of which the first two are in `factory/SEAMS` today and the rest join it with the issue that adds each. Nothing in `ws.ts`, `rpc.ts`, `packages/contracts` or `Migrations.ts`. Those are the files upstream churns most, and adding an RPC would touch five of them. The factory API is a separate HTTP route layer instead.
+Six entries, of which 1, 2, 4, 5 and 6 are in `factory/SEAMS` now; the sidebar nav link (3) joins it with #28. Nothing in `ws.ts`, `rpc.ts`, `packages/contracts` or `Migrations.ts`. Those are the files upstream churns most, and adding an RPC would touch five of them. The factory API is a separate HTTP route layer instead.
 
 ### Boundary rules, checked by a test
 

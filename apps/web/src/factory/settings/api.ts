@@ -30,7 +30,7 @@ export interface RepoBlock {
       readonly checks_minutes: number;
       readonly interruption_resumes: number;
     };
-    readonly autonomy: string;
+    readonly autonomy: "pr";
   } | null;
   readonly errors: ReadonlyArray<ConfigError> | null;
 }
@@ -46,6 +46,11 @@ export interface MachineConfigValues {
   readonly repos: ReadonlyArray<{ readonly repo: string; readonly path: string }>;
 }
 
+/** The file's values read leniently when it does not load: any key may be missing or oddly typed. */
+export type MachineConfigDraft = Partial<Omit<MachineConfigValues, "repos">> & {
+  readonly repos?: ReadonlyArray<{ readonly repo?: string; readonly path?: string }>;
+};
+
 export interface MachineConfigReport {
   readonly file: string;
   readonly exists: boolean;
@@ -59,6 +64,10 @@ export interface MachineConfigReport {
     readonly model: string;
     readonly repos: ReadonlyArray<{ readonly repo: string; readonly path: string }>;
   } | null;
+  /** What an empty form holds; the server owns these so the page never copies them. */
+  readonly defaults: MachineConfigValues;
+  /** Present when the file exists but does not load: its values, to edit instead of retype. */
+  readonly draft?: MachineConfigDraft;
   readonly errors: ReadonlyArray<ConfigError>;
   readonly repos: ReadonlyArray<RepoBlock>;
 }

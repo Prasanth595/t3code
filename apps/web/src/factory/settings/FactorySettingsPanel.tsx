@@ -31,28 +31,29 @@ interface FormState {
   readonly repos: ReadonlyArray<{ readonly repo: string; readonly path: string }>;
 }
 
-/** The same defaults the server reports when there is no file. Used when the file does not load. */
-const DEFAULT_FORM: FormState = {
+const EMPTY_FORM: FormState = {
   gh_config_dir: "",
-  poll_seconds: "60",
-  max_concurrent_runs: "1",
-  max_concurrent_gates: "2",
-  model_instance: "claudeAgent",
+  poll_seconds: "",
+  max_concurrent_runs: "",
+  max_concurrent_gates: "",
+  model_instance: "",
   model: "",
   repos: [],
 };
 
+const text = (value: unknown) => (value === undefined || value === null ? "" : String(value));
+
+/** The file's values, or when it does not load the defaults under whatever the file does hold. */
 const formOf = (report: MachineConfigReport): FormState => {
-  const { config } = report;
-  if (config === null) return DEFAULT_FORM;
+  const source = report.config ?? { ...report.defaults, ...report.draft };
   return {
-    gh_config_dir: config.gh_config_dir,
-    poll_seconds: String(config.poll_seconds),
-    max_concurrent_runs: String(config.max_concurrent_runs),
-    max_concurrent_gates: String(config.max_concurrent_gates),
-    model_instance: config.model_instance,
-    model: config.model,
-    repos: config.repos.map(({ repo, path }) => ({ repo, path })),
+    gh_config_dir: text(source.gh_config_dir),
+    poll_seconds: text(source.poll_seconds),
+    max_concurrent_runs: text(source.max_concurrent_runs),
+    max_concurrent_gates: text(source.max_concurrent_gates),
+    model_instance: text(source.model_instance),
+    model: text(source.model),
+    repos: (source.repos ?? []).map((row) => ({ repo: text(row.repo), path: text(row.path) })),
   };
 };
 
@@ -119,10 +120,8 @@ export function FactorySettingsPanel() {
 
   const [load, setLoad] = useState<Load>({ status: "loading" });
   const [attempt, setAttempt] = useState(0);
-  const [form, setForm] = useState<FormState>(DEFAULT_FORM);
+  const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<ReadonlyArray<ConfigError>>([]);
-  // The errors of a file that did not load are all listed at the top; a save's field errors are not.
-  const [listAllErrors, setListAllErrors] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [saveFailure, setSaveFailure] = useState<string | null>(null);
 
@@ -135,7 +134,6 @@ export function FactorySettingsPanel() {
     setLoad({ status: "ready", report });
     setForm(formOf(report));
     setErrors(report.errors);
-    setListAllErrors(report.config === null);
   };
 
   useEffect(() => {
@@ -198,7 +196,6 @@ export function FactorySettingsPanel() {
     setSaveStatus("idle");
     if (result.kind === "invalid") {
       setErrors(result.errors);
-      setListAllErrors(false);
     } else {
       setSaveFailure(
         result.kind === "forbidden"
@@ -242,7 +239,17 @@ export function FactorySettingsPanel() {
   }
 
   const { report } = load;
-  const topErrors = errors.filter((error) => listAllErrors || fieldKey(error) === undefined);
+  // An error that names no rendered input would otherwise show nowhere.
+  const inputNames = new Set<string>([
+    "gh_config_dir",
+    "poll_seconds",
+    "max_concurrent_runs",
+    "max_concurrent_gates",
+    "model_instance",
+    "model",
+    ...form.repos.flatMap((_, index) => [`repos[${index}].repo`, `repos[${index}].path`]),
+  ]);
+  const topErrors = errors.filter((error) => !inputNames.has(fieldKey(error) ?? ""));
   const saving = saveStatus === "saving";
 
   return (
