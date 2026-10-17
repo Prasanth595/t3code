@@ -22,10 +22,10 @@ import {
   END_WITH_DONE,
   LAUNCH_FAILED,
   launchMessage,
-  launchable,
   sessionMayExistNote,
   type ResumeFrom,
 } from "./messages.ts";
+import { launchable } from "./launchTarget.ts";
 import { relaunchCommandId, type Relaunch } from "./progress.ts";
 import {
   describe,
@@ -130,6 +130,7 @@ export const relaunchSession = (
             branch,
             model_instance: project.model.instanceId,
             model: project.model.model,
+            model_options: project.model.options ?? null,
             resumed_from: { run: runIdToString(run), branch: relaunch.branch },
           },
         },

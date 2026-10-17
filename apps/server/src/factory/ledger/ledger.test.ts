@@ -138,12 +138,13 @@ const sampleEvents: ReadonlyArray<{ readonly event: RunEvent; readonly line: str
         branch: "issue-8",
         model_instance: "claudeAgent",
         model: "claude-opus-5-5",
+        model_options: [{ id: "reasoningEffort", value: "high" }],
         resumed_from: { run: "rawphp__softfac__8__1", branch: "t3code/abc" },
       },
     },
     line: lineAtT0(
       "session_launched",
-      `{"thread_id":"thr_1","worktree":"/tmp/wt","branch":"issue-8","model_instance":"claudeAgent","model":"claude-opus-5-5","resumed_from":{"run":"rawphp__softfac__8__1","branch":"t3code/abc"}}`,
+      `{"thread_id":"thr_1","worktree":"/tmp/wt","branch":"issue-8","model_instance":"claudeAgent","model":"claude-opus-5-5","model_options":[{"id":"reasoningEffort","value":"high"}],"resumed_from":{"run":"rawphp__softfac__8__1","branch":"t3code/abc"}}`,
     ),
   },
   {
@@ -155,12 +156,13 @@ const sampleEvents: ReadonlyArray<{ readonly event: RunEvent; readonly line: str
         branch: null,
         model_instance: null,
         model: null,
+        model_options: null,
         resumed_from: null,
       },
     },
     line: lineAtT0(
       "session_launched",
-      `{"thread_id":"thr_2","worktree":null,"branch":null,"model_instance":null,"model":null,"resumed_from":null}`,
+      `{"thread_id":"thr_2","worktree":null,"branch":null,"model_instance":null,"model":null,"model_options":null,"resumed_from":null}`,
     ),
   },
   {
@@ -649,6 +651,7 @@ describe("append", () => {
         event: "session_launched",
         data: {
           resumed_from: { branch: "t3code/abc", run: "r" },
+          model_options: null,
           model: "m",
           model_instance: "i",
           branch: "b",
@@ -661,7 +664,7 @@ describe("append", () => {
     expect(readText(ledger.path)).toBe(
       lineAtT0(
         "session_launched",
-        `{"thread_id":"t","worktree":"w","branch":"b","model_instance":"i","model":"m","resumed_from":{"run":"r","branch":"t3code/abc"}}`,
+        `{"thread_id":"t","worktree":"w","branch":"b","model_instance":"i","model":"m","model_options":null,"resumed_from":{"run":"r","branch":"t3code/abc"}}`,
       ),
     );
   });

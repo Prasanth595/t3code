@@ -79,6 +79,7 @@ const STARTED: ReadonlyArray<RunEvent> = [
       branch: "t3code/abc",
       model_instance: "claudeAgent",
       model: "claude-opus-5-5",
+      model_options: null,
       resumed_from: null,
     },
   },

@@ -107,6 +107,7 @@ const STARTED: ReadonlyArray<RunEvent> = [
       branch: "t3code/abc",
       model_instance: "claudeAgent",
       model: "claude-opus-5-5",
+      model_options: null,
       resumed_from: null,
     },
   },
@@ -862,6 +863,7 @@ const relaunchedLine: Line = {
     branch: "t3code/def",
     model_instance: "claudeAgent",
     model: "claude-opus-5-5",
+    model_options: null,
     resumed_from: { run: RUN, branch: "t3code/abc" },
   },
 };

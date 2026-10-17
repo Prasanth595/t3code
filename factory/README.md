@@ -73,6 +73,8 @@ factory/scripts/rollback.sh
 
 It points `current` at `previous`, restarts the job, removes `previous` and runs the same health check on the restored version. It exits 1 with `rollback to <previous> from <current> failed its health check` when that check fails too. When there is no `previous`, install an older archive from `release/` with `factory/scripts/install.sh <archive>`.
 
+A version from before #93 requires `model_instance` and `model` in `~/.config/t3fac/factory/config.yml`, and a save from `/settings/factory` on the current version removes them. Before rolling back to such a version, add both keys back by hand, or the restored server fails its health check with `model: is missing`.
+
 ### Handing the repo over and back
 
 [docs/handover.md](docs/handover.md) is the runbook for switching this repo from the Rust factory to the fork's factory, and for handing it back and moving it back.

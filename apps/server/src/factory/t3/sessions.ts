@@ -6,6 +6,7 @@ import {
   ThreadId,
   type ModelSelection,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -372,10 +373,13 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const row = yield* projects.findActiveByWorkspaceRoot(workspaceRoot);
       if (Option.isNone(row)) return null;
-      // The settings are read only when the project does not settle it.
-      const model =
-        row.value.defaultModelSelection ?? (yield* settings.getSettings).defaultModelSelection;
-      return { id: row.value.projectId as string, model };
+      // T3's own resolver, as a new thread uses it (`serverRuntimeStartup.ts`): a project
+      // override stored in the settings wins over the row, a folded install ignores the row,
+      // and a model whose provider instance is disabled for the project is skipped.
+      const { projectId } = row.value;
+      const model = resolveProjectSettings(yield* settings.getSettings, projectId, row.value)
+        .settings.defaultModelSelection;
+      return { id: projectId as string, model };
     }).pipe(Effect.mapError((cause) => new SessionsError({ operation: "find-project", cause })));
 
   const launch: FactorySessions["Service"]["launch"] = (request) =>

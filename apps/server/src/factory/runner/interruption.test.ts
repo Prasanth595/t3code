@@ -119,6 +119,7 @@ const startedWith = (
       branch,
       model_instance: "claudeAgent",
       model: "claude-opus-5-5",
+      model_options: null,
       resumed_from: null,
     },
   },
@@ -142,6 +143,7 @@ const startedResumedFrom = (
             branch,
             model_instance: "claudeAgent",
             model: "claude-opus-5-5",
+            model_options: null,
             resumed_from: resumedFrom,
           },
         }

@@ -122,6 +122,7 @@ const STARTED: ReadonlyArray<RunEvent> = [
       branch: "t3code/abc",
       model_instance: "claudeAgent",
       model: "claude-opus-5-5",
+      model_options: null,
       resumed_from: null,
     },
   },
@@ -4099,6 +4100,7 @@ const relaunchedLine: Line = {
     branch: "t3code/def",
     model_instance: "claudeAgent",
     model: "claude-opus-5-5",
+    model_options: null,
     resumed_from: { run: RUN, branch: "t3code/abc" },
   },
 };
@@ -5024,6 +5026,33 @@ describe("regate: a failed re-gate of a ready pull request", () => {
       assertRelaunched(rig);
       // The branch is never deleted: nothing but a worktree was removed, once, at the pass.
       assert.deepStrictEqual(worktreeLines(rig), [worktreeRemoved]);
+    }),
+  );
+
+  it.effect("a relaunch records the provider options the project's model carries", () =>
+    Effect.gen(function* () {
+      const rig = yield* prOpenRun();
+      const options = [{ id: "reasoningEffort", value: "high" }];
+      const model = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+      rig.t3.project = { id: "proj-1", model: { ...model, options } };
+      baseMoved(rig, 0);
+      passThenFail(rig);
+      assert.deepStrictEqual(yield* regateStep(rig), { kind: "sent-back", attempt: 2 });
+      assert.deepStrictEqual(rig.t3.launches[0]!.model, { ...model, options });
+      assert.ok(
+        hasLine(rig, {
+          event: "session_launched",
+          data: {
+            thread_id: "thread-2",
+            worktree: "/t3/wt2",
+            branch: "t3code/def",
+            model_instance: "claudeAgent",
+            model: "claude-opus-5-5",
+            model_options: options,
+            resumed_from: { run: RUN, branch: "t3code/abc" },
+          },
+        }),
+      );
     }),
   );
 

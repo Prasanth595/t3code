@@ -345,6 +345,7 @@ const startedLines = (): Array<{ line: RunEvent; cause: Cause }> => [
         branch: "t3code/abc",
         model_instance: "claudeAgent",
         model: "claude-opus-5-5",
+        model_options: null,
         resumed_from: null,
       },
     },
@@ -466,6 +467,28 @@ describe("start: a fresh ready issue", () => {
         branch: "t3code/abc",
         model_instance: "codex",
         model: "gpt-5.5",
+        model_options: null,
+        resumed_from: null,
+      });
+    }),
+  );
+
+  it.effect("records the provider options the project's model carries", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const { tracker } = fakeTracker({});
+      const options = [{ id: "reasoningEffort", value: "high" }];
+      const model = { instanceId: "codex", model: "gpt-5.5", options };
+      const t3 = fakeSessions(dataDir, { project: { id: "proj-1", model } });
+      yield* startIn(dataDir, tracker, t3.sessions);
+      assert.deepStrictEqual(t3.launchRequests[0]!.model, model);
+      assert.deepStrictEqual(entriesOf(dataDir)[4]!.data, {
+        thread_id: "thread-1",
+        worktree: WORKTREE,
+        branch: "t3code/abc",
+        model_instance: "codex",
+        model: "gpt-5.5",
+        model_options: options,
         resumed_from: null,
       });
     }),
@@ -485,6 +508,7 @@ describe("start: a fresh ready issue", () => {
         branch: null,
         model_instance: "claudeAgent",
         model: "claude-opus-5-5",
+        model_options: null,
         resumed_from: null,
       });
     }),
@@ -1486,6 +1510,7 @@ const sessionRun = (
           branch: "t3code/abc",
           model_instance: "claudeAgent",
           model: "claude-opus-5-5",
+          model_options: null,
           resumed_from: null,
         },
       },
@@ -1727,6 +1752,7 @@ const startedLinesOn = (branch: string | null) =>
               branch,
               model_instance: "claudeAgent",
               model: "claude-opus-5-5",
+              model_options: null,
               resumed_from: null,
             },
           } satisfies RunEvent,

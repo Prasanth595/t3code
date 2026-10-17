@@ -69,10 +69,10 @@ import {
   LAUNCH_FAILED,
   TEXT_CHANGED,
   launchMessage,
-  launchable,
   sessionMayExistNote,
   type EarlierRunResume,
 } from "./messages.ts";
+import { launchable } from "./launchTarget.ts";
 import {
   APPROVAL_RECHECKED,
   LAUNCH_SENDING,
@@ -727,6 +727,7 @@ const launchSession = (
             branch,
             model_instance: project.model.instanceId,
             model: project.model.model,
+            model_options: project.model.options ?? null,
             resumed_from:
               resumed === null ? null : { run: runIdToString(resumed.run), branch: resumed.branch },
           },

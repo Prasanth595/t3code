@@ -11,6 +11,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  type ModelSelection,
   type OrchestrationV2AppThread,
   type OrchestrationV2ThreadProjection,
 } from "@t3tools/contracts";
@@ -264,7 +265,7 @@ const projectCreated = (
   id: string,
   workspaceRoot: string,
   sequence: number,
-  defaultModelSelection: typeof PROJECT_MODEL | null = null,
+  defaultModelSelection: ModelSelection | null = null,
 ) =>
   ({
     sequence,
@@ -393,6 +394,108 @@ describe("FactorySessions.findProject", () => {
         ),
       ),
     ),
+  );
+
+  // T3 resolves a project's model through its settings: an override stored there wins over the
+  // project row, a folded install ignores the row, and a disabled provider instance is skipped.
+  // The factory asks T3's own resolver, so a session gets what a new thread on the project gets.
+  it.effect("takes the model override stored in T3's settings over the project row", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectStore.ProjectStoreV2;
+      yield* projects.apply(projectCreated("p-spike", "/tmp/t3-spike-repo", 1));
+      const sessions = yield* Sessions.FactorySessions;
+      assert.deepStrictEqual(yield* sessions.findProject("/tmp/t3-spike-repo"), {
+        id: "p-spike",
+        model: PROJECT_MODEL,
+      });
+    }).pipe(
+      Effect.provide(
+        layerSessions(
+          {},
+          {},
+          {},
+          {},
+          NodeServices.layer,
+          ServerSettings.layerTest({
+            defaultModelSelection: SETTINGS_MODEL,
+            projectSettingsOverrides: {
+              [ProjectId.make("p-spike")]: { defaultModelSelection: PROJECT_MODEL },
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("ignores a model left on the project row once T3 has folded project settings", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectStore.ProjectStoreV2;
+      yield* projects.apply(projectCreated("p-spike", "/tmp/t3-spike-repo", 1, PROJECT_MODEL));
+      const sessions = yield* Sessions.FactorySessions;
+      const found = yield* sessions.findProject("/tmp/t3-spike-repo");
+      assert.strictEqual(found?.model?.instanceId, "claudeAgent");
+      assert.strictEqual(found?.model?.model, "claude-sonnet-5-5");
+    }).pipe(
+      Effect.provide(
+        layerSessions(
+          {},
+          {},
+          {},
+          {},
+          NodeServices.layer,
+          ServerSettings.layerTest({
+            defaultModelSelection: SETTINGS_MODEL,
+            projectSettingsFolded: true,
+          }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("skips a project model whose provider instance is disabled for the project", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectStore.ProjectStoreV2;
+      yield* projects.apply(projectCreated("p-spike", "/tmp/t3-spike-repo", 1, PROJECT_MODEL));
+      const sessions = yield* Sessions.FactorySessions;
+      const found = yield* sessions.findProject("/tmp/t3-spike-repo");
+      assert.strictEqual(found?.model?.instanceId, "claudeAgent");
+      assert.strictEqual(found?.model?.model, "claude-sonnet-5-5");
+    }).pipe(
+      Effect.provide(
+        layerSessions(
+          {},
+          {},
+          {},
+          {},
+          NodeServices.layer,
+          ServerSettings.layerTest({
+            defaultModelSelection: SETTINGS_MODEL,
+            projectSettingsOverrides: {
+              [ProjectId.make("p-spike")]: {
+                providerInstances: { [ProviderInstanceId.make("codex")]: { enabled: false } },
+              },
+            },
+          }),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("carries the provider options the project's model names", () =>
+    Effect.gen(function* () {
+      const projects = yield* ProjectStore.ProjectStoreV2;
+      yield* projects.apply(
+        projectCreated("p-spike", "/tmp/t3-spike-repo", 1, {
+          ...PROJECT_MODEL,
+          options: [{ id: "reasoningEffort", value: "high" }],
+        }),
+      );
+      const sessions = yield* Sessions.FactorySessions;
+      assert.deepStrictEqual(yield* sessions.findProject("/tmp/t3-spike-repo"), {
+        id: "p-spike",
+        model: { ...PROJECT_MODEL, options: [{ id: "reasoningEffort", value: "high" }] },
+      });
+    }).pipe(Effect.provide(layerSessions())),
   );
 
   it.effect("has no model when neither the project nor the settings name one", () =>
@@ -536,6 +639,43 @@ describe("FactorySessions.launch", () => {
         assert.strictEqual(input.threadId, undefined);
         assert.strictEqual(input.reuseExistingThread, undefined);
       }),
+  );
+
+  it.effect("passes the model's provider options on to T3", () =>
+    Effect.gen(function* () {
+      const inputs: Array<ThreadLaunch.ThreadLaunchInput> = [];
+      yield* Effect.gen(function* () {
+        const sessions = yield* Sessions.FactorySessions;
+        return yield* sessions.launch({
+          ...request,
+          model: { ...request.model, options: [{ id: "reasoningEffort", value: "high" }] },
+        });
+      }).pipe(
+        Effect.provide(
+          layerSessions(
+            {},
+            {
+              launch: (input) =>
+                Effect.sync(() => {
+                  inputs.push(input);
+                  return {
+                    threadId,
+                    resumed: false,
+                    projection: {
+                      thread: { branch: null, worktreePath: null },
+                    } as OrchestrationV2ThreadProjection,
+                  };
+                }),
+            },
+          ),
+        ),
+      );
+      assert.deepStrictEqual(inputs[0]!.modelSelection, {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-sonnet-5-5",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      });
+    }),
   );
 
   it.effect("reports the branch and worktree path once T3 has them", () =>
