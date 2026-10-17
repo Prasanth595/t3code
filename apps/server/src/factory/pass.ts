@@ -386,7 +386,7 @@ class Pass {
   /**
    * Prints `error` as an error line and records it: as an `error` line in the ledger of `run`
    * when there is one that can take it, in the machine log otherwise (with the run's id when a
-   * run's ledger could not take it). A run's error that says T3 did not answer (`t3Down`) goes to
+   * run's ledger could not take it). A run's error that says a T3 call failed (`t3Down`) goes to
    * both, so the machine log holds the T3 trouble of this pass for the next one to read.
    * `unreadable` is a run whose own ledger cannot be read.
    */
@@ -429,7 +429,9 @@ class Pass {
       step,
       kind: errorKind(error),
       message: error.message,
-      t3Down: error._tag === "FactorySessionsError",
+      // A sessions call that failed is T3 in trouble, except the worktree removal: that is git on
+      // this machine, and a directory it cannot empty says nothing about T3.
+      t3Down: error._tag === "FactorySessionsError" && error.operation !== "remove-worktree",
     });
   }
 

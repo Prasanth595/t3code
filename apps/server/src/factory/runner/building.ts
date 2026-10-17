@@ -585,6 +585,7 @@ export const advance = (
       // `stuck` as stopped by hand.
       // Only a building run: a line that is there for a run past `building` is stale.
       if (seen.stopRequested && at.state === "building") {
+        if (relaunchDecided(seen)) yield* endUnbegunRelaunch(ctx, run);
         return yield* stuck("stop-requested", { reason: STOPPED_BY_HAND });
       }
       // A relaunch is decided once, in `interrupted`, and carried out from the ledger: this is the
@@ -1517,6 +1518,33 @@ const relaunchBranchOf = (
       }
     }
     return null;
+  });
+
+/**
+ * A relaunch was decided and cut short after the next attempt's ledger was made, and then the
+ * operator stopped this run: the stop wins (`advance`), so that ledger, which `resume` never began
+ * (no claim, no state), is finished too. Left unfinished it would count as an active run and hold
+ * a slot until a person ended it. A next attempt that has begun is a run of its own and is left
+ * alone. Safe to repeat: this run stays `building` until its own stuck path has run.
+ */
+const endUnbegunRelaunch = (
+  ctx: InterruptContext,
+  run: RunId,
+): Effect.Effect<void, BuildingError> =>
+  Effect.gen(function* () {
+    const next: RunId = { ...run, attempt: run.attempt + 1 };
+    const existing = yield* ledger(() => readRun(ctx.dataDir, next)).pipe(
+      Effect.catchTags({ LedgerNotFoundError: () => Effect.succeed(null) }),
+    );
+    if (existing === null) return;
+    const seen = readProgress(existing.entries);
+    if (seen.finished || seen.claimed || seen.state !== null) return;
+    const out = yield* ledger(() => Ledger.open(ctx.dataDir, next, { clock: ctx.clock }));
+    try {
+      yield* ledger(() => out.finish("stuck", null, null, makeCause("advance", "stop-requested")));
+    } finally {
+      out.close();
+    }
   });
 
 /**

@@ -285,8 +285,14 @@ export const liveWorld = (
   host: string,
   attention: Pick<Attention["Service"], "raise" | "clear">,
   live: LiveGate,
-  gateRemoteBase?: string,
+  options: {
+    /** Where the gate fetches from; a test passes a `file://` base. */
+    readonly gateRemoteBase?: string;
+    /** When T3 Code (this server) started: a start within ten minutes is T3 trouble (`t3TroubleSince`). */
+    readonly t3StartedMs?: number;
+  } = {},
 ): PassWorld => {
+  const { gateRemoteBase, t3StartedMs = null } = options;
   // Built once per process, so judgements last as long as the factory runs.
   const claimMemo = new ClaimMemo();
   // The runs whose gate this process is running now: a gate holds the run's lock file only
@@ -492,7 +498,7 @@ export const liveWorld = (
     watch: (repo, run) => watch(buildingContext(repo), run),
     forward: (repo, run) => forward(buildingContext(repo), run),
     advance: (repo, run) => advance(interruptContext(repo), run),
-    t3Trouble: () => ledger(() => t3TroubleSince(dataDir, clock())),
+    t3Trouble: () => ledger(() => t3TroubleSince(dataDir, clock(), t3StartedMs)),
     interrupted: (repo, run, evidence) => interrupted(interruptContext(repo), run, evidence),
     gateRunning: (run) =>
       gating.has(runIdToString(run)) || NodeFS.existsSync(gateLockFile(dataDir, run)),
@@ -674,7 +680,11 @@ const startFactory = (options: RuntimeOptions) =>
         wake: Effect.suspend(() => running?.wake ?? Effect.void),
         scope: yield* Effect.scope,
       },
-      options.gateRemoteBase,
+      {
+        ...(options.gateRemoteBase !== undefined && { gateRemoteBase: options.gateRemoteBase }),
+        // The server's process start: a restart is what cuts a running session off.
+        t3StartedMs: Math.round(performance.timeOrigin),
+      },
     );
     // The threads of the unfinished runs, read at start and after every pass: a pass is what
     // launches and finishes sessions, so between passes the set does not change.

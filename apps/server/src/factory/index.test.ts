@@ -1078,6 +1078,36 @@ describe("liveWorld", () => {
       assert.strictEqual(yield* world.t3Trouble(), "timed out");
     }),
   );
+
+  it.effect("T3 trouble is the server's own start within ten minutes, with no error logged", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDirForLogs();
+      const { process } = ghWith(() => null);
+      const worldStartedAt = (t3StartedMs: number) =>
+        liveWorld(
+          machine,
+          dataDir,
+          process,
+          stubSessions,
+          () => NOW,
+          "mac-mini",
+          noAttention,
+          {
+            gate: { run: () => Effect.succeed({ _tag: "running" as const }) },
+            wake: Effect.void,
+            scope: Scope.makeUnsafe(),
+          },
+          { t3StartedMs },
+        );
+      // A restart cancels every turn that was running and leaves no error behind: the start is
+      // the sign. An older start is not.
+      assert.strictEqual(
+        yield* worldStartedAt(NOW - 2 * MINUTE).t3Trouble(),
+        "T3 Code started at 2026-10-08T01:58:00.000Z",
+      );
+      assert.strictEqual(yield* worldStartedAt(NOW - 11 * MINUTE).t3Trouble(), null);
+    }),
+  );
 });
 
 describe("the gate in the background", () => {

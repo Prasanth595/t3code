@@ -21,6 +21,7 @@ import type { TextCheck } from "../domain/approval.ts";
 import type { State } from "../domain/lifecycle.ts";
 import { makeCause, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
+import { listUnfinishedRuns } from "../ledger/listRuns.ts";
 import { field, readRun } from "../ledger/read.ts";
 import { runPath, type RunId } from "../ledger/runId.ts";
 import { T0, useTempDirs } from "../ledger/testSupport.ts";
@@ -1474,6 +1475,46 @@ describe("a decided relaunch", () => {
       assert.ok(!rig.gh.includes("setState 10 triage"), rig.gh.join("\n"));
       assert.strictEqual(rig.world.issue.state, "building");
       assert.deepStrictEqual(linesOf(rig).at(-1), FINISHED);
+    }),
+  );
+
+  it.effect("overtaken by a stop by hand ends the next attempt it made, so it holds no slot", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      threadGone(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("thread-gone"));
+      // The decision is written and the next attempt's ledger made, then the label call fails.
+      rig.world.setStateFails = ghFailure();
+      yield* Effect.flip(decide(rig, afterOutage()));
+      assert.deepStrictEqual(linesOf(rig, run10b), [step(`approved ${LABELED}`)]);
+      // Before the next pass the operator stops the run: the stop wins over the relaunch.
+      appendTo(rig, rig.run, [STOP_REQUESTED], "operator");
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "stuck", reason: STOPPED_BY_HAND });
+      assert.deepStrictEqual(linesOf(rig).at(-1), FINISHED);
+      assert.ok(
+        linesOf(rig).some((line) => line.event === "stuck"),
+        JSON.stringify(linesOf(rig)),
+      );
+      assert.deepStrictEqual(rig.launches, []);
+      assert.strictEqual(rig.world.issue.state, "stuck");
+      // The next attempt `resume` never began is finished too, not left to hold a slot.
+      const next = linesOf(rig, run10b);
+      assert.strictEqual(next.length, 2, JSON.stringify(next));
+      assert.strictEqual(next.at(-1)?.event, "finished");
+      assert.strictEqual(field(next.at(-1)!.data, "outcome"), "stuck");
+      assert.deepStrictEqual(listUnfinishedRuns(rig.dataDir), []);
+    }),
+  );
+
+  it.effect("overtaken by a stop by hand leaves a next attempt that already started alone", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, relaunchLine(1, "t3code/abc"), STOP_REQUESTED]);
+      seed(rig.dataDir, run10b, STARTED);
+      const before = bytesOf(rig, run10b);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "stuck", reason: STOPPED_BY_HAND });
+      assert.deepStrictEqual(linesOf(rig).at(-1), FINISHED);
+      assert.strictEqual(bytesOf(rig, run10b), before);
     }),
   );
 });

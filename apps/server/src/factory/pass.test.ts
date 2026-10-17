@@ -41,7 +41,7 @@ import {
 import type { LastPass } from "./runner/gating.ts";
 import { GateRunningError, type StartError, type StartOutcome } from "./runner/start.ts";
 import type { StopRequestOutcome } from "./runner/stop.ts";
-import { SessionsError } from "./t3/sessions.ts";
+import { MessageRejectedError, SessionsError } from "./t3/sessions.ts";
 import { GitHubFailed, type Blocker } from "./tracker/github.ts";
 
 const REPO = "rawphp/softfac";
@@ -126,6 +126,8 @@ class Fake implements PassWorld {
   machineLogFails = false;
   /** When set, `record` appends to the real machine log in this dir and `t3Trouble` reads it, as the live world does. */
   machineLogDir: string | null = null;
+  /** When T3 Code (this server) started, for `t3Trouble` to read with the machine log. */
+  t3StartedMs: number | null = null;
   /** What the pass wrote to a run's ledger as an `error` line. */
   runErrors: Array<{ run: RunId; step: string; kind: ErrorKind; message: string }> = [];
   /** The next run ledger writes fail: the run's ledger is finished, or cannot be written. */
@@ -372,7 +374,7 @@ class Fake implements PassWorld {
   t3Trouble() {
     this.calls.push("t3_trouble");
     if (this.machineLogDir !== null)
-      return Effect.succeed(t3TroubleSince(this.machineLogDir, this.now));
+      return Effect.succeed(t3TroubleSince(this.machineLogDir, this.now, this.t3StartedMs));
     const answer = this.t3Trouble_;
     return typeof answer === "object" && answer !== null
       ? Effect.fail(
@@ -3203,6 +3205,77 @@ describe("sessions that ended badly", () => {
         );
         assert.ok(!fake.items.some((item) => item.kind === "stuck"));
       }),
+  );
+
+  it.effect(
+    "a lone run cancelled by a T3 restart is resumed with the start as the evidence, with no failure before it",
+    () =>
+      Effect.gen(function* () {
+        // The restart ends the turn as `cancelled` and the next pass's status read answers fine:
+        // nothing fails, so no error reaches the machine log. The server's start is the sign.
+        const fake = new Fake();
+        fake.machineLogDir = passTempDir();
+        fake.t3StartedMs = T0 - 2 * 60_000;
+        fake.runIn(12, BUILDING, REPO, true);
+        fake.advances[`${REPO}#12`] = [badEnd("cancelled")];
+        const { report, lines } = yield* pass(fake, machine([REPO], 1));
+        assert.equal(report.errors, 0);
+        assert.deepEqual(errorEvents(fake), []);
+        assert.deepEqual(decisions(fake), [
+          `advance ${REPO}#12`,
+          "t3_trouble",
+          `interrupted ${T3_LINE} t3=T3 Code started at 2026-10-07T13:31:20.000Z ended=1`,
+        ]);
+        assert.equal(
+          lineFor(lines, 12),
+          "rawphp/softfac#12 building: session ended as cancelled; interrupted, sent it a resume (1 of 2)",
+        );
+      }),
+  );
+
+  /** A t3-kind error of a run that is not T3 failing to answer, then a cancel the next pass. */
+  const notT3Down = (error: BuildingError, label: string) =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.machineLogDir = passTempDir();
+      fake.runIn(12, BUILDING, REPO, true);
+      fake.advances[`${REPO}#12`] = [error, badEnd("cancelled")];
+      fake.interrupts[`${REPO}#12`] = [
+        { kind: "stuck", reason: "the session run ended as cancelled" },
+      ];
+      const first = yield* pass(fake, machine([REPO], 1));
+      assert.equal(first.report.errors, 1, label);
+      // The run's ledger has it as t3, and the machine log has nothing: it is not T3 trouble.
+      assert.deepEqual(
+        fake.runErrors.map((e) => [runIdToString(e.run), e.step, e.kind]),
+        [[T3_LINE, "advance", "t3"]],
+        label,
+      );
+      assert.deepEqual(errorEvents(fake), [], label);
+      fake.calls.length = 0;
+      fake.now = T0 + 60_000;
+      yield* pass(fake, machine([REPO], 1));
+      assert.deepEqual(
+        decisions(fake),
+        [`advance ${REPO}#12`, "t3_trouble", `interrupted ${T3_LINE} t3=none ended=1`],
+        label,
+      );
+    });
+
+  it.effect(
+    "a worktree removal that fails is not T3 trouble, so a later cancel still goes stuck",
+    () =>
+      notT3Down(
+        new SessionsError({ operation: "remove-worktree", cause: "Directory not empty" }),
+        "remove-worktree",
+      ),
+  );
+
+  it.effect("a message T3 refused is not T3 trouble, so a later cancel still goes stuck", () =>
+    notT3Down(
+      new MessageRejectedError({ threadId: "thread-1", commandId: "softfac:x", cause: "refused" }),
+      "rejected",
+    ),
   );
 
   it.effect("says nothing about it before the decision", () =>
