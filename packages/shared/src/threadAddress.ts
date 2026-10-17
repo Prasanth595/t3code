@@ -57,6 +57,19 @@ export function parseThreadAddress(href: string): ThreadAddress | null {
   return messageId === null ? null : { ...thread, messageId };
 }
 
+/**
+ * Fork: `parseThreadAddress`, only for an environment that `known` accepts. The path shape alone
+ * also matches pages such as `https://github.com/<owner>/<repo>`, so a client must name the
+ * environments it knows before a link becomes a thread.
+ */
+export function parseKnownThreadAddress(
+  href: string,
+  known: (environmentId: EnvironmentId) => boolean,
+): ThreadAddress | null {
+  const address = parseThreadAddress(href);
+  return address !== null && known(address.environmentId) ? address : null;
+}
+
 /** Fork: the app link of a thread, the form that `parseThreadAddress` reads back. */
 export function formatThreadAppLink(address: ThreadAddress): string {
   const base = `t3code://threads/${encodeURIComponent(address.environmentId)}/${encodeURIComponent(address.threadId)}`;

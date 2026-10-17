@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
-import { parseThreadAddress, type ThreadAddress } from "@t3tools/shared/threadAddress";
+import { parseKnownThreadAddress, type ThreadAddress } from "@t3tools/shared/threadAddress";
 import { formatThreadLink, percentDecodedThreadLinkId } from "@t3tools/shared/threadLinks";
 import {
   linkThreadMarkers,
@@ -95,8 +95,7 @@ export function useForkKnownThreadAddress(
     environmentId ? knownThreadEnvironmentIdsAtom(environmentId) : NO_ENVIRONMENT_ATOM,
   );
   if (knownIds === null || !href) return null;
-  const address = parseThreadAddress(href);
-  return address && knownIds.includes(address.environmentId) ? address : null;
+  return parseKnownThreadAddress(href, (id) => knownIds.includes(id));
 }
 
 /** Fork: the attached-thread chip for a thread web address that `useForkKnownThreadAddress` found. */
