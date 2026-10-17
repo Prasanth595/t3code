@@ -1,3 +1,4 @@
+import { VcsFallbackNotice } from "../VcsFallbackNotice";
 import type {
   OrchestrationV2ProviderFailureClass,
   ProviderInstanceId,
@@ -13,6 +14,12 @@ import { dismissThreadErrorBannerForSession, ThreadErrorBanner } from "./ThreadE
  * values, so a ChatView render that changes neither banner leaves both cached.
  */
 export function ChatBannerLane(props: {
+  vcsFallbackNotice: {
+    environmentId: string;
+    repository: string;
+    notice: string | null;
+    reason: string | null;
+  } | null;
   vcsUnsupportedReason: string | null;
   providerStatus: ServerProvider | null;
   providerStatusBannerKey: string | null;
@@ -41,7 +48,15 @@ export function ChatBannerLane(props: {
   } = props;
   return (
     <div className="chat-banner-lane pointer-events-none absolute top-0 z-30 flex flex-col">
-      {props.vcsUnsupportedReason ? <div role="alert" className="pointer-events-auto border-b border-warning/20 bg-background px-4 py-2 text-xs text-warning">{props.vcsUnsupportedReason}</div> : null}
+      {props.vcsFallbackNotice ? <VcsFallbackNotice {...props.vcsFallbackNotice} /> : null}
+      {props.vcsUnsupportedReason ? (
+        <div
+          role="alert"
+          className="pointer-events-auto border-b border-warning/20 bg-background px-4 py-2 text-xs text-warning"
+        >
+          {props.vcsUnsupportedReason}
+        </div>
+      ) : null}
       <ProviderStatusBanner
         status={providerStatus}
         onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}

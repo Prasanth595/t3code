@@ -1157,13 +1157,22 @@ export default function ChatView(props: ChatViewProps) {
     canPickEnvironment: hasMultipleEnvironments,
   });
 
-  const gitCwd = activeProject ? projectScriptCwd({ project: { cwd: activeProject.workspaceRoot }, worktreePath: activeThread?.worktreePath ?? null }) : null;
+  const gitCwd = activeProject
+    ? projectScriptCwd({
+        project: { cwd: activeProject.workspaceRoot },
+        worktreePath: activeThread?.worktreePath ?? null,
+      })
+    : null;
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
-  const gitStatusQuery = useEnvironmentQuery(gitStatusCwd === null ? null : vcsEnvironment.status({ environmentId, input: { cwd: gitStatusCwd } }));
+  const gitStatusQuery = useEnvironmentQuery(
+    gitStatusCwd === null
+      ? null
+      : vcsEnvironment.status({ environmentId, input: { cwd: gitStatusCwd } }),
+  );
   const vcsActionsSupported = supportsVcsActions(gitStatusQuery.data);
   const { handlePreparedPullRequestThreadStable, openPullRequestDialogStable } =
     usePullRequestDraftThread({
-    vcsActionsSupported,
+      vcsActionsSupported,
       routeKind,
       draftId,
       settings,
@@ -3262,6 +3271,19 @@ export default function ChatView(props: ChatViewProps) {
             <ThreadFind onClose={focusComposerStable} />
             {isWorkspaceFileDragActive ? <WorkspaceFileDropOverlay /> : null}
             <ChatBannerLane
+              vcsFallbackNotice={
+                activeProject
+                  ? {
+                      environmentId,
+                      repository: activeProject.workspaceRoot,
+                      notice:
+                        gitStatusQuery.data?.vcs?.kind === "git"
+                          ? (gitStatusQuery.data.vcs.notice ?? null)
+                          : null,
+                      reason: vcsUnsupportedReason,
+                    }
+                  : null
+              }
               vcsUnsupportedReason={vcsUnsupportedReason}
               providerStatus={visibleProviderStatus}
               providerStatusBannerKey={providerStatusBannerKey}
