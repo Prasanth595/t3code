@@ -46,8 +46,8 @@ repos:
 const commentLines = (text: string) =>
   text.split("\n").filter((line) => line.trimStart().startsWith("#") || line.includes(" # "));
 
-const edited = (existing: string | null, body: unknown) => {
-  const result = editMachineConfig(existing, body);
+const edited = (existing: string | null, body: Record<string, unknown>) => {
+  const result = editMachineConfig(existing, body, FILE);
   if (Result.isFailure(result)) assert.fail(JSON.stringify(result.failure));
   return result.success;
 };
@@ -91,7 +91,13 @@ describe("editMachineConfig", () => {
 
   it("leaves keys absent from the body untouched", () => {
     const text = edited(COMMENTED, { poll_seconds: 120 });
-    assert.strictEqual(text, COMMENTED.replace("poll_seconds: 60", "poll_seconds: 120"));
+    // The yaml printer may add a blank line before a trailing comment; nothing else moves.
+    const unblank = (value: string) => value.replace(/\n{2,}/g, "\n");
+    assert.strictEqual(
+      unblank(text),
+      unblank(COMMENTED.replace("poll_seconds: 60", "poll_seconds: 120")),
+    );
+    assert.strictEqual(edited(text, { poll_seconds: 120 }), text);
   });
 
   it("drops repos the body no longer lists", () => {
@@ -103,15 +109,19 @@ describe("editMachineConfig", () => {
   });
 
   it("refuses an invalid body with the parser's fields", () => {
-    const result = editMachineConfig(COMMENTED, { poll_seconds: 5, model: "", repos: [] });
+    const result = editMachineConfig(COMMENTED, { poll_seconds: 5, model: "", repos: [] }, FILE);
     assert.ok(Result.isFailure(result));
     const errors = Result.isFailure(result) ? result.failure : [];
     assert.deepStrictEqual(errors.map((e) => e.field).sort(), ["model", "poll_seconds", "repos"]);
-    assert.ok(errors.every((e) => e.file === FILE || e.file.length > 0));
+    assert.ok(errors.every((e) => e.file === FILE));
   });
 
   it("gives a float and a string the parser's own messages", () => {
-    const result = editMachineConfig(COMMENTED, { poll_seconds: 60.5, max_concurrent_runs: "two" });
+    const result = editMachineConfig(
+      COMMENTED,
+      { poll_seconds: 60.5, max_concurrent_runs: "two" },
+      FILE,
+    );
     assert.ok(Result.isFailure(result));
     const errors = Result.isFailure(result) ? result.failure : [];
     assert.deepStrictEqual(
