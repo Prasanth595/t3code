@@ -337,6 +337,68 @@ describe("readProgress: the last wait marker", () => {
   });
 });
 
+describe("readProgress: the checks read", () => {
+  const sha = "0123456789ABCDEF0123456789abcdef01234567";
+  const checksRead = (ms: number, checks: ReadonlyArray<{ name: string; state: string }>) =>
+    line(ms, "checks_read", { sha, checks });
+
+  it("checksPassed is the newest all-passed checks_read's lower-case sha and null for any other read", () => {
+    const mixed = checksRead(1, [
+      { name: "gate", state: "passed" },
+      { name: "lint", state: "failed" },
+    ]);
+    const allPassed = checksRead(2, [
+      { name: "gate", state: "passed" },
+      { name: "lint", state: "passed" },
+    ]);
+    const laterMixed = checksRead(3, [
+      { name: "gate", state: "passed" },
+      { name: "lint", state: "pending" },
+    ]);
+    assert.strictEqual(readProgress([mixed]).checksPassed, null);
+    assert.strictEqual(readProgress([mixed, allPassed]).checksPassed, sha.toLowerCase());
+    assert.strictEqual(readProgress([mixed, allPassed, laterMixed]).checksPassed, null);
+    assert.strictEqual(readProgress([allPassed, checksRead(4, [])]).checksPassed, null);
+  });
+
+  it("a pass recorded after a read clears it: the new pass's checks are read afresh", () => {
+    const allPassed = checksRead(1, [{ name: "gate", state: "passed" }]);
+    const failed = checksRead(1, [{ name: "gate", state: "failed" }]);
+    const passedAgain = step(2, `gate-passed ${sha.toLowerCase()} 2`);
+    const seen = readProgress([allPassed, passedAgain]);
+    assert.strictEqual(seen.checksPassed, null);
+    assert.strictEqual(readProgress([failed, passedAgain]).checksFailed, null);
+  });
+
+  it("checksFailed names the failed checks of the newest failing read, and a later read keeps it", () => {
+    const failing = checksRead(1, [
+      { name: "gate", state: "failed" },
+      { name: "lint", state: "pending" },
+      { name: "docs", state: "failed" },
+    ]);
+    const want = {
+      sha: sha.toLowerCase(),
+      failed: ["gate", "docs"].map((name) => ({
+        name,
+        state: "failed" as const,
+        conclusion: "",
+        url: null,
+      })),
+    };
+    assert.deepStrictEqual(readProgress([failing]).checksFailed, want);
+    const laterPassed = checksRead(2, [
+      { name: "gate", state: "passed" },
+      { name: "lint", state: "passed" },
+      { name: "docs", state: "passed" },
+    ]);
+    assert.deepStrictEqual(readProgress([failing, laterPassed]).checksFailed, want);
+    assert.strictEqual(
+      readProgress([checksRead(1, [{ name: "gate", state: "pending" }])]).checksFailed,
+      null,
+    );
+  });
+});
+
 describe("readProgress: gating again", () => {
   const HEAD = "4f1c2d3e4a5b60718293a4b5c6d7e8f901234567";
   const PUSHED = "7e6d5c4b3a291807f6e5d4c3b2a190817263a4b5";

@@ -8,6 +8,7 @@ import { isState, type State } from "../domain/lifecycle.ts";
 import { dataField, type Entry } from "../ledger/read.ts";
 import { runIdToString, type RunId } from "../ledger/runId.ts";
 import { isCommitId } from "../text.ts";
+import type { CheckStatus } from "../tracker/github.ts";
 
 /** A passing attempt as the ledger records it: the commands that ran, and the commit they were gated on. */
 export interface PassRecord {
@@ -157,6 +158,21 @@ export interface Seen {
   readonly regates: number;
   /** A `pr_ready_outside` line: someone else marked the pull request ready while a gate ran, and it is noted. */
   readonly readyOutside: boolean;
+  /**
+   * The lower-case sha of the newest `checks_read` line whose checks are non-empty and all
+   * `passed`; null when the newest read decided otherwise, there is none, or a pass was recorded
+   * after it.
+   */
+  readonly checksPassed: string | null;
+  /**
+   * The newest `checks_read` line with a failed check, since the last recorded pass: its
+   * lower-case sha and the checks that failed, with no result or link. The decision that the
+   * pass's checks failed, which a later read does not undo.
+   */
+  readonly checksFailed: {
+    readonly sha: string;
+    readonly failed: ReadonlyArray<CheckStatus>;
+  } | null;
   /** A `gate_regate` line since the run last changed state or posted the results of a pass: a re-gate is under way. */
   readonly regating: boolean;
   /** What the newest `gate_regate` line says moved, compared with the pass on record when it was written. */
@@ -282,6 +298,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
   const cleanupFailed = new Set<string>();
   let regates = 0;
   let readyOutside = false;
+  let checksPassed: string | null = null;
+  let checksFailed: Seen["checksFailed"] = null;
   let regating = false;
   let regateMoved: Moved | null = null;
   let regatePassed = false;
@@ -347,6 +365,9 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
           // The results of this pass are not posted yet, whatever an earlier one's were.
           resultsPosted = false;
           regates = 0;
+          // A read of the checks is about the pass before it: this one's are read afresh.
+          checksPassed = null;
+          checksFailed = null;
           regatePassed = regating;
           // The step's own cause names the attempt; a ledger from before it did is read by the
           // last command.
@@ -504,6 +525,27 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         regateSentBack = false;
         break;
       }
+      case "checks_read": {
+        const sha = field(entry.data, "sha");
+        const checks = field(entry.data, "checks");
+        if (typeof sha !== "string" || !Array.isArray(checks)) {
+          checksPassed = null;
+          break;
+        }
+        const read: ReadonlyArray<unknown> = checks;
+        checksPassed =
+          read.length > 0 && read.every((check) => field(check, "state") === "passed")
+            ? sha.toLowerCase()
+            : null;
+        const failed = read.flatMap((check): Array<CheckStatus> => {
+          const name = field(check, "name");
+          if (field(check, "state") !== "failed" || typeof name !== "string") return [];
+          // The line records no result or link.
+          return [{ name, state: "failed", conclusion: "", url: null }];
+        });
+        if (failed.length > 0) checksFailed = { sha: sha.toLowerCase(), failed };
+        break;
+      }
       case "regate_relaunching": {
         const attempt = number(dataField(entry.data, "attempt"));
         const branch = dataField(entry.data, "branch");
@@ -573,6 +615,8 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
     cleanupFailed,
     regates,
     readyOutside,
+    checksPassed,
+    checksFailed,
     regating,
     regateMoved,
     regatePassed,
