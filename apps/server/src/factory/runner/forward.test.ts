@@ -1609,6 +1609,79 @@ describe("forward: a send T3 refuses", () => {
     }),
   );
 
+  it.effect("a marker left idle by a crash is cancelled when its comment has since gone", () =>
+    Effect.gen(function* () {
+      // A marker was written, the send was refused, the call crashed, and the instructor then
+      // deleted the comment: the next call has nothing to send.
+      const rig = rigFor([...BASE_EVENTS, waitStep(1)]);
+      setRun(rig, "completed", 1, DONE_MESSAGE);
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+      assert.deepStrictEqual(rig.t3, ["status thread-1"]);
+      assert.deepStrictEqual(rig.posted, []);
+      assert.deepStrictEqual(linesOf(rig), [...BASE_EVENTS, waitStep(1), cancelStep(1)]);
+      const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
+      assert.strictEqual(seen.waitingAfter, null);
+      assert.strictEqual(seen.idleForwardWait, null);
+
+      // No run newer than 1 is awaited, so the gate can run.
+      rig.ctx = {
+        ...rig.ctx,
+        tracker: { ...rig.ctx.tracker, pullRequest: () => Effect.succeed(draftPr) },
+      };
+      assert.deepStrictEqual(yield* advanceIn(rig), {
+        kind: "ready-for-gate",
+        pr: 12,
+        prUrl: URL12,
+      });
+
+      // Cancelled once: the next call with nothing to send writes nothing and reads no status.
+      clearCalls(rig);
+      rig.world.statusForbidden = true;
+      const bytes = bytesOf(rig);
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+      assert.deepStrictEqual(rig.t3, []);
+      assert.strictEqual(bytesOf(rig), bytes);
+    }),
+  );
+
+  it.effect(
+    "a marker left idle by a crash is cancelled before the issue hears its comment was dropped",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor([...STARTED, waitStep(1)]);
+        setRun(rig, "completed", 1);
+        scriptDropped(rig, [dropOf(101, "edited-by-other")]);
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+        assert.deepStrictEqual(rig.posted, [droppedText(101, BY_OTHER)]);
+        assert.deepStrictEqual(linesOf(rig), [
+          ...STARTED,
+          waitStep(1),
+          cancelStep(1),
+          droppedStep(101),
+        ]);
+      }),
+  );
+
+  it.effect("an idle marker with nothing to send stays once the session has moved on", () =>
+    Effect.gen(function* () {
+      // A run newer than the marker has started (or ended): something did go in, so the wait is
+      // real, and a thread T3 no longer has is not cancelled either.
+      for (const set of [
+        (rig: Rig) => setRun(rig, "running", 2),
+        (rig: Rig) => setRun(rig, "completed", 2),
+        (rig: Rig) => {
+          rig.world.status = new ThreadNotFoundError({ threadId: "thread-1" });
+        },
+      ]) {
+        const rig = rigFor([...STARTED, waitStep(1)]);
+        set(rig);
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+        assert.deepStrictEqual(rig.t3, ["status thread-1"]);
+        assert.deepStrictEqual(linesOf(rig), [...STARTED, waitStep(1)]);
+      }
+    }),
+  );
+
   it.effect(
     "a crash before the notice says it on the next call, and the step comes after the comment",
     () =>

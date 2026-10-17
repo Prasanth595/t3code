@@ -886,6 +886,19 @@ const refusedEditNotice = (editedAt: string): Notice => ({
 });
 
 /** Posts each notice and records it. A failure stops the call and the rest is said on the next one. */
+/** The ordinal of the session's latest run when no run is active, so a message sent now starts a run after it; null while one is. */
+const idleOrdinal = (status: ThreadStatus): number | null =>
+  status.run === null || isTerminal(status.run) ? (status.runOrdinal ?? 0) : null;
+
+/** Cancels the `forward-wait <k>` under which nothing went into the session. */
+const cancelForwardWait = (out: Out, k: number): Effect.Effect<void, BuildingError> =>
+  append(
+    out,
+    { event: "step_changed", data: { step: `${FORWARD_WAIT_CANCELLED} ${k}` } },
+    "forward",
+    "forward-wait-cancelled",
+  );
+
 const tellIssue = (
   ctx: BuildingContext,
   out: Out,
@@ -922,7 +935,9 @@ const tellIssue = (
  * first send: the session counts as working until a run newer than `k` has ended, and `advance`
  * and the gate wait for it instead of judging the old run again. A session that is working has
  * the message steered into its run, which needs no marker. The status is read only when there is
- * something to send.
+ * something to send, or when a call with nothing to send finds a `forward-wait` nothing went in
+ * under (`Seen.idleForwardWait`, left by a call that crashed): it is cancelled while the session
+ * is still idle at that ordinal.
  *
  * The read also lists the instructors' comments it could not forward (`Activity.dropped`). After
  * the sends, each one the ledger has no `comment-dropped <id>` step for, and that was not
@@ -989,6 +1004,15 @@ export const forward = (
       const { comments, bodyEdit } = yield* unsent(seen, activity);
       const drops = unreported(seen, activity);
       if (comments.length === 0 && bodyEdit === null) {
+        // A marker a crashed call left idle, whose items have since gone (deleted, or now dropped
+        // by the tracker), waits for a run nothing will start. It is cancelled while the session
+        // is still idle at it; a newer run means something did go in.
+        if (seen.idleForwardWait !== null) {
+          const status = yield* threadStatus(ctx, threadId);
+          if (status !== null && idleOrdinal(status) === seen.idleForwardWait) {
+            yield* cancelForwardWait(out, seen.idleForwardWait);
+          }
+        }
         yield* tellIssue(
           ctx,
           out,
@@ -1002,10 +1026,10 @@ export const forward = (
       // new run, and the gate must wait for that run, not judge the old one again.
       const status = yield* threadStatus(ctx, threadId);
       if (status === null) return skip("no-thread");
-      let marker: number | null = null; // the ordinal this call's messages would start a run after
+      // The ordinal this call's messages would start a run after.
+      const marker = idleOrdinal(status);
       let wroteMarker = false;
-      if (status.run === null || isTerminal(status.run)) {
-        marker = status.runOrdinal ?? 0;
+      if (marker !== null) {
         if (seen.lastWait !== marker) {
           yield* append(
             out,
@@ -1081,12 +1105,7 @@ export const forward = (
         marker !== null &&
         (wroteMarker || seen.idleForwardWait === marker)
       ) {
-        yield* append(
-          out,
-          { event: "step_changed", data: { step: `${FORWARD_WAIT_CANCELLED} ${marker}` } },
-          "forward",
-          "forward-wait-cancelled",
-        );
+        yield* cancelForwardWait(out, marker);
       }
       // Last: telling the issue must not hold back what the session needs.
       yield* tellIssue(ctx, out, issue, [
