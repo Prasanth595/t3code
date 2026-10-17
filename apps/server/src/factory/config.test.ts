@@ -12,6 +12,7 @@ import {
   type ConfigError,
   ConfigErrors,
   formatConfigError,
+  hasFactoryBlock,
   loadMachineConfig,
   loadProjectConfig,
   parseMachineConfig,
@@ -36,9 +37,6 @@ factory:
 const MACHINE = `
 gh_config_dir: /Users/me/.config/softfac/gh
 max_concurrent_runs: 1
-repos:
-  - repo: rawphp/softfac
-    path: /Users/me/EA/projects/softfac
 `;
 
 const PFILE = "/r/.dw/config.yml";
@@ -128,7 +126,7 @@ const machineMissing = (path: string, errorPath = path) => {
   assertOne(machineErr(edit(MACHINE, (t) => remove(t, path))), errorPath, MFILE);
 };
 
-/** Set `editPath` (tree address, e.g. `repos.0.path`), expect the error at `errorPath` (`repos[0].path`). */
+/** Set `editPath` (tree address, e.g. `a.0.b`), expect the error at `errorPath` (`a[0].b`). */
 const machineBadAt = (editPath: string, errorPath: string, yaml: string) => {
   assertOne(machineErr(edit(MACHINE, (t) => set(t, editPath, yaml))), errorPath, MFILE);
 };
@@ -414,6 +412,31 @@ describe("formatConfigError", () => {
   });
 });
 
+describe("hasFactoryBlock", () => {
+  it("is true when the root has a factory mapping", () => {
+    expect(hasFactoryBlock(PROJECT)).toBe(true);
+    expect(hasFactoryBlock("factory: {}\n")).toBe(true);
+  });
+  it("is true for a block that would not validate: it only decides the opt-in", () => {
+    expect(hasFactoryBlock("factory:\n  base: 5\n")).toBe(true);
+  });
+  it("is false when there is no factory key", () => {
+    expect(hasFactoryBlock("tracker:\n  backend: do-work-io\n")).toBe(false);
+  });
+  it("is false when factory is not a mapping", () => {
+    expect(hasFactoryBlock("factory: 1\n")).toBe(false);
+    expect(hasFactoryBlock("factory: [a]\n")).toBe(false);
+    expect(hasFactoryBlock("factory:\n")).toBe(false);
+  });
+  it("is false for invalid YAML", () => {
+    expect(hasFactoryBlock("factory: [unclosed\n")).toBe(false);
+  });
+  it("is false when the document is not a mapping", () => {
+    expect(hasFactoryBlock("- factory\n")).toBe(false);
+    expect(hasFactoryBlock("")).toBe(false);
+  });
+});
+
 describe("machine config", () => {
   it("machine valid resolves every field and the defaults", () => {
     expect(machine(MACHINE)).toEqual({
@@ -422,9 +445,43 @@ describe("machine config", () => {
       maxConcurrentRuns: 1,
       maxConcurrentGates: 2,
       notify: true,
-      repos: [{ repo: "rawphp/softfac", path: "/Users/me/EA/projects/softfac" }],
     });
     expect(machineLoaded(MACHINE).warnings).toEqual([]);
+  });
+
+  // #106 retired the key: the factory watches the T3 projects of its environment instead.
+  it("machine repos is no longer read, and is one warning naming repos", () => {
+    const t = edit(MACHINE, (tree) => {
+      tree.repos = [{ repo: "rawphp/softfac", path: "/Users/me/EA/projects/softfac" }];
+    });
+    const loaded = machineLoaded(t);
+    expect(loaded.config).not.toHaveProperty("repos");
+    expect(loaded.warnings).toEqual([
+      {
+        file: MFILE,
+        field: "repos",
+        message:
+          "is no longer used: the factory watches the T3 projects of this environment whose checkout has a .dw/config.yml with a factory block",
+      },
+    ]);
+  });
+
+  it("machine repos of any type is a warning, never an error", () => {
+    for (const yaml of ["nope", "[]", "5", "{a: 1}", "[{repo: a/b, pathh: x}]"]) {
+      const loaded = machineLoaded(edit(MACHINE, (tree) => set(tree, "repos", yaml)));
+      expect(loaded.warnings.map((w) => w.field)).toEqual(["repos"]);
+    }
+  });
+
+  it("machine the three retired keys are three warnings, in the order of the retired list", () => {
+    const loaded = machineLoaded(
+      edit(MACHINE, (tree) => {
+        set(tree, "repos", "[]");
+        set(tree, "model", "x");
+        set(tree, "model_instance", "y");
+      }),
+    );
+    expect(loaded.warnings.map((w) => w.field)).toEqual(["model_instance", "model", "repos"]);
   });
 
   // The keys were retired by #93: the model now comes from the T3 project, then the T3 settings.
@@ -483,13 +540,6 @@ describe("machine config", () => {
   describe("required keys", () => {
     it("machine missing gh config dir", () => machineMissing("gh_config_dir"));
     it("machine missing max concurrent runs", () => machineMissing("max_concurrent_runs"));
-    it("machine missing repos", () => machineMissing("repos"));
-    it("machine repo missing repo", () => machineMissing("repos.0.repo", "repos[0].repo"));
-    it("machine repo missing path", () => {
-      const t = edit(MACHINE, (tree) => remove(tree, "repos.0.path"));
-      assertOne(machineErr(t), "repos[0].path", MFILE);
-      expect(machineErr(t)[0]!.message).toBe("is missing");
-    });
   });
 
   describe("integers", () => {
@@ -535,63 +585,24 @@ describe("machine config", () => {
     });
   });
 
-  describe("repos", () => {
-    it("machine repos as a string is not a list", () => {
-      machineBad("repos", "nope");
-      expect(machineErr(edit(MACHINE, (t) => set(t, "repos", "nope")))[0]!.message).toBe(
-        "must be a list",
-      );
-    });
-    it("machine repos empty", () => {
-      machineBad("repos", "[]");
-      expect(machineErr(edit(MACHINE, (t) => set(t, "repos", "[]")))[0]!.message).toBe(
-        "must not be empty",
-      );
-    });
-    it("machine repo item not a mapping", () => {
-      machineBadAt("repos.0", "repos[0]", "5");
-      expect(machineErr(edit(MACHINE, (t) => set(t, "repos.0", "5")))[0]!.message).toBe(
-        "must be a mapping",
-      );
-    });
-    it("machine repo and path must be non-empty strings", () => {
-      machineBadAt("repos.0.repo", "repos[0].repo", '""');
-      machineBadAt("repos.0.path", "repos[0].path", "[x]");
-    });
-    it("machine reads several repos in order", () => {
-      const t = edit(MACHINE, (tree) => {
-        tree.repos.push({ repo: "a/b", path: "/b" });
-      });
-      expect(machine(t).repos.map((r) => r.repo)).toEqual(["rawphp/softfac", "a/b"]);
-    });
-  });
-
   describe("unknown keys", () => {
     it("machine unknown top-level key is one file-level error", () => {
       const errs = machineErr(edit(MACHINE, (t) => set(t, "self_updte", "1")));
       assertFileLevel(errs, MFILE, "unknown key self_updte");
       expect(formatConfigError(errs[0]!)).toBe(`${MFILE}: unknown key self_updte`);
     });
-    it("machine unknown key inside a repo is named by its path", () => {
-      const errs = machineErr(edit(MACHINE, (t) => set(t, "repos.0.pathh", "x")));
-      assertFileLevel(errs, MFILE, "unknown key repos[0].pathh");
-    });
     it("machine two unknown keys are two errors, after the field errors", () => {
       const t = edit(MACHINE, (tree) => {
         set(tree, "zzz", "1");
         remove(tree, "gh_config_dir");
-        set(tree, "repos.0.pathh", "x");
+        set(tree, "yyy", "2");
       });
       const errs = machineErr(t);
       expect(errs.map(formatConfigError)).toEqual([
         `${MFILE}: gh_config_dir: is missing`,
         `${MFILE}: unknown key zzz`,
-        `${MFILE}: unknown key repos[0].pathh`,
+        `${MFILE}: unknown key yyy`,
       ]);
-    });
-    it("machine does not look for unknown keys inside a value of the wrong type", () => {
-      const errs = machineErr(edit(MACHINE, (t) => set(t, "repos", "{a: 1}")));
-      assertOne(errs, "repos", MFILE);
     });
   });
 
@@ -694,7 +705,7 @@ describe("loaders", () => {
 
   // factory/config.example.yml is what the handover runbook tells a person to copy to
   // ~/.config/t3fac/factory/config.yml, so it must load as it stands.
-  effectIt.effect("the example machine config loads and watches the fork from its own clone", () =>
+  effectIt.effect("the example machine config loads as it stands, with no warning", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const file = yield* path.fromFileUrl(
@@ -709,12 +720,6 @@ describe("loaders", () => {
             maxConcurrentRuns: 1,
             maxConcurrentGates: 1,
             notify: true,
-            repos: [
-              {
-                repo: "original-solutions/t3code-factory",
-                path: "/Users/tomkaczocha/EA/projects/t3code-factory-fac",
-              },
-            ],
           },
         }),
       );

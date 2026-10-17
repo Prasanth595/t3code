@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import { describe } from "vite-plus/test";
 
-import { parseMachineConfig } from "./config.ts";
+import { parseMachineConfig, type RepoConfigReading, type WatchedProject } from "./config.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
 import { editMachineConfig, isJsonObject, readMachineConfigReport } from "./settings.ts";
 
@@ -27,7 +27,7 @@ poll_seconds: 60
 max_concurrent_runs: 1
 # notifications stay a hand edit
 notify: false
-# the repos
+# the repos (retired by #106; a hand-written block stays as it is)
 repos:
   # the main repo
   - repo: a/b # primary
@@ -50,10 +50,6 @@ describe("editMachineConfig", () => {
       gh_config_dir: "/other",
       poll_seconds: 90,
       max_concurrent_runs: 3,
-      repos: [
-        { repo: "a/b", path: "/b2" },
-        { repo: "c/d", path: "/d" },
-      ],
     });
     const after = text.split("\n");
     for (const line of commentLines(COMMENTED).map((l) => l.trim())) {
@@ -71,10 +67,6 @@ describe("editMachineConfig", () => {
       maxConcurrentRuns: 3,
       maxConcurrentGates: 2,
       notify: false,
-      repos: [
-        { repo: "a/b", path: "/b2" },
-        { repo: "c/d", path: "/d" },
-      ],
     });
   });
 
@@ -89,12 +81,36 @@ describe("editMachineConfig", () => {
     assert.strictEqual(edited(text, { poll_seconds: 120 }), text);
   });
 
-  it("drops repos the body no longer lists", () => {
-    const text = edited(COMMENTED, { repos: [{ repo: "x/y", path: "/y" }] });
-    const parsed = parseMachineConfig(text, FILE);
-    assert.deepStrictEqual(Result.isSuccess(parsed) && parsed.success.config.repos, [
-      { repo: "x/y", path: "/y" },
-    ]);
+  // #106 retired the key. The page no longer sends it, and an edit leaves a hand-written block as is.
+  it("keeps a hand-written repos block and its comments through an edit", () => {
+    const text = edited(COMMENTED, { poll_seconds: 120 });
+    for (const kept of [
+      "repos:",
+      "- repo: a/b # primary",
+      "path: /b",
+      "# the repos (retired by #106; a hand-written block stays as it is)",
+      "# the main repo",
+    ]) {
+      assert.include(text, kept);
+    }
+    const unblank = (value: string) => value.replace(/\n{2,}/g, "\n");
+    assert.strictEqual(
+      unblank(text),
+      unblank(COMMENTED.replace("poll_seconds: 60", "poll_seconds: 120")),
+    );
+  });
+
+  it("ignores a repos key in the body: neither adds nor changes the file's", () => {
+    const withBlock = edited(COMMENTED, {
+      poll_seconds: 120,
+      repos: [{ repo: "x/y", path: "/y" }],
+    });
+    assert.strictEqual(withBlock, edited(COMMENTED, { poll_seconds: 120 }));
+    assert.notInclude(withBlock, "x/y");
+    assert.notInclude(
+      edited(null, { gh_config_dir: "/gh", max_concurrent_runs: 1, repos: [] }),
+      "repos",
+    );
   });
 
   // #93 retired the two keys. A save keeps them as written, so a rollback to a version that
@@ -110,71 +126,11 @@ describe("editMachineConfig", () => {
     assert.strictEqual(unblank(text), unblank(retired));
   });
 
-  describe("repos", () => {
-    const TWO = COMMENTED.replace(
-      "# end of file",
-      "  # the second repo\n  - repo: c/d # secondary\n    path: /d\n# end of file",
-    );
-
-    it("matches a repo by name: removing the first leaves the second's comments on it", () => {
-      const text = edited(TWO, { repos: [{ repo: "c/d", path: "/d" }] });
-      assert.include(text, "# the second repo");
-      assert.include(text, "# secondary");
-      assert.notInclude(text, "# primary");
-      assert.notInclude(text, "a/b");
-    });
-
-    it("orders the repos as the body does and keeps each one's comments", () => {
-      const text = edited(TWO, {
-        repos: [
-          { repo: "c/d", path: "/d" },
-          { repo: "a/b", path: "/b" },
-        ],
-      });
-      assert.ok(text.indexOf("c/d") < text.indexOf("a/b"), text);
-      assert.ok(text.indexOf("# secondary") < text.indexOf("a/b"), text);
-      assert.ok(text.indexOf("# primary") > text.indexOf("a/b"), text);
-    });
-
-    it("replaces a matched repo's fields wholesale: a missing path is not kept", () => {
-      const result = editMachineConfig(TWO, { repos: [{ repo: "a/b" }] }, FILE);
-      assert.ok(Result.isFailure(result));
-      const errors = Result.isFailure(result) ? result.failure : [];
-      assert.deepStrictEqual(
-        errors.map((e) => e.field),
-        ["repos[0].path"],
-      );
-    });
-  });
-
-  describe("a typo inside a repo block", () => {
-    it("is dropped by an edit, and the comments on the repo stay", () => {
-      const text = [
-        "gh_config_dir: /gh",
-        "poll_seconds: 60",
-        "max_concurrent_runs: 1",
-        "repos:",
-        "  # the main repo",
-        "  - repo: a/b # primary",
-        "    paht: /x",
-        "",
-      ].join("\n");
-      const result = editMachineConfig(text, { repos: [{ repo: "a/b", path: "/b" }] }, FILE);
-      assert.ok(Result.isSuccess(result), JSON.stringify(result));
-      const out = Result.isSuccess(result) ? result.success : "";
-      assert.include(out, "# the main repo");
-      assert.include(out, "# primary");
-      assert.notInclude(out, "paht");
-      assert.include(out, "path: /b");
-    });
-  });
-
   describe("files the page could not fix before", () => {
     const BODY = {
       gh_config_dir: "/gh",
       poll_seconds: 60,
       max_concurrent_runs: 1,
-      repos: [{ repo: "a/b", path: "/b" }],
     };
 
     it("drops an unknown top-level key, keeps notify and the comments", () => {
@@ -193,18 +149,10 @@ describe("editMachineConfig", () => {
   });
 
   it("refuses an invalid body with the parser's fields", () => {
-    const result = editMachineConfig(
-      COMMENTED,
-      { poll_seconds: 5, gh_config_dir: "", repos: [] },
-      FILE,
-    );
+    const result = editMachineConfig(COMMENTED, { poll_seconds: 5, gh_config_dir: "" }, FILE);
     assert.ok(Result.isFailure(result));
     const errors = Result.isFailure(result) ? result.failure : [];
-    assert.deepStrictEqual(errors.map((e) => e.field).sort(), [
-      "gh_config_dir",
-      "poll_seconds",
-      "repos",
-    ]);
+    assert.deepStrictEqual(errors.map((e) => e.field).sort(), ["gh_config_dir", "poll_seconds"]);
     assert.ok(errors.every((e) => e.file === FILE));
   });
 
@@ -231,19 +179,9 @@ describe("editMachineConfig", () => {
       poll_seconds: 60,
       max_concurrent_runs: 1,
       max_concurrent_gates: 2,
-      repos: [{ repo: "a/b", path: "/b" }],
     });
     const parsed = parseMachineConfig(text, FILE);
     assert.ok(Result.isSuccess(parsed), text);
-  });
-
-  it("copies only repo and path from each repo", () => {
-    const text = edited(null, {
-      gh_config_dir: "/gh",
-      max_concurrent_runs: 1,
-      repos: [{ repo: "a/b", path: "/b", extra: true }],
-    });
-    assert.notInclude(text, "extra");
   });
 
   it("recognises a JSON object and nothing else", () => {
@@ -259,15 +197,18 @@ const DEFAULTS = {
   poll_seconds: 60,
   max_concurrent_runs: 1,
   max_concurrent_gates: 2,
-  repos: [],
 };
 
 describe("readMachineConfigReport", () => {
-  const report = (text: string | null, readings = new Map()) =>
+  const report = (
+    text: string | null,
+    watched: ReadonlyArray<WatchedProject> = [],
+    readings: ReadonlyMap<string, RepoConfigReading> = new Map(),
+  ) =>
     Effect.gen(function* () {
       const file = NodePath.join(tempDir("report"), "config.yml");
       if (text !== null) NodeFS.writeFileSync(file, text);
-      return { file, report: yield* readMachineConfigReport(file, readings) };
+      return { file, report: yield* readMachineConfigReport(file, watched, readings) };
     }).pipe(Effect.provide(NodeServices.layer));
 
   it.effect("reports the defaults for a missing file", () =>
@@ -294,6 +235,21 @@ describe("readMachineConfigReport", () => {
     }),
   );
 
+  const WATCHED: ReadonlyArray<WatchedProject> = [
+    { repo: "a/b", path: "/b", title: "Bee" },
+    { repo: "c/d", path: "/d", title: "Dee" },
+  ];
+
+  it.effect("lists the watched projects for a missing file and for an invalid one", () =>
+    Effect.gen(function* () {
+      const expected = WATCHED.map((w) => ({ ...w, factory: null, errors: null }));
+      const missing = yield* report(null, WATCHED);
+      assert.deepStrictEqual(missing.report.repos, expected);
+      const invalid = yield* report("poll_seconds: 1\n", WATCHED);
+      assert.deepStrictEqual(invalid.report.repos, expected);
+    }),
+  );
+
   it.effect("gives the form its draft: the values an invalid file holds, as written", () =>
     Effect.gen(function* () {
       const { report: r } = yield* report(COMMENTED.replace("poll_seconds: 60", "poll_seconds: 5"));
@@ -303,20 +259,16 @@ describe("readMachineConfigReport", () => {
         gh_config_dir: "/gh",
         poll_seconds: 5,
         max_concurrent_runs: 1,
-        repos: [{ repo: "a/b", path: "/b" }],
       });
     }),
   );
 
-  it.effect("copies only what is a string, a number or a repo mapping into the draft", () =>
+  it.effect("copies only what is a string or a number into the draft, and not repos", () =>
     Effect.gen(function* () {
       const { report: r } = yield* report(
-        "poll_seconds: [1]\ngh_config_dir: /x\nrepos:\n  - repo: a/b\n    path: 7\n  - nope\n  - {path: /p}\n",
+        "poll_seconds: [1]\ngh_config_dir: /x\nrepos:\n  - repo: a/b\n    path: 7\n",
       );
-      assert.deepStrictEqual(r.draft, {
-        gh_config_dir: "/x",
-        repos: [{ repo: "a/b" }, { path: "/p" }],
-      });
+      assert.deepStrictEqual(r.draft, { gh_config_dir: "/x" });
     }),
   );
 
@@ -331,24 +283,49 @@ describe("readMachineConfigReport", () => {
     }),
   );
 
-  it.effect("joins the last reading of each repo", () =>
+  it.effect("joins the last reading of each watched project", () =>
     Effect.gen(function* () {
-      const readings = new Map([
-        ["a/b", { kind: "errors" as const, errors: [{ file: ".dw/config.yml", message: "bad" }] }],
+      const readings = new Map<string, RepoConfigReading>([
+        ["a/b", { kind: "errors", errors: [{ file: ".dw/config.yml", message: "bad" }] }],
       ]);
-      const two = COMMENTED.replace("# end of file", "  - repo: c/d\n    path: /d\n# end of file");
-      const { report: r } = yield* report(two, readings);
+      const { report: r } = yield* report(COMMENTED, WATCHED, readings);
       assert.strictEqual(r.exists, true);
       assert.deepStrictEqual(r.errors, []);
       assert.deepStrictEqual(r.repos, [
         {
           repo: "a/b",
           path: "/b",
+          title: "Bee",
           factory: null,
           errors: [{ file: ".dw/config.yml", message: "bad" }],
         },
-        { repo: "c/d", path: "/d", factory: null, errors: null },
+        { repo: "c/d", path: "/d", title: "Dee", factory: null, errors: null },
       ]);
+    }),
+  );
+
+  it.effect("shows the project config a reading holds", () =>
+    Effect.gen(function* () {
+      const project = {
+        instructors: ["tk"],
+        base: "main",
+        provision: [],
+        gate: ["true"],
+        requiredChecks: ["ci"],
+        limits: {
+          minutes: 90,
+          gateRetries: 1,
+          regates: 5,
+          checksMinutes: 30,
+          interruptionResumes: 2,
+        },
+        autonomy: "pr" as const,
+      };
+      const readings = new Map<string, RepoConfigReading>([["a/b", { kind: "ok", project }]]);
+      const { report: r } = yield* report(COMMENTED, WATCHED.slice(0, 1), readings);
+      assert.strictEqual(r.repos[0]?.factory?.base, "main");
+      assert.deepStrictEqual(r.repos[0]?.factory?.required_checks, ["ci"]);
+      assert.strictEqual(r.repos[0]?.errors, null);
     }),
   );
 });
