@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { ModelBenchmarks, ProviderInstanceId } from "@t3tools/contracts";
 import { ChartSplineIcon, ExternalLinkIcon } from "lucide-react";
-import { memo, useMemo } from "react";
+import { memo } from "react";
 
 import { Button } from "../ui/button";
 import { ComboboxItem } from "../ui/combobox";
@@ -96,16 +96,13 @@ export function useParetoPoints(
   enabled: boolean,
 ) {
   const benchmarks = useAtomValue(modelBenchmarksAtom);
-  const points = useMemo(
-    () =>
-      enabled && benchmarks
-        ? matchBenchmarkVariants(entries, benchmarks.variants).filter(
-            (point) => !getModelDisabledReason?.(point.entry.instanceId, point.model.slug),
-          )
-        : [],
-    [benchmarks, enabled, entries, getModelDisabledReason],
-  );
-  const frontier = useMemo(() => paretoFrontier(points), [points]);
+  const points =
+    enabled && benchmarks
+      ? matchBenchmarkVariants(entries, benchmarks.variants).filter(
+          (point) => !getModelDisabledReason?.(point.entry.instanceId, point.model.slug),
+        )
+      : [];
+  const frontier = paretoFrontier(points);
   return { benchmarks: enabled ? benchmarks : undefined, points, frontier };
 }
 
@@ -199,8 +196,10 @@ function ParetoChart(props: {
   const scores = props.points.map((point) => point.intelligence);
   const minLog = Math.min(...costs) - 0.15;
   const maxLog = Math.max(...costs) + 0.15;
-  const minScore = Math.floor(Math.min(...scores) / 10) * 10;
-  const maxScore = Math.ceil(Math.max(...scores) / 10) * 10;
+  const lowestScore = Math.min(...scores);
+  const highestScore = Math.max(...scores);
+  const minScore = Math.floor(lowestScore / 10) * 10;
+  const maxScore = Math.ceil(highestScore / 10) * 10;
   const plotWidth = CHART.width - CHART.left - CHART.right;
   const plotHeight = CHART.height - CHART.top - CHART.bottom;
   const x = (cost: number) =>
