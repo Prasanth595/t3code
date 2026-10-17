@@ -1,6 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+import { describe } from "vite-plus/test";
 
 import { PROJECT_CONFIG_PATH } from "../config.ts";
 import type { Approval, Refusal, TextCheck } from "../domain/approval.ts";
@@ -22,11 +26,15 @@ import {
   MAX_DEPENDS_ON,
   MAX_FILE_BYTES,
   CLOSED_BY_QUERY,
+  PR_FEEDBACK_QUERY,
   READY_BY_QUERY,
+  REVIEW_PAGE_LIMIT,
+  REVIEWS_BEFORE_QUERY,
   STATUS_MARKER,
   type Blocker,
   type DropReason,
   type Dropped,
+  type Feedback,
   type GitHubError,
   isNotFound,
   makeGitHub,
@@ -5067,3 +5075,1182 @@ it.effect("activity with a malformed since is a parse error without calling gh",
     }
   }),
 );
+
+// ---- instructor feedback on a pull request (from softfac's github.rs) ----
+
+describe("pr feedback", () => {
+  type Json = Record<string, unknown>;
+
+  /** The moment the feedback tests read from: everything after it is new. */
+  const FB_SINCE = "2026-10-04T10:30:00Z";
+  const RAWPHP = ["rawphp"];
+
+  const person = (login: string): Json => ({ __typename: "User", login });
+
+  const feedbackCall = (query: string, ...rest: ReadonlyArray<string>) => [
+    "api",
+    "graphql",
+    "-f",
+    `query=${query}`,
+    "-f",
+    "owner=rawphp",
+    "-f",
+    "name=softfac",
+    "-F",
+    "number=6",
+    ...rest,
+  ];
+  const beforeCall = (cursor: string) =>
+    feedbackCall(REVIEWS_BEFORE_QUERY, "-f", `before=${cursor}`);
+
+  const feedbackReply = (reviews: ReadonlyArray<Json>, comments: ReadonlyArray<Json>) =>
+    JSON.stringify({
+      data: {
+        repository: { pullRequest: { reviews: { nodes: reviews }, comments: { nodes: comments } } },
+      },
+    });
+  /** A reply whose reviews connection says how many there are in all and where its first node starts. */
+  const pagedReply = (
+    reviews: ReadonlyArray<Json>,
+    comments: ReadonlyArray<Json>,
+    total: number,
+    cursor: string,
+  ) =>
+    JSON.stringify({
+      data: {
+        repository: {
+          pullRequest: {
+            reviews: { totalCount: total, pageInfo: { startCursor: cursor }, nodes: reviews },
+            comments: { nodes: comments },
+          },
+        },
+      },
+    });
+  /** A reply to the paging query. */
+  const reviewsPage = (reviews: ReadonlyArray<Json>, total: number, cursor: string) =>
+    JSON.stringify({
+      data: {
+        repository: {
+          pullRequest: {
+            reviews: { totalCount: total, pageInfo: { startCursor: cursor }, nodes: reviews },
+          },
+        },
+      },
+    });
+  const GONE = JSON.stringify({ data: { repository: { pullRequest: null } } });
+
+  const reviewNode = (
+    id: number | string,
+    state: string,
+    body: string,
+    at: string | null,
+    author: string,
+    inline: ReadonlyArray<Json> = [],
+  ): Json => ({
+    fullDatabaseId: String(id),
+    state,
+    body,
+    submittedAt: at,
+    author: person(author),
+    lastEditedAt: null,
+    editor: null,
+    comments: { nodes: inline },
+  });
+  const inlineNode = (
+    body: string,
+    path: string,
+    line: number | null,
+    author: string,
+    originalLine: number | null = 5,
+  ): Json => ({ body, path, line, originalLine, author: person(author) });
+  const prCommentNode = (id: number | string, body: string, at: string, author: string): Json => ({
+    fullDatabaseId: String(id),
+    body,
+    createdAt: at,
+    author: person(author),
+    lastEditedAt: null,
+    editor: null,
+  });
+
+  const readWith = (t: ReturnType<typeof setup>, since = FB_SINCE, floor = FB_SINCE) =>
+    t.ok(t.github.prFeedback(6, since, floor, RAWPHP));
+  const errorWith = (t: ReturnType<typeof setup>, since = FB_SINCE, floor = FB_SINCE) =>
+    t.err(t.github.prFeedback(6, since, floor, RAWPHP));
+  const readFeedback = (answer: string) => readWith(setup(reply(answer)));
+  const feedbackIds = (items: ReadonlyArray<Feedback>) => items.map((f) => f.id);
+
+  // ---- the call and the queries ----
+
+  it.effect("asks for the reviews and conversation comments with one call", () =>
+    Effect.gen(function* () {
+      const t = setup(reply(feedbackReply([], [])));
+      yield* readWith(t);
+      assert.deepStrictEqual(t.calls(), [feedbackCall(PR_FEEDBACK_QUERY)]);
+    }),
+  );
+
+  it.effect("reads a real answer to the feedback query by the rules", () =>
+    Effect.gen(function* () {
+      const live = NodeFS.readFileSync(
+        NodePath.join(import.meta.dirname, "fixtures", "pr_feedback_cli_9000.json"),
+        "utf8",
+      );
+      const t = setup(reply(live));
+      const items = yield* t.ok(
+        t.github.prFeedback(9000, "2024-04-01T00:00:00Z", "2024-04-01T00:00:00Z", [
+          "williammartin",
+        ]),
+      );
+      // Review 2028948315 approves with a body that ends in "LGTM!" and no inline comment, so
+      // it is not feedback.
+      assert.deepStrictEqual(feedbackIds(items), ["pr-comment:2082274688", "review:2028628010"]);
+      assert.deepStrictEqual(items[1]?.kind, { kind: "review", state: "COMMENTED" });
+      assert.deepStrictEqual(
+        items[1]?.inline.map((c) => [c.path, c.line]),
+        [
+          ["pkg/cmd/attestation/verify/verify.go", 130],
+          ["pkg/cmdutil/auth_check_test.go", 113],
+        ],
+      );
+      // Someone else's review and comments are not feedback.
+      assert.isTrue(items.every((i) => i.author === "williammartin"));
+    }),
+  );
+
+  it("the feedback query asks for what the rules judge", () => {
+    for (const part of [
+      "pullRequest(number: $number)",
+      "reviews(last: 50) { totalCount pageInfo { startCursor } nodes {",
+      "comments(last: 100)",
+      "comments(first: 50)",
+      "fullDatabaseId",
+      "submittedAt",
+      "lastEditedAt",
+      "editor { __typename login }",
+      "author { __typename login }",
+      "originalLine",
+      "comments(first: 50) { totalCount nodes { id body path line originalLine",
+      "userContentEdits(first: 20)",
+      "totalCount nodes { editedAt editor { __typename login } }",
+    ]) {
+      assert.isTrue(PR_FEEDBACK_QUERY.includes(part), `missing ${part}`);
+    }
+    // The review's and the conversation comment's histories, and no history on the inline
+    // comments: those are read one comment at a time, only where one was edited.
+    assert.strictEqual(PR_FEEDBACK_QUERY.split("userContentEdits(first: 20)").length - 1, 2);
+    assert.isFalse(PR_FEEDBACK_QUERY.includes("reviews(last: 100)"));
+    assert.isFalse(PR_FEEDBACK_QUERY.includes("comments(first: 100)"));
+  });
+
+  /** The text of the `{ ... }` that follows the first `reviews(` in `query`. */
+  const reviewsSelection = (query: string): string => {
+    const from = query.indexOf("reviews(");
+    const open = query.indexOf("{", from);
+    let depth = 0;
+    for (let at = open; at < query.length; at += 1) {
+      if (query[at] === "{") depth += 1;
+      if (query[at] === "}") {
+        depth -= 1;
+        if (depth === 0) return query.slice(open, at + 1);
+      }
+    }
+    throw new Error(`no closing brace for the reviews selection in ${query}`);
+  };
+
+  it("both feedback queries select the same review fields", () => {
+    const first = reviewsSelection(PR_FEEDBACK_QUERY);
+    assert.isTrue(first.includes("fullDatabaseId"));
+    assert.strictEqual(first, reviewsSelection(REVIEWS_BEFORE_QUERY));
+  });
+
+  it("the page limit is twenty pages of fifty reviews", () => {
+    assert.strictEqual(REVIEW_PAGE_LIMIT, 20);
+    assert.isTrue(REVIEWS_BEFORE_QUERY.includes("reviews(last: 50, before: $before)"));
+  });
+
+  // ---- what counts ----
+
+  it.effect(
+    "an instructor review is feedback with its inline comments and their path and line",
+    () =>
+      Effect.gen(function* () {
+        const inline = inlineNode("rename this", "src/a.rs", 7, "rawphp");
+        const got = yield* readFeedback(
+          feedbackReply(
+            [
+              reviewNode(11, "CHANGES_REQUESTED", "please fix", "2026-10-04T11:00:00Z", "rawphp", [
+                inline,
+              ]),
+            ],
+            [],
+          ),
+        );
+        assert.deepStrictEqual(got, [
+          {
+            id: "review:11",
+            author: "rawphp",
+            kind: { kind: "review", state: "CHANGES_REQUESTED" },
+            createdAt: "2026-10-04T11:00:00Z",
+            body: "please fix",
+            inline: [{ path: "src/a.rs", line: 7, body: "rename this" }],
+            inlineUnread: 0,
+          },
+        ]);
+      }),
+  );
+
+  it.effect("ids past what a 32-bit integer holds are read from the full database id", () =>
+    Effect.gen(function* () {
+      const got = yield* readFeedback(
+        feedbackReply(
+          [reviewNode(6_082_131_994, "COMMENTED", "big", "2026-10-04T11:00:00Z", "rawphp")],
+          [prCommentNode(5_700_000_001, "also big", "2026-10-04T11:01:00Z", "rawphp")],
+        ),
+      );
+      assert.deepStrictEqual(feedbackIds(got), ["review:6082131994", "pr-comment:5700000001"]);
+    }),
+  );
+
+  it.effect("a commented review and a conversation comment are feedback, oldest first", () =>
+    Effect.gen(function* () {
+      const got = yield* readFeedback(
+        feedbackReply(
+          [reviewNode(11, "COMMENTED", "later", "2026-10-04T12:00:00Z", "rawphp")],
+          [prCommentNode(21, "first", "2026-10-04T11:00:00Z", "rawphp")],
+        ),
+      );
+      assert.deepStrictEqual(
+        got.map((f) => [f.id, f.kind]),
+        [
+          ["pr-comment:21", { kind: "pr-comment" }],
+          ["review:11", { kind: "review", state: "COMMENTED" }],
+        ],
+      );
+      assert.strictEqual(got[0]?.body, "first");
+      assert.strictEqual(got[0]?.createdAt, "2026-10-04T11:00:00Z");
+    }),
+  );
+
+  it.effect("someone who is not an instructor, and a bot of the same name, are not feedback", () =>
+    Effect.gen(function* () {
+      const botComment = {
+        ...prCommentNode(22, "hi", "2026-10-04T11:00:00Z", "rawphp"),
+        author: { __typename: "Bot", login: "rawphp" },
+      };
+      const got = yield* readFeedback(
+        feedbackReply(
+          [reviewNode(11, "CHANGES_REQUESTED", "no", "2026-10-04T11:00:00Z", "stranger")],
+          [prCommentNode(21, "hello", "2026-10-04T11:00:00Z", "stranger"), botComment],
+        ),
+      );
+      assert.deepStrictEqual(got, []);
+    }),
+  );
+
+  it.effect("an author who was deleted is not feedback", () =>
+    Effect.gen(function* () {
+      const gone = {
+        ...prCommentNode(21, "hi", "2026-10-04T11:00:00Z", "rawphp"),
+        author: null,
+      };
+      assert.deepStrictEqual(yield* readFeedback(feedbackReply([], [gone])), []);
+    }),
+  );
+
+  it.effect("the logins are compared without regard to case", () =>
+    Effect.gen(function* () {
+      const got = yield* readFeedback(
+        feedbackReply([], [prCommentNode(21, "hello", "2026-10-04T11:00:00Z", "RawPHP")]),
+      );
+      assert.strictEqual(got.length, 1);
+    }),
+  );
+
+  it.effect("a comment with the factory's marker is never feedback", () =>
+    Effect.gen(function* () {
+      const got = yield* readFeedback(
+        feedbackReply(
+          [reviewNode(11, "COMMENTED", "ok <!-- softfac -->", "2026-10-04T11:00:00Z", "rawphp")],
+          [
+            prCommentNode(21, "gate ok\n\n<!-- softfac -->", "2026-10-04T11:00:00Z", "rawphp"),
+            prCommentNode(22, "<!-- softfac:status -->", "2026-10-04T11:00:00Z", "rawphp"),
+          ],
+        ),
+      );
+      assert.deepStrictEqual(got, []);
+    }),
+  );
+
+  it.effect(
+    "an approval is feedback only with inline comments; a dismissed review with words or inline comments is too",
+    () =>
+      Effect.gen(function* () {
+        // softfac also counts an approval with a body, so approving with "LGTM!" would send the
+        // pull request back to draft and the issue back to building. This port does not.
+        const inline = inlineNode("nit", "src/a.rs", 3, "rawphp");
+        const got = yield* readFeedback(
+          feedbackReply(
+            [
+              reviewNode(11, "APPROVED", "", "2026-10-04T11:00:00Z", "rawphp"),
+              reviewNode(12, "DISMISSED", "  \n", "2026-10-04T11:01:00Z", "rawphp"),
+              reviewNode(13, "APPROVED", "LGTM!", "2026-10-04T11:02:00Z", "rawphp"),
+              reviewNode(14, "APPROVED", "", "2026-10-04T11:03:00Z", "rawphp", [inline]),
+              reviewNode(15, "DISMISSED", "stale", "2026-10-04T11:04:00Z", "rawphp"),
+              reviewNode(16, "APPROVED", "one more nit", "2026-10-04T11:05:00Z", "rawphp", [
+                inline,
+              ]),
+            ],
+            [],
+          ),
+        );
+        assert.deepStrictEqual(feedbackIds(got), ["review:14", "review:15", "review:16"]);
+      }),
+  );
+
+  it.effect("a comment and a commented review that only say LGTM are still feedback", () =>
+    Effect.gen(function* () {
+      // The factory's login opens the pull requests, so an instructor acting as it can only
+      // comment: only an approval's body is left unread.
+      const got = yield* readFeedback(
+        feedbackReply(
+          [reviewNode(11, "COMMENTED", "looks good", "2026-10-04T11:00:00Z", "rawphp")],
+          [prCommentNode(21, "LGTM, merging after the release", "2026-10-04T11:01:00Z", "rawphp")],
+        ),
+      );
+      assert.deepStrictEqual(feedbackIds(got), ["review:11", "pr-comment:21"]);
+    }),
+  );
+
+  it.effect("a review that is still pending or has no submission time is not feedback", () =>
+    Effect.gen(function* () {
+      const got = yield* readFeedback(
+        feedbackReply(
+          [
+            reviewNode(11, "PENDING", "draft", "2026-10-04T11:00:00Z", "rawphp"),
+            reviewNode(12, "COMMENTED", "x", null, "rawphp"),
+          ],
+          [],
+        ),
+      );
+      assert.deepStrictEqual(got, []);
+    }),
+  );
+
+  it.effect("a review with more inline comments than were read says how many are missing", () =>
+    Effect.gen(function* () {
+      const shown = Array.from({ length: 100 }, (_, i) =>
+        inlineNode(`note ${i}`, "src/a.rs", 7, "rawphp"),
+      );
+      const withTotal = (review: Json, totalCount: number): Json => ({
+        ...review,
+        comments: { totalCount, nodes: (review.comments as { nodes: unknown }).nodes },
+      });
+      const many = yield* readFeedback(
+        feedbackReply(
+          [
+            withTotal(
+              reviewNode(11, "COMMENTED", "many", "2026-10-04T11:00:00Z", "rawphp", shown),
+              150,
+            ),
+          ],
+          [],
+        ),
+      );
+      assert.strictEqual(many[0]?.inline.length, 100);
+      assert.strictEqual(many[0]?.inlineUnread, 50);
+      // Read whole, or a count that is no larger than what came: nothing is missing.
+      const whole = yield* readFeedback(
+        feedbackReply(
+          [
+            withTotal(
+              reviewNode(12, "COMMENTED", "few", "2026-10-04T11:00:00Z", "rawphp", [
+                inlineNode("a", "src/a.rs", 1, "rawphp"),
+              ]),
+              1,
+            ),
+          ],
+          [],
+        ),
+      );
+      assert.strictEqual(whole[0]?.inlineUnread, 0);
+    }),
+  );
+
+  it.effect(
+    "only inline comments by instructors without the marker are kept, and the line falls back",
+    () =>
+      Effect.gen(function* () {
+        const inline = [
+          inlineNode("keep", "src/a.rs", 7, "rawphp"),
+          inlineNode("stranger", "src/b.rs", 8, "stranger"),
+          inlineNode("mine <!-- softfac -->", "src/c.rs", 9, "rawphp"),
+          inlineNode("outdated", "src/d.rs", null, "rawphp", 4),
+          inlineNode("nowhere", "src/e.rs", null, "rawphp", null),
+        ];
+        const got = yield* readFeedback(
+          feedbackReply(
+            [reviewNode(11, "COMMENTED", "", "2026-10-04T11:00:00Z", "rawphp", inline)],
+            [],
+          ),
+        );
+        assert.deepStrictEqual(
+          got[0]?.inline.map((c) => [c.path, c.line, c.body]),
+          [
+            ["src/a.rs", 7, "keep"],
+            ["src/d.rs", 4, "outdated"],
+            ["src/e.rs", null, "nowhere"],
+          ],
+        );
+      }),
+  );
+
+  it.effect("only what was written after since is feedback; the same second is not after", () =>
+    Effect.gen(function* () {
+      const got = yield* readFeedback(
+        feedbackReply(
+          [reviewNode(11, "COMMENTED", "old", "2026-10-04T10:29:59Z", "rawphp")],
+          [
+            prCommentNode(21, "same second", FB_SINCE, "rawphp"),
+            prCommentNode(22, "new", "2026-10-04T10:30:01Z", "rawphp"),
+          ],
+        ),
+      );
+      assert.deepStrictEqual(feedbackIds(got), ["pr-comment:22"]);
+    }),
+  );
+
+  it.effect("a pull request that is gone has no feedback", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* readFeedback(GONE), []);
+    }),
+  );
+
+  // ---- since and floor ----
+
+  it.effect("a since that is not GitHub's form is refused before gh runs", () =>
+    Effect.gen(function* () {
+      for (const since of ["", "2026-10-04", "2026-10-04 10:30:00", "2026-10-04T10:30:00.5Z"]) {
+        const t = setup();
+        const error = yield* errorWith(t, since, since);
+        assert.strictEqual(error._tag, "GitHubParse", JSON.stringify(since));
+        assert.deepStrictEqual(t.calls(), [], JSON.stringify(since));
+      }
+    }),
+  );
+
+  it.effect("a floor that is not GitHub's form is refused before gh runs", () =>
+    Effect.gen(function* () {
+      for (const floor of ["", "2026-10-04", "2026-10-04T10:30:00.5Z"]) {
+        const t = setup();
+        const error = yield* errorWith(t, FB_SINCE, floor);
+        assert.strictEqual(error._tag, "GitHubParse", JSON.stringify(floor));
+        assert.deepStrictEqual(t.calls(), [], JSON.stringify(floor));
+      }
+    }),
+  );
+
+  it.effect("feedback with a time or id it cannot read is an error and not a guess", () =>
+    Effect.gen(function* () {
+      const noId = {
+        ...prCommentNode(21, "hi", "2026-10-04T11:00:00Z", "rawphp"),
+        fullDatabaseId: null,
+      };
+      const badTime = prCommentNode(21, "hi", "yesterday", "rawphp");
+      const notANumber = prCommentNode("abc", "hi", "2026-10-04T11:00:00Z", "rawphp");
+      for (const comment of [noId, badTime, notANumber]) {
+        const error = yield* errorWith(setup(reply(feedbackReply([], [comment]))));
+        assert.strictEqual(error._tag, "GitHubParse", JSON.stringify(comment));
+      }
+      const noReviewId = {
+        ...reviewNode(11, "COMMENTED", "x", "2026-10-04T11:00:00Z", "rawphp"),
+        fullDatabaseId: null,
+      };
+      const reviewError = yield* errorWith(setup(reply(feedbackReply([noReviewId], []))));
+      assert.strictEqual(reviewError._tag, "GitHubParse");
+      for (const garbage of ["", "no", "{}"]) {
+        const error = yield* errorWith(setup(reply(garbage)));
+        assert.strictEqual(error._tag, "GitHubParse", garbage);
+      }
+    }),
+  );
+
+  // ---- paging back through the reviews ----
+
+  /** 50 reviews by a stranger at 11:00 to 11:49 on the day of `FB_SINCE`; the first at 09:00 with `olderFirst`. */
+  const fiftyReviews = (olderFirst: boolean): Array<Json> =>
+    Array.from({ length: 50 }, (_, i) =>
+      reviewNode(
+        100 + i,
+        "COMMENTED",
+        "noise",
+        olderFirst && i === 0 ? "2026-10-04T09:00:00Z" : `2026-10-04T11:${pad(i)}:00Z`,
+        "stranger",
+      ),
+    );
+  const oldestIsInstructors = (id: number, body: string, at: string) =>
+    reviewNode(id, "CHANGES_REQUESTED", body, at, "rawphp");
+
+  it.effect("the oldest of the fifty reviews the query reads is still read", () =>
+    Effect.gen(function* () {
+      // GitHub lists the newest 50 oldest first: the instructor's review is the first of a full
+      // page. With no `totalCount` saying more exist, nothing pages back.
+      const reviews = [
+        oldestIsInstructors(11, "the oldest", "2026-10-04T11:00:00Z"),
+        ...fiftyReviews(false).slice(1),
+      ];
+      assert.strictEqual(reviews.length, 50);
+      const t = setup(reply(feedbackReply(reviews, [])));
+      assert.deepStrictEqual(feedbackIds(yield* readWith(t)), ["review:11"]);
+      assert.strictEqual(t.calls().length, 1);
+    }),
+  );
+
+  it.effect("a full page of new reviews with more behind it is paged back to read the 51st", () =>
+    Effect.gen(function* () {
+      const older = oldestIsInstructors(11, "the 51st", "2026-10-04T10:45:00Z");
+      const t = setup(
+        reply(pagedReply(fiftyReviews(false), [], 51, "c1")),
+        reply(reviewsPage([older], 51, "c0")),
+      );
+      assert.deepStrictEqual(feedbackIds(yield* readWith(t)), ["review:11"]);
+      assert.deepStrictEqual(t.calls(), [feedbackCall(PR_FEEDBACK_QUERY), beforeCall("c1")]);
+    }),
+  );
+
+  it.effect("a pending oldest review does not stop the paging", () =>
+    Effect.gen(function* () {
+      const [first, ...rest] = fiftyReviews(false);
+      const pending = [{ ...first, submittedAt: null }, ...rest];
+      const older = oldestIsInstructors(11, "the 51st", "2026-10-04T10:45:00Z");
+      const t = setup(
+        reply(pagedReply(pending, [], 51, "c1")),
+        reply(reviewsPage([older], 51, "c0")),
+      );
+      assert.deepStrictEqual(feedbackIds(yield* readWith(t)), ["review:11"]);
+      assert.deepStrictEqual(t.calls(), [feedbackCall(PR_FEEDBACK_QUERY), beforeCall("c1")]);
+    }),
+  );
+
+  it.effect("an unreadable time on the oldest review is an error and pages no further", () =>
+    Effect.gen(function* () {
+      const [first, ...rest] = fiftyReviews(false);
+      const garbled = [{ ...first, submittedAt: "yesterday" }, ...rest];
+      const t = setup(reply(pagedReply(garbled, [], 51, "c1")));
+      const error = yield* errorWith(t);
+      assert.strictEqual(error._tag, "GitHubParse");
+      assert.strictEqual(t.calls().length, 1);
+    }),
+  );
+
+  it.effect("paging back stops at a review at or before the starting point", () =>
+    Effect.gen(function* () {
+      const page = [
+        reviewNode(10, "COMMENTED", "old", "2026-10-04T10:30:00Z", "rawphp"),
+        oldestIsInstructors(11, "new", "2026-10-04T10:45:00Z"),
+      ];
+      const t = setup(
+        reply(pagedReply(fiftyReviews(false), [], 200, "c1")),
+        reply(reviewsPage(page, 200, "c0")),
+      );
+      assert.deepStrictEqual(feedbackIds(yield* readWith(t)), ["review:11"]);
+      assert.strictEqual(t.calls().length, 2);
+    }),
+  );
+
+  it.effect("paging back goes on while the oldest review read is still new", () =>
+    Effect.gen(function* () {
+      const pageOfNew = (base: number) =>
+        [0, 1].map((i) =>
+          reviewNode(base + i, "COMMENTED", "noise", "2026-10-04T10:40:00Z", "stranger"),
+        );
+      const oldest = reviewNode(1, "COMMENTED", "old", "2026-10-04T09:00:00Z", "stranger");
+      const t = setup(
+        reply(pagedReply(fiftyReviews(false), [], 54, "c1")),
+        reply(reviewsPage(pageOfNew(60), 54, "c0")),
+        reply(reviewsPage([oldest, ...pageOfNew(70)], 54, "cx")),
+      );
+      yield* readWith(t);
+      assert.deepStrictEqual(t.calls(), [
+        feedbackCall(PR_FEEDBACK_QUERY),
+        beforeCall("c1"),
+        beforeCall("c0"),
+      ]);
+    }),
+  );
+
+  it.effect("a failed call for the earlier reviews is an error and is not retried", () =>
+    Effect.gen(function* () {
+      const t = setup(reply(pagedReply(fiftyReviews(false), [], 51, "c1")), fail(1, "boom"));
+      const error = yield* errorWith(t);
+      assert.strictEqual(error._tag, "GitHubFailed");
+      assert.strictEqual(t.calls().length, 2);
+    }),
+  );
+
+  it.effect("reviews from every page come back oldest first", () =>
+    Effect.gen(function* () {
+      const newer = reviewNode(30, "COMMENTED", "newer", "2026-10-04T11:20:00Z", "rawphp");
+      const olderPage = [
+        reviewNode(10, "COMMENTED", "old", "2026-10-04T10:30:00Z", "rawphp"),
+        reviewNode(20, "COMMENTED", "older", "2026-10-04T10:45:00Z", "rawphp"),
+      ];
+      const t = setup(
+        reply(pagedReply([newer, ...fiftyReviews(false)], [], 100, "c1")),
+        reply(reviewsPage(olderPage, 100, "c0")),
+      );
+      assert.deepStrictEqual(feedbackIds(yield* readWith(t)), ["review:20", "review:30"]);
+      assert.strictEqual(t.calls().length, 2);
+    }),
+  );
+
+  /**
+   * Replies to the feedback query and to `pages - 1` paging calls, every page one new review by a
+   * stranger and a total no number of pages reaches, each with a cursor of its own. With `oldLast`
+   * the last page is at or before the starting point.
+   */
+  const endlessReviews = (pages: number, oldLast: boolean): Array<Answer> => {
+    const answers = [reply(pagedReply(fiftyReviews(false), [], 1_000_000, "c1"))];
+    for (let i = 1; i < pages; i += 1) {
+      const at = oldLast && i === pages - 1 ? "2026-10-04T09:00:00Z" : "2026-10-04T10:40:00Z";
+      const review = reviewNode(1000 + i, "COMMENTED", "noise", at, "stranger");
+      answers.push(reply(reviewsPage([review], 1_000_000, `c${i + 1}`)));
+    }
+    return answers;
+  };
+
+  it.effect("a page with the cursor that was just sent is an error after two calls", () =>
+    Effect.gen(function* () {
+      const page = reviewNode(11, "COMMENTED", "noise", "2026-10-04T10:40:00Z", "stranger");
+      const t = setup(
+        reply(pagedReply(fiftyReviews(false), [], 1000, "c1")),
+        reply(reviewsPage([page], 1000, "c1")),
+        reply(reviewsPage([page], 1000, "c1")),
+      );
+      const error = yield* errorWith(t);
+      assert.strictEqual(error._tag, "GitHubParse");
+      assert.strictEqual(t.calls().length, 2);
+    }),
+  );
+
+  it.effect("paging back that would read past the page limit is an error after the limit", () =>
+    Effect.gen(function* () {
+      const t = setup(...endlessReviews(REVIEW_PAGE_LIMIT + 5, false));
+      const error = yield* errorWith(t);
+      assert.strictEqual(error._tag, "GitHubParse");
+      assert.strictEqual(t.calls().length, REVIEW_PAGE_LIMIT);
+    }),
+  );
+
+  it.effect("paging back that reaches an old review on the last page allowed is not an error", () =>
+    Effect.gen(function* () {
+      const t = setup(...endlessReviews(REVIEW_PAGE_LIMIT, true));
+      yield* readWith(t);
+      assert.strictEqual(t.calls().length, REVIEW_PAGE_LIMIT);
+    }),
+  );
+
+  it.effect("a total equal to the reviews read does not page back", () =>
+    Effect.gen(function* () {
+      const t = setup(reply(pagedReply(fiftyReviews(false), [], 50, "c1")));
+      yield* readWith(t);
+      assert.strictEqual(t.calls().length, 1);
+    }),
+  );
+
+  it.effect(
+    "a full page whose oldest review is at or before the starting point does not page back",
+    () =>
+      Effect.gen(function* () {
+        const t = setup(reply(pagedReply(fiftyReviews(true), [], 51, "c1")));
+        yield* readWith(t);
+        assert.strictEqual(t.calls().length, 1);
+      }),
+  );
+
+  it.effect("paging back stops at the floor and still judges what is after since", () =>
+    Effect.gen(function* () {
+      const older = oldestIsInstructors(
+        11,
+        "after since, before the floor",
+        "2026-10-04T10:45:00Z",
+      );
+      const t = setup(
+        reply(pagedReply(fiftyReviews(false), [], 1000, "c1")),
+        reply(reviewsPage([older], 1000, "c0")),
+      );
+      const got = yield* readWith(t, FB_SINCE, "2026-10-04T10:50:00Z");
+      assert.deepStrictEqual(feedbackIds(got), ["review:11"]);
+      assert.deepStrictEqual(t.calls(), [feedbackCall(PR_FEEDBACK_QUERY), beforeCall("c1")]);
+    }),
+  );
+
+  it.effect(
+    "a full page whose oldest review is at the floor does not page back and is judged",
+    () =>
+      Effect.gen(function* () {
+        const page = [
+          oldestIsInstructors(11, "at the floor", "2026-10-04T11:00:00Z"),
+          reviewNode(12, "COMMENTED", "noise", "2026-10-04T11:05:00Z", "stranger"),
+        ];
+        const t = setup(reply(pagedReply(page, [], 1000, "c1")));
+        const got = yield* readWith(t, FB_SINCE, "2026-10-04T11:00:00Z");
+        assert.deepStrictEqual(feedbackIds(got), ["review:11"]);
+        assert.strictEqual(t.calls().length, 1);
+      }),
+  );
+
+  it.effect(
+    "paging back ends on an empty page and fails on a gone pull request or a missing cursor",
+    () =>
+      Effect.gen(function* () {
+        const first = pagedReply(fiftyReviews(false), [], 99, "c1");
+        // GitHub answers `before:` the oldest cursor with an empty page: the start was reached.
+        const empty = setup(reply(first), reply(reviewsPage([], 99, "c0")));
+        yield* readWith(empty);
+        assert.strictEqual(empty.calls().length, 2);
+
+        const gone = setup(reply(first), reply(GONE));
+        assert.strictEqual((yield* errorWith(gone))._tag, "GitHubParse");
+        assert.strictEqual(gone.calls().length, 2);
+
+        const noCursor = setup(
+          reply(
+            JSON.stringify({
+              data: {
+                repository: {
+                  pullRequest: {
+                    reviews: { totalCount: 99, nodes: fiftyReviews(false) },
+                    comments: { nodes: [] },
+                  },
+                },
+              },
+            }),
+          ),
+        );
+        assert.strictEqual((yield* errorWith(noCursor))._tag, "GitHubParse");
+        assert.strictEqual(noCursor.calls().length, 1);
+      }),
+  );
+
+  // ---- text that was edited ----
+
+  const EDITED_AT = "2026-10-04T11:05:00Z";
+  const editHistory = (total: number, shown: ReadonlyArray<readonly [string, string]>): Json => ({
+    totalCount: total,
+    nodes: shown.map(([editedAt, who]) => ({ editedAt, editor: person(who) })),
+  });
+  const BY_INSTRUCTOR_ONLY = [
+    [EDITED_AT, "rawphp"],
+    ["2026-10-04T11:00:00Z", "rawphp"],
+  ] as const;
+  const STRANGER_THEN_INSTRUCTOR = [
+    [EDITED_AT, "rawphp"],
+    ["2026-10-04T11:03:00Z", "stranger"],
+    ["2026-10-04T11:00:00Z", "rawphp"],
+  ] as const;
+  const BY_STRANGER = [
+    [EDITED_AT, "stranger"],
+    ["2026-10-04T11:00:00Z", "rawphp"],
+  ] as const;
+
+  /** A conversation comment by `rawphp`, last edited at 11:05 by `lastEditor`, with `history` as its edits. */
+  const editedPrComment = (id: number, lastEditor: string, history: Json): Json => ({
+    ...prCommentNode(id, "text", "2026-10-04T11:00:00Z", "rawphp"),
+    lastEditedAt: EDITED_AT,
+    editor: person(lastEditor),
+    userContentEdits: history,
+  });
+  /** A review by `rawphp`, last edited at 11:05 by `lastEditor`, with `history` as its edits. */
+  const editedReview = (
+    id: number,
+    lastEditor: string,
+    history: Json,
+    inline: ReadonlyArray<Json> = [],
+  ): Json => ({
+    ...reviewNode(id, "COMMENTED", "text", "2026-10-04T11:00:00Z", "rawphp", inline),
+    lastEditedAt: EDITED_AT,
+    editor: person(lastEditor),
+    userContentEdits: history,
+  });
+  /** An inline comment by `rawphp` with node id `id`, edited at 11:05. Its history is read on its own. */
+  const editedInline = (body: string, id: string | null): Json => ({
+    ...(id === null ? {} : { id }),
+    body,
+    path: "src/a.rs",
+    line: 7,
+    originalLine: 7,
+    author: person("rawphp"),
+    lastEditedAt: EDITED_AT,
+  });
+  /** One node of GitHub's answer to the edit-history query. */
+  const editNode = (id: string, lastEditor: string, history: Json): Json => ({
+    id,
+    lastEditedAt: EDITED_AT,
+    editor: person(lastEditor),
+    userContentEdits: history,
+  });
+  const editNodesReply = (nodes: ReadonlyArray<unknown>) => JSON.stringify({ data: { nodes } });
+  const reviewWith = (at: string, inline: ReadonlyArray<Json>) =>
+    reviewNode(11, "CHANGES_REQUESTED", "please fix", at, "rawphp", inline);
+
+  it.effect("an item edited by someone who is not an instructor is not feedback", () =>
+    Effect.gen(function* () {
+      const byStranger = editedPrComment(21, "stranger", editHistory(2, BY_STRANGER));
+      const byInstructor = editedPrComment(22, "rawphp", editHistory(2, BY_INSTRUCTOR_ONLY));
+      const byNobody = {
+        ...prCommentNode(23, "changed", "2026-10-04T11:02:00Z", "rawphp"),
+        lastEditedAt: EDITED_AT,
+        editor: null,
+        userContentEdits: { totalCount: 1, nodes: [] },
+      };
+      const byBot = {
+        ...editedReview(11, "rawphp", editHistory(2, BY_INSTRUCTOR_ONLY)),
+        editor: { __typename: "Bot", login: "rawphp" },
+      };
+      const got = yield* readFeedback(feedbackReply([byBot], [byStranger, byInstructor, byNobody]));
+      assert.deepStrictEqual(feedbackIds(got), ["pr-comment:22"]);
+    }),
+  );
+
+  it.effect("a stranger's edit followed by an instructor's touch-up is not feedback", () =>
+    Effect.gen(function* () {
+      const history = editHistory(3, STRANGER_THEN_INSTRUCTOR);
+      const got = yield* readFeedback(
+        feedbackReply(
+          [editedReview(11, "rawphp", history)],
+          [editedPrComment(21, "rawphp", history)],
+        ),
+      );
+      assert.deepStrictEqual(got, []);
+    }),
+  );
+
+  it.effect("an item whose edits were all an instructor's is feedback", () =>
+    Effect.gen(function* () {
+      const history = editHistory(2, BY_INSTRUCTOR_ONLY);
+      const got = yield* readFeedback(
+        feedbackReply(
+          [editedReview(11, "rawphp", history)],
+          [editedPrComment(21, "rawphp", history)],
+        ),
+      );
+      assert.deepStrictEqual(feedbackIds(got), ["review:11", "pr-comment:21"]);
+    }),
+  );
+
+  it.effect("an edit history that is cut off or lacks the latest edit is not feedback", () =>
+    Effect.gen(function* () {
+      // Three edits, two shown: an older one may be a stranger's.
+      const cutOff = editHistory(3, BY_INSTRUCTOR_ONLY);
+      // Edited, and no history at all.
+      const { userContentEdits: _history, ...missing } = editedPrComment(
+        22,
+        "rawphp",
+        editHistory(2, BY_INSTRUCTOR_ONLY),
+      );
+      // The newest entry is not the latest edit.
+      const stale = editHistory(1, [["2026-10-04T11:00:00Z", "rawphp"]]);
+      const got = yield* readFeedback(
+        feedbackReply(
+          [editedReview(11, "rawphp", cutOff)],
+          [editedPrComment(21, "rawphp", cutOff), missing, editedPrComment(23, "rawphp", stale)],
+        ),
+      );
+      assert.deepStrictEqual(got, []);
+    }),
+  );
+
+  // ---- inline comments that were edited ----
+
+  it.effect(
+    "an inline comment edited by a stranger is dropped and the rest of the review stays",
+    () =>
+      Effect.gen(function* () {
+        const inline = [
+          inlineNode("untouched", "src/a.rs", 7, "rawphp"),
+          editedInline("by stranger", "C1"),
+          editedInline("stranger then touch-up", "C2"),
+          editedInline("own touch-up", "C3"),
+        ];
+        const t = setup(
+          reply(feedbackReply([reviewWith("2026-10-04T11:00:00Z", inline)], [])),
+          reply(
+            editNodesReply([
+              editNode("C1", "stranger", editHistory(2, BY_STRANGER)),
+              editNode("C2", "rawphp", editHistory(3, STRANGER_THEN_INSTRUCTOR)),
+              editNode("C3", "rawphp", editHistory(2, BY_INSTRUCTOR_ONLY)),
+            ]),
+          ),
+        );
+        const got = yield* readWith(t);
+        assert.strictEqual(got.length, 1);
+        assert.strictEqual(got[0]?.body, "please fix");
+        assert.deepStrictEqual(
+          got[0]?.inline.map((c) => c.body),
+          ["untouched", "own touch-up"],
+        );
+        assert.deepStrictEqual(t.calls(), [
+          feedbackCall(PR_FEEDBACK_QUERY),
+          editorCall("C1", "C2", "C3"),
+        ]);
+      }),
+  );
+
+  it.effect("an unedited inline comment costs no second call", () =>
+    Effect.gen(function* () {
+      const inline = [inlineNode("plain", "src/a.rs", 7, "rawphp")];
+      const t = setup(reply(feedbackReply([reviewWith("2026-10-04T11:00:00Z", inline)], [])));
+      const got = yield* readWith(t);
+      assert.strictEqual(got[0]?.inline.length, 1);
+      assert.strictEqual(t.calls().length, 1);
+    }),
+  );
+
+  it.effect("an edited inline comment whose whole history is an instructor's is kept", () =>
+    Effect.gen(function* () {
+      const inline = [editedInline("touched up", "PRRC_abc")];
+      const t = setup(
+        reply(feedbackReply([reviewWith("2026-10-04T11:00:00Z", inline)], [])),
+        reply(editNodesReply([editNode("PRRC_abc", "rawphp", editHistory(2, BY_INSTRUCTOR_ONLY))])),
+      );
+      const got = yield* readWith(t);
+      assert.strictEqual(got[0]?.inline[0]?.body, "touched up");
+      assert.deepStrictEqual(t.calls(), [feedbackCall(PR_FEEDBACK_QUERY), editorCall("PRRC_abc")]);
+    }),
+  );
+
+  /** Reads one review whose one inline comment `PRRC_abc` was edited, with this answer to the history query. */
+  const inlineKeptGiven = (answer: string) =>
+    Effect.gen(function* () {
+      const inline = [editedInline("touched up", "PRRC_abc")];
+      const t = setup(
+        reply(feedbackReply([reviewWith("2026-10-04T11:00:00Z", inline)], [])),
+        reply(answer),
+      );
+      const got = yield* readWith(t);
+      assert.strictEqual(got.length, 1, "the review stays");
+      return got[0]?.inline.map((c) => c.body) ?? [];
+    });
+
+  it.effect("an edited inline comment with a cut-off history is dropped and the review stays", () =>
+    Effect.gen(function* () {
+      const answer = editNodesReply([
+        editNode("PRRC_abc", "rawphp", editHistory(3, BY_INSTRUCTOR_ONLY)),
+      ]);
+      assert.deepStrictEqual(yield* inlineKeptGiven(answer), []);
+    }),
+  );
+
+  it.effect(
+    "an edited inline comment with a full page of edits is dropped and the review stays",
+    () =>
+      Effect.gen(function* () {
+        // A hundred entries, all the instructor's, and the total says no more: a full page may
+        // still hide older ones.
+        const history = editHistory(
+          100,
+          Array.from({ length: 100 }, () => [EDITED_AT, "rawphp"] as const),
+        );
+        const answer = editNodesReply([editNode("PRRC_abc", "rawphp", history)]);
+        assert.deepStrictEqual(yield* inlineKeptGiven(answer), []);
+      }),
+  );
+
+  it.effect("an edited inline comment touched by a bot with an instructor's login is dropped", () =>
+    Effect.gen(function* () {
+      const bot = { __typename: "Bot", login: "rawphp" };
+      const rawphp = person("rawphp");
+      const history = (first: Json, second: Json): Json => ({
+        totalCount: 2,
+        nodes: [
+          { editedAt: EDITED_AT, editor: first },
+          { editedAt: "2026-10-04T11:00:00Z", editor: second },
+        ],
+      });
+      // The last editor is the bot.
+      const lastEditorIsABot = {
+        id: "PRRC_abc",
+        lastEditedAt: EDITED_AT,
+        editor: bot,
+        userContentEdits: history(bot, rawphp),
+      };
+      assert.deepStrictEqual(yield* inlineKeptGiven(editNodesReply([lastEditorIsABot])), []);
+      // The bot is one of the earlier edits.
+      const botInTheHistory = {
+        id: "PRRC_abc",
+        lastEditedAt: EDITED_AT,
+        editor: rawphp,
+        userContentEdits: history(rawphp, bot),
+      };
+      assert.deepStrictEqual(yield* inlineKeptGiven(editNodesReply([botInTheHistory])), []);
+    }),
+  );
+
+  it.effect(
+    "a bot as the last editor is dropped though the newest entry is a user of the same login",
+    () =>
+      Effect.gen(function* () {
+        // The history agrees with the editor by login, but the last editor is not a person.
+        const node = {
+          id: "PRRC_abc",
+          lastEditedAt: EDITED_AT,
+          editor: { __typename: "Bot", login: "rawphp" },
+          userContentEdits: editHistory(2, BY_INSTRUCTOR_ONLY),
+        };
+        assert.deepStrictEqual(yield* inlineKeptGiven(editNodesReply([node])), []);
+      }),
+  );
+
+  it.effect(
+    "an edited inline comment that is gone or has no id is dropped and the review stays",
+    () =>
+      Effect.gen(function* () {
+        const inline = [editedInline("gone", "PRRC_gone"), editedInline("no id", null)];
+        const t = setup(
+          reply(feedbackReply([reviewWith("2026-10-04T11:00:00Z", inline)], [])),
+          reply(editNodesReply([null])),
+        );
+        const got = yield* readWith(t);
+        assert.strictEqual(got.length, 1);
+        assert.deepStrictEqual(got[0]?.inline, []);
+        // Only the one with an id was looked up.
+        assert.deepStrictEqual(t.calls(), [
+          feedbackCall(PR_FEEDBACK_QUERY),
+          editorCall("PRRC_gone"),
+        ]);
+      }),
+  );
+
+  const editedInlineList = (from: number, n: number): Array<Json> =>
+    Array.from({ length: n }, (_, k) => editedInline(`note ${from + k}`, `E${from + k}`));
+  const wholeHistoryNode = (i: number): Json =>
+    editNode(`E${i}`, "rawphp", editHistory(2, BY_INSTRUCTOR_ONLY));
+
+  it.effect("the edited inline comments of every review are read with one extra call", () =>
+    Effect.gen(function* () {
+      const reviews = [
+        reviewNode(
+          11,
+          "COMMENTED",
+          "one",
+          "2026-10-04T11:00:00Z",
+          "rawphp",
+          editedInlineList(0, 3),
+        ),
+        reviewNode(
+          12,
+          "COMMENTED",
+          "two",
+          "2026-10-04T11:01:00Z",
+          "rawphp",
+          editedInlineList(3, 2),
+        ),
+      ];
+      const nodes = Array.from({ length: 5 }, (_, i) => wholeHistoryNode(i));
+      // E1's last editor is a stranger.
+      nodes[1] = editNode("E1", "stranger", editHistory(2, BY_STRANGER));
+      // The answer comes in any order: it is matched by id, not by position.
+      const t = setup(reply(feedbackReply(reviews, [])), reply(editNodesReply(nodes.toReversed())));
+      const got = yield* readWith(t);
+      assert.strictEqual(got.length, 2);
+      assert.deepStrictEqual(
+        got[0]?.inline.map((c) => c.body),
+        ["note 0", "note 2"],
+      );
+      assert.deepStrictEqual(
+        got[1]?.inline.map((c) => c.body),
+        ["note 3", "note 4"],
+      );
+      assert.deepStrictEqual(t.calls(), [
+        feedbackCall(PR_FEEDBACK_QUERY),
+        editorCall("E0", "E1", "E2", "E3", "E4"),
+      ]);
+    }),
+  );
+
+  it.effect("a hundred and one edited inline comments are read with two extra calls", () =>
+    Effect.gen(function* () {
+      const review = reviewNode(
+        11,
+        "COMMENTED",
+        "many",
+        "2026-10-04T11:00:00Z",
+        "rawphp",
+        editedInlineList(0, 101),
+      );
+      const t = setup(
+        reply(feedbackReply([review], [])),
+        reply(editNodesReply(Array.from({ length: 100 }, (_, i) => wholeHistoryNode(i)))),
+        reply(editNodesReply([wholeHistoryNode(100)])),
+      );
+      const got = yield* readWith(t);
+      assert.strictEqual(got[0]?.inline.length, 101);
+      const ids = (from: number, to: number) =>
+        Array.from({ length: to - from }, (_, i) => `E${from + i}`);
+      assert.deepStrictEqual(t.calls(), [
+        feedbackCall(PR_FEEDBACK_QUERY),
+        editorCall(...ids(0, 100)),
+        editorCall(...ids(100, 101)),
+      ]);
+    }),
+  );
+
+  it.effect("a null entry or a missing id drops only that comment", () =>
+    Effect.gen(function* () {
+      const review = reviewNode(
+        11,
+        "COMMENTED",
+        "mixed",
+        "2026-10-04T11:00:00Z",
+        "rawphp",
+        editedInlineList(0, 4),
+      );
+      // E1 is null, E2 is not in the answer at all.
+      const t = setup(
+        reply(feedbackReply([review], [])),
+        reply(editNodesReply([wholeHistoryNode(0), null, wholeHistoryNode(3)])),
+      );
+      const got = yield* readWith(t);
+      assert.deepStrictEqual(
+        got[0]?.inline.map((c) => c.body),
+        ["note 0", "note 3"],
+      );
+    }),
+  );
+
+  it.effect("an edited inline comment of a review before since makes no extra call", () =>
+    Effect.gen(function* () {
+      const inline = [editedInline("old", "PRRC_old")];
+      const t = setup(reply(feedbackReply([reviewWith("2026-10-04T10:00:00Z", inline)], [])));
+      assert.deepStrictEqual(yield* readWith(t), []);
+      assert.strictEqual(t.calls().length, 1);
+    }),
+  );
+
+  it.effect("an edited inline comment by a stranger makes no extra call", () =>
+    Effect.gen(function* () {
+      const byStranger = { ...editedInline("theirs", "PRRC_x"), author: person("stranger") };
+      const t = setup(reply(feedbackReply([reviewWith("2026-10-04T11:00:00Z", [byStranger])], [])));
+      yield* readWith(t);
+      assert.strictEqual(t.calls().length, 1);
+    }),
+  );
+
+  it.effect("a failed or unreadable edit history read is an error", () =>
+    Effect.gen(function* () {
+      const main = feedbackReply(
+        [reviewWith("2026-10-04T11:00:00Z", [editedInline("touched up", "PRRC_abc")])],
+        [],
+      );
+      const failed = yield* errorWith(setup(reply(main), fail(1, "boom")));
+      assert.strictEqual(failed._tag, "GitHubFailed");
+      const garbled = yield* errorWith(
+        setup(
+          reply(main),
+          reply('{"data":{"nodes":[{"id":"PRRC_abc","lastEditedAt":"2026-10-04T11:05:00Z"}]}}'),
+        ),
+      );
+      assert.strictEqual(garbled._tag, "GitHubParse");
+    }),
+  );
+});

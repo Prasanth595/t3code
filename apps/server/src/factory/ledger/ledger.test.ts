@@ -21,7 +21,7 @@ import type { AppendIo } from "./appendFile.ts";
 import { parseLines, readRun, type Entry, type ReadCause } from "./read.ts";
 import { formatTs } from "./time.ts";
 import { catchLedgerError, scripted, T0, ticking, useTempDirs } from "./testSupport.ts";
-import type { RunId } from "./runId.ts";
+import { feedbackReadFile, type RunId } from "./runId.ts";
 
 const tempDir = useTempDirs();
 
@@ -1378,6 +1378,34 @@ describe("read", () => {
 });
 
 describe("finish", () => {
+  it("finishing a run removes its feedback read file", () => {
+    const dataDir = tempDir();
+    const ledger = create(dataDir);
+    const file = feedbackReadFile(dataDir, softfacRun);
+    NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+    NodeFS.writeFileSync(file, "1000");
+    ledger.finish("stuck", null, null, testCause());
+    expect(NodeFS.existsSync(file)).toBe(false);
+  });
+
+  it("a run that never wrote a feedback read file finishes", () => {
+    const dataDir = tempDir();
+    const ledger = create(dataDir);
+    ledger.finish("stuck", null, null, testCause());
+    expect(NodeFS.existsSync(NodePath.join(dataDir, "feedback"))).toBe(false);
+  });
+
+  it("a reopened run removes its feedback read file when it finishes", () => {
+    const dataDir = tempDir();
+    create(dataDir);
+    const file = feedbackReadFile(dataDir, softfacRun);
+    NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+    NodeFS.writeFileSync(file, "1000");
+    const ledger = reopen(dataDir);
+    ledger.finish("stuck", null, null, testCause());
+    expect(NodeFS.existsSync(file)).toBe(false);
+  });
+
   it("finish writes the summary line with total time and zero gate attempts", () => {
     const dataDir = tempDir();
     const ledger = create(dataDir, scripted([T0, T0 + 90_000]));

@@ -3,7 +3,10 @@ import { describe } from "vite-plus/test";
 
 import type { Entry } from "../ledger/read.ts";
 import {
+  attemptsSincePass,
+  committingFeedback,
   movedSince,
+  nextGateAttempt,
   pendingRelaunch,
   readProgress,
   regateAttempt,
@@ -887,6 +890,166 @@ describe("readProgress: gating again", () => {
       relaunchCommandId(seen.relaunch!, RUN),
       "softfac:rawphp__softfac__10__1:regate:2",
     );
+  });
+
+  describe("instructor feedback", () => {
+    const deciding = (ms: number, n: number, items: ReadonlyArray<string>) =>
+      line(ms, "feedback_relaunching", {
+        n,
+        branch: "t3code/abc",
+        items,
+        message: "Feedback 1 of 1",
+      });
+
+    it("is a relaunch that is pending until the session is recorded, then only the transition is left", () => {
+      const decided = readProgress([...PASS, deciding(8, 1, ["review:11", "issue-comment:42"])]);
+      assert.deepStrictEqual(pendingRelaunch(decided), {
+        fixes: { kind: "feedback", n: 1 },
+        branch: "t3code/abc",
+        message: "Feedback 1 of 1",
+      });
+      assert.strictEqual(committingFeedback(decided), null);
+      // The items are named for good, and the relaunch is counted.
+      assert.deepStrictEqual([...decided.feedbackSent].sort(), ["issue-comment:42", "review:11"]);
+      assert.strictEqual(decided.feedbackRelaunches, 1);
+      assert.strictEqual(decided.feedbackLastItems, 2);
+
+      const launchedSeen = readProgress([
+        ...PASS,
+        deciding(8, 1, ["review:11", "issue-comment:42"]),
+        launched(9),
+      ]);
+      assert.strictEqual(pendingRelaunch(launchedSeen), null);
+      assert.notStrictEqual(committingFeedback(launchedSeen), null);
+
+      const committed = readProgress([
+        ...PASS,
+        deciding(8, 1, ["review:11", "issue-comment:42"]),
+        launched(9),
+        moved(10, "pr-open", "building"),
+      ]);
+      assert.strictEqual(pendingRelaunch(committed), null);
+      assert.strictEqual(committingFeedback(committed), null);
+      assert.strictEqual(committed.feedbackRelaunches, 1);
+      assert.strictEqual(committed.feedbackSent.size, 2);
+    });
+
+    it("is not committing for a re-gate relaunch", () => {
+      const seen = readProgress([...PASS, relaunching(8), launched(9)]);
+      assert.strictEqual(committingFeedback(seen), null);
+    });
+
+    it("counts the highest relaunch and takes the item count of the newest", () => {
+      const seen = readProgress([
+        ...PASS,
+        deciding(8, 1, ["review:1", "review:2"]),
+        deciding(9, 2, ["review:3"]),
+      ]);
+      assert.strictEqual(seen.feedbackRelaunches, 2);
+      assert.strictEqual(seen.feedbackLastItems, 1);
+      assert.strictEqual(seen.feedbackSent.size, 3);
+      assert.strictEqual(readProgress(PASS).feedbackRelaunches, 0);
+      assert.strictEqual(readProgress(PASS).feedbackLastItems, 0);
+    });
+
+    it("names the items a forward sent into a paused session as sent too", () => {
+      const seen = readProgress([
+        ...PASS,
+        line(8, "feedback_forwarding", {
+          n: 1,
+          run_ordinal: 2,
+          items: ["issue-comment:7"],
+          message: "m",
+        }),
+      ]);
+      assert.deepStrictEqual([...seen.feedbackSent], ["issue-comment:7"]);
+      assert.strictEqual(seen.feedbackRelaunches, 0);
+    });
+
+    it("is no gate attempt and no re-gate", () => {
+      const before = readProgress(PASS);
+      const seen = readProgress([
+        ...PASS,
+        deciding(8, 1, ["review:11"]),
+        launched(9),
+        moved(10, "pr-open", "building"),
+      ]);
+      assert.deepStrictEqual(seen.sending, before.sending);
+      assert.strictEqual(seen.regates, before.regates);
+      assert.deepStrictEqual(seen.sentBackAttempts, before.sentBackAttempts);
+      assert.deepStrictEqual(seen.commandAttempts, before.commandAttempts);
+      assert.strictEqual(nextGateAttempt(seen), nextGateAttempt(before));
+      assert.strictEqual(seen.regating || seen.regatePassed || seen.regateSentBack, false);
+    });
+
+    it("closes a passed attempt, so the next gate is a new attempt", () => {
+      const seen = readProgress(PASS);
+      assert.strictEqual(seen.pass?.attempt, 1);
+      assert.strictEqual(nextGateAttempt(seen), 2);
+    });
+
+    it("counts the retry budget from the last pass before the attempt", () => {
+      const seen = readProgress(PASS);
+      assert.strictEqual(attemptsSincePass(seen, 1), 1);
+      assert.strictEqual(attemptsSincePass(seen, 2), 1);
+      assert.strictEqual(attemptsSincePass(seen, 3), 2);
+    });
+
+    it("reads feedback from the pass the run reached pr-open on", () => {
+      const seen = readProgress(PASS);
+      assert.strictEqual(seen.pass?.atMs, 5);
+      assert.strictEqual(seen.prOpenSince, 5);
+      assert.strictEqual(readProgress([]).prOpenSince, null);
+      // A pr-open with no pass on record is the line's own time.
+      assert.strictEqual(readProgress([moved(40, "triage", "pr-open")]).prOpenSince, 40);
+    });
+
+    it("keeps the cursor through a re-gate on a moved base and through a trip via building", () => {
+      const regated = [
+        ...PASS,
+        line(8, "gate_regate", { sha: HEAD, base_sha: MOVED, previous_base_sha: BASE }),
+        command(9),
+        passed(10),
+        step(11, "gate-results-posted"),
+      ];
+      assert.strictEqual(readProgress(regated).prOpenSince, 5);
+      const tripped = [
+        ...regated,
+        moved(12, "pr-open", "building"),
+        moved(13, "building", "pr-open"),
+      ];
+      assert.strictEqual(readProgress(tripped).prOpenSince, 5);
+    });
+
+    it("resets the cursor on a feedback relaunch, and the next pr-open sets it again", () => {
+      const decided = [...PASS, deciding(8, 1, ["review:11"])];
+      assert.strictEqual(readProgress(decided).prOpenSince, null);
+      const building = [...decided, launched(9), moved(10, "pr-open", "building")];
+      assert.strictEqual(readProgress(building).prOpenSince, null);
+      const back = [...building, moved(5_000, "building", "pr-open")];
+      assert.strictEqual(readProgress(back).prOpenSince, 5_000);
+      // Later trips through building and back (a failed re-gate) do not move it.
+      const tripped = [
+        ...back,
+        moved(9_000, "pr-open", "building"),
+        moved(12_000, "building", "pr-open"),
+      ];
+      assert.strictEqual(readProgress(tripped).prOpenSince, 5_000);
+    });
+
+    it("launches under a command id of what the relaunch fixes", () => {
+      const regate = {
+        fixes: { kind: "regate", attempt: 2 },
+        branch: "t3code/abc",
+        message: "boom",
+      } as const;
+      const feedback = { ...regate, fixes: { kind: "feedback", n: 3 } } as const;
+      assert.strictEqual(relaunchCommandId(regate, RUN), "softfac:rawphp__softfac__10__1:regate:2");
+      assert.strictEqual(
+        relaunchCommandId(feedback, RUN),
+        "softfac:rawphp__softfac__10__1:feedback:3",
+      );
+    });
   });
 });
 

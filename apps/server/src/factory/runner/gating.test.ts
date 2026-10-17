@@ -5042,6 +5042,9 @@ describe("regate: a failed re-gate of a ready pull request", () => {
       assert.ok(req.message.includes(URL12), req.message);
       assert.ok(req.message.includes("git push origin HEAD:t3code/abc"), req.message);
       assert.ok(req.message.includes("Do not open another pull request."), req.message);
+      // The resume paragraph is the failed re-gate's, not the feedback one.
+      assert.ok(req.message.includes("the gate failed when it ran again"), req.message);
+      assert.notInclude(req.message, "an instructor left feedback");
       assert.ok(req.message.endsWith(`${END_WITH_DONE}\n\n${BOOM_MESSAGE}`), req.message);
       assertRelaunched(rig);
       // The branch is never deleted: nothing but a worktree was removed, once, at the pass.
