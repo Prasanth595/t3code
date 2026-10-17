@@ -1,5 +1,5 @@
 import { act, type ComponentProps } from "react";
-import { createRoot } from "react-dom/client";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
@@ -30,7 +30,12 @@ vi.mock(import("../../assets/assetUrls"), async (importOriginal) => ({
 
 import { QueuedRunsControl } from "./QueuedRunsControl";
 
-afterEach(() => {
+const roots: Root[] = [];
+
+afterEach(async () => {
+  await act(async () => {
+    for (const root of roots.splice(0)) root.unmount();
+  });
   document.body.replaceChildren();
   vi.unstubAllGlobals();
 });
@@ -49,6 +54,7 @@ async function render(props: Partial<ComponentProps<typeof QueuedRunsControl>> =
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
+  roots.push(root);
   await act(async () => root.render(<QueuedRunsControl {...baseProps} {...props} />));
   return container;
 }
