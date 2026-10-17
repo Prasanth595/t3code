@@ -180,7 +180,11 @@ import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
 import { useAssetUrlRefresh, useAssetUrlState } from "../assets/assetUrls";
 import { cn } from "../lib/utils";
-import { useRemoteOpenResolution, type RemoteOpenMode } from "../remoteOpen";
+import {
+  resolveRemoteOpenState,
+  useRemoteOpenResolution,
+  type RemoteOpenMode,
+} from "../remoteOpen";
 import { useRightPanelStore } from "../rightPanelStore";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
@@ -2311,8 +2315,6 @@ function useChatMarkdownState({
   const canUseShellActions =
     canOperateHost &&
     canUseMarkdownFileShellActions(environmentId, remoteOpen.state.mode, remoteOpen.isResolved);
-  const remoteEnvironmentId =
-    remoteOpen.isResolved && remoteOpen.state.mode !== "local-exec" ? environmentId : null;
   const openMarkdownMedia = (
     source: string,
     resolvedFilePath?: string,
@@ -2345,13 +2347,23 @@ function useChatMarkdownState({
       },
       (error: unknown) => {
         if (mediaRequestId.current !== requestId) return;
+        // Remote-open resolution may settle while the media lookup is in flight.
+        const target =
+          environmentId === null ? null : readPreparedConnection(environmentId)?.target;
+        const isRemote =
+          resolveRemoteOpenState({
+            target: target ?? null,
+            sshAlias: null,
+            remoteOpenTargets: undefined,
+            isDesktopRenderer: window.desktopBridge !== undefined,
+          }).mode !== "local-exec";
         toastManager.add(
           stackedThreadToast({
             type: "error",
             title: "Media unavailable",
             description: describeMediaUnavailable(
               error,
-              remoteEnvironmentId === null ? null : readEnvironmentLabel(remoteEnvironmentId),
+              isRemote && environmentId !== null ? readEnvironmentLabel(environmentId) : null,
             ),
           }),
         );
