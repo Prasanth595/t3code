@@ -331,6 +331,7 @@ function ComposerCommandItemDetail(props: {
 }) {
   const skill = props.item.type === "skill" ? props.item.skill : null;
   const skillSourceKind = skill ? resolveProviderSkillSourceKind(skill) : null;
+  const description = skill?.description ?? props.item.description;
   const provider =
     props.item.type === "skill" || props.item.type === "provider-slash-command"
       ? props.item.provider
@@ -359,9 +360,9 @@ function ComposerCommandItemDetail(props: {
           onClick={props.onClose}
         />
       </div>
-      {props.item.description ? (
+      {description ? (
         <p className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words text-secondary-label text-xs">
-          {props.item.description}
+          {description}
         </p>
       ) : null}
       {provider || skill ? (

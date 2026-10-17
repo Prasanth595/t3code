@@ -1,4 +1,4 @@
-import { EnvironmentId, ProviderDriverKind } from "@t3tools/contracts";
+import { EnvironmentId, ProviderDriverKind, type ServerProviderSkill } from "@t3tools/contracts";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -34,15 +34,40 @@ function commandItem(id: string, description: string): ComposerCommandItem {
   };
 }
 
-function skillItem(id: string, description: string): ComposerCommandItem {
+function skillItem(
+  id: string,
+  description: string,
+  skill: Partial<ServerProviderSkill> = {},
+): ComposerCommandItem {
   return {
     id,
     type: "skill",
     provider: ProviderDriverKind.make("claudeAgent"),
-    skill: { name: id, path: `/skills/${id}/SKILL.md`, enabled: true, description },
+    skill: { name: id, path: `/skills/${id}/SKILL.md`, enabled: true, description, ...skill },
     label: `/skill:${id}`,
     description,
   };
+}
+
+async function renderDetail(item: ComposerCommandItem) {
+  await act(async () =>
+    root.render(
+      <ComposerCommandMenu
+        listId="suggestions"
+        environmentId={EnvironmentId.make("environment-1")}
+        items={[item]}
+        resolvedTheme="light"
+        isLoading={false}
+        triggerKind="skill"
+        activeItemId={item.id}
+        detailItem={item}
+        onHighlightedItemChange={() => {}}
+        onShowDetail={() => {}}
+        onCloseDetail={() => {}}
+        onSelect={() => {}}
+      />,
+    ),
+  );
 }
 
 async function renderActive(item: ComposerCommandItem) {
@@ -91,5 +116,18 @@ describe("ComposerCommandMenu detail button", () => {
 
   it("appears on every skill, even when its description fits", async () => {
     expect(await renderActive(skillItem("tidy", "Fits"))).not.toBeNull();
+  });
+});
+
+describe("ComposerCommandMenu detail panel", () => {
+  it("shows a skill's full description rather than its short one", async () => {
+    await renderDetail(
+      skillItem("release", "Short summary", {
+        shortDescription: "Short summary",
+        description: "The full description with every detail",
+      }),
+    );
+    expect(container.textContent).toContain("The full description with every detail");
+    expect(container.textContent).not.toContain("Short summary");
   });
 });
