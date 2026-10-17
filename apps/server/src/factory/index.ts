@@ -342,13 +342,15 @@ export const serverStartedMs = (): number => Math.round(performance.timeOrigin);
  */
 const SERVER_STARTS_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-/** The pass over this machine: GitHub through `gh`, the ledger under `dataDir`, the wall clock. */
+/**
+ * The pass over this machine: GitHub through `gh`, the ledger under `dataDir`, the wall clock.
+ * It does not know which repos are watched: `startFactory` adds `watchedRepos`.
+ */
 export const liveWorld = (
   machine: MachineConfig,
   dataDir: string,
   process: FactoryProcess["Service"],
   sessions: T3Sessions.FactorySessions["Service"],
-  watchedRepos: Effect.Effect<ReadonlyArray<WatchedRepo>, PassError>,
   clock: () => number,
   host: string,
   attention: Pick<Attention["Service"], "raise" | "clear">,
@@ -357,7 +359,7 @@ export const liveWorld = (
   onProject?: (repo: string, reading: RepoConfigReading) => void,
   // Built once per process by the factory, so a reload's new world goes on from the old one's.
   { gating, claimMemo }: LiveShared = { gating: new Set(), claimMemo: new ClaimMemo() },
-): PassWorld => {
+): Omit<PassWorld, "watchedRepos"> => {
   const withProcess = <A, E>(effect: Effect.Effect<A, E, FactoryProcess>) =>
     Effect.provideService(effect, FactoryProcess, process);
   const githubFor = (watched: WatchedRepo) =>
@@ -484,7 +486,6 @@ export const liveWorld = (
       return { kind: "started" } as const;
     });
   return {
-    watchedRepos,
     project: (watched) =>
       withProcess(projectFromBase(githubFor(watched))).pipe(
         Effect.tap((project) =>
@@ -699,7 +700,7 @@ export interface RuntimeOptions {
   readonly restartDelay?: Duration.Input;
   /** Where the gate fetches `<owner>/<name>.git` from. Default `https://github.com`; a test passes a `file://` base. */
   readonly gateRemoteBase?: string;
-  /** Called with each world a start or reload builds, right after `liveWorld` returns: for a test that needs the pass world a reload built. */
+  /** Called with each world a start or reload builds, once the world is built: for a test that needs the pass world a reload built. */
   readonly onWorld?: (world: PassWorld) => void;
 }
 
@@ -775,22 +776,25 @@ const startFactory = (options: RuntimeOptions) =>
     const start = (machine: MachineConfig) =>
       Effect.gen(function* () {
         // The loop is made after the world, so a gate that ends wakes whatever loop there is then.
-        const world = liveWorld(
-          machine,
-          factoryDir,
-          process,
-          sessions,
-          listWatched.pipe(Effect.mapError(asPassError("t3"))),
-          () => Date.now(),
-          hostName(),
-          attention,
-          { gate, wake: Effect.suspend(() => state.loop?.wake ?? Effect.void), scope },
-          options.gateRemoteBase,
-          (repo, reading) => {
-            readings.set(repo, reading);
-          },
-          shared,
-        );
+        const world: PassWorld = {
+          ...liveWorld(
+            machine,
+            factoryDir,
+            process,
+            sessions,
+            () => Date.now(),
+            hostName(),
+            attention,
+            { gate, wake: Effect.suspend(() => state.loop?.wake ?? Effect.void), scope },
+            options.gateRemoteBase,
+            (repo, reading) => {
+              readings.set(repo, reading);
+            },
+            shared,
+          ),
+          // Where the list comes from is known here alone.
+          watchedRepos: listWatched.pipe(Effect.mapError(asPassError("t3"))),
+        };
         options.onWorld?.(world);
         state.current = { machine, world };
         state.status = {

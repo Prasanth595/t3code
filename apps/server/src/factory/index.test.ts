@@ -77,9 +77,6 @@ const stubSessions = Sessions.FactorySessions.of({
 });
 const noSessions = Layer.succeed(Sessions.FactorySessions, stubSessions);
 
-/** A pass world's list of watched repos that nobody reads: the tests of the world's other methods. */
-const watchedNow: PassWorld["watchedRepos"] = Effect.succeed([]);
-
 const A_B: WatchedProject = { repo: "a/b", path: "/b", title: "B" };
 const C_D: WatchedProject = { repo: "c/d", path: "/d", title: "D" };
 
@@ -729,7 +726,6 @@ describe("liveWorld", () => {
       "/factory-test/data",
       process,
       stubSessions,
-      watchedNow,
       () => NOW,
       "mac-mini",
       noAttention,
@@ -1147,7 +1143,6 @@ describe("liveWorld", () => {
         dataDir,
         process,
         stubSessions,
-        watchedNow,
         () => NOW,
         "mac-mini",
         noAttention,
@@ -1179,7 +1174,6 @@ describe("liveWorld", () => {
         dataDir,
         process,
         stubSessions,
-        watchedNow,
         () => NOW,
         "mac-mini",
         noAttention,
@@ -1217,7 +1211,6 @@ describe("liveWorld", () => {
         downDir,
         process,
         stubSessions,
-        watchedNow,
         () => NOW,
         "mac-mini",
         noAttention,
@@ -1335,7 +1328,6 @@ describe("the gate in the background", () => {
           ...stubSessions,
           archive: (threadId) => Effect.sync(() => void archived.push(threadId)),
         }),
-        watchedNow,
         () => 1_000,
         "mac-mini",
         noAttention,
@@ -1386,7 +1378,6 @@ describe("the gate in the background", () => {
           dataDir,
           gh,
           stubSessions,
-          watchedNow,
           () => 1_000,
           "mac-mini",
           noAttention,
@@ -1467,7 +1458,6 @@ describe("the gate in the background", () => {
           dataDir,
           deadGh,
           sessions,
-          watchedNow,
           () => 1_000,
           "mac-mini",
           noAttention,
@@ -1517,7 +1507,6 @@ describe("the gate in the background", () => {
           dataDir,
           deadGh,
           sessions,
-          watchedNow,
           () => 1_000,
           "mac-mini",
           noAttention,
@@ -1544,7 +1533,6 @@ describe("the gate in the background", () => {
           dataDir,
           deadGh,
           sessions,
-          watchedNow,
           () => 1_000,
           "mac-mini",
           noAttention,
@@ -1587,7 +1575,6 @@ describe("the gate in the background", () => {
         dataDir,
         quietGh,
         sessions,
-        watchedNow,
         () => 1_000,
         "mac-mini",
         {
@@ -1637,7 +1624,6 @@ describe("the gate in the background", () => {
         dataDir,
         deadGh,
         sessions,
-        watchedNow,
         () => 1_000,
         "mac-mini",
         noAttention,
@@ -1764,7 +1750,6 @@ describe("the gate in the background", () => {
         dataDir,
         { run: () => Effect.die("no gh") },
         stubSessions,
-        watchedNow,
         () => 2_000,
         "mac-mini",
         noAttention,
@@ -1816,7 +1801,6 @@ describe("the gate in the background", () => {
           dataDir,
           { run: () => Effect.die("no gh") },
           stubSessions,
-          watchedNow,
           () => 2_000,
           "mac-mini",
           noAttention,
