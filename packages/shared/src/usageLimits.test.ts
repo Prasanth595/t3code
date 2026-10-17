@@ -558,6 +558,7 @@ describe("pools", () => {
         {
           ...laptop,
           serverConfig: {
+            providers: [],
             usageLimitSources: [{ ...source, accounts: [withoutEmail("a.json", "ws-1")] }],
           },
         },
@@ -567,6 +568,7 @@ describe("pools", () => {
         {
           ...laptop,
           serverConfig: {
+            providers: [],
             usageLimitSources: [{ ...source, accounts: [withoutEmail("a.json", "ws-2")] }],
           },
         },
@@ -727,10 +729,16 @@ describe("pools", () => {
     };
     const hub = { ...source, accounts: [seat] };
     const input = new Map([
-      [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { usageLimitSources: [hub] } }],
+      [
+        EnvironmentId.make("env-a"),
+        { ...laptop, serverConfig: { providers: [], usageLimitSources: [hub] } },
+      ],
       [
         EnvironmentId.make("env-b"),
-        { entry: { target: { label: "Desktop" } }, serverConfig: { usageLimitSources: [hub] } },
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: { providers: [], usageLimitSources: [hub] },
+        },
       ],
     ]);
     const accounts = collectLimitAccounts(input);
@@ -753,7 +761,10 @@ describe("pools", () => {
           new Map([
             [
               EnvironmentId.make("env-a"),
-              { ...laptop, serverConfig: { usageLimitSources: [{ ...source, accounts }] } },
+              {
+                ...laptop,
+                serverConfig: { providers: [], usageLimitSources: [{ ...source, accounts }] },
+              },
             ],
           ]),
         ),
