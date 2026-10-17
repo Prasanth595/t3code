@@ -74,6 +74,7 @@ const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
   stopRun: vi.fn(),
   pauseClaims: vi.fn(),
   resumeClaims: vi.fn(),
+  dismissAttention: vi.fn(),
   ...overrides,
 });
 
