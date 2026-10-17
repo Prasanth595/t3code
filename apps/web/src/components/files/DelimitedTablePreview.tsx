@@ -4,7 +4,6 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 import { parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
-import { useMemo } from "react";
 
 import { px0Table } from "~/state/projects";
 
@@ -18,10 +17,7 @@ export function DelimitedTablePreview(props: {
   readonly cwd?: string;
   readonly path?: string;
 }) {
-  const fallback = useMemo(
-    () => parseDelimitedPreview(props.text, props.delimiter),
-    [props.text, props.delimiter],
-  );
+  const fallback = parseDelimitedPreview(props.text, props.delimiter);
   if (props.environmentId && props.cwd && props.path) {
     return (
       <WorkspaceTable
