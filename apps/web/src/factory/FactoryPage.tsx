@@ -30,7 +30,14 @@ export function FactoryPage() {
     }
   };
 
-  const failed = status.status === "error" ? status : runs.status === "error" ? runs : null;
+  // A failed poll only replaces the page while there is nothing to show; otherwise it is a notice.
+  const errored = [status, runs].filter((resource) => resource.status === "error");
+  const failed = errored.find((resource) => resource.data === null) ?? null;
+  const stale = failed === null ? (errored[0] ?? null) : null;
+  const retry = () => {
+    status.refresh();
+    runs.refresh();
+  };
   // The age labels move on when a poll lands, not on every render.
   const nowMs = useMemo(() => Date.now(), [status.data, runs.data]);
   const report = status.data;
@@ -38,20 +45,25 @@ export function FactoryPage() {
 
   let body;
   if (failed) {
-    body = (
-      <FactoryError
-        message={messageOf(failed.error)}
-        onRetry={() => {
-          status.refresh();
-          runs.refresh();
-        }}
-      />
-    );
+    body = <FactoryError message={messageOf(failed.error)} onRetry={retry} />;
   } else if (report === null || runs.data === null) {
     body = <FactoryLoading label="Loading factory" />;
   } else {
     body = (
       <>
+        {stale ? (
+          <div
+            className="flex items-center gap-2 rounded-lg border bg-card px-3 py-2 text-sm text-muted-foreground"
+            role="alert"
+          >
+            <span className="min-w-0 flex-1 truncate">
+              Could not refresh: {messageOf(stale.error)}
+            </span>
+            <Button onClick={retry} size="sm" variant="outline">
+              Retry
+            </Button>
+          </div>
+        ) : null}
         {report.state === "idle" ? (
           <p className="rounded-lg border bg-card px-3 py-2 text-sm text-muted-foreground">
             The factory is idle{report.reason ? `: ${report.reason}` : "."}
