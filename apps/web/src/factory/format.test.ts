@@ -123,6 +123,24 @@ describe("lastGateOutput", () => {
     expect(out.message).toBe("third");
   });
 
+  it("shows the message sent after the last attempt failed", () => {
+    const out = lastGateOutput([
+      entry("gate_command", { attempt: 1, command: "pnpm lint", exit_code: 1, duration_ms: 40 }),
+      entry("regate_relaunching", { attempt: 1, branch: "b", message: "lint failed" }),
+    ]);
+    expect(out.message).toBe("lint failed");
+  });
+
+  it("drops a message about an earlier attempt once a later attempt has run", () => {
+    const out = lastGateOutput([
+      entry("gate_command", { attempt: 1, command: "pnpm lint", exit_code: 1, duration_ms: 40 }),
+      entry("regate_relaunching", { attempt: 1, branch: "b", message: "lint failed" }),
+      entry("gate_command", { attempt: 2, command: "pnpm lint", exit_code: 0, duration_ms: 41 }),
+    ]);
+    expect(out.attempt).toBe(2);
+    expect(out.message).toBeNull();
+  });
+
   it("keeps a stuck reason only when it mentions the gate", () => {
     expect(
       lastGateOutput([entry("stuck", { reason: "the Gate failed 3 times" })]).stuckReason,
