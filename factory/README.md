@@ -90,7 +90,7 @@ The Factory pages work on a phone. They run in the fork's own web, so open the f
 
    It maps the server to Tailscale HTTPS and prints a pairing link such as `https://<machine>.<tailnet>.ts.net/pair#token=...`. Treat the link as a password.
 
-3. Open the link in the phone's browser, which signs it in. Then open `/factory` on that same origin. The machine config is at `/settings/factory`.
+3. Open the link in the phone's browser, which signs it in. Then open `/factory` on that same origin. The machine config is at `/settings/factory`. It names no model: each issue's session runs on the T3 project's default model, falling back to the default model in T3's own Settings, so the model is picked once, in T3.
 4. Add it to the home screen: in iOS Safari, Share, then Add to Home Screen; in Android Chrome, the menu, then Add to home screen.
 
 The pages use the paired session, so there is no factory token to set. Pause, resume and stop need the `orchestration:operate` scope that a normal pairing carries. A connection through T3 Connect (the relay) does not reach the Factory pages yet; pair directly as above.
