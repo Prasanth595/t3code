@@ -9,6 +9,17 @@ import * as OtlpLogger from "effect/observability/OtlpLogger";
 
 import * as ServerConfig from "./config.ts";
 
+const consoleLogger = (format: ServerConfig.LogFormat) => {
+  switch (format) {
+    case "pretty":
+      return Logger.consolePretty();
+    case "logfmt":
+      return Logger.consoleLogFmt;
+    case "json":
+      return Logger.consoleJson;
+  }
+};
+
 export const layer = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const hostName = yield* HostProcess.Hostname;
@@ -33,9 +44,7 @@ export const layer = Effect.gen(function* () {
   // messages as log records stamped with their trace and span ids, so it is a
   // superset: keeping both would export every in-span message twice.
   const layerLogger = Logger.layer(
-    otlpLogger === undefined
-      ? [Logger.consolePretty(), Logger.tracerLogger]
-      : [Logger.consolePretty(), otlpLogger],
+    [consoleLogger(ServerConfig.resolveLogFormat(config)), otlpLogger ?? Logger.tracerLogger],
     { mergeWithExisting: false },
   ).pipe(
     Layer.provide(OtlpExporter.layerFlusher),

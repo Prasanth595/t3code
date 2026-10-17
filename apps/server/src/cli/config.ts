@@ -94,6 +94,10 @@ export const traceMaxFilesConfig = Config.Int("T3CODE_TRACE_MAX_FILES").pipe(
 
 const EnvServerConfig = Config.all({
   logLevel: Config.LogLevel("T3CODE_LOG_LEVEL").pipe(Config.withDefault("Info")),
+  logFormat: Config.schema(ServerConfig.LogFormat, "T3CODE_LOG_FORMAT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
   traceMinLevel: Config.LogLevel("T3CODE_TRACE_MIN_LEVEL").pipe(Config.withDefault("Info")),
   traceTimingEnabled: Config.Boolean("T3CODE_TRACE_TIMING_ENABLED").pipe(Config.withDefault(true)),
   traceFile: traceFileConfig,
@@ -439,6 +443,7 @@ export const resolveServerConfig = (
 
     const config: ServerConfig.ServerConfig["Service"] = {
       logLevel,
+      logFormat: env.logFormat,
       traceMinLevel: env.traceMinLevel,
       traceTimingEnabled: env.traceTimingEnabled,
       traceBatchWindowMs: env.traceBatchWindowMs,

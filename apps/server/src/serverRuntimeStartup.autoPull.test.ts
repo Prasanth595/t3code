@@ -76,6 +76,7 @@ it.effect("parks automatic pull until activation without delaying command readin
           )),
           baseDir: cwd,
           logLevel: "Error",
+          logFormat: "pretty",
           traceMinLevel: "Info",
           traceTimingEnabled: false,
           traceBatchWindowMs: 200,

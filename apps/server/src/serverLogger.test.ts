@@ -2,6 +2,7 @@ import * as NodePath from "@effect/platform-node/NodePath";
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeOS from "node:os";
 import * as ConfigProvider from "effect/ConfigProvider";
+import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -46,6 +47,7 @@ const layerConfig = (overrides: Partial<ServerConfig.ServerConfig["Service"]>) =
       const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
       return ServerConfig.make({
         logLevel: "Info",
+        logFormat: "pretty",
         traceMinLevel: "Info",
         traceTimingEnabled: false,
         traceBatchWindowMs: 200,
@@ -130,6 +132,37 @@ const logInSpanThrough = (overrides: Partial<ServerConfig.ServerConfig["Service"
   });
 
 describe("ServerLoggerLive", () => {
+  it.effect("writes each message as one JSON line when the log format is json", () =>
+    Effect.gen(function* () {
+      const lines: Array<unknown> = [];
+      const testConsole = {
+        ...globalThis.console,
+        log: (...args: ReadonlyArray<unknown>) => {
+          lines.push(...args);
+        },
+      } satisfies Console.Console;
+
+      yield* Effect.logWarning("server logger under test").pipe(
+        Effect.annotateLogs({ slice: "app-t3code-agents.slice" }),
+        Effect.provide(
+          ServerLogger.layer.pipe(
+            Layer.provide(layerConfig({ logFormat: "json" })),
+            Layer.provide(layerCollector([])),
+          ),
+        ),
+        Effect.provideService(Console.Console, testConsole),
+      );
+
+      assert.lengthOf(lines, 1);
+      assert.notInclude(String(lines[0]), "\n");
+      assert.deepInclude(JSON.parse(String(lines[0])), {
+        message: "server logger under test",
+        level: "WARN",
+        annotations: { slice: "app-t3code-agents.slice" },
+      });
+    }),
+  );
+
   it.effect("exports log records to the configured logs endpoint", () =>
     Effect.gen(function* () {
       const requests = yield* logThrough({

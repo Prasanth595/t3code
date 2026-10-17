@@ -4,7 +4,7 @@
 
 T3 Code has one server-side observability model:
 
-- pretty logs go to stdout for humans
+- logs go to stdout: pretty on a terminal, one JSON record per line under a service manager
 - completed spans go to a local NDJSON trace file
 - traces, metrics, and logs can also be exported over OTLP to a real backend like Grafana LGTM
 
@@ -19,7 +19,10 @@ stdout/stderr at `~/.t3/ssh-launch/<state>/server.log`.
 Logs are human-facing:
 
 - destination: stdout
-- format: `Logger.consolePretty()`
+- format: `T3CODE_LOG_FORMAT` (`pretty`, `logfmt`, or `json`). Unset, it is `pretty` on a terminal
+  and in desktop mode and `json` otherwise, because journald and log files store each output line
+  as its own record. Outside `pretty`, headless startup logs one ready line instead of printing a
+  pairing token and QR code that would persist in the log.
 - normal local persistence: none
 - SSH-managed launch persistence: `~/.t3/ssh-launch/<state>/server.log`
 - remote export: OTLP only, when configured
@@ -589,6 +592,11 @@ exports traces and logs only; the main process records no metrics, so the metric
 to the backend alone.
 
 ### Env Vars
+
+stdout logs:
+
+- `T3CODE_LOG_LEVEL`: minimum level, default `Info`
+- `T3CODE_LOG_FORMAT`: `pretty`, `logfmt`, or `json`; see [Logs](#logs) for the default
 
 Local trace file:
 

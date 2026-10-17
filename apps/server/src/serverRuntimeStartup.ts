@@ -50,6 +50,7 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import {
   formatHeadlessServeOutput,
   formatHostForUrl,
+  headlessServeConnectionString,
   isWildcardHost,
   issueHeadlessServeAccessInfo,
 } from "./startupAccess.ts";
@@ -585,12 +586,21 @@ const make = (options?: StartupOptions) =>
             }),
             Effect.ignoreCause({ log: true }),
           );
-          if (serverConfig.startupPresentation === "headless") {
+          if (
+            serverConfig.startupPresentation === "headless" &&
+            ServerConfig.resolveLogFormat(serverConfig) === "pretty"
+          ) {
             yield* Effect.logDebug("startup phase: headless access info");
             const accessInfo = yield* issueHeadlessServeAccessInfo();
             yield* runStartupPhase(
               "headless.output",
               Console.log(formatHeadlessServeOutput(accessInfo)),
+            );
+          } else if (serverConfig.startupPresentation === "headless") {
+            // A pairing token printed here would persist in the service's log.
+            const connectionString = yield* headlessServeConnectionString;
+            yield* Effect.logInfo("T3 Code server is ready. Run `t3 pair` to pair a client.").pipe(
+              Effect.annotateLogs({ connectionString }),
             );
           } else {
             yield* Effect.logDebug("startup phase: browser open check");

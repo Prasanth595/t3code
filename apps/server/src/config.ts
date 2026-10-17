@@ -21,6 +21,16 @@ export type RuntimeMode = typeof RuntimeMode.Type;
 export const StartupPresentation = Schema.Literals(["browser", "headless"]);
 export type StartupPresentation = typeof StartupPresentation.Type;
 
+export const LogFormat = Schema.Literals(["pretty", "logfmt", "json"]);
+export type LogFormat = typeof LogFormat.Type;
+
+/** journald and log files keep each output line as a separate record. */
+export const resolveLogFormat = (config: {
+  readonly logFormat: LogFormat | undefined;
+  readonly mode: RuntimeMode;
+}): LogFormat =>
+  config.logFormat ?? (config.mode === "desktop" || process.stdout.isTTY ? "pretty" : "json");
+
 export interface ServerDerivedPaths {
   readonly stateDir: string;
   readonly dbPath: string;
@@ -50,6 +60,7 @@ export class ServerConfig extends Context.Service<
   ServerConfig,
   ServerDerivedPaths & {
     readonly logLevel: LogLevel.LogLevel;
+    readonly logFormat: LogFormat | undefined;
     readonly traceMinLevel: LogLevel.LogLevel;
     readonly traceTimingEnabled: boolean;
     readonly traceBatchWindowMs: number;
@@ -193,6 +204,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
 
   return ServerConfig.of({
     logLevel: "Error",
+    logFormat: "pretty",
     traceMinLevel: "Info",
     traceTimingEnabled: true,
     traceBatchWindowMs: 200,

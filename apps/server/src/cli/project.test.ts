@@ -55,6 +55,7 @@ const makeConfig = (baseDir: string) =>
     const derivedPaths = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
     return {
       logLevel: "Info",
+      logFormat: "pretty",
       traceMinLevel: "Info",
       traceTimingEnabled: true,
       traceBatchWindowMs: 200,

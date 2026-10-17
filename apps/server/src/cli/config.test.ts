@@ -20,7 +20,7 @@ import * as NetService from "@t3tools/shared/Net";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { deriveServerPaths } from "../config.ts";
+import { deriveServerPaths, resolveLogFormat } from "../config.ts";
 import { resolveServerConfig } from "./config.ts";
 
 const deriveExplicitServerPaths = (baseDir: string, devUrl: URL | undefined) =>
@@ -1045,6 +1045,26 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
         resolved.otlpMetricsExport.protocol,
         resolved.otlpLogsExport.protocol,
       ]).toEqual(["http/protobuf", "http/protobuf", "http/protobuf"]);
+    }),
+  );
+
+  it.effect("reads the log format from env", () =>
+    Effect.gen(function* () {
+      const { join } = yield* Path.Path;
+      const baseDir = join(NodeOS.tmpdir(), "t3-cli-config-log-format-base");
+
+      const resolved = yield* resolveServerConfig(minimalWebFlags(baseDir), Option.none()).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: { T3CODE_LOG_FORMAT: "logfmt" } })),
+            NetService.layer,
+          ),
+        ),
+      );
+
+      expect(resolved.logFormat).toBe("logfmt");
+      expect(resolveLogFormat(resolved)).toBe("logfmt");
+      expect(resolveLogFormat({ logFormat: undefined, mode: "desktop" })).toBe("pretty");
     }),
   );
 
