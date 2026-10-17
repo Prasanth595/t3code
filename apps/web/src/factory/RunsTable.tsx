@@ -88,7 +88,7 @@ export function RunsTable({ runs, nowMs }: { runs: ReadonlyArray<FactoryRunRow>;
               <TableCell>{run.step ?? run.last_event ?? "—"}</TableCell>
               <TableCell>{formatAge(startedMs(run), nowMs)}</TableCell>
               <TableCell>
-                {run.pr_url ? (
+                {run.pr_url?.startsWith("https://github.com/") ? (
                   <a
                     className="underline-offset-2 hover:underline"
                     href={run.pr_url}
@@ -98,7 +98,7 @@ export function RunsTable({ runs, nowMs }: { runs: ReadonlyArray<FactoryRunRow>;
                     {prLabel(run.pr_url)}
                   </a>
                 ) : (
-                  "—"
+                  run.pr_url || "—"
                 )}
               </TableCell>
               <TableCell>
