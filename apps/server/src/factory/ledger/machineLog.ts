@@ -192,17 +192,87 @@ export const scanMachineLog = (dataDir: string): Array<MachineEntry> => {
 /** How long T3 trouble in the machine log counts as the cause of a session ending badly: ten minutes, fixed. */
 const T3_TROUBLE_WINDOW_MS = 10 * 60 * 1000;
 
+/** How much of the log one backward read takes at a time. */
+const TAIL_CHUNK_BYTES = 64 * 1024;
+
+/**
+ * The entries of the machine log at or after `sinceMs`, oldest first, read backwards from the end
+ * of the file in chunks of `chunkBytes`: the log is append-only and in time order, so the read
+ * stops at the first entry older than `sinceMs` and never decodes the months before it. A line cut
+ * by a chunk boundary is joined with the chunk before it. The file is opened and checked as
+ * `scanMachineLog` opens it; a missing file is an empty log. A line that is not an entry is
+ * skipped, as the full scan skips it.
+ */
+export const machineLogSince = (
+  dataDir: string,
+  sinceMs: number,
+  chunkBytes = TAIL_CHUNK_BYTES,
+): Array<MachineEntry> => {
+  const path = NodePath.join(dataDir, MACHINE_LOG);
+  let fd: number;
+  try {
+    fd = NodeFS.openSync(
+      path,
+      NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW | NodeFS.constants.O_NONBLOCK,
+    );
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") return [];
+    throw new LedgerIoError({ path, cause: error });
+  }
+  // Newest first while reading; reversed on the way out.
+  const newestFirst: Array<MachineEntry> = [];
+  let older = false;
+  const take = (line: Uint8Array) => {
+    if (isBlankLine(line)) return;
+    const object = decodeLine(line);
+    const head = object === null ? null : lineHead(object);
+    if (head === null) return;
+    if (head.ms < sinceMs) {
+      older = true;
+      return;
+    }
+    newestFirst.push(head);
+  };
+  try {
+    const stat = NodeFS.fstatSync(fd);
+    if (!stat.isFile()) throw new Error(NOT_REGULAR);
+    let end = stat.size;
+    // The start of a line the previous chunk cut: its rest comes with the next chunk.
+    let carry: Buffer = Buffer.alloc(0);
+    while (end > 0 && !older) {
+      const start = Math.max(0, end - chunkBytes);
+      const chunk = Buffer.alloc(end - start);
+      NodeFS.readSync(fd, chunk, 0, chunk.length, start);
+      const bytes = carry.length === 0 ? chunk : Buffer.concat([chunk, carry]);
+      let lineEnd = bytes.length;
+      for (let i = bytes.length - 1; i >= 0 && !older; i -= 1) {
+        if (bytes[i] !== NEWLINE) continue;
+        take(bytes.subarray(i + 1, lineEnd));
+        lineEnd = i;
+      }
+      if (older) break;
+      // What is left before the first newline is a whole line only at the start of the file.
+      if (start === 0) take(bytes.subarray(0, lineEnd));
+      else carry = Buffer.from(bytes.subarray(0, lineEnd));
+      end = start;
+    }
+  } catch (error) {
+    throw new LedgerIoError({ path, cause: error });
+  } finally {
+    NodeFS.closeSync(fd);
+  }
+  return newestFirst.reverse();
+};
+
 /**
  * The newest sign of T3 trouble in the machine log at or after `nowMs` minus ten minutes: a
  * `preflight_failed` whose check is `t3` (its `why`), or an `error` whose kind is `t3` (its
- * `message`). Only the machine log is read, never a run's ledger. Null for none, and for a log
- * that does not exist yet.
+ * `message`). Only the machine log is read, never a run's ledger, and only its tail
+ * (`machineLogSince`). Null for none, and for a log that does not exist yet.
  */
 export const t3TroubleSince = (dataDir: string, nowMs: number): string | null => {
-  const since = nowMs - T3_TROUBLE_WINDOW_MS;
   let newest: { readonly ms: number; readonly text: string } | null = null;
-  for (const entry of scanMachineLog(dataDir)) {
-    if (entry.ms < since) continue;
+  for (const entry of machineLogSince(dataDir, nowMs - T3_TROUBLE_WINDOW_MS)) {
     const text =
       entry.event === "preflight_failed" && field(entry.data, "check") === "t3"
         ? field(entry.data, "why")

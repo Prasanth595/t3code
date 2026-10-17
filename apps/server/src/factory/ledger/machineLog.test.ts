@@ -12,6 +12,7 @@ import { MACHINE_EVENT_FIELDS, type MachineEvent } from "./events.ts";
 import {
   MachineLog,
   scanMachineLog,
+  machineLogSince,
   t3TroubleSince,
   type MachineLogOptions,
 } from "./machineLog.ts";
@@ -747,5 +748,51 @@ describe("T3 trouble in the machine log", () => {
 
   it("is none for a missing machine log", () => {
     expect(t3TroubleSince(tempDir(), NOW)).toBeNull();
+  });
+
+  it("stops at the first entry older than the window, so older trouble is not read", () => {
+    const dataDir = tempDir();
+    const entries: Array<[number, MachineEvent]> = [];
+    for (let i = 0; i < 40; i += 1) {
+      entries.push([NOW - 60 * MINUTE + i * MINUTE, t3Error(`old ${i} ${"x".repeat(200)}`)]);
+    }
+    entries.push([NOW - 11 * MINUTE, t3Error("just outside")]);
+    entries.push([NOW - 9 * MINUTE, passStarted]);
+    entries.push([NOW - MINUTE, passStarted]);
+    logWith(dataDir, ...entries);
+    expect(t3TroubleSince(dataDir, NOW)).toBeNull();
+    // Only the window's entries come back, oldest first, whatever the chunk size.
+    const since = NOW - 10 * MINUTE;
+    const expected = scanMachineLog(dataDir).filter((entry) => entry.ms >= since);
+    expect(expected).toHaveLength(2);
+    for (const chunk of [1, 7, 64, 1024, 1 << 16]) {
+      expect(machineLogSince(dataDir, since, chunk), `chunk ${chunk}`).toEqual(expected);
+    }
+  });
+
+  it("reads a line cut by a chunk boundary whole, and the first line of the file", () => {
+    const dataDir = tempDir();
+    const long = (n: number) => t3Error(`${n} ${"message ".repeat(30)}`);
+    logWith(
+      dataDir,
+      [NOW - 8 * MINUTE, long(1)],
+      [NOW - 6 * MINUTE, passStarted],
+      [NOW - 4 * MINUTE, long(2)],
+      [NOW - 2 * MINUTE, long(3)],
+    );
+    const all = scanMachineLog(dataDir);
+    expect(all).toHaveLength(4);
+    // Chunks smaller than a line, equal to one, and odd sizes that land inside and on newlines.
+    for (const chunk of [1, 2, 3, 16, 100, 255, 256, 257, 4096]) {
+      expect(machineLogSince(dataDir, 0, chunk), `chunk ${chunk}`).toEqual(all);
+    }
+    expect(t3TroubleSince(dataDir, NOW)).toBe(`3 ${"message ".repeat(30)}`);
+  });
+
+  it("is none and reads nothing for a missing log, and is an error for a log that is not a file", () => {
+    expect(machineLogSince(tempDir(), 0, 8)).toEqual([]);
+    const dataDir = tempDir();
+    NodeFS.mkdirSync(NodePath.join(dataDir, "events.jsonl"));
+    expect(() => machineLogSince(dataDir, 0)).toThrow(LedgerIoError);
   });
 });
