@@ -8,14 +8,14 @@ await Effect.runPromise(
   Effect.gen(function* () {
     const lane = process.argv[2];
     if (!lane || process.argv.length !== 3)
-      return yield* Effect.fail(
+      return yield* Effect.die(
         new Error(
           "Usage: node apps/server/scripts/i89-offline-fixture.ts <existing-lane-directory>",
         ),
       );
     const receipt = yield* runI89OfflineFixture(lane);
     yield* Console.log(
-      yield* Schema.encodeEffect(Schema.UnknownFromJsonString)({
+      yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
         status: receipt.status,
         directory: receipt.directory,
         workerStarts: receipt.workerStarts,

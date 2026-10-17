@@ -659,7 +659,10 @@ it.effect("startup retries the persisted envelope before allocating a fresh snap
     const retried = Promise.withResolvers<string>();
     yield* Effect.gen(function* () {
       const bytes = yield* Effect.promise(() => retried.promise);
-      assert.equal(bytes, JSON.stringify(pending.envelope));
+      assert.equal(
+        bytes,
+        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(pending.envelope),
+      );
     }).pipe(
       Effect.provide(
         layerBridgeTest({
