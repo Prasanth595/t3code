@@ -99,16 +99,33 @@ const virtualInterface = (address: string) => [
 
 describe("resolveBoundEndpoints", () => {
   it("lists nothing for a loopback-only server", () => {
-    expect(resolveBoundEndpoints({ host: undefined, port: 3773, interfaces: INTERFACES })).toEqual(
-      [],
-    );
     expect(
-      resolveBoundEndpoints({ host: "127.0.0.1", port: 3773, interfaces: INTERFACES }),
+      resolveBoundEndpoints({
+        platform: "linux",
+        host: undefined,
+        port: 3773,
+        interfaces: INTERFACES,
+      }),
+    ).toEqual([]);
+    expect(
+      resolveBoundEndpoints({
+        platform: "linux",
+        host: "127.0.0.1",
+        port: 3773,
+        interfaces: INTERFACES,
+      }),
     ).toEqual([]);
   });
 
   it("lists every external IPv4 address for a wildcard bind, tagging the tailnet one", () => {
-    expect(resolveBoundEndpoints({ host: "0.0.0.0", port: 3773, interfaces: INTERFACES })).toEqual([
+    expect(
+      resolveBoundEndpoints({
+        platform: "linux",
+        host: "0.0.0.0",
+        port: 3773,
+        interfaces: INTERFACES,
+      }),
+    ).toEqual([
       { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
     ]);
@@ -124,11 +141,48 @@ describe("resolveBoundEndpoints", () => {
       bridge100: virtualInterface("192.168.64.1"),
       vmbr0: virtualInterface("192.168.1.20"),
     };
-    expect(resolveBoundEndpoints({ host: "0.0.0.0", port: 3773, interfaces })).toEqual([
+    expect(
+      resolveBoundEndpoints({ platform: "linux", host: "0.0.0.0", port: 3773, interfaces }),
+    ).toEqual([
       { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" },
       { kind: "lan", httpBaseUrl: "http://192.168.1.20:3773/" },
     ]);
+  });
+
+  it("skips VirtualBox and VMware host adapters on Windows by MAC, whatever they are named", () => {
+    const adapter = (address: string, mac: string) => [
+      { ...virtualInterface(address)[0]!, netmask: "255.255.255.0", mac },
+    ];
+    const interfaces = {
+      Ethernet: INTERFACES.en0,
+      "VirtualBox Host-Only Network": adapter("192.168.56.1", "0a:00:27:00:00:0c"),
+      // VirtualBox's Windows driver puts the whole interface index in the last three bytes.
+      "VirtualBox-Host-Only-Netzwerk #2": adapter("192.168.57.1", "0a:00:27:00:01:01"),
+      "VMware Network Adapter VMnet1": adapter("192.168.128.1", "00:50:56:c0:00:01"),
+      "VMware Network Adapter VMnet8": adapter("192.168.150.1", "00:50:56:c0:00:08"),
+      // A server inside a VM: its NIC has a default guest MAC.
+      "Ethernet 2": adapter("192.168.1.30", "08:00:27:5e:1a:22"),
+      "Ethernet 3": adapter("192.168.1.31", "00:50:56:2b:8c:01"),
+      "Ethernet 4": adapter("192.168.1.32", "00:0c:29:4f:8e:35"),
+    };
+    expect(
+      resolveBoundEndpoints({ platform: "win32", host: "0.0.0.0", port: 3773, interfaces }),
+    ).toEqual([
+      { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.30:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.31:3773/" },
+      { kind: "lan", httpBaseUrl: "http://192.168.1.32:3773/" },
+    ]);
+  });
+
+  it("keeps a Linux bridge that took a VirtualBox adapter's MAC, since it carries the LAN address", () => {
+    const interfaces = {
+      br0: [{ ...virtualInterface("192.168.1.55")[0]!, mac: "0a:00:27:00:00:0c" }],
+    };
+    expect(
+      resolveBoundEndpoints({ platform: "linux", host: "0.0.0.0", port: 3773, interfaces }),
+    ).toEqual([{ kind: "lan", httpBaseUrl: "http://192.168.1.55:3773/" }]);
   });
 
   it("tags only addresses on Tailscale's interface as tailnet, not other VPNs in its range", () => {
@@ -138,7 +192,9 @@ describe("resolveBoundEndpoints", () => {
       CloudflareWARP: vpnInterface("100.96.0.1"),
       utun7: vpnInterface("100.85.0.1"),
     };
-    expect(resolveBoundEndpoints({ host: "0.0.0.0", port: 3773, interfaces })).toEqual([
+    expect(
+      resolveBoundEndpoints({ platform: "linux", host: "0.0.0.0", port: 3773, interfaces }),
+    ).toEqual([
       { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
       { kind: "tailnet", httpBaseUrl: "http://100.70.1.2:3773/" },
       { kind: "lan", httpBaseUrl: "http://100.96.0.1:3773/" },
@@ -148,19 +204,31 @@ describe("resolveBoundEndpoints", () => {
 
   it("lists only the bound address for a specific bind", () => {
     expect(
-      resolveBoundEndpoints({ host: "100.101.102.103", port: 3773, interfaces: INTERFACES }),
+      resolveBoundEndpoints({
+        platform: "linux",
+        host: "100.101.102.103",
+        port: 3773,
+        interfaces: INTERFACES,
+      }),
     ).toEqual([{ kind: "tailnet", httpBaseUrl: "http://100.101.102.103:3773/" }]);
   });
 
   it("never reports a host name, which can resolve to another machine per client", () => {
     for (const host of ["server.local", "devbox", "devbox.home.arpa"]) {
-      expect(resolveBoundEndpoints({ host, port: 3773, interfaces: INTERFACES })).toEqual([]);
+      expect(
+        resolveBoundEndpoints({ platform: "linux", host, port: 3773, interfaces: INTERFACES }),
+      ).toEqual([]);
     }
   });
 
   it("never reports a public address, which would carry the credential over plain HTTP", () => {
     expect(
-      resolveBoundEndpoints({ host: "203.0.113.20", port: 3773, interfaces: INTERFACES }),
+      resolveBoundEndpoints({
+        platform: "linux",
+        host: "203.0.113.20",
+        port: 3773,
+        interfaces: INTERFACES,
+      }),
     ).toEqual([]);
   });
 });

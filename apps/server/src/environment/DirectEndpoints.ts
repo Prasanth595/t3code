@@ -14,6 +14,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isPrivateNetworkHost, isTailnetHost } from "@t3tools/shared/hostClassification";
 
 import * as ServerConfig from "../config.ts";
@@ -55,6 +56,24 @@ const VIRTUAL_INTERFACE =
   /^(docker|br-|veth|virbr|vmnet|vboxnet|vEthernet|podman|cni|flannel|cali|lxcbr|lxdbr|bridge1\d\d)/;
 
 /**
+ * Windows keys adapters by connection name, which users can rename and Windows
+ * translates, so there VirtualBox and VMware host adapters are matched by MAC.
+ * VirtualBox's Windows driver builds host-only MACs from `0a:00:27` plus the
+ * interface index. VMware's VMnet host adapters use `00:50:56:c0:00:<n>`,
+ * outside the ranges VMware gives virtual machines. Not used elsewhere: a
+ * Linux bridge can take a member's MAC while carrying the real LAN address.
+ */
+const WINDOWS_VIRTUAL_ADAPTER_MAC = /^(0a:00:27|00:50:56:c0:00):/i;
+
+const isVirtualInterface = (
+  name: string,
+  entries: ReadonlyArray<NodeOS.NetworkInterfaceInfo>,
+  platform: NodeJS.Platform,
+): boolean =>
+  VIRTUAL_INTERFACE.test(name) ||
+  (platform === "win32" && entries.some((entry) => WINDOWS_VIRTUAL_ADAPTER_MAC.test(entry.mac)));
+
+/**
  * Tailscale's own interface: `tailscale0` on Linux, "Tailscale" on Windows.
  * macOS names every tunnel `utunN`, so there it is the one that also carries
  * an address in Tailscale's IPv6 range. Cloudflare WARP and other VPNs assign
@@ -68,6 +87,7 @@ const isTailscaleInterface = (
   entries.some((entry) => entry.family === "IPv6" && isTailnetHost(entry.address));
 
 export function resolveBoundEndpoints(input: {
+  readonly platform: NodeJS.Platform;
   readonly host: string | undefined;
   readonly port: number;
   readonly interfaces: NetworkInterfacesMap;
@@ -80,7 +100,9 @@ export function resolveBoundEndpoints(input: {
   );
   const addresses = isWildcardHost(input.host)
     ? Object.entries(input.interfaces)
-        .flatMap(([name, entries]) => (VIRTUAL_INTERFACE.test(name) ? [] : (entries ?? [])))
+        .flatMap(([name, entries = []]) =>
+          isVirtualInterface(name, entries, input.platform) ? [] : entries,
+        )
         .filter(
           (entry) =>
             !entry.internal && entry.family === "IPv4" && isAdvertisableAddress(entry.address),
@@ -98,10 +120,12 @@ export const make = Effect.gen(function* () {
   const config = yield* ServerConfig.ServerConfig;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
+  const platform = yield* HostProcess.Platform;
 
   const resolve = Effect.gen(function* () {
     const endpoints = [
       ...resolveBoundEndpoints({
+        platform,
         host: config.host,
         port: config.port,
         interfaces: NodeOS.networkInterfaces(),
