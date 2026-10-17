@@ -32,6 +32,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlError from "effect/sql/SqlError";
 import * as Stream from "effect/Stream";
@@ -40,6 +41,7 @@ import { toolOutputImages } from "@t3tools/shared/toolOutput";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as EventStore from "./EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -68,6 +70,14 @@ const layerGit = GitVcsDriver.layer.pipe(
   Layer.provideMerge(NodeServices.layer),
 );
 
+const layerVcsRepair = Layer.unwrap(
+  Effect.map(GitVcsDriver.GitVcsDriver, (git) =>
+    Layer.mock(GitWorkflowService.GitWorkflowService)({
+      currentRefName: (cwd) => git.resolveBranchName(cwd, "HEAD"),
+    }),
+  ),
+).pipe(Layer.provide(layerGit));
+
 const makeLayerTest = <E>(ingestorEventSink: Layer.Layer<EventSink.EventSinkV2, E>) =>
   Layer.mergeAll(
     layerTestDatabase,
@@ -76,6 +86,7 @@ const makeLayerTest = <E>(ingestorEventSink: Layer.Layer<EventSink.EventSinkV2, 
     IdAllocator.layer,
     ThreadCommandExecutor.layer,
     layerGit,
+    layerVcsRepair,
     ProviderEventIngestor.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
@@ -84,6 +95,7 @@ const makeLayerTest = <E>(ingestorEventSink: Layer.Layer<EventSink.EventSinkV2, 
           IdAllocator.layer,
           ThreadCommandExecutor.layer,
           layerGit,
+          layerVcsRepair,
         ),
       ),
     ),
@@ -1695,16 +1707,21 @@ layer("ProviderEventIngestorV2", (it) => {
   );
 
   it.effect.each([
-    { parentMoved: false, failure: null },
-    { parentMoved: true, failure: null },
-    { parentMoved: false, failure: "write" },
-    { parentMoved: false, failure: "git" },
+    { kind: "git", parentMoved: false, failure: null },
+    { kind: "git", parentMoved: true, failure: null },
+    { kind: "git", parentMoved: false, failure: "write" },
+    { kind: "git", parentMoved: false, failure: "git" },
+    { kind: "jj", parentMoved: false, failure: null },
+    { kind: "jj", parentMoved: true, failure: null },
+    { kind: "jj", parentMoved: false, failure: "write" },
+    { kind: "jj", parentMoved: false, failure: "git" },
   ])(
     "rechecks a pending native child's branch after the rename scan: %j",
-    ({ parentMoved, failure }) =>
+    ({ kind, parentMoved, failure }) =>
       Effect.gen(function* () {
         const { worktreePath, command } = yield* makeSharedWorktree;
         const git = yield* GitVcsDriver.GitVcsDriver;
+        const detectedCwds: string[] = [];
         const now = yield* DateTime.now;
         const eventSink = yield* EventSink.EventSinkV2;
         const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -1719,7 +1736,7 @@ layer("ProviderEventIngestorV2", (it) => {
         yield* eventSink.write({ events: [{ ...rootEvent, payload: parent }] });
         const childId = ids.derive.threadFromProviderThread({
           driver: CODEX_DRIVER,
-          nativeThreadId: `child-created-during-rename:${parentMoved}:${failure}`,
+          nativeThreadId: `child-created-during-rename:${kind}:${parentMoved}:${failure}`,
         });
         const beforeCommit = yield* Deferred.make<
           void,
@@ -1752,20 +1769,26 @@ layer("ProviderEventIngestorV2", (it) => {
         const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2.pipe(
           Effect.provide(Layer.fresh(ProviderEventIngestor.layer)),
           Effect.provideService(EventSink.EventSinkV2, gatedSink),
-          Effect.provideService(GitVcsDriver.GitVcsDriver, {
-            ...git,
-            resolveBranchName: (cwd, refName) =>
-              failure === "git"
-                ? Effect.fail(
+          Effect.provide(
+            Layer.mock(GitWorkflowService.GitWorkflowService)({
+              currentRefName: (cwd) => {
+                detectedCwds.push(cwd);
+                if (failure === "git") {
+                  return Effect.fail(
                     new GitCommandError({
                       operation: "ingestor-test",
                       cwd,
-                      command: "rev-parse",
+                      command: "resolve current ref",
                       detail: "Read failed",
                     }),
-                  )
-                : git.resolveBranchName(cwd, refName),
-          }),
+                  );
+                }
+                return kind === "jj"
+                  ? Effect.succeed("generated-branch")
+                  : git.resolveBranchName(cwd, "HEAD");
+              },
+            }),
+          ),
         );
         const providerSessionId = yield* ids.allocate.providerSession({
           providerInstanceId: modelSelection.instanceId,
@@ -1823,6 +1846,7 @@ layer("ProviderEventIngestorV2", (it) => {
         assert.equal(child.branch, failure === null ? "generated-branch" : parent.branch);
         assert.equal(child.worktreePath, parent.worktreePath);
         assert.equal(correctionWrites, failure === "git" ? 0 : 1);
+        assert.deepEqual(detectedCwds, [worktreePath]);
         assert.deepEqual(yield* ingestor.ingestNormalized(creationInput), []);
       }),
   );
@@ -1852,16 +1876,20 @@ layer("ProviderEventIngestorV2", (it) => {
           driver: CODEX_DRIVER,
           nativeThreadId: `no-correction:${scenario}`,
         });
-        let gitReads = 0;
+        let currentRefReads = 0;
         const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2.pipe(
-          Effect.provide(Layer.fresh(ProviderEventIngestor.layer)),
-          Effect.provideService(GitVcsDriver.GitVcsDriver, {
-            ...git,
-            resolveBranchName: (cwd, refName) => {
-              gitReads++;
-              return git.resolveBranchName(cwd, refName);
-            },
-          }),
+          Effect.provide(
+            Layer.fresh(ProviderEventIngestor.layer).pipe(
+              Layer.provide(
+                Layer.mock(GitWorkflowService.GitWorkflowService)({
+                  currentRefName: (cwd) => {
+                    currentRefReads++;
+                    return git.resolveBranchName(cwd, "HEAD");
+                  },
+                }),
+              ),
+            ),
+          ),
         );
         const stored = yield* ingestor.ingestNormalized({
           providerSessionId: yield* ids.allocate.providerSession({
@@ -1888,7 +1916,7 @@ layer("ProviderEventIngestorV2", (it) => {
         });
         assert.equal((yield* projections.getThread(childId)).branch, branch);
         assert.equal(stored.length, 1);
-        assert.equal(gitReads, scenario === "explicit" ? 0 : 1);
+        assert.equal(currentRefReads, scenario === "explicit" ? 0 : 1);
       }),
   );
 

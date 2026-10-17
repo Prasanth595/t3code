@@ -1,4 +1,8 @@
-import { SourceControlProviderKind, VcsProcessSpawnError } from "@t3tools/contracts";
+import {
+  SourceControlProviderKind,
+  VcsProcessSpawnError,
+  VcsUnsupportedOperationError,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -75,7 +79,18 @@ const layerDiscovery = Layer.effect(
 ).pipe(
   Layer.provideMerge(TestSourceControlHost.layer({ process: { run } })),
   Layer.provideMerge(ServerSettings.ServerSettingsService.layerTest()),
-  Layer.provideMerge(Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({})),
+  Layer.provideMerge(
+    Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
+      get: () =>
+        Effect.fail(
+          new VcsUnsupportedOperationError({
+            operation: "VcsDriverRegistry.get",
+            kind: "jj",
+            detail: "No jj VCS driver is registered.",
+          }),
+        ),
+    }),
+  ),
   Layer.provideMerge(Layer.mock(VcsProcess.VcsProcess)({ run })),
   Layer.provideMerge(
     ServerConfig.layerTest(process.cwd(), { prefix: "t3-source-control-discovery-" }),
