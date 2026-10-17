@@ -153,6 +153,8 @@ export function RightPanelColumns(props: {
       inline: "nearest",
       behavior: reduceMotion ? "auto" : "smooth",
     });
+    // A repeated selection must reveal the column again even when its id is unchanged.
+    // eslint-disable-next-line react/exhaustive-effect-dependencies
   }, [enabled, activeSurfaceId, revealRequestId]);
 
   // Every column, the chat included, takes half the strip when it shares it,
