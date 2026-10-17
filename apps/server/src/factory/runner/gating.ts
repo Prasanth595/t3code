@@ -194,6 +194,27 @@ const stuckWith = (
   });
 
 /**
+ * The gate's stop for a pull request that is not the run's own (`checkBinding`), or is gone:
+ * `pr-not-bound`, with the session's last `message` for the stuck comment when there is a session.
+ */
+const stuckUnbound = (
+  ctx: GateContext,
+  out: Out,
+  issue: number,
+  at: Progress,
+  message: string | null,
+  unbound: { readonly public: string; readonly detail?: string },
+): Effect.Effect<GateStep, GateStepError> =>
+  stuckWith(
+    ctx,
+    out,
+    issue,
+    at,
+    "pr-not-bound",
+    stopOf(unbound.public, message, unbound.detail === undefined ? {} : { detail: unbound.detail }),
+  );
+
+/**
  * The rest of a passing gate once the pass is recorded: stop the session and remove its
  * worktree (the branch stays, locally and on `origin`), mark the pull request ready, post the
  * results (each skipped when the ledger says it is done), move the issue to `pr-open` and write
@@ -662,15 +683,6 @@ const buildingMode = (
         if (ordinal === null) return NOT_READY;
         const message = status.lastAssistantMessage;
         const branch = status.branch;
-        const stuckUnbound = (unbound: { readonly public: string; readonly detail?: string }) =>
-          stuck(
-            "pr-not-bound",
-            stopOf(
-              unbound.public,
-              message,
-              unbound.detail === undefined ? {} : { detail: unbound.detail },
-            ),
-          );
         return {
           attempt,
           bind: (pull, mustBeDraft) => {
@@ -684,6 +696,11 @@ const buildingMode = (
             );
             if (unbound !== null || pull === null) {
               return stuckUnbound(
+                ctx,
+                out,
+                issue,
+                at,
+                message,
                 unbound ?? { public: `the session reported PR #${pr} but it does not exist` },
               );
             }
@@ -786,16 +803,7 @@ const readyMode = (
               false,
               seen.resumedFrom,
             );
-            if (unbound !== null) {
-              return stuck(
-                "pr-not-bound",
-                stopOf(
-                  unbound.public,
-                  null,
-                  unbound.detail === undefined ? {} : { detail: unbound.detail },
-                ),
-              );
-            }
+            if (unbound !== null) return stuckUnbound(ctx, out, issue, at, null, unbound);
             return Effect.succeed(pull);
           },
           noteReadyOutside: () => Effect.void,
