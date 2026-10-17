@@ -35,6 +35,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 **Updates and releases**
 
 - **Fork releases:** nightly desktop builds for macOS (signed with a self-made certificate), Windows and Linux, plus Linux server archives and `SHA256SUMS`. A release builds on each push to main that changes more than docs or the portal. `t3 update`, "Update everything" and `scripts/install.sh` install from the fork releases.
+- **Android APK:** after each fork release, the workflow "Fork Android" adds a signed Android APK of fork main to it. It installs next to the store app and updates over the previous APK.
 - **Fork installers:** one command installs the fork from the fork releases on macOS, Windows or Linux and joins the machine map. The installer has no source build.
 - **Install when idle:** while agents run, the update offers "Install when idle" next to "Install now".
 - **Server auto-update:** a headless server that runs as the background service installs each newer fork release when no agent turn runs (`forkAutoUpdate`).
