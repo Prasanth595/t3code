@@ -1,7 +1,7 @@
 import { DeviceHostUpdates } from "~/components/device/DeviceHostUpdates";
 import type { DevicePlatform, DeviceServiceState, DeviceSummary } from "@t3tools/contracts";
 import { Smartphone, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { useRightPanelStore, type RightPanelSurface } from "~/rightPanelStore";
@@ -15,7 +15,7 @@ import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "~/components/device/DeviceLoadingView";
-import { DeviceSetup } from "~/components/device/DeviceSetup";
+import { DeviceSetup, deviceHubReadiness } from "~/components/device/DeviceSetup";
 import { DeviceWorkspace } from "~/components/device/DeviceWorkspace";
 import { PreviewPanelShell } from "~/components/preview/PreviewPanelShell";
 
@@ -62,10 +62,7 @@ export default function DeviceSidePanel(props: {
     void list({ environmentId, input: {} });
   }, [environmentId, list, loaded, visible, hostDisabled]);
 
-  const sessions = useMemo(
-    () => state.sessions.filter((session) => session.threadId === threadId),
-    [state.sessions, threadId],
-  );
+  const sessions = state.sessions.filter((session) => session.threadId === threadId);
   const activeSession = props.surface.target
     ? sessions.find(
         (session) =>
@@ -79,7 +76,7 @@ export default function DeviceSidePanel(props: {
       )
     : undefined;
 
-  const grouped = useMemo(() => groupDevices(state), [state]);
+  const grouped = groupDevices(state);
 
   const selectDevice = async (value: string) => {
     const device = state.devices.find((candidate) => deviceKey(candidate) === value);
@@ -114,7 +111,6 @@ export default function DeviceSidePanel(props: {
     }
   };
 
-  // Floating the device closes the panel, like the browser's floating preview.
   const floatActive = () => {
     if (!activeDevice) return;
     usePreviewMiniPlayerStore.getState().open(threadRef, {
@@ -154,12 +150,7 @@ export default function DeviceSidePanel(props: {
 
   const bootingDevices =
     state.bootingDevices?.filter((device) => device.threadId === threadId) ?? [];
-  const hostReady = Object.values(state.hostStatuses).some((host) => host.status === "ready");
-  const hostBusy =
-    !hostReady &&
-    Object.values(state.hostStatuses).some(
-      (host) => host.status === "installing" || host.status === "starting",
-    );
+  const { ready: hostReady, busy: hostBusy } = deviceHubReadiness(state);
   const unavailablePlatforms = state.hosts.flatMap((host) =>
     host.platforms
       .filter((platform) => !platform.available)

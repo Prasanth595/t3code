@@ -154,6 +154,8 @@ async function renderFileFor(threadRef: ScopedThreadRef) {
       <Suspense fallback={null}>
         <RegisteredSidePanel
           id="files"
+          onNavigateFolder={() => undefined}
+          folderTrail={undefined}
           cwd="/repo"
           projectName="repo"
           relativePath="src/a.ts"
