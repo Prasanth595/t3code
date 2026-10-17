@@ -535,14 +535,12 @@ const openStaticFile = Effect.fn("openStaticFile")(function* (filePath: string) 
   const fileSystem = yield* FileSystem.FileSystem;
   const pathInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
   if (pathInfo?.type !== "File") return null;
-  const file = yield* fileSystem
-    .open(filePath, { flag: "r" })
-    .pipe(
-      Effect.catchTags({
-        PlatformError: (error) =>
-          error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
-      }),
-    );
+  const file = yield* fileSystem.open(filePath, { flag: "r" }).pipe(
+    Effect.catchTags({
+      PlatformError: (error) =>
+        error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
+    }),
+  );
   if (file === null) {
     return { info: pathInfo, body: Stream.fromEffect(fileSystem.readFile(filePath)) };
   }
