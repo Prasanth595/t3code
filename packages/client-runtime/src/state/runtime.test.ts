@@ -373,6 +373,28 @@ describe("finite environment subscription lifecycle", () => {
 });
 
 describe("environment query lifecycle", () => {
+  it.effect("keeps the previous value when a refetch returns equal content", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let checks = [{ name: "ci", status: "passed" }];
+        const execute = Effect.sync(() => ({ checks: checks.map((check) => ({ ...check })) }));
+        const harness = yield* makeEnvironmentQueryHarness(execute);
+        const registry = yield* mountEnvironmentQuery(harness.atom);
+
+        const first = yield* readEnvironmentQuery(registry, harness.atom);
+        registry.refresh(harness.atom);
+        const equal = yield* readEnvironmentQuery(registry, harness.atom);
+        expect(equal).toBe(first);
+
+        checks = [{ name: "ci", status: "failed" }];
+        registry.refresh(harness.atom);
+        const changed = yield* readEnvironmentQuery(registry, harness.atom);
+        expect(changed).not.toBe(first);
+        expect(changed.checks[0]?.status).toBe("failed");
+      }),
+    ),
+  );
+
   it.effect(
     "retries an interrupted query without exposing a failure during session replacement",
     () =>

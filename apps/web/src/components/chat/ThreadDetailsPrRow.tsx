@@ -116,10 +116,13 @@ export function ThreadDetailsPrRow({
       ? pullRequestEnvironment.checks({ environmentId, input: reference })
       : null,
   );
+  // Every refetch moves the timestamps; comparing them first keeps `detail`
+  // stable while the data itself is unchanged.
+  const checksAreNewer = checksQuery.dataUpdatedAt >= detailQuery.dataUpdatedAt;
   const detail =
     detailQuery.data === null
       ? null
-      : checksQuery.data !== null && checksQuery.dataUpdatedAt >= detailQuery.dataUpdatedAt
+      : checksQuery.data !== null && checksAreNewer
         ? { ...detailQuery.data, ...checksQuery.data }
         : detailQuery.data;
   const open = reference !== null && (detail?.state ?? pr?.state) === "open";
