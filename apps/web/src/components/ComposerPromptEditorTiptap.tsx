@@ -354,6 +354,8 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
   const skill = skillPath
     ? skills.find((candidate) => candidate.path === skillPath)
     : skills.find((candidate) => candidate.name === skillName);
+  // A linked file missing from the current skill list is still the one picked.
+  const instructionsPath = skill?.path ?? skillPath;
   return (
     <NodeViewWrapper as="span" className={CHIP_NODE_SELECTION_CLASS_NAME}>
       <ContextChipPopover
@@ -369,8 +371,12 @@ function ComposerSkillNodeView({ node }: NodeViewProps) {
               skillDescription ??
               "No description is available for this skill."}
           </p>
-          {skill?.path ? (
-            <Button variant="outline" size="sm" onClick={() => actions.openMention(skill.path)}>
+          {instructionsPath ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => actions.openMention(instructionsPath)}
+            >
               View instructions
             </Button>
           ) : null}

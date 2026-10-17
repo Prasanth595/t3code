@@ -106,6 +106,11 @@ describe("formatProviderSkillMention", () => {
       path: project.path,
       source: mention,
     });
+    const dotted = [project, user].map((skill) => ({ ...skill, name: "review.v2" }));
+    const [dottedToken] = collectComposerInlineTokens(
+      `${formatProviderSkillMention(dotted[0]!, dotted)} `,
+    );
+    expect(dottedToken).toMatchObject({ value: "review.v2", path: project.path });
   });
 });
 

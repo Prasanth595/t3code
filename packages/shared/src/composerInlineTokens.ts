@@ -41,10 +41,11 @@ const SKILL_TOKEN_REGEX = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s)`, "gu");
 export const SKILL_MENTION_PATTERN = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s|$)`, "gu");
 /**
  * A skill mention linked to the SKILL.md that must run even when another skill
- * shares the name. formatLinkedSkillMention percent-encodes the destination,
- * so it holds no whitespace or parentheses.
+ * shares the name. The brackets delimit the name, so it takes any name a
+ * provider reports, dots included. formatLinkedSkillMention percent-encodes the
+ * destination, so it holds no whitespace or parentheses.
  */
-const LINKED_SKILL_TOKEN_REGEX = /(^|\s)\[\$([a-zA-Z0-9][a-zA-Z0-9:_-]*)\]\(([^()\s]+)\)(?=\s)/gu;
+const LINKED_SKILL_TOKEN_REGEX = /(^|\s)\[\$([^\s[\]]+)\]\(([^()\s]+)\)(?=\s)/gu;
 const SKILL_FILE_REGEX = /[\\/]SKILL\.md$/i;
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
 /**
