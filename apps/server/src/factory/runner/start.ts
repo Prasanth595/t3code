@@ -39,7 +39,7 @@ import { ledgerCall as ledger, type LedgerError } from "../ledger/errors.ts";
 import { makeCause, type Cause, type ClaimRepair, type Outcome } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
 import { MachineLog } from "../ledger/machineLog.ts";
-import { readRun, type Entry } from "../ledger/read.ts";
+import { field, readRun, type Entry } from "../ledger/read.ts";
 import { newRunId, nextAttempt, runIdToString, type RunId } from "../ledger/runId.ts";
 import { formatTs } from "../ledger/time.ts";
 import { isUtcSecond } from "../tracker/approvalHistory.ts";
@@ -69,7 +69,6 @@ import {
   APPROVAL_RECHECKED,
   LAUNCH_SENDING,
   LAUNCH_SENDING_RESUMED,
-  field,
   readProgress,
   type Seen,
 } from "./progress.ts";
@@ -818,9 +817,10 @@ export const isPlainRefName = (name: string): boolean =>
  * A time-limit stop (its `stuck` line has the reason `time-limit`) wins over a relaunch. Its
  * branch is the one on the `session_launched` line, or, as that line is written when T3 answers
  * the launch and usually before the worktree exists, the one the `stuck` line recorded from the
- * thread. A relaunch's branch is the one on its newest `session_interrupted` line with
- * `relaunch`. An attempt that finished as `needs-info` left nothing to continue from, whatever it
- * did before: its questions end it, and the next attempt starts from base.
+ * thread. A relaunch's branch is the one on its newest `session_interrupted` line, when that is a
+ * relaunch (`Seen.interruption`). An attempt that finished as `needs-info` left nothing to
+ * continue from, whatever it did before: its questions end it, and the next attempt starts from
+ * base.
  */
 const continuation = (
   entries: ReadonlyArray<Entry>,
@@ -838,10 +838,8 @@ const continuation = (
     const branch = launched ?? recorded ?? null;
     return branch === null ? null : { branch, after: "time-limit" };
   }
-  const relaunch = entries.findLast(
-    (e) => e.event === "session_interrupted" && field(e.data, "relaunch") === true,
-  );
-  const branch = relaunch === undefined ? null : branchOn("session_interrupted", relaunch);
+  const relaunch = readProgress(entries).interruption;
+  const branch = relaunch !== null && relaunch.relaunch ? relaunch.branch : null;
   return branch === null ? null : { branch, after: "interrupted" };
 };
 

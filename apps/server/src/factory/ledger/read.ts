@@ -11,6 +11,10 @@ import { runPath, type RunId } from "./runId.ts";
  */
 export type ReadCause = { step: string; reason: string; [key: string]: unknown };
 
+/** `key` of a ledger line's `data`, or undefined when that is not an object with it. */
+export const field = (data: unknown, key: string): unknown =>
+  typeof data === "object" && data !== null ? (data as Record<string, unknown>)[key] : undefined;
+
 /** One line of a run, as read back: the event and its data are as written. */
 export type Entry = {
   /** RFC 3339 UTC, as written in the file. */

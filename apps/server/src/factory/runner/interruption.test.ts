@@ -21,7 +21,7 @@ import type { TextCheck } from "../domain/approval.ts";
 import type { State } from "../domain/lifecycle.ts";
 import { makeCause, type RunEvent } from "../ledger/events.ts";
 import { Ledger } from "../ledger/ledger.ts";
-import { readRun } from "../ledger/read.ts";
+import { field, readRun } from "../ledger/read.ts";
 import { runPath, type RunId } from "../ledger/runId.ts";
 import { T0, useTempDirs } from "../ledger/testSupport.ts";
 import {
@@ -52,7 +52,6 @@ import {
   type InterruptContext,
 } from "./building.ts";
 import { launchMessage, type ResumeFrom } from "./messages.ts";
-import { field } from "./progress.ts";
 import { resume, start } from "./start.ts";
 
 const tempDir = useTempDirs();

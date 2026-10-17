@@ -71,7 +71,6 @@ import {
   INTERRUPTION_SENT,
   RESULT_LINE_REMINDED,
   RESULT_LINE_REMINDING,
-  field,
   readProgress,
   regateBranch,
   type Seen,
@@ -1330,10 +1329,9 @@ const resumesUsed = (
   Effect.gen(function* () {
     if (seen.interruption !== null) return seen.interruption.resumes;
     const previous = yield* previousRun(ctx, run);
-    const newest = previous?.entries.findLast((entry) => entry.event === "session_interrupted");
-    if (newest === undefined || field(newest.data, "relaunch") !== true) return 0;
-    const resumes = field(newest.data, "resumes");
-    return typeof resumes === "number" ? resumes : 0;
+    if (previous === null) return 0;
+    const earlier = readProgress(previous.entries).interruption;
+    return earlier !== null && earlier.relaunch ? earlier.resumes : 0;
   });
 
 /**

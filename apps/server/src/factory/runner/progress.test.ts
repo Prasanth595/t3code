@@ -362,6 +362,7 @@ describe("readProgress: an interruption", () => {
       resumes: 1,
       relaunch: false,
       runOrdinal: 2,
+      branch: "t3code/abc",
       sent: false,
     });
     const sent = readProgress([launched(1), interrupted(2), step(3, "interruption-sent 1")]);
@@ -391,6 +392,31 @@ describe("readProgress: an interruption", () => {
       interrupted(3, { branch: null }),
     ]);
     assert.strictEqual(seen.lastBranch, "t3code/def");
+    // The line's own branch is kept apart: this one names none.
+    assert.strictEqual(seen.interruption?.branch, null);
+  });
+
+  it("carries a relaunch's branch and count, which the next attempt reads", () => {
+    const seen = readProgress([
+      launched(1),
+      interrupted(2, { resumes: 2, relaunch: true, run_ordinal: null, branch: "t3code/def" }),
+    ]);
+    assert.deepStrictEqual(seen.interruption, {
+      resumes: 2,
+      relaunch: true,
+      runOrdinal: null,
+      branch: "t3code/def",
+      sent: false,
+    });
+    // A count that is not a number is no line at all, so the older decision stands.
+    const odd = readProgress([
+      launched(1),
+      interrupted(2, { relaunch: true, run_ordinal: null }),
+      interrupted(3, { resumes: "two", relaunch: true, run_ordinal: null, branch: "t3code/x" }),
+    ]);
+    assert.strictEqual(odd.interruption?.resumes, 1);
+    assert.strictEqual(odd.interruption?.branch, "t3code/abc");
+    assert.strictEqual(odd.lastBranch, "t3code/x");
   });
 
   it("owes nothing to a new session: its thread has its own runs", () => {

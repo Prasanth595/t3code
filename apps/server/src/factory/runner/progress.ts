@@ -5,7 +5,7 @@
  */
 
 import { isState, type State } from "../domain/lifecycle.ts";
-import type { Entry } from "../ledger/read.ts";
+import { field, type Entry } from "../ledger/read.ts";
 import { runIdToString, type RunId } from "../ledger/runId.ts";
 import { isCommitId } from "../text.ts";
 
@@ -40,6 +40,8 @@ export interface Interruption {
   readonly relaunch: boolean;
   /** The ordinal of the run that ended, for a resume. */
   readonly runOrdinal: number | null;
+  /** The line's branch: the thread's for a resume, where the next attempt resumes from for a relaunch; null when it names none. */
+  readonly branch: string | null;
   /** The `interruption-sent <resumes>` step for this resume is in the ledger. */
   readonly sent: boolean;
 }
@@ -237,10 +239,6 @@ export const GATE_SENDING = "gate-sending";
 export const GATE_PASSED = "gate-passed";
 /** The ledger step that says the gate results are on the pull request. */
 export const GATE_RESULTS_POSTED = "gate-results-posted";
-
-/** `key` of a ledger line's `data`, or undefined when that is not an object with it. */
-export const field = (data: unknown, key: string): unknown =>
-  typeof data === "object" && data !== null ? (data as Record<string, unknown>)[key] : undefined;
 
 /** `text` when it is a number without a sign or leading zero that is a safe integer. */
 const canonical = (text: string): number | null =>
@@ -512,7 +510,13 @@ export const readProgress = (entries: ReadonlyArray<Entry>): Seen => {
         if (typeof branch === "string") lastBranch = branch;
         if (resumes === null) break;
         const relaunch = field(entry.data, "relaunch") === true;
-        interruption = { resumes, relaunch, runOrdinal: ordinal, sent: false };
+        interruption = {
+          resumes,
+          relaunch,
+          runOrdinal: ordinal,
+          branch: typeof branch === "string" ? branch : null,
+          sent: false,
+        };
         // The resume starts a new run: the session is working until one newer than the run that
         // ended has ended. Like a forward's, only a newer run drops the wait.
         if (!relaunch && ordinal !== null) awaitRun(ordinal, true);

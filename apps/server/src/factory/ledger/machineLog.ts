@@ -17,7 +17,7 @@ import {
 import { LedgerUnknownEventError, LedgerIoError, errnoCode } from "./errors.ts";
 import { MACHINE_EVENT_FIELDS, buildData, issueKeyJson, type MachineEvent } from "./events.ts";
 import { NEWLINE } from "./limits.ts";
-import { decodeLine, isBlankLine, lineHead } from "./read.ts";
+import { decodeLine, field, isBlankLine, lineHead } from "./read.ts";
 import { formatTs } from "./time.ts";
 
 /** The file in the data dir that takes the events that belong to no run. */
@@ -203,13 +203,11 @@ export const t3TroubleSince = (dataDir: string, nowMs: number): string | null =>
   let newest: { readonly ms: number; readonly text: string } | null = null;
   for (const entry of scanMachineLog(dataDir)) {
     if (entry.ms < since) continue;
-    const data = typeof entry.data === "object" && entry.data !== null ? entry.data : {};
-    const field = (key: string): unknown => (data as Record<string, unknown>)[key];
     const text =
-      entry.event === "preflight_failed" && field("check") === "t3"
-        ? field("why")
-        : entry.event === "error" && field("kind") === "t3"
-          ? field("message")
+      entry.event === "preflight_failed" && field(entry.data, "check") === "t3"
+        ? field(entry.data, "why")
+        : entry.event === "error" && field(entry.data, "kind") === "t3"
+          ? field(entry.data, "message")
           : undefined;
     if (typeof text === "string" && (newest === null || entry.ms >= newest.ms)) {
       newest = { ms: entry.ms, text };
