@@ -16,7 +16,7 @@ import {
   SearchIcon,
   XIcon,
 } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { readLocalApi } from "~/localApi";
@@ -157,28 +157,21 @@ export function UsageExplorer(props: UsageExplorerProps) {
   const { merged, metric, timeline, timeZone, preferences, onPreferencesChange } = props;
   const { environmentLabel, accountLabel, previous } = props;
   const navigate = useNavigate();
-  const data = useMemo(
-    () =>
-      buildExplorerData(
-        merged.contributions.map((contribution) => ({
-          ...contribution,
-          environmentLabel: environmentLabel(contribution.environmentId),
-        })),
-      ),
-    [environmentLabel, merged],
+  const data = buildExplorerData(
+    merged.contributions.map((contribution) => ({
+      ...contribution,
+      environmentLabel: environmentLabel(contribution.environmentId),
+    })),
   );
-  const previousData = useMemo(
-    () =>
-      previous === null
-        ? null
-        : buildExplorerData(
-            previous.contributions.map((contribution) => ({
-              ...contribution,
-              environmentLabel: environmentLabel(contribution.environmentId),
-            })),
-          ),
-    [environmentLabel, previous],
-  );
+  const previousData =
+    previous === null
+      ? null
+      : buildExplorerData(
+          previous.contributions.map((contribution) => ({
+            ...contribution,
+            environmentLabel: environmentLabel(contribution.environmentId),
+          })),
+        );
 
   const [filterState, setFilters] = useState<UsageFilters>(NO_FILTERS);
   const [threadView, setThreadView] = useState(false);
@@ -196,11 +189,11 @@ export function UsageExplorer(props: UsageExplorerProps) {
   const [highlight, setHighlight] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
 
-  const environments = useMemo(() => new Set(props.environmentIds), [props.environmentIds]);
+  const environments = new Set(props.environmentIds);
   const environmentCount = environments.size;
   // Focus on an environment, or on its projects or accounts, stops filtering
   // once that environment is deselected in the page's menu.
-  const filters = useMemo(() => {
+  const filters = (() => {
     const selected = (key: string) => {
       const environment = environmentOfKey(key);
       return environment === null || environments.has(environment);
@@ -215,7 +208,7 @@ export function UsageExplorer(props: UsageExplorerProps) {
       next = { ...next, accounts: kept.length === 0 ? null : new Set(kept) };
     }
     return next;
-  }, [environments, filterState]);
+  })();
   // Adjusting state while rendering, so reselecting does not bring the focus back.
   if (filters !== filterState) setFilters(filters);
   // Threads live inside a project: the tab works only while one is focused.
@@ -226,7 +219,7 @@ export function UsageExplorer(props: UsageExplorerProps) {
       : preferences.dimension === "environment" && environmentCount < 2
         ? "project"
         : preferences.dimension;
-  const favorites = useMemo(() => new Set(preferences.favorites), [preferences.favorites]);
+  const favorites = new Set(preferences.favorites);
 
   const resetDrill = () => {
     setOpen(new Set());
@@ -235,36 +228,32 @@ export function UsageExplorer(props: UsageExplorerProps) {
     setHighlight(null);
   };
 
-  /* ------------------------------ names ------------------------------ */
-  const accountProvider = useMemo(() => {
+  const accountProvider = (() => {
     const map = new Map<string, UsageProviderKind>();
     for (const fact of data.facts) map.set(fact.account, fact.provider);
     return map;
-  }, [data.facts]);
-  const nameOf = useCallback(
-    (dim: BreakdownDimension, key: string): string => {
-      switch (dim) {
-        case "project":
-          return key === OUTSIDE_PROJECTS
-            ? "Outside projects"
-            : key === UNKNOWN_PROJECT
-              ? "Unknown folder"
-              : ((filters.environment === null ? data.projectNames : data.projectTitles).get(key) ??
-                "Unknown project");
-        case "provider":
-          return PROVIDER_PRESENTATION[key as UsageProviderKind]?.label ?? key;
-        case "account":
-          return accountLabel(key, accountProvider.get(key) ?? (key as UsageProviderKind));
-        case "model":
-          return splitModelKey(key).model;
-        case "environment":
-          return environmentLabel(key);
-        case "thread":
-          return key === NOT_IN_THREAD ? "Not in a thread" : threadTitle(data, key);
-      }
-    },
-    [accountLabel, accountProvider, data, environmentLabel, filters.environment],
-  );
+  })();
+  const nameOf = (dim: BreakdownDimension, key: string): string => {
+    switch (dim) {
+      case "project":
+        return key === OUTSIDE_PROJECTS
+          ? "Outside projects"
+          : key === UNKNOWN_PROJECT
+            ? "Unknown folder"
+            : ((filters.environment === null ? data.projectNames : data.projectTitles).get(key) ??
+              "Unknown project");
+      case "provider":
+        return PROVIDER_PRESENTATION[key as UsageProviderKind]?.label ?? key;
+      case "account":
+        return accountLabel(key, accountProvider.get(key) ?? (key as UsageProviderKind));
+      case "model":
+        return splitModelKey(key).model;
+      case "environment":
+        return environmentLabel(key);
+      case "thread":
+        return key === NOT_IN_THREAD ? "Not in a thread" : threadTitle(data, key);
+    }
+  };
 
   // Under an environment, its projects need no environment in their names.
   const rowName = (row: ItemRow) =>
@@ -272,25 +261,18 @@ export function UsageExplorer(props: UsageExplorerProps) {
       ? (data.projectTitles.get(row.key) ?? nameOf("project", row.key))
       : nameOf(row.dimension, row.key);
 
-  /* ------------------------------ facts ------------------------------ */
-  const filtered = useMemo(
-    () => data.facts.filter((fact) => matchesFilters(fact, filters)),
-    [data.facts, filters],
-  );
+  const filtered = data.facts.filter((fact) => matchesFilters(fact, filters));
   const hiddenNow = hidden[dimension];
-  const visible = useMemo(
-    () =>
-      hiddenNow.size === 0
-        ? filtered
-        : filtered.filter((fact) => {
-            const key = keyFor(dimension, fact, data.threads);
-            return key === null || !hiddenNow.has(key);
-          }),
-    [data.threads, dimension, filtered, hiddenNow],
-  );
-  const total = useMemo(() => sumFacts(visible), [visible]);
+  const visible =
+    hiddenNow.size === 0
+      ? filtered
+      : filtered.filter((fact) => {
+          const key = keyFor(dimension, fact, data.threads);
+          return key === null || !hiddenNow.has(key);
+        });
+  const total = sumFacts(visible);
   // Short spans read better per hour than per partial day. Days are local.
-  const perActive = useMemo(() => {
+  const perActive = (() => {
     const hourly = timeline.hours.length > 0 && timeline.hours.length <= 48;
     const active = new Set(
       visible.map((fact) => (hourly ? fact.time : binKey(fact.time, 1440, timeZone))),
@@ -299,42 +281,30 @@ export function UsageExplorer(props: UsageExplorerProps) {
       tokens: active === 0 ? 0 : tokensOf(total) / active,
       unit: hourly ? ("hour" as const) : ("day" as const),
     };
-  }, [timeZone, timeline.hours.length, total, visible]);
-  const previousFiltered = useMemo(
-    () => previousData?.facts.filter((fact) => matchesFilters(fact, filters)) ?? null,
-    [filters, previousData],
-  );
+  })();
+  const previousFiltered =
+    previousData?.facts.filter((fact) => matchesFilters(fact, filters)) ?? null;
   // Hidden series leave both windows, so the comparison stays like for like.
-  const previousVisible = useMemo(
-    () =>
-      previousFiltered === null || previousData === null || hiddenNow.size === 0
-        ? previousFiltered
-        : previousFiltered.filter((fact) => {
-            const key = keyFor(dimension, fact, previousData.threads);
-            return key === null || !hiddenNow.has(key);
-          }),
-    [dimension, hiddenNow, previousData, previousFiltered],
-  );
-  const previousByKey = useMemo(
-    () =>
-      previousFiltered === null || previousData === null
-        ? undefined
-        : foldFacts(previousFiltered, (fact) => keyFor(dimension, fact, previousData.threads)),
-    [dimension, previousData, previousFiltered],
-  );
+  const previousVisible =
+    previousFiltered === null || previousData === null || hiddenNow.size === 0
+      ? previousFiltered
+      : previousFiltered.filter((fact) => {
+          const key = keyFor(dimension, fact, previousData.threads);
+          return key === null || !hiddenNow.has(key);
+        });
+  const previousByKey =
+    previousFiltered === null || previousData === null
+      ? undefined
+      : foldFacts(previousFiltered, (fact) => keyFor(dimension, fact, previousData.threads));
 
-  /* ------------------------------ series ----------------------------- */
-  const totalsByKey = useMemo(
-    () => foldFacts(filtered, (fact) => keyFor(dimension, fact, data.threads)),
-    [data.threads, dimension, filtered],
-  );
-  const allByKey = useMemo(() => {
+  const totalsByKey = foldFacts(filtered, (fact) => keyFor(dimension, fact, data.threads));
+  const allByKey = (() => {
     const unfiltered = data.facts.filter((fact) =>
       matchesFilters(fact, { ...filters, accounts: null }),
     );
     return foldFacts(unfiltered, (fact) => keyFor(dimension, fact, data.threads));
-  }, [data.facts, data.threads, dimension, filters]);
-  const { series, seriesOf, colorOf } = useMemo(() => {
+  })();
+  const { series, seriesOf, colorOf } = (() => {
     // Usage no thread holds is always its own band, as it is its own row.
     const none = dimension === "thread" ? totalsByKey.get(NOT_IN_THREAD) : undefined;
     const threaded =
@@ -353,41 +323,22 @@ export function UsageExplorer(props: UsageExplorerProps) {
       seriesOf: (key: string) => (key === NOT_IN_THREAD ? NOT_IN_THREAD : built.seriesOf(key)),
       colorOf: (key: string) => (key === NOT_IN_THREAD ? NOT_IN_THREAD_COLOR : built.colorOf(key)),
     };
-  }, [allByKey, dimension, metric, totalsByKey]);
-  const bins = useMemo(
-    () => timelineBins(timeline, timeline.binMinutes, timeZone),
-    [timeZone, timeline],
-  );
-  const columns = useMemo(
-    () =>
-      chartColumns({
-        facts: visible,
-        bins,
-        series,
-        seriesOf: (fact) => {
-          const key = keyFor(dimension, fact, data.threads);
-          return key === null ? null : seriesOf(key);
-        },
-        binOf: (fact) => binKey(fact.time, timeline.binMinutes, timeZone),
-        metric,
-        running: preferences.running,
-      }),
-    [
-      bins,
-      data.threads,
-      dimension,
-      metric,
-      preferences.running,
-      series,
-      seriesOf,
-      timeZone,
-      timeline.binMinutes,
-      visible,
-    ],
-  );
+  })();
+  const bins = timelineBins(timeline, timeline.binMinutes, timeZone);
+  const columns = chartColumns({
+    facts: visible,
+    bins,
+    series,
+    seriesOf: (fact) => {
+      const key = keyFor(dimension, fact, data.threads);
+      return key === null ? null : seriesOf(key);
+    },
+    binOf: (fact) => binKey(fact.time, timeline.binMinutes, timeZone),
+    metric,
+    running: preferences.running,
+  });
 
-  /* ------------------------------ table ------------------------------ */
-  const accountsByProvider = useMemo(() => {
+  const accountsByProvider = (() => {
     const map = new Map<string, Set<string>>();
     for (const fact of filtered) {
       const set = map.get(fact.provider) ?? new Set<string>();
@@ -395,47 +346,26 @@ export function UsageExplorer(props: UsageExplorerProps) {
       map.set(fact.provider, set);
     }
     return map;
-  }, [filtered]);
-  const rows = useMemo(
-    () =>
-      buildBreakdownRows({
-        dimension,
-        facts: filtered,
-        tree: data.threads,
-        metric,
-        sort,
-        nameOf,
-        nounOf: noun,
-        seriesOf,
-        colorOf,
-        hidden: hiddenNow,
-        favorites,
-        accountsOfProvider: (provider) => accountsByProvider.get(provider)?.size ?? 0,
-        open,
-        showAll,
-        query,
-        ...(previousByKey === undefined ? {} : { previous: previousByKey }),
-      }),
-    [
-      accountsByProvider,
-      colorOf,
-      data.threads,
-      dimension,
-      favorites,
-      filtered,
-      hiddenNow,
-      metric,
-      nameOf,
-      open,
-      previousByKey,
-      query,
-      seriesOf,
-      showAll,
-      sort,
-    ],
-  );
+  })();
+  const rows = buildBreakdownRows({
+    dimension,
+    facts: filtered,
+    tree: data.threads,
+    metric,
+    sort,
+    nameOf,
+    nounOf: noun,
+    seriesOf,
+    colorOf,
+    hidden: hiddenNow,
+    favorites,
+    accountsOfProvider: (provider) => accountsByProvider.get(provider)?.size ?? 0,
+    open,
+    showAll,
+    query,
+    ...(previousByKey === undefined ? {} : { previous: previousByKey }),
+  });
 
-  /* ------------------------------ actions ---------------------------- */
   const setPreference = (patch: Partial<UsageExplorerPreferences>) =>
     onPreferencesChange({ ...preferences, ...patch });
   const toggleHidden = (keys: readonly string[]) =>
@@ -470,10 +400,7 @@ export function UsageExplorer(props: UsageExplorerProps) {
   const accountsOf = (provider: string) => [
     ...new Set(data.facts.filter((fact) => fact.provider === provider).map((fact) => fact.account)),
   ];
-  const allAccounts = useMemo(
-    () => [...new Set(data.facts.map((fact) => fact.account))],
-    [data.facts],
-  );
+  const allAccounts = [...new Set(data.facts.map((fact) => fact.account))];
   const setAccounts = (accounts: readonly string[] | null) => {
     const next =
       accounts === null || allAccounts.every((account) => accounts.includes(account))
@@ -728,14 +655,12 @@ export function UsageExplorer(props: UsageExplorerProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  /* ------------------------------ render ----------------------------- */
   const format = metric === "cost" ? formatUsd : formatTokens;
   const formatAxis = (value: number) =>
     metric === "cost" && Number.isInteger(value) ? `$${formatCount(value)}` : format(value);
   const hiddenCount = hiddenNow.size;
-  const providerScope = useMemo(
-    () => data.facts.filter((fact) => matchesFilters(fact, { ...filters, accounts: null })),
-    [data.facts, filters],
+  const providerScope = data.facts.filter((fact) =>
+    matchesFilters(fact, { ...filters, accounts: null }),
   );
   const chips = [
     filters.environment === null
@@ -1149,8 +1074,6 @@ function describeAccounts(
   return parts.length === 0 ? "None" : parts.join(", ");
 }
 
-/* -------------------------------------------------------------------------- */
-
 function Headline({
   updating,
   metric,
@@ -1527,8 +1450,6 @@ function ThreadFilters({
     </>
   );
 }
-
-/* -------------------------------------------------------------------------- */
 
 function BreakdownTable({
   rows,

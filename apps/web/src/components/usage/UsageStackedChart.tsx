@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import type { ChartColumn } from "./usageExplorerModel";
@@ -118,7 +118,7 @@ export function UsageStackedChart({
   const [brush, setBrush] = useState<{ from: number; to: number } | null>(null);
   const count = columns.length;
 
-  const geometry = useMemo(() => {
+  const geometry = (() => {
     const peak = columns.reduce((max, column) => Math.max(max, column.total), 0);
     const scale = niceScale(peak, TICK_COUNT);
     const toY = (value: number) =>
@@ -164,42 +164,36 @@ export function UsageStackedChart({
       bands,
       totalLine: topCurve === undefined ? "" : forward(topCurve),
     };
-  }, [columns, count, series]);
+  })();
 
-  const binAt = useCallback(
-    (clientX: number) => {
-      const plot = plotRef.current;
-      if (plot === null || count === 0) return null;
-      const bounds = plot.getBoundingClientRect();
-      if (bounds.width === 0) return null;
-      const index = Math.floor(((clientX - bounds.left) / bounds.width) * count);
-      return Math.min(count - 1, Math.max(0, index));
-    },
-    [count],
-  );
+  const binAt = (clientX: number) => {
+    const plot = plotRef.current;
+    if (plot === null || count === 0) return null;
+    const bounds = plot.getBoundingClientRect();
+    if (bounds.width === 0) return null;
+    const index = Math.floor(((clientX - bounds.left) / bounds.width) * count);
+    return Math.min(count - 1, Math.max(0, index));
+  };
 
   /** The band under the pointer, read from the curves as drawn. */
-  const seriesAt = useCallback(
-    (clientX: number, clientY: number) => {
-      const plot = plotRef.current;
-      if (plot === null) return null;
-      const bounds = plot.getBoundingClientRect();
-      if (bounds.width === 0 || bounds.height === 0) return null;
-      const x = ((clientX - bounds.left) / bounds.width) * VIEW_WIDTH;
-      const y = ((clientY - bounds.top) / bounds.height) * VIEW_HEIGHT;
-      let bottom = VIEW_HEIGHT;
-      for (const [k, entry] of series.entries()) {
-        const top = curveYAt(geometry.curves[k] ?? [], x);
-        if (top === null) return null;
-        if (y <= bottom && y >= top) return entry.key;
-        bottom = top;
-      }
-      return null;
-    },
-    [geometry, series],
-  );
+  const seriesAt = (clientX: number, clientY: number) => {
+    const plot = plotRef.current;
+    if (plot === null) return null;
+    const bounds = plot.getBoundingClientRect();
+    if (bounds.width === 0 || bounds.height === 0) return null;
+    const x = ((clientX - bounds.left) / bounds.width) * VIEW_WIDTH;
+    const y = ((clientY - bounds.top) / bounds.height) * VIEW_HEIGHT;
+    let bottom = VIEW_HEIGHT;
+    for (const [k, entry] of series.entries()) {
+      const top = curveYAt(geometry.curves[k] ?? [], x);
+      if (top === null) return null;
+      if (y <= bottom && y >= top) return entry.key;
+      bottom = top;
+    }
+    return null;
+  };
 
-  const positionTooltip = useCallback(() => {
+  const positionTooltip = () => {
     const plot = plotRef.current;
     const tooltip = tooltipRef.current;
     const pointer = pointerRef.current;
@@ -221,7 +215,7 @@ export function UsageStackedChart({
       "--usage-tooltip-top",
       `${Math.min(Math.max(0, top), Math.max(0, plot.clientHeight - tooltip.offsetHeight))}px`,
     );
-  }, []);
+  };
 
   useLayoutEffect(() => {
     if (hoverIndex !== null) positionTooltip();

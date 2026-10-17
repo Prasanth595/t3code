@@ -2,6 +2,7 @@ import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
 import {
   ProviderDriverKind,
   USAGE_CONTRACT_VERSION,
@@ -15,7 +16,10 @@ import {
   ChevronDownIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useRef, useState } from "react";
+import { settlePromise } from "@t3tools/client-runtime/state/runtime";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
+import * as Cause from "effect/Cause";
 import {
   cursorKeychainAccessEnvironments,
   refreshUsageLimits,
@@ -30,6 +34,7 @@ import { isCompatibleUsageContractVersion, type MergedUsage } from "@t3tools/sha
 
 import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentPresentations } from "../../state/presentation";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../../state/server";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
@@ -108,6 +113,43 @@ function isUsageWindowDays(value: number): value is UsagePagePreferences["window
 
 const providerLabel = (provider: UsageProviderKind) => PROVIDER_PRESENTATION[provider].label;
 
+const selectedUsageModelKeyAtom = Atom.make<string | null>(null).pipe(
+  Atom.keepAlive,
+  Atom.withLabel("usage:selected-model-key"),
+);
+
+function selectUsageModel(key: string | null): void {
+  appAtomRegistry.set(selectedUsageModelKeyAtom, key);
+}
+
+function UsageModelDialogHost({
+  models,
+  onSetPrice,
+  ...dialogProps
+}: Omit<Parameters<typeof UsageModelDialog>[0], "model" | "onSetPrice" | "onClose"> & {
+  readonly models: MergedUsage["models"];
+  readonly onSetPrice: (model: string) => void;
+}) {
+  const selectedKey = useAtomValue(selectedUsageModelKeyAtom);
+  useEffect(() => () => selectUsageModel(null), []);
+  const model =
+    selectedKey === null
+      ? undefined
+      : models.find((candidate) => `${candidate.provider}:${candidate.model}` === selectedKey);
+  if (model === undefined) return null;
+  return (
+    <UsageModelDialog
+      {...dialogProps}
+      model={model}
+      onSetPrice={() => {
+        selectUsageModel(null);
+        onSetPrice(model.model);
+      }}
+      onClose={() => selectUsageModel(null)}
+    />
+  );
+}
+
 export function UsagePage() {
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
   const [explorerPreferences, setExplorerPreferences] = useState(readUsageExplorerPreferences);
@@ -134,7 +176,6 @@ export function UsagePage() {
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
   const [priceDialog, setPriceDialog] = useState<{ readonly model?: string } | null>(null);
-  const [selectedModelKey, setSelectedModelKey] = useState<string | null>(null);
   const [selectedEnvironmentIds, setSelectedEnvironmentIds] =
     useState<ReadonlySet<EnvironmentId> | null>(null);
   const { range, window: requested } = windowSelection;
@@ -148,7 +189,7 @@ export function UsagePage() {
     readonly for: UsageSummaryInput;
     readonly ids: ReadonlySet<EnvironmentId>;
   } | null>(null);
-  const byDay = useMemo(() => dailyFallback(requested), [requested]);
+  const byDay = dailyFallback(requested);
   const neededNow = daysNeeded?.for === requested ? daysNeeded.ids : null;
   const window =
     byDay !== null &&
@@ -156,10 +197,7 @@ export function UsagePage() {
     [...neededNow].some((id) => selectedEnvironmentIds === null || selectedEnvironmentIds.has(id))
       ? byDay
       : requested;
-  const hiddenProviders = useMemo(
-    () => new Set(preferences.hiddenProviders),
-    [preferences.hiddenProviders],
-  );
+  const hiddenProviders = new Set(preferences.hiddenProviders);
   const {
     merged: answeredUsage,
     environments,
@@ -169,13 +207,11 @@ export function UsagePage() {
     isPartial,
     refresh,
   } = useUsage(window, selectedEnvironmentIds, hiddenProviders);
-  // Until a new window's first answer, the previous one stays on screen, muted.
   const merged = shown?.merged ?? answeredUsage;
   const shownWindow = shown?.window ?? window;
   const refreshingUsage = isRefreshing && !showingLimits;
-  // Usage kept from another window is all old, so every figure stays muted.
   const showingKept = shown !== null && shown.window !== window;
-  const loading = useMemo(() => {
+  const loading = (() => {
     if (showingKept) {
       return { partial: true, everyProvider: true, providers: new Set<UsageProviderKind>() };
     }
@@ -187,7 +223,7 @@ export function UsagePage() {
       everyProvider: state.everyProvider,
       providers,
     };
-  }, [showingKept, refreshingUsage, selectedEnvironments, hiddenProviders]);
+  })();
   const fellBack =
     byDay !== null && window === requested
       ? selectedEnvironments
@@ -216,22 +252,16 @@ export function UsagePage() {
       ),
   );
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const selectedEnvironmentIdList = useMemo(
-    () => selectedEnvironments.map((environment) => environment.environmentId),
-    [selectedEnvironments],
+  const selectedEnvironmentIdList = selectedEnvironments.map(
+    (environment) => environment.environmentId,
   );
   const cursorAccessEnvironments = hiddenProviders.has("cursor")
     ? []
     : cursorKeychainAccessEnvironments(selectedEnvironments);
-  const environmentNote = useCallback(
-    (environmentId: string) => {
-      const environment = selectedEnvironments.find(
-        (entry) => entry.environmentId === environmentId,
-      );
-      return environment?.savedAt ? `Offline · as of ${formatSavedAt(environment.savedAt)}` : null;
-    },
-    [selectedEnvironments],
-  );
+  const environmentNote = (environmentId: string) => {
+    const environment = selectedEnvironments.find((entry) => entry.environmentId === environmentId);
+    return environment?.savedAt ? `Offline · as of ${formatSavedAt(environment.savedAt)}` : null;
+  };
   const sourceMessages = [
     ...new Set(
       selectedEnvironments.flatMap(
@@ -249,43 +279,33 @@ export function UsagePage() {
       ),
     ),
   ];
+  const providersByEnvironment = useAtomValue(environmentPresentations.providersByEnvironmentAtom);
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
   });
 
-  const timeline = useMemo(() => timelineFor(shownWindow), [shownWindow]);
+  const timeline = timelineFor(shownWindow);
   const canReadDiagnostics = selectedEnvironments.some(
     (environment) => environment.canReadDiagnostics,
   );
-  const selectedModel =
-    selectedModelKey === null
-      ? undefined
-      : merged.models.find((model) => `${model.provider}:${model.model}` === selectedModelKey);
-
-  const environmentLabel = useCallback(
-    (environmentId: string) =>
-      environments.find((environment) => environment.environmentId === environmentId)?.label ??
-      environmentId,
-    [environments],
-  );
+  const environmentLabel = (environmentId: string) =>
+    environments.find((environment) => environment.environmentId === environmentId)?.label ??
+    environmentId;
   // Accounts are provider instances, named in their own environment's settings.
   const showEnvironments = selectedEnvironments.length > 1;
-  const accountLabel = useCallback(
-    (account: string, provider: UsageProviderKind) => {
-      const { environmentId, instance } = splitAccountKey(account);
-      const configured = presentations
-        .get(environmentId as EnvironmentId)
-        ?.serverConfig?.providers.find((entry) => entry.instanceId === instance)?.displayName;
-      const label = PROVIDER_PRESENTATION[provider]?.label ?? provider;
-      const name =
-        configured ??
-        (instance === provider || instance === PROVIDER_PRESENTATION[provider]?.driverKind
-          ? label
-          : `${label} · ${instance}`);
-      return showEnvironments ? `${name} · ${environmentLabel(environmentId)}` : name;
-    },
-    [environmentLabel, presentations, showEnvironments],
-  );
+  const accountLabel = (account: string, provider: UsageProviderKind) => {
+    const { environmentId, instance } = splitAccountKey(account);
+    const configured = providersByEnvironment
+      .get(environmentId as EnvironmentId)
+      ?.find((entry) => entry.instanceId === instance)?.displayName;
+    const label = PROVIDER_PRESENTATION[provider]?.label ?? provider;
+    const name =
+      configured ??
+      (instance === provider || instance === PROVIDER_PRESENTATION[provider]?.driverKind
+        ? label
+        : `${label} · ${instance}`);
+    return showEnvironments ? `${name} · ${environmentLabel(environmentId)}` : name;
+  };
 
   const setRange = (next: UsageRange) =>
     setWindowSelection({ range: next, window: windowFor(next) });
@@ -307,9 +327,10 @@ export function UsagePage() {
     setExplorerPreferences(next);
     saveUsageExplorerPreferences(next);
   };
-  const refreshLimits = async (automatic = false, afterPending = false) => {
-    try {
-      await Promise.all(
+  const refreshLimits = (automatic = false, afterPending = false) =>
+    // Settled so the timestamp still advances when a refresh throws.
+    settlePromise(() =>
+      Promise.all(
         Array.from(presentations, ([environmentId, presentation]) => {
           if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) return;
           if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
@@ -321,11 +342,11 @@ export function UsagePage() {
             );
           }
         }),
-      );
-    } finally {
+      ),
+    ).then((result) => {
       setLimitsNow(Date.now());
-    }
-  };
+      if (!AsyncResult.isSuccess(result)) throw Cause.squash(result.cause);
+    });
   const onUsageKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (
       event.defaultPrevented ||
@@ -401,6 +422,14 @@ export function UsagePage() {
     if (showingLimits && connectedLimitsEnvironments) autoRefreshLimits();
   }, [showingLimits, connectedLimitsEnvironments]);
 
+  const showChatGptSharing =
+    !hiddenProviders.has("codex") &&
+    [...providersByEnvironment].some(
+      ([id, providers]) =>
+        (selectedEnvironmentIds === null || selectedEnvironmentIds.has(id)) &&
+        providers.some(usesChatGptSharing),
+    );
+
   const topbarContent = (
     <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 xl:flex">
       <WorkspaceBreadcrumb ariaLabel="Usage breadcrumb" className="min-w-0">
@@ -454,8 +483,6 @@ export function UsagePage() {
             </Toggle>
           ))}
         </ToggleGroup>
-        {/* The period does not apply to Limits, so it stays in place but
-            disabled; unmounting it shifted the metric toggle ~300px. */}
         <ToggleGroup
           aria-label="Usage period"
           variant="segmented"
@@ -559,11 +586,7 @@ export function UsagePage() {
 
   const providerExtras = (
     <>
-      {[...presentations].some(
-        ([id, presentation]) =>
-          (selectedEnvironmentIds === null || selectedEnvironmentIds.has(id)) &&
-          presentation.serverConfig?.providers.some(usesChatGptSharing),
-      ) ? (
+      {showChatGptSharing ? (
         <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
           <span>ChatGPT shared usage</span>
           <ChatGptUsageButton size="xs" />
@@ -669,7 +692,7 @@ export function UsagePage() {
                   onResetZoom={() => {
                     if (range.kind === "zoom") setRange(range.from);
                   }}
-                  onOpenModel={(provider, model) => setSelectedModelKey(`${provider}:${model}`)}
+                  onOpenModel={(provider, model) => selectUsageModel(`${provider}:${model}`)}
                   onSetPrice={(model) => setPriceDialog({ model })}
                   providerExtras={providerExtras}
                   updating={loading}
@@ -679,9 +702,9 @@ export function UsagePage() {
           </WorkspacePageContainer>
         </ScrollArea>
       </div>
-      {selectedModel !== undefined && !showingLimits ? (
-        <UsageModelDialog
-          model={selectedModel}
+      {showingLimits ? null : (
+        <UsageModelDialogHost
+          models={merged.models}
           environments={selectedEnvironments}
           metric={metric === "tokens" ? "tokens" : "cost"}
           chartWindow={{
@@ -691,13 +714,9 @@ export function UsagePage() {
             timeZone: window.timeZone,
             referenceTime: window.untilTime,
           }}
-          onSetPrice={() => {
-            setSelectedModelKey(null);
-            setPriceDialog({ model: selectedModel.model });
-          }}
-          onClose={() => setSelectedModelKey(null)}
+          onSetPrice={(model) => setPriceDialog({ model })}
         />
-      ) : null}
+      )}
       {priceDialog ? (
         <UsagePriceOverrides
           usage={environments}
@@ -818,15 +837,12 @@ function CursorEnableButton({
   const [pending, setPending] = useState(false);
   const enable = async () => {
     setPending(true);
-    try {
-      const result = await updateSettings({
-        environmentId,
-        input: { patch: { cursorKeychainUsageEnabled: true } },
-      });
-      if (result._tag === "Success") onEnabled();
-    } finally {
-      setPending(false);
-    }
+    const result = await updateSettings({
+      environmentId,
+      input: { patch: { cursorKeychainUsageEnabled: true } },
+    });
+    if (result._tag === "Success") onEnabled();
+    setPending(false);
   };
   const button = tooltip ? (
     <InlineButton
@@ -928,7 +944,6 @@ function CursorEnableLimits({
   );
 }
 
-/** Brand mark for the harness a row belongs to. */
 function ProviderMark({
   provider,
   className,
@@ -1002,7 +1017,6 @@ function UsageCoverageNotice({
   );
 }
 
-/** Environment selection, with each environment's scan status in the menu. */
 function UsageEnvironmentFilter({
   environments,
   selectedEnvironments,
@@ -1142,7 +1156,6 @@ function UsageEnvironmentFilter({
   );
 }
 
-/** Provider visibility shared by every tab. Stored as the hidden set. */
 function UsageProviderFilter({
   hiddenProviders,
   onChange,
@@ -1202,11 +1215,6 @@ function UsageProviderFilter({
   );
 }
 
-/**
- * Stand-in with the loaded page's shape, using the shared `Skeleton` bars so it
- * breathes with the same `animate-skeleton` pulse as every other loading state.
- * Replaced by results as soon as the first environment answers.
- */
 function UsageSkeleton() {
   return (
     <>

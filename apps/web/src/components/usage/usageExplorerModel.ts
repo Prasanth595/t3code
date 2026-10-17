@@ -150,10 +150,6 @@ export function foldFacts(
   return out;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Threads                                                                    */
-/* -------------------------------------------------------------------------- */
-
 export interface UsageThreadInfo {
   readonly key: string;
   readonly title: string | null;
@@ -255,10 +251,6 @@ export const isCacheHeavy = (own: UsageTotals | undefined): boolean =>
   own.records >= 30 &&
   own.cacheWriteUsd / own.costUsd >= 0.5;
 
-/* -------------------------------------------------------------------------- */
-/* Series and colours                                                         */
-/* -------------------------------------------------------------------------- */
-
 export const SERIES_PALETTE = [
   "#5b8ff9",
   "#61d9a8",
@@ -346,10 +338,6 @@ export function buildSeries(
   return { series, seriesOf, colorOf };
 }
 
-/* -------------------------------------------------------------------------- */
-/* Time                                                                       */
-/* -------------------------------------------------------------------------- */
-
 export type BinMinutes = 60 | 360 | 1440;
 
 /** Interval that keeps a readable number of points for a window's length. */
@@ -389,10 +377,6 @@ export function binKey(time: string, binMinutes: BinMinutes, timeZone: string): 
   return `${day}T${String(Math.floor(hour / 6) * 6).padStart(2, "0")}`;
 }
 
-/* -------------------------------------------------------------------------- */
-/* Formatting helpers                                                         */
-/* -------------------------------------------------------------------------- */
-
 /** Share as a percentage, with `<0.1%` for small positive shares. */
 export function formatShare(share: number, digits = 1): string {
   if (!Number.isFinite(share) || share <= 0) return "0%";
@@ -417,10 +401,6 @@ export function toCsv(rows: readonly (readonly (string | number)[])[]): string {
   };
   return rows.map((row) => row.map(cell).join(",")).join("\n") + "\n";
 }
-
-/* -------------------------------------------------------------------------- */
-/* From merged summaries                                                      */
-/* -------------------------------------------------------------------------- */
 
 /** One environment's buckets with the threads and projects they point at. */
 export interface UsageExplorerSource {
@@ -558,10 +538,6 @@ export function buildExplorerData(sources: readonly UsageExplorerSource[]): Usag
   return { facts, threads, projectNames, projectTitles, hasThreads };
 }
 
-/* -------------------------------------------------------------------------- */
-/* Dimensions and filters                                                     */
-/* -------------------------------------------------------------------------- */
-
 export const modelKey = (provider: string, model: string) => `${provider}${KEY_SEP}${model}`;
 export const splitModelKey = (key: string): { provider: string; model: string } => {
   const index = key.indexOf(KEY_SEP);
@@ -626,10 +602,6 @@ export function childDimension(
       return null;
   }
 }
-
-/* -------------------------------------------------------------------------- */
-/* Columns and sorting                                                        */
-/* -------------------------------------------------------------------------- */
 
 export type UsageColumnId =
   | "cost"
@@ -761,10 +733,6 @@ export function matchesQuery(text: string, query: string): boolean {
     .filter(Boolean)
     .every((word) => haystack.includes(word));
 }
-
-/* -------------------------------------------------------------------------- */
-/* Chart                                                                      */
-/* -------------------------------------------------------------------------- */
 
 export interface ChartColumn {
   readonly bin: string;
