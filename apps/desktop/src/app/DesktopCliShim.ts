@@ -5,6 +5,7 @@ import * as Option from "effect/Option";
 
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
+import { FORK_PRODUCT_NAME } from "../../../../scripts/lib/fork-identity.ts";
 
 // A desktop install puts no `t3` on PATH, so commands the server asks a person
 // to run (`sudo t3 browser setup`) had nothing to call. The app keeps a small
@@ -14,7 +15,8 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 // so its launcher mounts the AppImage itself instead of pointing into it.
 const { logInfo, logWarning } = makeComponentLogger("desktop-cli-shim");
 
-export const MARKER = "Written by T3 Code: runs the desktop app's bundled t3 CLI.";
+// Names the fork so each app recognises and manages only its own link; upstream's launcher counts as a foreign `t3`.
+export const MARKER = `Written by ${FORK_PRODUCT_NAME}: runs the desktop app's bundled t3 CLI.`;
 
 /** Server entry inside the app, relative to its server root (an asar archive when packaged). */
 const SERVER_ENTRY = "apps/server/dist/bin.mjs";
@@ -24,7 +26,7 @@ const shellWord = (value: string) => `'${value.replaceAll("'", `'"'"'`)}'`;
 const cmdText = (value: string) => value.replaceAll("%", "%%");
 const cmdWord = (value: string) => `"${cmdText(value)}"`;
 
-const MOVED = "T3 Code has moved or been removed. Open the app once to update this command.";
+const MOVED = `${FORK_PRODUCT_NAME} has moved or been removed. Open the app once to update this command.`;
 
 export type CliShimTarget =
   | { readonly kind: "appimage"; readonly appImage: string; readonly executableName: string }
