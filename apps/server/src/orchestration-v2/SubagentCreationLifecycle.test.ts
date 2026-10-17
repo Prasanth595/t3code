@@ -1,4 +1,5 @@
 import { assert, it } from "@effect/vitest";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
   MessageId,
@@ -13,12 +14,15 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -48,6 +52,10 @@ const infrastructure = Layer.mergeAll(
   ProjectionStore.layer.pipe(Layer.provide(database)),
   ThreadCommandExecutor.layer,
   IdAllocator.layer,
+  GitVcsDriver.layer.pipe(
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "subagent-lifecycle-git-" })),
+    Layer.provideMerge(NodeServices.layer),
+  ),
 );
 const layerTest = ProviderEventIngestor.layer.pipe(Layer.provideMerge(infrastructure));
 
@@ -129,6 +137,44 @@ it.layer(layerTest)("subagent creation lifecycle", (it) => {
         };
         yield* f.ingest(deletedChild);
         assert.deepEqual((yield* f.projections.getThread(deletedChild.id)).deletedAt, stale);
+      }),
+  );
+
+  it.effect.each(["thread.archive", "thread.delete"] as const)(
+    "preserves inherited lifecycle through branch correction after %s",
+    (operation) =>
+      Effect.gen(function* () {
+        const f = yield* fixture(`branch-correction:${operation}`);
+        const fs = yield* FileSystem.FileSystem;
+        const git = yield* GitVcsDriver.GitVcsDriver;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "subagent-branch-" });
+        const command = (args: string[]) =>
+          git.execute({ operation: "subagent-lifecycle-test", cwd: directory, args });
+        yield* command(["init", "-b", "t3/abcd1234"]);
+        yield* command([
+          "-c",
+          "user.name=Test",
+          "-c",
+          "user.email=test@example.test",
+          "commit",
+          "--allow-empty",
+          "-m",
+          "initial",
+        ]);
+        const offered = { ...f.child, branch: "t3/abcd1234", worktreePath: directory };
+        yield* command(["branch", "-m", "generated-branch"]);
+        yield* f.lifecycle(operation);
+        const parent = yield* f.projections.getThread(f.threadId);
+        const stored = yield* f.ingest(offered);
+        assert.deepEqual(
+          stored.map((entry) => entry.event.type),
+          ["thread.created", "thread.metadata-updated"],
+        );
+        const child = yield* f.projections.getThread(offered.id);
+        assert.equal(child.branch, "generated-branch");
+        assert.deepEqual(child.archivedAt, parent.archivedAt);
+        assert.deepEqual(child.deletedAt, parent.deletedAt);
+        assert.isEmpty(yield* f.ingest(offered));
       }),
   );
 
