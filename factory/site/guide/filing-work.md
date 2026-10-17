@@ -33,7 +33,7 @@ An instructor is a GitHub login listed under `instructors` in the repo's `.dw/co
 - Only an instructor's `factory:ready` label starts a run.
 - An instructor's comments on the issue are sent to the running session as instructions. Anyone else's comments are ignored.
 - An instructor may edit the issue at any time. An edit by anyone else after the label stops the work (see [Editing after ready](#editing-after-ready)).
-- On an open pull request, review comments and comments from instructors are feedback the factory acts on.
+- On an open pull request, reviews and comments from instructors, on the pull request or the issue, are feedback the factory acts on.
 
 ## Labels
 

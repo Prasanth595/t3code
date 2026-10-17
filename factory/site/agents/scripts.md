@@ -44,15 +44,15 @@ Fails when a committed file differs from the upstream commit in `factory/UPSTREA
 
 Builds the server archive and smoke-tests it.
 
-|         |                                                                                        |
-| ------- | -------------------------------------------------------------------------------------- |
-| Usage   | `factory/scripts/build.sh [--print-version]`                                           |
-| Output  | `release/t3fac-<version>-darwin-arm64.tar.gz`, path printed as the last line           |
-| Version | `<upstream nightly version>+fac.<short sha>`                                           |
-| Env     | `T3FAC_REPO_ROOT` (default: git top level), `T3FAC_SMOKE_TIMEOUT` (default 60 seconds) |
-| Needs   | `vp`, stable Rust (`cargo`)                                                            |
-| 0       | Built and smoke-tested, or `--print-version`.                                          |
-| 1       | Dirty tree; unreadable `SEA_NODE_VERSION`; smoke test failed (`smoke: FAILED: ...`).   |
+|         |                                                                                                                                   |
+| ------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| Usage   | `factory/scripts/build.sh [--print-version]`                                                                                      |
+| Output  | `release/t3fac-<version>-darwin-arm64.tar.gz`; its absolute path is the last line printed                                         |
+| Version | `<upstream nightly version>+fac.<short sha>`; the `apps/server/package.json` version when `factory/UPSTREAM` names no nightly tag |
+| Env     | `T3FAC_REPO_ROOT` (default: git top level), `T3FAC_SMOKE_TIMEOUT` (default 60 seconds)                                            |
+| Needs   | `vp`, stable Rust (`cargo`)                                                                                                       |
+| 0       | Built and smoke-tested, or `--print-version`.                                                                                     |
+| 1       | Dirty tree; unreadable `SEA_NODE_VERSION`; smoke test failed (`smoke: FAILED: ...`).                                              |
 
 ## install.sh
 

@@ -1,6 +1,6 @@
 # Install and run
 
-The factory runs in a T3 server started by a macOS LaunchAgent. The desktop app is optional: it is a window onto that server, and runs no factory of its own. Both are built from a clone of this repo on an Apple silicon Mac.
+The factory runs in a T3 server started by a macOS LaunchAgent. The desktop app is optional: it is a window onto that server. Both are built from a clone of this repo on an Apple silicon Mac.
 
 ## Before you start
 
@@ -48,7 +48,7 @@ vp run dist:desktop:dmg:arm64
 
 The dmg lands under `release/`. It is unsigned, so the first time you open the app, right-click it and choose Open. It installs beside upstream T3 Code as `T3 Code Factory` and shares no data with it or with the LaunchAgent server.
 
-The app's built-in server runs no factory. To see the factory in the app, pair the LaunchAgent server as an environment in Settings → Connections, with a pairing link from:
+The app's built-in server has no machine config, so its factory stays idle. Keep it that way: before you save Settings → Factory in the app, pick the LaunchAgent server's environment. Saving the form for the built-in server would start a second factory on this Mac that claims the same issues. To see the factory in the app, pair the LaunchAgent server as an environment in Settings → Connections, with a pairing link from:
 
 ```sh
 ~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac

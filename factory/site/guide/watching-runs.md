@@ -27,12 +27,11 @@ A run in `factory:building` can be stopped from here. See [Stopping a run by han
 The top of the Factory page lists what needs a person, and the sidebar's Factory item shows how many. An item is raised when:
 
 - a run went to `factory:stuck` or `factory:needs-info`,
-- an issue was closed while its run was building, so the run was abandoned,
 - a run is holding a slot but nothing will move it, for example its label was changed by hand,
 - the machine config failed to load,
 - three passes in a row failed.
 
-Each item links to its run, or to Settings → Factory for a config problem. Each new item also posts a macOS notification on the server's Mac, unless `notify` is `false` in the [machine config](/guide/machine-config).
+Each item links to its run, or to Settings → Factory for a config problem. Each new item also posts a macOS notification, as does a run abandoned because its issue was closed, on the server's Mac, unless `notify` is `false` in the [machine config](/guide/machine-config).
 
 An item clears itself when its cause goes away: the config loads, a pass succeeds, the issue is claimed again. Dismiss an item to hide it once you've dealt with it. A dismissed item stays hidden until its cause clears and comes back.
 

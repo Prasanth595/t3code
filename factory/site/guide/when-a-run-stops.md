@@ -49,6 +49,6 @@ A run in any other state can't be stopped this way. The script and the page say 
 
 ## Abandoning a run
 
-Close the issue. A run that hasn't reached `factory:pr-open` is abandoned on the next pass: the factory archives the session, removes the worktree and writes nothing on GitHub. The Factory page shows the abandoned run as an item that needs attention.
+Close the issue. A run that hasn't reached `factory:pr-open` is abandoned on the next pass: the factory archives the session, removes the worktree and writes nothing on GitHub. The server's Mac gets a notification that the run was abandoned.
 
 A run at `factory:pr-open` ends when its pull request is merged or closed. Close the pull request to end it early.

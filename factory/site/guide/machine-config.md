@@ -2,7 +2,7 @@
 
 The machine config says how the factory runs on this Mac: which GitHub login it uses, how often it checks GitHub, and how much it does at once. It lives in `~/.config/t3fac/factory/config.yml`. Repos are not listed here: [Add a repo](/guide/add-a-repo) covers how a repo is watched, and the model comes from the T3 project.
 
-Without the file, the server starts and the factory stays idle. Start from [`factory/config.example.yml`](https://github.com/original-solutions/t3code-factory/blob/main/factory/config.example.yml) in the repo, or save the form at Settings → Factory, which creates it.
+Without the file, the server starts and the factory stays idle. Start from [`factory/config.example.yml`](https://github.com/original-solutions/t3code-factory/blob/main/factory/config.example.yml) in the repo, or save the form at Settings → Factory with the factory's server selected, which creates it.
 
 ```yaml
 gh_config_dir: /Users/you/.config/t3fac/gh

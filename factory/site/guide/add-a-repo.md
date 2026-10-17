@@ -37,7 +37,7 @@ The factory reads this file from the tip of the default branch on GitHub, not fr
 | `limits.interruption_resumes` | no       | `2`     | How many times to resume a session that ended because T3 itself had trouble.                                                                      |
 | `autonomy`                    | yes      |         | Must be `pr`: the factory stops at a pull request a person merges.                                                                                |
 
-The gate runs each `provision` command, then each `gate` command, through the shell at the root of a fresh checkout of the pull request merged with the base branch. Each command has 30 minutes. The server runs it with the LaunchAgent's environment, so the tools it needs must be on that `PATH` ([Install and run](/guide/install#tools-the-server-can-see)).
+The gate runs each `provision` command, then each `gate` command, through the shell at the root of a fresh checkout of the pull request merged with the base branch. Each command has 30 minutes. The commands get only a few variables from the server's environment: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `TMPDIR`, `TERM` and `LC_*`. The tools they need must be on that `PATH` ([Install and run](/guide/install#tools-the-server-can-see)); any other variable has to be set by the command itself.
 
 [For agents → Repo config](/agents/repo-config) has the exact types and limits.
 

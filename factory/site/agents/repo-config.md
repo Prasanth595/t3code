@@ -57,11 +57,11 @@ Keys the server does not read are ignored.
 
 ## Gate
 
-| Step        | Detail                                                                                          |
-| ----------- | ----------------------------------------------------------------------------------------------- |
-| Checkout    | Fresh clone of the PR head merged with the base branch tip. A merge conflict fails the attempt. |
-| Commands    | Each `provision` command, then each `gate` command, through the shell, at the checkout root.    |
-| Timeout     | 30 minutes per command.                                                                         |
-| Pass        | Every command exits 0. Then `required_checks`, if any, must pass on the gated commit.           |
-| Source      | The commands come from the default branch, never from the PR.                                   |
-| Environment | The server's: the LaunchAgent `PATH` plus `~/.config/t3fac/env`.                                |
+| Step        | Detail                                                                                                                                                                |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Checkout    | Fresh clone of the PR head merged with the base branch tip. A merge conflict fails the attempt.                                                                       |
+| Commands    | Each `provision` command, then each `gate` command, through the shell, at the checkout root.                                                                          |
+| Timeout     | 30 minutes per command.                                                                                                                                               |
+| Pass        | Every command exits 0. Then `required_checks`, if any, must pass on the gated commit.                                                                                 |
+| Source      | The commands come from the default branch, never from the PR.                                                                                                         |
+| Environment | Only `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `TMPDIR`, `TERM` and `LC_*` from the server. `PATH` is the LaunchAgent's, extended by `~/.config/t3fac/env`. |
