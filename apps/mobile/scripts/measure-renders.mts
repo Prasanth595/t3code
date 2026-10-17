@@ -258,6 +258,10 @@ const formatTable = (reports: ReadonlyArray<RenderReport>) => {
     lines.push(`| ${region} | ${median(reports.map((report) => regionTotal(report, region)))} |`);
   lines.push(`| **total** | **${median(reports.map((report) => report.totalRenders))}** |`);
   lines.push(`| commits | ${median(reports.map((report) => report.commits))} |`);
+  // Provider pace sets how many commits land in the window; per-commit cost is comparable across runs.
+  lines.push(
+    `| renders per commit | ${median(reports.map((report) => Math.round(report.totalRenders / Math.max(report.commits, 1))))} |`,
+  );
 
   const componentKeys = new Map<string, { name: string; region: string }>();
   for (const report of reports)
