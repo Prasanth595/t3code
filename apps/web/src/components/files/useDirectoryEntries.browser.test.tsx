@@ -1,6 +1,6 @@
 import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
 import { act, useEffect } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const { listEntries } = vi.hoisted(() => ({ listEntries: vi.fn() }));
@@ -16,7 +16,8 @@ vi.mock("~/state/projects", async () => {
 
 import { useDirectoryEntries } from "./useDirectoryEntries";
 
-let renderer: ReactTestRenderer | null;
+let root: Root | null;
+let container: HTMLDivElement;
 let view: ReturnType<typeof useDirectoryEntries>;
 let calls: Array<{ path: string; resolve: (entries: readonly ProjectEntry[]) => void }>;
 let activeQueries: number;
@@ -32,7 +33,8 @@ function Probe() {
 
 async function mount() {
   await act(async () => {
-    renderer = create(<Probe />);
+    root = createRoot(container);
+    root.render(<Probe />);
   });
 }
 
@@ -41,7 +43,9 @@ async function settle(index: number, entries: readonly ProjectEntry[] = []) {
 }
 
 beforeEach(() => {
-  renderer = null;
+  root = null;
+  container = document.createElement("div");
+  document.body.append(container);
   calls = [];
   activeQueries = 0;
   peakQueries = 0;
@@ -62,7 +66,8 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await act(async () => renderer?.unmount());
+  await act(async () => root?.unmount());
+  container.remove();
   vi.unstubAllGlobals();
 });
 
@@ -139,8 +144,8 @@ it("retains the four-query concurrency bound across directories and refreshes", 
 it("does not start a queued follow-up after unmount", async () => {
   await mount();
   await act(async () => view.refresh());
-  await act(async () => renderer?.unmount());
-  renderer = null;
+  await act(async () => root?.unmount());
+  root = null;
   await settle(0);
   expect(calls).toHaveLength(1);
 });
