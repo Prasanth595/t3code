@@ -232,6 +232,11 @@ const measureStreamReply = Effect.fn("measure.streamReply")(function* (
   yield* evaluate(`__t3RenderCounterStart(${encodeJson(REGION_ROOTS)})`);
   yield* Effect.sleep(`${options.windowSeconds} seconds`);
   const report = yield* decodeReport(yield* evaluate("JSON.stringify(__t3RenderCounterStop())"));
+  // React commits on every streamed delta, so an empty window means the app is not on the thread.
+  if (report.commits === 0)
+    return yield* new MeasureError({
+      message: `Run ${run}: no React commits in the window. Check the device for a red box.`,
+    });
   const after = yield* client["orchestration.getThreadProjection"]({ threadId });
   const stillStreaming = streamingItem(after) !== undefined;
   const activeRun = after.runs.find(
