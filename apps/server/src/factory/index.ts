@@ -133,7 +133,7 @@ export class FactoryLoop extends Context.Service<
     readonly repoConfigs: Effect.Effect<ReadonlyMap<string, RepoConfigReading>>;
     /**
      * The watched projects as the reader lists them now, for the settings page. A listing that
-     * fails is logged and answers an empty list.
+     * fails is logged and answers an empty list. Reading it changes nothing the pass reports.
      */
     readonly watchedRepos: Effect.Effect<ReadonlyArray<WatchedProject>>;
   }
@@ -742,7 +742,7 @@ const startFactory = (options: RuntimeOptions) =>
       watched: [],
     };
     const readings = new Map<string, RepoConfigReading>();
-    // The repos the last listing named, for the status; a pass lists them anew before it works.
+    // The repos the pass's last listing named, for the status; a pass lists them anew before it works.
     const listWatched = watched.list.pipe(
       Effect.tap((list) =>
         Effect.sync(() => {
@@ -881,7 +881,8 @@ const startFactory = (options: RuntimeOptions) =>
 
     // One reload or save at a time, and none cut short half way: two at once from idle would
     // make two loops, and a save cut short after the write leaves the loop on the old config.
-    const watchedRepos = listWatched.pipe(
+    // The settings page reads the list untapped: only the pass writes `state.watched` and the status.
+    const watchedRepos = watched.list.pipe(
       Effect.catch((error) => Effect.logWarning(error.message).pipe(Effect.as([]))),
     );
     const lock = yield* Semaphore.make(1);
