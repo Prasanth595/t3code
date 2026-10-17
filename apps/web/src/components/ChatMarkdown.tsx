@@ -76,7 +76,8 @@ import { mediaFileReference, mediaUrlReference } from "@t3tools/client-runtime/m
 import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import { mediaKindFromPath, mediaMimeTypeFromExtension } from "@t3tools/shared/filePreview";
 import * as Cause from "effect/Cause";
-import { AsyncResult } from "effect/reactivity";
+import * as Option from "effect/Option";
+import { AsyncResult, Atom } from "effect/reactivity";
 import React, {
   Children,
   Suspense,
@@ -184,7 +185,12 @@ import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
 import { assetEnvironment } from "../state/assets";
-import { readEnvironmentScope, usePreparedConnection, useEnvironmentScope } from "../state/session";
+import {
+  readEnvironmentScope,
+  readPreparedConnection,
+  useEnvironmentScope,
+  usePreparedConnection,
+} from "../state/session";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
@@ -1527,6 +1533,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
 }) {
   const assetUrl = useAssetUrlState(props.environmentId, props.resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
+  const connectionReady = usePreparedConnection(props.environmentId)._tag === "Some";
   const resource = props.resource;
   const refreshToken = JSON.stringify([props.environmentId, resource, props.workspaceMutationId]);
   const handledRefreshToken = useRef<string | null>(null);
@@ -1534,6 +1541,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   useEffect(() => {
     if (
       props.workspaceMutationId === undefined ||
+      !connectionReady ||
       (resource._tag !== "media-file" && resource._tag !== "workspace-file") ||
       handledRefreshToken.current === refreshToken
     ) {
@@ -1551,7 +1559,14 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     }
     handledRefreshToken.current = refreshToken;
     void refreshAssetUrl().catch(() => undefined);
-  }, [assetLoading, props.workspaceMutationId, refreshAssetUrl, refreshToken, resource._tag]);
+  }, [
+    assetLoading,
+    connectionReady,
+    props.workspaceMutationId,
+    refreshAssetUrl,
+    refreshToken,
+    resource._tag,
+  ]);
   const path =
     resource._tag === "media-file"
       ? resource.path
@@ -2221,6 +2236,8 @@ function areMarkdownFileLinkPropsEqual(
 
 const NO_MARKDOWN_EDITORS: ReadonlyArray<EditorId> = [];
 
+type MarkdownServerConfigFields = ReturnType<typeof markdownServerConfigFields>;
+
 /** The server config fields markdown reads. */
 function markdownServerConfigFields(config: ServerConfig | null) {
   return {
@@ -2234,6 +2251,29 @@ function markdownServerConfigFields(config: ServerConfig | null) {
         : undefined,
   };
 }
+
+function markdownServerConfigFieldsEqual(
+  previous: MarkdownServerConfigFields,
+  next: MarkdownServerConfigFields,
+): boolean {
+  return (
+    previous.pullRequestsEnabled === next.pullRequestsEnabled &&
+    previous.revealInFileManagerLabel === next.revealInFileManagerLabel &&
+    previous.availableEditors.length === next.availableEditors.length &&
+    previous.availableEditors.every((editor, index) => editor === next.availableEditors[index])
+  );
+}
+
+// The config object changes with every provider status push and snapshot. The
+// atom keeps its previous value while the fields markdown reads are equal, so
+// those pushes don't re-render every visible reply.
+const markdownServerConfigFieldsAtom = Atom.family((environmentId: EnvironmentId | null) =>
+  Atom.make((get) => {
+    const next = markdownServerConfigFields(get(serverEnvironment.configValueAtom(environmentId)));
+    const previous = Option.getOrNull(get.self<MarkdownServerConfigFields>());
+    return previous !== null && markdownServerConfigFieldsEqual(previous, next) ? previous : next;
+  }).pipe(Atom.withLabel("markdown-server-config-fields")),
+);
 
 function useChatMarkdownState({
   text,
@@ -2307,7 +2347,6 @@ function useChatMarkdownState({
   const canUseShellActions =
     canOperateHost &&
     canUseMarkdownFileShellActions(environmentId, remoteOpen.state.mode, remoteOpen.isResolved);
-  const preparedConnection = usePreparedConnection(environmentId);
   const openMarkdownMedia = (
     source: string,
     resolvedFilePath?: string,
@@ -2319,8 +2358,10 @@ function useChatMarkdownState({
       resolvedFilePath,
       cwd,
       threadRef,
+      // Read at click time: a reconnect replaces the prepared connection, and
+      // subscribing would hand every rendered markdown element a new context.
       httpBaseUrl:
-        preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : undefined,
+        environmentId === null ? undefined : readPreparedConnection(environmentId)?.httpBaseUrl,
       createAssetUrl,
       onOpenFile: threadRef
         ? (path) => useRightPanelStore.getState().openFile(threadRef, path)
@@ -2351,20 +2392,9 @@ function useChatMarkdownState({
       },
     );
   };
-  // Only the parts of the server config markdown reads. The config object itself
-  // changes with every provider status push, which would re-render every
-  // visible reply.
-  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
-  const nextConfigFields = markdownServerConfigFields(serverConfig);
-  const [configFields, setConfigFields] = useState(nextConfigFields);
-  if (
-    configFields.pullRequestsEnabled !== nextConfigFields.pullRequestsEnabled ||
-    configFields.availableEditors !== nextConfigFields.availableEditors ||
-    configFields.revealInFileManagerLabel !== nextConfigFields.revealInFileManagerLabel
-  ) {
-    setConfigFields(nextConfigFields);
-  }
-  const { pullRequestsEnabled, availableEditors, revealInFileManagerLabel } = configFields;
+  const { pullRequestsEnabled, availableEditors, revealInFileManagerLabel } = useAtomValue(
+    markdownServerConfigFieldsAtom(environmentId),
+  );
   const projects = useProjects();
   const [preferredEditor] = usePreferredEditor(availableEditors);
   const preferredEditorMenuLabel = openInEditorMenuLabel(preferredEditor);
@@ -2508,7 +2538,8 @@ function useChatMarkdownState({
     });
   };
   const openMarkdownFileInPreview = (path: string) => {
-    if (!threadRef || !canOperatePreview || preparedConnection._tag === "None") {
+    const preparedConnection = threadRef ? readPreparedConnection(threadRef.environmentId) : null;
+    if (!threadRef || !canOperatePreview || preparedConnection === null) {
       return Promise.resolve(
         AsyncResult.failure<void, BrowserPreviewUnavailableError>(
           Cause.fail(
@@ -2523,7 +2554,7 @@ function useChatMarkdownState({
       threadRef,
       filePath: path,
       workspaceRoot: cwd,
-      httpBaseUrl: preparedConnection.value.httpBaseUrl,
+      httpBaseUrl: preparedConnection.httpBaseUrl,
       createAssetUrl,
       openPreview,
     });

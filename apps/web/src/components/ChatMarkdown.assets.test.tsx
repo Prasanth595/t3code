@@ -8,6 +8,7 @@ import { expect, it, vi } from "vite-plus/test";
 const mint = vi.hoisted(() => vi.fn());
 const asset = vi.hoisted(() => ({
   state: { _tag: "Loading" } as AssetUrlState,
+  connected: true,
   listeners: new Set<() => void>(),
 }));
 vi.mock("../assets/assetUrls", async (importOriginal) => {
@@ -27,7 +28,25 @@ vi.mock("../assets/assetUrls", async (importOriginal) => {
   };
 });
 vi.mock("./media/MediaActions", () => ({ MediaActions: () => null }));
-vi.mock("@effect/atom-react", () => ({ useAtomValue: () => null }));
+// Atoms derived from the server config run in a real registry over a missing
+// config; every other subscription reads nothing.
+vi.mock("@effect/atom-react", async () => {
+  const { AtomRegistry } = await import("effect/reactivity");
+  const registry = AtomRegistry.make();
+  const derived = new Set(["markdown-server-config-fields", "pull-request-link-mode"]);
+  return {
+    useAtomValue: (atom: { readonly label?: readonly [string, ...unknown[]] }) =>
+      derived.has(atom.label?.[0] ?? "") ? registry.get(atom as never) : null,
+  };
+});
+vi.mock("../state/server", async () => {
+  const { Atom } = await import("effect/reactivity");
+  const noConfig = Atom.make(null);
+  return {
+    serverEnvironment: { configValueAtom: () => noConfig },
+    environmentServerConfigsAtom: Atom.make(new Map()),
+  };
+});
 vi.mock("../hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("../hooks/useFileMetadata", () => ({ useFileMetadata: () => undefined }));
 vi.mock("../hooks/useSettings", async (importOriginal) => {
@@ -54,12 +73,29 @@ vi.mock("./ui/tooltip", async () => {
 });
 vi.mock("../state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => mint }));
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
-vi.mock("../state/session", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../state/session")>()),
-  readEnvironmentScope: () => false,
-  useEnvironmentScope: () => false,
-  usePreparedConnection: () => ({ _tag: "Some", value: { httpBaseUrl: "https://host.test" } }),
-}));
+vi.mock("../state/session", async (importOriginal) => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    ...(await importOriginal<typeof import("../state/session")>()),
+    readEnvironmentScope: () => false,
+    useEnvironmentScope: () => false,
+    readPreparedConnection: () => ({ httpBaseUrl: "https://host.test" }),
+    usePreparedConnection: () => {
+      const connected = useSyncExternalStore(
+        (listener) => {
+          asset.listeners.add(listener);
+          return () => {
+            asset.listeners.delete(listener);
+          };
+        },
+        () => asset.connected,
+      );
+      return connected
+        ? { _tag: "Some", value: { httpBaseUrl: "https://host.test" } }
+        : { _tag: "None" };
+    },
+  };
+});
 vi.mock("../state/entities", () => ({
   readEnvironmentSupportsServerBrowser: () => false,
   readThreadShell: () => null,
@@ -98,6 +134,53 @@ async function publishAssetState(state: AssetUrlState) {
     for (const listener of asset.listeners) listener();
   });
 }
+
+it.each(["opened", "edited"] as const)(
+  "refreshes a cached failure after a file preview is %s offline and reconnects",
+  async (action) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    mint
+      .mockReset()
+      .mockResolvedValue(
+        AsyncResult.success({ relativeUrl: "/api/assets/updated.svg", expiresAt: 1 }),
+      );
+    asset.state = { _tag: "Failure" };
+    asset.connected = action === "edited";
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdownAssetImage {...assetProps} workspaceMutationId={null} />);
+      });
+      if (action === "edited") {
+        await act(async () => {
+          asset.connected = false;
+          for (const listener of asset.listeners) listener();
+        });
+        mint.mockClear();
+        for (const mutation of ["edit-1", "edit-2"]) {
+          await act(async () => {
+            renderer!.update(
+              <ChatMarkdownAssetImage {...assetProps} workspaceMutationId={mutation} />,
+            );
+          });
+        }
+      }
+      expect(mint).not.toHaveBeenCalled();
+      await act(async () => {
+        asset.connected = true;
+        for (const listener of asset.listeners) listener();
+      });
+      expect(mint).toHaveBeenCalledExactlyOnceWith({
+        environmentId: assetProps.environmentId,
+        input: { resource: assetProps.resource },
+      });
+    } finally {
+      await act(async () => renderer?.unmount());
+      asset.connected = true;
+      vi.unstubAllGlobals();
+    }
+  },
+);
 
 it("does not mint a second URL when the initial file preview request completes", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
