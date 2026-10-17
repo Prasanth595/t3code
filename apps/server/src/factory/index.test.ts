@@ -47,7 +47,7 @@ import type { Repo } from "./pass.ts";
 import { CUT_SHORT_COMMENT } from "./runner/messages.ts";
 import { stopRequestPath } from "./runner/stop.ts";
 import { utcSecond } from "./runner/start.ts";
-import { MARKER } from "./tracker/github.ts";
+import { ClaimMemo, MARKER } from "./tracker/github.ts";
 import { FactoryProcess, RunSpawnError, type RunInput, type RunResult } from "./process.ts";
 import { FactoryGate } from "./gate.ts";
 import { EventsError, FactoryEvents } from "./t3/events.ts";
@@ -1324,6 +1324,70 @@ describe("the gate in the background", () => {
         // The run is free for the next pass's gate.
         assert.deepStrictEqual(yield* world.gate(gateRepo, run), { kind: "started" });
       }),
+  );
+
+  it.effect("a world built on the same shared state sees the gates another world started", () =>
+    Effect.gen(function* () {
+      const dataDir = tempDir();
+      const run = reportedRun(dataDir);
+      const other = newRunId(REPO, "11", 1);
+      const held = yield* Deferred.make<void>();
+      const entered = yield* Deferred.make<void>();
+      const sessions = Sessions.FactorySessions.of({
+        ...stubSessions,
+        status: () =>
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(held)),
+            Effect.andThen(Effect.die("released")),
+          ),
+      });
+      const live = {
+        gate: { run: () => Effect.die("never reached") },
+        wake: Effect.void,
+        scope: yield* Scope.make(),
+      };
+      const shared = { gating: new Set<string>(), claimMemo: new ClaimMemo() };
+      const build = () =>
+        liveWorld(
+          gateMachine,
+          dataDir,
+          deadGh,
+          sessions,
+          () => 1_000,
+          "mac-mini",
+          noAttention,
+          live,
+          undefined,
+          undefined,
+          shared,
+        );
+      const before = build();
+      assert.deepStrictEqual(yield* before.gate(gateRepo, run), { kind: "started" });
+      yield* Deferred.await(entered);
+      // What a reload does: a new world, on the state the old one shares.
+      const after = build();
+      assert.strictEqual(after.gateRunning(run), true);
+      assert.deepStrictEqual(yield* after.gate(gateRepo, other), {
+        kind: "queued",
+        running: 1,
+        max: 1,
+      });
+      // Without shared state a world starts from nothing: that is the defect this guards.
+      assert.strictEqual(
+        liveWorld(
+          gateMachine,
+          dataDir,
+          deadGh,
+          sessions,
+          () => 1_000,
+          "mac-mini",
+          noAttention,
+          live,
+        ).gateRunning(run),
+        false,
+      );
+      yield* Deferred.succeed(held, undefined);
+    }),
   );
 
   it.effect("a gate that ends in stuck raises the run's stuck item, as a pass would", () =>
