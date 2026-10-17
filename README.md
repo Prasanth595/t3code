@@ -61,7 +61,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Sidebar groups:** thread groups as tabs above the sidebar list, filled by drag or by rules. Each tab has an icon and can hide its name. The first tab can be renamed and can show all threads. The machine map syncs the groups to every machine (`sidebarGroupsEnabled`; `sidebarGroupSingleThreadOpens`; `sidebarGroups`).
 - **Snooze quick options:** edit the choices of the snooze menus (`snoozeQuickOptions`).
 - **Worktree path template:** a template decides where new worktrees go, for example next to `main/` in a `.bare` container (`worktreePathTemplate`).
-- **Thread link chips:** thread links in chat look like an attached thread. A web address of a thread on a known machine opens the thread in T3 Code (`threadLinkChips`).
+- **Thread link chips:** every thread link form in chat, including the attached-thread markers that agents copy, looks like an attached thread and opens the thread in T3 Code (`threadLinkChips`). A thread address opened from Slack or GitHub can open the desktop app (`threadLinksOpenDesktopApp`).
 
 **Filters**
 

@@ -354,13 +354,24 @@ The server setting `threadCardLayouts` holds a custom thread card layout for des
 
 ## Thread link chips
 
-The server setting `threadLinkChips` shows thread links in chat as the chip of an attached thread. It is off by default. Turn it on in Settings > Appearance > Thread links. The machine map syncs it like other settings.
+The server setting `threadLinkChips` shows every thread link in chat as the chip of an attached thread. It is off by default. Turn it on in Settings > Appearance > Thread links. The machine map syncs it like other settings.
 
-- A `t3-thread://v1/<threadId>` link becomes the chip. It opens the thread in the app and shows its current title.
-- A web address of a thread, `https://<host>/<environmentId>/<threadId>`, becomes the chip when this client knows the environment: the server of the page or a connected environment. It then opens the thread in the app, not in a browser. The host does not matter, because the environment id names the machine. An address with a query, such as a prompt link, stays a normal link. So does an address of an unknown environment.
+- Agents can write any form. No agent instruction asks for one form. The chip reads these forms:
+  - `t3-thread://v1/<threadId>`: a thread on the machine of the message.
+  - `t3code://threads/<environmentId>/<threadId>`: the app link.
+  - `https://<host>/<environmentId>/<threadId>`: a web address. The host does not matter, because the environment id names the machine.
+  - `[Thread: <title>; ref=<contextId>]`: the marker of an attached thread, which agents copy from the prompt. The client finds the thread in the attached-thread records of the thread's user messages. It does not parse the ref.
+- An app link or a web address becomes the chip only when this client knows the environment: the server of the page or a connected environment. A click opens the thread in the app, not in a browser. A link with a query other than `message`, such as a prompt link, stays a normal link. So does an address of an unknown environment, and a marker with an unknown ref.
+- `?message=<messageId>` is read and kept, but the app does not scroll to the message yet. Upstream pingdotgg/t3code#19203 adds message links.
 - Copy keeps the link as written, so a copied web address still works outside T3 Code.
 - Desktop and web read the setting of the server of the message. The mobile app reads it from the server of the thread, and has no switch of its own. With the setting off, links look and open as before.
-- Agents get one rule for links, with or without the setting: `t3-thread://` for a thread on the same machine, and the web address for a thread on another machine and for text that leaves T3 Code. The data of an attached thread has a ready `link` line. The rule is in `packages/provider-core/src/server/forkThreadLinkInstructions.ts`.
+
+The server setting `threadLinksOpenDesktopApp` makes a thread address open the desktop app. It is off by default. Turn it on in Settings > Appearance > Thread links.
+
+- It applies to a tab that opened from outside T3 Code, for example from Slack or GitHub: no history, not a reload, no opener, and no referrer of the same server.
+- That tab hands the thread to the desktop app with `t3code://threads/...` at once, and then shows "Continue here" and "Open in desktop app".
+- The desktop app, the installed web app and app.t3.codes never redirect.
+- Known limit: when the desktop app is not running, the link that starts it is lost (upstream pingdotgg/t3code#18613). Revisit when pingdotgg/t3code#18422 merges upstream.
 
 ## Pull request watch remark filter
 

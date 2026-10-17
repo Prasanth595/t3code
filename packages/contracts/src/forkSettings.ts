@@ -278,6 +278,11 @@ export const ForkServerSettingsFields = {
    * environment that the client knows opens inside T3. A server setting, so the mobile app reads it.
    */
   threadLinkChips: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Fork: a thread address opened from outside T3 Code in a plain browser tab hands the thread to
+   * the desktop app (`t3code://threads/...`) as soon as the page loads.
+   */
+  threadLinksOpenDesktopApp: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Fork: machine map connection. See `MachineMapSettings`. */
   machineMap: MachineMapSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /** Fork: how a Cloudflare Access sign-in of a browser meets the clients of the map. See `ClientAccessMode`. */
@@ -308,6 +313,7 @@ export const ForkServerSettingsPatchFields = {
   agentSessionImportMaxMessages: Schema.optionalKey(AgentSessionImportMaxMessages),
   preferOriginRemote: Schema.optionalKey(Schema.Boolean),
   threadLinkChips: Schema.optionalKey(Schema.Boolean),
+  threadLinksOpenDesktopApp: Schema.optionalKey(Schema.Boolean),
   /** Replaces the saved groups whole: a merge would keep deleted groups and assignments. */
   sidebarGroups: Schema.optionalKey(SidebarGroups),
   /** Per surface: a patched layout replaces the saved one, and `null` restores the built-in card. */

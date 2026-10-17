@@ -42,6 +42,13 @@ export const APPEARANCE_ITEMS = [
     searchTerms: ["thread link chip chat message url open app machine environment"],
     environmentOnly: true,
   },
+  {
+    id: "thread-links-open-desktop-app",
+    title: "Thread addresses open the desktop app",
+    to: "/settings/appearance",
+    searchTerms: ["thread link address url browser tab slack github desktop app deep link open"],
+    environmentOnly: true,
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export const GLOBAL_SCRIPTS_ITEMS = [
