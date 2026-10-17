@@ -205,6 +205,20 @@ describe("useFactoryStatus", () => {
     ).toEqual([]);
     errors.mockRestore();
   });
+
+  it("drops the store once its last reader is gone, so the next reader starts over", async () => {
+    const fetchStatus = vi.fn(async () => status(2));
+    __setFactoryApiForTests(api({ status: fetchStatus }));
+    const first = await mount(() => useFactoryStatus(ENV_1));
+    expect(first.current.data?.attention).toHaveLength(2);
+    unmountAll();
+    // The drop waits a microtask (see `subscribe`), so an unmount that is not followed by a
+    // resubscribe in the same flush must still let it go.
+    await settle();
+    const again = await mount(() => useFactoryStatus(ENV_1));
+    expect(fetchStatus).toHaveBeenCalledTimes(2);
+    expect(again.current.status).toBe("ready");
+  });
 });
 
 describe("the poll follows the window", () => {
