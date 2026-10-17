@@ -1075,6 +1075,18 @@ describe("interrupted: a T3 restart", () => {
     }),
   );
 
+  it.effect("resumes a run cut off by a shutdown written more than a day before the start", () =>
+    Effect.gen(function* () {
+      // Down from Friday to Monday: the stop is 60 hours older than the only start of the last day.
+      const rig = rigFor();
+      const stopped = T3_STARTED - 60 * 60 * MINUTE;
+      endedWith(rig, "cancelled", stopped - 30 * MINUTE, stopped - 500);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
+      const outcome = yield* decide(rig, evidence(null, 1, [T3_STARTED], [stopped]));
+      assert.strictEqual(outcome.kind, "resumed");
+    }),
+  );
+
   it.effect("does not count a stop that belongs to an earlier restart", () =>
     Effect.gen(function* () {
       // A stop and start at T0 - 50 and T0 - 45 min, then this start with no stop line: the run

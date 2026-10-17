@@ -243,7 +243,7 @@ export interface Evidence {
   readonly t3Starts: ReadonlyArray<number>;
   /**
    * When those servers began shutting down, oldest first: the machine log's `server_stopping`
-   * lines of the last day. A shutdown marks every running turn `cancelled` about then, so a run
+   * lines each start of the last day follows, whatever their age. A shutdown marks every running turn `cancelled` about then, so a run
    * that ended between a stop and the next start was cut off by that restart, however long the
    * server stayed down. A stop whose line was never written (a crash, a power cut) has no entry,
    * and the start's grace stands in for it.
