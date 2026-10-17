@@ -54,8 +54,8 @@ Requirements have stable numbers. Do not renumber them. Mark a removed requireme
 - **MM-302** The levels map to T3 scopes:
   - `none`: no access.
   - `read`: `orchestration:read`, `filesystem:read`, `terminal:read`, `diagnostics:read`.
-  - `standard`: `AuthStandardClientScopes`.
-  - `admin`: `AuthAdministrativeScopes`.
+  - `standard`: `AuthStandardClientScopes` without `access:read`, `access:write` and `relay:write`.
+  - `admin`: `AuthStandardClientScopes`.
 - **MM-303** An arrow has the option "agent tools". With it on, agents on the source machine can call T3 tools on the target machine, within the scopes of the level.
 - **MM-304** An arrow can expire. "For 1 hour", "for 1 day" and "until a time" set an expiry. At expiry the arrow returns to its earlier permanent level as a new revision made by the portal. A second temporary level keeps the first permanent level.
 - **MM-305** The target machine enforces an arrow. A lower level ends the sessions of the source machine on the target at once, including open connections. The source then connects again with the new level, or not at all for `none`.

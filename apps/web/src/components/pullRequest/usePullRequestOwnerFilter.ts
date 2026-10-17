@@ -37,6 +37,36 @@ export const selectPullRequestFilterChips = (settings: ClientSettings) =>
   settings.pullRequestFilterChips;
 export const NO_FILTER_CHIPS: ReadonlyArray<PullRequestFilterChip> = [];
 
+type OwnerRow = { readonly environmentId: EnvironmentId; readonly projectId: ProjectId };
+type OwnerRowFilter = ((row: OwnerRow) => boolean) | null;
+
+/** `rows` narrowed to the selected owners. A null `keep` means no owner filter applies. */
+export function ownedRows<Row extends OwnerRow>(
+  rows: ReadonlyArray<Row>,
+  keep: OwnerRowFilter,
+): ReadonlyArray<Row>;
+export function ownedRows<Row extends OwnerRow>(
+  rows: ReadonlyArray<Row> | undefined,
+  keep: OwnerRowFilter,
+): ReadonlyArray<Row> | undefined;
+export function ownedRows<Row extends OwnerRow>(
+  rows: ReadonlyArray<Row> | undefined,
+  keep: OwnerRowFilter,
+): ReadonlyArray<Row> | undefined {
+  return rows === undefined || keep === null ? rows : rows.filter(keep);
+}
+
+export function ownedPartitions<Row extends OwnerRow>(
+  partitions:
+    | { readonly authored: ReadonlyArray<Row>; readonly reviewing: ReadonlyArray<Row> }
+    | undefined,
+  keep: OwnerRowFilter,
+) {
+  return partitions === undefined || keep === null
+    ? partitions
+    : { authored: partitions.authored.filter(keep), reviewing: partitions.reviewing.filter(keep) };
+}
+
 /** The search patch of an owner menu change. */
 export const ownerMenuPatch = (
   owners: ReadonlyArray<string>,

@@ -1,13 +1,13 @@
 import { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { parsePullRequestQuery } from "./pullRequestList.logic";
 import {
   readPullRequestListPreferences,
   writePullRequestListPreferences,
 } from "./pullRequestListPreferences";
 import {
   NO_PULL_REQUEST_OWNER_FILTER,
+  parsePullRequestQueryWithOwners as parsePullRequestQuery,
   projectsOfOwners,
   pullRequestMenuOwnerFilter,
   pullRequestOwnerRowFilter,

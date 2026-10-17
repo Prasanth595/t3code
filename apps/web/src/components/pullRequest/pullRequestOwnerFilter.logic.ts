@@ -9,6 +9,8 @@ import {
   type RepositoryIdentity,
 } from "@t3tools/contracts";
 
+import { parsePullRequestQuery } from "@t3tools/client-runtime/pull-request-query";
+
 import type { FilterOperator } from "../filters/FilterChip";
 import { pullRequestProjectKey } from "./PullRequestListFilters";
 
@@ -111,4 +113,47 @@ export function pullRequestOwnerRowFilter(
     const key = pullRequestProjectKey({ id: row.projectId, environmentId: row.environmentId });
     return known.has(key) ? kept.has(key) : keepsUnknown;
   };
+}
+
+// The same token and list rules as `parsePullRequestQuery` in client-runtime.
+const QUERY_TOKEN = /(?:[^\s"]|"[^"]*")+/g;
+const OWNER_QUALIFIER = /^(-?)(?:org|owner):(.*)$/i;
+const MAX_QUALIFIER_VALUES = 10;
+const MAX_QUALIFIER_LENGTH = 200;
+
+function ownerNames(raw: string): string[] {
+  return (raw.match(/(?:[^,"]|"[^"]*")+/g) ?? [])
+    .slice(0, MAX_QUALIFIER_VALUES)
+    .map((part) => part.replaceAll('"', "").trim().slice(0, MAX_QUALIFIER_LENGTH).trim())
+    .filter((name) => name.length > 0)
+    .map((name) => name.toLowerCase());
+}
+
+/**
+ * Fork: with `ownerQualifiers`, `org:` and `owner:` name repository owners instead of labels. The
+ * names are lowercase, and all owner qualifiers together are one OR, because a project has one
+ * owner. A negated owner qualifier, `-org:`, drops that owner. `owners` is absent when no owner
+ * is named. The other tokens go to the upstream parser.
+ */
+export function parsePullRequestQueryWithOwners(
+  raw: string,
+  options: { readonly ownerQualifiers?: boolean } = {},
+): ReturnType<typeof parsePullRequestQuery> & { readonly owners?: PullRequestOwnerFilter } {
+  if (options.ownerQualifiers !== true) return parsePullRequestQuery(raw);
+  const rest: string[] = [];
+  const include = new Set<string>();
+  const exclude = new Set<string>();
+  for (const [token] of raw.matchAll(QUERY_TOKEN)) {
+    const qualifier = OWNER_QUALIFIER.exec(token);
+    const names = qualifier === null ? [] : ownerNames(qualifier[2] ?? "");
+    if (names.length === 0) {
+      rest.push(token);
+      continue;
+    }
+    for (const name of names) (qualifier?.[1] === "-" ? exclude : include).add(name);
+  }
+  const parsed = parsePullRequestQuery(rest.join(" "));
+  return include.size === 0 && exclude.size === 0
+    ? parsed
+    : { ...parsed, owners: { include: [...include], exclude: [...exclude] } };
 }
