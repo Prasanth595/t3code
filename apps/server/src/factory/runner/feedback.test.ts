@@ -46,6 +46,7 @@ import {
   type ThreadStatus,
 } from "../t3/sessions.ts";
 import {
+  type CheckStatus,
   GitHubFailed,
   GitHubRateLimited,
   type Activity,
@@ -334,6 +335,13 @@ class FakeGh {
     branchTip: (branch) =>
       this.run(`branchTip ${branch}`, () => {}).pipe(
         Effect.map(() => (this.tipCell === null ? this.baseTip : this.tipCell.tip)),
+      ),
+    // The feedback step reads no checks (required checks after a relaunch wait for #26).
+    checks: (sha, names) =>
+      this.run(`checks ${sha} ${names.join(",")}`, () => {}).pipe(
+        Effect.map((): Array<CheckStatus> =>
+          names.map((name) => ({ name, state: "passed", conclusion: "success", url: null })),
+        ),
       ),
     setState: (n, state) =>
       this.run(`setState ${n} ${state}`, (w) => {

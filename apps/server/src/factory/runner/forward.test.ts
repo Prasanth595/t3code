@@ -196,6 +196,8 @@ interface World {
   delivered: Map<string, string>;
   /** The next comments posted on the issue fail with this, and post nothing. */
   postFailure: GitHubError | null;
+  /** The command ids T3 refuses (a `MessageRejectedError`), after the call is logged. */
+  refuse: Set<string>;
 }
 
 const projectConfig = (instructors: ReadonlyArray<string>): ProjectConfig => {
@@ -209,11 +211,22 @@ const projectConfig = (instructors: ReadonlyArray<string>): ProjectConfig => {
   };
 };
 
+/** A line `forward` writes about one send: its cause names the send's T3 command id. */
+interface Sent {
+  readonly sent: RunEvent;
+  readonly command: string;
+}
+type Seeded = RunEvent | Sent;
+const isSent = (line: Seeded): line is Sent => "sent" in line;
+/** The lines as `linesOf` reads them back. */
+const plain = (lines: ReadonlyArray<Seeded>): Array<RunEvent> =>
+  lines.map((line) => (isSent(line) ? line.sent : line));
+
 /** Seeds a run file with `events`, line `i` written at `ms(i)`. */
 const seed = (
   dataDir: string,
   id: RunId,
-  events: ReadonlyArray<RunEvent>,
+  events: ReadonlyArray<Seeded>,
   ms: (index: number) => number = () => T0,
 ) => {
   let now = T0;
@@ -221,7 +234,9 @@ const seed = (
   try {
     events.forEach((event, index) => {
       now = ms(index);
-      ledger.append(event, makeCause("start", "seed"));
+      if (isSent(event)) {
+        ledger.append(event.sent, makeCause("forward", "seed", { command: event.command }));
+      } else ledger.append(event, makeCause("start", "seed"));
     });
   } finally {
     ledger.close();
@@ -244,7 +259,7 @@ interface Rig {
 }
 
 const rigFor = (
-  events: ReadonlyArray<RunEvent> | null = STARTED,
+  events: ReadonlyArray<Seeded> | null = STARTED,
   options: { ms?: (index: number) => number; instructors?: ReadonlyArray<string> } = {},
 ): Rig => {
   const dataDir = tempDir();
@@ -259,6 +274,7 @@ const rigFor = (
     closedBy: null,
     delivered: new Map(),
     postFailure: null,
+    refuse: new Set(),
   };
   const activityCalls: Array<string> = [];
   const reads: Array<string> = [];
@@ -315,6 +331,9 @@ const rigFor = (
     send: (threadId, commandId, text) => {
       const failed = call(`send ${threadId} ${commandId} ${text}`);
       if (failed !== null) return Effect.fail(failed);
+      if (world.refuse.has(commandId)) {
+        return Effect.fail(new MessageRejectedError({ threadId, commandId, cause: "refused" }));
+      }
       world.delivered.set(commandId, text);
       return Effect.void;
     },
@@ -874,57 +893,67 @@ describe("forward: guards and failures", () => {
     }),
   );
 
-  it.effect("a failed send stops the call, and the rest is sent in order under the same ids", () =>
-    Effect.gen(function* () {
-      const rig = rigFor();
-      script(rig, [
-        comment(101, "rawphp", "one"),
-        comment(102, "rawphp", "two"),
-        comment(103, "rawphp", "three"),
-      ]);
-      // The status read is call 0; the second send, call 2, times out.
-      rig.world.failAt = 2;
-      const error = yield* Effect.flip(forwardIn(rig));
-      assert.strictEqual(error._tag, "FactorySessionsError");
-      // The first is recorded; the second and the third are not, and the third was not tried.
-      assert.deepStrictEqual(linesOf(rig), [...STARTED, commentForwarded(101)]);
-      assert.deepStrictEqual(
-        rig.t3,
-        afterStatus(commentSend(101, "rawphp", "one"), commentSend(102, "rawphp", "two")),
-      );
+  // Departs from softfac on purpose (#74): only a transport failure stops the call. A refusal is
+  // final and is dropped instead; see "forward: a send T3 refuses".
+  it.effect(
+    "a failed send (transport) stops the call, and the rest is sent in order under the same ids",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor();
+        script(rig, [
+          comment(101, "rawphp", "one"),
+          comment(102, "rawphp", "two"),
+          comment(103, "rawphp", "three"),
+        ]);
+        // The status read is call 0; the second send, call 2, times out.
+        rig.world.failAt = 2;
+        const error = yield* Effect.flip(forwardIn(rig));
+        assert.strictEqual(error._tag, "FactorySessionsError");
+        // The first is recorded; the second and the third are not, and the third was not tried.
+        assert.deepStrictEqual(linesOf(rig), [...STARTED, commentForwarded(101)]);
+        assert.deepStrictEqual(
+          rig.t3,
+          afterStatus(commentSend(101, "rawphp", "one"), commentSend(102, "rawphp", "two")),
+        );
 
-      rig.world.failAt = null;
-      clearCalls(rig);
-      assert.deepStrictEqual(yield* forwardIn(rig), outcome(2, false));
-      assert.deepStrictEqual(
-        rig.t3,
-        afterStatus(commentSend(102, "rawphp", "two"), commentSend(103, "rawphp", "three")),
-      );
-      assert.deepStrictEqual(linesOf(rig), [
-        ...STARTED,
-        commentForwarded(101),
-        commentForwarded(102),
-        commentForwarded(103),
-      ]);
-    }),
+        rig.world.failAt = null;
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(2, false));
+        assert.deepStrictEqual(
+          rig.t3,
+          afterStatus(commentSend(102, "rawphp", "two"), commentSend(103, "rawphp", "three")),
+        );
+        assert.deepStrictEqual(linesOf(rig), [
+          ...STARTED,
+          commentForwarded(101),
+          commentForwarded(102),
+          commentForwarded(103),
+        ]);
+      }),
   );
 
-  it.effect("a send T3 refuses fails the call and records nothing for it", () =>
+  // Departs from softfac on purpose (#74): softfac treats a refusal as transient and resends the
+  // same command id forever. T3 keeps the refusal under that id, so the item is dropped and the
+  // issue told once.
+  it.effect("a send T3 refuses is dropped with a notice, and the call goes on", () =>
     Effect.gen(function* () {
       const rig = rigFor();
       script(rig, [comment(101, "rawphp", "one")]);
-      const refused = new MessageRejectedError({
-        threadId: "thread-1",
-        commandId: `softfac:${RUN}:comment:101`,
-        cause: "no",
-      });
-      rig.ctx = {
-        ...rig.ctx,
-        sessions: { ...rig.ctx.sessions, send: () => Effect.fail(refused) },
-      };
-      const error = yield* Effect.flip(forwardIn(rig));
-      assert.strictEqual(error._tag, "FactoryMessageRejectedError");
-      assert.deepStrictEqual(linesOf(rig), [...STARTED]);
+      rig.world.refuse.add(commentCmd(101));
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+      assert.deepStrictEqual(rig.t3, afterStatus(commentSend(101, "rawphp", "one")));
+      assert.deepStrictEqual(rig.posted, [droppedText(101, REFUSED)]);
+      assert.deepStrictEqual(linesOf(rig), [...STARTED, droppedStep(101)]);
+      assert.deepStrictEqual(causesOf(rig).at(-1), "forward comment-dropped");
+
+      // Never sent again, said once.
+      clearCalls(rig);
+      rig.world.statusForbidden = true;
+      const bytes = bytesOf(rig);
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+      assert.deepStrictEqual(rig.t3, []);
+      assert.deepStrictEqual(rig.posted, []);
+      assert.strictEqual(bytesOf(rig), bytes);
     }),
   );
 
@@ -1116,6 +1145,17 @@ describe("forward: waiting for the run a message starts", () => {
       assert.deepStrictEqual(yield* forwardIn(done), outcome(0, false));
       assert.deepStrictEqual(done.t3, []);
       assert.strictEqual(linesOf(done).length, STARTED.length + 2);
+      // Nor with an idle marker left by a crash, proven refused or not: the ledger decides.
+      const leftovers: ReadonlyArray<ReadonlyArray<Seeded>> = [
+        [sentWait(1, 101)],
+        [sentWait(1, 101), sentRefused(101)],
+      ];
+      for (const left of leftovers) {
+        const crashed = rigFor([...STARTED, ...left]);
+        crashed.world.statusForbidden = true;
+        assert.deepStrictEqual(yield* forwardIn(crashed), outcome(0, false));
+        assert.deepStrictEqual(crashed.t3, []);
+      }
     }),
   );
 
@@ -1253,6 +1293,19 @@ const droppedText = (id: number, why: string) =>
   `10 The factory did not send an instructor's comment to the build session, because ${why}.\n\nComment: https://github.com/rawphp/softfac/issues/10#issuecomment-${id}\n\nPost the instruction as a new comment and the factory will send it.`;
 
 const droppedStep = (id: number) => step(`comment-dropped ${id}`);
+
+const REFUSED = "T3 refused it";
+const refusedEditText =
+  "10 The factory did not send the edited issue body to the build session, because T3 refused it. Post the change as a new comment and the factory will send it.";
+const bodyDropped = (editedAt: string) => step(`body-edit-dropped ${editedAt}`);
+const cancelStep = (k: number) => step(`forward-wait-cancelled ${k}`);
+const refusedStep = (id: number) => step(`comment-refused ${id}`);
+const bodyRefused = (editedAt: string) => step(`body-edit-refused ${editedAt}`);
+const commentCmd = (id: number) => `softfac:${RUN}:comment:${id}`;
+/** The marker and the refusal of a send of comment `id`, as a crashed call left them. */
+const sentWait = (k: number, id: number): Sent => ({ sent: waitStep(k), command: commentCmd(id) });
+const sentRefused = (id: number): Sent => ({ sent: refusedStep(id), command: commentCmd(id) });
+const bodyCmd = (editedAt: string) => `softfac:${RUN}:body:${editedAt}`;
 
 describe("forward: dropped comments", () => {
   it.effect("a dropped comment is reported once with the factory's fixed words", () =>
@@ -1440,6 +1493,449 @@ describe("forward: dropped comments", () => {
         yield* forwardIn(rig);
         assert.deepStrictEqual(rig.posted, [droppedText(7, CANNOT_CHECK)]);
         assert.deepStrictEqual(linesOf(rig), [...STARTED, droppedStep(7)]);
+      }),
+  );
+});
+
+// ---- a send T3 refuses (#74) ---------------------------------------------------------------------------
+
+describe("forward: a send T3 refuses", () => {
+  it.effect(
+    "a refused body edit is dropped with a notice and its step, and a newer edit is still sent",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor();
+        script(rig, [], edit(EDITED, "rawphp", "new"));
+        rig.world.refuse.add(bodyCmd(EDITED));
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+        assert.deepStrictEqual(rig.t3, afterStatus(bodySend(EDITED, "rawphp", "new")));
+        assert.deepStrictEqual(rig.posted, [refusedEditText]);
+        assert.deepStrictEqual(linesOf(rig), [...STARTED, bodyDropped(EDITED)]);
+        assert.deepStrictEqual(causesOf(rig).at(-1), "forward body-edit-dropped");
+
+        clearCalls(rig);
+        rig.world.statusForbidden = true;
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+        assert.deepStrictEqual(rig.t3, []);
+        assert.deepStrictEqual(rig.posted, []);
+        assert.deepStrictEqual(linesOf(rig), [...STARTED, bodyDropped(EDITED)]);
+
+        rig.world.statusForbidden = false;
+        const LATER = "2026-10-04T10:20:00Z";
+        script(rig, [], edit(LATER, "rawphp", "newer"));
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, true));
+        assert.deepStrictEqual(rig.t3, afterStatus(bodySend(LATER, "rawphp", "newer")));
+        assert.deepStrictEqual(linesOf(rig), [
+          ...STARTED,
+          bodyDropped(EDITED),
+          bodyForwarded(LATER),
+        ]);
+      }),
+  );
+
+  it.effect("a refusal between two sendable comments stops nothing", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      script(rig, [
+        comment(101, "rawphp", "one"),
+        comment(102, "rawphp", "two"),
+        comment(103, "rawphp", "three"),
+      ]);
+      rig.world.refuse.add(commentCmd(102));
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(2, false));
+      assert.deepStrictEqual(
+        rig.t3,
+        afterStatus(
+          commentSend(101, "rawphp", "one"),
+          commentSend(102, "rawphp", "two"),
+          commentSend(103, "rawphp", "three"),
+        ),
+      );
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        commentForwarded(101),
+        commentForwarded(103),
+        droppedStep(102),
+      ]);
+      assert.deepStrictEqual(rig.posted, [droppedText(102, REFUSED)]);
+    }),
+  );
+
+  // The edit went in under this call's marker, so the marker is not cancelled: only a marker nothing was sent under is.
+  it.effect("a refused comment followed by a sendable edit sends the edit and keeps the wait", () =>
+    Effect.gen(function* () {
+      const rig = rigAt("completed", 1);
+      instructorActivity(rig);
+      rig.world.refuse.add(commentCmd(101));
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, true));
+      assert.deepStrictEqual(
+        rig.t3,
+        afterStatus(commentSend(101, "rawphp", "one"), bodySend(EDITED, "rawphp", "new")),
+      );
+      assert.deepStrictEqual(rig.posted, [droppedText(101, REFUSED)]);
+      // Each send under the idle marker has its own marker line, and the refusal its step.
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        waitStep(1),
+        refusedStep(101),
+        waitStep(1),
+        bodyForwarded(EDITED),
+        droppedStep(101),
+      ]);
+      const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
+      assert.strictEqual(seen.waitingAfter, 1);
+      assert.strictEqual(seen.idleForwardWait, null);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+    }),
+  );
+
+  it.effect("a call whose every send was refused holds no gate and leaves no wait", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(BASE_EVENTS);
+      setRun(rig, "completed", 1, DONE_MESSAGE);
+      script(rig, [comment(101, "rawphp", "one")], edit(EDITED, "rawphp", "new"));
+      rig.world.refuse.add(commentCmd(101));
+      rig.world.refuse.add(bodyCmd(EDITED));
+      // Nothing was sent, so the pass has nothing to hold the gate for.
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+      assert.deepStrictEqual(
+        rig.t3,
+        afterStatus(commentSend(101, "rawphp", "one"), bodySend(EDITED, "rawphp", "new")),
+      );
+      // Each refusal is recorded before anything else can fail, and the cancel after the last.
+      assert.deepStrictEqual(linesOf(rig), [
+        ...BASE_EVENTS,
+        waitStep(1),
+        refusedStep(101),
+        waitStep(1),
+        bodyRefused(EDITED),
+        cancelStep(1),
+        droppedStep(101),
+        bodyDropped(EDITED),
+      ]);
+      const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
+      assert.strictEqual(seen.waitingAfter, null);
+      assert.strictEqual(seen.lastWait, null);
+      assert.strictEqual(seen.idleForwardWait, null);
+
+      rig.ctx = {
+        ...rig.ctx,
+        tracker: { ...rig.ctx.tracker, pullRequest: () => Effect.succeed(draftPr) },
+      };
+      assert.deepStrictEqual(yield* advanceIn(rig), {
+        kind: "ready-for-gate",
+        pr: 12,
+        prUrl: URL12,
+      });
+
+      // A new comment while run 1 is still the latest ended: a fresh marker, since the cancelled
+      // one no longer counts as the last wait.
+      clearCalls(rig);
+      script(rig, [comment(101, "rawphp", "one"), comment(102, "rawphp", "two")]);
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(1, false));
+      assert.deepStrictEqual(linesOf(rig).slice(-2), [waitStep(1), commentForwarded(102)]);
+      assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+    }),
+  );
+
+  it.effect("a refused send under a marker another message used keeps the wait", () =>
+    Effect.gen(function* () {
+      const rig = rigAt("completed", 1);
+      script(rig, [comment(101, "rawphp", "one"), comment(102, "rawphp", "two")]);
+      rig.world.refuse.add(commentCmd(102));
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(1, false));
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        waitStep(1),
+        commentForwarded(101),
+        droppedStep(102),
+      ]);
+    }),
+  );
+
+  it.effect(
+    "a marker whose refusal was recorded before a crash is cancelled on the next call",
+    () =>
+      Effect.gen(function* () {
+        // The send was refused and recorded, and the call crashed before its cancel. The comment is
+        // still there and is refused again under a fresh marker.
+        const rig = rigFor([...STARTED, sentWait(1, 101), sentRefused(101)]);
+        setRun(rig, "completed", 1);
+        script(rig, [comment(101, "rawphp", "one")]);
+        rig.world.refuse.add(commentCmd(101));
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+        assert.deepStrictEqual(linesOf(rig), [
+          ...STARTED,
+          waitStep(1),
+          refusedStep(101),
+          cancelStep(1),
+          waitStep(1),
+          refusedStep(101),
+          cancelStep(1),
+          droppedStep(101),
+        ]);
+        const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
+        assert.strictEqual(seen.waitingAfter, null);
+        assert.strictEqual(seen.lastWait, null);
+      }),
+  );
+
+  it.effect(
+    "a marker whose refusal was recorded is cancelled when its comment has since gone",
+    () =>
+      Effect.gen(function* () {
+        // The call crashed between the refusal's step and the cancel, and the instructor then
+        // deleted the comment: the next call has nothing to send. The ledger alone proves nothing
+        // went in, so T3 is not asked.
+        const rig = rigFor([...BASE_EVENTS, sentWait(1, 101), sentRefused(101)]);
+        setRun(rig, "completed", 1, DONE_MESSAGE);
+        rig.world.statusForbidden = true;
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+        assert.deepStrictEqual(rig.t3, []);
+        assert.deepStrictEqual(rig.posted, []);
+        assert.deepStrictEqual(linesOf(rig), [
+          ...BASE_EVENTS,
+          waitStep(1),
+          refusedStep(101),
+          cancelStep(1),
+        ]);
+        const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
+        assert.strictEqual(seen.waitingAfter, null);
+        assert.strictEqual(seen.idleForwardWait, null);
+
+        // No run newer than 1 is awaited, so the gate can run.
+        rig.world.statusForbidden = false;
+        rig.ctx = {
+          ...rig.ctx,
+          tracker: { ...rig.ctx.tracker, pullRequest: () => Effect.succeed(draftPr) },
+        };
+        assert.deepStrictEqual(yield* advanceIn(rig), {
+          kind: "ready-for-gate",
+          pr: 12,
+          prUrl: URL12,
+        });
+
+        // Cancelled once: the next call writes nothing.
+        clearCalls(rig);
+        const bytes = bytesOf(rig);
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+        assert.strictEqual(bytesOf(rig), bytes);
+      }),
+  );
+
+  it.effect("a recorded refusal is cancelled before the issue hears its comment was dropped", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, sentWait(1, 101), sentRefused(101)]);
+      rig.world.statusForbidden = true;
+      scriptDropped(rig, [dropOf(101, "edited-by-other")]);
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+      assert.deepStrictEqual(rig.posted, [droppedText(101, BY_OTHER)]);
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        waitStep(1),
+        refusedStep(101),
+        cancelStep(1),
+        droppedStep(101),
+      ]);
+    }),
+  );
+
+  it.effect("a marker with a send whose outcome was never recorded keeps the wait", () =>
+    Effect.gen(function* () {
+      // A crash before any line after the marker, a crash after a refusal while the next send was
+      // out, and a marker from a build that did not name its send: any of them may have gone in.
+      // The comments have since gone or been dropped.
+      const crashes: ReadonlyArray<ReadonlyArray<Seeded>> = [
+        [sentWait(1, 101)],
+        [sentWait(1, 101), sentRefused(101), sentWait(1, 102)],
+        [sentWait(1, 101), commentForwarded(101), sentRefused(102)],
+        [waitStep(1), sentRefused(101)],
+      ];
+      for (const crashed of crashes) {
+        const rig = rigFor([...STARTED, ...crashed]);
+        rig.world.statusForbidden = true;
+        scriptDropped(rig, [dropOf(102, "edited-by-other")]);
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+        assert.deepStrictEqual(rig.posted, [droppedText(102, BY_OTHER)]);
+        assert.deepStrictEqual(linesOf(rig), [...STARTED, ...plain(crashed), droppedStep(102)]);
+        assert.strictEqual(readProgress(readRun(rig.dataDir, rig.run).entries).waitingAfter, 1);
+      }
+    }),
+  );
+
+  it.effect("a refusal of another comment does not close a send a crash left open", () =>
+    Effect.gen(function* () {
+      // The send of 101 under marker 1 may have gone in, so refusing 102 proves nothing.
+      const rig = rigFor([...STARTED, sentWait(1, 101)]);
+      setRun(rig, "completed", 1);
+      script(rig, [comment(102, "rawphp", "two")]);
+      rig.world.refuse.add(commentCmd(102));
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        waitStep(1),
+        waitStep(1),
+        refusedStep(102),
+        droppedStep(102),
+      ]);
+      const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
+      assert.strictEqual(seen.waitingAfter, 1);
+      assert.strictEqual(seen.refusedForwardWait, null);
+    }),
+  );
+
+  it.effect("a send lost to a transport failure and refused when sent again is cancelled", () =>
+    Effect.gen(function* () {
+      const rig = rigFor(BASE_EVENTS);
+      setRun(rig, "completed", 1, DONE_MESSAGE);
+      script(rig, [comment(101, "rawphp", "one")]);
+      rig.world.refuse.add(commentCmd(101));
+      // The status read is call 0, the send call 1: it fails, and may or may not have gone in.
+      rig.world.failAt = 1;
+      const error = yield* Effect.flip(forwardIn(rig));
+      assert.strictEqual(error._tag, "FactorySessionsError");
+      assert.deepStrictEqual(linesOf(rig), [...BASE_EVENTS, waitStep(1)]);
+
+      // The resend under the same command id is refused: T3 refused the first one too.
+      rig.world.failAt = null;
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+      assert.deepStrictEqual(linesOf(rig), [
+        ...BASE_EVENTS,
+        waitStep(1),
+        waitStep(1),
+        refusedStep(101),
+        cancelStep(1),
+        droppedStep(101),
+      ]);
+      const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
+      assert.strictEqual(seen.waitingAfter, null);
+      assert.strictEqual(seen.lastWait, null);
+      rig.ctx = {
+        ...rig.ctx,
+        tracker: { ...rig.ctx.tracker, pullRequest: () => Effect.succeed(draftPr) },
+      };
+      assert.deepStrictEqual(yield* advanceIn(rig), {
+        kind: "ready-for-gate",
+        pr: 12,
+        prUrl: URL12,
+      });
+    }),
+  );
+
+  it.effect("a send a crash left without an outcome and refused when sent again is cancelled", () =>
+    Effect.gen(function* () {
+      const rig = rigFor([...STARTED, sentWait(1, 101)]);
+      setRun(rig, "completed", 1);
+      script(rig, [comment(101, "rawphp", "one")]);
+      rig.world.refuse.add(commentCmd(101));
+      assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+      assert.deepStrictEqual(linesOf(rig), [
+        ...STARTED,
+        waitStep(1),
+        waitStep(1),
+        refusedStep(101),
+        cancelStep(1),
+        droppedStep(101),
+      ]);
+      assert.strictEqual(readProgress(readRun(rig.dataDir, rig.run).entries).waitingAfter, null);
+    }),
+  );
+
+  it.effect(
+    "a send lost to a transport failure that goes in when sent again waits for its run",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor(BASE_EVENTS);
+        setRun(rig, "completed", 1, DONE_MESSAGE);
+        script(rig, [comment(101, "rawphp", "one")]);
+        rig.world.failAt = 1;
+        yield* Effect.flip(forwardIn(rig));
+
+        rig.world.failAt = null;
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(1, false));
+        assert.deepStrictEqual(linesOf(rig), [
+          ...BASE_EVENTS,
+          waitStep(1),
+          waitStep(1),
+          commentForwarded(101),
+        ]);
+        const seen = readProgress(readRun(rig.dataDir, rig.run).entries);
+        assert.strictEqual(seen.waitingAfter, 1);
+        assert.strictEqual(seen.refusedForwardWait, null);
+        assert.deepStrictEqual(yield* advanceIn(rig), { kind: "running" });
+      }),
+  );
+
+  it.effect("the marker and the refusal of a send name its command id in their cause", () =>
+    Effect.gen(function* () {
+      const rig = rigAt("completed", 1);
+      script(rig, [comment(101, "rawphp", "one")], edit(EDITED, "rawphp", "new"));
+      rig.world.refuse.add(commentCmd(101));
+      rig.world.refuse.add(bodyCmd(EDITED));
+      yield* forwardIn(rig);
+      const commands = readRun(rig.dataDir, rig.run)
+        .entries.slice(STARTED.length)
+        .map((entry) => entry.cause?.command ?? null);
+      assert.deepStrictEqual(commands, [
+        commentCmd(101),
+        commentCmd(101),
+        bodyCmd(EDITED),
+        bodyCmd(EDITED),
+        null,
+        null,
+        null,
+      ]);
+    }),
+  );
+
+  it.effect(
+    "a crash before the notice says it on the next call, and the step comes after the comment",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor();
+        script(rig, [comment(101, "rawphp", "one")]);
+        rig.world.refuse.add(commentCmd(101));
+        rig.world.postFailure = ghFailure();
+        const error = yield* Effect.flip(forwardIn(rig));
+        assert.strictEqual(error._tag, "GitHubFailed");
+        assert.deepStrictEqual(linesOf(rig), [...STARTED]);
+        assert.deepStrictEqual(rig.t3, afterStatus(commentSend(101, "rawphp", "one")));
+
+        rig.world.postFailure = null;
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(0, false));
+        assert.deepStrictEqual(rig.t3, afterStatus(commentSend(101, "rawphp", "one")));
+        assert.deepStrictEqual(rig.posted, [droppedText(101, REFUSED)]);
+        assert.deepStrictEqual(linesOf(rig), [...STARTED, droppedStep(101)]);
+      }),
+  );
+
+  it.effect(
+    "a transport failure after a refusal still stops the call, and the refused item is told next time",
+    () =>
+      Effect.gen(function* () {
+        const rig = rigFor();
+        script(rig, [comment(101, "rawphp", "one"), comment(102, "rawphp", "two")]);
+        rig.world.refuse.add(commentCmd(101));
+        // The status read is call 0, the first send call 1, the second call 2.
+        rig.world.failAt = 2;
+        const error = yield* Effect.flip(forwardIn(rig));
+        assert.strictEqual(error._tag, "FactorySessionsError");
+        assert.deepStrictEqual(rig.posted, []);
+        assert.deepStrictEqual(linesOf(rig), [...STARTED]);
+
+        rig.world.failAt = null;
+        clearCalls(rig);
+        assert.deepStrictEqual(yield* forwardIn(rig), outcome(1, false));
+        assert.deepStrictEqual(
+          rig.t3,
+          afterStatus(commentSend(101, "rawphp", "one"), commentSend(102, "rawphp", "two")),
+        );
+        assert.deepStrictEqual(linesOf(rig), [...STARTED, commentForwarded(102), droppedStep(101)]);
+        assert.deepStrictEqual(rig.posted, [droppedText(101, REFUSED)]);
       }),
   );
 });
