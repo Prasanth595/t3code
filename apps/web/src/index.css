@@ -2361,86 +2361,78 @@ code {
   margin: 0;
 }
 
-/* Floating thread note: markdown source editor and live preview. */
-.floating-note-editor {
-  font-size: 0.75rem;
-  line-height: 1.625;
-}
-
-.floating-note-editor::placeholder {
-  color: var(--color-placeholder);
-}
-
-.floating-note-preview {
+/* Floating thread note: one editable Markdown surface. */
+.floating-note-content {
   font-size: 0.75rem;
   line-height: 1.625;
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
-.floating-note-preview > :first-child {
+.floating-note-content > :first-child {
   margin-top: 0;
 }
 
-.floating-note-preview > :last-child {
+.floating-note-content > :last-child {
   margin-bottom: 0;
 }
 
-.floating-note-preview h1,
-.floating-note-preview h2,
-.floating-note-preview h3,
-.floating-note-preview h4,
-.floating-note-preview h5,
-.floating-note-preview h6 {
+.floating-note-content h1,
+.floating-note-content h2,
+.floating-note-content h3,
+.floating-note-content h4,
+.floating-note-content h5,
+.floating-note-content h6 {
   font-weight: 600;
   line-height: 1.3;
   margin: 0.5em 0 0.25em;
 }
 
-.floating-note-preview h1 {
+.floating-note-content h1 {
   font-size: 1.25rem;
   font-weight: 700;
 }
 
-.floating-note-preview h2 {
+.floating-note-content h2 {
   font-size: 1.05rem;
   font-weight: 700;
 }
 
-.floating-note-preview h3 {
+.floating-note-content h3 {
   font-size: 0.875rem;
 }
 
-.floating-note-preview h4 {
+.floating-note-content h4 {
   font-size: 0.8125rem;
 }
 
-.floating-note-preview p {
+.floating-note-content p {
   margin: 0.25em 0;
 }
 
-.floating-note-preview ul,
-.floating-note-preview ol {
+.floating-note-content ul,
+.floating-note-content ol {
   margin: 0.25em 0;
   padding-left: 1.25rem;
 }
 
-.floating-note-preview ul {
+.floating-note-content ul {
   list-style: disc;
 }
 
-.floating-note-preview ol {
+.floating-note-content ol {
   list-style: decimal;
 }
 
-.floating-note-preview li {
+.floating-note-content li {
   margin: 0.125em 0;
 }
 
-.floating-note-preview li::marker {
+.floating-note-content li::marker {
   color: var(--muted-foreground);
 }
 
-.floating-note-preview code {
+.floating-note-content code {
   font-family: var(--font-mono);
   font-size: 0.92em;
   background: color-mix(in oklab, var(--muted-foreground) 12%, transparent);
@@ -2448,7 +2440,7 @@ code {
   padding: 0.05em 0.25em;
 }
 
-.floating-note-preview pre {
+.floating-note-content pre {
   background: color-mix(in oklab, var(--muted-foreground) 10%, transparent);
   border-radius: 0.4em;
   font-family: var(--font-mono);
@@ -2459,47 +2451,94 @@ code {
   white-space: pre-wrap;
 }
 
-.floating-note-preview pre code {
+.floating-note-content pre code {
   background: transparent;
   padding: 0;
 }
 
-.floating-note-preview blockquote {
+.floating-note-content blockquote {
   border-left: 2px solid var(--border);
   color: var(--muted-foreground);
   margin: 0.5em 0;
   padding-left: 0.75rem;
 }
 
-.floating-note-preview a {
+.floating-note-content a {
   color: var(--primary);
   text-decoration: underline;
 }
 
-.floating-note-preview hr {
+.floating-note-content hr {
   border: 0;
   border-top: 1px solid var(--border);
   margin: 0.5em 0;
 }
 
-.floating-note-preview table {
+.floating-note-content table {
   border-collapse: collapse;
   font-size: inherit;
   margin: 0.5em 0;
 }
 
-.floating-note-preview th,
-.floating-note-preview td {
+.floating-note-content th,
+.floating-note-content td {
   border: 1px solid var(--border);
   padding: 0.25em 0.5em;
 }
 
-.floating-note-preview th {
+.floating-note-content th {
   font-weight: 600;
 }
 
-.floating-note-preview img {
+.floating-note-content img {
   max-width: 100%;
+}
+
+.floating-note-editor:has(> p:only-child > br.ProseMirror-trailingBreak:only-child)::before {
+  color: var(--color-placeholder);
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+}
+
+.floating-note-content ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+
+.floating-note-content li[data-type="taskItem"] {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+}
+
+.floating-note-content li[data-type="taskItem"] > label {
+  flex-shrink: 0;
+  padding-top: 0.25em;
+  line-height: 1;
+}
+
+.floating-note-content li[data-type="taskItem"] input[type="checkbox"] {
+  accent-color: var(--primary);
+  appearance: auto;
+  width: 0.85rem;
+  height: 0.85rem;
+  cursor: pointer;
+}
+
+.floating-note-content li[data-type="taskItem"] > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.floating-note-content li[data-type="taskItem"] > div > p {
+  margin: 0;
+}
+
+.floating-note-content li[data-checked="true"] > div > p {
+  color: var(--muted-foreground);
+  text-decoration: line-through;
 }
 
 /* px0 read-only file view. Rows are a fixed height so Px0FileSurface can
