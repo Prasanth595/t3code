@@ -16,6 +16,7 @@ import { type ReactElement, useCallback, useEffect, useMemo, useState } from "re
 import { Pressable, View } from "react-native";
 
 import { SymbolView } from "../../components/ui/AppSymbol";
+import * as Dialog from "../../components/ui/Dialog";
 import { AppText as Text } from "../../components/ui/AppText";
 import { readRequestHeaders, saveRequestHeaders } from "../../connection/requestHeaderCommands";
 import { isCloudflareAccessChallenged } from "../../connection/requestHeaders";
@@ -96,31 +97,42 @@ function cloudflareAccessTokenFromForm(
   return { token: clientId === "" ? null : { clientId, clientSecret } };
 }
 
-/**
- * Add environment: saves the form's token for the pairing target before pairing.
- * `undo` puts back the headers of that origin as they were, for a pairing that fails.
- */
-function useStageCloudflareAccessToken() {
+/** A saved token. `undo` puts back the old headers and returns an error message if it cannot. */
+interface SavedCloudflareAccessToken {
+  readonly undo: () => Promise<string | null>;
+}
+
+/** Saves `token` for `origin` and keeps its other headers, for a flow that may fail after it. */
+export function useSaveCloudflareAccessToken() {
   const store = useCloudflareAccessStore();
+  return useCallback(
+    async (
+      origin: string,
+      token: CloudflareAccessServiceToken,
+    ): Promise<SavedCloudflareAccessToken | { readonly error: string }> => {
+      const result = await store.update(origin, () => token);
+      if ("error" in result) return result;
+      return { undo: () => store.write(origin, result.previous) };
+    },
+    [store],
+  );
+}
+
+/** Add environment: saves the form's token for the pairing target before pairing. */
+function useStageCloudflareAccessToken() {
+  const save = useSaveCloudflareAccessToken();
   return useCallback(
     async (
       pairingUrl: string,
       form: CloudflareAccessForm,
-    ): Promise<{ readonly undo: () => Promise<void> } | { readonly error: string }> => {
+    ): Promise<SavedCloudflareAccessToken | { readonly error: string }> => {
       const parsed = cloudflareAccessTokenFromForm(form);
       if ("error" in parsed) return parsed;
       const origin = pairingTargetOrigin(pairingUrl);
-      if (parsed.token === null || origin === null) return { undo: async () => {} };
-      const token = parsed.token;
-      const result = await store.update(origin, () => token);
-      if ("error" in result) return result;
-      return {
-        undo: async () => {
-          await store.write(origin, result.previous);
-        },
-      };
+      if (parsed.token === null || origin === null) return { undo: async () => null };
+      return save(origin, parsed.token);
     },
-    [store],
+    [save],
   );
 }
 
@@ -357,6 +369,20 @@ export function useAddEnvironmentCloudflareAccess(input: {
         disabled={input.disabled}
       />
     ),
-    stage: () => stageToken(input.pairingUrl, form),
+    stage: async () => {
+      const staged = await stageToken(input.pairingUrl, form);
+      if ("error" in staged) return staged;
+      return {
+        undo: async () => {
+          const error = await staged.undo();
+          if (error !== null) {
+            Dialog.alert(
+              "Service token not removed",
+              `The pairing failed, and the saved service token could not be removed. ${error}`,
+            );
+          }
+        },
+      };
+    },
   };
 }

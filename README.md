@@ -29,7 +29,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Client access:** each machine decides which browsers get in through Cloudflare Access. `off` keeps the owner login. `observe` gives a browser of an approved client the level of its arrow, at most `standard`. `enforce` lets in only browsers of approved clients; other browsers wait for approval (`clientAccess`).
 - **Owner-only access changes:** only the owner changes `clientAccess` and `machineMap`, in the portal with the passkey step or in the desktop app of the machine. Agents cannot change them.
 - **Sibling client sessions:** a browser client session lasts 1 day, also on sibling machines. A refused sibling pairs again by itself with the browser key.
-- **App invites and app tokens:** only the owner makes an invite, in the portal. "Invite an app" shows a QR code that a native app, such as the T3 Android app, uses once. The app gets its own Cloudflare Access token, and each machine gives it the level of its arrow.
+- **App invites and app tokens:** only the owner makes an invite, in the portal. "Invite an app" shows a QR code that a native app, such as the T3 Android app, uses once. The app gets its own Cloudflare Access token, and each machine gives it the level of its arrow. In the mobile app, scan it in Add environment, or paste its link in Address; the app then pairs with every machine it may reach.
 - **Machines panel:** a read-only map in the right panel of a thread. Open it with "Show machines" in the command palette.
 
 **Updates and releases**

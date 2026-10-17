@@ -1,0 +1,133 @@
+/**
+ * Fork: native app clients of the machine map (MM-913, MM-914). An invite from
+ * the portal gives this app its own Cloudflare Access service token and the
+ * machines it may reach. The app keeps the token as request headers for each
+ * machine origin and the portal origin, then pairs with each machine through
+ * `/api/auth/cloudflare-access/pairing-credential`.
+ */
+import { AuthPairingCredentialResult, ClientEnrollResponse } from "@t3tools/contracts";
+import * as Device from "expo-device";
+import * as Schema from "effect/Schema";
+import { Platform } from "react-native";
+
+import { fetchWithRequestHeaders, isCloudflareAccessChallenged } from "./requestHeaders";
+
+export interface ClientInvite {
+  readonly enrollUrl: string;
+  readonly code: string;
+}
+
+/** The invite in `https://<portal>/enroll/client#code=<code>`, or null for any other text. */
+export function parseClientInvite(text: string): ClientInvite | null {
+  let url: URL;
+  try {
+    url = new URL(text.trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" || url.pathname !== "/enroll/client") return null;
+  const code = new URLSearchParams(url.hash.slice(1)).get("code")?.trim() ?? "";
+  return code === "" ? null : { enrollUrl: `${url.origin}/enroll/client`, code };
+}
+
+// After 404 and 423 the portal deletes any token it made, so a new invite is the only way on.
+const ENROLL_ERRORS: Readonly<Record<number, string>> = {
+  404: "This invite is unknown, used or cancelled, or its client is gone. Ask for a new invite.",
+  410: "This invite expired. Invites last 15 minutes. Ask for a new invite.",
+  423: "Everything is paused. Ask for a new invite after Resume.",
+  429: "Too many attempts. Wait 15 minutes, then scan again.",
+  503: "The portal has no Cloudflare API token, so it cannot make a token for this phone.",
+};
+
+const decodeEnrollResponse = Schema.decodeUnknownSync(Schema.toCodecJson(ClientEnrollResponse));
+const decodePairingCredential = Schema.decodeUnknownSync(
+  Schema.toCodecJson(AuthPairingCredentialResult),
+);
+
+function deviceName(): string {
+  const model = Device.modelName ?? "Phone";
+  return `${model} · ${Platform.OS === "android" ? "Android" : "iOS"} ${Device.osVersion ?? ""}`
+    .trim()
+    .slice(0, 200);
+}
+
+const ENROLL_TIMEOUT_MS = 20_000;
+
+// Before the owner runs "Set up approvals" in the portal, Cloudflare Access
+// answers the invite path with its login page instead of the Worker.
+function isAccessLoginPage(response: Response): boolean {
+  try {
+    return new URL(response.url).hostname.endsWith(".cloudflareaccess.com");
+  } catch {
+    return false;
+  }
+}
+
+/** Uses the invite once. The answer holds the only copy of the token secret. */
+export async function redeemClientInvite(invite: ClientInvite): Promise<ClientEnrollResponse> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ENROLL_TIMEOUT_MS);
+  let response: Response;
+  try {
+    response = await fetch(invite.enrollUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ code: invite.code, device: deviceName() }),
+      signal: controller.signal,
+    });
+  } catch (cause) {
+    throw new Error(
+      controller.signal.aborted
+        ? "The portal did not answer. Check the connection, then scan again."
+        : `The portal is unreachable (${cause instanceof Error ? cause.message : String(cause)}).`,
+      { cause },
+    );
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (isAccessLoginPage(response)) {
+    throw new Error("The portal is not set up for app invites yet. Run Set up approvals in it.");
+  }
+  // Cloudflare answers 520-530 with an HTML page when the Worker is down.
+  if (!(response.headers.get("content-type") ?? "").includes("application/json")) {
+    throw new Error(`The portal is unreachable (${response.status}). Try again later.`);
+  }
+  if (!response.ok) {
+    throw new Error(
+      ENROLL_ERRORS[response.status] ?? `The portal refused the invite (${response.status}).`,
+    );
+  }
+  return decodeEnrollResponse(await response.json());
+}
+
+// Right after an enroll, Access may not accept the new token yet, and the machine
+// may not know the new client until the portal's desired state reaches it.
+const PAIRING_RETRY_DELAYS_MS = [1_000, 3_000, 6_000];
+
+/**
+ * A one-use pairing credential from a machine. Needs the token headers saved for
+ * its origin. Retries a refusal a few times, for a token that is still new.
+ */
+export async function issueMachinePairingCredential(origin: string): Promise<string> {
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetchWithRequestHeaders(
+      `${origin}/api/auth/cloudflare-access/pairing-credential`,
+      { method: "POST" },
+    );
+    // fetch follows the Access login redirect, so a refused token can end as a 200 login page.
+    const refused =
+      response.status === 401 || response.status === 403 || isCloudflareAccessChallenged(origin);
+    if (response.ok && !refused) return decodePairingCredential(await response.json()).credential;
+    const delay = PAIRING_RETRY_DELAYS_MS[attempt];
+    if (refused && delay !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
+      continue;
+    }
+    const status = response.ok ? "Cloudflare Access login" : response.status;
+    throw new Error(
+      refused
+        ? `The machine refused this phone (${status}). Cloudflare Access may not accept the new token yet, or the machine runs a version without app invites; update it, then use a new invite.`
+        : `The machine refused this phone (${response.status}).`,
+    );
+  }
+}
