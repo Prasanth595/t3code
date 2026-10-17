@@ -15,6 +15,7 @@ import * as Schema from "effect/Schema";
 import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { FORK_BOOT_SERVICE_LAUNCHD_LABEL } from "@t3tools/shared/forkIdentity";
 import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimeCommand,
@@ -34,9 +35,9 @@ import {
 
 const BOOT_SERVICE_NAME = "t3code";
 const BOOT_SERVICE_UNIT_FILE = `${BOOT_SERVICE_NAME}.service`;
-// `.service` suffix keeps the label distinct from the desktop app's bundle id
-// (com.t3tools.t3code), so launchd and TCC records never collide.
-const BOOT_SERVICE_LAUNCHD_LABEL = "com.t3tools.t3code.service";
+// The label is the fork desktop app's bundle id plus `.service`, so it never
+// collides with upstream T3 Code's service or with the desktop app's TCC records.
+const BOOT_SERVICE_LAUNCHD_LABEL = FORK_BOOT_SERVICE_LAUNCHD_LABEL;
 const BOOT_SERVICE_PLIST_FILE = `${BOOT_SERVICE_LAUNCHD_LABEL}.plist`;
 const BOOT_SERVICE_UNIT_ENV = "T3_BOOT_SERVICE_UNIT";
 export const BOOT_SERVICE_LOG_FILE = "boot-service.log";

@@ -2,9 +2,18 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { assert, describe, it } from "vite-plus/test";
+import { assert, describe, it, vi } from "vite-plus/test";
 
 import {
+  FORK_DESKTOP_APP_ID,
+  FORK_DESKTOP_DEV_APP_ID,
+  FORK_DESKTOP_DEV_SCHEME,
+  FORK_DESKTOP_SCHEME,
+} from "@t3tools/shared/forkIdentity";
+
+import {
+  APP_BUNDLE_ID,
+  APP_PROTOCOL_SCHEMES,
   makeDevelopmentEnvironmentScript,
   makeDevelopmentLauncherScript,
   resolveElectronBinaryPath,
@@ -101,6 +110,49 @@ describe("electron development launcher", () => {
       "exec '/repo/apps/desktop/.electron-runtime/T3 Code (Dev).app/Contents/MacOS/Electron'",
     );
     assert.notInclude(script, "node_modules/electron");
+  });
+
+  it("registers the fork's bundle id and URL scheme, never upstream's", () => {
+    const values = resolveMacBundleInfoPlistStrings("T3 Code Factory (Dev) Launcher");
+    const forkSchemes = [FORK_DESKTOP_SCHEME, FORK_DESKTOP_DEV_SCHEME];
+
+    assert.equal(values.CFBundleIdentifier, APP_BUNDLE_ID);
+    assert.match(
+      APP_BUNDLE_ID,
+      new RegExp(`^${FORK_DESKTOP_APP_ID.replaceAll(".", "\\.")}(\\.dev\\.[a-z0-9]+)?$`),
+    );
+    assert.equal(APP_PROTOCOL_SCHEMES.length, 1);
+    assert.include(forkSchemes, APP_PROTOCOL_SCHEMES[0]);
+    assert.notInclude(APP_PROTOCOL_SCHEMES, "t3code");
+    assert.notInclude(APP_PROTOCOL_SCHEMES, "t3code-dev");
+    assert.match(values.CFBundleDisplayName, /^T3 Code Factory \((Dev|Beta)\)$/);
+  });
+
+  it("registers the fork's development bundle id and scheme under a dev server", async () => {
+    vi.stubEnv("VITE_DEV_SERVER_URL", "http://127.0.0.1:8526");
+    vi.resetModules();
+    try {
+      const launcher = await import("./electron-launcher.mjs");
+      const repoRoot = NodePath.resolve(import.meta.dirname, "..", "..", "..");
+      const suffix = NodePath.basename(repoRoot)
+        .toLowerCase()
+        .replaceAll(/[^a-z0-9]+/g, "");
+      const devBundleId = `${FORK_DESKTOP_DEV_APP_ID}.${suffix || "local"}`;
+
+      assert.equal(launcher.APP_BUNDLE_ID, devBundleId);
+      assert.deepEqual(launcher.APP_PROTOCOL_SCHEMES, [FORK_DESKTOP_DEV_SCHEME]);
+      assert.equal(
+        launcher.resolveMacBundleInfoPlistStrings("x").CFBundleDisplayName,
+        "T3 Code Factory (Dev)",
+      );
+      assert.include(
+        launcher.makeDevelopmentEnvironmentScript({ VITE_DEV_SERVER_URL: "http://127.0.0.1:8526" }),
+        `export T3CODE_DESKTOP_APP_USER_MODEL_ID='${devBundleId}'`,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
   });
 
   it("declares why the macOS app needs protected access", () => {

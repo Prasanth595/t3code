@@ -36,8 +36,9 @@ import * as DesktopSnapShot from "../snapShot/DesktopSnapShot.ts";
 import * as DesktopWslBackend from "../wsl/DesktopWslBackend.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { FORK_DESKTOP_BACKEND_PORT } from "@t3tools/shared/forkIdentity";
 
-const DEFAULT_DESKTOP_BACKEND_PORT = 3773;
+export const DEFAULT_DESKTOP_BACKEND_PORT = FORK_DESKTOP_BACKEND_PORT;
 const MAX_TCP_PORT = 65_535;
 const DESKTOP_BACKEND_PORT_PROBE_HOSTS = ["127.0.0.1", "0.0.0.0", "::"] as const;
 

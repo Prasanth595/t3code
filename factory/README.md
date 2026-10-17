@@ -44,6 +44,16 @@ factory/scripts/install.sh <archive>          # unpack, point `current` at it, r
 factory/scripts/rollback.sh                   # point `current` at the previous version, restart the job and check it comes up
 ```
 
+## Desktop app
+
+Build the macOS app with `vp run dist:desktop:dmg:arm64`. The dmg is unsigned by default and lands under `release/`. The first time you open an unsigned app, right-click it and choose Open.
+
+It installs and runs beside upstream T3 Code and shares nothing with it, or with the LaunchAgent server: its own bundle id (`io.github.original-solutions.t3code-factory`), name (`T3 Code Factory`), app data (`~/Library/Application Support/t3code-factory`), T3 home (`~/.t3code-factory`), `t3code-factory://` URL scheme, backend port scan from 3880 and launchd label (`io.github.original-solutions.t3code-factory.service`). A local build has no update feed unless `T3CODE_DESKTOP_UPDATE_REPOSITORY` or `GITHUB_REPOSITORY` is set. The identity values live in `packages/shared/src/forkIdentity.ts`.
+
+Sign-in through Clerk needs the fork's redirects in the Clerk instance the app's publishable key points at, in place of upstream's `t3code://app/` and `t3code-dev://app/` from `docs/operations/connect-setup.md`: add `t3code-factory://app/` and `t3code-factory-dev://app/` to the SSO redirect allowlist and the matching origins to the Backend API `allowed_origins`. Without them Clerk rejects the desktop callback and relay sign-in fails.
+
+Linux and Windows keep upstream's identity (desktop entry, WM class, `t3code.service`, the Linux `protocols` block): the fork ships no desktop build for them, and a fork server on Linux installing its boot service would take over upstream's unit.
+
 ## Logs
 
 The server writes to `~/Library/Logs/t3fac/t3fac.log`. launchd never rotates that file, and a crash-looping server writes the most and cannot rotate it itself, so a second LaunchAgent, `io.github.rawphp.t3fac.logrotate`, runs `~/.local/share/t3fac/rotate-log.sh` every 10 minutes. When the log is over 20 MB it copies it to `t3fac.log.1`, shifts the older copies up (`.2.gz` to `.5.gz`, gzipped), deletes anything past the fifth and empties `t3fac.log` in place, so the running server keeps writing to the same open file. The rotator's own output goes to `~/Library/Logs/t3fac/logrotate.log` and stays tiny: it prints one line per rotation and nothing otherwise.
