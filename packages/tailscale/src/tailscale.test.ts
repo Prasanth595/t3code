@@ -323,9 +323,29 @@ describe("tailscale", () => {
       assert.equal(error.executable, "tailscale");
       assert.equal(error.subcommand, "status");
       assert.equal(error.argumentCount, 2);
-      assert.equal(error.timeoutMs, 1_500);
+      assert.equal(error.timeoutMs, 3_500);
       assert.isTrue(Cause.isTimeoutError(error.cause));
-      assert.equal(error.message, "tailscale status timed out after 1500ms.");
+      assert.equal(error.message, "tailscale status timed out after 3500ms.");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("waits for a tailscale status that takes 2.6 seconds, as seen on Windows", () => {
+    const slowHandle = ChildProcessSpawner.makeHandle({
+      ...mockHandle({ stdout: tailscaleStatusWithSingleIpJson }),
+      exitCode: Effect.sleep("2600 millis").pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+    });
+    const layer = Layer.merge(
+      TestClock.layer(),
+      layerSpawner(ChildProcessSpawner.make(() => Effect.succeed(slowHandle))),
+    );
+
+    return Effect.gen(function* () {
+      const fiber = yield* readTailscaleStatus.pipe(Effect.forkScoped);
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("2600 millis");
+      const status = yield* Fiber.join(fiber);
+
+      assert.equal(status.magicDnsName, "desktop.tail.ts.net");
     }).pipe(Effect.provide(layer));
   });
 
