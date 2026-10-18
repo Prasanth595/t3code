@@ -89,7 +89,11 @@ import {
   remapFileCommentAnnotations,
 } from "./fileCommentAnnotations";
 import { installFileEditorDismissal } from "./fileEditorDismissal";
-import { getFileScrollPosition, guardFileScrollTarget } from "./fileScrollPosition";
+import {
+  type FileRevealRequest,
+  getFileScrollPosition,
+  guardFileScrollTarget,
+} from "./fileScrollPosition";
 import {
   FILE_LINK_REVEAL_ATTRIBUTE,
   FILE_LINK_REVEAL_UNSAFE_CSS,
@@ -128,8 +132,7 @@ interface FilePreviewPanelProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
-  revealLine: number | null;
-  revealRequestId: number;
+  revealRequest: FileRevealRequest | null;
   onOpenFile: (relativePath: string) => void;
   /** Moves this folder browser to another folder in place; see `navigateFolder`. */
   onNavigateFolder: (relativePath: string, folderTrail: string, keepSource: boolean) => void;
@@ -394,14 +397,14 @@ interface FileRevealState {
   stopTrackingScroll: (() => void) | null;
   frameId: number | null;
   cancelGuard: (() => void) | null;
-  latestRequestId: number;
+  latestRequest: FileRevealRequest | null;
 }
 
 function useFileLineReveal(
   scrollKey: string | null,
-  revealLine: number | null,
-  revealRequestId: number,
+  revealRequest: FileRevealRequest | null,
 ): FilePostRender {
+  const revealLine = revealRequest?.revealLine ?? null;
   const [revealStates] = useState(() => new Map<string, FileRevealState>());
 
   return (fileContainer, instance, phase) => {
@@ -413,7 +416,7 @@ function useFileLineReveal(
       stopTrackingScroll: null,
       frameId: null,
       cancelGuard: null,
-      latestRequestId: revealRequestId,
+      latestRequest: revealRequest,
     };
     if (!existingState) revealStates.set(scrollKey, state);
 
@@ -439,9 +442,9 @@ function useFileLineReveal(
 
     if (!(instance instanceof VirtualizedFile)) return;
 
-    if (state.latestRequestId !== revealRequestId) {
+    if (state.latestRequest !== revealRequest) {
       cancelPendingReveal();
-      state.latestRequestId = revealRequestId;
+      state.latestRequest = revealRequest;
     }
 
     const scrollContainer = fileContainer.closest<HTMLElement>(".file-preview-virtualizer");
@@ -452,7 +455,7 @@ function useFileLineReveal(
       };
       scrollContainer.addEventListener("scroll", remember, { passive: true });
       state.stopTrackingScroll = () => scrollContainer.removeEventListener("scroll", remember);
-      if (revealLine === null || position.handledRevealRequestId === revealRequestId) {
+      if (revealLine === null || position.handledRevealRequest === revealRequest) {
         const top = position.top;
         state.cancelGuard = guardFileScrollTarget(scrollContainer, () => top);
       }
@@ -466,7 +469,7 @@ function useFileLineReveal(
       Math.max(instance.height, scrollContainer.clientHeight),
     )}px`;
 
-    if (position.handledRevealRequestId === revealRequestId || state.frameId !== null) {
+    if (position.handledRevealRequest === revealRequest || state.frameId !== null) {
       return;
     }
 
@@ -504,7 +507,7 @@ function useFileLineReveal(
     const scheduleReveal = (attempt: number) => {
       state.frameId = requestAnimationFrame(() => {
         state.frameId = null;
-        if (state.latestRequestId !== revealRequestId || !fileContainer.isConnected) {
+        if (state.latestRequest !== revealRequest || !fileContainer.isConnected) {
           return;
         }
 
@@ -522,7 +525,7 @@ function useFileLineReveal(
         updateFileLinkReveal(fileContainer, line);
 
         scrollContainer.scrollTop = targetTop;
-        position.handledRevealRequestId = revealRequestId;
+        position.handledRevealRequest = revealRequest;
         state.cancelGuard = guardFileScrollTarget(scrollContainer, () => resolveScrollTarget(line));
       });
     };
@@ -937,8 +940,7 @@ export default function FilePreviewPanel({
   composerDraftTarget,
   keybindings,
   availableEditors,
-  revealLine,
-  revealRequestId,
+  revealRequest,
   onOpenFile,
   onNavigateFolder,
   folderTrail,
@@ -946,6 +948,8 @@ export default function FilePreviewPanel({
   selectedFilePending,
   workspaceMutationId,
 }: FilePreviewPanelProps) {
+  const revealLine = revealRequest?.revealLine ?? null;
+  const revealRequestId = revealRequest?.revealRequestId ?? 0;
   const relativePath =
     attachment === undefined ? resolveFilePreviewPath(requestedPath, cwd) : requestedPath;
   const draft = typeof composerDraftTarget === "string";
@@ -1022,19 +1026,13 @@ export default function FilePreviewPanel({
     true,
     Schema.Boolean,
   );
-  // Paired with the path on purpose: each file surface counts its reveals from
-  // one, so a bare id would let a dismissed reveal on one file swallow the first
-  // reveal on the next.
-  const [handledReveal, setHandledReveal] = useState<{ path: string; requestId: number } | null>(
-    null,
-  );
+  // Closed and reopened file tabs can reuse the same numeric reveal ID.
+  const [handledReveal, setHandledReveal] = useState<FileRevealRequest | null>(null);
   const breadcrumbRef = useRef<HTMLDivElement>(null);
   const isMarkdown = previewPath ? isMarkdownPreviewFile(previewPath) : false;
   const tableDelimiter =
     previewPath && attachment === undefined ? filePreviewDelimiter({ name: previewPath }) : null;
-  const revealHandled =
-    revealLine === null ||
-    (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
+  const revealHandled = revealLine === null || handledReveal === revealRequest;
   const renderMarkdown = isMarkdown && renderMarkdownPreferred && revealHandled;
   const renderBrowserFile = isPdf || (isHtml && renderBrowserFilePreferred && revealHandled);
   const renderTable = tableDelimiter !== null && renderTablePreferred && revealHandled;
@@ -1084,8 +1082,7 @@ export default function FilePreviewPanel({
         : null;
   const onFilePostRender = useFileLineReveal(
     absolutePath === null ? null : `${environmentId}:${threadRef.threadId}:${absolutePath}`,
-    revealLine,
-    revealRequestId,
+    revealRequest,
   );
   useWorkspaceMutationRefresh({
     enabled:
@@ -1206,11 +1203,7 @@ export default function FilePreviewPanel({
               onPress={() => {
                 const pressed = !rendered;
                 setRenderedPreferred(pressed);
-                setHandledReveal(
-                  pressed && relativePath !== null
-                    ? { path: relativePath, requestId: revealRequestId }
-                    : null,
-                );
+                setHandledReveal(pressed ? revealRequest : null);
               }}
             >
               <MorphIcon

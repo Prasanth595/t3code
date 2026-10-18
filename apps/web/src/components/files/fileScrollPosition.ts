@@ -1,6 +1,11 @@
+export interface FileRevealRequest {
+  readonly revealLine: number | null;
+  readonly revealRequestId: number;
+}
+
 interface FileScrollPosition {
   top: number;
-  handledRevealRequestId: number | null;
+  handledRevealRequest: FileRevealRequest | null;
 }
 
 const MAX_POSITIONS = 200;
@@ -8,7 +13,7 @@ const positions = new Map<string, FileScrollPosition>();
 
 export function getFileScrollPosition(key: string): FileScrollPosition {
   let position = positions.get(key);
-  if (!position) position = { top: 0, handledRevealRequestId: null };
+  if (!position) position = { top: 0, handledRevealRequest: null };
   positions.delete(key);
   positions.set(key, position);
   if (positions.size > MAX_POSITIONS) positions.delete(positions.keys().next().value!);

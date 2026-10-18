@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import { getFileScrollPosition, guardFileScrollTarget } from "./fileScrollPosition";
+import { selectActiveRightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
 
 class ScrollContainer extends EventTarget {
   scrollTop = 0;
@@ -29,6 +32,32 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("file scroll positions", () => {
+  it("retains handled requests across tab switches but distinguishes a reopened file", () => {
+    const ref = scopeThreadRef(EnvironmentId.make("reveal-test"), ThreadId.make("thread"));
+    const store = useRightPanelStore.getState();
+    const activeSurface = () =>
+      selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, ref);
+    store.openFile(ref, "file.ts", 40);
+    const original = activeSurface();
+    if (original?.kind !== "file") throw new Error("Expected an open file");
+    const position = getFileScrollPosition("reveal-test:thread:/repo/file.ts");
+    position.top = 10_000;
+    position.handledRevealRequest = original;
+
+    store.open(ref, "diff");
+    store.activateSurface(ref, original.id);
+    expect(position.handledRevealRequest).toBe(activeSurface());
+
+    store.closeSurface(ref, original.id);
+    store.openFile(ref, "file.ts", 87);
+    const reopened = activeSurface();
+    if (reopened?.kind !== "file") throw new Error("Expected a reopened file");
+    expect(reopened.revealRequestId).toBe(original.revealRequestId);
+    expect(position.handledRevealRequest).not.toBe(reopened);
+    expect(getFileScrollPosition("reveal-test:thread:/repo/file.ts").top).toBe(10_000);
+    store.removeThread(ref);
+  });
+
   it("keeps positions separate across threads", () => {
     getFileScrollPosition("environment:thread-a:/repo/file.ts").top = 10_000;
     getFileScrollPosition("environment:thread-b:/repo/file.ts").top = 400;
