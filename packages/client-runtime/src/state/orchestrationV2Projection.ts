@@ -5,7 +5,10 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
-import { isActiveBackgroundTurnItem } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import {
+  isActiveBackgroundTurnItem,
+  turnItemUpdateCanEndBackgroundWork,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   createOrchestrationV2TurnItemVisibility,
   isOrchestrationV2TurnItemVisible,
@@ -294,14 +297,22 @@ export function applyOrchestrationV2ProjectionEvent(
     case "plan.updated":
       return { ...base, plans: upsertEntity(base.plans, event.payload) };
     case "turn-item.updated": {
-      const unloaded =
+      const loaded = projection.turnItems.some((candidate) => candidate.id === event.payload.id);
+      const belowWindow =
         partialTimeline &&
-        !projection.turnItems.some((candidate) => candidate.id === event.payload.id) &&
+        (!loaded || turnItemUpdateCanEndBackgroundWork(event.payload)) &&
         shouldDropMissingPartialTurnItem(projection, event.payload, latestLocalTurnOrdinal);
-      if (unloaded && !isActiveBackgroundTurnItem(event.payload)) return projection;
+      // Running work from before the window still counts toward the waiting state, but is not
+      // timeline, so it is kept only while it runs.
+      if (belowWindow) {
+        if (isActiveBackgroundTurnItem(event.payload)) {
+          return { ...base, turnItems: upsertEntity(base.turnItems, event.payload) };
+        }
+        return loaded
+          ? { ...base, turnItems: base.turnItems.filter((item) => item.id !== event.payload.id) }
+          : projection;
+      }
       const next = { ...base, turnItems: upsertEntity(base.turnItems, event.payload) };
-      // Running work from before the window still counts toward the waiting state, but is not timeline.
-      if (unloaded) return next;
       // Only interrupt requests can change another item's visibility. Streaming
       // text/tool updates must not recheck every row against every run.
       const previous = projection.turnItems.find((item) => item.id === event.payload.id);

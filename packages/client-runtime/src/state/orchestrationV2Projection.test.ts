@@ -469,6 +469,22 @@ describe("applyOrchestrationV2ProjectionEvent", () => {
       expect(next?.visibleTurnItems).toEqual(oldSubagentWindow().visibleTurnItems);
     });
 
+    it("stops tracking a below-window subagent once it finishes", () => {
+      const running = applyOldSubagent("running")!;
+      const next = applyOrchestrationV2ProjectionEvent(
+        running,
+        itemEvent(subagentItem("completed")),
+        {
+          partialTimeline: true,
+          latestLocalTurnOrdinal: 3_000_003,
+        },
+      );
+
+      expect(next?.turnItems.map((item) => item.id)).toEqual(
+        oldSubagentWindow().turnItems.map((item) => item.id),
+      );
+    });
+
     it("still drops a finished subagent below the window", () => {
       const projection = oldSubagentWindow();
       expect(applyOldSubagent("completed")).toEqual(projection);
