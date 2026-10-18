@@ -930,7 +930,9 @@ export const make = Effect.gen(function* () {
     readonly viewer: string | null;
     readonly error: PullRequestProviderError | null;
   };
-  const viewerKey = (host: string, scope: string) => `${host}\n${scope}`;
+  // Every grouping of repositories goes through this key: a group is read with one credential, so
+  // it can share a viewer, a batched search and a line-count read without mixing two accounts.
+  const credentialKey = (host: string, scope: string) => `${host}\n${scope}`;
   const viewersByHost = new Map<string, { readonly at: number; readonly result: ResolvedViewer }>();
   const viewerFlights = yield* Cache.makeWith(
     (key: string): Effect.Effect<ResolvedViewer> => {
@@ -960,7 +962,7 @@ export const make = Effect.gen(function* () {
         })),
         Effect.tap((result) =>
           Effect.map(Clock.currentTimeMillis, (at) =>
-            viewersByHost.set(viewerKey(host, scope), { at, result }),
+            viewersByHost.set(credentialKey(host, scope), { at, result }),
           ),
         ),
         Effect.catch((error) =>
@@ -989,7 +991,7 @@ export const make = Effect.gen(function* () {
     options?: { readonly allowPaused: boolean },
   ) =>
     Effect.forEach(
-      [...new Set(projects.map((project) => viewerKey(project.host, project.credentialScope)))],
+      [...new Set(projects.map((project) => credentialKey(project.host, project.credentialScope)))],
       (accountKey) =>
         Effect.flatMap(Clock.currentTimeMillis, (now): Effect.Effect<ResolvedViewer> => {
           const held = viewersByHost.get(accountKey);
@@ -997,7 +999,7 @@ export const make = Effect.gen(function* () {
             return Effect.succeed(held.result);
           }
           const forAccount = projects.filter(
-            (project) => viewerKey(project.host, project.credentialScope) === accountKey,
+            (project) => credentialKey(project.host, project.credentialScope) === accountKey,
           );
           const { host, api } = forAccount[0]!;
           const scope = forAccount[0]!.credentialScope;
@@ -1140,11 +1142,11 @@ export const make = Effect.gen(function* () {
       const viewers: Record<string, string> = {};
       for (const result of viewerResults) {
         if (result.viewer === null) continue;
-        viewerByAccount.set(viewerKey(result.host, result.scope), result.viewer);
+        viewerByAccount.set(credentialKey(result.host, result.scope), result.viewer);
         viewers[result.host] ??= result.viewer;
       }
       const viewerFor = (project: SupportedProject): string | undefined =>
-        viewerByAccount.get(viewerKey(project.host, project.credentialScope));
+        viewerByAccount.get(credentialKey(project.host, project.credentialScope));
 
       const providers: ReadonlyArray<PullRequestProviderSummary> = [
         ...[...new Set(viewerResults.map((result) => result.host))].map((host) => {
@@ -1192,8 +1194,8 @@ export const make = Effect.gen(function* () {
           result.error === null ||
           !selected.some(
             (project) =>
-              viewerKey(project.host, project.credentialScope) ===
-              viewerKey(result.host, result.scope),
+              credentialKey(project.host, project.credentialScope) ===
+              credentialKey(result.host, result.scope),
           )
             ? []
             : [result.error],
@@ -1388,7 +1390,7 @@ export const make = Effect.gen(function* () {
           separate.push(project);
           continue;
         }
-        const key = `${project.host}\n${viewerFor(project)}\n${cursorOf(project)?.updatedBefore ?? ""}`;
+        const key = `${credentialKey(project.host, project.credentialScope)}\n${cursorOf(project)?.updatedBefore ?? ""}`;
         const group = together.get(key);
         if (group === undefined) together.set(key, [project]);
         else group.push(project);
@@ -2423,7 +2425,7 @@ export const make = Effect.gen(function* () {
   const listStatsUncached: PullRequestService["Service"]["listStats"] = (input) =>
     Effect.gen(function* () {
       if (input.refs.length === 0) return { stats: [] };
-      const { supported, viewerRoots } = yield* listWorkspaceProjects({});
+      const { supported } = yield* listWorkspaceProjects({});
       const byProject = new Map(supported.map((project) => [project.project.id, project]));
       const wanted = new Map<
         string,
@@ -2440,22 +2442,9 @@ export const make = Effect.gen(function* () {
         }
         wanted.set(`${project.project.id} ${ref.number}`, { project, number: ref.number });
       }
-      // One read carries one account's token, so rows are grouped by who the listing read them
-      // as: the viewer the listing already resolved, or the scope where it could not.
-      const viewerResults = yield* resolveViewers(
-        [...wanted.values()].map(({ project }) => project),
-        viewerRoots,
-      );
-      const accountOf = (project: SupportedProject) => {
-        const scope = project.credentialScope;
-        const viewer = viewerResults.find(
-          (result) => result.host === project.host && result.scope === scope,
-        )?.viewer;
-        return `${project.host}\n${viewer == null ? `scope ${scope}` : `viewer ${viewer}`}`;
-      };
       const byAccount = new Map<string, Array<{ project: SupportedProject; number: number }>>();
       for (const entry of wanted.values()) {
-        const key = accountOf(entry.project);
+        const key = credentialKey(entry.project.host, entry.project.credentialScope);
         const held = byAccount.get(key);
         if (held === undefined) byAccount.set(key, [entry]);
         else held.push(entry);

@@ -4160,6 +4160,53 @@ it.effect("reads an open pull request again once an account choice changes", () 
   }),
 );
 
+it.effect("never shares a search or a line-count read between two credentials of one login", () =>
+  Effect.gen(function* () {
+    const searches: Array<string> = [];
+    const statsAsked: Array<string> = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        project({ id: "p2", title: "api", workspaceRoot: "/b", repository: "acme/api" }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("github"), {
+          // Two tokens that sign in as the same login, such as one gh refreshed and one held.
+          credentialScope: ({ repository }) =>
+            Effect.succeed(repository === "acme/web" ? "token-a" : "token-b"),
+          getViewer: () => Effect.succeed("bilal"),
+          listChangeRequestsAcross: (input) =>
+            Effect.sync(() => {
+              searches.push(input.repositories.join(","));
+              return {
+                items: input.repositories.map((repository) =>
+                  batchedChangeRequest(1, repository, "2026-07-02T00:00:00Z"),
+                ),
+                truncated: false,
+              };
+            }),
+          listChangeRequestStats: (input) =>
+            Effect.sync(() => {
+              statsAsked.push(input.changeRequests.map((entry) => entry.repository).join(","));
+              return [];
+            }),
+        }),
+      ],
+    });
+
+    const result = yield* service.list({ state: "open", involvement: "all" });
+    yield* service.listStats({
+      refs: result.entries.map(({ projectId, repository, number }) => ({
+        projectId,
+        repository,
+        number,
+      })),
+    });
+    assert.deepStrictEqual(searches.toSorted(), ["acme/api", "acme/web"]);
+    assert.deepStrictEqual(statsAsked.toSorted(), ["acme/api", "acme/web"]);
+  }),
+);
+
 it.effect("leaves only the repositories of an account that cannot be read unavailable", () =>
   Effect.gen(function* () {
     const service = yield* makeService({

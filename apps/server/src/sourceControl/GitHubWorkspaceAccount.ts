@@ -42,16 +42,19 @@ export const workspaceGitHubCredential = Effect.fn("GitHubWorkspaceAccount.crede
 });
 
 /**
- * Variables for the agent processes working in `cwd`, so `gh` and git over HTTPS inside them act
- * as the account Settings choose for the repository. Empty unless Settings picked a login
- * of their own: an environment token reaches the agent already, and gh's active login is what an
- * agent without `GH_TOKEN` gets anyway.
+ * Variables for the agent processes working in `cwd`, so `gh` inside them acts as the account
+ * Settings choose for the repository. Empty unless Settings picked a login of their own on
+ * github.com or GHE.com: an environment token reaches the agent already, and gh's active login is
+ * what an agent without `GH_TOKEN` gets anyway.
  */
 export const agentGitHubEnvironment = Effect.fn("GitHubWorkspaceAccount.agentEnvironment")(
   function* (cwd: string) {
     const none: Readonly<Record<string, Redacted.Redacted<string>>> = {};
     const workspace = yield* workspaceGitHubRepository(cwd);
-    if (workspace === null) return none;
+    // gh sends `GH_TOKEN` only to github.com and GHE.com, but `GH_ENTERPRISE_TOKEN` to every other
+    // host it is pointed at, so an Enterprise Server token is never handed to an agent: there gh's
+    // own login, which it keeps per host, stays in charge.
+    if (workspace === null || !GitHubCredentials.isGitHubDotCom(workspace.host)) return none;
     const credentials = yield* GitHubCredentials.GitHubCredentials;
     // Settings first, so a turn in a workspace no rule covers never waits on `gh`.
     if ((yield* credentials.accountFor(workspace.host, workspace.repository)) === undefined) {
@@ -61,10 +64,6 @@ export const agentGitHubEnvironment = Effect.fn("GitHubWorkspaceAccount.agentEnv
       .get(workspace.host, workspace.repository)
       .pipe(Effect.orElseSucceed(() => null));
     if (credential?.account === undefined) return none;
-    // gh reads `GH_ENTERPRISE_TOKEN` for every host but github.com and GHE.com.
-    const variable = GitHubCredentials.isGitHubDotCom(credential.host)
-      ? "GH_TOKEN"
-      : "GH_ENTERPRISE_TOKEN";
-    return { [variable]: credential.token };
+    return { GH_TOKEN: credential.token };
   },
 );

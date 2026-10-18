@@ -157,12 +157,12 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
 });
 
 const tokenReads: Array<string | null | undefined> = [];
-const identityFor = (owner: string) => ({
-  canonicalKey: `github.com/${owner}/web`,
+const identityFor = (owner: string, host = "github.com") => ({
+  canonicalKey: `${host}/${owner}/web`,
   locator: {
     source: "git-remote" as const,
     remoteName: "origin",
-    remoteUrl: `git@github.com:${owner}/web.git`,
+    remoteUrl: `git@${host}:${owner}/web.git`,
   },
   owner,
   name: "web",
@@ -174,7 +174,11 @@ const layerWithAccounts = layerTest.pipe(
     Layer.mergeAll(
       Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
         resolve: (cwd) =>
-          Effect.succeed(identityFor(cwd === "/project-worktree" ? "acme" : "someone")),
+          Effect.succeed(
+            cwd === "/enterprise-worktree"
+              ? identityFor("acme", "github.acme-corp.example")
+              : identityFor(cwd === "/project-worktree" ? "acme" : "someone"),
+          ),
       }),
       Layer.mock(GitHubCredentials.GitHubCredentials)({
         accountFor: (_host, repository) =>
@@ -216,6 +220,15 @@ it.layer(layerWithAccounts)("RuntimePolicyV2 with GitHub accounts", (it) => {
       });
       assert.isUndefined(personal.environment);
       // A workspace no rule covers never asks gh for a token.
+      assert.deepEqual(tokenReads, ["acme/web"]);
+
+      // gh would send an Enterprise Server token to any host a command names, so none is handed
+      // out there, even where a rule picks an account.
+      const enterprise = yield* policy.resolve({
+        thread: makeThread({ now, worktreePath: "/enterprise-worktree" }),
+        modelSelection,
+      });
+      assert.isUndefined(enterprise.environment);
       assert.deepEqual(tokenReads, ["acme/web"]);
     }),
   );
