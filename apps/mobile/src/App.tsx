@@ -21,6 +21,7 @@ import {
 import { RootStack } from "./Stack";
 import { appAtomRegistry } from "./state/atom-registry";
 import { OverlayPortalHost } from "./components/ui/OverlayPortal";
+import { initialShortcutHref } from "./features/shortcuts/useAppShortcuts";
 import { shouldHandleAppLink } from "./lib/appLinking";
 import { useMobileNavigationTheme } from "./lib/useMobileNavigationTheme";
 import { useUiRuntimeMemoryWarningGc } from "./lib/useUiRuntimeMemoryWarningGc";
@@ -41,6 +42,13 @@ const appLinking = {
   prefixes: [Linking.createURL("/"), "t3code://", "t3code-dev://", "t3code-preview://"],
   config: { initialRouteName: "Home" },
   filter: shouldHandleAppLink,
+  // A launcher shortcut that starts the app becomes the first screen. A navigation sent once the
+  // app runs comes too early on a cold start: React Navigation drops it before it is ready.
+  getInitialURL: async () => {
+    const href = initialShortcutHref();
+    // The href starts with "/"; the scheme prefix ends with "//".
+    return href === null ? Linking.getInitialURL() : Linking.createURL(href.slice(1));
+  },
 };
 
 const Navigation = createStaticNavigation(RootStack);

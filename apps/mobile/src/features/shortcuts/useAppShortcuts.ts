@@ -21,22 +21,18 @@ export function useAppShortcuts(state: NavigationState): void {
   useRecentThreadShortcutSync(state);
 }
 
+/**
+ * The shortcut that started the app, for the initial URL of the navigation container (App.tsx).
+ * With `initialRouteName: "Home"`, Back from that screen returns home instead of leaving the app.
+ */
+export function initialShortcutHref(): string | null {
+  return QuickActions.initial ? shortcutHref(QuickActions.initial) : null;
+}
+
 function useShortcutNavigation(): void {
   const linkTo = useLinkTo();
-  const handledInitialAction = useRef(false);
 
   useEffect(() => {
-    // Cold start: the tapped shortcut arrives as the launch action, before
-    // any listener can fire. Navigating from here pushes the target over the
-    // initial Home route, so back returns home instead of exiting the app.
-    if (!handledInitialAction.current) {
-      handledInitialAction.current = true;
-      const initialHref = QuickActions.initial ? shortcutHref(QuickActions.initial) : null;
-      if (initialHref !== null) {
-        linkTo(initialHref);
-      }
-    }
-
     const subscription = QuickActions.addListener((action) => {
       const href = shortcutHref(action);
       if (href !== null) {
