@@ -1249,6 +1249,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       expect(yield* terminalState(h.installation)).toMatchObject({ installedVersion: "1.4.1" });
 
       manifest = withdrawnManifest;
+      expect((yield* Effect.flip(h.installation.resolve())).detail).toContain("no longer works");
       yield* h.installation.checkForUpdate;
       expect(yield* h.installation.state).toMatchObject({
         installedVersion: "1.4.1",

@@ -436,7 +436,15 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       }
       if (yield* fs.exists(activePath)) {
         const active = yield* readRecord(activePath, ActiveRelease);
-        return yield* completedRelease(active.releaseId);
+        const installed = yield* completedRelease(active.releaseId);
+        // Without this a withdrawn install keeps launching until its owner updates.
+        if (yield* isWithdrawn(installed.version)) {
+          return yield* installationError(
+            "resolve",
+            `Antigravity ${installed.version} no longer works with this T3 Code release. Update it in Antigravity setup.`,
+          );
+        }
+        return installed;
       }
       for (const candidate of pathCandidates(names.executable, processEnvironment)) {
         const selected = yield* fromExternal(candidate, "path");
