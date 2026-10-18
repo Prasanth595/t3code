@@ -1,6 +1,6 @@
 import type { DevicePlatform } from "@t3tools/contracts";
 
-export type DeviceModelId = "iphone-18-pro" | "iphone-18-pro-max" | "ipad-pro-13-m5";
+export type DeviceModelId = "iphone-18-pro" | "iphone-18-pro-max" | "ipad-pro-13-m5" | "iphone-duo";
 
 export interface DeviceModelSource {
   readonly id: DeviceModelId;
@@ -15,9 +15,9 @@ export interface DeviceAccessorySource {
 
 export type DeviceAssetSource = DeviceModelSource | DeviceAccessorySource;
 
-/** Match actual hardware, never stretch an available model to impersonate another device. */
 export function resolveDeviceModelId(platform: DevicePlatform, name: string): DeviceModelId | null {
   if (platform !== "ios") return null;
+  if (/^iPhone Duo$/i.test(name)) return "iphone-duo";
   if (/^iPhone 18 Pro Max$/i.test(name)) return "iphone-18-pro-max";
   if (/^iPhone 18 Pro$/i.test(name)) return "iphone-18-pro";
   if (/^iPad Pro 13-inch \(M5\)$/i.test(name)) return "ipad-pro-13-m5";
@@ -72,7 +72,6 @@ export function createDeviceModelSlot<
             request = null;
             options.onError?.(cause);
           }
-          // The procedural body stays installed on download, decoding or validation failure.
         },
       );
     },
