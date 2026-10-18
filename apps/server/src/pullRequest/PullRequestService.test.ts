@@ -608,7 +608,7 @@ function makeService(input: {
   );
 }
 
-it.effect.each(["unknown", "github"])(
+it.effect.each(["unknown", "github", "omitted"])(
   "routes a mapped custom host with stored kind %s through the real Forgejo PR provider",
   (storedKind) =>
     Effect.gen(function* () {
@@ -644,20 +644,24 @@ it.effect.each(["unknown", "github"])(
           }),
         ),
       );
+      const savedProject = project({
+        id: "forge",
+        title: "custom forge",
+        workspaceRoot: "/forge",
+        repository: "team/repo",
+        host: "code.aopc.cloud",
+        provider: storedKind,
+      });
+      const { provider: _provider, ...identityWithoutKind } = savedProject.repositoryIdentity!;
       const service = yield* makeService({
         settings: {
           ...DEFAULT_SERVER_SETTINGS,
           sourceControlHostOverrides: { "code.aopc.cloud": { kind: "forgejo" } },
         },
         projects: [
-          project({
-            id: "forge",
-            title: "custom forge",
-            workspaceRoot: "/forge",
-            repository: "team/repo",
-            host: "code.aopc.cloud",
-            provider: storedKind,
-          }),
+          storedKind === "omitted"
+            ? { ...savedProject, repositoryIdentity: identityWithoutKind }
+            : savedProject,
         ],
         providers: [provider],
       });

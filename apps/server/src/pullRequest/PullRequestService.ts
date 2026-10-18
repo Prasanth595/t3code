@@ -738,7 +738,7 @@ export const make = Effect.gen(function* () {
           const identity = project.repositoryIdentity;
           let kind = identity?.provider as SourceControlProviderKind | undefined;
           const repository = sourceControlRepositorySelector(project.repositoryIdentity);
-          if (!identity || kind === undefined || repository === null) continue;
+          if (!identity || repository === null) continue;
           let refinedProvider: SourceControlProviderInfo | null | undefined;
           const overridden =
             sourceControlHostOverrideForRemoteUrl(identity.locator.remoteUrl, overrides) !==
@@ -757,6 +757,7 @@ export const make = Effect.gen(function* () {
             refinedProvider = provider === null ? null : refinedProviders.get(provider.baseUrl);
             kind = refinedProvider?.kind ?? kind;
           }
+          if (kind === undefined) continue;
           const host =
             refinedProvider && (overridden || refinedProvider.kind === "forgejo")
               ? new URL(refinedProvider.baseUrl).host.toLowerCase()
