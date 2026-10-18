@@ -63,6 +63,13 @@ export const APPEARANCE_ITEMS = [
     searchTerms: ["mobile phone android app new thread project picker last scratch no project"],
     environmentOnly: true,
   },
+  {
+    id: "mobile-composer-camera",
+    title: "Camera on mobile",
+    to: "/settings/appearance",
+    searchTerms: ["mobile phone android app camera photo take picture composer attachment plus"],
+    environmentOnly: true,
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export const GLOBAL_SCRIPTS_ITEMS = [

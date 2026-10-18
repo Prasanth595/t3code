@@ -60,6 +60,7 @@ const FORK_PAGE_ROWS: Record<
   previewLocalServerGroups: "preview-local-server-groups",
   mobilePublishedThemes: "mobile-published-themes",
   mobileNewThreadProject: "mobile-new-thread-project",
+  mobileComposerCamera: "mobile-composer-camera",
 };
 
 /** The settings that Restore defaults keeps, with the reason. */

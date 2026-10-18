@@ -27,6 +27,7 @@ const FORK_RESTORED_SETTINGS = [
   ["previewLocalServerGroups", "All local servers in the browser"],
   ["mobilePublishedThemes", "Published themes on mobile"],
   ["mobileNewThreadProject", "New thread on mobile"],
+  ["mobileComposerCamera", "Camera on mobile"],
   ["keybindingSync", "Keybinding sync"],
   ["pullRequestWatchRemarkFilter", "Pull request watch remarks"],
   ["agentSessionImportWindowDays", "Session import window"],

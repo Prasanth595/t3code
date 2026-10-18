@@ -345,6 +345,14 @@ What New thread opens in the mobile app.
 - Back from the draft shows the project list. A share, a prompt link and "Choose a project" in the draft keep the project list.
 - **Limits:** `none` needs a server that offers threads without a project. Without one, and with `last` and no earlier new thread, the project list shows.
 
+### Camera in the mobile composer
+
+The plus button of the mobile composer, the new thread draft and question answers offers "Take Photo" next to "Photo Library" and "Choose Files".
+
+- **Setting:** server setting `mobileComposerCamera` (off by default, because on a server without file attachments the plus button opens a menu instead of the photo library). Settings > Appearance > Mobile app, or Fork in the mobile Settings.
+- **Works on:** mobile.
+- **Limits:** photos only, because the app asks for no microphone access. Revisit if video from the camera is needed.
+
 ### Thread card layouts
 
 Build the thread card from its elements, for desktop and web and for mobile.
@@ -480,7 +488,7 @@ The mobile app uses the themes that its servers publish.
 
 ### Fork settings on mobile
 
-Fork in the mobile Settings holds the fork settings that apply to the mobile app: published themes, thread link chips and what New thread opens. A change writes the setting to each selected environment.
+Fork in the mobile Settings holds the fork settings that apply to the mobile app: published themes, the camera in the composer, thread link chips and what New thread opens. A change writes the setting to each selected environment.
 
 - **Works on:** mobile.
 - **Limits:** a change on the phone is the own value of each server, not the shared value of the machine map. Set the shared value in the portal or from a machine with the map role `edit`.

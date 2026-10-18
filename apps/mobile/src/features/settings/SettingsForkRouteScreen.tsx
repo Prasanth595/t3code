@@ -111,6 +111,14 @@ export function SettingsForkRouteScreen() {
                   onValueChange={(value) => write({ mobilePublishedThemes: value })}
                 />
                 <SettingsSwitchRow
+                  icon="camera"
+                  label="Camera in the composer"
+                  subtitle="The plus button of the composer offers Take Photo."
+                  value={uniformMobileSetting(targets, "mobileComposerCamera")}
+                  disabled={disabled}
+                  onValueChange={(value) => write({ mobileComposerCamera: value })}
+                />
+                <SettingsSwitchRow
                   icon="link"
                   label="Thread link chips"
                   subtitle="Thread links in chat look like an attached thread and open the thread here."

@@ -404,7 +404,8 @@ const config: ExpoConfig = {
     [
       "expo-camera",
       {
-        cameraPermission: "Allow T3 Code to access your camera so you can scan pairing QR codes.",
+        cameraPermission:
+          "Allow T3 Code to access your camera so you can scan pairing QR codes and take photos for messages.",
         microphonePermission: false,
         barcodeScannerEnabled: true,
         recordAudioAndroid: false,

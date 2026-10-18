@@ -26,6 +26,7 @@ export function MobileAppSettingsSection() {
     <SettingsSection id="mobile-app" title="Mobile app">
       <MobilePublishedThemesSettingsRow />
       <MobileNewThreadProjectSettingsRow />
+      <MobileComposerCameraSettingsRow />
     </SettingsSection>
   );
 }
@@ -55,6 +56,37 @@ export function MobilePublishedThemesSettingsRow() {
           checked={settings.mobilePublishedThemes}
           onCheckedChange={(checked) => updateSettings({ mobilePublishedThemes: Boolean(checked) })}
           aria-label="Published themes on mobile"
+        />
+      }
+    />
+  );
+}
+
+export function MobileComposerCameraSettingsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["mobileComposerCamera"]);
+  const fallback = DEFAULT_SERVER_SETTINGS.mobileComposerCamera;
+  return (
+    <SettingsRow
+      {...searchableSetting("mobile-composer-camera")}
+      serverScoped
+      settingKeys={["mobileComposerCamera"]}
+      description="The plus button of the mobile composer offers Take Photo, next to the photo library and files."
+      resetAction={
+        mixed || settings.mobileComposerCamera !== fallback ? (
+          <SettingResetButton
+            label="camera on mobile"
+            onClick={() => updateSettings({ mobileComposerCamera: fallback })}
+          />
+        ) : null
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["mobileComposerCamera"]}
+          checked={settings.mobileComposerCamera}
+          onCheckedChange={(checked) => updateSettings({ mobileComposerCamera: Boolean(checked) })}
+          aria-label="Camera on mobile"
         />
       }
     />
