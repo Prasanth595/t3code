@@ -444,6 +444,7 @@ function useProjectLookups() {
 }
 
 const selectCommandPaletteClientSettings = (settings: ClientSettings) => ({
+  tooltipShortcuts: settings.tooltipShortcuts,
   sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
   sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
   sidebarProjectSortOrder: settings.sidebarProjectSortOrder,
@@ -3138,7 +3139,15 @@ function OpenCommandPaletteDialog(props: {
             <Kbd>{createShortcutLabel}</Kbd>
           </KbdGroup>
         </TooltipTrigger>
-        <TooltipPopup side="top">{`Create (${createShortcutLabel})`}</TooltipPopup>
+        <TooltipPopup side="top">
+          Create
+          {clientSettings.tooltipShortcuts ? (
+            <>
+              {" "}
+              <Kbd>{createShortcutLabel}</Kbd>
+            </>
+          ) : null}
+        </TooltipPopup>
       </Tooltip>
     ) : addProjectCloneFlow?.step === "repository" ? (
       <Tooltip>
@@ -3165,7 +3174,15 @@ function OpenCommandPaletteDialog(props: {
             <Kbd>Enter</Kbd>
           </KbdGroup>
         </TooltipTrigger>
-        <TooltipPopup side="top">{remoteProjectButtonLabel ?? "Continue"} (Enter)</TooltipPopup>
+        <TooltipPopup side="top">
+          {remoteProjectButtonLabel ?? "Continue"}
+          {clientSettings.tooltipShortcuts ? (
+            <>
+              {" "}
+              <Kbd>Enter</Kbd>
+            </>
+          ) : null}
+        </TooltipPopup>
       </Tooltip>
     ) : isBrowsing ? (
       <Tooltip>
@@ -3207,11 +3224,21 @@ function OpenCommandPaletteDialog(props: {
           </KbdGroup>
         </TooltipTrigger>
         <TooltipPopup side="top">
-          {isCloneDestinationStep && !canCloneProject
-            ? "This connection needs permission to write source control and add projects."
-            : canCreateProject
-              ? `${submitActionLabel} (${addShortcutLabel})`
-              : "This connection cannot add projects."}
+          {isCloneDestinationStep && !canCloneProject ? (
+            "This connection needs permission to write source control and add projects."
+          ) : canCreateProject ? (
+            <>
+              {submitActionLabel}
+              {clientSettings.tooltipShortcuts ? (
+                <>
+                  {" "}
+                  <Kbd>{addShortcutLabel}</Kbd>
+                </>
+              ) : null}
+            </>
+          ) : (
+            "This connection cannot add projects."
+          )}
         </TooltipPopup>
       </Tooltip>
     ) : null;

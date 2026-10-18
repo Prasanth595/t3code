@@ -25,7 +25,7 @@ import {
   type ComposerControlSize,
 } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
-import { shortcutLabelForCommand } from "../../keybindings";
+import { ShortcutHint } from "../focusLevels/ShortcutHint";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   environmentId: EnvironmentId | null;
@@ -145,9 +145,6 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     setIsMenuOpen(false);
   };
 
-  const shortcutLabel = props.keybindings
-    ? shortcutLabelForCommand(props.keybindings, "modelPicker.toggle")
-    : null;
   const selectedEntries = props.selectedModels?.map((selection) => {
     const entry = props.instanceEntries.find(
       (candidate) => candidate.instanceId === selection.instanceId,
@@ -176,9 +173,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const allModelNames = selectedEntries
     ? selectedEntries.map((selection) => selection.label).join(", ") || "Choose models"
     : undefined;
-  const triggerTooltipContent = shortcutLabel
-    ? `${props.triggerLabel ?? allModelNames ?? triggerLabel} · ${shortcutLabel}`
-    : (props.triggerLabel ?? allModelNames ?? triggerLabel);
+  const triggerTooltipContent = props.triggerLabel ?? allModelNames ?? triggerLabel;
 
   return (
     <Popover
@@ -261,7 +256,10 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             >
               {props.triggerLabel ?? multipleLabel ?? triggerTitle}
             </TooltipTrigger>
-            <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
+            <TooltipPopup side="top">
+              {triggerTooltipContent}
+              <ShortcutHint command={props.keybindings ? "modelPicker.toggle" : null} />
+            </TooltipPopup>
           </Tooltip>
           {selectedModel?.isUnavailable && !selectedEntries && props.triggerLabel === undefined ? (
             <Badge variant="outline" size="sm">

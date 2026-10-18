@@ -167,6 +167,7 @@ import {
 } from "./ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { ShortcutHint } from "./focusLevels/ShortcutHint";
 import {
   SidebarContent,
   SidebarGroup,
@@ -237,7 +238,12 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
   duration: 180,
   easing: "ease-out",
 } as const;
-const EMPTY_THREAD_JUMP_LABELS = new Map<string, string>();
+type ThreadJumpHint = {
+  label: string;
+  command: NonNullable<ReturnType<typeof threadJumpCommandForIndex>>;
+  terminalOpen: boolean;
+};
+const EMPTY_THREAD_JUMP_LABELS = new Map<string, ThreadJumpHint>();
 const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
   repository: "Group by repository",
   repository_path: "Group by repository path",
@@ -298,7 +304,7 @@ function buildThreadJumpLabelMap(input: {
     string,
     NonNullable<ReturnType<typeof threadJumpCommandForIndex>>
   >;
-}): ReadonlyMap<string, string> {
+}): ReadonlyMap<string, ThreadJumpHint> {
   if (input.threadJumpCommandByKey.size === 0) {
     return EMPTY_THREAD_JUMP_LABELS;
   }
@@ -310,11 +316,11 @@ function buildThreadJumpLabelMap(input: {
       terminalOpen: input.terminalOpen,
     },
   } as const;
-  const mapping = new Map<string, string>();
+  const mapping = new Map<string, ThreadJumpHint>();
   for (const [threadKey, command] of input.threadJumpCommandByKey) {
     const label = shortcutLabelForCommand(input.keybindings, command, shortcutLabelOptions);
     if (label) {
-      mapping.set(threadKey, label);
+      mapping.set(threadKey, { label, command, terminalOpen: input.terminalOpen });
     }
   }
   return mapping.size > 0 ? mapping : EMPTY_THREAD_JUMP_LABELS;
@@ -325,7 +331,7 @@ interface SidebarThreadRowProps {
   orderedProjectThreadKeys: readonly string[];
   isActive: boolean;
   openPullRequestsInRightPanel: boolean;
-  jumpLabel: string | null;
+  jumpHint: ThreadJumpHint | null;
   appSettingsConfirmThreadArchive: boolean;
   renamingThreadKey: string | null;
   renamingTitle: string;
@@ -380,7 +386,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     orderedProjectThreadKeys,
     isActive,
     openPullRequestsInRightPanel,
-    jumpLabel,
+    jumpHint,
     appSettingsConfirmThreadArchive,
     renamingThreadKey,
     renamingTitle,
@@ -856,19 +862,25 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     <TooltipPopup side="top">{threadEnvironmentLabel}</TooltipPopup>
                   </Tooltip>
                 )}
-                {jumpLabel ? (
+                {jumpHint ? (
                   <Tooltip>
                     <TooltipTrigger
                       render={
                         <span
-                          aria-label={jumpLabel}
+                          aria-label={jumpHint.label}
                           className="inline-flex h-5 items-center rounded-full border border-border/80 bg-background/90 px-1.5 font-mono text-3xs font-medium tracking-tight text-foreground shadow-sm"
                         />
                       }
                     >
-                      {jumpLabel}
+                      {jumpHint.label}
                     </TooltipTrigger>
-                    <TooltipPopup side="top">{jumpLabel}</TooltipPopup>
+                    <TooltipPopup side="top">
+                      Jump to thread
+                      <ShortcutHint
+                        command={jumpHint.command}
+                        context={{ terminalFocus: false, terminalOpen: jumpHint.terminalOpen }}
+                      />
+                    </TooltipPopup>
                   </Tooltip>
                 ) : (
                   <span
@@ -902,7 +914,7 @@ interface SidebarProjectThreadListProps {
   isThreadListExpanded: boolean;
   activeRouteThreadKey: string | null;
   openPullRequestsInRightPanel: boolean;
-  threadJumpLabelByKey: ReadonlyMap<string, string>;
+  threadJumpLabelByKey: ReadonlyMap<string, ThreadJumpHint>;
   appSettingsConfirmThreadArchive: boolean;
   renamingThreadKey: string | null;
   renamingTitle: string;
@@ -1011,7 +1023,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
               orderedProjectThreadKeys={orderedProjectThreadKeys}
               isActive={activeRouteThreadKey === threadKey}
               openPullRequestsInRightPanel={openPullRequestsInRightPanel}
-              jumpLabel={threadJumpLabelByKey.get(threadKey) ?? null}
+              jumpHint={threadJumpLabelByKey.get(threadKey) ?? null}
               appSettingsConfirmThreadArchive={appSettingsConfirmThreadArchive}
               renamingThreadKey={renamingThreadKey}
               renamingTitle={renamingTitle}
@@ -1076,12 +1088,12 @@ interface SidebarProjectItemProps {
   isThreadListExpanded: boolean;
   activeRouteThreadKey: string | null;
   openPullRequestsInRightPanel: boolean;
-  newThreadShortcutLabel: string | null;
+  newThreadCommand: "chat.newLocal" | "chat.new";
   handleNewThread: ReturnType<typeof useNewThreadHandler>;
   archiveThread: ReturnType<typeof useThreadActions>["archiveThread"];
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   markThreadUnread: ReturnType<typeof useThreadActions>["markThreadUnread"];
-  threadJumpLabelByKey: ReadonlyMap<string, string>;
+  threadJumpLabelByKey: ReadonlyMap<string, ThreadJumpHint>;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
@@ -1243,7 +1255,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     isThreadListExpanded,
     activeRouteThreadKey,
     openPullRequestsInRightPanel,
-    newThreadShortcutLabel,
+    newThreadCommand,
     handleNewThread,
     archiveThread,
     deleteThread,
@@ -2355,7 +2367,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
             }
           />
           <TooltipPopup side="top">
-            {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
+            New thread
+            <ShortcutHint
+              command={newThreadCommand}
+              context={{ terminalFocus: false, terminalOpen: false }}
+            />
           </TooltipPopup>
         </Tooltip>
       </div>
@@ -2789,9 +2805,9 @@ interface SidebarProjectsContentProps {
   activeRouteProjectKey: string | null;
   routeThreadKey: string | null;
   openPullRequestsInRightPanel: boolean;
-  newThreadShortcutLabel: string | null;
+  newThreadCommand: "chat.newLocal" | "chat.new";
   commandPaletteShortcutLabel: string | null;
-  threadJumpLabelByKey: ReadonlyMap<string, string>;
+  threadJumpLabelByKey: ReadonlyMap<string, ThreadJumpHint>;
   attachThreadListAutoAnimateRef: (node: HTMLElement | null) => void;
   expandThreadListForProject: (projectKey: string) => void;
   collapseThreadListForProject: (projectKey: string) => void;
@@ -2833,7 +2849,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     activeRouteProjectKey,
     routeThreadKey,
     openPullRequestsInRightPanel,
-    newThreadShortcutLabel,
+    newThreadCommand,
     commandPaletteShortcutLabel,
     threadJumpLabelByKey,
     attachThreadListAutoAnimateRef,
@@ -2950,7 +2966,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                           activeRouteProjectKey === project.projectKey ? routeThreadKey : null
                         }
                         openPullRequestsInRightPanel={openPullRequestsInRightPanel}
-                        newThreadShortcutLabel={newThreadShortcutLabel}
+                        newThreadCommand={newThreadCommand}
                         handleNewThread={handleNewThread}
                         archiveThread={archiveThread}
                         deleteThread={deleteThread}
@@ -2984,7 +3000,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                   activeRouteProjectKey === project.projectKey ? routeThreadKey : null
                 }
                 openPullRequestsInRightPanel={openPullRequestsInRightPanel}
-                newThreadShortcutLabel={newThreadShortcutLabel}
+                newThreadCommand={newThreadCommand}
                 handleNewThread={handleNewThread}
                 archiveThread={archiveThread}
                 deleteThread={deleteThread}
@@ -3314,9 +3330,13 @@ export default function LegacySidebar() {
       terminalOpen: false,
     },
   };
-  const newThreadShortcutLabel =
-    shortcutLabelForCommand(keybindings, "chat.newLocal", newThreadShortcutLabelOptions) ??
-    shortcutLabelForCommand(keybindings, "chat.new", newThreadShortcutLabelOptions);
+  const newThreadCommand = shortcutLabelForCommand(
+    keybindings,
+    "chat.newLocal",
+    newThreadShortcutLabelOptions,
+  )
+    ? "chat.newLocal"
+    : "chat.new";
 
   const navigateToThread = (threadRef: ScopedThreadRef) => {
     if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
@@ -3653,7 +3673,7 @@ export default function LegacySidebar() {
         activeRouteProjectKey={activeRouteProjectKey}
         routeThreadKey={routeThreadKey}
         openPullRequestsInRightPanel={routeThreadRef !== null}
-        newThreadShortcutLabel={newThreadShortcutLabel}
+        newThreadCommand={newThreadCommand}
         commandPaletteShortcutLabel={commandPaletteShortcutLabel}
         threadJumpLabelByKey={visibleThreadJumpLabelByKey}
         attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}

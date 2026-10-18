@@ -4659,10 +4659,10 @@ export default function Sidebar() {
     openCommandPalette({ open: "new-thread-in" });
   };
 
-  const newThreadShortcutLabel =
-    shortcutLabelForCommand(keybindings, "chat.new") ??
-    (projectGroups.length <= 1 ? shortcutLabelForCommand(keybindings, "chat.newLocal") : undefined);
-  const newThreadInProjectShortcutLabel = shortcutLabelForCommand(keybindings, "chat.newLocal");
+  const newThreadCommand =
+    shortcutLabelForCommand(keybindings, "chat.new") || projectGroups.length > 1
+      ? "chat.new"
+      : "chat.newLocal";
   return (
     <>
       <ThreadContextDragGhost />
@@ -4802,8 +4802,7 @@ export default function Sidebar() {
               onNewProject={openAddProjectCommandPalette}
               onNewThread={handleNewThreadClick}
               newThreadDisabled={projects.length === 0}
-              newThreadShortcutLabel={newThreadShortcutLabel}
-              newThreadInProjectShortcutLabel={newThreadInProjectShortcutLabel}
+              newThreadCommand={newThreadCommand}
               showNewThreadInProjectHint={projectGroups.length > 1}
               searchInputRef={threadSearchInputRef}
               searchQuery={threadSearchQuery}
