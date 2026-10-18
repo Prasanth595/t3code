@@ -29,6 +29,7 @@ function harness(
   hosts: Record<string, { readonly account?: string; readonly enabled?: boolean }> = {},
   signedOut: ReadonlyArray<string> = [],
   tokens: Record<string, string> = {},
+  activeToken = () => "active-token",
 ) {
   const calls: Array<ReadonlyArray<string>> = [];
   const run: SourceControlHost.SourceControlHost["Service"]["process"]["run"] = (input) =>
@@ -46,7 +47,7 @@ function harness(
       }
       return {
         exitCode: ChildProcessSpawner.ExitCode(0),
-        stdout: input.args.includes("--user") ? `token-for-${user}\n` : "active-token\n",
+        stdout: input.args.includes("--user") ? `token-for-${user}\n` : `${activeToken()}\n`,
         stderr: "",
         stdoutTruncated: false,
         stderrTruncated: false,
@@ -167,6 +168,43 @@ describe("GitHubCredentials", () => {
       expect(Redacted.value(credential.token)).toBe("saved-token");
       expect(credential.source).toBe("settings");
       expect(calls).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "rereads a renewed broker App token after invalidation and changes its fingerprint",
+    () => {
+      let current = "installation-token-first";
+      const { layer, calls } = harness({}, [], {}, () => current);
+      return Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        const first = yield* credentials.get("github.com");
+        current = "installation-token-renewed";
+        expect(Redacted.value((yield* credentials.get("github.com")).token)).toBe(
+          "installation-token-first",
+        );
+        yield* credentials.invalidate("github.com");
+        const renewed = yield* credentials.get("github.com");
+        expect(Redacted.value(renewed.token)).toBe(current);
+        expect(renewed.fingerprint).not.toBe(first.fingerprint);
+        expect(calls).toHaveLength(2);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("uses a replacement App token saved in Settings on the next lookup", () => {
+    const { layer, calls } = harness({}, [], { "github.com": "installation-token-first" });
+    return Effect.gen(function* () {
+      const credentials = yield* GitHubCredentials.GitHubCredentials;
+      const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
+      const first = yield* credentials.get("github.com");
+      yield* settings.update({
+        sourceControlHosts: { github: { tokens: { "github.com": "installation-token-renewed" } } },
+      });
+      const renewed = yield* credentials.get("github.com");
+      expect(Redacted.value(renewed.token)).toBe("installation-token-renewed");
+      expect(renewed.fingerprint).not.toBe(first.fingerprint);
+      expect(calls).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });
 

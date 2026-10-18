@@ -43,6 +43,8 @@ import {
 } from "@t3tools/contracts";
 
 import * as GitHubRest from "./GitHubRest.ts";
+import { gitHubActorLogin } from "./gitHubActorLogin.ts";
+import { GitHubViewerResponseError, makeGitHubViewerReader } from "./gitHubViewer.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubGraphQlClient from "./gitHubGraphQlClient.ts";
 import { PullRequestBatchesGraphQLGroup } from "./pullRequestBatches.graphql.ts";
@@ -295,6 +297,7 @@ export class GitHubBranchDeletionRefusedError extends Schema.TaggedError<GitHubB
 }
 
 export type GitHubPullRequestApiError =
+  | GitHubViewerResponseError
   | GitHubBranchDeletionRefusedError
   | GitHubStackActionError
   | GitHubRequestPolicy.GitHubApiError
@@ -784,8 +787,9 @@ function matchesFilters(
     (filters.labels === undefined || filters.labels.every((group) => group.some(holds))) &&
     (filters.excludedLabels === undefined || !filters.excludedLabels.some(holds)) &&
     (filters.author === undefined ||
-      item.author?.login.toLowerCase() ===
-        resolvePullRequestAuthorFilter(filters.author, viewer).toLowerCase())
+      (item.author !== null &&
+        gitHubActorLogin(item.author.login, item.author.isBot === true) ===
+          resolvePullRequestAuthorFilter(filters.author, viewer).toLowerCase()))
   );
 }
 
@@ -803,7 +807,8 @@ function matchesUnsortedListing(
   const matchesInvolvement =
     input.involvement === "all" ||
     (input.involvement === "authored"
-      ? item.author?.login.toLowerCase() === viewer
+      ? item.author !== null &&
+        gitHubActorLogin(item.author.login, item.author.isBot === true) === viewer
       : item.hasTeamReviewRequest ||
         item.reviewRequestLogins.some((login) => login.toLowerCase() === viewer));
   return matchesState && matchesInvolvement && matchesFilters(item, input.filters, input.viewer);
@@ -876,6 +881,7 @@ const IMMEDIATELY_MERGEABLE = new Set(["CLEAN", "HAS_HOOKS", "UNSTABLE"]);
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
+  const readGitHubViewer = yield* makeGitHubViewerReader;
   const api = yield* GitHubRest.GitHubRest;
   const policy = yield* GitHubRequestPolicy.GitHubRequestPolicy;
   const httpClient = yield* HttpClient.HttpClient;
@@ -919,13 +925,15 @@ export const make = Effect.gen(function* () {
               if (cached !== undefined && now - cached.at < 10 * 60_000)
                 return { ...credential, ...cached.value };
               // Pin this read so an auth switch cannot poison its cache entry.
-              const response = yield* api
-                .rest({ host, operation: "getRoutingIdentity", path: "user", allowReserve: true })
-                .pipe(
-                  Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, credential),
-                  Effect.provideService(SourceControlRateLimit.CredentialScope, key),
-                );
-              const identity = yield* decodeRoutingIdentity(response.body).pipe(
+              const response = yield* readGitHubViewer({
+                host,
+                operation: "getRoutingIdentity",
+                allowReserve: true,
+              }).pipe(
+                Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, credential),
+                Effect.provideService(SourceControlRateLimit.CredentialScope, key),
+              );
+              const identity = yield* decodeRoutingIdentity(response).pipe(
                 Effect.mapError(unavailable),
               );
               const value = { accountId: String(identity.id), viewer: identity.login };

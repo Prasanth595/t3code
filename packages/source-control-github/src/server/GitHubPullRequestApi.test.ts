@@ -703,6 +703,65 @@ it.effect(
     }),
 );
 
+it.effect("pins an App credential across the REST refusal and GraphQL identity fallback", () =>
+  Effect.gen(function* () {
+    let activeToken = "app-before";
+    const requests: Array<{ readonly url: string; readonly authorization: string | undefined }> =
+      [];
+    const credentials = Layer.succeed(GitHubCredentials.GitHubCredentials, {
+      get: (host) =>
+        Effect.sync(() => ({
+          host,
+          token: Redacted.make(activeToken),
+          source: GitHubCredentials.GitHubCredentialSource.make("env"),
+          fingerprint: `${host}:${activeToken}`,
+        })),
+      invalidate: () => Effect.void,
+    });
+    const http = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.sync(() => {
+          requests.push({ url: request.url, authorization: request.headers["authorization"] });
+          const rest = request.url.endsWith("/user");
+          if (rest) activeToken = "app-after";
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(
+              encodeJson(
+                rest
+                  ? { message: "Resource not accessible by integration" }
+                  : { data: { viewer: { login: "example[bot]", databaseId: 123 } } },
+              ),
+              {
+                status: rest ? 403 : 200,
+                headers: { "content-type": "application/json" },
+              },
+            ),
+          );
+        }),
+      ),
+    );
+    const cli = yield* GitHubPullRequestApi.make.pipe(
+      Effect.provide(
+        GitHubRest.layer.pipe(
+          Layer.provideMerge(Layer.mergeAll(credentials, http)),
+          Layer.provideMerge(GitHubQuota.layer),
+          Layer.provideMerge(SourceControlRateLimit.layer),
+          Layer.merge(TestSourceControlHost.layer()),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    );
+    const identity = yield* cli.getRoutingIdentity({ cwd: "/repo", host: "github.com" });
+    expect(identity).toEqual({ accountId: "123", viewer: "example[bot]" });
+    expect(requests.map((request) => request.authorization)).toEqual([
+      "Bearer app-before",
+      "Bearer app-before",
+    ]);
+  }),
+);
+
 layer("GitHubPullRequestApi.layer", (it) => {
   it.effect("holds background previews once an answer reports the reserve, until it resets", () =>
     Effect.gen(function* () {
@@ -2175,6 +2234,39 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect.each(["authored", "filtered"])(
+    "matches the App actor rather than a human with the same slug in %s fallback",
+    (mode) =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              listedPullRequests(2, 1, (number) => ({
+                author: {
+                  __typename: number === 1 ? "Bot" : "User",
+                  login: "example",
+                  avatarUrl: "https://avatars/example",
+                },
+              })),
+            ),
+          ),
+        );
+        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+        const batch = yield* cli.listPullRequests({
+          cwd: "/w",
+          repository: "acme/web",
+          host: "github.com",
+          state: "open",
+          involvement: mode === "authored" ? "authored" : "all",
+          viewer: "example[bot]",
+          limit: 10,
+          ...(mode === "filtered" ? { filters: { author: "me" } } : {}),
+        });
+        expect(batch.items.map((item) => item.number)).toEqual([1]);
+      }),
+  );
+
   it.effect("keeps state and involvement filters on the search-free fallback", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
@@ -3628,6 +3720,130 @@ layer("GitHubPullRequestApi.layer", (it) => {
       const error = yield* Effect.flip(cli.getViewerLogin({ cwd: "/w", host: "github.com" }));
 
       assert.strictEqual(error._tag, "GitHubViewerLoginUnavailableError");
+    }),
+  );
+
+  it.effect("verifies an installation token's bot identity when REST user is forbidden", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new GitHubRequestPolicy.GitHubApiResponseError({
+            host: "github.app-fallback.test",
+            operation: "getRoutingIdentity",
+            status: 403,
+          }),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: { viewer: { login: "example[bot]", databaseId: 123 } },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const input = { cwd: "/w", host: "github.app-fallback.test" };
+
+      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+        accountId: "123",
+        viewer: "example[bot]",
+      });
+      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+        accountId: "123",
+        viewer: "example[bot]",
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
+      expect(callAt(1)).toMatchObject({
+        kind: "graphql",
+        host: "github.app-fallback.test",
+        operationName: "GitHubViewer",
+      });
+    }),
+  );
+
+  it.effect("does not cache an App identity returned alongside GraphQL errors", () =>
+    Effect.gen(function* () {
+      const host = "app-identity-error.test";
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new GitHubRequestPolicy.GitHubApiResponseError({
+            host,
+            operation: "getRoutingIdentity",
+            status: 403,
+          }),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: { viewer: { login: "unverified[bot]", databaseId: 123 } },
+              errors: [{ message: "Resource not accessible by integration", type: "FORBIDDEN" }],
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const input = { cwd: "/w", host };
+      const error = yield* cli.getRoutingIdentity(input).pipe(Effect.flip);
+      expect(error._tag).toBe("GitHubApiResponseError");
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(output(encodeJson({ id: 456, login: "verified" }))),
+      );
+      expect(yield* cli.getRoutingIdentity(input)).toEqual({
+        accountId: "456",
+        viewer: "verified",
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(3);
+    }),
+  );
+
+  it.effect.each([null, 0, -1])("rejects an App viewer with invalid account ID %s", (databaseId) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new GitHubRequestPolicy.GitHubApiResponseError({
+            host: `invalid-app-${databaseId}.test`,
+            operation: "getRoutingIdentity",
+            status: 403,
+          }),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: { viewer: { login: "example[bot]", databaseId } },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const error = yield* cli
+        .getRoutingIdentity({ cwd: "/w", host: `invalid-app-${databaseId}.test` })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("GitHubViewerLoginUnavailableError");
+    }),
+  );
+
+  it.effect("does not retry refused credentials with GraphQL", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.fail(
+          new GitHubRequestPolicy.GitHubApiAuthenticationError({
+            host: "refused-identity.test",
+            operation: "getRoutingIdentity",
+          }),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+      const error = yield* cli
+        .getRoutingIdentity({ cwd: "/w", host: "refused-identity.test" })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("GitHubApiAuthenticationError");
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
     }),
   );
 

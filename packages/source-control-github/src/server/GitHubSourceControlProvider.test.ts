@@ -88,6 +88,7 @@ interface GraphQlCall {
   readonly host: string;
   readonly operationName: string;
   readonly query: string;
+  readonly authorization: string | undefined;
   readonly lookups: ReadonlyArray<Readonly<Record<string, unknown>>>;
 }
 
@@ -130,6 +131,7 @@ function graphQlHttp(respond: GraphQlRespond, calls: Array<GraphQlCall>) {
         host: new URL(request.url).hostname.replace(/^api\./, ""),
         operationName: sent.operationName,
         query: sent.query,
+        authorization: request.headers["authorization"],
         lookups,
       };
       calls.push(call);
@@ -242,7 +244,11 @@ function harness(input: {
   );
   const layer = Layer.mergeAll(
     host,
-    Layer.mock(GitHubRest.GitHubRest)(input.api ?? {}),
+    Layer.mock(GitHubRest.GitHubRest)({
+      credential: (host) =>
+        Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:token` }),
+      ...input.api,
+    }),
     policy,
     Layer.succeed(HttpClient.HttpClient, graphQlHttp(graphql, graphqlCalls)),
     NodeServices.layer,
@@ -263,6 +269,126 @@ const githubContext = (host: string) => ({
   },
   remoteName: "origin",
   remoteUrl: `git@${host}:acme/web.git`,
+});
+
+it.effect("discovers an installation token through its verified GraphQL bot identity", () => {
+  const { layer, graphqlCalls } = harness({
+    remotes: "",
+    api: {
+      credential: (host) =>
+        Effect.succeed({ token: Redacted.make("app-token"), fingerprint: `${host}:app` }),
+      rest: () =>
+        Effect.fail(
+          new GitHubRequestPolicy.GitHubApiResponseError({
+            host: "github.com",
+            operation: "discovery",
+            status: 403,
+          }),
+        ),
+    },
+    graphql: () =>
+      new Response(encodeJson({ data: { viewer: { login: "example[bot]", databaseId: 123 } } }), {
+        headers: { "content-type": "application/json" },
+      }),
+  });
+  return Effect.gen(function* () {
+    const discovery = yield* GitHubSourceControlProvider.makeDiscovery;
+    const result = yield* discovery.probe("/repo");
+    assert.strictEqual(result.auth.status, "authenticated");
+    assert.deepStrictEqual(result.auth.account, Option.some("example[bot]"));
+    assert.strictEqual(graphqlCalls[0]?.operationName, "GitHubViewer");
+  }).pipe(
+    Effect.provide(layer),
+    Effect.provideService(HostProcess.Environment, { GH_TOKEN: "app-token" }),
+  );
+});
+
+it.effect.each([
+  { host: "github.com", saved: false, environment: { GH_TOKEN: "app-token" } },
+  {
+    host: "github.enterprise.test",
+    saved: false,
+    environment: { GH_HOST: "github.enterprise.test", GH_ENTERPRISE_TOKEN: "app-token" },
+  },
+  { host: "github.saved.test", saved: true, environment: {} },
+])(
+  "discovers configured App credentials on $host without a working CLI login",
+  ({ host, saved, environment }) => {
+    const requests: string[] = [];
+    const { layer } = harness({
+      remotes: "",
+      api: {
+        rest: (input) => {
+          requests.push(input.host);
+          return Effect.fail(
+            new GitHubRequestPolicy.GitHubApiResponseError({
+              host: input.host,
+              operation: "discovery",
+              status: 403,
+            }),
+          );
+        },
+      },
+      graphql: () =>
+        new Response(encodeJson({ data: { viewer: { login: "example[bot]", databaseId: 123 } } }), {
+          headers: { "content-type": "application/json" },
+        }),
+    });
+    return Effect.gen(function* () {
+      if (saved) {
+        const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
+        yield* settings.update({
+          sourceControlHosts: { github: { tokens: { [host]: "app-token" } } },
+        });
+      }
+      const discovery = yield* GitHubSourceControlProvider.makeDiscovery;
+      const result = yield* discovery.probe("/repo");
+      assert.strictEqual(result.auth.status, "authenticated");
+      assert.deepStrictEqual(result.auth.host, Option.some(host));
+      assert.isTrue(
+        result.auth.accounts?.some(
+          (account) =>
+            account.host === host && account.account === "example[bot]" && account.authenticated,
+        ),
+      );
+      assert.deepStrictEqual(requests, [host]);
+    }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, environment));
+  },
+);
+
+it.effect("does not probe disabled or unrelated enterprise hosts with an environment token", () => {
+  const requests: string[] = [];
+  const { layer } = harness({
+    remotes: "",
+    api: {
+      rest: (input) => {
+        requests.push(input.host);
+        return Effect.succeed(restResponse({ login: "unexpected" }));
+      },
+    },
+  });
+  return Effect.gen(function* () {
+    const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
+    yield* settings.update({
+      sourceControlHosts: {
+        github: {
+          hosts: {
+            "github.enterprise.test": { enabled: false },
+            "unrelated.test": { enabled: true },
+          },
+        },
+      },
+    });
+    const discovery = yield* GitHubSourceControlProvider.makeDiscovery;
+    yield* discovery.probe("/repo");
+    assert.deepStrictEqual(requests, []);
+  }).pipe(
+    Effect.provide(layer),
+    Effect.provideService(HostProcess.Environment, {
+      GH_HOST: "github.enterprise.test",
+      GH_ENTERPRISE_TOKEN: "app-token",
+    }),
+  );
 });
 
 describe("GitHubSourceControlProvider repository resolution", () => {
@@ -695,6 +821,338 @@ describe("GitHubSourceControlProvider writes", () => {
       assert.strictEqual(requests.length, 2);
     });
   });
+});
+
+it.effect(
+  "pins an explicit enterprise clone URL to its own host instead of the checkout host",
+  () => {
+    const credentials: string[] = [];
+    const { layer } = harness({
+      remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
+      api: {
+        credential: (host) => {
+          credentials.push(host);
+          return Effect.succeed({ token: Redacted.make("token"), fingerprint: `${host}:token` });
+        },
+        rest: (input) =>
+          Effect.gen(function* () {
+            const pinned = yield* GitHubRequestPolicy.PinnedGitHubCredential;
+            assert.strictEqual(pinned?.host, "enterprise.example");
+            assert.strictEqual(input.host, "enterprise.example");
+            return restResponse({
+              full_name: "acme/notes",
+              html_url: "https://enterprise.example/acme/notes",
+              ssh_url: "git@enterprise.example:acme/notes.git",
+            });
+          }),
+      },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitHubSourceControlProvider.make;
+      const result = yield* provider.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: "https://enterprise.example/acme/notes",
+      });
+      assert.strictEqual(result.url, "https://enterprise.example/acme/notes");
+      assert.deepStrictEqual(credentials, ["enterprise.example"]);
+    }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+  },
+);
+
+it.effect("pins App repository owner resolution and creation to the captured token", () => {
+  let current = "before";
+  const credential = (host: string) =>
+    Effect.succeed({
+      host,
+      token: Redacted.make(current),
+      source: GitHubCredentials.GitHubCredentialSource.make("env"),
+      fingerprint: `${host}:${current}`,
+    });
+  const { layer, graphqlCalls } = harness({
+    remotes: "",
+    api: {
+      credential,
+      rest: (input) =>
+        Effect.sync(() => {
+          current = "after";
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(
+              new GitHubRequestPolicy.GitHubApiResponseError({
+                host: input.host,
+                operation: "getViewer",
+                status: 403,
+              }),
+            ),
+          ),
+        ),
+    },
+    graphql: (_, call) =>
+      new Response(
+        encodeJson({
+          data:
+            call.operationName === "GitHubViewer"
+              ? { viewer: { login: "example[bot]", databaseId: 123 } }
+              : call.operationName === "InstallationRepositoryOwner"
+                ? { repositoryOwner: { __typename: "User", login: "acme", id: "USER_acme" } }
+                : {
+                    createRepository: {
+                      repository: {
+                        nameWithOwner: "acme/notes",
+                        url: "https://github.com/acme/notes",
+                        sshUrl: "git@github.com:acme/notes.git",
+                      },
+                    },
+                  },
+        }),
+        { headers: { "content-type": "application/json" } },
+      ),
+  });
+  return Effect.gen(function* () {
+    const provider = yield* GitHubSourceControlProvider.make;
+    yield* provider.createRepository({
+      cwd: "/repo",
+      repository: "acme/notes",
+      visibility: "private",
+    });
+    assert.deepStrictEqual(
+      graphqlCalls.map((call) => call.authorization),
+      ["Bearer before", "Bearer before", "Bearer before"],
+    );
+    assert.strictEqual(graphqlCalls.at(-1)?.lookups[0]?.ownerId, "USER_acme");
+  }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+});
+
+it.effect("does not create an App repository when GitHub cannot resolve its owner", () => {
+  const { layer, graphqlCalls } = harness({
+    remotes: "",
+    api: {
+      rest: (input) =>
+        Effect.fail(
+          new GitHubRequestPolicy.GitHubApiResponseError({
+            host: input.host,
+            operation: "getViewer",
+            status: 403,
+          }),
+        ),
+    },
+    graphql: (_, call) =>
+      new Response(
+        encodeJson({
+          data:
+            call.operationName === "GitHubViewer"
+              ? { viewer: { login: "example[bot]", databaseId: 123 } }
+              : { repositoryOwner: null },
+        }),
+        { headers: { "content-type": "application/json" } },
+      ),
+  });
+  return Effect.gen(function* () {
+    const provider = yield* GitHubSourceControlProvider.make;
+    const error = yield* provider
+      .createRepository({ cwd: "/repo", repository: "missing/notes", visibility: "private" })
+      .pipe(Effect.flip);
+    assert.include(error.message, "Repository owner not found");
+    assert.deepStrictEqual(
+      graphqlCalls.map((call) => call.operationName),
+      ["GitHubViewer", "InstallationRepositoryOwner"],
+    );
+  }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+});
+
+describe("GitHub App repository ownership", () => {
+  const appHarness = (
+    owners: ReadonlyArray<string>,
+    pages = false,
+    personal = false,
+    returnsRepository = true,
+  ) => {
+    const paths: string[] = [];
+    const context = harness({
+      remotes: "",
+      api: {
+        rest: (input) => {
+          paths.push(input.path);
+          if (input.path === "user")
+            return Effect.fail(
+              new GitHubRequestPolicy.GitHubApiResponseError({
+                host: input.host,
+                operation: "getViewer",
+                status: 403,
+              }),
+            );
+          if (input.path.startsWith("installation/repositories"))
+            return Effect.succeed(
+              restResponse({
+                repositories:
+                  pages && input.path.endsWith("page=1")
+                    ? Array.from({ length: 100 }, (_, index) => ({
+                        full_name: `acme/repo${index}`,
+                      }))
+                    : owners.map((owner) => ({
+                        full_name: `${owner}/notes`,
+                        owner: { login: owner, type: personal ? "User" : "Organization" },
+                      })),
+              }),
+            );
+          return Effect.succeed(
+            restResponse({
+              full_name: "acme/notes",
+              html_url: "https://github.com/acme/notes",
+              ssh_url: "git@github.com:acme/notes.git",
+            }),
+          );
+        },
+      },
+      graphql: (_lookup, call) =>
+        new Response(
+          encodeJson({
+            data:
+              call.operationName === "GitHubViewer"
+                ? { viewer: { login: "example[bot]", databaseId: 123 } }
+                : call.operationName === "InstallationRepositoryOwner"
+                  ? {
+                      repositoryOwner: {
+                        __typename: personal ? "User" : "Organization",
+                        id: personal ? "USER_acme" : "ORG_acme",
+                        login: "acme",
+                      },
+                    }
+                  : {
+                      createRepository: {
+                        repository: returnsRepository
+                          ? {
+                              nameWithOwner: "acme/notes",
+                              url: "https://github.com/acme/notes",
+                              sshUrl: "git@github.com:acme/notes.git",
+                            }
+                          : null,
+                      },
+                    },
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+    });
+    return { ...context, paths };
+  };
+
+  it.effect(
+    "resolves bare clone names from the paginated installation owner instead of the bot",
+    () => {
+      const { layer, paths } = appHarness(["acme"], true);
+      return Effect.gen(function* () {
+        const provider = yield* GitHubSourceControlProvider.make;
+        const result = yield* provider.getRepositoryCloneUrls({
+          cwd: "/repo",
+          repository: "notes",
+        });
+        assert.strictEqual(result.nameWithOwner, "acme/notes");
+        assert.deepStrictEqual(paths, [
+          "user",
+          "installation/repositories?per_page=100&page=1",
+          "installation/repositories?per_page=100&page=2",
+          "repos/acme/notes",
+        ]);
+      }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+    },
+  );
+
+  it.effect(
+    "reports possible creation without retrying when the token cannot read the result",
+    () => {
+      const { layer, graphqlCalls } = appHarness(["acme"], false, false, false);
+      return Effect.gen(function* () {
+        const provider = yield* GitHubSourceControlProvider.make;
+        const error = yield* provider
+          .createRepository({ cwd: "/repo", repository: "acme/notes", visibility: "private" })
+          .pipe(Effect.flip);
+        assert.include(error.message, "acme/notes may already have been created");
+        assert.include(error.message, "Check the repository and token access before retrying");
+        assert.strictEqual(
+          graphqlCalls.filter((call) => call.operationName === "CreateInstallationRepository")
+            .length,
+          1,
+        );
+      }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+    },
+  );
+
+  it.effect.each(["acme/notes", "notes"])(
+    "creates %s in the installation organization",
+    (repository) => {
+      const { layer, paths, graphqlCalls } = appHarness(["acme"]);
+      return Effect.gen(function* () {
+        const provider = yield* GitHubSourceControlProvider.make;
+        yield* provider.createRepository({ cwd: "/repo", repository, visibility: "private" });
+        assert.strictEqual(graphqlCalls.at(-1)?.operationName, "CreateInstallationRepository");
+        assert.strictEqual(graphqlCalls.at(-1)?.lookups[0]?.ownerId, "ORG_acme");
+        assert.isFalse(paths.some((path) => path.includes("[bot]")));
+      }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+    },
+  );
+
+  it.effect.each(["acme/notes", "notes"])(
+    "creates %s under a verified personal installation",
+    (repository) => {
+      const { layer, graphqlCalls } = appHarness(["acme"], false, true);
+      return Effect.gen(function* () {
+        const provider = yield* GitHubSourceControlProvider.make;
+        yield* provider.createRepository({ cwd: "/repo", repository, visibility: "private" });
+        assert.strictEqual(graphqlCalls.at(-1)?.lookups[0]?.ownerId, "USER_acme");
+      }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+    },
+  );
+
+  it.effect("accepts an explicit organization when an installation has no repositories yet", () => {
+    const { layer, graphqlCalls } = appHarness([]);
+    return Effect.gen(function* () {
+      const provider = yield* GitHubSourceControlProvider.make;
+      yield* provider.createRepository({
+        cwd: "/repo",
+        repository: "acme/notes",
+        visibility: "private",
+      });
+      assert.strictEqual(graphqlCalls.at(-1)?.operationName, "CreateInstallationRepository");
+      assert.strictEqual(graphqlCalls.at(-1)?.lookups[0]?.ownerId, "ORG_acme");
+    }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+  });
+
+  it.effect(
+    "uses an explicit personal owner ID even when its installation has no repositories",
+    () => {
+      const { layer, paths, graphqlCalls } = appHarness([], false, true);
+      return Effect.gen(function* () {
+        const provider = yield* GitHubSourceControlProvider.make;
+        yield* provider.createRepository({
+          cwd: "/repo",
+          repository: "acme/notes",
+          visibility: "private",
+        });
+        assert.strictEqual(graphqlCalls.at(-1)?.lookups[0]?.ownerId, "USER_acme");
+        assert.isFalse(
+          paths.some(
+            (path) =>
+              path.startsWith("installation/") || path.startsWith("orgs/") || path === "user/repos",
+          ),
+        );
+      }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+    },
+  );
+
+  it.effect.each([[], ["acme", "other"]])(
+    "requires an explicit owner when installation metadata is inconclusive: %s",
+    (owners) => {
+      const { layer, paths } = appHarness(owners);
+      return Effect.gen(function* () {
+        const provider = yield* GitHubSourceControlProvider.make;
+        const error = yield* provider
+          .getRepositoryCloneUrls({ cwd: "/repo", repository: "notes" })
+          .pipe(Effect.flip);
+        assert.include(error.message, "Specify owner/repo");
+        assert.isFalse(paths.some((path) => path.startsWith("repos/")));
+      }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+    },
+  );
 });
 
 describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {

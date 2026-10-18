@@ -269,27 +269,39 @@ describe("GitHubRest", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("drops a refused token so the next request asks the source again", () => {
-    const { layer, requests, invalidations } = harness((request) =>
-      request.headers.authorization === "Bearer first"
-        ? new Response(null, { status: 401 })
-        : json({ ok: true }),
-    );
-    return Effect.gen(function* () {
-      const api = yield* GitHubRest.GitHubRest;
-      const refused = yield* Effect.flip(
-        api.rest({ host: "github.com", operation: "user", path: "user" }),
+  it.effect.each([false, true])(
+    "drops a refused token so the next request asks the source again (pinned=%s)",
+    (pinned) => {
+      const { layer, requests, invalidations } = harness((request) =>
+        request.headers.authorization === "Bearer first"
+          ? new Response(null, { status: 401 })
+          : json({ ok: true }),
       );
-      expect(refused._tag).toBe("GitHubApiAuthenticationError");
-      expect(invalidations()).toBe(1);
-      const answered = yield* api.rest({ host: "github.com", operation: "user", path: "user" });
-      expect(answered.status).toBe(200);
-      expect(requests.map((request) => request.headers.authorization)).toEqual([
-        "Bearer first",
-        "Bearer second",
-      ]);
-    }).pipe(Effect.provide(layer));
-  });
+      return Effect.gen(function* () {
+        const api = yield* GitHubRest.GitHubRest;
+        const request = api.rest({ host: "github.com", operation: "user", path: "user" });
+        const refused = yield* Effect.flip(
+          pinned
+            ? request.pipe(
+                Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+                  host: "github.com",
+                  token: Redacted.make("first"),
+                  credentialFingerprint: "github.com:first",
+                }),
+              )
+            : request,
+        );
+        expect(refused._tag).toBe("GitHubApiAuthenticationError");
+        expect(invalidations()).toBe(1);
+        const answered = yield* api.rest({ host: "github.com", operation: "user", path: "user" });
+        expect(answered.status).toBe(200);
+        expect(requests.map((request) => request.headers.authorization)).toEqual([
+          "Bearer first",
+          "Bearer second",
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.effect("refuses to send a pinned credential to another host", () => {
     const { layer, requests } = harness(() => json({}));

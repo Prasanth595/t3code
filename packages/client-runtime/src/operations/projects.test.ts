@@ -20,6 +20,7 @@ import {
   getDefaultCloneUrl,
   getNewProjectPublishTarget,
   getNewProjectPublishTargets,
+  getNewProjectRepository,
   normalizePastedCloneUrl,
   resolveAddProjectPath,
   sortAddProjectProviderSources,
@@ -296,6 +297,18 @@ describe("new project publish targets", () => {
       host: Option.none(),
       detail: Option.none(),
     },
+  });
+
+  it("keeps publication available for a GitHub App without treating its bot as the owner", () => {
+    const targets = getNewProjectPublishTargets({
+      versionControlSystems: [],
+      sourceControlProviders: [readyHost("github", "example[bot]")],
+    });
+    const target = getNewProjectPublishTarget(targets, null);
+    expect(target?.definition.kind).toBe("github");
+    expect(target?.owner).toBeNull();
+    if (target === null) throw new Error("GitHub App publish target missing");
+    expect(getNewProjectRepository(target, "/work/new-repository")).toBe("new-repository");
   });
 
   it("offers ready hosts that can place the repository, GitHub first, and keeps the pick", () => {

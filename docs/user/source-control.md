@@ -34,6 +34,38 @@ over that choice; a host turned off stays off either way.
 For GitHub Enterprise, sign in with `gh auth login --hostname YOUR_HOST`. T3 Code treats a
 custom server name as GitHub once it has a credential for that host.
 
+#### GitHub App installation tokens
+
+You can use an installation token through the same Settings, environment, or CLI credential
+sources above. Discovery shows the App's bot account. The installation must include the
+repositories you use and grant the permissions required for each operation:
+
+| Task                                    | Repository permissions                                                                                                                                           |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Browse PRs and their checks             | Pull requests: read; Contents: read; Checks: read; Commit statuses: read                                                                                         |
+| Create, edit, comment on, or review PRs | Pull requests: write                                                                                                                                             |
+| Push commits, update branches, or merge | Contents: write                                                                                                                                                  |
+| Push changes to workflow files          | Contents: write and Workflows: write                                                                                                                             |
+| Approve workflow runs                   | Actions: write                                                                                                                                                   |
+| Create repositories                     | Repository creation: write, or Administration: write; see [GitHub's requirements](https://docs.github.com/en/rest/repos/repos#create-an-organization-repository) |
+
+The bot is the acting identity, not a repository owner. For clone or publish destinations,
+use `owner/repo`. A bare name uses the installation's repository owner when it can be determined;
+if the installation has no repositories or exposes multiple owners, specify the owner explicitly.
+GitHub still enforces repository permissions and restrictions such as reviewing your own PR.
+
+Publishing requires the token to access the newly created repository. A token restricted to
+existing repository IDs can create a repository without being able to return its details or
+finish publishing. If T3 Code reports missing creation details, check whether the repository
+exists and update the token's access before retrying.
+
+Installation tokens expire, normally after one hour. T3 Code does not mint their replacements:
+replace a saved token, or use a CLI credential source backed by your token-renewal service.
+A token placed in the server environment once will not renew itself. Credentials stay fixed for
+an operation; a refused credential is refreshed from its source on a subsequent request.
+Configure Git's HTTPS credential helper separately for clone, fetch, and push. Git commit author
+name and email are also separate from the API token.
+
 ### Forgejo and Gitea
 
 Install [Forgejo CLI (`fj`)](https://codeberg.org/forgejo-contrib/forgejo-cli) or

@@ -1249,6 +1249,47 @@ describe("reaction decoding", () => {
       { content: "heart", count: 2, actors: ["julius"], viewerHasReacted: true },
     ]);
   });
+  it("leaves out an App viewer reaction without hiding a human who shares its slug", () => {
+    const decoded = expectSuccess(
+      decodeReviewThreadCommentsJson(
+        JSON.stringify({
+          data: {
+            viewer: { login: "example[bot]" },
+            repository: { pullRequest: { id: "PR_1" } },
+            node: {
+              pullRequest: { id: "PR_1" },
+              comments: {
+                pageInfo: LAST_PAGE,
+                nodes: [
+                  {
+                    id: "t1",
+                    body: "nice",
+                    createdAt: "2026-07-01T00:00:00Z",
+                    reactionGroups: [
+                      {
+                        content: "HEART",
+                        viewerHasReacted: true,
+                        reactors: {
+                          totalCount: 2,
+                          nodes: [
+                            { __typename: "Bot", login: "example" },
+                            { __typename: "User", login: "example" },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        }),
+      ),
+    );
+    expect(decoded.comments[0]?.reactions).toEqual([
+      { content: "heart", count: 2, actors: ["example"], viewerHasReacted: true },
+    ]);
+  });
 });
 
 describe("repository access decoding", () => {

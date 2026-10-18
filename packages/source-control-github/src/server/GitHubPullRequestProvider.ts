@@ -1,3 +1,4 @@
+import { gitHubActorLogin } from "./gitHubActorLogin.ts";
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import { removeAgentCredits } from "@t3tools/source-control-core/server/mergeMessage";
 import * as Effect from "effect/Effect";
@@ -118,10 +119,15 @@ function withAvatar(
   botLogins?: ReadonlySet<string>,
 ): PullRequestActor | null {
   if (actor === null) return actor;
-  if (botLogins?.has(actor.login)) actor = { ...actor, isBot: true };
-  if (actor.avatarUrl !== null) return actor;
-  const avatarUrl = avatarsByLogin.get(actor.login) ?? loginAvatarUrl(actor.login, host);
-  return avatarUrl === null ? actor : { ...actor, avatarUrl };
+  const isBot = actor.isBot === true || botLogins?.has(actor.login) === true;
+  const avatarUrl =
+    actor.avatarUrl ?? avatarsByLogin.get(actor.login) ?? loginAvatarUrl(actor.login, host);
+  return {
+    ...actor,
+    login: isBot ? gitHubActorLogin(actor.login, true) : actor.login,
+    avatarUrl,
+    ...(isBot ? { isBot: true } : {}),
+  };
 }
 
 function withWorkflowApprovals(

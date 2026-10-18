@@ -5732,6 +5732,52 @@ it.effect('resolves an author filter of "me" to the viewer before narrowing a ho
   }),
 );
 
+it.effect(
+  "keeps App-authored rows through GitHub provider normalization and the service author filter",
+  () =>
+    Effect.gen(function* () {
+      const identity = {
+        accountId: "123",
+        viewer: "example[bot]",
+        credentialFingerprint: "github.com:app",
+      };
+      const items = [true, false].map((isBot, index) => ({
+        ...changeRequest(index + 1, "2026-07-02T00:00:00Z"),
+        repository: "acme/web",
+        authorId: null,
+        reviewDecision: null,
+        checksState: null,
+        hasTeamReviewRequest: false,
+        author: { login: "example", name: null, avatarUrl: null, isBot },
+      }));
+      const provider = yield* GitHubPullRequestProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({
+            getRoutingIdentity: () => Effect.succeed(identity),
+            withVerifiedCredential: (_, use) => use(identity),
+            getViewerLogin: () => Effect.succeed(identity.viewer),
+            listPullRequests: () => Effect.succeed({ items, truncated: false, continues: false }),
+            searchPullRequests: () => Effect.succeed({ items, truncated: false }),
+            listActorAvatars: () => Effect.succeed(new Map<string, string>()),
+            listPullRequestStats: () => Effect.succeed([]),
+          }),
+        ),
+      );
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [provider],
+      });
+      const result = yield* service.list({ state: "open", filters: { author: "me" } });
+      assert.deepStrictEqual(
+        result.entries.map((entry) => entry.number),
+        [1],
+      );
+      assert.strictEqual(result.entries[0]?.author?.login, "example[bot]");
+    }),
+);
+
 it.effect.each([false, true])(
   "authorizes stack rebases and refreshes sibling layers (cross-host: %s)",
   (crossHost) =>

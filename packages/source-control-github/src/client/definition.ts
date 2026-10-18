@@ -51,7 +51,7 @@ export const definition = defineSourceControlClient({
   publicHost: "github.com",
   publishDescription: "github.com",
   publishHost: () => "github.com",
-  newRepositoryOwner: (account) => ({ owner: account }),
+  newRepositoryOwner: (account) => ({ owner: account?.endsWith("[bot]") ? null : account }),
   defaultCloneTransport: "https",
   changeRequestUrl: ({ host, repository, number }) =>
     `https://${host}/${repository}/pull/${number}`,

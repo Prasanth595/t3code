@@ -1,3 +1,4 @@
+import { gitHubActorLogin } from "./gitHubActorLogin.ts";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import * as Result from "effect/Result";
@@ -202,15 +203,17 @@ function toReactions(
   for (const group of groups ?? []) {
     const content = REACTION_CONTENT_BY_GITHUB[trimmed(group.content)?.toUpperCase() ?? ""];
     if (content === undefined) continue;
-    const logins = nodesOf(group.reactors).flatMap((node) =>
-      "login" in node ? (trimmed(node.login) ?? []) : [],
-    );
-    const count = Math.max(group.reactors.totalCount, logins.length);
+    const reactors = nodesOf(group.reactors).flatMap((node) => {
+      const login = "login" in node ? trimmed(node.login) : null;
+      return login === null
+        ? []
+        : [{ login, identity: gitHubActorLogin(login, node.__typename === "Bot") }];
+    });
+    const count = Math.max(group.reactors.totalCount, reactors.length);
     if (count <= 0) continue;
-    const actors =
-      normalizedViewer === null
-        ? logins
-        : logins.filter((login) => login.toLowerCase() !== normalizedViewer);
+    const actors = reactors
+      .filter((actor) => normalizedViewer === null || actor.identity !== normalizedViewer)
+      .map((actor) => actor.login);
     reactions.push({ content, count, actors, viewerHasReacted: group.viewerHasReacted });
   }
   return reactions;
