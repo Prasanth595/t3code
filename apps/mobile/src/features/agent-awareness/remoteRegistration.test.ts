@@ -1651,11 +1651,10 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         yield* Effect.promise(() => tokenRead);
         yield* Deferred.succeed(finishRead, undefined);
         const startsBeforeTokenResolved = widgetMocks.start.mock.calls.length;
-        const readsBeforeTokenResolved = { global: globalReads, scoped: scopedReads };
         finishToken("activity-token");
         yield* Fiber.join(refresh);
         pending.resolve(yield* Fiber.join(localRegistration));
-        expect(readsBeforeTokenResolved).toEqual({ global: 1, scoped: 1 });
+        expect({ global: globalReads, scoped: scopedReads }).toEqual({ global: 1, scoped: 1 });
         expect(startsBeforeTokenResolved).toBe(1);
         expect(activities).toHaveLength(1);
       }).pipe(Effect.scoped),
