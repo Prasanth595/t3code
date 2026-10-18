@@ -1,3 +1,30 @@
+diff --git a/build/Widgets.d.ts b/build/Widgets.d.ts
+index fb37d5d..47a97af 100644
+--- a/build/Widgets.d.ts
++++ b/build/Widgets.d.ts
+@@ -100,6 +100,8 @@ export declare class LiveActivityFactory<T extends object = object> {
+      * @platform ios
+      */
+     getInstances(): LiveActivity<T>[];
++    /** Dismisses ended instances that iOS still shows on the Lock Screen. */
++    dismissEnded(): void;
+ }
+ /**
+  * Creates a dismissal policy that removes the Live Activity at the specified time within a four-hour window.
+diff --git a/build/Widgets.js b/build/Widgets.js
+index cc1efce..3ce8897 100644
+--- a/build/Widgets.js
++++ b/build/Widgets.js
+@@ -134,6 +134,9 @@ import ExpoWidgetsModule from './ExpoWidgets';
+    */ getInstances() {
+         return this.nativeLiveActivityFactory.getInstances().map((instance)=>new LiveActivity(instance));
+     }
++    dismissEnded() {
++        this.nativeLiveActivityFactory.dismissEnded();
++    }
+ }
+ /**
+  * Creates a dismissal policy that removes the Live Activity at the specified time within a four-hour window.
 diff --git a/build/Widgets.types.d.ts b/build/Widgets.types.d.ts
 index 4c474bb..b0173df 100644
 --- a/build/Widgets.types.d.ts
@@ -14,20 +41,29 @@ index 4c474bb..b0173df 100644
       * Whether the activity is displayed in a context with reduced luminance.
       * @platform iOS 16+
 diff --git a/ios/LiveActivityFactory.swift b/ios/LiveActivityFactory.swift
-index 29e4f15..7143f9a 100644
+index 29e4f15..629e547 100644
 --- a/ios/LiveActivityFactory.swift
 +++ b/ios/LiveActivityFactory.swift
-@@ -19,6 +19,14 @@ final class LiveActivityFactory: SharedObject {
-       throw LiveActivitiesNotSupportedException()
-     }
+@@ -14,11 +14,23 @@ final class LiveActivityFactory: SharedObject {
+     WidgetsStorage.set(layout, forKey: "__expo_widgets_live_activity_\(name)_layout")
+   }
  
-+    // iOS ends an activity after 8 hours but leaves it frozen on the Lock Screen for up to
-+    // 4 more. getInstances() can't see it, so a caller starting a replacement would leave
-+    // both cards visible. Dismiss the ended ones now.
++  // iOS ends an activity after 8 hours but leaves it frozen on the Lock Screen for up to
++  // 4 more. getInstances() can't see it, so dismiss the ended ones directly.
++  func dismissEnded() {
 +    for activity in Activity<LiveActivityAttributes>.activities
 +    where activity.content.state.name == name && activity.activityState == .ended {
 +      Task { await activity.end(nil, dismissalPolicy: .immediate) }
 +    }
++  }
++
+   func start(props: String?, url: URL?, staleDate: Date?) throws -> LiveActivity {
+     guard ActivityAuthorizationInfo().areActivitiesEnabled else {
+       throw LiveActivitiesNotSupportedException()
+     }
+ 
++    // A replacement started beside an ended card would leave both visible.
++    dismissEnded()
 +
      do {
        let initialState = LiveActivityAttributes.ContentState(name: name, props: props)
@@ -150,6 +186,21 @@ index 4d135c4..dae4744 100644
      if #available(iOS 18.0, *) {
        LiveActivityBanner(context: context, nodes: nodes)
      } else if let node = nodes["banner"] as? [String: Any] {
+diff --git a/ios/WidgetsModule.swift b/ios/WidgetsModule.swift
+index 285136b..d36eac4 100644
+--- a/ios/WidgetsModule.swift
++++ b/ios/WidgetsModule.swift
+@@ -97,6 +97,10 @@ public final class WidgetsModule: Module {
+       Function("getInstances") { (liveActivity: LiveActivityFactory) in
+         try liveActivity.getInstances()
+       }
++
++      Function("dismissEnded") { (liveActivity: LiveActivityFactory) in
++        liveActivity.dismissEnded()
++      }
+     }
+ 
+     Class("LiveActivity", LiveActivity.self) {
 diff --git a/src/Widgets.types.ts b/src/Widgets.types.ts
 index 690d069..ffab6f3 100644
 --- a/src/Widgets.types.ts
