@@ -3095,6 +3095,500 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect.each(["unwatch", "merged", "newer head"] as const)(
+    "does not promote a pull-request wake invalidated while queued: %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-stale-wake-${mode}`);
+        const projectId = ProjectId.make(`pr-watch-stale-wake-project-${mode}`);
+        yield* seedProject({
+          projectId,
+          title: "Stale PR watch wake",
+          workspaceRoot: "/workspace/stale-watch",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`stale-wake-create-${mode}`),
+          threadId,
+          projectId,
+          title: "Stale wake",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        const key = { host: "github.com", repository: "pingdotgg/t3code", number: 7 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make(`stale-wake-link-${mode}`),
+          threadId,
+          ...key,
+          url: "https://github.com/pingdotgg/t3code/pull/7",
+          source: "agent",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`stale-wake-watch-${mode}`),
+          threadId,
+          ...key,
+          watching: true,
+        });
+        const watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+        assert.isDefined(watch);
+        if (watch === undefined) return;
+
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`stale-wake-active-${mode}`),
+          threadId,
+          messageId: MessageId.make(`stale-wake-active-${mode}`),
+          text: "Active",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        const wakeMessageId = MessageId.make(`stale-wake-${mode}`);
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make(`stale-wake-sync-${mode}`),
+          threadId,
+          ...key,
+          startedAt: watch.startedAt,
+          watch: { ...watch, headSha: "abc123", wakes: 1 },
+          wake: {
+            messageId: wakeMessageId,
+            text: "Checks failed on #7",
+            notification: {
+              source: { kind: "monitor" },
+              outcome: "updated",
+              summary: "#7: checks failed",
+            },
+          },
+        });
+        const userMessageId = MessageId.make(`stale-wake-user-${mode}`);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`stale-wake-user-${mode}`),
+          threadId,
+          messageId: userMessageId,
+          text: "User follow-up",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "queue_after_active" },
+        });
+
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const activeRun = before.runs.find((run) => run.status === "starting");
+        const staleRun = before.runs.find(
+          (run) => run.status === "queued" && run.userMessageId === wakeMessageId,
+        );
+        const userRun = before.runs.find(
+          (run) => run.status === "queued" && run.userMessageId === userMessageId,
+        );
+        assert.isDefined(activeRun);
+        assert.isDefined(staleRun);
+        assert.isDefined(userRun);
+        if (activeRun === undefined || staleRun === undefined || userRun === undefined) return;
+
+        const staleStatuses = yield* Queue.unbounded<string>();
+        const userStatuses = yield* Queue.unbounded<string>();
+        const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+        yield* eventSink.stream({ threadId, afterSequence }).pipe(
+          Stream.runForEach((stored) =>
+            stored.event.type === "run.updated" && stored.event.payload.id === staleRun.id
+              ? Queue.offer(staleStatuses, stored.event.payload.status)
+              : stored.event.type === "run.updated" && stored.event.payload.id === userRun.id
+                ? Queue.offer(userStatuses, stored.event.payload.status)
+                : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        yield* Effect.yieldNow;
+
+        if (mode === "unwatch") {
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`stale-wake-unwatch-${mode}`),
+            threadId,
+            ...key,
+            watching: false,
+          });
+        } else if (mode === "merged") {
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request-link.sync",
+            commandId: CommandId.make(`stale-wake-merge-${mode}`),
+            threadId,
+            ...key,
+            snapshot: {
+              state: "merged",
+              title: "Watched pull request",
+              headBranch: "feature",
+              baseBranch: "main",
+              isDraft: false,
+              updatedAt: null,
+              syncedAt: "2026-10-02T12:00:00.000Z",
+            },
+            stack: null,
+          });
+        } else {
+          const current = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+          assert.isDefined(current);
+          if (current === undefined) return;
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request-watch.sync",
+            commandId: CommandId.make(`stale-wake-advance-${mode}`),
+            threadId,
+            ...key,
+            startedAt: current.startedAt,
+            watch: { ...current, headSha: "def4567" },
+          });
+        }
+
+        const completedAt = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`stale-wake-active-completed-${mode}`),
+              type: "run.updated",
+              threadId,
+              runId: activeRun.id,
+              ...(activeRun.rootNodeId === null ? {} : { nodeId: activeRun.rootNodeId }),
+              providerInstanceId: activeRun.providerInstanceId,
+              occurredAt: completedAt,
+              payload: { ...activeRun, status: "completed", completedAt },
+            },
+          ],
+        });
+
+        assert.equal(yield* Queue.take(staleStatuses), "cancelled");
+        assert.equal(yield* Queue.take(userStatuses), "starting");
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(after.runs.find((run) => run.id === staleRun.id)?.status, "cancelled");
+        const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+        assert.deepEqual(
+          messages
+            .filter((message) => message.id === wakeMessageId)
+            .map((message) => message.notification?.summary),
+          ["#7: checks failed"],
+        );
+      }),
+  );
+
+  it.effect.each(["still watching", "closed notice"] as const)(
+    "promotes a queued pull-request wake that stays deliverable: %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-live-wake-${mode}`);
+        const projectId = ProjectId.make(`pr-watch-live-wake-project-${mode}`);
+        yield* seedProject({
+          projectId,
+          title: "Live PR watch wake",
+          workspaceRoot: "/workspace/live-watch",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`live-wake-create-${mode}`),
+          threadId,
+          projectId,
+          title: "Live wake",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        const key = { host: "github.com", repository: "pingdotgg/t3code", number: 7 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make(`live-wake-link-${mode}`),
+          threadId,
+          ...key,
+          url: "https://github.com/pingdotgg/t3code/pull/7",
+          source: "agent",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`live-wake-watch-${mode}`),
+          threadId,
+          ...key,
+          watching: true,
+        });
+        const watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+        assert.isDefined(watch);
+        if (watch === undefined) return;
+
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`live-wake-active-${mode}`),
+          threadId,
+          messageId: MessageId.make(`live-wake-active-${mode}`),
+          text: "Active",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        const wakeMessageId = MessageId.make(`live-wake-${mode}`);
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make(`live-wake-sync-${mode}`),
+          threadId,
+          ...key,
+          startedAt: watch.startedAt,
+          watch: mode === "closed notice" ? null : { ...watch, headSha: "abc123", wakes: 1 },
+          wake: {
+            messageId: wakeMessageId,
+            text:
+              mode === "closed notice"
+                ? "Pull request #7 was closed, so T3 Code stopped watching it."
+                : "Checks failed on #7",
+            notification: {
+              source: { kind: "monitor" },
+              outcome: "updated",
+              summary:
+                mode === "closed notice" ? "#7: closed, stopped watching" : "#7: checks failed",
+            },
+          },
+        });
+
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const activeRun = before.runs.find((run) => run.status === "starting");
+        const wakeRun = before.runs.find(
+          (run) => run.status === "queued" && run.userMessageId === wakeMessageId,
+        );
+        assert.isDefined(activeRun);
+        assert.isDefined(wakeRun);
+        if (activeRun === undefined || wakeRun === undefined) return;
+
+        const wakeStatuses = yield* Queue.unbounded<string>();
+        const afterSequence = yield* orchestrator.getThreadEventSequence(threadId);
+        yield* eventSink.stream({ threadId, afterSequence }).pipe(
+          Stream.runForEach((stored) =>
+            stored.event.type === "run.updated" && stored.event.payload.id === wakeRun.id
+              ? Queue.offer(wakeStatuses, stored.event.payload.status)
+              : Effect.void,
+          ),
+          Effect.forkScoped,
+        );
+        yield* Effect.yieldNow;
+
+        const completedAt = yield* DateTime.now;
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`live-wake-active-completed-${mode}`),
+              type: "run.updated",
+              threadId,
+              runId: activeRun.id,
+              ...(activeRun.rootNodeId === null ? {} : { nodeId: activeRun.rootNodeId }),
+              providerInstanceId: activeRun.providerInstanceId,
+              occurredAt: completedAt,
+              payload: { ...activeRun, status: "completed", completedAt },
+            },
+          ],
+        });
+
+        assert.equal(yield* Queue.take(wakeStatuses), "starting");
+      }),
+  );
+
+  it.effect("does not dispatch an open pull-request wake for a merged pull request", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-pull-request-watch-preflight-stale");
+      const projectId = ProjectId.make("pr-watch-preflight-stale-project");
+      yield* seedProject({
+        projectId,
+        title: "Preflight stale PR watch wake",
+        workspaceRoot: "/workspace/preflight-stale-watch",
+        defaultModelSelection: null,
+        createdAt: "2026-10-01T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("preflight-stale-create"),
+        threadId,
+        projectId,
+        title: "Preflight stale wake",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const key = { host: "github.com", repository: "pingdotgg/t3code", number: 7 };
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("preflight-stale-link"),
+        threadId,
+        ...key,
+        url: "https://github.com/pingdotgg/t3code/pull/7",
+        source: "agent",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.watch",
+        commandId: CommandId.make("preflight-stale-watch"),
+        threadId,
+        ...key,
+        watching: true,
+      });
+      const watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+      assert.isDefined(watch);
+      if (watch === undefined) return;
+
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-link.sync",
+        commandId: CommandId.make("preflight-stale-merge"),
+        threadId,
+        ...key,
+        snapshot: {
+          state: "merged",
+          title: "Watched pull request",
+          headBranch: "feature",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: null,
+          syncedAt: "2026-10-02T12:00:00.000Z",
+        },
+        stack: null,
+      });
+
+      const wakeMessageId = MessageId.make("preflight-stale-wake");
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request-watch.sync",
+        commandId: CommandId.make("preflight-stale-sync"),
+        threadId,
+        ...key,
+        startedAt: watch.startedAt,
+        watch: { ...watch, headSha: "abc123", wakes: 1 },
+        wake: {
+          messageId: wakeMessageId,
+          text: "Checks failed on #7",
+          notification: {
+            source: { kind: "monitor" },
+            outcome: "updated",
+            summary: "#7: checks failed",
+          },
+        },
+      });
+
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.isUndefined(
+        after.runs.find((run) => run.userMessageId === wakeMessageId),
+        "stale open wake must not create a run",
+      );
+      const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+      assert.isUndefined(
+        messages.find((message) => message.id === wakeMessageId),
+        "stale open wake must not persist a message",
+      );
+    }),
+  );
+
+  it.effect.each(["fresh", "closed notice"] as const)(
+    "dispatches a pull-request wake that is deliverable on an idle thread: %s",
+    (mode) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(`runtime-pull-request-watch-preflight-live-${mode}`);
+        const projectId = ProjectId.make(`pr-watch-preflight-live-project-${mode}`);
+        yield* seedProject({
+          projectId,
+          title: "Preflight live PR watch wake",
+          workspaceRoot: "/workspace/preflight-live-watch",
+          defaultModelSelection: null,
+          createdAt: "2026-10-01T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`preflight-live-create-${mode}`),
+          threadId,
+          projectId,
+          title: "Preflight live wake",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        const key = { host: "github.com", repository: "pingdotgg/t3code", number: 7 };
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.link",
+          commandId: CommandId.make(`preflight-live-link-${mode}`),
+          threadId,
+          ...key,
+          url: "https://github.com/pingdotgg/t3code/pull/7",
+          source: "agent",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request.watch",
+          commandId: CommandId.make(`preflight-live-watch-${mode}`),
+          threadId,
+          ...key,
+          watching: true,
+        });
+        const watch = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[0]?.watch;
+        assert.isDefined(watch);
+        if (watch === undefined) return;
+
+        const wakeMessageId = MessageId.make(`preflight-live-wake-${mode}`);
+        yield* orchestrator.dispatch({
+          type: "thread.pull-request-watch.sync",
+          commandId: CommandId.make(`preflight-live-sync-${mode}`),
+          threadId,
+          ...key,
+          startedAt: watch.startedAt,
+          watch: mode === "closed notice" ? null : { ...watch, headSha: "abc123", wakes: 1 },
+          wake: {
+            messageId: wakeMessageId,
+            text:
+              mode === "closed notice"
+                ? "Pull request #7 was closed, so T3 Code stopped watching it."
+                : "Checks failed on #7",
+            notification: {
+              source: { kind: "monitor" },
+              outcome: "updated",
+              summary:
+                mode === "closed notice" ? "#7: closed, stopped watching" : "#7: checks failed",
+            },
+          },
+        });
+
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          after.runs.find((run) => run.userMessageId === wakeMessageId)?.status,
+          "starting",
+        );
+        const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
+        assert.equal(
+          messages.find((message) => message.id === wakeMessageId)?.notification?.summary,
+          mode === "closed notice" ? "#7: closed, stopped watching" : "#7: checks failed",
+        );
+      }),
+  );
+
   it.effect("persists rejected command receipts across retries", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
