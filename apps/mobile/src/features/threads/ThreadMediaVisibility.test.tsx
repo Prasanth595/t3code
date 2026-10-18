@@ -125,3 +125,20 @@ describe("thread media visibility", () => {
     expect(viewability.callbacks.size).toBe(0);
   });
 });
+
+it("keeps a replacement keyed video visible without another scroll event", () => {
+  const renderVideo = (key: string) =>
+    act(() =>
+      root.render(
+        <ThreadMediaVisibility>
+          <Video key={key} />
+        </ThreadMediaVisibility>,
+      ),
+    );
+  renderVideo("first");
+  scroll(50);
+  expect(container.textContent).toBe("thumbnail active");
+  renderVideo("replacement");
+  expect(container.textContent).toBe("thumbnail active");
+  expect(viewability.callbacks.size).toBe(1);
+});

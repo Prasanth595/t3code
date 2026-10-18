@@ -20,7 +20,6 @@ function createVisibilityStore(onObserved: (observed: boolean) => void) {
       return () => {
         listeners.delete(listener);
         if (listeners.size === 0) {
-          visible = false;
           onObserved(false);
         }
       };
@@ -53,6 +52,8 @@ function VisibilityObserver(props: { readonly onVisible: (visible: boolean) => v
   const [visible, setVisible] = useState(false);
   useViewabilityAmount(useCallback((token) => setVisible(token.sizeVisible > 0), []));
   useLayoutEffect(() => onVisible(visible), [onVisible, visible]);
+  // A keyed video handoff can keep the observer mounted across the last unsubscribe.
+  useLayoutEffect(() => () => onVisible(false), [onVisible]);
   return null;
 }
 
