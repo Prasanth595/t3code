@@ -1,14 +1,7 @@
 /**
- * Anonymous telemetry service.
- *
- * Persists an installation-scoped anonymous identifier, buffers events in
- * memory, and flushes batches over Effect's HTTP client to the T3 Code ingest
- * endpoint, which keeps a copy and forwards events to PostHog. A failed batch
- * is retried with backoff and dropped after a few tries, or at once when the
- * endpoint rejects it. Each event carries a uuid, so a retried copy can be told
- * apart from a new event.
- *
- * @module AnalyticsService
+ * Events go to the T3 Code ingest endpoint, which keeps a copy and forwards
+ * them to PostHog. Each event carries a uuid, so PostHog can tell a retried
+ * copy from a new event.
  */
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import type { ClientOs } from "@t3tools/contracts";
@@ -41,13 +34,9 @@ interface BufferedAnalyticsEvent {
 }
 
 interface DeliveryState {
-  /** Batch that failed last. It is sent again before newer events. */
   readonly failedBatch: ReadonlyArray<BufferedAnalyticsEvent>;
-  /** Failed sends of `failedBatch`. */
   readonly batchAttempts: number;
-  /** Failed sends since the last success. Sets the backoff delay. */
   readonly failures: number;
-  /** The background flush does not send before this time (epoch ms). */
   readonly retryAt: number;
 }
 
@@ -72,11 +61,7 @@ const REJECTED_BATCH_STATUSES = new Set([400, 401, 413]);
  */
 declare const __T3CODE_TELEMETRY_CHANNEL__: "stable" | "nightly" | "preview" | "dev" | undefined;
 
-/**
- * Delay before the next send after `failures` consecutive failed sends. The
- * ceiling doubles from 2s up to 5 minutes, and the delay is a random point in
- * its upper half. `random` is in [0, 1).
- */
+/** `random` is in [0, 1). */
 export function retryDelayMs(failures: number, random: number): number {
   const ceiling = Math.min(RETRY_MAX_DELAY_MS, RETRY_BASE_DELAY_MS * 2 ** (failures - 1));
   return Math.round(ceiling / 2 + (ceiling / 2) * random);
@@ -100,17 +85,14 @@ const TelemetryEnvConfig = Config.all({
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
   {
-    /** Record an anonymous event for best-effort buffered delivery. */
     readonly record: (
       event: string,
       properties?: Readonly<Record<string, unknown>>,
     ) => Effect.Effect<void>;
 
-    /** Flush all currently queued telemetry events. */
     readonly flush: Effect.Effect<void>;
   }
 >()("t3/telemetry/AnalyticsService") {
-  /** No-op layer for callers that intentionally disable telemetry. */
   static readonly layerTest = Layer.succeed(
     AnalyticsService,
     AnalyticsService.of({
@@ -135,6 +117,7 @@ function serverOsFromNodePlatform(platform: string): ClientOs {
   }
 }
 
+/** @public */
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
@@ -232,8 +215,6 @@ export const make = Effect.gen(function* () {
     return [nextBatch, current.slice(nextBatch.length)] as const;
   });
 
-  // Sends batches until the buffer is empty or a send fails. A failed batch is
-  // kept for the next flush, and dropped after MAX_BATCH_ATTEMPTS failed sends.
   // A rejected batch is dropped at once, but the next batch still waits for the
   // backoff, so a wrong api_key does not send every batch as fast as it can.
   const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
@@ -290,7 +271,7 @@ export const make = Effect.gen(function* () {
 
       // Telemetry is best effort: an event without a uuid is not sent. The
       // Node implementation throws (a defect) rather than failing, so catch both.
-      const uuid = yield* Effect.exit(crypto.randomUUIDv7);
+      const uuid = yield* Effect.exit(crypto.randomUUIDv7());
       if (Exit.isFailure(uuid)) return;
 
       const enqueueResult = yield* enqueueBufferedEvent(uuid.value, event, properties);
