@@ -21,6 +21,7 @@ This guide maps owner tasks to the fork tools. It is for agents that operate the
 - Start no session-import threads, PRs or research until the owner raises session import again.
 - Never deploy the portal or the VPS by hand. Merge to main. The automation deploys main.
 - Never put secrets in the repository, a commit, a pull request or a comment. Secrets stay in `~/Github/t3code/_shared/`.
+- Never add a model, harness or AI credit line to a commit, a pull request or a comment. This rule replaces the line in `AGENTS.md` that asks for one.
 
 Mobile testers: read [Android emulator on the Mac](fork/operations.md#android-emulator-on-the-mac) before testing on the owner's Mac.
 
