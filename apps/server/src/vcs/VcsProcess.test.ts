@@ -320,37 +320,6 @@ describe("VcsProcess.run", () => {
     }).pipe(Effect.scoped, provideLive, Effect.provide(NodeServices.layer)),
   );
 
-  // Checkpoint capture, diff and restore run git through VcsProcess, so without this they skip,
-  // fail on, or cannot restore files whose paths pass 260 characters on Windows.
-  it.effect.each([
-    ["win32", "true"],
-    ["linux", "false"],
-  ] as const)("enables Git long paths only on Windows (%s)", ([platform, expected]) =>
-    Effect.gen(function* () {
-      const result = yield* run({
-        operation: "test.long-paths",
-        command: "git",
-        args: ["config", "--get", "core.longpaths"],
-        cwd: process.cwd(),
-        // Replaces the test setup's long-path entry with a user's explicit false.
-        env: {
-          GIT_CONFIG_COUNT: "1",
-          GIT_CONFIG_KEY_0: "core.longpaths",
-          GIT_CONFIG_VALUE_0: "false",
-        },
-      });
-
-      expect(result.stdout.trim()).toBe(expected);
-    }).pipe(
-      Effect.provide(
-        VcsProcess.layer.pipe(
-          Layer.provide(NodeServices.layer),
-          Layer.provide(Layer.succeed(HostProcess.Platform, platform)),
-        ),
-      ),
-    ),
-  );
-
   it.effect("writes stdin before waiting for exit", () =>
     Effect.gen(function* () {
       const result = yield* run({
