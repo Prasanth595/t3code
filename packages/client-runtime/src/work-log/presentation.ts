@@ -48,12 +48,25 @@ export function toolItemForDisplay(item: OrchestrationV2TurnItem): Orchestration
   }
 }
 
-export function contextCompactionLabel(
-  item: Pick<
-    Extract<OrchestrationV2TurnItem, { type: "compaction" }>,
-    "status" | "beforeTokenCount" | "afterTokenCount"
-  >,
-): string {
+type CompactionLabelItem = Pick<
+  Extract<OrchestrationV2TurnItem, { type: "compaction" }>,
+  "status" | "beforeTokenCount" | "afterTokenCount"
+>;
+
+export function contextCompactionTokenCounts(
+  item: CompactionLabelItem,
+): { readonly before: string; readonly after: string } | null {
+  if (
+    item.status === "running" ||
+    item.beforeTokenCount === undefined ||
+    item.afterTokenCount === undefined
+  ) {
+    return null;
+  }
+  return { before: formatTokens(item.beforeTokenCount), after: formatTokens(item.afterTokenCount) };
+}
+
+export function contextCompactionLabel(item: CompactionLabelItem): string {
   if (item.status === "failed") return "Context compaction failed";
   if (item.status === "cancelled" || item.status === "interrupted") {
     return "Context compaction stopped";
@@ -61,10 +74,10 @@ export function contextCompactionLabel(
   if (item.status === "pending" || item.status === "running" || item.status === "waiting") {
     return "Compacting context";
   }
-  if (item.beforeTokenCount !== undefined && item.afterTokenCount !== undefined) {
-    return `Context compacted ${formatTokens(item.beforeTokenCount)} → ${formatTokens(item.afterTokenCount)} tokens`;
-  }
-  return "Context compacted";
+  const tokens = contextCompactionTokenCounts(item);
+  return tokens
+    ? `Context compacted ${tokens.before} → ${tokens.after} tokens`
+    : "Context compacted";
 }
 
 export interface WorkLogPresentationEntry {
