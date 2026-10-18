@@ -36,6 +36,13 @@ export const FORK_SESSION_IDLE_LIMIT = Duration.days(7);
  * restart every session looks disconnected until its client connects again.
  */
 const CLEANUP_INTERVAL = Duration.hours(1);
+/**
+ * The most sessions that one sweep or one issue ends, oldest first. Each ended session sends one
+ * "removed" message to every open client, so a backlog of thousands would freeze them. The hourly
+ * sweep drains a large backlog over time. Revisit when upstream adds one event for many removed
+ * sessions.
+ */
+const REVOKE_LIMIT_PER_PASS = 500;
 
 type Issue = SessionStore["Service"]["issue"];
 
@@ -127,10 +134,12 @@ export const makeForkSessions = Effect.fn("makeForkSessions")(function* (store: 
   const sql = yield* SqlClient.SqlClient;
   const permit = yield* Semaphore.make(1);
 
+  // The connected sessions first, then the newest: only those can be given again, and an identity
+  // can hold a backlog of thousands.
   const findIdentity = SqlSchema.findAll({
-    Request: IdentityRequest,
+    Request: Schema.Struct({ ...IdentityRequest.fields, connected: Schema.Array(AuthSessionId) }),
     Result: IdentityRow,
-    execute: ({ subject, method, label, now }) => sql`
+    execute: ({ subject, method, label, now, connected }) => sql`
       SELECT
         session_id AS "sessionId",
         scopes AS "scopes",
@@ -143,10 +152,12 @@ export const makeForkSessions = Effect.fn("makeForkSessions")(function* (store: 
         AND client_label = ${label}
         AND revoked_at IS NULL
         AND expires_at > ${now}
+      ORDER BY ${sql.in("session_id", connected)} DESC, issued_at DESC
+      LIMIT 20
     `,
   });
 
-  /** Ends every live session of the identity except `keep`. */
+  /** Ends the oldest live sessions of the identity except `keep`, at most one pass. */
   const revokeIdentity = SqlSchema.findAll({
     Request: Schema.Struct({
       ...IdentityRequest.fields,
@@ -156,12 +167,17 @@ export const makeForkSessions = Effect.fn("makeForkSessions")(function* (store: 
     execute: ({ subject, method, label, now, keep }) => sql`
       UPDATE auth_sessions
       SET revoked_at = ${now}
-      WHERE subject = ${subject}
-        AND method = ${method}
-        AND client_label = ${label}
-        AND revoked_at IS NULL
-        AND expires_at > ${now}
-        AND NOT (${sql.in("session_id", keep)})
+      WHERE session_id IN (
+        SELECT session_id FROM auth_sessions
+        WHERE subject = ${subject}
+          AND method = ${method}
+          AND client_label = ${label}
+          AND revoked_at IS NULL
+          AND expires_at > ${now}
+          AND NOT (${sql.in("session_id", keep)})
+        ORDER BY issued_at ASC
+        LIMIT ${REVOKE_LIMIT_PER_PASS}
+      )
       RETURNING session_id AS "sessionId"
     `,
   });
@@ -176,16 +192,21 @@ export const makeForkSessions = Effect.fn("makeForkSessions")(function* (store: 
     execute: ({ now, seenBefore, connected }) => sql`
       UPDATE auth_sessions
       SET revoked_at = ${now}
-      WHERE revoked_at IS NULL
-        AND expires_at > ${now}
-        AND (
-          subject LIKE 'machine:%'
-          OR subject LIKE 'client:%'
-          OR client_label LIKE ${`${CLOUDFLARE_ACCESS_LABEL_PREFIX}%`}
-        )
-        AND issued_at < ${seenBefore}
-        AND (last_connected_at IS NULL OR last_connected_at < ${seenBefore})
-        AND NOT (${sql.in("session_id", connected)})
+      WHERE session_id IN (
+        SELECT session_id FROM auth_sessions
+        WHERE revoked_at IS NULL
+          AND expires_at > ${now}
+          AND (
+            subject LIKE 'machine:%'
+            OR subject LIKE 'client:%'
+            OR client_label LIKE ${`${CLOUDFLARE_ACCESS_LABEL_PREFIX}%`}
+          )
+          AND issued_at < ${seenBefore}
+          AND (last_connected_at IS NULL OR last_connected_at < ${seenBefore})
+          AND NOT (${sql.in("session_id", connected)})
+        ORDER BY issued_at ASC
+        LIMIT ${REVOKE_LIMIT_PER_PASS}
+      )
       RETURNING session_id AS "sessionId"
     `,
   });
@@ -212,7 +233,8 @@ export const makeForkSessions = Effect.fn("makeForkSessions")(function* (store: 
       const now = DateTime.makeUnsafe(nowMs);
       const connected = new Set(yield* store.connectedSessionIds);
       const identity = { subject, method, label, now };
-      const reuse = pickReusable(yield* findIdentity(identity), scopes, connected, nowMs);
+      const rows = yield* findIdentity({ ...identity, connected: [...connected] });
+      const reuse = pickReusable(rows, scopes, connected, nowMs);
       const revoked = yield* revokeIdentity({
         ...identity,
         keep: [...connected, ...(reuse === undefined ? [] : [reuse.sessionId])],
