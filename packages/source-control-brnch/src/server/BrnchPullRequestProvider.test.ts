@@ -47,19 +47,19 @@ const actor = (userId: string, type = "human", names: object = {}) => ({
   display_name: null,
   ...names,
 });
-const change = (number: number, author: ReturnType<typeof actor>) => ({
-  id: `chg_${number}`,
+const change = (number: number, author: ReturnType<typeof actor>, state = "open") => ({
+  id: `chg_${String(number).padStart(4, "0")}`,
   number,
   title: `Change ${number}`,
   description: "",
-  state: "open",
+  state,
   target_ref: "refs/heads/main",
   source: { kind: "ref", workspace_id: null, ref: `refs/heads/change-${number}` },
   author,
   current_revision: { head_oid: `oid${number}` },
   merged: null,
-  created_at: "2026-10-01T00:00:00Z",
-  updated_at: `2026-10-0${number}T00:00:00Z`,
+  created_at: `2026-10-01T00:00:${String(number).padStart(2, "0")}Z`,
+  updated_at: `2026-10-02T00:00:${String(number).padStart(2, "0")}Z`,
 });
 
 describe("BrnchPullRequestProvider", () => {
@@ -108,6 +108,70 @@ describe("BrnchPullRequestProvider", () => {
       );
       // Authors are named by the listing alone; the signed-in account is not consulted.
       assert.isTrue(brnch.runs.every((run) => run.args[0] === "change"));
+    }).pipe(Effect.provide(brnch.layer));
+  });
+
+  it.effect("pages a long list by rows delivered, newest first across open and draft", () => {
+    // Open changes 40..1 over two pages, drafts 50..41 on one; cursors are opaque strings.
+    const brnch = fakeBrnch((args: ReadonlyArray<string>) => {
+      const state = args[args.indexOf("--state") + 1];
+      const cursor = args.includes("--cursor") ? args[args.indexOf("--cursor") + 1] : null;
+      const numbers =
+        state === "draft"
+          ? Array.from({ length: 10 }, (_, i) => 50 - i)
+          : cursor === null
+            ? Array.from({ length: 20 }, (_, i) => 40 - i)
+            : Array.from({ length: 20 }, (_, i) => 20 - i);
+      return {
+        items: numbers.map((number) => change(number, actor("usr_me"), state ?? "open")),
+        next_cursor: state === "open" && cursor === null ? "page-2" : null,
+      };
+    });
+    return Effect.gen(function* () {
+      const provider = yield* BrnchPullRequestProvider.make;
+      const first = yield* provider.listChangeRequests({
+        ...ref,
+        state: "open",
+        involvement: "all",
+        viewer: "alice",
+        limit: 15,
+      });
+      assert.deepStrictEqual(
+        first.items.map((item) => item.number),
+        [50, 49, 48, 47, 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 36],
+      );
+      assert.deepStrictEqual(
+        { truncated: first.truncated, continues: first.continues, advance: first.cursorAdvance },
+        { truncated: true, continues: true, advance: 15 },
+      );
+      // The first slice needs no second page of open changes.
+      assert.isFalse(brnch.runs.some((run) => run.args.includes("--cursor")));
+      const third = yield* provider.listChangeRequests({
+        ...ref,
+        state: "open",
+        involvement: "all",
+        viewer: "alice",
+        limit: 15,
+        cursor: { updatedBefore: "2026-10-01T00:00:00Z", delivered: 30 },
+      });
+      assert.deepStrictEqual(
+        third.items.map((item) => item.number),
+        [20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6],
+      );
+      assert.isTrue(third.truncated);
+      const fourth = yield* provider.listChangeRequests({
+        ...ref,
+        state: "open",
+        involvement: "all",
+        viewer: "alice",
+        limit: 15,
+        cursor: { updatedBefore: "2026-10-01T00:00:00Z", delivered: 45 },
+      });
+      assert.deepStrictEqual(
+        fourth.items.map((item) => item.number),
+        [5, 4, 3, 2, 1],
+      );
+      assert.isFalse(fourth.truncated);
     }).pipe(Effect.provide(brnch.layer));
   });
 

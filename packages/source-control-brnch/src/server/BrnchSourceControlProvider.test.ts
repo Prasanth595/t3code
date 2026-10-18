@@ -146,6 +146,43 @@ describe("BrnchSourceControlProvider", () => {
     }).pipe(Effect.provide(brnch.layer));
   });
 
+  it.effect("walks every page of a long list to find a branch's change", () => {
+    // Seven pages of a hundred changes on other branches, then the one being looked for.
+    const brnch = fakeBrnch((args) => {
+      const state = args[args.indexOf("--state") + 1];
+      const page = args.includes("--cursor") ? Number(args[args.indexOf("--cursor") + 1]) : 0;
+      if (state === "draft") return { stdout: { items: [], next_cursor: null } };
+      const last = page === 7;
+      return {
+        stdout: {
+          items: last
+            ? [change(1, "open", "refs/heads/feature", "2026-09-01T00:00:00Z")]
+            : Array.from({ length: 100 }, (_, i) =>
+                change(1000 - page * 100 - i, "open", "refs/heads/other", "2026-10-01T00:00:00Z"),
+              ),
+          next_cursor: last ? null : String(page + 1),
+        },
+      };
+    });
+    return Effect.gen(function* () {
+      const provider = yield* BrnchSourceControlProvider.make;
+      const changes = yield* provider.listChangeRequests({
+        cwd: "/repo",
+        context,
+        headSelector: "feature",
+        state: "open",
+      });
+      assert.deepStrictEqual(
+        changes.map((item) => item.number),
+        [1],
+      );
+      assert.strictEqual(
+        brnch.runs.filter((args) => args[args.indexOf("--state") + 1] === "open").length,
+        8,
+      );
+    }).pipe(Effect.provide(brnch.layer));
+  });
+
   it.effect("opens a change from the branch against its base with the body file", () => {
     const brnch = fakeBrnch(() => ({
       stdout: change(7, "open", "refs/heads/feature", "2026-10-01T00:00:00Z"),

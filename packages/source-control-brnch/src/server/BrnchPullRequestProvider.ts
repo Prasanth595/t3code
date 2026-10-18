@@ -34,7 +34,7 @@ const CAPABILITIES: PullRequestCapabilities = {
   edit: { changeRequest: false, comment: false },
 };
 
-/** Change list rows read per state; a listing past it reports itself truncated. */
+/** Rows per `change list` page. */
 const PAGE_SIZE = 100;
 /** Where `brnch merge request` stopped short; any other state is queued or done. */
 const FAILED_PROMOTION_STATES = new Set(["blocked", "failed", "cancelled"]);
@@ -131,39 +131,59 @@ export const make = Effect.gen(function* () {
       brnch("getViewer", input, ["auth", "status"], AuthStatus).pipe(
         Effect.map((status) => status.user.handle ?? status.user.id),
       ),
+    /**
+     * Brnch's cursors are opaque and one list per state, while the service pages by rows
+     * delivered, so each read walks its lists from the top to the slice asked for. Lists arrive
+     * newest first and the slice keeps that order, so a list read as far as the slice's end
+     * contributes everything that can fall inside it.
+     */
     listChangeRequests: Effect.fn("BrnchPullRequestProvider.listChangeRequests")(function* (input) {
       const repo = yield* repoArgs("listChangeRequests", input);
-      const limit = Math.max(1, Math.min(input.limit, PAGE_SIZE));
+      const offset = input.cursor?.delivered ?? 0;
+      const end = offset + Math.max(1, input.limit);
       // Brnch keeps drafts apart from open changes; both are open here.
       const states =
         input.state === "all" ? [null] : input.state === "open" ? ["open", "draft"] : [input.state];
-      const pages = yield* Effect.forEach(
+      const lists = yield* Effect.forEach(
         states,
-        (state) =>
-          brnch(
-            "listChangeRequests",
-            input,
-            [
-              "change",
-              "list",
-              ...repo,
-              "--limit",
-              String(limit),
-              ...(state === null ? [] : ["--state", state]),
-            ],
-            Json.BrnchChanges,
-          ),
+        Effect.fn(function* (state) {
+          const items: Array<Json.BrnchChange> = [];
+          let cursor: string | null = null;
+          const cursors = new Set<string>();
+          while (items.length < end) {
+            const page: typeof Json.BrnchChanges.Type = yield* brnch(
+              "listChangeRequests",
+              input,
+              [
+                "change",
+                "list",
+                ...repo,
+                "--limit",
+                String(PAGE_SIZE),
+                ...(state === null ? [] : ["--state", state]),
+                ...(cursor === null ? [] : ["--cursor", cursor]),
+              ],
+              Json.BrnchChanges,
+            );
+            items.push(...page.items);
+            if (page.next_cursor === null || cursors.has(page.next_cursor))
+              return { items, more: false };
+            cursors.add(page.next_cursor);
+            cursor = page.next_cursor;
+          }
+          return { items, more: true };
+        }),
         { concurrency: 2 },
       );
-      const changes = pages
-        .flatMap((page) => page.items)
-        .toSorted((a, b) => b.updated_at.localeCompare(a.updated_at));
+      const changes = lists
+        .flatMap((list) => list.items)
+        .toSorted((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+      const items = changes.slice(offset, end);
       return {
-        items: changes
-          .slice(0, limit)
-          .map((change) => Json.toProviderChangeRequest(change, input.repository)),
-        truncated: changes.length > limit || pages.some((page) => page.next_cursor !== null),
-        continues: false,
+        items: items.map((change) => Json.toProviderChangeRequest(change, input.repository)),
+        truncated: changes.length > end || lists.some((list) => list.more),
+        continues: true,
+        cursorAdvance: items.length,
       };
     }),
     getChangeRequest: (input) =>

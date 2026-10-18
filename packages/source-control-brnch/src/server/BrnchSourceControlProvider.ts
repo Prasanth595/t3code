@@ -13,8 +13,7 @@ import * as BrnchCli from "./brnchCli.ts";
 import * as Json from "./brnchChangeJson.ts";
 
 const KIND = SourceControlProviderKind.make("brnch");
-/** Change list pages read while looking for a branch's changes; the CLI has no branch filter. */
-const MAX_PAGES = 5;
+/** Rows per `change list` page; the CLI has no branch filter, so a branch's changes are a walk. */
 const PAGE_SIZE = 100;
 
 export const discovery = {
@@ -144,7 +143,9 @@ export const make = Effect.gen(function* () {
         const items: Array<ChangeRequest> = [];
         for (const state of states) {
           let cursor: string | null = null;
-          for (let page = 0; page < MAX_PAGES && items.length < limit; page++) {
+          // Every page until the list ends; a cursor seen before means the host is looping.
+          const cursors = new Set<string>();
+          while (items.length < limit) {
             const changes: typeof Json.BrnchChanges.Type = yield* brnch(
               "listChangeRequests",
               input.cwd,
@@ -169,7 +170,8 @@ export const make = Effect.gen(function* () {
               )
                 items.push(item);
             }
-            if (changes.next_cursor === null || changes.next_cursor === cursor) break;
+            if (changes.next_cursor === null || cursors.has(changes.next_cursor)) break;
+            cursors.add(changes.next_cursor);
             cursor = changes.next_cursor;
           }
         }
