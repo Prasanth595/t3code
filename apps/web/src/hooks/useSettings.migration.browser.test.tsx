@@ -11,7 +11,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const settingsFromServerWithoutMigration = DEFAULT_SERVER_SETTINGS;
@@ -24,26 +24,39 @@ const state = vi.hoisted(() => ({
   persist: vi.fn(),
 }));
 
-vi.mock("~/connection/catalog", () => ({
-  environmentCatalog: { stateAtom: () => state.connection },
+vi.mock(import("~/connection/catalog"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    environmentCatalog: {
+      ...actual.environmentCatalog,
+      stateAtom: (() => state.connection) as never,
+    },
+  };
+});
+vi.mock(import("~/state/server"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      settingsValueAtom: (() => state.settings) as never,
+    },
+  };
+});
+vi.mock(import("~/state/use-atom-command"), async (original) => ({
+  ...(await original()),
+  useAtomCommand: (() => state.persist) as never,
 }));
-
-vi.mock("~/state/server", () => ({
-  serverEnvironment: {
-    settingsValueAtom: () => state.settings,
-    updateSettings: Symbol("updateSettings"),
-  },
-  primaryServerSettingsAtom: undefined,
-}));
-vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => state.persist }));
-vi.mock("~/localApi", () => ({
-  ensureLocalApi: () => ({
+vi.mock(import("~/localApi"), async (original) => ({
+  ...(await original()),
+  ensureLocalApi: (() => ({
     persistence: {
       getClientSettings: async () => ({
         favorites: [{ provider: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" }],
       }),
     },
-  }),
+  })) as never,
 }));
 
 import { useEnvironmentModelPreferences } from "./useSettings";
@@ -54,7 +67,8 @@ function ModelPicker(props: { readonly environmentId: EnvironmentId }) {
 }
 
 let registry: AtomRegistry.AtomRegistry;
-let renderer: ReactTestRenderer | undefined;
+let root: Root;
+let container: HTMLDivElement;
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -66,6 +80,9 @@ beforeEach(() => {
   state.persist
     .mockReset()
     .mockResolvedValue(AsyncResult.success(settingsFromServerWithoutMigration));
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
 });
 
 function connected(generation: number): SupervisorConnectionState {
@@ -73,13 +90,13 @@ function connected(generation: number): SupervisorConnectionState {
 }
 
 async function renderModelPicker(environmentId: EnvironmentId) {
-  await act(async () => {
-    renderer = create(
+  await act(async () =>
+    root.render(
       <RegistryContext.Provider value={registry}>
         <ModelPicker environmentId={environmentId} />
       </RegistryContext.Provider>,
-    );
-  });
+    ),
+  );
 }
 
 async function pushSettings(count: number) {
@@ -89,7 +106,8 @@ async function pushSettings(count: number) {
 }
 
 afterEach(async () => {
-  await act(() => renderer?.unmount());
+  await act(() => root.unmount());
+  container.remove();
   registry.dispose();
   vi.unstubAllGlobals();
 });
