@@ -24,19 +24,22 @@ XDG_PROJECTS_DIR="$HOME/Projects"
 
 describe("parseXdgProjectsDir", () => {
   it("reads the directory xdg-user-dirs-update writes", () => {
-    expect(parseXdgProjectsDir(GENERATED_USER_DIRS)).toEqual(Option.some("~/Projects"));
+    expect(parseXdgProjectsDir(GENERATED_USER_DIRS)).toEqual(Option.some("~/Projects/"));
   });
 
   it("accepts the same values as xdg-user-dir", () => {
     const cases: ReadonlyArray<readonly [string, string]> = [
-      ['XDG_PROJECTS_DIR="/srv/code/"', "/srv/code"],
-      ['XDG_PROJECTS_DIR="$HOME/My Projects"', "~/My Projects"],
-      ['XDG_PROJECTS_DIR="$HOME/a\\"b"', '~/a"b'],
-      ['XDG_PROJECTS_DIR="$HOME/a\\\\b"', "~/a\\b"],
-      ['XDG_PROJECTS_DIR="$HOME/a\\$b"', "~/a$b"],
-      ['\t XDG_PROJECTS_DIR \t= \t"$HOME/code" trailing', "~/code"],
-      ['XDG_PROJECTS_DIR="$HOME/code', "~/code"],
-      ['XDG_PROJECTS_DIR="$HOME/"', "~"],
+      ['XDG_PROJECTS_DIR="/srv/code"', "/srv/code/"],
+      ['XDG_PROJECTS_DIR="/srv/code//"', "/srv/code/"],
+      ['XDG_PROJECTS_DIR="$HOME/My Projects"', "~/My Projects/"],
+      ['XDG_PROJECTS_DIR="$HOME/ Projects "', "~/ Projects /"],
+      ['XDG_PROJECTS_DIR="$HOME/a\\"b"', '~/a"b/'],
+      ['XDG_PROJECTS_DIR="$HOME/a\\\\b"', "~/a\\b/"],
+      ['XDG_PROJECTS_DIR="$HOME/a\\$b"', "~/a$b/"],
+      ['\t XDG_PROJECTS_DIR \t= \t"$HOME/code" trailing', "~/code/"],
+      ['XDG_PROJECTS_DIR="$HOME/code', "~/code/"],
+      ['XDG_PROJECTS_DIR="$HOME"', "~/"],
+      ['XDG_PROJECTS_DIR="$HOME/"', "~/"],
       ['XDG_PROJECTS_DIR="/"', "/"],
     ];
     for (const [line, root] of cases) {
@@ -65,7 +68,7 @@ describe("parseXdgProjectsDir", () => {
       parseXdgProjectsDir(
         'XDG_PROJECTS_DIR="$HOME/first"\r\nXDG_PROJECTS_DIR="$HOME/second"\r\nXDG_PROJECTS_DIR=bad\r\n',
       ),
-    ).toEqual(Option.some("~/second"));
+    ).toEqual(Option.some("~/second/"));
   });
 });
 
@@ -104,7 +107,18 @@ it.layer(NodeServices.layer)("resolveUserProjectsRoot", (it) => {
     Effect.gen(function* () {
       const home = yield* makeHome({ userDirs: GENERATED_USER_DIRS, directories: ["Projects"] });
 
-      expect(yield* resolveFor(home)).toEqual(Option.some("~/Projects"));
+      expect(yield* resolveFor(home)).toEqual(Option.some("~/Projects/"));
+    }),
+  );
+
+  it.effect("keeps whitespace at the end of the directory name", () =>
+    Effect.gen(function* () {
+      const home = yield* makeHome({
+        userDirs: 'XDG_PROJECTS_DIR="$HOME/ Projects "\n',
+        directories: [" Projects "],
+      });
+
+      expect(yield* resolveFor(home)).toEqual(Option.some("~/ Projects /"));
     }),
   );
 
@@ -147,7 +161,7 @@ it.layer(NodeServices.layer)("resolveUserProjectsRoot", (it) => {
 
         expect(
           yield* resolveFor(home, { env: { XDG_CONFIG_HOME: path.join(home, "config") } }),
-        ).toEqual(Option.some(path.join(home, "code")));
+        ).toEqual(Option.some(`${path.join(home, "code")}/`));
         expect(yield* resolveFor(home, { env: { XDG_CONFIG_HOME: "config" } })).toEqual(
           Option.none(),
         );

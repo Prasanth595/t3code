@@ -615,7 +615,8 @@ export const ServerConfig = Schema.Struct({
   /**
    * The xdg-user-dirs Projects directory (`XDG_PROJECTS_DIR`), present only
    * when it exists. The Add Project browser starts here while
-   * `addProjectBaseDirectory` is empty. Paths under home start with `~`.
+   * `addProjectBaseDirectory` is empty. Paths under home start with `~`, and
+   * every path ends in `/`.
    */
   userProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**

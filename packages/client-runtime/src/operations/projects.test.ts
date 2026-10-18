@@ -43,8 +43,9 @@ describe("add project shared logic", () => {
   });
 
   it("starts in the environment's projects directory when the setting is empty", () => {
-    expect(getAddProjectInitialQuery("", "~/Projects")).toBe("~/Projects/");
-    expect(getAddProjectInitialQuery("  ", "/srv/code")).toBe("/srv/code/");
+    expect(getAddProjectInitialQuery("", "~/Projects/")).toBe("~/Projects/");
+    expect(getAddProjectInitialQuery("  ", "/srv/code/")).toBe("/srv/code/");
+    expect(getAddProjectInitialQuery("", "~/ Projects /")).toBe("~/ Projects /");
     expect(getAddProjectInitialQuery(null, null)).toBe("~/");
     expect(getAddProjectInitialQuery("/work", "~/Projects")).toBe("/work/");
   });

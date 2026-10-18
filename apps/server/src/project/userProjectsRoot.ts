@@ -11,7 +11,8 @@ const PROJECTS_DIR_ASSIGNMENT = /^[ \t]*XDG_PROJECTS_DIR[ \t]*=[ \t]*"((?:[^"\\]
  * Reads `user-dirs.dirs` the way xdg-user-dirs' own `xdg-user-dir` does: the
  * value is quoted, starts with `$HOME` or `/`, a backslash keeps the next
  * character, and the last valid line wins. `$HOME` comes back as `~` so
- * clients show the directory the way they show the `~/` default.
+ * clients show the directory the way they show the `~/` default, and the
+ * result always ends in `/`.
  */
 export function parseXdgProjectsDir(contents: string): Option.Option<string> {
   const roots = contents.split(/\r?\n/).flatMap((line) => {
@@ -24,7 +25,9 @@ export function parseXdgProjectsDir(contents: string): Option.Option<string> {
         : value.startsWith("/")
           ? value
           : null;
-    return root === null ? [] : [root.replace(/(?<=.)\/+$/, "")];
+    // Config strings are trimmed on the wire, and the separator keeps a
+    // directory name that ends in whitespace intact
+    return root === null ? [] : [root.replace(/\/*$/, "/")];
   });
   return Option.fromUndefinedOr(roots.at(-1));
 }
