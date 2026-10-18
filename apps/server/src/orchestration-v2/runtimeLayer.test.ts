@@ -4522,13 +4522,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       }),
   );
 
-  it.effect(
-    "starts a queued prompt for another provider with its own model after a usage limit",
-    () =>
+  it.effect.each(["user prompt", "PR update"] as const)(
+    "starts a queued %s on another provider after a usage limit",
+    (kind) =>
       Effect.gen(function* () {
         const orchestrator = yield* Orchestrator.OrchestratorV2;
         const eventSink = yield* EventSink.EventSinkV2;
-        const threadId = ThreadId.make("runtime-layer-limited-queue-other-provider");
+        const threadId = ThreadId.make(`runtime-layer-limited-queue-other-provider:${kind}`);
         const queuedSelection = { instanceId: alternateInstanceId, model: "gpt-5.5" };
         yield* orchestrator.dispatch({
           type: "thread.create",
@@ -4544,20 +4544,38 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           branch: null,
           worktreePath: process.cwd(),
         });
-        for (const [index, selection] of [modelSelection, queuedSelection].entries()) {
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make(`${threadId}:message:${index}`),
-            threadId,
-            messageId: MessageId.make(`${threadId}:message:${index}`),
-            text: index === 0 ? "Active" : "Queued",
-            attachments: [],
-            modelSelection: selection,
-            dispatchMode: { type: index === 0 ? "start_immediately" : "queue_after_active" },
-          });
-        }
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:message:active`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:message:active`),
+          text: "Active",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:message:queued`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:message:queued`),
+          text: "Queued",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          ...(kind === "user prompt"
+            ? { modelSelection: queuedSelection, createdBy: "user", creationSource: "web" }
+            : {
+                notification: {
+                  source: { kind: "monitor" },
+                  outcome: "updated",
+                  summary: "PR updated",
+                },
+                createdBy: "agent",
+                creationSource: "server",
+              }),
+        });
         const [activeRun, queuedRun] = (yield* orchestrator.getThreadProjection(threadId)).runs;
         assert.isDefined(activeRun?.rootNodeId);
         assert.isDefined(queuedRun);
@@ -4610,7 +4628,21 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
             },
           ],
         });
-        yield* orchestrator.resumeQueuedRuns;
+        if (kind === "user prompt") {
+          yield* orchestrator.resumeQueuedRuns;
+        } else {
+          yield* orchestrator.dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make(`${threadId}:select`),
+            threadId,
+            modelSelection: queuedSelection,
+          });
+          yield* orchestrator.dispatch({
+            type: "queue.resume",
+            commandId: CommandId.make(`${threadId}:resume`),
+            threadId,
+          });
+        }
 
         const after = yield* orchestrator.getThreadProjection(threadId);
         const started = after.runs.find((run) => run.id === queuedRun.id);

@@ -617,6 +617,37 @@ function nextQueuedRun(
   return queuedRunsInDeliveryOrder(projection)[0];
 }
 
+function queuedRunModelSelection(
+  projection: Pick<OrchestrationV2ThreadProjection, "thread" | "messages">,
+  run: OrchestrationV2Run,
+): ModelSelection {
+  const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+  // A PR update belongs to the thread's current agent. One queued before a
+  // provider handoff must not switch the thread back to the old provider.
+  return message?.notification?.source.kind === "monitor"
+    ? projection.thread.modelSelection
+    : run.modelSelection;
+}
+
+// The limit already stopped this provider. Starting the queue on it would send
+// every waiting message and drop it from the queue as each one fails.
+function usageLimitHoldsQueue(
+  projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
+  providerInstanceId: ModelSelection["instanceId"],
+): boolean {
+  const sessionError =
+    projection.providerSessions
+      .filter((session) => session.providerInstanceId === providerInstanceId)
+      .toSorted(
+        (left, right) =>
+          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
+      )[0]?.lastError ?? null;
+  return (
+    usageLimitBlockedRun(projection.runs, projection.turnItems, sessionError)
+      ?.providerInstanceId === providerInstanceId
+  );
+}
+
 function latestStableRun(
   projection: Pick<OrchestrationV2ThreadProjection, "runs">,
 ): OrchestrationV2Run | null {
@@ -1302,31 +1333,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const queuedMessage = projection.messages.find(
         (candidate) => candidate.id === storedQueuedRun.userMessageId,
       );
-      // A PR update belongs to the thread's current agent. One queued before a
-      // provider handoff must not switch the thread back to the old provider.
-      const followsThreadSelection = queuedMessage?.notification?.source.kind === "monitor";
-      const modelSelection = followsThreadSelection
-        ? projection.thread.modelSelection
-        : storedQueuedRun.modelSelection;
+      const modelSelection = queuedRunModelSelection(projection, storedQueuedRun);
       const queuedRun = {
         ...storedQueuedRun,
         modelSelection,
         providerInstanceId: modelSelection.instanceId,
       };
-
-      // The limit already stopped this provider. Starting the queue would send
-      // every waiting message and drop it from the queue as each one fails.
-      const sessionError =
-        projection.providerSessions
-          .filter((session) => session.providerInstanceId === queuedRun.providerInstanceId)
-          .toSorted(
-            (left, right) =>
-              DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-          )[0]?.lastError ?? null;
-      if (
-        usageLimitBlockedRun(projection.runs, projection.turnItems, sessionError)
-          ?.providerInstanceId === queuedRun.providerInstanceId
-      ) {
+      if (usageLimitHoldsQueue(projection, queuedRun.providerInstanceId)) {
         return;
       }
       // A message queued behind a worktree that was cancelled or never created
@@ -11097,8 +11110,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "queue.resume": {
         const projection = yield* loadProjectionForCommand(
           command,
-          ["runs", "turnItems", "providerSessions"],
-          { turnItemTypes: ["error"] },
+          ["runs", "turnItems", "providerSessions", "messages"],
+          { turnItemTypes: ["error"], messageRoles: ["user"] },
         );
         if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
           return yield* new OrchestratorDispatchError({
@@ -11107,16 +11120,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Thread ${command.threadId} is not active.`,
           });
         }
-        const sessionError =
-          projection.providerSessions
-            .filter(
-              (session) => session.providerInstanceId === projection.thread.providerInstanceId,
-            )
-            .toSorted(
-              (left, right) =>
-                DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-            )[0]?.lastError ?? null;
-        if (usageLimitBlockedRun(projection.runs, projection.turnItems, sessionError) !== null) {
+        const nextRun = nextQueuedRun(projection);
+        if (
+          usageLimitHoldsQueue(
+            projection,
+            nextRun === undefined
+              ? projection.thread.providerInstanceId
+              : queuedRunModelSelection(projection, nextRun).instanceId,
+          )
+        ) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
             commandType: command.type,
