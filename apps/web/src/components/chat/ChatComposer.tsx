@@ -98,6 +98,7 @@ import {
   readFileAsDataUrl,
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
+  threadHasStarted,
   threadShellHasStarted,
 } from "../ChatView.logic";
 import {
@@ -127,6 +128,7 @@ import {
   deriveEffectiveComposerModelState,
   useComposerDraftModelState,
 } from "../../composerDraftStore";
+import { draftModelSelectionApplies } from "../../lib/chatThreadActions";
 import {
   MAX_STASH_ENTRIES,
   partitionStashAttachments,
@@ -1781,6 +1783,7 @@ function useComposerProviderModel(
     readonly threadModelSelection: ModelSelection | null | undefined;
     readonly projectModelSelection: ModelSelection | null | undefined;
     readonly promptInjectionState: ReturnType<typeof getComposerPromptInjectionState>;
+    readonly threadStarted: boolean;
   },
 ) {
   const {
@@ -1794,8 +1797,9 @@ function useComposerProviderModel(
     candidateInstanceIds,
     lockedProvider,
     lockedInstanceId,
+    threadStarted,
   } = input;
-  const draftModelState = useComposerDraftModelState(threadRef);
+  const draftModelState = useComposerDraftModelState(threadRef, { threadStarted });
   const providerInstanceEntries: ReadonlyArray<ProviderInstanceEntry> = sortProviderInstanceEntries(
     applyProviderInstanceSettings(
       deriveProviderInstanceEntries(providerStatuses),
@@ -2256,6 +2260,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     uploadsByImageId,
   ]);
 
+  const activeThreadStarted = threadHasStarted(activeThread);
   const {
     providerInstanceEntries,
     selectedProviderEntry,
@@ -2275,8 +2280,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     threadModelSelection: activeThreadModelSelection,
     projectModelSelection: activeProjectDefaultModelSelection,
     promptInjectionState: getComposerPromptInjectionState(prompt),
+    threadStarted: activeThreadStarted,
     candidateInstanceIds: [
-      composerDraft.activeProvider ?? null,
+      draftModelSelectionApplies(composerDraft, activeThreadStarted)
+        ? (composerDraft.activeProvider ?? null)
+        : null,
       activeThread?.runtime?.providerInstanceId,
       activeThreadModelSelection?.instanceId,
       activeProjectDefaultModelSelection?.instanceId,

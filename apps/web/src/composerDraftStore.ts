@@ -72,6 +72,7 @@ import {
 import { create } from "zustand";
 import { persist, type PersistStorage, type StorageValue } from "zustand/middleware";
 import { useShallow } from "zustand/react/shallow";
+import { draftModelSelectionApplies } from "./lib/chatThreadActions";
 import { createDeferredStorage, createMemoryStorage } from "./lib/storage";
 import { getDefaultServerModel } from "./providerModels";
 import {
@@ -3029,15 +3030,21 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
 
             const nextMap = { ...base.modelSelectionByProvider };
             const currentForProvider = nextMap[instanceKey];
+            // The caller passes the model the composer shows. Prefer it over a
+            // stored seed, which a started thread ignores.
+            const shownModel =
+              normalizeModelSlug(options?.model, normalizedProvider) ?? currentForProvider?.model;
             if (providerOpts) {
               nextMap[instanceKey] = createModelSelection(
                 instanceKey,
-                currentForProvider?.model ?? fallbackModel,
+                shownModel ?? fallbackModel,
                 providerOpts,
               );
-            } else if (currentForProvider && (currentForProvider.options?.length ?? 0) > 0) {
-              const { options: _, ...rest } = currentForProvider;
-              nextMap[instanceKey] = rest as ModelSelection;
+            } else if (currentForProvider) {
+              nextMap[instanceKey] = createModelSelection(
+                instanceKey,
+                shownModel ?? currentForProvider.model,
+              );
             }
 
             let nextStickyMap = state.stickyModelSelectionByProvider;
@@ -3085,7 +3092,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               Equal.equals(base.modelSelectionByProvider, nextMap) &&
               Equal.equals(state.stickyModelSelectionByProvider, nextStickyMap) &&
               Equal.equals(state.stickyOptionsByModelByProvider, nextOptionsByModel) &&
-              state.stickyActiveProvider === nextStickyActiveProvider
+              state.stickyActiveProvider === nextStickyActiveProvider &&
+              base.modelSelectionExplicit === true &&
+              (!options?.instanceId || base.activeProvider === instanceKey)
             ) {
               return state;
             }
@@ -4244,11 +4253,13 @@ export function useThreadHasUnsentDraft(threadRef: ScopedThreadRef): boolean {
 
 export function useComposerDraftModelState(
   threadRef: ComposerThreadTarget,
+  options?: { readonly threadStarted?: boolean },
 ): ComposerDraftModelState {
+  const threadStarted = options?.threadStarted === true;
   return useComposerDraftStore(
     useShallow((state) => {
       const draft = getComposerDraftState(state, threadRef);
-      return draft
+      return draft && draftModelSelectionApplies(draft, threadStarted)
         ? {
             activeProvider: draft.activeProvider,
             modelSelectionByProvider: draft.modelSelectionByProvider,

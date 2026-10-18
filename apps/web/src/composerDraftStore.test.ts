@@ -77,6 +77,7 @@ import {
   useComposerDraftStore,
   DraftId,
 } from "./composerDraftStore";
+import { draftModelSelectionApplies } from "./lib/chatThreadActions";
 import { removeLocalStorageItem, setLocalStorageItem } from "./hooks/useLocalStorage";
 import { insertInlineContextReference } from "./lib/composerContextReferences";
 import { terminalContextReference, threadContextRecord } from "./lib/composerContextRecords";
@@ -1960,6 +1961,84 @@ describe("composerDraftStore modelSelection", () => {
       replaceOptions: true,
     });
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBeUndefined();
+  });
+
+  it("lets only an explicit draft selection override a started thread", () => {
+    expect(draftModelSelectionApplies(undefined, false)).toBe(true);
+    expect(draftModelSelectionApplies({}, false)).toBe(true);
+    expect(draftModelSelectionApplies(undefined, true)).toBe(false);
+    expect(draftModelSelectionApplies({}, true)).toBe(false);
+    expect(draftModelSelectionApplies({ modelSelectionExplicit: true }, true)).toBe(true);
+  });
+
+  it("does not let a seeded model ride along when traits change on a started thread", () => {
+    const store = useComposerDraftStore.getState();
+    // New-thread seeding: not explicit.
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));
+    // The started thread shows its own model, so the traits picker passes it.
+    store.setProviderModelOptions(
+      threadRef,
+      CODEX_DRIVER,
+      toSelections({ reasoningEffort: "high" }),
+      { instanceId: CODEX_INSTANCE, model: "gpt-5.3-codex", persistSticky: true },
+    );
+
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(draft?.modelSelectionExplicit).toBe(true);
+    expect(draft?.modelSelectionByProvider[CODEX_INSTANCE]).toEqual(
+      modelSelection(CODEX_DRIVER, "gpt-5.3-codex", { reasoningEffort: "high" }),
+    );
+  });
+
+  it("keeps the shown model when traits are cleared on a started thread", () => {
+    const store = useComposerDraftStore.getState();
+    store.setModelSelection(
+      threadRef,
+      modelSelection(CODEX_DRIVER, "gpt-5.4", { reasoningEffort: "low" }),
+    );
+    store.setProviderModelOptions(threadRef, CODEX_DRIVER, null, {
+      instanceId: CODEX_INSTANCE,
+      model: "gpt-5.3-codex",
+    });
+
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(draft?.modelSelectionExplicit).toBe(true);
+    expect(draft?.modelSelectionByProvider[CODEX_INSTANCE]).toEqual(
+      modelSelection(CODEX_DRIVER, "gpt-5.3-codex"),
+    );
+  });
+
+  it("keeps the shown model when traits are cleared over an option-less seed", () => {
+    const store = useComposerDraftStore.getState();
+    store.setModelSelection(threadRef, modelSelection(CODEX_DRIVER, "gpt-5.4"));
+    store.setProviderModelOptions(threadRef, CODEX_DRIVER, null, {
+      instanceId: CODEX_INSTANCE,
+      model: "gpt-5.3-codex",
+    });
+
+    expect(
+      draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionByProvider[CODEX_INSTANCE],
+    ).toEqual(modelSelection(CODEX_DRIVER, "gpt-5.3-codex"));
+  });
+
+  it("marks a trait choice explicit even when it matches the seeded state", () => {
+    const store = useComposerDraftStore.getState();
+    const seeded = modelSelection(CODEX_DRIVER, "gpt-5.4", { reasoningEffort: "high" });
+    store.setStickyModelSelection(seeded);
+    store.setModelSelection(threadRef, modelSelection(CLAUDE_AGENT_DRIVER, "claude-sonnet-4-6"));
+    store.setModelSelection(threadRef, seeded);
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.modelSelectionExplicit).toBeUndefined();
+
+    store.setProviderModelOptions(
+      threadRef,
+      CODEX_DRIVER,
+      toSelections({ reasoningEffort: "high" }),
+      { instanceId: CODEX_INSTANCE, model: "gpt-5.4", persistSticky: true },
+    );
+
+    const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
+    expect(draft?.modelSelectionExplicit).toBe(true);
+    expect(draft?.activeProvider).toBe(CODEX_INSTANCE);
   });
 
   it("persists the explicit marker through storage round-trips", async () => {

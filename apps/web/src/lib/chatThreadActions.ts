@@ -67,6 +67,19 @@ export function hasExplicitComposerModelSelection(
   );
 }
 
+/**
+ * Whether a draft's model state may override the thread's own model. A started
+ * thread keeps the model it ran on: new-thread seeds from sticky state or the
+ * default model must not move it to another model or provider. Only a model or
+ * trait the user picked for this thread does.
+ */
+export function draftModelSelectionApplies(
+  draft: Pick<ComposerThreadDraftState, "modelSelectionExplicit"> | null | undefined,
+  threadStarted: boolean,
+): boolean {
+  return !threadStarted || draft?.modelSelectionExplicit === true;
+}
+
 export function resolveThreadActionProjectRef(
   context: ChatThreadActionContext,
 ): ScopedProjectRef | null {
