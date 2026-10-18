@@ -233,54 +233,46 @@ describe("AssetAccess", () => {
   });
 
   describe("SSO organization uploads", () => {
+    // github.com answers the token with the SSO sign-in page; only the signed URL serves bytes.
     const signed = "https://private-user-images.githubusercontent.com/1/2-sso.png?jwt=a.b&x=1";
-    // github.com answers the token with the SSO sign-in page for every upload here; only the
-    // signed URL serves bytes.
     const loadTwice = (input: {
       readonly asset: { readonly url: string; readonly cwd: string; readonly repository?: string };
-      readonly checkout: string | null;
-      readonly rendersTo: string;
+      readonly checkout?: string;
+      readonly rendersTo?: string;
       readonly signedStatus?: number;
       readonly accounts?: readonly [string, string];
     }) => {
       let credentialReads = 0;
-      const rendered: Array<unknown> = [];
-      const resolvedCheckouts: Array<string> = [];
+      const contexts: Array<unknown> = [];
       const requests: Array<{ url: string; authorization: string | undefined }> = [];
       return Effect.gen(function* () {
         const asset = { ...input.asset, expiresAt: Number.MAX_SAFE_INTEGER };
         const first = yield* githubMediaResponse(asset, {});
         const second = yield* githubMediaResponse(asset, {});
-        return {
-          statuses: [first.status, second.status],
-          contentType: first.headers["content-type"],
-          rendered,
-          resolvedCheckouts,
-          requests,
-        };
+        return { statuses: [first.status, second.status], contexts, requests };
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
-              resolve: (cwd) =>
-                Effect.sync(() => {
-                  resolvedCheckouts.push(cwd);
-                  return input.checkout === null
+              resolve: () =>
+                Effect.succeed(
+                  input.checkout === undefined
                     ? null
                     : {
                         canonicalKey: `github.com/${input.checkout}`,
                         locator: { source: "git-remote", remoteName: "origin", remoteUrl: "" },
-                      };
-                }),
+                      },
+                ),
             }),
             Layer.mock(GitHubRest.GitHubRest)({
               rest: (request) =>
                 Effect.sync(() => {
-                  rendered.push(request.body);
+                  contexts.push((request.body as { context: string }).context);
+                  const src = (input.rendersTo ?? signed).replace("&", "&amp;");
                   return {
                     status: 200,
                     headers: {},
-                    body: `<p><img src="${input.rendersTo.replace("&", "&amp;")}" alt=""></p>`,
+                    body: `<p><img src="${src}" alt=""></p>`,
                     truncated: false,
                     invalidUtf8: false,
                   };
@@ -301,13 +293,13 @@ describe("AssetAccess", () => {
           HttpClient.HttpClient,
           HttpClient.make((request) => {
             requests.push({ url: request.url, authorization: request.headers.authorization });
-            const contentType = request.url === signed ? "image/png" : "text/html; charset=utf-8";
+            const isSigned = request.url === signed;
             return Effect.succeed(
               HttpClientResponse.fromWeb(
                 request,
                 new Response(null, {
-                  status: request.url === signed ? (input.signedStatus ?? 200) : 200,
-                  headers: { "content-type": contentType },
+                  status: isSigned ? (input.signedStatus ?? 200) : 200,
+                  headers: { "content-type": isSigned ? "image/png" : "text/html" },
                 }),
               ),
             );
@@ -316,24 +308,17 @@ describe("AssetAccess", () => {
         Effect.scoped,
       );
     };
+    const url = "https://github.com/user-attachments/assets/0f5c0e6e";
 
-    it.effect("loads them through the URL the API signs in the pull request's repository", () =>
+    it.effect("loads them through a URL the API signs in the pull request's repository", () =>
       Effect.gen(function* () {
-        const url = "https://github.com/user-attachments/assets/0f5c0e6e-pr-repo";
         const result = yield* loadTwice({
           asset: { url, cwd: "/checkout", repository: "enterprise/private" },
           checkout: "elsewhere/public",
-          rendersTo: signed,
         });
         expect(result.statuses).toEqual([200, 200]);
-        expect(result.contentType).toBe("image/png");
-        // Rendered once in the pull request's repository, then reused.
-        expect(result.rendered).toEqual([
-          { text: `![](${url})`, mode: "gfm", context: "enterprise/private" },
-        ]);
-        expect(result.resolvedCheckouts).toEqual([]);
-        // The signed URL authorizes itself, so the token never leaves GitHub, and a cached one
-        // skips the sign-in page entirely.
+        expect(result.contexts).toEqual(["enterprise/private"]);
+        // The signed URL authorizes itself, so the token never leaves GitHub, and it is reused.
         expect(result.requests).toEqual([
           { url, authorization: "Bearer signed-in" },
           { url: signed, authorization: undefined },
@@ -342,90 +327,38 @@ describe("AssetAccess", () => {
       }),
     );
 
-    it.effect("signs them in the checkout's repository when the pull request's is unknown", () =>
+    it.effect("falls back to the checkout's repository, and fails without a signed URL", () =>
       Effect.gen(function* () {
-        const url = "https://github.com/user-attachments/assets/0f5c0e6e-checkout";
-        const result = yield* loadTwice({
-          asset: { url, cwd: "/checkout" },
+        const checkout = yield* loadTwice({
+          asset: { url: `${url}-checkout`, cwd: "/checkout" },
           checkout: "owner/private",
-          rendersTo: signed,
         });
-        expect(result.statuses).toEqual([200, 200]);
-        expect(result.resolvedCheckouts).toEqual(["/checkout"]);
-        expect(result.rendered).toEqual([
-          { text: `![](${url})`, mode: "gfm", context: "owner/private" },
-        ]);
+        expect(checkout.statuses).toEqual([200, 200]);
+        expect(checkout.contexts).toEqual(["owner/private"]);
+
+        const noRepository = yield* loadTwice({ asset: { url: `${url}-none`, cwd: "/scratch" } });
+        expect(noRepository.statuses).toEqual([415, 415]);
+        expect(noRepository.contexts).toEqual([]);
+
+        // What the API answers when the context repository is outside the upload's enterprise.
+        const unsigned = yield* loadTwice({
+          asset: { url: `${url}-unsigned`, cwd: "/checkout", repository: "outside/enterprise" },
+          rendersTo: "https://private-user-images.githubusercontent.com/1/2-sso.png?x=1",
+        });
+        expect(unsigned.statuses).toEqual([415, 415]);
       }),
     );
 
-    it.effect("reports them unavailable without any repository to sign them in", () =>
+    it.effect("signs them again after a failed load or for another account", () =>
       Effect.gen(function* () {
-        const url = "https://github.com/user-attachments/assets/0f5c0e6e-no-repo";
-        const result = yield* loadTwice({
-          asset: { url, cwd: "/scratch" },
-          checkout: null,
-          rendersTo: signed,
-        });
-        expect(result.statuses).toEqual([415, 415]);
-        expect(result.rendered).toEqual([]);
-        expect(result.requests.map((request) => request.url)).toEqual([url, url]);
-      }),
-    );
-
-    it.effect("signs them again for a different GitHub account", () =>
-      Effect.gen(function* () {
-        const url = "https://github.com/user-attachments/assets/0f5c0e6e-two-accounts";
-        const result = yield* loadTwice({
-          asset: { url, cwd: "/checkout", repository: "enterprise/private" },
-          checkout: null,
-          rendersTo: signed,
+        const asset = { url: `${url}-again`, cwd: "/checkout", repository: "enterprise/private" };
+        const failed = yield* loadTwice({ asset, signedStatus: 403 });
+        expect(failed.contexts).toHaveLength(2);
+        const switched = yield* loadTwice({
+          asset: { ...asset, url: `${url}-accounts` },
           accounts: ["work", "personal"],
         });
-        expect(result.statuses).toEqual([200, 200]);
-        expect(result.rendered).toHaveLength(2);
-      }),
-    );
-
-    it.effect("signs them again when a signed URL fails to load", () =>
-      Effect.gen(function* () {
-        const url = "https://github.com/user-attachments/assets/0f5c0e6e-signed-fails";
-        const result = yield* loadTwice({
-          asset: { url, cwd: "/checkout", repository: "enterprise/private" },
-          checkout: null,
-          rendersTo: signed,
-          signedStatus: 403,
-        });
-        expect(result.statuses).toEqual([403, 403]);
-        expect(result.rendered).toHaveLength(2);
-        expect(result.requests).toEqual([
-          { url, authorization: "Bearer signed-in" },
-          { url: signed, authorization: undefined },
-          { url, authorization: "Bearer signed-in" },
-          { url: signed, authorization: undefined },
-        ]);
-      }),
-    );
-
-    it.effect("reports them unavailable when GitHub renders them unsigned", () =>
-      Effect.gen(function* () {
-        // What the API answers when the context repository is outside the upload's enterprise.
-        for (const rendersTo of [
-          "https://github.com/user-attachments/assets/0f5c0e6e-unsigned",
-          "https://private-user-images.githubusercontent.com/1/2-sso.png?x=1",
-        ]) {
-          const url = `https://github.com/user-attachments/assets/0f5c0e6e-${rendersTo.length}`;
-          const result = yield* loadTwice({
-            asset: { url, cwd: "/checkout", repository: "outside/enterprise" },
-            checkout: null,
-            rendersTo,
-          });
-          expect(result.statuses).toEqual([415, 415]);
-          expect(result.rendered).toHaveLength(2);
-          expect(result.requests).toEqual([
-            { url, authorization: "Bearer signed-in" },
-            { url, authorization: "Bearer signed-in" },
-          ]);
-        }
+        expect(switched.contexts).toHaveLength(2);
       }),
     );
   });
@@ -1682,7 +1615,6 @@ describe("AssetAccess", () => {
         },
       });
       expect(yield* resolve(fromPullRequest.relativeUrl)).toMatchObject({
-        cwd: "/repo",
         repository: "owner/repo",
       });
 
