@@ -14,6 +14,7 @@ import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { getTelemetryIdentifier } from "./Identify.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
 
@@ -82,10 +83,94 @@ it("retryDelayMs doubles from 2s and stays under the 5 minute cap", () => {
 });
 
 it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
+  it.effect.each([
+    { environmentEnabled: true, savedEnabled: false },
+    { environmentEnabled: false, savedEnabled: true },
+  ])(
+    "does not collect when env=$environmentEnabled and saved=$savedEnabled",
+    ({ environmentEnabled, savedEnabled }) =>
+      Effect.gen(function* () {
+        const batches: Array<ReadonlyArray<{ readonly uuid: string }>> = [];
+        const runtime = AnalyticsService.layer.pipe(
+          Layer.provideMerge(ServerSettings.layerTest({ telemetryEnabled: savedEnabled })),
+          Layer.provideMerge(
+            ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-privacy-" }),
+          ),
+          Layer.provide(
+            ConfigProvider.layer(
+              ConfigProvider.fromUnknown({ T3CODE_TELEMETRY_ENABLED: environmentEnabled }),
+            ),
+          ),
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(HostProcess.Platform, "linux"),
+              Layer.succeed(HostProcess.Architecture, "x64"),
+              layerAcceptThenFailClient(batches),
+            ),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          assert.equal(analytics.disabledByEnvironment, !environmentEnabled);
+          yield* analytics.record("test.private");
+          yield* analytics.flush;
+          const settings = yield* ServerSettings.ServerSettingsService;
+          yield* settings.updateSettings({ telemetryEnabled: true });
+          yield* analytics.flush;
+        }).pipe(Effect.provide(runtime));
+        assert.equal(batches.length, 0);
+      }),
+  );
+
+  it.effect(
+    "live opt-out discards buffered events and retries, then collects only new events",
+    () =>
+      Effect.gen(function* () {
+        const batches: Array<ReadonlyArray<{ readonly uuid: string }>> = [];
+        const runtime = AnalyticsService.layer.pipe(
+          Layer.provideMerge(ServerSettings.layerTest()),
+          Layer.provideMerge(
+            ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-privacy-live-" }),
+          ),
+          Layer.provide(
+            ConfigProvider.layer(ConfigProvider.fromUnknown({ T3CODE_TELEMETRY_ENABLED: true })),
+          ),
+          Layer.provide(
+            Layer.mergeAll(
+              Layer.succeed(HostProcess.Platform, "linux"),
+              Layer.succeed(HostProcess.Architecture, "x64"),
+              layerAcceptThenFailClient(batches),
+            ),
+          ),
+        );
+        yield* Effect.gen(function* () {
+          const analytics = yield* AnalyticsService.AnalyticsService;
+          const settings = yield* ServerSettings.ServerSettingsService;
+          yield* analytics.record("test.retry");
+          yield* analytics.flush;
+          assert.equal(batches.length, 1);
+          yield* analytics.record("test.buffered");
+          yield* settings.updateSettings({ telemetryEnabled: false });
+          yield* analytics.record("test.disabled");
+          yield* analytics.flush;
+          assert.equal(batches.length, 1);
+          yield* settings.updateSettings({ telemetryEnabled: true });
+          yield* analytics.flush;
+          assert.equal(batches.length, 1);
+          yield* analytics.record("test.new");
+          yield* analytics.flush;
+          assert.equal(batches.length, 2);
+          assert.equal(batches[1]?.length, 1);
+          assert.notEqual(batches[0]?.[0]?.uuid, batches[1]?.[0]?.uuid);
+        }).pipe(Effect.provide(runtime));
+      }),
+  );
+
   it.effect("a batch that keeps failing is retried with backoff, then dropped", () =>
     Effect.gen(function* () {
       const batches: Array<ReadonlyArray<{ readonly uuid: string }>> = [];
       const layerRuntime = AnalyticsService.layer.pipe(
+        Layer.provideMerge(ServerSettings.layerTest()),
         Layer.provideMerge(
           ServerConfig.ServerConfig.layerTest(process.cwd(), { prefix: "t3-telemetry-retry-" }),
         ),
@@ -131,7 +216,10 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
         prefix: "t3-telemetry-base-",
       });
 
-      const layerTelemetry = AnalyticsService.layer.pipe(Layer.provideMerge(layerServerConfig));
+      const layerTelemetry = AnalyticsService.layer.pipe(
+        Layer.provideMerge(ServerSettings.layerTest()),
+        Layer.provideMerge(layerServerConfig),
+      );
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           T3CODE_TELEMETRY_ENABLED: true,
@@ -232,7 +320,10 @@ it.layer(NodeServices.layer)("AnalyticsService test", (it) => {
       const layerServerConfig = ServerConfig.ServerConfig.layerTest(process.cwd(), {
         prefix: "t3-telemetry-disabled-",
       });
-      const layerTelemetry = AnalyticsService.layer.pipe(Layer.provideMerge(layerServerConfig));
+      const layerTelemetry = AnalyticsService.layer.pipe(
+        Layer.provideMerge(ServerSettings.layerTest()),
+        Layer.provideMerge(layerServerConfig),
+      );
       const layerConfig = ConfigProvider.layer(
         ConfigProvider.fromUnknown({
           T3CODE_TELEMETRY_ENABLED: false,

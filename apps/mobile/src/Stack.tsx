@@ -102,6 +102,7 @@ import { SettingsFollowUpRouteScreen } from "./features/settings/SettingsFollowU
 import {
   SettingsEnvironmentAgentBehaviorRouteScreen,
   SettingsEnvironmentMaintenanceRouteScreen,
+  SettingsEnvironmentPrivacyRouteScreen,
   SettingsEnvironmentNewThreadsRouteScreen,
   SettingsEnvironmentSourceControlRouteScreen,
 } from "./features/settings/SettingsServerControlsRouteScreen";
@@ -255,6 +256,11 @@ const SettingsContentStack = createV5SheetStackNavigator({
       screen: SettingsEnvironmentMaintenanceRouteScreen,
       linking: "maintenance",
       options: { title: "Maintenance" },
+    }),
+    SettingsEnvironmentPrivacy: createNativeStackScreen({
+      screen: SettingsEnvironmentPrivacyRouteScreen,
+      linking: "privacy",
+      options: { title: "Privacy" },
     }),
     SettingsNotifications: createNativeStackScreen({
       screen: SettingsNotificationsRouteScreen,

@@ -1700,6 +1700,7 @@ const layerWsRpc = (
               otlpLogsEnabled: config.otlpLogsUrl !== undefined,
             },
             settings,
+            telemetryDisabledByEnvironment: analytics.disabledByEnvironment,
             shellResumeCompletionMarker: true,
             threadResumeCompletionMarker: true,
             threadSnapshotPagination: true,

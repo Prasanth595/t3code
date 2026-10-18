@@ -212,6 +212,12 @@ function SettingsIndexSections() {
           target="SettingsEnvironmentMaintenance"
           disabled={noServerTargets}
         />
+        <SettingsRow
+          icon={{ ios: "lock", android: "lock" }}
+          label="Privacy"
+          target="SettingsEnvironmentPrivacy"
+          disabled={noServerTargets}
+        />
       </SettingsSection>
 
       <SettingsSection title="App">

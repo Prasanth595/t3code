@@ -98,6 +98,26 @@ const recordProviderUsage = (provider: string, instanceId: string | null = provi
   });
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("persists and broadcasts the environment telemetry preference", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* ServerSettingsModule.ServerSettingsService;
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        const changes = yield* service.subscribeChanges;
+        yield* service.updateSettings({ telemetryEnabled: false });
+        const received = Option.getOrThrow(yield* Stream.runHead(changes));
+        assert.equal(received.telemetryEnabled, false);
+        const saved = yield* decodeServerSettingsJson(
+          yield* fs.readFileString(config.settingsPath),
+        );
+        assert.equal(saved.telemetryEnabled, false);
+        yield* service.updateSettings({ telemetryEnabled: true });
+        assert.equal((yield* service.getSettings).telemetryEnabled, true);
+      }),
+    ).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("serializes concurrent model preference edits without cancelling duplicate adds", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

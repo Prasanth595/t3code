@@ -411,6 +411,16 @@ describe("searchSettings", () => {
 });
 
 describe("settings search targets", () => {
+  it("finds the product telemetry opt-out as an environment-wide preference", () => {
+    for (const query of ["telemetry", "privacy", "PostHog", "opt out"]) {
+      expect(searchSettings(query).some((item) => item.id === "product-telemetry")).toBe(true);
+    }
+    const target = getSettingsSearchTargetScope("product-telemetry")!;
+    expect(isSettingsSearchScopeAvailable(target.scope, "all")).toBe(true);
+    expect(isSettingsSearchScopeAvailable(target.scope, "environment")).toBe(true);
+    expect(isSettingsSearchScopeAvailable(target.scope, "project")).toBe(false);
+  });
+
   it("requires an environment for the resolved telemetry export destination", () => {
     const result = searchSettings("OpenTelemetry export").find(
       (item) => item.id === "telemetry-export",

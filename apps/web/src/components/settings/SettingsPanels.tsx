@@ -2047,10 +2047,33 @@ export function GeneralSettingsPanel() {
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const navigate = useNavigate();
-  const { scope, environment, connectedEnvironments, target } = useSettingsScope();
+  const {
+    scope,
+    environment,
+    connectedEnvironments,
+    target,
+    targets: settingsTargets,
+  } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
   const isEnvironmentScope = scope.environmentIds.length === 1 && environmentId !== null;
   const hasServerTargets = connectedEnvironments.length > 0;
+  const supportsTelemetrySettings =
+    hasServerTargets &&
+    connectedEnvironments.every(
+      (target) => target.serverConfig?.environment.capabilities.productTelemetrySettings === true,
+    );
+  const telemetryLockedEnvironments = connectedEnvironments.filter(
+    (entry) => entry.serverConfig?.telemetryDisabledByEnvironment === true,
+  );
+  const telemetryValues = settingsTargets.map(
+    (entry) =>
+      entry.settings.telemetryEnabled &&
+      !connectedEnvironments.find(
+        (environment) => environment.environmentId === entry.environmentId,
+      )?.serverConfig?.telemetryDisabledByEnvironment,
+  );
+  const telemetryChecked = telemetryValues.length > 0 && telemetryValues.every(Boolean);
+  const telemetryMixed = telemetryValues.some(Boolean) && !telemetryChecked;
   const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
   const lastEnabledProjectGroupingMode = useRef<SidebarProjectGroupingMode>(
@@ -3250,6 +3273,36 @@ export function GeneralSettingsPanel() {
             </Button>
           }
         />
+      </SettingsSection>
+      <SettingsSection title="Privacy">
+        <SettingsRow
+          serverScoped
+          {...searchableSetting("product-telemetry")}
+          description="Help improve T3 Code. Never includes prompts, responses, or files."
+          status={
+            telemetryLockedEnvironments.length > 0
+              ? `Disabled by environment variable on ${telemetryLockedEnvironments.map((entry) => entry.label).join(", ")}.`
+              : undefined
+          }
+          settingKeys={["telemetryEnabled"]}
+          control={
+            <Switch
+              checked={telemetryChecked}
+              mixed={telemetryMixed}
+              disabled={!supportsTelemetrySettings || telemetryLockedEnvironments.length > 0}
+              onCheckedChange={(checked) => updateSettings({ telemetryEnabled: Boolean(checked) })}
+              aria-label="Share usage data"
+            />
+          }
+        />
+        <p className="px-4 py-3 text-xs text-muted-foreground sm:px-5">
+          Applies to all devices connected to each selected environment.
+        </p>
+        {!supportsTelemetrySettings && (
+          <p className="px-4 py-3 text-xs text-muted-foreground sm:px-5">
+            Select connected environments with updated servers to change product usage collection.
+          </p>
+        )}
       </SettingsSection>
       <SettingsSection title="Diagnostics">
         <SettingsRow

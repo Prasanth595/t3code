@@ -552,6 +552,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["OTel OTLP telemetry export endpoints logs traces metrics Grafana"],
   },
   {
+    id: "product-telemetry",
+    title: "Share usage data",
+    to: "/settings/general",
+    scope: "environment-defaults",
+    searchTerms: ["privacy telemetry analytics tracking collection opt out PostHog"],
+  },
+  {
     id: "diagnostics",
     title: "Diagnostics",
     to: "/settings/general",

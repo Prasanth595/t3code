@@ -972,6 +972,13 @@ describe("ServerSettingsPatch.providerInstances", () => {
 });
 
 describe("ServerSettingsPatch string normalization", () => {
+  it("defaults product telemetry on and preserves an explicit opt-out", () => {
+    expect(decodeServerSettings({}).telemetryEnabled).toBe(true);
+    expect(decodeServerSettings({ telemetryEnabled: false }).telemetryEnabled).toBe(false);
+    expect(decodeServerSettingsPatch({ telemetryEnabled: false }).telemetryEnabled).toBe(false);
+    expect(decodeServerSettingsPatch({}).telemetryEnabled).toBeUndefined();
+  });
+
   it("trims string settings while decoding patches", () => {
     const patch = decodeServerSettingsPatch({
       addProjectBaseDirectory: "  ~/Development  ",

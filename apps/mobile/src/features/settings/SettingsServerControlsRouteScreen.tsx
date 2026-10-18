@@ -41,13 +41,14 @@ import {
 } from "./settings-scoped-server";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 
-type SettingsPage = "new-threads" | "source-control" | "agent-behavior" | "maintenance";
+type SettingsPage = "new-threads" | "source-control" | "agent-behavior" | "maintenance" | "privacy";
 
 const PAGE_TITLES: Record<SettingsPage, string> = {
   "new-threads": "New threads",
   "source-control": "Source control",
   "agent-behavior": "Agent behavior",
   maintenance: "Maintenance",
+  privacy: "Privacy",
 };
 
 const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettingKey[]> = {
@@ -62,6 +63,7 @@ const PAGE_PROJECT_KEYS: Record<SettingsPage, readonly ProjectScopedServerSettin
   ],
   "agent-behavior": ["responseStreamingMode", "enableAgentBrowserAccess"],
   maintenance: ["continueThreadsAfterServerUpdate"],
+  privacy: [],
 };
 
 const SUBMODULE_CHOICES: ReadonlyArray<{
@@ -136,6 +138,10 @@ export function SettingsEnvironmentAgentBehaviorRouteScreen() {
 
 export function SettingsEnvironmentMaintenanceRouteScreen() {
   return <ServerSettingsDetail page="maintenance" />;
+}
+
+export function SettingsEnvironmentPrivacyRouteScreen() {
+  return <ServerSettingsDetail page="privacy" />;
 }
 
 function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
@@ -237,6 +243,22 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
         key as (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number],
       ));
 
+  const supportsTelemetrySettings = targets.every(
+    (target) =>
+      target.environment.serverConfig.environment.capabilities.productTelemetrySettings === true,
+  );
+  const telemetryLockedTargets = displayTargets.filter(
+    (target) => target.environment.serverConfig.telemetryDisabledByEnvironment === true,
+  );
+  const telemetryValues = displayTargets.map(
+    (target) =>
+      target.settings.telemetryEnabled &&
+      target.environment.serverConfig.telemetryDisabledByEnvironment !== true,
+  );
+  const telemetryValue = telemetryValues.every((value) => value === telemetryValues[0])
+    ? (telemetryValues[0] ?? false)
+    : null;
+
   return (
     <>
       <SettingsEnvironmentFilterHeader />
@@ -259,7 +281,7 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
             </Text>
           ) : (
             <>
-              {projectSelected ? (
+              {projectSelected && props.page !== "privacy" ? (
                 <SettingsProjectOverridesSection
                   projectLabel={selectedProject?.label ?? "Unavailable project"}
                   hasOverrides={targets.some((target) =>
@@ -423,6 +445,40 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                       onValueChange={(value) => write({ enableAgentBrowserAccess: value })}
                     />
                   </SettingsSection>
+                </>
+              ) : null}
+
+              {props.page === "privacy" ? (
+                <>
+                  <SettingsSection title="Privacy">
+                    <SettingsSwitchRow
+                      icon={{ ios: "lock", android: "lock" }}
+                      label="Share usage data"
+                      subtitle={
+                        !supportsTelemetrySettings
+                          ? "Update older servers to control product usage collection."
+                          : projectSelected
+                            ? "Environment-wide setting. Select All projects to change it."
+                            : "Help improve T3 Code. Never includes prompts, responses, or files."
+                      }
+                      value={telemetryValue}
+                      disabled={
+                        disabledFor("telemetryEnabled") ||
+                        !supportsTelemetrySettings ||
+                        telemetryLockedTargets.length > 0
+                      }
+                      onValueChange={(value) => write({ telemetryEnabled: value })}
+                    />
+                  </SettingsSection>
+                  {telemetryLockedTargets.length > 0 && (
+                    <Text className="px-2 text-sm text-foreground-muted">
+                      Disabled by environment variable on{" "}
+                      {telemetryLockedTargets.map((target) => target.environment.label).join(", ")}.
+                    </Text>
+                  )}
+                  <Text className="px-2 text-sm text-foreground-muted">
+                    Applies to all devices connected to each selected environment.
+                  </Text>
                 </>
               ) : null}
 

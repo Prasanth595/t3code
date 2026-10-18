@@ -599,6 +599,7 @@ export const ServerConfig = Schema.Struct({
   directEndpoints: Schema.optionalKey(ForwardCompatibleArray(ServerDirectEndpoint)),
   observability: ServerObservability,
   settings: ServerSettings,
+  telemetryDisabledByEnvironment: Schema.optionalKey(Schema.Boolean),
   shellResumeCompletionMarker: Schema.optionalKey(Schema.Boolean),
   shellRevealInFileManager: Schema.optionalKey(Schema.Boolean),
   shellRevealInFileManagerKind: Schema.optionalKey(FileManagerRevealKind),

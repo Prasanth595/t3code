@@ -17,12 +17,14 @@ import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { getTelemetryIdentifier } from "./Identify.ts";
 
 interface BufferedAnalyticsEvent {
@@ -70,6 +72,7 @@ const TelemetryEnvConfig = Config.all({
 export class AnalyticsService extends Context.Service<
   AnalyticsService,
   {
+    readonly disabledByEnvironment: boolean;
     readonly record: (
       event: string,
       properties?: Readonly<Record<string, unknown>>,
@@ -81,6 +84,7 @@ export class AnalyticsService extends Context.Service<
   static readonly layerTest = Layer.succeed(
     AnalyticsService,
     AnalyticsService.of({
+      disabledByEnvironment: false,
       record: () => Effect.void,
       flush: Effect.void,
     }),
@@ -106,6 +110,11 @@ function serverOsFromNodePlatform(platform: string): ClientOs {
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const telemetryConfig = yield* TelemetryEnvConfig;
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const isEnabled = settings.getSettings.pipe(
+    Effect.map((current) => telemetryConfig.enabled && current.telemetryEnabled),
+    Effect.catch(() => Effect.succeed(false)),
+  );
   const httpClient = yield* HttpClient.HttpClient;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const identifier = yield* getTelemetryIdentifier;
@@ -117,6 +126,10 @@ export const make = Effect.gen(function* () {
     failures: 0,
     retryAt: 0,
   });
+  const discardBufferedEvents = Effect.all([
+    Ref.set(bufferRef, []),
+    Ref.set(deliveryRef, { failedBatch: [], batchAttempts: 0, failures: 0, retryAt: 0 }),
+  ]).pipe(Effect.asVoid);
   // The background flush and the shutdown flush must not send the same batch at once.
   const flushLock = yield* Semaphore.make(1);
   const clientType = serverConfig.mode === "desktop" ? "desktop-app" : "cli-web-client";
@@ -158,7 +171,7 @@ export const make = Effect.gen(function* () {
   const sendBatch = Effect.fn("AnalyticsService.sendBatch")(function* (
     events: ReadonlyArray<BufferedAnalyticsEvent>,
   ) {
-    if (!telemetryConfig.enabled || !identifier) return;
+    if (!(yield* isEnabled) || !identifier) return;
 
     const payload = {
       api_key: telemetryConfig.posthogKey,
@@ -199,6 +212,10 @@ export const make = Effect.gen(function* () {
 
   const flush: AnalyticsService["Service"]["flush"] = Effect.gen(function* () {
     while (true) {
+      if (!(yield* isEnabled)) {
+        yield* discardBufferedEvents;
+        return;
+      }
       const delivery = yield* Ref.get(deliveryRef);
       const batch = delivery.failedBatch.length > 0 ? delivery.failedBatch : yield* takeBatch;
       if (batch.length === 0) {
@@ -241,7 +258,7 @@ export const make = Effect.gen(function* () {
 
   const record: AnalyticsService["Service"]["record"] = Effect.fn("AnalyticsService.record")(
     function* (event, properties) {
-      if (!telemetryConfig.enabled || !identifier) return;
+      if (!(yield* isEnabled) || !identifier) return;
 
       // Telemetry is best effort: an event without a uuid is not sent. The
       // Node implementation throws (a defect) rather than failing, so catch both.
@@ -258,13 +275,22 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  // An opt-out must discard retries too, even if collection is re-enabled before the next flush.
+  const changes = yield* settings.subscribeChanges;
+  yield* changes.pipe(
+    Stream.runForEach((current) =>
+      current.telemetryEnabled ? Effect.void : discardBufferedEvents.pipe(flushLock.withPermit),
+    ),
+    Effect.forkScoped,
+  );
+
   yield* Effect.forever(Effect.sleep(FLUSH_INTERVAL_MS).pipe(Effect.flatMap(() => flushWhenDue)), {
     disableYield: true,
   }).pipe(Effect.forkScoped);
 
   yield* Effect.addFinalizer(() => flush);
 
-  return AnalyticsService.of({ record, flush });
+  return AnalyticsService.of({ disabledByEnvironment: !telemetryConfig.enabled, record, flush });
 });
 
 export const layer = Layer.effect(AnalyticsService, make);
