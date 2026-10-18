@@ -214,7 +214,7 @@ function steps(): ReadonlyArray<Step> {
     {
       name: "doc links",
       detail: "fork docs",
-      command: ["node", "scripts/fork-check-doc-links.ts"],
+      command: ["node", NodePath.join(import.meta.dirname, "fork-check-doc-links.ts")],
     },
   ];
 }

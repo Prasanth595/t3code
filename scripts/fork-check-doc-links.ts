@@ -3,7 +3,7 @@
 // Fork: checks the relative links and anchors of the fork docs. Fork CI (Lint) and
 // `vp run fork:check` run it. See docs/fork/operations.md "Check a change before you push".
 //
-//   node scripts/fork-check-doc-links.ts
+//   node scripts/fork-check-doc-links.ts    (from the repository root)
 //
 // Limit: an anchor is checked only when it points into a markdown file, against the
 // GitHub slugs of its headings. HTML anchors (`<a id>`) do not count. Revisit when a
@@ -11,7 +11,6 @@
 
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
 import GithubSlugger from "github-slugger";
 import remarkParse from "remark-parse";
 import { unified } from "unified";
@@ -26,7 +25,8 @@ interface MarkdownNode {
   readonly position?: { readonly start: { readonly line: number } } | undefined;
 }
 
-const repoRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
+// The working folder, so the script also checks a checkout that does not hold it yet.
+const repoRoot = process.cwd();
 const parser = unified().use(remarkParse);
 const parsed = new Map<string, MarkdownNode>();
 
