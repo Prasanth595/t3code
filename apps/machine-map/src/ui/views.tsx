@@ -59,6 +59,7 @@ import {
 } from "./history.ts";
 import { ClockIcon, RobotIcon, UndoIcon } from "./icons.tsx";
 import { MapView } from "./MapView.tsx";
+import { PortalStyle } from "./PortalStyle.tsx";
 import { PushSettings } from "./PushSettings.tsx";
 import { NO_SELECTION } from "./route.ts";
 import { ClientLink, MachineLink, RouteLink } from "./StickerLink.tsx";
@@ -1295,6 +1296,7 @@ export function ClientsView() {
       </div>
       {error && <p className="error-text">{error}</p>}
       <ApprovedClients />
+      <PortalStyle />
       <PushSettings />
       <h3>Portal sign-ins</h3>
       {devices === null ? (

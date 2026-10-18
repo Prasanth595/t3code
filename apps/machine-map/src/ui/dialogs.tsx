@@ -27,6 +27,7 @@ import { confirmResume, EmergencyButton } from "./emergency.tsx";
 import { COMMAND_LABEL, LEVEL_LABEL, timeUntil } from "./format.ts";
 import { CopyIcon, KindIcon } from "./icons.tsx";
 import { playJoinSound, showJoinEffects } from "./panicEffects.ts";
+import { readPortalStyle, setPortalStyle } from "./PortalStyle.tsx";
 import { QrCodeSvg } from "./QrCode.tsx";
 import {
   INSTALL_TARGET_LABEL,
@@ -995,6 +996,15 @@ export function Palette({ close, toggleHold }: { close: () => void; toggleHold: 
       kind: "action",
       run: () => portal.open({ _tag: "inviteApp" }),
     });
+    out.push(
+      readPortalStyle() === "inkwire"
+        ? {
+            label: "Use the neo-brutalist style",
+            kind: "action",
+            run: () => setPortalStyle("brutalist"),
+          }
+        : { label: "Use the Inkwire style", kind: "action", run: () => setPortalStyle("inkwire") },
+    );
     // MM-904, MM-907: clients and the sign-ins that wait for approval.
     for (const client of map.clients) {
       out.push({

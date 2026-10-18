@@ -2,7 +2,10 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App.tsx";
+import { applyPortalStyle, readPortalStyle } from "./PortalStyle.tsx";
 import { Tooltip } from "./Tooltip.tsx";
+
+applyPortalStyle(readPortalStyle());
 
 const root = document.getElementById("root");
 if (!root) throw new Error("The page has no #root element.");

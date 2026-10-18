@@ -1,0 +1,386 @@
+/* Inkwire (MM-1101): the optional second style of the portal, the same look as the Inkwire theme
+   of T3 Code. PortalStyle.tsx sets data-style="inkwire" on the root; without it none of these
+   rules match and the portal stays neo-brutalist. Neon marks meaning: cyan is the primary action
+   and focus, magenta is selected and live. The hand-drawn look is static: uneven corners, a
+   second pencil outline drawn a little off and rotated, and wavy pencil lines. Only clickable
+   things get the sketched outline; text is never tilted or distorted. */
+:root[data-style="inkwire"] {
+  color-scheme: light;
+  --canvas: #f5f3ee;
+  --dots: #1a1d2412;
+  --surface: #fbfaf7;
+  --raised: #efece5;
+  --code-bg: #fbfaf7;
+  --ink: #1a1d24;
+  --muted: #5a6172;
+  --border: #d6d1c6;
+  --shadow-ink: #6b7080;
+  --accent: #007c9e;
+  --accent-fg: #ffffff;
+  --live: #c4127a;
+  --select: color-mix(in srgb, var(--live) 12%, var(--surface));
+  --select-fg: var(--ink);
+  --error: #d42a4c;
+  --error-fg: #b0213f;
+  --error-surface: #fbe9ec;
+  --warning: #b88a00;
+  --warning-fg: #8a6500;
+  --warning-surface: #fbf3dc;
+  --info: #2f6fd1;
+  --info-fg: #2659a8;
+  --info-surface: #e6eefb;
+  --green: #0f8f5a;
+  --yellow: #b88a00;
+  --pink: var(--live);
+  --stamp: var(--live);
+  --none: #8a8f9c;
+  --glow: color-mix(in srgb, var(--accent) 18%, transparent);
+  --glow-strong: color-mix(in srgb, var(--accent) 30%, transparent);
+  --radius: 8px;
+  --bw: 1px;
+  --shadow: none;
+  --sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --wobble: 7px 12px 6px 11px / 11px 6px 12px 7px;
+  --wobble-pass: 11px 6px 12px 7px / 7px 12px 6px 11px;
+  --wobble-lg: 14px 22px 12px 20px / 20px 12px 22px 14px;
+  --wobble-lg-pass: 20px 12px 22px 14px / 14px 22px 12px 20px;
+  /* One stroke of a pencil line, tiled. It is a mask, so the line takes the theme color. */
+  --wave-x: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='6'%3E%3Cpath d='M0 3 C 15 1.6, 30 4.4, 45 3 S 75 1.8, 90 3.2 S 110 2.6, 120 3' fill='none' stroke='black' stroke-width='1.2' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-style="inkwire"] {
+    color-scheme: dark;
+    --canvas: #0a0c10;
+    --dots: #e6e9ef0d;
+    --surface: #10131a;
+    --raised: #161a23;
+    --code-bg: #0d1015;
+    --ink: #e6e9ef;
+    --muted: #98a2b3;
+    --border: #343b4c;
+    --shadow-ink: #5b6478;
+    --accent: #00e5ff;
+    --accent-fg: #001418;
+    --live: #ff3cac;
+    --select: color-mix(in srgb, var(--live) 14%, var(--surface));
+    --error: #ff4d6d;
+    --error-fg: #ff7a92;
+    --error-surface: #2a1219;
+    --warning: #ffcc33;
+    --warning-fg: #ffd95e;
+    --warning-surface: #2a2410;
+    --info: #6fb3ff;
+    --info-fg: #8cc3ff;
+    --info-surface: #121f33;
+    --green: #3dffa2;
+    --yellow: #ffcc33;
+    --none: #98a2b3;
+    --glow: color-mix(in srgb, var(--accent) 22%, transparent);
+    --glow-strong: color-mix(in srgb, var(--accent) 40%, transparent);
+  }
+}
+
+/* A faint drafting grid instead of the dots. Both are single static backgrounds. */
+:root[data-style="inkwire"] body {
+  background-image:
+    linear-gradient(var(--dots) 1px, transparent 1px),
+    linear-gradient(90deg, var(--dots) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+:root[data-style="inkwire"] .map {
+  background-image:
+    linear-gradient(var(--dots) 1px, transparent 1px),
+    linear-gradient(90deg, var(--dots) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+:root[data-style="inkwire"] :is(h1, h2, h3) {
+  font-weight: 650;
+}
+:root[data-style="inkwire"] a {
+  font-weight: 600;
+}
+:root[data-style="inkwire"] :focus-visible {
+  outline-width: 2px;
+}
+:root[data-style="inkwire"] :not(pre) > code {
+  padding: 1px 5px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  border-radius: 4px;
+}
+:root[data-style="inkwire"] .link {
+  font-weight: 600;
+  text-decoration-thickness: 1px;
+}
+
+/* Containers stay plain: a quiet border, no shadow. */
+:root[data-style="inkwire"] .card {
+  border-radius: 12px;
+}
+
+/* Clickable controls: a sketched graphite outline and a quiet state change, no lift. */
+:root[data-style="inkwire"]
+  :is(
+    .btn,
+    .seg,
+    .tabs,
+    input:not([type="checkbox"], [type="radio"], [type="range"]),
+    select,
+    textarea,
+    .item:not(.static),
+    .pair
+  ) {
+  border-color: var(--shadow-ink);
+  border-radius: var(--wobble);
+}
+:root[data-style="inkwire"] .node {
+  border-color: var(--shadow-ink);
+  border-radius: var(--wobble-lg);
+}
+:root[data-style="inkwire"] .btn {
+  position: relative;
+  font-weight: 600;
+  box-shadow: none;
+  transition:
+    border-color 140ms,
+    background-color 140ms,
+    box-shadow 140ms;
+}
+@media (hover: hover) {
+  :root[data-style="inkwire"] .btn:not(:disabled):hover {
+    transform: none;
+    box-shadow: none;
+    border-color: color-mix(in srgb, var(--shadow-ink) 55%, var(--ink));
+    background-color: var(--raised);
+  }
+  :root[data-style="inkwire"] .node:hover {
+    box-shadow: 0 0 14px var(--glow);
+  }
+}
+:root[data-style="inkwire"] .btn:not(:disabled):active {
+  transform: scale(0.98);
+  box-shadow: none;
+}
+/* A disabled control is drawn with a dashed line: present, but not usable yet. */
+:root[data-style="inkwire"] .btn:disabled {
+  border-style: dashed;
+}
+
+/* The second pencil pass: the same outline again, a little off and rotated. */
+:root[data-style="inkwire"] :is(.btn:not(:disabled), .node, .pair)::after {
+  content: "";
+  position: absolute;
+  inset: -3px -1px -1px -3px;
+  border: 1px solid currentColor;
+  border-radius: var(--wobble-pass);
+  opacity: 0.4;
+  transform: rotate(-0.8deg);
+  pointer-events: none;
+}
+:root[data-style="inkwire"] :is(.node, .pair)::after {
+  border-radius: var(--wobble-lg-pass);
+  opacity: 0.3;
+  transform: rotate(-0.5deg);
+}
+
+/* Primary: a cyan outline and label with a soft glow on dark; a solid fill on paper. */
+:root[data-style="inkwire"] .btn.primary {
+  border-color: var(--accent);
+  box-shadow: 0 0 8px var(--glow);
+}
+@media (prefers-color-scheme: dark) {
+  :root[data-style="inkwire"] .btn.primary {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  }
+  @media (hover: hover) {
+    :root[data-style="inkwire"] .btn.primary:not(:disabled):hover {
+      background: color-mix(in srgb, var(--accent) 20%, var(--surface));
+    }
+  }
+}
+@media (hover: hover) {
+  :root[data-style="inkwire"] .btn.primary:not(:disabled):hover {
+    border-color: var(--accent);
+    box-shadow: 0 0 14px var(--glow-strong);
+  }
+}
+:root[data-style="inkwire"] .btn.primary:disabled {
+  color: var(--muted);
+  background: transparent;
+  border-color: var(--shadow-ink);
+  box-shadow: none;
+}
+:root[data-style="inkwire"] .btn.danger {
+  border-color: color-mix(in srgb, var(--error) 70%, transparent);
+}
+:root[data-style="inkwire"] .btn[aria-pressed="true"] {
+  border-color: var(--live);
+}
+
+:root[data-style="inkwire"] :is(input, select, textarea):focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 10px var(--glow);
+}
+
+/* Selected and live things carry a magenta marker over a faint magenta wash. */
+:root[data-style="inkwire"] .tabs {
+  box-shadow: none;
+}
+:root[data-style="inkwire"] :is(.tabs a + a, .seg button + button) {
+  border-left-color: var(--border);
+}
+:root[data-style="inkwire"] .tabs a {
+  font-weight: 600;
+}
+:root[data-style="inkwire"]
+  :is(.tabs a[aria-current="page"], .seg button:is([aria-pressed="true"], [aria-selected="true"])) {
+  box-shadow: inset 0 -3px 0 var(--live);
+}
+:root[data-style="inkwire"] .seg button {
+  font-weight: 600;
+}
+:root[data-style="inkwire"] .item.on,
+:root[data-style="inkwire"] .item.on:hover {
+  border-color: var(--shadow-ink);
+  border-left: 3px solid var(--live);
+  padding-left: 14px;
+}
+:root[data-style="inkwire"] :is(.node.on, .node.target) {
+  border-color: var(--live);
+  box-shadow: 0 0 14px color-mix(in srgb, var(--live) 25%, transparent);
+}
+:root[data-style="inkwire"] .dir.on {
+  box-shadow: inset 3px 0 0 var(--live);
+}
+:root[data-style="inkwire"] .pair {
+  box-shadow: none;
+}
+:root[data-style="inkwire"] .switch {
+  border-color: var(--shadow-ink);
+}
+:root[data-style="inkwire"] .switch:checked {
+  box-shadow: 0 0 8px var(--glow);
+}
+:root[data-style="inkwire"] .switch:checked::after {
+  background: var(--accent-fg);
+}
+
+/* Stickers become small outlined tags in the monospace face, level and straight. */
+:root[data-style="inkwire"] .sticker {
+  padding: 1px 8px;
+  font: 600 0.7rem/1.35 var(--mono);
+  letter-spacing: 0.04em;
+  color: var(--ink);
+  background: transparent;
+  border: 1px solid color-mix(in srgb, currentColor 60%, transparent);
+  border-radius: var(--wobble);
+  box-shadow: none;
+  transform: none;
+}
+:root[data-style="inkwire"] .sticker:is(.ok, .lvl-standard, .hk-machines, .hk-clients) {
+  color: var(--green);
+}
+:root[data-style="inkwire"]
+  .sticker:is(.wait, .hk-pause, .hk-resume, .hk-expiry, .hk-join, .hk-raise, .hk-lockdown) {
+  color: var(--yellow);
+}
+:root[data-style="inkwire"] .sticker:is(.info, .lvl-read, .hk-lower) {
+  color: var(--info);
+}
+:root[data-style="inkwire"] .sticker.warn {
+  color: var(--warning);
+}
+:root[data-style="inkwire"] .sticker:is(.accent, .lvl-admin, .hk-settings, .hk-preset, .hk-note) {
+  color: var(--live);
+}
+:root[data-style="inkwire"] .sticker:is(.none, .lvl-none, .hk-move, .hk-other) {
+  color: var(--muted);
+}
+:root[data-style="inkwire"] .sticker.hk-alert {
+  color: var(--error);
+}
+:root[data-style="inkwire"] .stamp {
+  font-family: var(--mono);
+  font-weight: 600;
+  border-width: 1px;
+  border-style: dashed;
+  transform: none;
+}
+:root[data-style="inkwire"] .count {
+  color: var(--live);
+  background: transparent;
+  border: 1px solid currentColor;
+}
+:root[data-style="inkwire"] .brand-mark {
+  color: var(--accent);
+  background: transparent;
+  border-color: var(--shadow-ink);
+  border-radius: var(--wobble);
+  box-shadow: 0 0 12px var(--glow);
+  transform: none;
+}
+
+/* Map lines are drawn in graphite; the focused machine's lines turn cyan. */
+:root[data-style="inkwire"] .map path {
+  stroke: var(--shadow-ink);
+  stroke-width: 1.75;
+  stroke-linecap: round;
+}
+:root[data-style="inkwire"] .map path.hot {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+:root[data-style="inkwire"] .map path.empty {
+  stroke-width: 1.5;
+}
+
+/* Notes keep their four colours as a tinted card with a coloured outline. */
+:root[data-style="inkwire"] .note {
+  color: var(--ink);
+  border-color: var(--note, var(--yellow));
+  border-radius: var(--wobble);
+  background: color-mix(in srgb, var(--note, var(--yellow)) 14%, var(--surface));
+  box-shadow: none;
+}
+:root[data-style="inkwire"] .note-yellow {
+  --note: var(--yellow);
+}
+:root[data-style="inkwire"] .note-pink {
+  --note: var(--live);
+}
+:root[data-style="inkwire"] .note-blue {
+  --note: var(--info);
+}
+:root[data-style="inkwire"] .note-green {
+  --note: var(--green);
+}
+
+/* Wavy pencil lines where the neo-brutalist style draws straight or dashed rules. */
+:root[data-style="inkwire"] .day-sep::after {
+  height: 6px;
+  border: 0;
+  background: var(--border);
+  mask: var(--wave-x) repeat-x center / 120px 6px;
+}
+:root[data-style="inkwire"] .panel .head {
+  border-bottom-color: transparent;
+}
+:root[data-style="inkwire"] .panel .head::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -3px;
+  height: 6px;
+  background: var(--border);
+  mask: var(--wave-x) repeat-x center / 120px 6px;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-style="inkwire"] .btn {
+    transition: none;
+  }
+}
