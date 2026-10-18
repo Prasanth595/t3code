@@ -51,6 +51,15 @@ describe("extractTerminalLinks", () => {
 
   it("does not treat quoted prose as a path", () => {
     expect(extractTerminalLinks('error: "something went wrong"')).toEqual([]);
+    expect(extractTerminalLinks('error: "something went wrong."')).toEqual([]);
+  });
+
+  it.each([
+    ['"my file.ts":12:7', "my file.ts:12:7", 17],
+    ["'my file.ts:12:7'", "my file.ts:12:7", 16],
+    ["`my file.ts`", "my file.ts", 11],
+  ])("finds a quoted basename in %s", (line, text, end) => {
+    expect(extractTerminalLinks(line)).toEqual([{ kind: "path", text, start: 1, end }]);
   });
 
   it("keeps quoted paths and URLs separate without duplicate partial paths", () => {
