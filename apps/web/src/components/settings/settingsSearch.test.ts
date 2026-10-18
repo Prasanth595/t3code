@@ -115,6 +115,16 @@ describe("searchSettings", () => {
     expect(searchSettings("administrative access")[0]?.id).toBe("connections-environment");
   });
 
+  it.each(["command wrappers", "ignored prefixes", "running labels"])(
+    "finds the command display preference by %s",
+    (query) => {
+      expect(searchSettings(query)[0]).toMatchObject({
+        id: "ignored-command-prefixes",
+        to: "/settings/general",
+      });
+    },
+  );
+
   it("lists thread confirmations in panel order", () => {
     expect(searchSettings("confirmation").map((item) => item.id)).toEqual([
       "unpin-confirmation",

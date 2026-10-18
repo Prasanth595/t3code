@@ -15,6 +15,7 @@ import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSection } from "./components/SettingsSection";
+import { IgnoredCommandPrefixesSettings } from "./components/IgnoredCommandPrefixesSettings";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -47,6 +48,7 @@ export function SettingsThreadsRouteScreen() {
           contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
         >
           <AutoSettleSettingsRows />
+          <IgnoredCommandPrefixesSettings />
           <BetaSettingsSection />
           <LegacySettingsSection />
         </ScrollView>
