@@ -12,7 +12,7 @@ export interface ComposerAttachmentUploadRequest {
 export type ComposerAttachmentUploadState =
   | { readonly status: "uploading"; readonly progress: number }
   | { readonly status: "ready" }
-  | { readonly status: "failed"; readonly reason: string };
+  | { readonly status: "failed"; readonly reason: string; readonly queueOnSend?: boolean };
 
 export function composerAttachmentUploadKey(
   environmentId: EnvironmentId,
@@ -80,7 +80,8 @@ export function composerAttachmentUploadBlockReason(input: {
   for (const attachment of input.attachments) {
     if (!canUploadComposerAttachment(attachment, input.serverConfig)) continue;
     const state = input.states[composerAttachmentUploadKey(input.environmentId, attachment.id)];
-    if (state?.status === "failed") return "Retry or remove the failed attachment";
+    if (state?.status === "failed" && !state.queueOnSend)
+      return "Retry or remove the failed attachment";
   }
   return null;
 }
@@ -94,7 +95,7 @@ export function composerAttachmentsStillUploading(input: {
   return input.attachments.some((attachment) => {
     if (!canUploadComposerAttachment(attachment, input.serverConfig)) return false;
     const state = input.states[composerAttachmentUploadKey(input.environmentId, attachment.id)];
-    return state?.status !== "ready" && state?.status !== "failed";
+    return state?.status === "failed" ? state.queueOnSend === true : state?.status !== "ready";
   });
 }
 
@@ -104,6 +105,7 @@ export function createComposerAttachmentUploadQueue(options: {
     signal: AbortSignal,
     onProgress: (progress: number) => void,
   ) => Promise<boolean>;
+  readonly canQueueOnSend?: (error: unknown) => boolean;
   readonly onChange: (states: Readonly<Record<string, ComposerAttachmentUploadState>>) => void;
 }) {
   const jobs = new Map<
@@ -160,6 +162,7 @@ export function createComposerAttachmentUploadQueue(options: {
             setState(key, {
               status: "failed",
               reason: error instanceof Error ? error.message : "Upload failed. Tap to retry.",
+              ...(options.canQueueOnSend?.(error) ? { queueOnSend: true } : {}),
             });
           }
         })

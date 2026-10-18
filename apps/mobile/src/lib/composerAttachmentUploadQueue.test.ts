@@ -244,6 +244,42 @@ describe("composer attachment upload queue", () => {
     expect(upload).toHaveBeenCalledOnce();
     queue.dispose();
   });
+
+  it("keeps other upload failures blocking alongside a failure recoverable on Send", async () => {
+    const persistenceFailure = new Error("Draft storage unavailable");
+    const requests = [request("draft"), request("network")];
+    let states: Readonly<Record<string, ComposerAttachmentUploadState>> = {};
+    const queue = createComposerAttachmentUploadQueue({
+      upload: async ({ attachment }) => {
+        throw attachment.id === "draft" ? persistenceFailure : new Error("Network unavailable");
+      },
+      canQueueOnSend: (error) => error === persistenceFailure,
+      onChange: (next) => {
+        states = next;
+      },
+    });
+    queue.sync(requests);
+    await queue.settled();
+    const input = {
+      environmentId,
+      attachments: requests.map(({ attachment }) => attachment),
+      connected: true,
+      serverConfig: {
+        environment: {
+          capabilities: { attachmentUploads: true, fileAttachments: { maxUploadBytes: 1024 } },
+        },
+      },
+      states,
+    };
+    expect(composerAttachmentUploadBlockReason(input)).toBe(
+      "Retry or remove the failed attachment",
+    );
+    expect(composerAttachmentsStillUploading(input)).toBe(true);
+    const recoverable = { ...input, attachments: [requests[0]!.attachment] };
+    expect(composerAttachmentUploadBlockReason(recoverable)).toBeNull();
+    expect(composerAttachmentsStillUploading(recoverable)).toBe(true);
+    queue.dispose();
+  });
 });
 
 describe("draft upload scope and offline submission", () => {

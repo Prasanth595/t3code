@@ -19,6 +19,7 @@ import { flattenQueuedThreadMessages, threadOutboxManager } from "./thread-outbo
 import { useThreadOutboxMessages } from "./use-thread-outbox";
 import {
   composerDraftsAtom,
+  ComposerDraftPersistenceError,
   ensureComposerDraftsLoaded,
   flushComposerDrafts,
   setComposerDraftAttachmentUpload,
@@ -68,6 +69,8 @@ export function useComposerAttachmentUploadWorker() {
     ensureComposerDraftsLoaded();
     const queue = createComposerAttachmentUploadQueue({
       onChange: (states) => appAtomRegistry.set(composerAttachmentUploadsAtom, states),
+      // The outbox persists independently of drafts and re-uploads missing pending ids.
+      canQueueOnSend: (error) => error instanceof ComposerDraftPersistenceError,
       upload: async ({ environmentId, attachment }, signal, onProgress) => {
         const release = isFileBackedComposerAttachment(attachment)
           ? retainComposerAttachmentFileForPreview(attachment)
