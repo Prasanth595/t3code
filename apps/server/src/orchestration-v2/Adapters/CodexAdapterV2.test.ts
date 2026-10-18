@@ -1233,7 +1233,7 @@ describe("CodexAdapterV2 native protocol logging", () => {
 });
 
 describe("CodexAdapterV2 rollback mapping", () => {
-  it.effect("derives native rollback count from durable provider turns", () =>
+  it.effect("derives native rollback turn ids from durable provider turns", () =>
     Effect.gen(function* () {
       const now = yield* DateTime.now;
       const providerThreadId = ProviderThreadId.make("provider-thread-codex-rollback");
@@ -1286,7 +1286,7 @@ describe("CodexAdapterV2 rollback mapping", () => {
         nativeTurnRef: null,
       };
 
-      const numTurns = yield* CodexAdapterV2.resolveCodexRollbackTurnCount({
+      const turnIds = yield* CodexAdapterV2.resolveCodexRollbackTurnIds({
         providerThread,
         target: {
           type: "provider_turn",
@@ -1297,7 +1297,10 @@ describe("CodexAdapterV2 rollback mapping", () => {
         providerThreadTurns: [goalCommandTurn, interruptedTurn, runningTurn, secondTurn, firstTurn],
       });
 
-      assert.equal(numTurns, 2);
+      assert.deepEqual(
+        [...turnIds],
+        ["native-provider-turn-interrupted", "native-provider-turn-second"],
+      );
     }),
   );
 });

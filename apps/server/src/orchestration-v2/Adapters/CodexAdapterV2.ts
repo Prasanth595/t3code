@@ -952,10 +952,10 @@ const providerTurnsForThread = (
 ): ReadonlyArray<OrchestrationV2ProviderTurn> =>
   providerTurns.filter((turn) => turn.providerThreadId === providerThread.id);
 
-const countTerminalTurnsAfterBoundary = (
+const terminalTurnsAfterBoundary = (
   providerTurns: ReadonlyArray<OrchestrationV2ProviderTurn>,
   providerTurnId: ProviderTurnId,
-): number | null => {
+): ReadonlyArray<OrchestrationV2ProviderTurn> | null => {
   const boundaryTurn = providerTurns.find((turn) => turn.id === providerTurnId);
   if (boundaryTurn === undefined) {
     return null;
@@ -963,7 +963,7 @@ const countTerminalTurnsAfterBoundary = (
 
   return providerTurns.filter(
     (turn) => turn.ordinal > boundaryTurn.ordinal && isTerminalProviderTurn(turn),
-  ).length;
+  );
 };
 
 const resolveCodexForkRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveForkRollbackTurnCount")(
@@ -972,11 +972,11 @@ const resolveCodexForkRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveForkR
       return 0;
     }
 
-    const rollbackTurnCount = countTerminalTurnsAfterBoundary(
+    const rollbackTurns = terminalTurnsAfterBoundary(
       providerTurnsForThread(input.sourceProviderTurns, input.sourceProviderThread),
       input.providerTurnId,
     );
-    if (rollbackTurnCount === null) {
+    if (rollbackTurns === null) {
       return yield* new ProviderAdapter.ProviderAdapterForkThreadError({
         driver: CODEX_PROVIDER,
         providerThreadId: input.sourceProviderThread.id,
@@ -984,7 +984,7 @@ const resolveCodexForkRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveForkR
       });
     }
 
-    return rollbackTurnCount;
+    return rollbackTurns.length;
   },
 );
 
@@ -1047,12 +1047,15 @@ const readCodexThreadHistoryMetadata = Effect.fn("CodexAdapterV2.readThreadHisto
   },
 );
 
-export const resolveCodexRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveRollbackTurnCount")(
+const nativeTurnIds = (turns: ReadonlyArray<OrchestrationV2ProviderTurn>): ReadonlySet<string> =>
+  new Set(turns.flatMap((turn) => turn.nativeTurnRef?.nativeId ?? []));
+
+export const resolveCodexRollbackTurnIds = Effect.fn("CodexAdapterV2.resolveRollbackTurnIds")(
   function* (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) {
     const providerTurns = input.providerThreadTurns;
     switch (input.target.type) {
       case "thread_start":
-        return providerTurns.filter(isTerminalProviderTurn).length;
+        return nativeTurnIds(providerTurns.filter(isTerminalProviderTurn));
       case "provider_turn": {
         if (input.target.providerTurn.providerThreadId !== input.providerThread.id) {
           return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
@@ -1062,11 +1065,11 @@ export const resolveCodexRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveRo
           });
         }
 
-        const rollbackTurnCount = countTerminalTurnsAfterBoundary(
+        const rollbackTurns = terminalTurnsAfterBoundary(
           providerTurns,
           input.target.providerTurn.id,
         );
-        if (rollbackTurnCount === null) {
+        if (rollbackTurns === null) {
           return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
             driver: CODEX_PROVIDER,
             providerThreadId: input.providerThread.id,
@@ -1074,7 +1077,7 @@ export const resolveCodexRollbackTurnCount = Effect.fn("CodexAdapterV2.resolveRo
           });
         }
 
-        return rollbackTurnCount;
+        return nativeTurnIds(rollbackTurns);
       }
     }
   },
@@ -7177,12 +7180,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           rollbackThread: (threadInput) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(threadInput.providerThread);
-              const numTurns = yield* resolveCodexRollbackTurnCount(threadInput);
+              const turnIds = yield* resolveCodexRollbackTurnIds(threadInput);
               const nativeConversationHeadRef =
                 threadInput.target.type === "provider_turn"
                   ? threadInput.target.providerTurn.nativeTurnRef
                   : null;
-              if (numTurns === 0) {
+              if (turnIds.size === 0) {
                 return {
                   providerThread: {
                     ...threadInput.providerThread,
@@ -7219,7 +7222,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 });
               }
               const response = yield* ensureInitialized.pipe(
-                Effect.andThen(revertCodexThread(client, threadId, numTurns)),
+                Effect.andThen(revertCodexThread(client, threadId, turnIds)),
               );
               turnTokenUsageByThread.delete(threadId);
               return {

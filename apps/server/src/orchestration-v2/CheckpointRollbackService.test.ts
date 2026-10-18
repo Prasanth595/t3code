@@ -3,6 +3,7 @@ import { assert, it, vi } from "@effect/vitest";
 import {
   CheckpointId,
   CheckpointScopeId,
+  CommandId,
   type OrchestrationV2ThreadProjection,
   ProjectId,
   ProviderInstanceId,
@@ -18,17 +19,24 @@ import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { revertCodexThread } from "../provider/CodexThreadRevert.ts";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
-import { resolveCodexRollbackTurnCount } from "./Adapters/CodexAdapterV2.ts";
+import { resolveCodexRollbackTurnIds } from "./Adapters/CodexAdapterV2.ts";
 import { isCheckpointRestoreIsolated } from "./CheckpointRestoreSafety.ts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointRollbackService from "./CheckpointRollbackService.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
+import * as EffectWorker from "./EffectWorker.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -36,7 +44,11 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
+import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
+import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 
 const unrelatedProject = Option.some({
   workspaceRoot: "/nonexistent/t3-rollback-project",
@@ -622,6 +634,7 @@ it.effect.each([
                 runAttemptId: "attempt-1",
                 ordinal: 0,
                 status: "completed",
+                nativeTurnRef: { nativeId: "native-0" },
               },
             ]
           : []),
@@ -631,6 +644,7 @@ it.effect.each([
           runAttemptId: `attempt-${ordinal}`,
           ordinal,
           status: "completed",
+          nativeTurnRef: { nativeId: `native-${ordinal}` },
         })),
       ],
       nodes: [],
@@ -703,8 +717,8 @@ it.effect.each([
               Effect.succeed({
                 rollbackThread: (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) =>
                   Effect.gen(function* () {
-                    const count = yield* resolveCodexRollbackTurnCount(input);
-                    assert.equal(count, 2 - targetOrdinal);
+                    const turnIds = yield* resolveCodexRollbackTurnIds(input);
+                    assert.equal(turnIds.size, 2 - targetOrdinal);
                     calls.push("provider");
                     return { providerThread };
                   }),
@@ -732,6 +746,163 @@ it.effect.each([
     }).pipe(Effect.provide(layerTest));
   },
 );
+
+it.effect("replays a Codex rewind that failed after reverting without losing more turns", () => {
+  const threadId = ThreadId.make("rewind-replay");
+  const providerThreadId = ProviderThreadId.make("rewind-replay-provider");
+  const providerSessionId = ProviderSessionId.make("rewind-replay-session");
+  const instanceId = ProviderInstanceId.make("rewind-replay-instance");
+  const checkpointId = CheckpointId.make("rewind-replay-checkpoint");
+  const scopeId = CheckpointScopeId.make("rewind-replay-scope");
+  const providerThread = {
+    id: providerThreadId,
+    providerSessionId,
+    providerInstanceId: instanceId,
+  };
+  const projection = {
+    thread: {
+      worktreePath: process.cwd(),
+      activeProviderThreadId: providerThreadId,
+      modelSelection: { instanceId, model: "test" },
+    },
+    providerThreads: [providerThread],
+    providerSessions: [],
+    providerTurns: [1, 2, 3].map((ordinal) => ({
+      id: `turn-${ordinal}`,
+      providerThreadId,
+      runAttemptId: `attempt-${ordinal}`,
+      ordinal,
+      status: "completed",
+      nativeTurnRef: { nativeId: `native-${ordinal}` },
+    })),
+    nodes: [],
+    attempts: [1, 2, 3].map((ordinal) => ({ id: `attempt-${ordinal}`, runId: `run-${ordinal}` })),
+    checkpoints: [{ id: checkpointId, scopeId, status: "ready", appRunOrdinal: 1 }],
+    checkpointScopes: [{ id: scopeId, cwd: process.cwd() }],
+    runs: [1, 2, 3].map((ordinal) => ({
+      id: `run-${ordinal}`,
+      ordinal,
+      status: "completed",
+      rootNodeId: null,
+      activeAttemptId: `attempt-${ordinal}`,
+    })),
+  } as unknown as OrchestrationV2ThreadProjection;
+  let nativeTurns = ["native-1", "native-2", "native-3"];
+  const codex = {
+    request: (method: string, params: { readonly beforeTurnId: string }) =>
+      Effect.sync(() => {
+        if (method === "thread/turns/list") {
+          return { data: nativeTurns.toReversed().map((id) => ({ id })), nextCursor: null };
+        }
+        if (method === "thread/revert") {
+          nativeTurns = nativeTurns.slice(0, nativeTurns.indexOf(params.beforeTurnId));
+        }
+        return { thread: {} };
+      }),
+  } as unknown as Parameters<typeof revertCodexThread>[0];
+  let restores = 0;
+  const writes: Array<ReadonlyArray<string>> = [];
+  const layerSessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+    open: () =>
+      Effect.succeed({
+        rollbackThread: (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) =>
+          resolveCodexRollbackTurnIds(input).pipe(
+            Effect.flatMap((turnIds) => revertCodexThread(codex, "native-thread", turnIds)),
+            Effect.as({ providerThread }),
+          ),
+      } as never),
+  });
+  const layerRollback = layerCheckpointRollbackService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ThreadCommandExecutor.layer,
+        Layer.mock(CheckpointService.CheckpointServiceV2)({
+          restore: () =>
+            restores++ === 0
+              ? Effect.fail(
+                  new CheckpointService.CheckpointRestoreError({
+                    scopeId,
+                    checkpointId,
+                    cause: "simulated restore failure",
+                  }),
+                )
+              : Effect.void,
+        }),
+        Layer.mock(EventSink.EventSinkV2)({
+          write: ({ events }) =>
+            Effect.sync(() => {
+              writes.push(events.map((event) => event.type));
+              return [];
+            }),
+        }),
+        IdAllocator.layer,
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getThreadRecords: () => Effect.succeed(projection),
+          getThreadProviderContext: () => Effect.succeed({ providerSessions: [] } as never),
+          getCheckpointContext: () =>
+            Effect.succeed({
+              checkpointScopes: [{ cwd: process.cwd() }],
+              runs: [],
+              checkpoints: [],
+            } as never),
+          getShellSnapshot: () =>
+            Effect.succeed({
+              schemaVersion: 1,
+              snapshotSequence: 0,
+              threads: [],
+              archivedThreads: [],
+            }),
+        }),
+        layerSessions,
+        Layer.mock(RuntimePolicy.RuntimePolicyV2)({ resolve: () => Effect.succeed({} as never) }),
+      ),
+    ),
+  );
+  const layerTest = EffectWorker.layer.pipe(
+    Layer.provide(
+      EffectWorker.layerExecutor.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            layerRollback,
+            layerSessions,
+            Layer.mock(RunFinalizationService.RunFinalizationService)({}),
+            Layer.mock(ProviderTurnControlService.ProviderTurnControlServiceV2)({}),
+            Layer.mock(ProviderTurnStartService.ProviderTurnStartServiceV2)({}),
+            Layer.mock(RuntimeRequestService.RuntimeRequestServiceV2)({}),
+            Layer.mock(ThreadTitleRegenerationService.ThreadTitleRegenerationService)({}),
+            Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+            ServerSettings.layerTest(),
+          ),
+        ),
+      ),
+    ),
+    Layer.provideMerge(EffectOutbox.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
+  );
+  return Effect.gen(function* () {
+    const outbox = yield* EffectOutbox.EffectOutboxV2;
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    const effectId = "effect:rewind-replay";
+    yield* outbox.enqueue([
+      {
+        id: effectId,
+        commandId: CommandId.make("rewind-replay-command"),
+        threadId,
+        request: { type: "provider-thread.rollback", providerThreadId, checkpointId, scopeId },
+      },
+    ]);
+
+    yield* worker.drain();
+    assert.deepEqual(nativeTurns, ["native-1"]);
+    assert.deepEqual(writes, []);
+
+    yield* TestClock.adjust("1 second");
+    yield* worker.drain();
+    assert.deepEqual(nativeTurns, ["native-1"]);
+    assert.equal(restores, 2);
+    assert.equal(writes.length, 1);
+    assert.equal(Option.getOrThrow(yield* outbox.get(effectId)).status, "succeeded");
+  }).pipe(Effect.provide(layerTest));
+});
 
 it.effect.skipIf(!symlinksSupported)(
   "rejects an archived thread sharing a worktree through a symlink",
