@@ -708,6 +708,72 @@ describe("GitHubSourceControlProvider.getChangeRequest", () => {
 });
 
 describe("GitHubSourceControlProvider writes", () => {
+  it.effect("creates an App fork PR without granting fork edits and pins the acting token", () => {
+    let current = "before";
+    const posts: Array<GitHubRest.GitHubRestInput> = [];
+    const pinnedTokens: Array<string | null> = [];
+    const { layer, graphqlCalls } = harness({
+      remotes: remotesOutput(["origin", "git@github.com:acme/web.git"]),
+      api: {
+        credential: (host) =>
+          Effect.succeed({
+            token: Redacted.make(current),
+            fingerprint: `${host}:${current}`,
+          }),
+        rest: (input) =>
+          Effect.gen(function* () {
+            if (input.method === "POST") {
+              const pinned = yield* GitHubRequestPolicy.PinnedGitHubCredential;
+              pinnedTokens.push(pinned === null ? null : Redacted.value(pinned.token));
+              posts.push(input);
+              return restResponse({ number: 1 }, 201);
+            }
+            current = "after";
+            return yield* Effect.fail(
+              new GitHubRequestPolicy.GitHubApiResponseError({
+                host: input.host,
+                operation: "getViewer",
+                status: 403,
+              }),
+            );
+          }),
+      },
+      graphql: () =>
+        new Response(
+          encodeJson({
+            data: { viewer: { login: "example[bot]", databaseId: 123 } },
+          }),
+          { headers: { "content-type": "application/json" } },
+        ),
+    });
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const bodyFile = yield* fs.makeTempFileScoped({ suffix: ".md" });
+      yield* fs.writeFileString(bodyFile, "Body");
+      const provider = yield* GitHubSourceControlProvider.make;
+      yield* provider.createChangeRequest({
+        cwd: "/repo",
+        baseRefName: "main",
+        headSelector: "other:feature",
+        title: "Title",
+        bodyFile,
+      });
+      assert.strictEqual(posts.length, 1);
+      assert.deepStrictEqual(posts[0]?.body, {
+        base: "main",
+        head: "other:feature",
+        title: "Title",
+        body: "Body",
+        maintainer_can_modify: false,
+      });
+      assert.deepStrictEqual(pinnedTokens, ["before"]);
+      assert.deepStrictEqual(
+        graphqlCalls.map((call) => call.authorization),
+        ["Bearer before"],
+      );
+    }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)), Effect.scoped);
+  });
+
   it.effect("creates a cross-repository pull request with an owner:branch head", () => {
     const requests: Array<GitHubRest.GitHubRestInput> = [];
     const { layer } = harness({
@@ -718,6 +784,7 @@ describe("GitHubSourceControlProvider writes", () => {
       api: {
         rest: (input) =>
           Effect.sync(() => {
+            if (input.path === "user") return restResponse({ login: "me" });
             requests.push(input);
             return restResponse({ number: 1 }, 201);
           }),
@@ -1742,6 +1809,7 @@ it.effect.each([
       api: {
         rest: (input) =>
           Effect.sync(() => {
+            if (input.path === "user") return restResponse({ login: "me" });
             targets.push(`${input.host}/${input.path}`);
             return restResponse({
               full_name: expected,

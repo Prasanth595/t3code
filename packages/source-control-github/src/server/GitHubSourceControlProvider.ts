@@ -1055,22 +1055,39 @@ export const make = Effect.gen(function* () {
               failure("The pull request description could not be read.", cause),
             ),
           );
-        yield* rest({
-          host: locator.host,
-          operation: "createPullRequest",
-          method: "POST",
-          allowReserve: true,
-          path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}/pulls`,
-          // `owner:branch` is how the REST API takes a fork's head, the same as `gh --head`.
-          // gh allows maintainer edits unless told otherwise; the API's default is not documented.
-          body: {
-            base: input.baseRefName,
-            head: input.headSelector,
-            title: input.title,
-            body,
-            maintainer_can_modify: true,
-          },
-        });
+        const credential = yield* api
+          .credential(locator.host)
+          .pipe(Effect.mapError(fromGitHubApiError));
+        yield* Effect.gen(function* () {
+          const headOwner = input.headSelector.includes(":")
+            ? input.headSelector.split(":")[0]
+            : undefined;
+          const isFork =
+            headOwner !== undefined && headOwner.toLowerCase() !== locator.owner.toLowerCase();
+          const maintainerCanModify =
+            !isFork || !(yield* readViewerLogin(locator.host)).endsWith("[bot]");
+          yield* rest({
+            host: locator.host,
+            operation: "createPullRequest",
+            method: "POST",
+            allowReserve: true,
+            path: `repos/${encodeURIComponent(locator.owner)}/${encodeURIComponent(locator.name)}/pulls`,
+            // Installation tokens cannot grant maintainers access to another account's fork.
+            body: {
+              base: input.baseRefName,
+              head: input.headSelector,
+              title: input.title,
+              body,
+              maintainer_can_modify: maintainerCanModify,
+            },
+          });
+        }).pipe(
+          Effect.provideService(GitHubRequestPolicy.PinnedGitHubCredential, {
+            host: locator.host,
+            token: credential.token,
+            credentialFingerprint: credential.fingerprint,
+          }),
+        );
       }).pipe(
         Effect.mapError(
           providerError("createChangeRequest", input.cwd, { reference: input.headSelector }),
