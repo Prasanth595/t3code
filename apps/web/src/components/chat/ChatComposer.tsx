@@ -1354,7 +1354,9 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   canInterrupt: boolean;
   followUpBehavior: "queue" | "steer";
   canSteer: boolean;
-  alternateShortcutLabel: string | null;
+  alternateShortcutContext: React.ComponentProps<
+    typeof ComposerPrimaryActions
+  >["alternateShortcutContext"];
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -1398,7 +1400,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         canInterrupt={props.canInterrupt}
         followUpBehavior={props.followUpBehavior}
         canSteer={props.canSteer}
-        alternateShortcutLabel={props.alternateShortcutLabel}
+        alternateShortcutContext={props.alternateShortcutContext}
         showPlanFollowUpPrompt={props.showPlanFollowUpPrompt}
         promptHasText={props.promptHasText}
         isSendBusy={props.isSendBusy}
@@ -7301,17 +7303,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     canInterrupt={canInterrupt}
                     followUpBehavior={settings.followUpBehavior}
                     canSteer={!isCompacting}
-                    alternateShortcutLabel={shortcutLabelForCommand(
-                      keybindings,
-                      "composer.sendAlternate",
-                      {
-                        context: {
-                          composerFocus: true,
-                          draftThreadRoute: routeKind === "draft",
-                          turnRunning: true,
-                        },
-                      },
-                    )}
+                    alternateShortcutContext={{
+                      composerFocus: true,
+                      draftThreadRoute: routeKind === "draft",
+                      turnRunning: true,
+                    }}
                     showPlanFollowUpPrompt={
                       pendingUserInputs.length === 0 && showPlanFollowUpPrompt
                     }

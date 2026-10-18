@@ -139,7 +139,7 @@ import { WorkspacePageContainer } from "../components/WorkspacePageContainer";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { isElectron } from "../env";
-import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import { resolveShortcutCommand } from "../keybindings";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
   PanelLayoutControls,
@@ -1313,14 +1313,11 @@ function PullRequestsRouteView() {
       showThreadPanelControl={false}
       terminalAvailable={false}
       terminalOpen={false}
-      terminalShortcutLabel={null}
       threadPanelOpen={false}
       threadPanelPresentation="inline"
-      threadPanelShortcutLabel={null}
       onToggleThreadPanel={() => undefined}
       rightPanelAvailable={rightPanelAvailable}
       rightPanelOpen={rightPanelState.isOpen}
-      rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
       rightPanelUnavailableLabel="Select a pull request first"
       onToggleTerminal={() => undefined}
       onToggleRightPanel={toggleRightPanel}

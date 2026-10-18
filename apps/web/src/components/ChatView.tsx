@@ -7578,12 +7578,6 @@ export default function ChatView(props: ChatViewProps) {
     isServerThread && activeThread ? (
       <QueuedRunsControl
         ref={queuedRunsControlRef}
-        steerShortcutLabel={shortcutLabelForCommand(keybindings, "thread.steerQueuedMessage", {
-          context: { terminalFocus: false },
-        })}
-        editShortcutLabel={shortcutLabelForCommand(keybindings, "thread.editQueuedMessage", {
-          context: { composerFocus: true },
-        })}
         environmentId={activeThread.environmentId}
         threadId={activeThread.id}
         optimisticMessages={optimisticUserMessages}
@@ -7778,14 +7772,11 @@ export default function ChatView(props: ChatViewProps) {
   const panelToggleControlProps = {
     terminalAvailable: activeProject !== null,
     terminalOpen: terminalUiState.terminalOpen,
-    terminalShortcutLabel: shortcutLabelForCommand(keybindings, "terminal.toggle"),
     threadPanelOpen,
     threadPanelPresentation,
     threadPanelPopoverHandle,
-    threadPanelShortcutLabel: shortcutLabelForCommand(keybindings, "threadPanel.toggle"),
     rightPanelAvailable: activeProject !== null,
     rightPanelOpen,
-    rightPanelShortcutLabel: shortcutLabelForCommand(keybindings, "rightPanel.toggle"),
     onToggleTerminal: toggleTerminalVisibilityStable,
     onToggleThreadPanel: toggleThreadPanelStable,
     onToggleRightPanel: toggleRightPanelStable,

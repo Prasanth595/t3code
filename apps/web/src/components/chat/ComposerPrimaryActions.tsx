@@ -34,7 +34,7 @@ interface ComposerPrimaryActionsProps {
   canInterrupt: boolean;
   followUpBehavior?: "queue" | "steer";
   canSteer?: boolean;
-  alternateShortcutLabel?: string | null;
+  alternateShortcutContext?: React.ComponentProps<typeof ShortcutHint>["context"];
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -89,7 +89,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   canInterrupt,
   followUpBehavior = "steer",
   canSteer = true,
-  alternateShortcutLabel = null,
+  alternateShortcutContext,
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
@@ -302,11 +302,16 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             : null));
   const submitTooltip =
     submitStatus ??
-    (compactsBeforeSend
-      ? `Summarize ${compactTokens} tokens of history, then send`
-      : isRunning && !isEditingQueuedMessage && canSteer
-        ? `Click to ${followUpBehavior}, Ctrl/⌘-click${alternateShortcutLabel ? ` or ${alternateShortcutLabel}` : ""} to ${alternateAction}`
-        : submitLabel);
+    (compactsBeforeSend ? (
+      `Summarize ${compactTokens} tokens of history, then send`
+    ) : isRunning && !isEditingQueuedMessage && canSteer ? (
+      <>
+        Click to {followUpBehavior}, Ctrl/⌘-click to {alternateAction}
+        <ShortcutHint command="composer.sendAlternate" context={alternateShortcutContext ?? {}} />
+      </>
+    ) : (
+      submitLabel
+    ));
 
   const sendButton = (
     <button
