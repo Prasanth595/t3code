@@ -1,4 +1,5 @@
-import type { OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
+import type { OrchestrationV2ProjectedTurnItem, UserInputQuestion } from "@t3tools/contracts";
+import { page, userEvent } from "vite-plus/test/browser";
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -7,6 +8,8 @@ import { SideChatSession } from "./SideChat";
 const state = vi.hoisted(() => ({
   start: vi.fn(),
   interrupt: vi.fn(),
+  answer: vi.fn(),
+  userInputs: [] as { requestId: string; questions: UserInputQuestion[] }[],
   status: "running",
   visibleTurnItems: [] as OrchestrationV2ProjectedTurnItem[],
   ctrlKey: false,
@@ -38,17 +41,21 @@ vi.mock("@t3tools/client-runtime/state/thread-execution", () => ({
   deriveThreadRuntime: () => ({ status: state.status }),
 }));
 vi.mock("@t3tools/client-runtime/state/thread-requests", () => ({
-  derivePendingThreadRequests: () => ({ approvals: [], userInputs: [] }),
+  derivePendingThreadRequests: () => ({ approvals: [], userInputs: state.userInputs }),
 }));
 vi.mock("../../state/session", () => ({
   readEnvironmentScope: () => true,
   useEnvironmentScope: () => true,
 }));
 vi.mock("../../state/threads", () => ({
-  threadEnvironment: { startTurn: "start", interruptTurn: "interrupt" },
+  threadEnvironment: {
+    startTurn: "start",
+    interruptTurn: "interrupt",
+    respondToUserInput: "answer",
+  },
 }));
 vi.mock("../../state/use-orchestration-command", () => ({
-  useOrchestrationCommand: (name: "start" | "interrupt") => state[name],
+  useOrchestrationCommand: (name: "start" | "interrupt" | "answer") => state[name],
 }));
 vi.mock("../../lib/attachmentUploadQueue", () => ({
   useAttachmentUploadStore: () => ({}),
@@ -132,6 +139,8 @@ const send = () => container.querySelector<HTMLButtonElement>('button[type="subm
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.status = "running";
+  state.userInputs = [];
+  state.answer.mockReset().mockResolvedValue({ _tag: "Success" });
   state.visibleTurnItems = [];
   state.ctrlKey = false;
   state.metaKey = false;
@@ -239,3 +248,56 @@ it.each(["local", "inherited"] as const)(
     expect(card?.getAttribute("data-thread")).toBe(threadId);
   },
 );
+
+const editorRequest = () => [
+  {
+    requestId: "edit-request",
+    questions: [
+      {
+        id: "proposal",
+        header: "Proposed text",
+        question: "Review this text",
+        options: [],
+        initialAnswer: "  First line\nSecond line\n",
+      },
+    ],
+  },
+];
+it("shows and submits a proposed editor answer without changing its whitespace", async () => {
+  state.userInputs = editorRequest();
+  await render();
+  const field = container.querySelector<HTMLTextAreaElement>('[aria-label="Proposed text"]')!;
+  expect(field.value).toBe("  First line\nSecond line\n");
+  await userEvent.click(page.getByRole("button", { name: "Reply", exact: true }));
+  expect(state.answer).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: {
+        threadId: "side",
+        requestId: "edit-request",
+        answers: { proposal: "  First line\nSecond line\n" },
+      },
+    }),
+  );
+});
+it("preserves edits and an intentionally empty editor answer across projection refreshes", async () => {
+  state.userInputs = editorRequest();
+  await render();
+  await userEvent.fill(
+    page.getByRole("textbox", { name: "Proposed text", exact: true }),
+    "Edited\ntext",
+  );
+  state.userInputs = editorRequest();
+  await render();
+  expect(container.querySelector<HTMLTextAreaElement>('[aria-label="Proposed text"]')!.value).toBe(
+    "Edited\ntext",
+  );
+  await userEvent.fill(page.getByRole("textbox", { name: "Proposed text", exact: true }), "");
+  await render();
+  expect(container.querySelector<HTMLTextAreaElement>('[aria-label="Proposed text"]')!.value).toBe(
+    "",
+  );
+  await userEvent.click(page.getByRole("button", { name: "Reply", exact: true }));
+  expect(state.answer).toHaveBeenCalledWith(
+    expect.objectContaining({ input: expect.objectContaining({ answers: { proposal: "" } }) }),
+  );
+});

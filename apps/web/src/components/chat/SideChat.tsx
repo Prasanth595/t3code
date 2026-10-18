@@ -382,7 +382,15 @@ export function SideChatSession({
           </div>
         ))}
         {requests.userInputs.map((input) => {
-          const drafts = answers[input.requestId] ?? {};
+          const drafts = Object.fromEntries(
+            input.questions.map((question) => [
+              question.id,
+              answers[input.requestId]?.[question.id] ??
+                (question.initialAnswer === undefined
+                  ? {}
+                  : { customAnswer: question.initialAnswer }),
+            ]),
+          );
           const resolved = buildPendingUserInputAnswers(input.questions, drafts);
           return (
             <form
@@ -436,7 +444,8 @@ export function SideChatSession({
                     );
                   })}
                   {question.allowCustomAnswer !== false && (
-                    <input
+                    <textarea
+                      rows={2}
                       aria-label={question.header || question.question}
                       placeholder="Your answer…"
                       className="mt-2 w-full rounded border border-border bg-transparent p-2 text-sm"
@@ -449,6 +458,7 @@ export function SideChatSession({
                             [question.id]: setPendingUserInputCustomAnswer(
                               current[input.requestId]?.[question.id],
                               event.target.value,
+                              question,
                             ),
                           },
                         }))

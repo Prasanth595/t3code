@@ -3981,6 +3981,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
     if (side !== null && onSideChat) {
       event?.preventDefault();
+      if (
+        composerFilesRef.current.length > 0 ||
+        composerImagesRef.current.length > 0 ||
+        (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) > 0 ||
+        pendingDraftWork.has(attachmentTargetKey)
+      ) {
+        toastManager.add({
+          type: "info",
+          title: "Open Side chat before attaching files.",
+          description: "Your draft is unchanged. Attach files in the side composer.",
+        });
+        return;
+      }
       const prompt = promptRef.current;
       if (
         applyPromptReplacement(0, prompt.length, "", {
