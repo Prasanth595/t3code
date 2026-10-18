@@ -191,6 +191,11 @@ describe("threadStatusOf", () => {
     assert.strictEqual(running.runStartedAt, 1791182378376);
     assert.strictEqual(running.runCompletedAt, null);
     assert.strictEqual(statusOf([unstartedRun(1, "cancelled")]).runStartedAt, null);
+    // A run that never started counts from when it was requested; a run's work start wins.
+    const requested = { ...unstartedRun(1, "cancelled"), requestedAt: "2026-10-04T09:36:15.113Z" };
+    assert.strictEqual(statusOf([requested]).runStartedAt, 1791106575113);
+    const working = { ...run(1, "running"), workStartedAt: "2026-10-04T09:36:15.242Z" };
+    assert.strictEqual(statusOf([working]).runStartedAt, 1791106575242);
     assert.strictEqual(statusOf([]).runStartedAt, null);
   });
 

@@ -33,6 +33,7 @@ import {
   type RunStatus,
   type Thread,
   type ThreadStatus,
+  threadStatusOf,
 } from "../t3/sessions.ts";
 import {
   GitHubFailed,
@@ -1118,6 +1119,51 @@ describe("interrupted: a T3 restart", () => {
         reason: "the session run ended as failed",
       });
       assert.deepStrictEqual(sends(rig), []);
+    }),
+  );
+
+  /** T3's record of a sole run cancelled while its workspace was still being prepared. */
+  const cancelledBeforeStarting = (rig: Rig, requestedAt: number, completedAt: number) => {
+    rig.world.status = () =>
+      threadStatusOf({
+        thread: { branch: "t3code/abc", worktreePath: "/t3/wt", archivedAt: null },
+        runs: [
+          {
+            id: "run-1",
+            ordinal: 1,
+            status: "cancelled",
+            requestedAt: new Date(requestedAt).toISOString(),
+            startedAt: null,
+            completedAt: new Date(completedAt).toISOString(),
+          },
+        ],
+        messages: [],
+      });
+  };
+
+  it.effect("resumes a run the shutdown cancelled before it had started", () =>
+    Effect.gen(function* () {
+      // Claimed seconds before a redeploy: the old server cancelled the run while it was still
+      // preparing its workspace, so T3 never gave it a start time.
+      const rig = rigFor();
+      cancelledBeforeStarting(rig, T3_STARTED - 9_000, T3_STARTED - 6_000);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
+      const outcome = yield* decide(rig, evidence(null, 1, [T3_STARTED]));
+      assert.strictEqual(outcome.kind, "resumed");
+      const line = linesOf(rig).find((entry) => entry.event === "session_interrupted");
+      assert.strictEqual(field(line!.data, "t3_error"), T3_STARTED_TEXT);
+    }),
+  );
+
+  it.effect("sends a run requested and cancelled after the server started to stuck", () =>
+    Effect.gen(function* () {
+      const rig = rigFor();
+      cancelledBeforeStarting(rig, T0 - 3 * MINUTE, T0 - MINUTE);
+      assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
+      assert.deepStrictEqual(yield* decide(rig, evidence(null, 1, [T3_STARTED])), {
+        kind: "stuck",
+        reason: "the session run ended as cancelled",
+      });
     }),
   );
 
