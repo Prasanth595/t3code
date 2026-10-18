@@ -5,6 +5,7 @@ import type {
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { isActiveBackgroundTurnItem } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
   createOrchestrationV2TurnItemVisibility,
   isOrchestrationV2TurnItemVisible,
@@ -293,14 +294,14 @@ export function applyOrchestrationV2ProjectionEvent(
     case "plan.updated":
       return { ...base, plans: upsertEntity(base.plans, event.payload) };
     case "turn-item.updated": {
-      if (
+      const unloaded =
         partialTimeline &&
         !projection.turnItems.some((candidate) => candidate.id === event.payload.id) &&
-        shouldDropMissingPartialTurnItem(projection, event.payload, latestLocalTurnOrdinal)
-      ) {
-        return projection;
-      }
+        shouldDropMissingPartialTurnItem(projection, event.payload, latestLocalTurnOrdinal);
+      if (unloaded && !isActiveBackgroundTurnItem(event.payload)) return projection;
       const next = { ...base, turnItems: upsertEntity(base.turnItems, event.payload) };
+      // Running work from before the window still counts toward the waiting state, but is not timeline.
+      if (unloaded) return next;
       // Only interrupt requests can change another item's visibility. Streaming
       // text/tool updates must not recheck every row against every run.
       const previous = projection.turnItems.find((item) => item.id === event.payload.id);
