@@ -4137,6 +4137,17 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const scrollToEndStable = useStableCallback(scrollToEnd);
+  // The timeline does not follow footer growth, so the pull request card keeps itself in view
+  // while it loads and builds its graph, as long as the reader was at the end.
+  const followPullRequestCard = useStableCallback((element: HTMLDivElement | null) => {
+    if (!element) return;
+    let height = element.offsetHeight;
+    return observeResize(element, () => {
+      const grew = element.offsetHeight > height;
+      height = element.offsetHeight;
+      if (grew && isAtEndRef.current) scrollToEndStable();
+    });
+  });
   useEffect(() => {
     const composer = composerRef;
     let removeListeners: (() => void) | null = null;
@@ -7937,7 +7948,7 @@ export default function ChatView(props: ChatViewProps) {
                   paintOnlyDisplayedTimeline ? null : pendingHandoff === null ? (
                     <>
                       {pullRequestPanelTarget && activeThreadRef && activeProject ? (
-                        <div className="chat-content-lane py-3">
+                        <div ref={followPullRequestCard} className="chat-content-lane py-3">
                           <ThreadPullRequestCard
                             key={`${activeThread.environmentId}:${activeThread.id}:${pullRequestPanelTarget.url}`}
                             threadRef={activeThreadRef}
