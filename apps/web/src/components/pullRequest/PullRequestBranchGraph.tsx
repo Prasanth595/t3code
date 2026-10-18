@@ -139,6 +139,18 @@ export function GitCommitGraph({
   ];
   const { rows, width } = layoutGitGraph([...lead, ...history.commits]);
   const visible = expanded ? rows : rows.slice(0, lead.length + COLLAPSED_COMMITS);
+  // Keep the lead rows' original decode timing when more history is revealed mid-build.
+  const [entranceStarts] = useState(
+    () =>
+      new Map(
+        building
+          ? lead.map((commit, index) => [
+              commit.sha,
+              entranceStart(index, visible.length, lead.length) + 80,
+            ])
+          : [],
+      ),
+  );
   const laneWidth = Math.min(width, 96);
   const merged = target?.tone === "merged";
   const branch = branchOnlyShas(history.commits, headSha, history.baseSha);
@@ -167,11 +179,10 @@ export function GitCommitGraph({
   const previous = labels.key === historyKey ? labels.before : labels.current;
   // A commit that lands where the uncommitted row was decodes out of that row's label.
   const replacesWorkingTree = previous?.has(WORKING_TREE) === true && !working;
-  const scramble = (sha: string, label: string, index: number) => {
+  const scramble = (sha: string, label: string) => {
     if (previous === null) {
-      return building && index < lead.length
-        ? { from: "", delay: entranceStart(index, visible.length, lead.length) + 80 }
-        : { from: undefined, delay: 0 };
+      const start = entranceStarts.get(sha);
+      return start !== undefined ? { from: "", delay: start } : { from: undefined, delay: 0 };
     }
     const before = previous.get(sha);
     if (before !== undefined) return { from: before === label ? undefined : before, delay: 0 };
@@ -186,7 +197,8 @@ export function GitCommitGraph({
   const animateChanges = useEffectEvent((_signature: string, isMerged: boolean) => {
     const list = listRef.current;
     if (!list) return;
-    const before = previous;
+    const firstLayout = positions.current.size === 0;
+    const before = previous ?? labels.current;
     const reduced = prefersReducedMotion();
     const play = (element: Element, keyframes: Keyframe[], options: KeyframeAnimationOptions) => {
       const animation = element.animate(keyframes, {
@@ -260,7 +272,7 @@ export function GitCommitGraph({
       next.set(commit.sha, top);
       if (reduced) continue;
       const previousTop = positions.current.get(commit.sha);
-      if (before === null) {
+      if (firstLayout) {
         if (!building) continue;
         const start = entranceStart(index, visible.length, lead.length);
         if (index < lead.length) {
@@ -310,8 +322,8 @@ export function GitCommitGraph({
         flash(row, "rgb(245 158 11 / 0.14)", ARRIVAL_DELAY_MS - 60);
       }
     }
-    if (before === null && building && entranceKey !== null) builtGraphs.add(entranceKey);
-    if (!reduced && before !== null && isMerged && !wasMerged.current) {
+    if (firstLayout && building && entranceKey !== null) builtGraphs.add(entranceKey);
+    if (!reduced && !firstLayout && isMerged && !wasMerged.current) {
       for (const [rank, sha] of cascade.entries()) {
         const row = list.querySelector<HTMLElement>(`[data-graph-row="${sha}"]`);
         if (row) flash(row, "rgb(139 92 246 / 0.12)", rank * 70);
@@ -332,8 +344,8 @@ export function GitCommitGraph({
         aria-label="Branch commit history"
         className="relative max-h-80 overflow-auto overscroll-contain"
       >
-        {visible.map(({ commit, x, color, paths }, index) => {
-          const decode = scramble(commit.sha, commit.subject, index);
+        {visible.map(({ commit, x, color, paths }) => {
+          const decode = scramble(commit.sha, commit.subject);
           const isTarget = commit.sha === TARGET;
           const isWorking = commit.sha === WORKING_TREE;
           const isHead = commit.sha === headSha;

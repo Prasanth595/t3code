@@ -4172,7 +4172,9 @@ export default function ChatView(props: ChatViewProps) {
     return observeResize(element, () => {
       const grew = element.offsetHeight > height;
       height = element.offsetHeight;
-      if (grew && isAtEndRef.current) scrollToEndStable();
+      if (grew && isAtEndRef.current && timelineScrollModeRef.current === "following-end") {
+        scrollToEndStable();
+      }
     });
   });
   useEffect(() => {
