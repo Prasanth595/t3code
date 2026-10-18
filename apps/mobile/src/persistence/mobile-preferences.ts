@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
   EnvironmentId,
+  EnvironmentTheme,
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
@@ -17,6 +18,7 @@ import {
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
 import type { FollowUpBehavior } from "../lib/followUpBehavior";
 import { isMicrophoneKind, type MicrophoneEntry } from "../lib/microphonePriority";
+import { isPublishedMobileThemeId } from "../lib/forkPublishedThemeRegistry";
 import { MOBILE_THEME_IDS, type MobileThemeId, type MobileThemeMode } from "../lib/mobileTheme";
 import * as MobileDatabase from "./mobile-database";
 import * as MobileSecureStorage from "./mobile-secure-storage";
@@ -49,6 +51,7 @@ export type PullRequestListPreferences = typeof PullRequestListPreferences.Type;
 
 const isThreadListFilters = Schema.is(ThreadListFilters);
 const isPullRequestListPreferences = Schema.is(PullRequestListPreferences);
+const isPublishedThemes = Schema.is(Schema.Array(EnvironmentTheme));
 
 export interface Preferences {
   readonly pullRequestHideTestFiles?: boolean;
@@ -84,6 +87,10 @@ export interface Preferences {
   readonly threadListWorkingShelfExpanded?: boolean;
   readonly threadListFilters?: ThreadListFilters;
   readonly pullRequestListFilters?: PullRequestListPreferences;
+  /** Fork: the last published themes, so the app draws them before a server connects. */
+  readonly publishedThemes?: ReadonlyArray<EnvironmentTheme>;
+  /** Fork: the server `defaultTheme` that the app took last. */
+  readonly publishedDefaultThemeApplied?: string;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -153,6 +160,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListWorkingShelfExpanded?: boolean;
     threadListFilters?: ThreadListFilters;
     pullRequestListFilters?: PullRequestListPreferences;
+    publishedThemes?: ReadonlyArray<EnvironmentTheme>;
+    publishedDefaultThemeApplied?: string;
   } = {};
 
   if (typeof parsed.pullRequestHideTestFiles === "boolean") {
@@ -172,19 +181,22 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (
     typeof parsed.themeId === "string" &&
-    (MOBILE_THEME_IDS as readonly string[]).includes(parsed.themeId)
+    ((MOBILE_THEME_IDS as readonly string[]).includes(parsed.themeId) ||
+      isPublishedMobileThemeId(parsed.themeId))
   ) {
     preferences.themeId = parsed.themeId as MobileThemeId;
   }
   if (
     typeof parsed.lightThemeId === "string" &&
-    (MOBILE_THEME_IDS as readonly string[]).includes(parsed.lightThemeId)
+    ((MOBILE_THEME_IDS as readonly string[]).includes(parsed.lightThemeId) ||
+      isPublishedMobileThemeId(parsed.lightThemeId))
   ) {
     preferences.lightThemeId = parsed.lightThemeId as MobileThemeId;
   }
   if (
     typeof parsed.darkThemeId === "string" &&
-    (MOBILE_THEME_IDS as readonly string[]).includes(parsed.darkThemeId)
+    ((MOBILE_THEME_IDS as readonly string[]).includes(parsed.darkThemeId) ||
+      isPublishedMobileThemeId(parsed.darkThemeId))
   ) {
     preferences.darkThemeId = parsed.darkThemeId as MobileThemeId;
   }
@@ -277,6 +289,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isPullRequestListPreferences(parsed.pullRequestListFilters)) {
     preferences.pullRequestListFilters = parsed.pullRequestListFilters;
+  }
+  if (isPublishedThemes(parsed.publishedThemes)) {
+    preferences.publishedThemes = parsed.publishedThemes;
+  }
+  if (typeof parsed.publishedDefaultThemeApplied === "string") {
+    preferences.publishedDefaultThemeApplied = parsed.publishedDefaultThemeApplied;
   }
   return preferences;
 }

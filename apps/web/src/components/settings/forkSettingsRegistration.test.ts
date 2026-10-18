@@ -58,6 +58,7 @@ const FORK_PAGE_ROWS: Record<
   sidebarGroups: { notListed: "Content that the user builds in the sidebar." },
   keybindingSync: "keybinding-sync",
   previewLocalServerGroups: "preview-local-server-groups",
+  mobilePublishedThemes: "mobile-published-themes",
 };
 
 /** The settings that Restore defaults keeps, with the reason. */

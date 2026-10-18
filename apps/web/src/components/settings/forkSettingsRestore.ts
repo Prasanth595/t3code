@@ -25,6 +25,7 @@ const FORK_RESTORED_SETTINGS = [
   ["threadLinkChips", "Thread link chips"],
   ["threadLinksOpenDesktopApp", "Thread addresses open the desktop app"],
   ["previewLocalServerGroups", "All local servers in the browser"],
+  ["mobilePublishedThemes", "Published themes on mobile"],
   ["keybindingSync", "Keybinding sync"],
   ["pullRequestWatchRemarkFilter", "Pull request watch remarks"],
   ["agentSessionImportWindowDays", "Session import window"],

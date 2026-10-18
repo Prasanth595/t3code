@@ -2,6 +2,8 @@ import { MOBILE_SHAPE } from "../../lib/designTokens";
 import type { ReactNode } from "react";
 import { Platform, View } from "react-native";
 
+import { cn } from "../../lib/cn";
+import { useThemeRadius, useThemeRaised } from "../../lib/forkThemeStyle";
 import { AppText as Text } from "./AppText";
 
 export function ListSection(props: {
@@ -11,6 +13,11 @@ export function ListSection(props: {
   readonly children: ReactNode;
   readonly footer?: string;
 }) {
+  // Fork: a published theme sets the radius, the outline and the shadow (lib/forkThemeStyle.ts).
+  const radius = useThemeRadius(
+    Platform.OS === "android" ? MOBILE_SHAPE.group.android : MOBILE_SHAPE.group.ios,
+  );
+  const raised = useThemeRaised();
   return (
     <View className="gap-2">
       {props.title ? (
@@ -31,11 +38,8 @@ export function ListSection(props: {
         </View>
       ) : null}
       <View
-        className="overflow-hidden border-continuous bg-grouped-card"
-        style={{
-          borderRadius:
-            Platform.OS === "android" ? MOBILE_SHAPE.group.android : MOBILE_SHAPE.group.ios,
-        }}
+        className={cn("overflow-hidden border-continuous bg-grouped-card", raised.className)}
+        style={[{ borderRadius: radius }, raised.style]}
       >
         {props.children}
       </View>

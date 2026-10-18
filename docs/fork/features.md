@@ -446,8 +446,28 @@ A phone gets thread notifications while the installed app is closed, from each s
 Published themes can set shape, fonts, a canvas pattern and user CSS, in the theme JSON fields `radius`, `borderWidth`, `shadow`, `fonts`, `canvasPattern`, `canvasPatternColor` and `css`.
 
 - **Setting:** none. Select a published theme in Settings > Appearance. See [Appearance](../user/appearance.md) for published themes.
-- **Works on:** web, desktop.
-- **Limits:** the mobile app uses only the built-in palettes. Revisit when the mobile themes work lands.
+- **Works on:** web, desktop, and mobile with [Themes on mobile](#themes-on-mobile).
+- **Limits:** see [Themes on mobile](#themes-on-mobile) for the fields that mobile skips.
+
+### Themes on mobile
+
+The mobile app uses the themes that its servers publish.
+
+- **Setting:** server setting `mobilePublishedThemes` (off by default). Settings > Appearance > Mobile app. The machine map syncs it.
+- **Works on:** mobile.
+- Appearance in the mobile app shows the published themes under "From your servers". A theme with colors for one appearance offers that appearance only.
+- The app takes the server setting `defaultTheme` once for each theme id, for the appearances that the theme has colors for. The color scheme mode stays as set on the phone.
+- The app stores the last published themes, so the theme shows before a server connects.
+- Shape: `radius` sets every radius token except round elements, `borderWidth` sets every border, and `shadow` goes on grouped lists, the composer and the Android buttons. `apps/mobile/fork-theme.css` holds the tokens, and class rules make the fixed pixel radii of upstream (`rounded-[20px]`) follow them.
+- A `shadow` that the app cannot read is dropped.
+- Fonts: the app bundles Bricolage Grotesque and JetBrains Mono. A theme font with one of these names replaces the stock font.
+- Canvas: `dots` and `grid` show behind the thread feed.
+- **Limits:**
+  - A theme that lists only `canvas` and `accent` gets only those two colors, because the palette generator lives in `apps/web/src/themePalette.ts`. Revisit when such a theme is in use on a phone, or when upstream moves the generator to `packages/shared`.
+  - A pixel radius class that upstream adds later keeps its size under a theme until `fork-theme.css` gets a rule for it.
+  - Other fonts keep the stock font. The composer takes the `sans` font, and the terminal and diff views keep the platform monospace font.
+  - `noise`, user CSS and icon packs have no mobile form. The text of the Android buttons keeps the system font.
+  - Setting the same `defaultTheme` again does not apply it again on the phone, because `defaultThemeSetAt` is local to each machine.
 
 ### Theme icon packs
 

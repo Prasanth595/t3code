@@ -95,6 +95,8 @@
       // Fonts are configured as asset paths; Expo autolinks the native packages.
       "ignoreDependencies": [
         "@expo-google-fonts/dm-sans",
+        "@expo-google-fonts/bricolage-grotesque",
+        "@expo-google-fonts/jetbrains-mono",
         "@t3tools/mobile-review-diff-native",
         "@t3tools/mobile-terminal-native",
       ],

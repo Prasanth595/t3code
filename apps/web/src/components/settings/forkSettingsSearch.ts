@@ -49,6 +49,13 @@ export const APPEARANCE_ITEMS = [
     searchTerms: ["thread link address url browser tab slack github desktop app deep link open"],
     environmentOnly: true,
   },
+  {
+    id: "mobile-published-themes",
+    title: "Published themes on mobile",
+    to: "/settings/appearance",
+    searchTerms: ["mobile phone android app theme published fonts shape radius canvas pattern"],
+    environmentOnly: true,
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export const GLOBAL_SCRIPTS_ITEMS = [

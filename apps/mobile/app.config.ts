@@ -2,6 +2,7 @@ import type { ExpoConfig } from "expo/config";
 
 import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { FORK_THEME_FONT_PLUGIN_FILES } from "./src/lib/forkThemeFonts.ts";
 
 type AppVariant = "development" | "preview" | "production";
 
@@ -332,7 +333,12 @@ const config: ExpoConfig = {
       "expo-font",
       {
         ios: {
-          fonts: [dmSansFonts.regular, dmSansFonts.medium, dmSansFonts.bold],
+          fonts: [
+            dmSansFonts.regular,
+            dmSansFonts.medium,
+            dmSansFonts.bold,
+            ...FORK_THEME_FONT_PLUGIN_FILES.ios,
+          ],
         },
         android: {
           fonts: [
@@ -348,6 +354,7 @@ const config: ExpoConfig = {
               fontFamily: "DMSans-Bold",
               fontDefinitions: [{ path: dmSansFonts.bold, weight: 700 }],
             },
+            ...FORK_THEME_FONT_PLUGIN_FILES.android,
           ],
         },
       },

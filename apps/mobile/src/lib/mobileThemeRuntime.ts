@@ -1,5 +1,6 @@
 import { resolveTextScaleVariables } from "./appearancePreferences";
 import { BUILT_IN_THEME_IDS, type BuiltInThemeId } from "@t3tools/shared/themePalettes";
+import { isPublishedMobileThemeId } from "./forkPublishedThemeRegistry";
 import {
   DEFAULT_MOBILE_THEME_ID,
   type MobileThemeAppearance,
@@ -42,7 +43,10 @@ export function getMobileUniwindThemeName(
   themeId: MobileThemeId,
   appearance: MobileThemeAppearance,
 ): MobileUniwindThemeName {
-  return themeId === DEFAULT_MOBILE_THEME_ID || themeId === "material-you"
+  // Fork: a published theme has no generated Uniwind theme; its variables cover every color.
+  return themeId === DEFAULT_MOBILE_THEME_ID ||
+    themeId === "material-you" ||
+    isPublishedMobileThemeId(themeId)
     ? appearance
     : `${themeId}-${appearance}`;
 }

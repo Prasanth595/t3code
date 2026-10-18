@@ -329,6 +329,12 @@ export const ForkServerSettingsFields = {
    * server reads the process folders and sends the HTTP checks, for every client.
    */
   previewLocalServerGroups: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Fork: the mobile app offers the themes that this server publishes, with their fonts, shape
+   * and canvas pattern, and takes `defaultTheme`. A server setting, so the machine map syncs it
+   * and the mobile app reads it.
+   */
+  mobilePublishedThemes: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 };
 
 export const ForkServerSettingsPatchFields = {
@@ -350,6 +356,7 @@ export const ForkServerSettingsPatchFields = {
   threadLinksOpenDesktopApp: Schema.optionalKey(Schema.Boolean),
   keybindingSync: Schema.optionalKey(Schema.Boolean),
   previewLocalServerGroups: Schema.optionalKey(Schema.Boolean),
+  mobilePublishedThemes: Schema.optionalKey(Schema.Boolean),
   /** Replaces the saved groups whole: a merge would keep deleted groups and assignments. */
   sidebarGroups: Schema.optionalKey(SidebarGroups),
   /** Per surface: a patched layout replaces the saved one, and `null` restores the built-in card. */
