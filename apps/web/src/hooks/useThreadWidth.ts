@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { useCallback, type CSSProperties } from "react";
+import { type CSSProperties } from "react";
 
 import { useLocalStorage } from "./useLocalStorage";
 
@@ -35,9 +35,6 @@ export function useThreadWidth() {
     0,
     Schema.Unknown,
   );
-  const setExpansion = useCallback(
-    (value: number) => setStored(normalizeThreadWidth(value)),
-    [setStored],
-  );
+  const setExpansion = (value: number) => setStored(normalizeThreadWidth(value));
   return [normalizeThreadWidth(stored), setExpansion] as const;
 }
