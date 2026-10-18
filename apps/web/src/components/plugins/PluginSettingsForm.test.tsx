@@ -89,10 +89,12 @@ async function editAndSave(readOnly: boolean) {
   await renderForm(readOnly);
   const input = document.getElementById("plugin-setting-installation-1-endpoint")!;
   await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
-      input,
-      "https://new.example.test",
-    );
+    Object.getOwnPropertyDescriptor(
+      input instanceof HTMLTextAreaElement
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype,
+      "value",
+    )!.set!.call(input, "https://new.example.test");
     input.dispatchEvent(new Event("input", { bubbles: true }));
   });
   await act(async () =>
@@ -129,6 +131,38 @@ describe("PluginSettingsForm access", () => {
       input: {
         installationId: installation.installationId,
         changes: [{ key: "endpoint", value: "https://new.example.test" }],
+      },
+    });
+  });
+
+  it("preserves multiline text and replacement secrets through a save", async () => {
+    await renderForm(false);
+    const values = [
+      ["endpoint", '{\n  "endpoint": "https://example.test"\n}'],
+      ["token", "-----BEGIN KEY-----\nprivate-data\n-----END KEY-----"],
+    ] as const;
+    for (const [key, value] of values) {
+      const input = document.getElementById(`plugin-setting-installation-1-${key}`)!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          input instanceof HTMLTextAreaElement
+            ? HTMLTextAreaElement.prototype
+            : HTMLInputElement.prototype,
+          "value",
+        )!.set!.call(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+    await act(async () =>
+      container
+        .querySelector("form")!
+        .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+    );
+    expect(update).toHaveBeenCalledExactlyOnceWith({
+      environmentId,
+      input: {
+        installationId: installation.installationId,
+        changes: values.map(([key, value]) => ({ key, value })),
       },
     });
   });
