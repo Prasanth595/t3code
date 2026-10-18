@@ -15,7 +15,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { assert, it } from "@effect/vitest";
 
 import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../config.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -1050,6 +1050,7 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
             fallbackToHead: false,
           }),
         );
+        assert.isTrue(yield* fileSystem.exists(cwd));
         assert.isFalse(yield* fileSystem.exists(addedPath));
       }
       yield* fileSystem.writeFileString(
@@ -1146,7 +1147,7 @@ it.effect("GitVcsDriver treats a missing git executable as outside any repositor
   }).pipe(Effect.provide(vcsProcessSpawning("t3-missing-git-executable"))),
 );
 
-it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
   "GitVcsDriver still fails detection when git exists but cannot be spawned",
   () =>
     Effect.gen(function* () {
