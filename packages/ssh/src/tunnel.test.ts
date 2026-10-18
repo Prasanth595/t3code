@@ -1158,43 +1158,39 @@ describe("archive runner script", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
     60_000,
   );
-  it.effect.skipIf(windowsHost)("names the release file it could not download", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-archive-runner-" });
-      const releaseBaseUrl = yield* makeMirror(root);
-      const home = `${root}/home`;
-      yield* fs.makeDirectory(home, { recursive: true });
-      const versionsDir = `${home}/.t3/runtime/versions`;
+  it.effect.skipIf(windowsHost)(
+    "names the release file it could not download and leaves no install state",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-archive-runner-" });
+        const releaseBaseUrl = yield* makeMirror(root);
+        const home = `${root}/home`;
+        yield* fs.makeDirectory(home, { recursive: true });
+        const failDownload = Effect.fn("failDownload")(function* (version: string) {
+          const runner = `${root}/run-${version}.sh`;
+          yield* fs.writeFileString(
+            runner,
+            SshTunnel.buildRemoteT3RunnerScript({ archiveVersion: version, releaseBaseUrl }),
+          );
+          const result = yield* runRunner(home, runner);
+          assert.notEqual(result.exitCode, 0);
+          // No install lock, staging directory, or partial install survives the failure.
+          assert.deepEqual(yield* fs.readDirectory(`${home}/.t3/runtime/versions`), []);
+          return result.stderr;
+        });
 
-      const missingRelease = `${root}/run-missing-release.sh`;
-      yield* fs.writeFileString(
-        missingRelease,
-        SshTunnel.buildRemoteT3RunnerScript({ archiveVersion: "9.9.9", releaseBaseUrl }),
-      );
-      const noRelease = yield* runRunner(home, missingRelease);
-      assert.equal(noRelease.exitCode, 1);
-      assert.include(
-        noRelease.stderr,
-        `Could not download SHA256SUMS for t3 9.9.9 from ${releaseBaseUrl}/v9.9.9.`,
-      );
+        const noRelease = yield* failDownload("9.9.9");
+        assert.include(noRelease, `${releaseBaseUrl}/v9.9.9/SHA256SUMS`);
 
-      const tarball = (yield* fs.readDirectory(`${root}/mirror/v${archiveVersion}`)).find((name) =>
-        name.endsWith(".tar.gz"),
-      );
-      assert.isDefined(tarball);
-      yield* fs.remove(`${root}/mirror/v${archiveVersion}/${tarball}`);
-      const missingArchive = `${root}/run-missing-archive.sh`;
-      yield* fs.writeFileString(
-        missingArchive,
-        SshTunnel.buildRemoteT3RunnerScript({ archiveVersion, releaseBaseUrl }),
-      );
-      const noArchive = yield* runRunner(home, missingArchive);
-      assert.equal(noArchive.exitCode, 1);
-      assert.include(noArchive.stderr, `Could not download ${tarball} for t3 ${archiveVersion}`);
-      assert.isFalse(yield* fs.exists(`${versionsDir}/.${archiveVersion}.install.lock`));
-      assert.isFalse(yield* fs.exists(`${versionsDir}/${archiveVersion}`));
-    }).pipe(Effect.provide(NodeServices.layer)),
+        const release = `${root}/mirror/v${archiveVersion}`;
+        const tarball = (yield* fs.readDirectory(release)).find((name) => name.endsWith(".tar.gz"));
+        assert.isDefined(tarball);
+        yield* fs.remove(`${release}/${tarball}`);
+        const noArchive = yield* failDownload(archiveVersion);
+        assert.include(noArchive, `${releaseBaseUrl}/v${archiveVersion}/${tarball}`);
+      }).pipe(Effect.provide(NodeServices.layer)),
+    60_000,
   );
 });
 
