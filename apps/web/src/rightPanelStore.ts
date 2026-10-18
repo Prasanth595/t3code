@@ -24,6 +24,13 @@ const RIGHT_PANEL_KINDS = [
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
+export interface PullRequestCodePosition {
+  /** The commit the diff is scoped to; null for the whole pull request. */
+  commit: string | null;
+  /** The file at the top of the diff, and how far into it the reader had scrolled. */
+  file: { path: string; offset: number } | null;
+}
+
 export interface DeviceTabTarget {
   hostId: string;
   deviceId: string;
@@ -76,6 +83,7 @@ export type RightPanelSurface =
       repository: string;
       number: number;
       url?: string;
+      codePosition?: PullRequestCodePosition;
     }
   | { id: "pull-requests"; kind: "pull-requests" };
 
@@ -152,6 +160,11 @@ interface RightPanelStoreState {
       number: number;
       url?: string;
     },
+  ) => void;
+  setPullRequestCodePosition: (
+    ref: ScopedThreadRef,
+    surfaceId: string,
+    codePosition: PullRequestCodePosition,
   ) => void;
   openTerminal: (ref: ScopedThreadRef, terminalId: string) => void;
   splitTerminal: (
@@ -285,6 +298,15 @@ export function pullRequestSurface(target: {
     ...(typeof target.url === "string" ? { url: target.url } : {}),
   };
 }
+
+const isSamePullRequestCodePosition = (
+  a: PullRequestCodePosition | undefined,
+  b: PullRequestCodePosition,
+) =>
+  a !== undefined &&
+  a.commit === b.commit &&
+  a.file?.path === b.file?.path &&
+  a.file?.offset === b.file?.offset;
 
 const upsertSurface = (
   current: ThreadRightPanelState,
@@ -677,12 +699,38 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               ? {
                   ...next,
                   surfaces: next.surfaces.map((entry) =>
-                    entry.id === surface.id ? surface : entry,
+                    entry.id === surface.id && entry.kind === "pull-request"
+                      ? {
+                          ...surface,
+                          ...(entry.codePosition ? { codePosition: entry.codePosition } : {}),
+                        }
+                      : entry,
                   ),
                 }
               : next;
           }),
         ),
+      // Where the reader is in a diff is not a panel choice, so it does not count as a user action.
+      setPullRequestCodePosition: (ref, surfaceId, codePosition) =>
+        set((state) => {
+          const threadKey = scopedThreadKey(ref);
+          const existing = state.byThreadKey[threadKey]?.surfaces.find(
+            (surface) => surface.id === surfaceId,
+          );
+          if (
+            existing?.kind !== "pull-request" ||
+            isSamePullRequestCodePosition(existing.codePosition, codePosition)
+          )
+            return state;
+          return updateThread(state, threadKey, (current) => ({
+            ...current,
+            surfaces: current.surfaces.map((surface) =>
+              surface.id === surfaceId && surface.kind === "pull-request"
+                ? { ...surface, codePosition }
+                : surface,
+            ),
+          }));
+        }),
       openFile: (ref, requestedPath, line) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {

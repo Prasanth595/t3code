@@ -1054,6 +1054,32 @@ describe("rightPanelStore", () => {
     expect(state.surfaces[1]).not.toHaveProperty("url");
   });
 
+  it("remembers where each thread was in a pull request's code", () => {
+    const pr = { projectId: "project-a", repository: "pingdotgg/t3code", number: 4909 };
+    const id = pullRequestSurfaceId(pr);
+    const position = { commit: "abc123", file: { path: "src/app.ts", offset: 120 } };
+    const store = useRightPanelStore.getState();
+    store.openPullRequest(refA, pr);
+    store.openPullRequest(refB, pr);
+    const revision = store.getUserActionRevision(refA);
+    store.setPullRequestCodePosition(refA, id, position);
+    // Scrolling a diff is not a panel choice.
+    expect(store.getUserActionRevision(refA)).toBe(revision);
+    store.openPullRequest(refA, { ...pr, url: "https://github.com/pingdotgg/t3code/pull/4909" });
+
+    const byThreadKey = useRightPanelStore.getState().byThreadKey;
+    expect(selectActiveRightPanelSurface(byThreadKey, refA)).toMatchObject({
+      codePosition: position,
+    });
+    expect(selectActiveRightPanelSurface(byThreadKey, refB)).not.toHaveProperty("codePosition");
+
+    store.setPullRequestCodePosition(refA, id, {
+      commit: "abc123",
+      file: { path: "src/app.ts", offset: 120 },
+    });
+    expect(useRightPanelStore.getState().byThreadKey).toBe(byThreadKey);
+  });
+
   it("keeps matching repository and number on different hosts as separate tabs", () => {
     const first = { projectId: "project-a", repository: "acme/api", number: 7, host: "github.com" };
     const second = { ...first, host: "github.example.com" };

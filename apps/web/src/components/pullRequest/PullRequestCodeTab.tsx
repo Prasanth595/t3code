@@ -56,6 +56,7 @@ import {
 import { APP_BASE_NAME } from "~/branding";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
+import type { PullRequestCodePosition } from "~/rightPanelStore";
 import { createPullRequestDiffFileContentsLoader } from "~/lib/diffFileContents";
 import {
   buildDiffReviewComment,
@@ -111,6 +112,22 @@ import {
   usePullRequestReviewStore,
   type PendingReviewComment,
 } from "./pullRequestReviewStore";
+
+type CodeFilePosition = NonNullable<PullRequestCodePosition["file"]>;
+
+interface PendingFileReport {
+  readonly report: (file: CodeFilePosition | null) => void;
+  readonly file: CodeFilePosition | null;
+  readonly timer: ReturnType<typeof setTimeout>;
+}
+
+function flushFileReport(pending: { current: PendingFileReport | null }) {
+  const report = pending.current;
+  if (report === null) return;
+  clearTimeout(report.timer);
+  pending.current = null;
+  report.report(report.file);
+}
 
 interface ReviewAnnotationGroup {
   readonly threads: ReadonlyArray<PullRequestReviewThread>;
@@ -253,6 +270,8 @@ function PullRequestCodeTab({
   onRefresh,
   refreshToken = 0,
   revealRequest = null,
+  initialFile = null,
+  onFileChange,
 }: {
   scrollerRef: (node: HTMLDivElement | null) => void;
   environmentId: EnvironmentId;
@@ -267,6 +286,8 @@ function PullRequestCodeTab({
   onRefresh: () => void;
   refreshToken?: number;
   revealRequest?: { readonly path: string; readonly nonce: number } | null;
+  initialFile?: CodeFilePosition | null;
+  onFileChange?: (file: CodeFilePosition | null) => void;
 }) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings((settings) => ({
@@ -438,6 +459,14 @@ function PullRequestCodeTab({
   const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
   const requestTreeReveal = useCodeViewFileReveal(viewer, scopeKey);
   const answeredReveal = useRef<number | null>(null);
+  // Only for the diff it was read in: an asked-for reveal, or another commit, wins over it.
+  const [restoredFile] = useState(() =>
+    initialFile !== null && revealRequest === null ? { ...initialFile, scopeKey } : null,
+  );
+  const pendingRestore = useRef(restoredFile);
+  // Scrolling fires every frame, so the position goes out once the reader settles.
+  const pendingFileReport = useRef<PendingFileReport | null>(null);
+  useEffect(() => () => flushFileReport(pendingFileReport), []);
 
   const loadDiffFiles = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
     environmentId,
@@ -1287,6 +1316,62 @@ function PullRequestCodeTab({
     answerReveal();
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-checked as pages load until the requested file arrives.
   }, [canLoadNextSlice, items, revealRequest]);
+  const answerRestore = useEffectEvent(() => {
+    const restore = pendingRestore.current;
+    if (restore === null) return;
+    if (restore.scopeKey !== scopeKey || revealRequest !== null) {
+      pendingRestore.current = null;
+      return;
+    }
+    const item = items.find(
+      (candidate) => resolveFileDiffPath(candidate.fileDiff) === restore.path,
+    );
+    if (item === undefined) {
+      if (canLoadNextSlice) loadNextSlice();
+      else if (diffQuery.error !== null || (loadedSlices.length > 0 && nextCursor === null)) {
+        pendingRestore.current = null;
+      }
+      return;
+    }
+    if (!viewer?.getInstance()) return;
+    if (item.collapsed === true) {
+      toggleFile(item.id);
+      return;
+    }
+    pendingRestore.current = null;
+    viewer.scrollTo({ type: "item", id: item.id, align: "start", offset: -restore.offset });
+  });
+  useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- A file not loaded yet pages forward, and a folded one unfolds.
+    answerRestore();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-checked as pages load until the file arrives.
+  }, [canLoadNextSlice, items, viewer]);
+  const reportScroll = (
+    scrollTop: number,
+    view: { getTopForItem: (id: string) => number | undefined },
+  ) => {
+    if (onFileChange === undefined || pendingRestore.current !== null) return;
+    let low = 0;
+    let high = items.length - 1;
+    let file: CodeFilePosition | null = null;
+    while (low <= high) {
+      const middle = (low + high) >> 1;
+      const item = items[middle]!;
+      const top = view.getTopForItem(item.id);
+      if (top === undefined || top > scrollTop) {
+        high = middle - 1;
+        continue;
+      }
+      file = { path: resolveFileDiffPath(item.fileDiff), offset: Math.round(scrollTop - top) };
+      low = middle + 1;
+    }
+    if (pendingFileReport.current !== null) clearTimeout(pendingFileReport.current.timer);
+    pendingFileReport.current = {
+      report: onFileChange,
+      file,
+      timer: setTimeout(() => flushFileReport(pendingFileReport), 250),
+    };
+  };
   useEffect(() => {
     if (commit !== null && selectedCommit === undefined) {
       onSelectedCommitChange(null);
@@ -1430,6 +1515,7 @@ function PullRequestCodeTab({
               className="@container h-full overflow-auto [scrollbar-gutter:stable]"
               containerRef={scrollerRef}
               viewerRef={setViewer}
+              onScroll={reportScroll}
               items={items}
               selectedLines={selectedLines}
               onSelectedLinesChange={setSelectedLines}
@@ -1454,6 +1540,7 @@ function PullRequestCodeTab({
               ariaLabel={`Pull request #${detail.number} files`}
               entries={fileTreeEntries}
               onSelectFile={revealFile}
+              selectedPath={restoredFile?.scopeKey === scopeKey ? restoredFile.path : null}
               footer={
                 nextCursor === null ? null : (
                   <div className="shrink-0 border-t border-border/60 p-2">

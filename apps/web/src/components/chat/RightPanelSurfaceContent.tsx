@@ -146,6 +146,12 @@ export function RightPanelSurfaceContent(props: {
             repository: surface.repository,
             number: surface.number,
           }}
+          initialCodePosition={surface.codePosition}
+          onCodePositionChange={(position) => {
+            useRightPanelStore
+              .getState()
+              .setPullRequestCodePosition(threadRef, surface.id, position);
+          }}
           context={pullRequestPanelContext(
             {
               projectId: pullRequest.projectId,

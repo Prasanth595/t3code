@@ -62,7 +62,7 @@ import {
 } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
-import { useRightPanelStore } from "~/rightPanelStore";
+import { type PullRequestCodePosition, useRightPanelStore } from "~/rightPanelStore";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
@@ -583,6 +583,8 @@ export function PullRequestDetailPanel({
   onBack,
   onSelectPullRequest,
   onGuideShown,
+  initialCodePosition,
+  onCodePositionChange,
 }: {
   environmentId: EnvironmentId;
   shortcutsEnabled: boolean;
@@ -598,6 +600,8 @@ export function PullRequestDetailPanel({
   composerDraftTarget?: ScopedThreadRef | DraftId;
   onBack?: (() => void) | undefined;
   onGuideShown?: (() => void) | undefined;
+  initialCodePosition?: PullRequestCodePosition | undefined;
+  onCodePositionChange?: ((position: PullRequestCodePosition) => void) | undefined;
 }) {
   const environmentConfigs = useServerConfigs();
   const projects = useProjects();
@@ -635,11 +639,12 @@ export function PullRequestDetailPanel({
   const [codeCommitScope, setCodeCommitScope] = useState<{
     readonly pullRequestKey: string;
     readonly oid: string | null;
-  }>(() => ({ pullRequestKey, oid: null }));
+  }>(() => ({ pullRequestKey, oid: initialCodePosition?.commit ?? null }));
   const selectedCodeCommitOid =
     codeCommitScope.pullRequestKey === pullRequestKey ? codeCommitScope.oid : null;
   const selectCodeCommit = (oid: string | null) => {
     setCodeCommitScope({ pullRequestKey, oid });
+    onCodePositionChange?.({ commit: oid, file: null });
   };
   const openCommit = (oid: string) => {
     selectCodeCommit(oid);
@@ -2876,6 +2881,17 @@ export function PullRequestDetailPanel({
                     onRefresh={refreshDetail}
                     refreshToken={codeRefreshToken}
                     revealRequest={codeRevealRequest}
+                    initialFile={
+                      initialCodePosition?.commit === selectedCodeCommitOid
+                        ? initialCodePosition.file
+                        : null
+                    }
+                    {...(onCodePositionChange
+                      ? {
+                          onFileChange: (file: PullRequestCodePosition["file"]) =>
+                            onCodePositionChange({ commit: selectedCodeCommitOid, file }),
+                        }
+                      : {})}
                   />
                 </Suspense>
               </div>
