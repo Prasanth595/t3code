@@ -356,7 +356,9 @@ export interface ForkRelease {
   readonly tag: string | null;
   readonly version: string | null;
   readonly pageUrl: string;
+  /** Apple silicon. */
   readonly macUrl: string | null;
+  readonly macIntelUrl: string | null;
   readonly windowsUrl: string | null;
 }
 

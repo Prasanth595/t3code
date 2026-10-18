@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type {
   ClientId,
   MachineId,
@@ -507,6 +507,11 @@ function InstallStep({ code }: { code: string }) {
       () => setCopied(target),
       () => setCopied(null),
     );
+  const downloads = [
+    ["Mac Apple silicon (.dmg)", release?.macUrl],
+    ["Mac Intel (.dmg)", release?.macIntelUrl],
+    ["Windows (.exe)", release?.windowsUrl],
+  ].flatMap(([label, url]) => (label && url ? [[label, url] as const] : []));
   return (
     <div className="install-step">
       <p className="small">
@@ -527,12 +532,16 @@ function InstallStep({ code }: { code: string }) {
           </button>
         </div>
       ))}
-      {(release?.macUrl || release?.windowsUrl) && (
+      {downloads.length > 0 && (
         <p className="small muted">
-          Or download the app: {release.macUrl && <a href={release.macUrl}>Mac (.dmg)</a>}
-          {release.macUrl && release.windowsUrl && " · "}
-          {release.windowsUrl && <a href={release.windowsUrl}>Windows (.exe)</a>}. Then paste the
-          code in Settings &gt; Machines.
+          Or download the app:{" "}
+          {downloads.map(([label, url], index) => (
+            <Fragment key={label}>
+              {index > 0 && " · "}
+              <a href={url}>{label}</a>
+            </Fragment>
+          ))}
+          . Then paste the code in Settings &gt; Machines.
         </p>
       )}
     </div>

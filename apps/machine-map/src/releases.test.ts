@@ -14,6 +14,7 @@ const release = (tag: string, draft = false) => ({
       browser_download_url: "https://x/dmg.blockmap",
     },
     { name: `T3-Code-${tag.slice(1)}-arm64.dmg`, browser_download_url: `https://x/${tag}.dmg` },
+    { name: `T3-Code-${tag.slice(1)}-x64.dmg`, browser_download_url: `https://x/${tag}-x64.dmg` },
     { name: `T3-Code-${tag.slice(1)}-x64.exe`, browser_download_url: `https://x/${tag}.exe` },
     { name: "SHA256SUMS", browser_download_url: "https://x/SHA256SUMS" },
   ],
@@ -33,6 +34,7 @@ describe("newestRelease", () => {
       version: "0.0.46-nightly.1",
       pageUrl: "https://github.com/Yarden-zamir/t3code/releases/tag/v0.0.46-nightly.1",
       macUrl: "https://x/v0.0.46-nightly.1.dmg",
+      macIntelUrl: "https://x/v0.0.46-nightly.1-x64.dmg",
       windowsUrl: "https://x/v0.0.46-nightly.1.exe",
     });
   });
@@ -42,6 +44,7 @@ describe("newestRelease", () => {
       { ...release("v1"), assets: release("v1").assets.filter((a) => a.name === "SHA256SUMS") },
     ]);
     expect(result.macUrl).toBeNull();
+    expect(result.macIntelUrl).toBeNull();
     expect(result.windowsUrl).toBeNull();
   });
 
@@ -52,6 +55,7 @@ describe("newestRelease", () => {
         version: null,
         pageUrl: FORK_RELEASES_PAGE,
         macUrl: null,
+        macIntelUrl: null,
         windowsUrl: null,
       });
     }

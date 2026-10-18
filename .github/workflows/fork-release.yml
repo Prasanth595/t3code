@@ -172,6 +172,11 @@ jobs:
             platform: mac
             target: dmg
             arch: arm64
+          - label: macOS x64
+            runner: macos-15-intel
+            platform: mac
+            target: dmg
+            arch: x64
           - label: Windows x64
             runner: windows-2025
             platform: win
@@ -304,7 +309,7 @@ jobs:
         run: |
           set -euo pipefail
           # The build script keeps only the dmg and zip, so check the app inside the zip.
-          ditto -x -k release/*-arm64.zip "$RUNNER_TEMP/verify"
+          ditto -x -k release/*-${{ matrix.arch }}.zip "$RUNNER_TEMP/verify"
           app="$(ls -d "$RUNNER_TEMP"/verify/*.app)"
           codesign -dvv "$app" 2>&1 | tee "$RUNNER_TEMP/codesign.txt"
           codesign --verify --deep --strict --verbose=2 "$app"
@@ -346,11 +351,16 @@ jobs:
             [[ "$file" == */builder-debug.yml ]] && continue
             cp "$file" release-publish/
           done
+          # Both Mac builds write nightly-mac.yml. The mac_manifest job merges the x64 one into it.
+          if [[ "${{ matrix.platform }}" == mac && "${{ matrix.arch }}" == x64 ]]; then
+            mv release-publish/nightly-mac.yml release-publish/nightly-mac-x64.yml
+          fi
           ls -la release-publish
 
       # The first platform to finish creates the release, the others add their files.
-      # Each platform has its own updater manifest: nightly-mac.yml, nightly.yml
-      # (Windows), nightly-linux.yml (x64) and nightly-linux-arm64.yml.
+      # Each platform has its own updater manifest: nightly-mac.yml (nightly-mac-x64.yml
+      # until mac_manifest merges it), nightly.yml (Windows), nightly-linux.yml (x64) and
+      # nightly-linux-arm64.yml.
       # The release creates a tag. GITHUB_TOKEN cannot create a tag on a commit
       # whose workflow files differ from main, which happens when main moved
       # during the run. FORK_SYNC_TOKEN has the workflow scope.
@@ -360,7 +370,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
           NOTES: ${{ needs.prepare.outputs.notes }}
-          MANIFEST: ${{ matrix.platform == 'mac' && 'nightly-mac.yml' || matrix.platform == 'win' && 'nightly.yml' || matrix.arch == 'arm64' && 'nightly-linux-arm64.yml' || 'nightly-linux.yml' }}
+          MANIFEST: ${{ matrix.platform == 'mac' && matrix.arch == 'x64' && 'nightly-mac-x64.yml' || matrix.platform == 'mac' && 'nightly-mac.yml' || matrix.platform == 'win' && 'nightly.yml' || matrix.arch == 'arm64' && 'nightly-linux-arm64.yml' || 'nightly-linux.yml' }}
         run: |
           set -euo pipefail
           test -s "release-publish/$MANIFEST"
@@ -396,6 +406,50 @@ jobs:
           path: release-cli/t3-*.tar.gz
           if-no-files-found: error
           retention-days: 1
+
+  # electron-updater reads one nightly-mac.yml and picks the file entry of the running arch,
+  # so the x64 manifest merges into the arm64 one. Without both, the release keeps what it has:
+  # Intel Macs then skip this release, and Apple silicon Macs never get an x64 entry.
+  mac_manifest:
+    name: Merge macOS updater manifests
+    needs: [prepare, build_bundle, desktop]
+    if: always() && needs.build_bundle.result == 'success' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+      - uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+      - run: vp install --filter=@t3tools/scripts...
+      - name: Merge and publish nightly-mac.yml
+        env:
+          GH_TOKEN: ${{ secrets.FORK_SYNC_TOKEN || github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p manifests
+          for name in nightly-mac.yml nightly-mac-x64.yml; do
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir manifests || true
+          done
+          if [[ ! -s manifests/nightly-mac.yml || ! -s manifests/nightly-mac-x64.yml ]]; then
+            echo "Both macOS manifests are needed to merge. Found: $(ls manifests)"
+            exit 0
+          fi
+          node scripts/merge-update-manifests.ts --platform mac manifests/nightly-mac.yml manifests/nightly-mac-x64.yml
+          cat manifests/nightly-mac.yml
+          gh release upload "$TAG" manifests/nightly-mac.yml --repo "$GITHUB_REPOSITORY" --clobber
+          gh release delete-asset "$TAG" nightly-mac-x64.yml --repo "$GITHUB_REPOSITORY" --yes
 
   # Writes SHA256SUMS for the server archives and uploads it last. The server
   # updaters need it, so a release without it is not installable on servers.
@@ -448,7 +502,7 @@ jobs:
   # Off until the T3_AGENT_WEBHOOK_URL secret is set.
   notify_agent:
     name: Notify repair agent
-    needs: [prepare, build_bundle, desktop, checksums]
+    needs: [prepare, build_bundle, desktop, mac_manifest, checksums]
     if: failure() && github.event.inputs.notify_agent != 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 20

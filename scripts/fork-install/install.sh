@@ -80,9 +80,10 @@ newest_asset_url() {
 }
 
 install_mac() {
-  [[ "$(uname -m)" == arm64 ]] || die "the fork publishes the macOS app for Apple silicon only."
-  local url mount app name
-  url="$(newest_asset_url "-arm64.dmg")"
+  local url mount app name arch=x64
+  # uname -m says x86_64 in a Rosetta shell on Apple silicon, so ask the hardware.
+  [[ "$(sysctl -n hw.optional.arm64 2>/dev/null)" == 1 ]] && arch=arm64
+  url="$(newest_asset_url "-$arch.dmg")"
   [[ -n "$url" ]] || die "no macOS release found. Open https://github.com/$REPO/releases"
   local tmp
   tmp="$(mktemp -d)"

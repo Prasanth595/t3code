@@ -26,6 +26,7 @@ const FALLBACK: ForkRelease = {
   version: null,
   pageUrl: FORK_RELEASES_PAGE,
   macUrl: null,
+  macIntelUrl: null,
   windowsUrl: null,
 };
 
@@ -42,6 +43,7 @@ export function newestRelease(body: unknown): ForkRelease {
     version: release.tag_name.startsWith("v") ? release.tag_name.slice(1) : release.tag_name,
     pageUrl: release.html_url,
     macUrl: assetUrl("-arm64.dmg"),
+    macIntelUrl: assetUrl("-x64.dmg"),
     windowsUrl: assetUrl("-x64.exe"),
   };
 }
