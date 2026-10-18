@@ -1,7 +1,7 @@
 import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const drawerRenders = vi.hoisted(() => [] as Array<{ visible: boolean; threadRef: unknown }>);
 const drawerWorktreePaths = vi.hoisted(() => [] as Array<string | null>);
@@ -74,18 +74,31 @@ const panelIn = (host: PanelHost) => (
   </PanelHostContext>
 );
 
+let root: Root;
+let container: HTMLDivElement;
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+});
+afterEach(async () => {
+  await act(() => root.unmount());
+  container.remove();
+  vi.unstubAllGlobals();
+});
+
 describe("terminal side panel", () => {
   it("renders the host thread, skips rebuilt hosts with the same inputs, and follows visibility", () => {
-    let renderer: ReactTestRenderer | undefined;
     act(() => {
-      renderer = create(panelIn(hostFor(true)));
+      root.render(panelIn(hostFor(true)));
     });
     expect(drawerRenders).toEqual([{ visible: true, threadRef }]);
 
-    act(() => renderer!.update(panelIn(hostFor(true))));
+    act(() => root.render(panelIn(hostFor(true))));
     expect(drawerRenders).toHaveLength(1);
 
-    act(() => renderer!.update(panelIn(hostFor(false))));
+    act(() => root.render(panelIn(hostFor(false))));
     expect(drawerRenders).toEqual([
       { visible: true, threadRef },
       { visible: false, threadRef },
@@ -104,13 +117,14 @@ describe("terminal side panel", () => {
       </PanelHostContext>
     );
     act(() => {
-      create(launchedLocally);
+      root.render(launchedLocally);
     });
     expect(drawerWorktreePaths).toEqual([null]);
 
+    act(() => root.render(null));
     drawerWorktreePaths.length = 0;
     act(() => {
-      create(panelIn(hostFor(true)));
+      root.render(panelIn(hostFor(true)));
     });
     expect(drawerWorktreePaths).toEqual(["/repo/.worktrees/feature"]);
     thread.worktreePath = null;
@@ -122,9 +136,10 @@ describe("terminal side panel", () => {
       target: { terminalId: "term-1" },
       state: { summary: { cwd: "/repo", worktreePath: null } },
     });
+    act(() => root.render(null));
     drawerWorktreePaths.length = 0;
     act(() => {
-      create(panelIn(hostFor(true)));
+      root.render(panelIn(hostFor(true)));
     });
     expect(drawerWorktreePaths).toEqual([null]);
     terminalSessions.length = 0;
