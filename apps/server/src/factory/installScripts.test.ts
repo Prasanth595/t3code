@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 const scripts = NodePath.resolve(import.meta.dirname, "../../../../factory/scripts");
 const label = "io.github.rawphp.t3fac";
 const logrotateLabel = "io.github.rawphp.t3fac.logrotate";
+const autodeployLabel = "io.github.rawphp.t3fac.autodeploy";
 const uid = process.getuid?.() ?? 0;
 
 const v1 = "0.0.1-test+fac.aaaaaaa";
@@ -42,6 +43,8 @@ const plistPath = () => NodePath.join(home, "Library/LaunchAgents", `${label}.pl
 const root = () => NodePath.join(home, ".local/share/t3fac");
 const logrotatePlistPath = () =>
   NodePath.join(home, "Library/LaunchAgents", `${logrotateLabel}.plist`);
+const autodeployPlistPath = () =>
+  NodePath.join(home, "Library/LaunchAgents", `${autodeployLabel}.plist`);
 const logPath = () => NodePath.join(home, "Library/Logs/t3fac/t3fac.log");
 
 const run = (script: string, ...args: Array<string>) => runWith({}, script, ...args);
@@ -177,10 +180,12 @@ const setupInstalledSandbox = () => {
   expect(run("install.sh", archives[v2]!).status).toBe(0);
 };
 
-// The launchctl calls about each job. The logrotate job's come first: install.sh and
-// rollback.sh restart it just before the main job.
-const mainCalls = (calls: Array<string>) => calls.filter((c) => !c.includes(logrotateLabel));
+// The launchctl calls about each job. The timer jobs' come first: install.sh and rollback.sh
+// restart the logrotate job, then the autodeploy job, just before the main job.
+const mainCalls = (calls: Array<string>) =>
+  calls.filter((c) => !c.includes(logrotateLabel) && !c.includes(autodeployLabel));
 const logrotateCalls = (calls: Array<string>) => calls.filter((c) => c.includes(logrotateLabel));
+const autodeployCalls = (calls: Array<string>) => calls.filter((c) => c.includes(autodeployLabel));
 
 // bootout, then at least one print poll, then bootstrap, for the main job.
 const expectRestartSequence = (allCalls: Array<string>) => {
@@ -258,6 +263,51 @@ describe("install.sh and rollback.sh", () => {
       `print gui/${uid}/${logrotateLabel}`,
       `bootstrap gui/${uid} ${logrotatePlistPath()}`,
     ]);
+  });
+
+  it("writes, installs and bootstraps the autodeploy job on a first install", () => {
+    setupSandbox();
+    archives[v1] = makeArchive(v1);
+    const result = run("install.sh", archives[v1]!);
+    expect(result.status).toBe(0);
+
+    const plist = NodeFS.readFileSync(autodeployPlistPath(), "utf8");
+    expect(plist).not.toContain("@HOME@");
+    for (const part of [
+      `<string>${autodeployLabel}</string>`,
+      "StartInterval",
+      "<integer>600</integer>",
+      `${home}/.local/share/t3fac/autodeploy.sh`,
+      `${home}/Library/Logs/t3fac/autodeploy.log`,
+    ]) {
+      expect(plist).toContain(part);
+    }
+
+    const installed = NodePath.join(root(), "autodeploy.sh");
+    expect(NodeFS.readFileSync(installed, "utf8")).toBe(
+      NodeFS.readFileSync(NodePath.join(scripts, "autodeploy.sh"), "utf8"),
+    );
+    expect(NodeFS.statSync(installed).mode & 0o111).not.toBe(0);
+
+    expect(autodeployCalls(result.calls)).toEqual([
+      `print gui/${uid}/${autodeployLabel}`,
+      `bootstrap gui/${uid} ${autodeployPlistPath()}`,
+    ]);
+    // Between the logrotate job and the server's restart.
+    const firstAutodeploy = result.calls.findIndex((c) => c.includes(autodeployLabel));
+    expect(result.calls.slice(0, firstAutodeploy)).toEqual(logrotateCalls(result.calls));
+    expect(mainCalls(result.calls)).toEqual(result.calls.slice(firstAutodeploy + 2));
+  });
+
+  it("copies autodeploy.sh but leaves its job loaded when autodeploy.sh runs the install", () => {
+    const installed = NodePath.join(root(), "autodeploy.sh");
+    const inode = NodeFS.statSync(installed).ino;
+    const result = runWith({ T3FAC_SKIP_RELOAD: autodeployLabel }, "install.sh", archives[v1]!);
+    expect(result.status).toBe(0);
+    expect(NodeFS.statSync(installed).ino).not.toBe(inode);
+    expect(autodeployCalls(result.calls)).toEqual([]);
+    expect(logrotateCalls(result.calls)).toContain(`bootout gui/${uid}/${logrotateLabel}`);
+    expectRestartSequence(result.calls);
   });
 
   it("keeps the old version as previous and boots the job out first when loaded", () => {
