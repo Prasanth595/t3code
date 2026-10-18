@@ -112,11 +112,13 @@ export function parseGitHubRepositorySelector(
   selector: string,
   defaultHost: string,
 ): GitHubRepositoryLocator | null {
-  const trimmed = selector.trim().replace(/\.git$/i, "");
+  // Like gh, a clone URL's `.git` comes off the path, before any trailing slash, query or fragment.
+  const withoutGitSuffix = (path: string) => path.replace(/\.git\/*$/i, "");
+  const trimmed = withoutGitSuffix(selector.trim());
   if (/^https?:\/\//i.test(trimmed)) {
     try {
       const url = new URL(trimmed);
-      const [owner, name, ...rest] = url.pathname.split("/").filter(Boolean);
+      const [owner, name, ...rest] = withoutGitSuffix(url.pathname).split("/").filter(Boolean);
       return owner && name && rest.length === 0
         ? { host: url.host.toLowerCase(), owner, name }
         : null;
