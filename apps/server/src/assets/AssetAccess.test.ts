@@ -240,6 +240,7 @@ describe("AssetAccess", () => {
       readonly asset: { readonly url: string; readonly cwd: string; readonly repository?: string };
       readonly checkout: string | null;
       readonly rendersTo: string;
+      readonly signedStatus?: number;
     }) => {
       const rendered: Array<unknown> = [];
       const resolvedCheckouts: Array<string> = [];
@@ -302,7 +303,10 @@ describe("AssetAccess", () => {
             return Effect.succeed(
               HttpClientResponse.fromWeb(
                 request,
-                new Response(null, { status: 200, headers: { "content-type": contentType } }),
+                new Response(null, {
+                  status: request.url === signed ? (input.signedStatus ?? 200) : 200,
+                  headers: { "content-type": contentType },
+                }),
               ),
             );
           }),
@@ -363,6 +367,26 @@ describe("AssetAccess", () => {
         expect(result.statuses).toEqual([415, 415]);
         expect(result.rendered).toEqual([]);
         expect(result.requests.map((request) => request.url)).toEqual([url, url]);
+      }),
+    );
+
+    it.effect("signs them again when a signed URL fails to load", () =>
+      Effect.gen(function* () {
+        const url = "https://github.com/user-attachments/assets/0f5c0e6e-signed-fails";
+        const result = yield* loadTwice({
+          asset: { url, cwd: "/checkout", repository: "enterprise/private" },
+          checkout: null,
+          rendersTo: signed,
+          signedStatus: 403,
+        });
+        expect(result.statuses).toEqual([403, 403]);
+        expect(result.rendered).toHaveLength(2);
+        expect(result.requests).toEqual([
+          { url, authorization: "Bearer signed-in" },
+          { url: signed, authorization: undefined },
+          { url, authorization: "Bearer signed-in" },
+          { url: signed, authorization: undefined },
+        ]);
       }),
     );
 

@@ -96,10 +96,11 @@ const checkoutRepository = Effect.fn("GitHubMediaFetch.checkoutRepository")(func
  * repositories. The pull request's repository is the one that surely qualifies; the checkout's
  * is the fallback when the client did not say which pull request the upload is from.
  */
-const signedAttachmentUrl = Effect.fn("GitHubMediaFetch.signedAttachmentUrl")(function* (
-  asset: { readonly url: string; readonly cwd: string; readonly repository?: string },
-  now: number,
-) {
+const signedAttachmentUrl = Effect.fn("GitHubMediaFetch.signedAttachmentUrl")(function* (asset: {
+  readonly url: string;
+  readonly cwd: string;
+  readonly repository?: string;
+}) {
   const url = asset.url;
   const match = ATTACHMENT_URL_PATTERN.exec(url);
   if (match === null) return null;
@@ -123,14 +124,15 @@ const signedAttachmentUrl = Effect.fn("GitHubMediaFetch.signedAttachmentUrl")(fu
       Effect.map((response) => response.body),
       Effect.orElseSucceed(() => ""),
     );
-  const signed = SIGNED_ATTACHMENT_URL_PATTERN.exec(html)?.[1]?.replaceAll("&amp;", "&");
-  if (signed === undefined) return null;
+  return SIGNED_ATTACHMENT_URL_PATTERN.exec(html)?.[1]?.replaceAll("&amp;", "&") ?? null;
+});
+
+const cacheSignedUrl = (url: string, signed: string, now: number) => {
   if (signedUrlCache.size >= SIGNED_URL_CACHE_MAX_ENTRIES) {
     signedUrlCache.delete(signedUrlCache.keys().next().value!);
   }
   signedUrlCache.set(url, { at: now, url: signed });
-  return signed;
-});
+};
 
 const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedirects")(function* (
   url: string,
@@ -187,9 +189,13 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
     forwarded,
     cached === null ? token : null,
   );
+  let signed: string | null = null;
   if (cached === null && response?.headers["content-type"]?.startsWith("text/html")) {
-    const signed = yield* signedAttachmentUrl(asset, now);
+    signed = yield* signedAttachmentUrl(asset);
     if (signed !== null) response = yield* fetchFollowingRedirects(signed, forwarded, null);
+  }
+  if (cached !== null && (response === null || response.status >= 400)) {
+    signedUrlCache.delete(asset.url);
   }
   const remainingSeconds = Math.floor((asset.expiresAt - (yield* Clock.currentTimeMillis)) / 1000);
   const headers: Record<string, string> = {
@@ -214,6 +220,8 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
   if (!MEDIA_CONTENT_TYPE_PATTERN.test(contentType)) {
     return HttpServerResponse.empty({ status: 415, headers });
   }
+  // Only a signed URL that served media is reused; a failed one is rendered again next time.
+  if (signed !== null) cacheSignedUrl(asset.url, signed, now);
   for (const name of FORWARDED_RESPONSE_HEADERS) {
     const value = response.headers[name];
     if (value !== undefined) headers[name] = value;
