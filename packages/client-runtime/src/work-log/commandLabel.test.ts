@@ -19,13 +19,37 @@ describe("ignored command prefixes", () => {
     [".\\rtk git status", "git", "git status"],
     ["CI=1 env -u DEBUG sudo -u root rtk git status", "git", "git status"],
     ["/bin/zsh -lc 'rtk git status'", "git", "git status"],
-    ["command rtk git status", "git", "'git' 'status'"],
-    ["cd repo && rtk git status", "git", "git status"],
     ["rtk git status && git diff", "git", "git status && git diff"],
     ['& "C:\\Tools\\rtk" git status', "git", "git status"],
     ["rtk \\\n git status", "git", "git status"],
   ])("unwraps configured prefixes in %s", (command, program, preview) => {
     expect(commandProgramName(command, prefixes)).toBe(program);
+    expect(commandDisplayText(command, prefixes)).toBe(preview);
+  });
+
+  it.each([
+    "command rtk git status",
+    "cd repo && rtk git status",
+    "sh -c 'rtk git status' && npm test",
+    "bash -c 'rtk git status' && npm test",
+    "bash -c 'rtk git status'; npm test",
+    "bash -c 'rtk git status' && git status",
+    "sh -c 'rtk git status' git status",
+    "timeout 10 rtk git status; npm test",
+  ])("preserves shell boundaries and other commands in %s", (command) => {
+    expect(commandProgramName(command, prefixes)).toBe("git");
+    expect(commandDisplayText(command, prefixes)).toBe(command);
+  });
+
+  it.each([
+    ["rtk git status; npm test", "git status; npm test"],
+    ["rtk git status  ;  npm test", "git status  ;  npm test"],
+    ["rtk git status&&npm test", "git status&&npm test"],
+    ["rtk git status\nnpm test", "git status\nnpm test"],
+    ["wrapper rtk git status; npm test", "git status; npm test"],
+    ["rtk sh -c 'rtk git status' && npm test", "sh -c 'rtk git status' && npm test"],
+    ["rtk cat <<EOF\nhello\nEOF\nnpm test", "cat <<EOF\nhello\nEOF\nnpm test"],
+  ])("retains the original command suffix when removing prefixes in %s", (command, preview) => {
     expect(commandDisplayText(command, prefixes)).toBe(preview);
   });
 

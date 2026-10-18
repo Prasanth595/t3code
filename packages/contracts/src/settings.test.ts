@@ -33,7 +33,13 @@ describe("ignored command prefix settings", () => {
     }
   });
 
-  it.each([[42], [""], ["   "], "rtk", null])("rejects invalid lists: %j", (prefixes) => {
+  it.each([
+    { prefixes: [42] },
+    { prefixes: [""] },
+    { prefixes: ["   "] },
+    { prefixes: "rtk" },
+    { prefixes: null },
+  ])("rejects invalid lists: $prefixes", ({ prefixes }) => {
     expect(() => decodeClientSettings({ ignoredCommandPrefixes: prefixes })).toThrow();
   });
 });

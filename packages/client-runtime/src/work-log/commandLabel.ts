@@ -1108,6 +1108,7 @@ function parseCommandProgramName(
   context: CommandProgramContext,
   segmentsRemaining: number,
   labelContext?: CommandLabelContext,
+  allowDisplayRewrite = false,
 ): string | null {
   if (depth >= 8 || segmentsRemaining <= 0) return null;
   const commandWithoutComments = commandWithoutLeadingShellComments(command);
@@ -1235,18 +1236,29 @@ function parseCommandProgramName(
       const targetOffset = tokenOffsets?.[targetIndex];
       if (target && !target.startsWith("-") && targetOffset !== undefined) {
         const remainder = firstCommand.slice(targetOffset);
-        const displayCommand = commandSplit.remainingCommand
-          ? `${remainder} ${commandSplit.separator} ${commandSplit.remainingCommand}`
-          : remainder;
+        const source = command.trim();
+        const sourceFirstCommand = commandSplit.firstCommand.trim();
+        const sourceOffset =
+          source.startsWith(sourceFirstCommand) && sourceFirstCommand.endsWith(remainder)
+            ? sourceFirstCommand.length - remainder.length
+            : null;
+        const displayCommand =
+          sourceOffset !== null
+            ? source.slice(sourceOffset)
+            : commandSplit.remainingCommand
+              ? `${remainder} ${commandSplit.separator} ${commandSplit.remainingCommand}`
+              : remainder;
+        const rewriteDisplay = allowDisplayRewrite && sourceOffset !== null;
         const program = commandProgramNameInternal(
           displayCommand,
           depth + 1,
           "exec",
           segmentsRemaining,
           labelContext,
+          rewriteDisplay,
         );
         if (program !== null && !labelContext.unresolvedPrefix) {
-          labelContext.displayCommand ??= displayCommand;
+          if (rewriteDisplay) labelContext.displayCommand ??= displayCommand;
           return program;
         }
       }
@@ -1444,6 +1456,7 @@ function commandProgramNameInternal(
   context: CommandProgramContext,
   segmentsRemaining = MAX_COMMAND_SEGMENTS,
   labelContext?: CommandLabelContext,
+  allowDisplayRewrite = false,
 ): string | null {
   if (segmentsRemaining <= 0) return null;
   const calledProgram = powerShellCallOperatorProgramName(command);
@@ -1456,14 +1469,21 @@ function commandProgramNameInternal(
           "exec",
           segmentsRemaining,
           labelContext,
+          allowDisplayRewrite,
         ) ?? calledProgram
       );
     }
     return calledProgram;
   }
   return (
-    parseCommandProgramName(command, depth, context, segmentsRemaining, labelContext) ??
-    (context === "shell" ? literalCommandAliasProgramName(command) : null)
+    parseCommandProgramName(
+      command,
+      depth,
+      context,
+      segmentsRemaining,
+      labelContext,
+      allowDisplayRewrite,
+    ) ?? (context === "shell" ? literalCommandAliasProgramName(command) : null)
   );
 }
 
@@ -1515,7 +1535,8 @@ export function commandDisplayText(
   const display = withoutShellWrapper(command);
   if (ignoredCommandPrefixes.length === 0) return withVisibleControlCharacters(display);
   const context = commandLabelContext(ignoredCommandPrefixes);
-  commandProgramNameInternal(display, 0, "shell", MAX_COMMAND_SEGMENTS, context);
+  // Nested shell payloads and reconstructed tokens cannot replace the whole preview.
+  commandProgramNameInternal(display, 0, "shell", MAX_COMMAND_SEGMENTS, context, true);
   return withVisibleControlCharacters(context.displayCommand ?? display);
 }
 
