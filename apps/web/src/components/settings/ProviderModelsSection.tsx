@@ -507,7 +507,9 @@ function ProviderModelRow({
         */}
         <Tooltip>
           <TooltipTrigger
-            render={<span className="flex min-w-0 items-baseline gap-2 overflow-hidden" />}
+            render={
+              <span tabIndex={0} className="flex min-w-0 items-baseline gap-2 overflow-hidden" />
+            }
           >
             <span className={cn(nameClassName, "max-w-full shrink-0 truncate")}>{model.name}</span>
             {model.name !== model.slug ? (
