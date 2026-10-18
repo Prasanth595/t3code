@@ -155,18 +155,22 @@ prepare() {
 
 # Files `Sync to <tag> <kind>`, or comments on the open issue of that kind and
 # retitles it to this tag, so a problem that lasts across tags keeps one issue.
-# The search is fuzzy, so the exact match happens here, not in gh. Extra
-# arguments go to `gh issue create`.
+# An issue the factory is claiming or building keeps its title: the factory
+# reads a title change from someone who is not an instructor as the issue
+# changing under it, and stops the run. The search is fuzzy, so the exact match
+# happens here, not in gh. Extra arguments go to `gh issue create`.
 file_issue() {
   local kind=$1 body=$2
   shift 2
-  local title="Sync to $tag $kind" number
-  number=$(gh issue list --state open --search "\"$kind\" in:title" --json number,title \
-    --jq '.[] | "\(.number)\t\(.title)"' |
+  local title="Sync to $tag $kind" match number labels
+  match=$(gh issue list --state open --search "\"$kind\" in:title" --json number,title,labels \
+    --jq '.[] | "\(.number)\t\(.title)\t\([.labels[].name] | join(","))"' |
     awk -F '\t' -v kind="$kind" '
-      $2 ~ ("^Sync to v[0-9]+\\.[0-9]+\\.[0-9]+-nightly\\.[0-9]+\\.[0-9]+ " kind "$") { print $1; exit }')
+      $2 ~ ("^Sync to v[0-9]+\\.[0-9]+\\.[0-9]+-nightly\\.[0-9]+\\.[0-9]+ " kind "$") { print $1 "\t" $3; exit }')
+  IFS=$'\t' read -r number labels <<< "$match"
   if [[ -n $number ]]; then
-    gh issue edit "$number" --title "$title"
+    [[ ",$labels," =~ ,factory:(ready|triage|building|pr-open), ]] ||
+      gh issue edit "$number" --title "$title"
     gh issue comment "$number" --body-file "$body"
   else
     gh issue create --title "$title" "$@" --body-file "$body"
