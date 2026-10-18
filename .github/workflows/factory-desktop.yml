@@ -30,6 +30,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
         with:
+          # Only the publish step needs the write token; keep it out of .git/config
+          # while dependency install and build scripts run.
+          persist-credentials: false
           sparse-checkout: |
             /*
             !/.repos/
