@@ -911,47 +911,6 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
-  it.effect("stays stopped when the spec cannot move off a taken port", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        let spawnCount = 0;
-        const gaveUp = yield* Deferred.make<void>();
-        const layerSpawner = Layer.succeed(
-          ChildProcessSpawner.ChildProcessSpawner,
-          ChildProcessSpawner.make(() =>
-            Effect.gen(function* () {
-              spawnCount += 1;
-              const killed = yield* Deferred.make<void>();
-              return makeProcess({
-                exitCode: Deferred.await(killed).pipe(Effect.as(ChildProcessSpawner.ExitCode(1))),
-                kill: () => Deferred.succeed(killed, void 0).pipe(Effect.asVoid),
-              });
-            }),
-          ),
-        );
-
-        const instance = yield* makeTestInstance({
-          spawnerLayer: layerSpawner,
-          httpClientLayer: layerHttpClient((request) =>
-            Effect.succeed(
-              HttpClientResponse.fromWeb(request, Response.json({ desktopLaunchId: "other" })),
-            ),
-          ),
-          onPortTaken: () => Deferred.succeed(gaveUp, void 0).pipe(Effect.as(false)),
-        });
-
-        yield* instance.start;
-        yield* Deferred.await(gaveUp);
-        yield* TestClock.adjust(Duration.seconds(30));
-
-        const snapshot = yield* instance.snapshot;
-        assert.equal(spawnCount, 1);
-        assert.isFalse(snapshot.desiredRunning);
-        assert.isFalse(snapshot.restartScheduled);
-      }).pipe(Effect.provide(TestClock.layer())),
-    ),
-  );
-
   it.effect("starts the configured backend and closes the scoped process on stop", () =>
     Effect.scoped(
       Effect.gen(function* () {

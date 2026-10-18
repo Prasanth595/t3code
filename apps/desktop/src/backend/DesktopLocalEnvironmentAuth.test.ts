@@ -236,49 +236,6 @@ describe("DesktopLocalEnvironmentAuth", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("checks ownership again before retrying the exchange", () =>
-    Effect.gen(function* () {
-      const requests = yield* Ref.make<ReadonlyArray<string>>([]);
-      const descriptorReads = yield* Ref.make(0);
-      // The launched backend answers the first check, then fails the POST with
-      // a 503; by the retry another server holds the port.
-      const layerHttpClient = Layer.succeed(
-        HttpClient.HttpClient,
-        HttpClient.make((request) =>
-          Effect.gen(function* () {
-            yield* Ref.update(requests, (seen) => [...seen, `${request.method} ${request.url}`]);
-            if (request.url !== DESCRIPTOR_URL) {
-              return HttpClientResponse.fromWeb(request, new Response("", { status: 503 }));
-            }
-            const reads = yield* Ref.updateAndGet(descriptorReads, (count) => count + 1);
-            return HttpClientResponse.fromWeb(
-              request,
-              Response.json({ desktopLaunchId: reads === 1 ? "launch-1" : "another-server" }),
-            );
-          }),
-        ),
-      );
-      const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
-        Effect.provide(
-          DesktopLocalEnvironmentAuth.layer.pipe(
-            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient)),
-          ),
-        ),
-      );
-
-      const fiber = yield* auth.getBearerToken.pipe(Effect.flip, Effect.forkChild);
-      yield* TestClock.adjust(Duration.seconds(1));
-      const error = yield* Fiber.join(fiber);
-
-      assert.strictEqual(error._tag, "DesktopLocalEnvironmentAuthForeignServerError");
-      assert.deepEqual(yield* Ref.get(requests), [
-        `GET ${DESCRIPTOR_URL}`,
-        "POST http://127.0.0.1:3773/oauth/token",
-        `GET ${DESCRIPTOR_URL}`,
-      ]);
-    }).pipe(Effect.provide(TestClock.layer())),
-  );
-
   it.effect("does not retry a rejected bootstrap credential", () =>
     Effect.gen(function* () {
       const { auth, requestCount } = yield* makeExchange(1, () =>

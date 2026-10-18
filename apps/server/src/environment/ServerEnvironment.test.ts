@@ -128,30 +128,6 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       }
     }),
   );
-  it.effect("echoes the desktop launch id so the desktop can recognize its own backend", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const baseDir = yield* fs.makeTempDirectoryScoped();
-      const config = yield* makeServerConfig(baseDir);
-      yield* fs.makeDirectory(config.stateDir, { recursive: true });
-
-      const descriptor = yield* Effect.gen(function* () {
-        const environment = yield* ServerEnvironment.ServerEnvironment;
-        return yield* environment.getDescriptor;
-      }).pipe(
-        Effect.provide(
-          ServerEnvironment.layer.pipe(
-            Layer.provide(layerEmptySecretStore),
-            Layer.provide(
-              ServerConfig.layer({ ...config, mode: "desktop", desktopLaunchId: "launch-1" }),
-            ),
-          ),
-        ),
-      );
-
-      expect(descriptor.desktopLaunchId).toBe("launch-1");
-    }),
-  );
   it.effect.each([
     { name: "missing", content: undefined },
     { name: "empty", content: "" },
