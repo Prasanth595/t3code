@@ -41,6 +41,7 @@ const FORK_RESTORED_SETTINGS = [
   ["keyboardFocusLevels", "Keyboard focus levels"],
   ["focusLevelHighlight", "Focus highlight"],
   ["tooltipShortcuts", "Shortcuts in tooltips"],
+  ["tooltipShortcutLimit", "Keys per tooltip"],
   ["confirmTerminalClose", "Terminal close confirmation"],
 ] as const satisfies ReadonlyArray<
   readonly [keyof UnifiedSettings & keyof ScopedSettingsPatch, string]

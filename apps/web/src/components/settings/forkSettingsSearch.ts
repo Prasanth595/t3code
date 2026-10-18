@@ -138,6 +138,12 @@ export const BEHAVIOR_ITEMS = [
     searchTerms: ["keyboard shortcuts keybindings tooltip hint key label"],
   },
   {
+    id: "tooltip-shortcut-limit",
+    title: "Keys per tooltip",
+    to: "/settings/general",
+    searchTerms: ["keyboard shortcuts keybindings tooltip chips limit more how many"],
+  },
+  {
     id: "repository-owner-filters",
     title: "Repository owner filters",
     to: "/settings/general",

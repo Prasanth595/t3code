@@ -1,7 +1,13 @@
-import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import {
+  type ClientSettings,
+  DEFAULT_CLIENT_SETTINGS,
+  MAX_TOOLTIP_SHORTCUT_LIMIT,
+  MIN_TOOLTIP_SHORTCUT_LIMIT,
+} from "@t3tools/contracts";
 
 import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
 import { Switch } from "../ui/switch";
+import { BoundedIntegerInput } from "./BoundedIntegerInput";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -99,6 +105,41 @@ export function TooltipShortcutsSettingsRow() {
           checked={enabled}
           onCheckedChange={(checked) => void updateSettings({ tooltipShortcuts: Boolean(checked) })}
           aria-label="Shortcuts in tooltips"
+        />
+      }
+    />
+  );
+}
+
+const selectShortcutLimit = (settings: ClientSettings) => settings.tooltipShortcutLimit;
+
+/** Fork: `tooltipShortcutLimit`, the most keys one tooltip shows before "+N". */
+export function TooltipShortcutLimitSettingsRow() {
+  const limit = useClientSettings(selectShortcutLimit);
+  const updateSettings = useUpdateClientSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("tooltip-shortcut-limit")}
+      description="The most keys one tooltip shows. More show as +N; Settings → Keybindings lists them all."
+      resetAction={
+        limit !== DEFAULT_CLIENT_SETTINGS.tooltipShortcutLimit ? (
+          <SettingResetButton
+            label="keys per tooltip"
+            onClick={() =>
+              void updateSettings({
+                tooltipShortcutLimit: DEFAULT_CLIENT_SETTINGS.tooltipShortcutLimit,
+              })
+            }
+          />
+        ) : null
+      }
+      control={
+        <BoundedIntegerInput
+          value={limit}
+          min={MIN_TOOLTIP_SHORTCUT_LIMIT}
+          max={MAX_TOOLTIP_SHORTCUT_LIMIT}
+          onCommit={(value) => void updateSettings({ tooltipShortcutLimit: value })}
+          aria-label="Keys per tooltip"
         />
       }
     />

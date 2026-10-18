@@ -73,7 +73,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **Global scripts:** scripts for every project, pinned script buttons, floating previews and app overlays (`globalScripts`, `pinnedGlobalScriptIds`, `pinnedProjectScriptIds`). A script can run in the background without opening the terminal drawer (`runInBackground`). A remote client opens an app overlay action in the preview instead.
 - **App toggle shortcuts:** global keys that show and hide the desktop app (`appToggleShortcuts`).
 - **Keyboard focus levels:** Escape moves focus from the composer to the timeline, then to the sidebar. Arrow keys move a cursor there to open threads, switch groups and cite parts of messages (`keyboardFocusLevels`, off by default; `focusLevelHighlight`, on by default). Keys for thread actions and approvals work with it off.
-- **Shortcuts in tooltips:** control tooltips name the keyboard shortcut of the control, such as the stash, the runtime mode or the approval buttons (`tooltipShortcuts`, on by default).
+- **Shortcuts in tooltips:** control tooltips name the keyboard shortcut of the control, such as the stash, the runtime mode or the approval buttons (`tooltipShortcuts`, on by default; `tooltipShortcutLimit` keys per tooltip, default 4).
 - **Terminal settings:** app shortcuts first in the terminal, and a confirmation before a terminal closes (`terminalAppShortcutsFirst`; `confirmTerminalClose`, on by default).
 
 **Web app and look**
