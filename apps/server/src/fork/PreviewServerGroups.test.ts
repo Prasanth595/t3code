@@ -61,6 +61,7 @@ it.layer(NodeServices.layer)("PreviewServerGroups", (it) => {
             [4, path.join(temp, "elsewhere")],
           ]),
           folders,
+          sharedPorts: new Set(),
           probe: (server) =>
             Effect.sync(() => {
               probed.push(server.port);
@@ -83,5 +84,30 @@ it.layer(NodeServices.layer)("PreviewServerGroups", (it) => {
         // Upstream crash rule (pingdotgg/t3code#18377): no HTTP to a listener outside the projects.
         expect(probed.toSorted()).toEqual([5101, 5102, 5103]);
       }),
+  );
+
+  it.effect("sends no request to a port that a second process also owns", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const temp = yield* fileSystem.realPath(
+        yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-server-groups-" }),
+      );
+      const project = ProjectId.make("project-1");
+      const folders = yield* resolveProjectFolders([{ projectId: project, folder: temp }]);
+      const probed: number[] = [];
+      // The listener keeps only its first owner. A request to the port can reach the other one.
+      const placed = yield* placeListeners({
+        listeners: [listener(5201, 1)],
+        cwdByPid: new Map([[1, temp]]),
+        folders,
+        sharedPorts: new Set([5201]),
+        probe: (server) => Effect.sync(() => (probed.push(server.port), null)),
+      });
+
+      expect(placed.map(({ folder, check }) => ({ folder, check }))).toEqual([
+        { folder: { projectId: project, folder: temp }, check: "unchecked" },
+      ]);
+      expect(probed).toEqual([]);
+    }),
   );
 });

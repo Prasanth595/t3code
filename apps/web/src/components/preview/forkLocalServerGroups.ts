@@ -87,17 +87,30 @@ const CHECK_NOTES: Readonly<Record<ForkLocalListener["check"], string | null>> =
   unchecked: "not checked",
 };
 
-/** Null while the setting is off: the list is then exactly the upstream list. */
+/**
+ * The sections of the list. While the setting is off, the only section is the upstream list, so
+ * the list is exactly the upstream list.
+ */
 export function useForkLocalServerSections(input: {
   readonly threadRef: ScopedThreadRef;
   readonly servers: ReadonlyArray<PreviewableServer>;
-}): ReadonlyArray<ForkLocalServerSection> | null {
+}): {
+  readonly groupsEnabled: boolean;
+  readonly sections: ReadonlyArray<ForkLocalServerSection>;
+} {
   const { environmentId } = input.threadRef;
   const enabled = useAtomValue(groupsEnabledAtom(environmentId));
   const thread = useThreadShell(input.threadRef);
   const project = useProject(thread ? { environmentId, projectId: thread.projectId } : null);
   const query = useEnvironmentQuery(enabled ? localListeners({ environmentId, input: {} }) : null);
-  if (!enabled) return null;
+  const terminal: ForkLocalServerSection = {
+    group: "terminal",
+    label: null,
+    entries: input.servers.map((server) => ({ server, note: null })),
+  };
+  if (!enabled) {
+    return { groupsEnabled: false, sections: terminal.entries.length > 0 ? [terminal] : [] };
+  }
 
   const worktreePath = thread?.worktreePath ?? null;
   const groups = groupForkListeners({
@@ -120,11 +133,7 @@ export function useForkLocalServerSections(input: {
     note: CHECK_NOTES[listener.check],
   });
   const sections: ReadonlyArray<ForkLocalServerSection> = [
-    {
-      group: "terminal",
-      label: null,
-      entries: input.servers.map((server) => ({ server, note: null })),
-    },
+    terminal,
     {
       group: "worktree",
       label: worktreePath ? "This worktree" : "This project folder",
@@ -137,7 +146,10 @@ export function useForkLocalServerSections(input: {
     },
     { group: "other", label: "All other local servers", entries: groups.other.map(toEntry) },
   ];
-  return sections.filter((section) => section.entries.length > 0);
+  return {
+    groupsEnabled: true,
+    sections: sections.filter((section) => section.entries.length > 0),
+  };
 }
 
 /**

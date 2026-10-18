@@ -40,12 +40,14 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
-import { isFilesystemRoot } from "../worktreesDirectory.ts";
 
 const LSOF_TIMEOUT = Duration.seconds(5);
-// Limit: a new project or worktree counts only after this time. Revisit when a server that
-// starts in a new worktree must show in its group sooner.
+// Limit: a new project or thread worktree counts only after this time. Revisit when a server
+// that starts in a new worktree must show in its group sooner.
 const FOLDERS_TTL_MS = Duration.toMillis(Duration.seconds(30));
+// `git worktree list` runs once per project, so it refreshes less often. A worktree that no
+// thread uses counts after up to this time.
+const GIT_WORKTREES_TTL_MS = Duration.toMillis(Duration.minutes(5));
 const PROBE_TTL_MS = Duration.toMillis(Duration.seconds(15));
 const PROBE_CONCURRENCY = 16;
 const GIT_CONCURRENCY = 4;
@@ -62,6 +64,11 @@ export interface ScanObservation {
   readonly listeners: ReadonlyArray<DiscoveredLocalServer>;
   /** The listeners that the upstream list shows. */
   readonly shown: ReadonlyArray<DiscoveredLocalServer>;
+  /**
+   * Ports with more than one owner process, such as one on IPv4 and one on IPv6. A listener keeps
+   * only the first owner, so a request to the port can reach the other process.
+   */
+  readonly sharedPorts: ReadonlySet<number>;
   /** The upstream web check: the URL that serves a page, or null. */
   readonly probe: (url: string) => Effect.Effect<string | null>;
 }
@@ -88,13 +95,20 @@ export const scannerHook = Effect.serviceOption(PreviewServerGroups).pipe(
 );
 
 /**
- * Resolves symlinks, drops folders that do not exist or are a filesystem root, keeps the first
- * entry for each real folder, and puts the deepest folders first.
+ * Resolves symlinks, drops folders that do not exist, keeps the first entry for each real folder,
+ * and puts the deepest folders first. It also drops the home folder and every folder above it: a
+ * project there would put nearly every process inside a project.
+ *
+ * Limit: two projects with the same root keep only the first project, so the servers there are in
+ * the "all others" group for a thread of the second project. That changes no HTTP check, because
+ * every project folder gets one. Revisit if a group must name every project of a folder.
  */
 export const resolveProjectFolders = Effect.fn("PreviewServerGroups.resolveProjectFolders")(
   function* (folders: ReadonlyArray<Omit<ProjectFolder, "realPath">>) {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const homePath = path.resolve(yield* HostProcess.HomeDirectory);
+    const home = yield* fileSystem.realPath(homePath).pipe(Effect.orElseSucceed(() => homePath));
     const resolved = yield* Effect.forEach(folders, (entry) =>
       fileSystem.realPath(path.resolve(entry.folder)).pipe(
         Effect.map((realPath) => ({ ...entry, realPath })),
@@ -103,7 +117,7 @@ export const resolveProjectFolders = Effect.fn("PreviewServerGroups.resolveProje
     );
     const byRealPath = new Map<string, ProjectFolder>();
     for (const entry of resolved) {
-      if (Option.isNone(entry) || isFilesystemRoot(entry.value.realPath, path)) continue;
+      if (Option.isNone(entry) || isWithinRoot(path, home, entry.value.realPath)) continue;
       if (!byRealPath.has(entry.value.realPath)) byRealPath.set(entry.value.realPath, entry.value);
     }
     return [...byRealPath.values()].toSorted(
@@ -114,12 +128,13 @@ export const resolveProjectFolders = Effect.fn("PreviewServerGroups.resolveProje
 
 /**
  * Places each listener by the real working folder of its process. Only a listener inside a
- * project folder gets `probe`.
+ * project folder, on a port with one owner, gets `probe`.
  */
 export const placeListeners = Effect.fn("PreviewServerGroups.placeListeners")(function* (input: {
   readonly listeners: ReadonlyArray<DiscoveredLocalServer>;
   readonly cwdByPid: ReadonlyMap<number, string | null>;
   readonly folders: ReadonlyArray<ProjectFolder>;
+  readonly sharedPorts: ReadonlySet<number>;
   readonly probe: (listener: DiscoveredLocalServer) => Effect.Effect<string | null>;
 }) {
   const path = yield* Path.Path;
@@ -142,7 +157,7 @@ export const placeListeners = Effect.fn("PreviewServerGroups.placeListeners")(fu
           folder === undefined ? null : { projectId: folder.projectId, folder: folder.folder },
         check: "unchecked",
       };
-      if (folder === undefined) return placed;
+      if (folder === undefined || input.sharedPorts.has(listener.port)) return placed;
       const pageUrl = yield* input.probe(listener);
       return pageUrl === null
         ? { ...placed, check: "noPage" as const }
@@ -195,6 +210,10 @@ export const make = Effect.gen(function* () {
     readonly folders: ReadonlyArray<ProjectFolder>;
     readonly expiresAtMillis: number;
   }>({ folders: [], expiresAtMillis: 0 });
+  const gitWorktreesRef = yield* Ref.make<{
+    readonly worktrees: ReadonlyArray<{ readonly projectId: ProjectId; readonly folder: string }>;
+    readonly expiresAtMillis: number;
+  }>({ worktrees: [], expiresAtMillis: 0 });
   const probeCacheRef = yield* Ref.make<
     ReadonlyMap<string, { readonly url: string | null; readonly expiresAtMillis: number }>
   >(new Map());
@@ -219,9 +238,10 @@ export const make = Effect.gen(function* () {
 
   // Windows has no cheap way to read the folder of another process, so every listener there is
   // `outside`. Revisit if a Windows API exposes it without a process per PID.
+  // Null when the lookup itself failed, so the PIDs are read again on the next scan.
   const readCwds = Effect.fn("PreviewServerGroups.readCwds")(function* (
     pids: ReadonlyArray<number>,
-  ) {
+  ): Effect.fn.Return<ReadonlyMap<number, string> | null> {
     if (pids.length === 0 || hostPlatform === "win32") return new Map<number, string>();
     if (hostPlatform === "linux") {
       const entries = yield* Effect.forEach(
@@ -244,8 +264,8 @@ export const make = Effect.gen(function* () {
         maxOutputBytes: 1024 * 1024,
       })
       .pipe(
-        Effect.map((result) => parseLsofCwdOutput(result.stdout)),
-        Effect.orElseSucceed(() => new Map<number, string>()),
+        Effect.map((result) => (result.timedOut ? null : parseLsofCwdOutput(result.stdout))),
+        Effect.orElseSucceed(() => null),
       );
   });
 
@@ -261,7 +281,7 @@ export const make = Effect.gen(function* () {
       cached.get(pid)?.processName === processName ? [] : [pid],
     );
     const read = yield* readCwds(unknown);
-    const resolved = yield* Effect.forEach([...read], ([pid, cwd]) =>
+    const resolved = yield* Effect.forEach([...(read ?? [])], ([pid, cwd]) =>
       fileSystem.realPath(cwd).pipe(
         Effect.map((real) => [pid, real] as const),
         Effect.orElseSucceed(() => [pid, null] as const),
@@ -271,15 +291,33 @@ export const make = Effect.gen(function* () {
     const next = new Map<number, { processName: string | null; cwd: string | null }>();
     for (const [pid, processName] of processes) {
       const entry = cached.get(pid);
-      next.set(
-        pid,
-        entry?.processName === processName
-          ? entry
-          : { processName, cwd: realByPid.get(pid) ?? null },
-      );
+      if (entry?.processName === processName) next.set(pid, entry);
+      else if (read !== null) next.set(pid, { processName, cwd: realByPid.get(pid) ?? null });
     }
     yield* Ref.set(cwdCacheRef, next);
     return new Map([...next].map(([pid, entry]) => [pid, entry.cwd] as const));
+  });
+
+  const gitWorktrees = Effect.fn("PreviewServerGroups.gitWorktrees")(function* (
+    projects: ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string }>,
+  ) {
+    const nowMillis = yield* Clock.currentTimeMillis;
+    const cached = yield* Ref.get(gitWorktreesRef);
+    if (cached.expiresAtMillis > nowMillis) return cached.worktrees;
+    const worktrees = (yield* Effect.forEach(
+      projects,
+      (project) =>
+        git.listWorktreePaths(project.workspaceRoot).pipe(
+          Effect.map((paths) => paths.map((folder) => ({ projectId: project.id, folder }))),
+          Effect.orElseSucceed(() => []),
+        ),
+      { concurrency: GIT_CONCURRENCY },
+    )).flat();
+    yield* Ref.set(gitWorktreesRef, {
+      worktrees,
+      expiresAtMillis: nowMillis + GIT_WORKTREES_TTL_MS,
+    });
+    return worktrees;
   });
 
   const loadFolders = Effect.fn("PreviewServerGroups.loadFolders")(function* () {
@@ -296,15 +334,7 @@ export const make = Effect.gen(function* () {
       FROM orchestration_v2_projection_threads
       WHERE deleted_at IS NULL AND json_extract(payload_json, '$.worktreePath') IS NOT NULL
     `.pipe(Effect.orElseSucceed(() => []));
-    const worktrees = yield* Effect.forEach(
-      projects,
-      (project) =>
-        git.listWorktreePaths(project.workspaceRoot).pipe(
-          Effect.map((paths) => paths.map((folder) => ({ projectId: project.id, folder }))),
-          Effect.orElseSucceed(() => []),
-        ),
-      { concurrency: GIT_CONCURRENCY },
-    );
+    const worktrees = yield* gitWorktrees(projects);
     return yield* resolveProjectFolders([
       ...threads.flatMap(({ worktreePath, projectId }) => {
         const project = projectsById.get(projectId);
@@ -313,7 +343,7 @@ export const make = Effect.gen(function* () {
           : [{ projectId: project.id, folder: worktreePath }];
       }),
       ...projects.map((project) => ({ projectId: project.id, folder: project.workspaceRoot })),
-      ...worktrees.flat(),
+      ...worktrees,
     ]).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, path),
@@ -331,7 +361,11 @@ export const make = Effect.gen(function* () {
 
   const pass = Effect.fn("PreviewServerGroups.pass")(function* (scan: ScanObservation) {
     const shownPorts = new Set(scan.shown.map((server) => server.port));
-    const listeners = scan.listeners.filter((listener) => !shownPorts.has(listener.port));
+    // A listener of a T3 terminal that the upstream list hides serves no page. Upstream checked
+    // it already, so it gets no second request.
+    const listeners = scan.listeners.filter(
+      (listener) => listener.terminal === null && !shownPorts.has(listener.port),
+    );
     const cwdByPid = yield* cwdsFor(listeners);
     const folders = yield* currentFolders();
     const nowMillis = yield* Clock.currentTimeMillis;
@@ -349,9 +383,13 @@ export const make = Effect.gen(function* () {
       nextProbeCache.set(key, { url, expiresAtMillis: nowMillis + PROBE_TTL_MS });
       return url;
     });
-    const placed = yield* placeListeners({ listeners, cwdByPid, folders, probe }).pipe(
-      Effect.provideService(Path.Path, path),
-    );
+    const placed = yield* placeListeners({
+      listeners,
+      cwdByPid,
+      folders,
+      sharedPorts: scan.sharedPorts,
+      probe,
+    }).pipe(Effect.provideService(Path.Path, path));
     yield* Ref.set(probeCacheRef, nextProbeCache);
     // The setting can turn off while the checks run.
     if (!(yield* active)) return yield* clear;
