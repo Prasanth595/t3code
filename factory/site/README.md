@@ -1,6 +1,6 @@
 # t3code factory docs site
 
-The VitePress site at [factory.originalsolutions.com.au](https://factory.originalsolutions.com.au). `npm run dev` serves it locally and `npm run build` builds it, both from this folder after `npm ci`.
+The VitePress site at [t3code-factory-docs.originalsolutions.com.au](https://t3code-factory-docs.originalsolutions.com.au). `npm run dev` serves it locally and `npm run build` builds it, both from this folder after `npm ci`.
 
 ## Screenshots
 
