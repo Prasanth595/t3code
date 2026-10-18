@@ -199,10 +199,33 @@ describe("environment release checks", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe("https://github.com/pingdotgg/t3code/releases.atom");
   });
 
+  it("pages the release index for a preview that later nightlies pushed out of the feed", async () => {
+    const nightlies = Array.from({ length: 10 }, (_, i) => `v1.0.0-nightly.20260930.${i}`);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(feed(...nightlies))
+      .mockResolvedValueOnce(
+        Response.json(nightlies.concat(Array(90).fill("v1.0.0")).map((tag_name) => ({ tag_name }))),
+      )
+      .mockResolvedValueOnce(Response.json([{ tag_name: "v1.0.0-preview.20260924.3" }]));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await findEnvironmentUpdate("1.0.0-preview.20260923.1", signal)).toBe(
+      "1.0.0-preview.20260924.3",
+    );
+    expect(fetchMock.mock.calls[2]?.[0]).toContain("api.github.com");
+    expect(fetchMock.mock.calls[2]?.[0]).toContain("page=2");
+  });
+
   it("reports failed checks instead of claiming the server is current", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 429 })));
     await expect(findEnvironmentUpdate("1.0.0", signal)).rejects.toThrow("429");
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(feed("v1.0.0")));
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValueOnce(feed("v1.0.0"))
+        .mockResolvedValueOnce(Response.json([{ tag_name: "v1.0.0" }])),
+    );
     await expect(findEnvironmentUpdate("1.0.0-nightly.20260923.1", signal)).rejects.toThrow(
       "No nightly release",
     );

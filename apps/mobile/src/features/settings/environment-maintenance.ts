@@ -9,6 +9,7 @@ import {
   CLI_RELEASES_PAGE_URL,
   type CliReleaseChannel,
   cliReleaseChannelOf,
+  cliReleaseIndexPageUrl,
   newestCliReleaseVersion,
 } from "@t3tools/shared/cliRelease";
 import { compareSemverVersions } from "@t3tools/shared/semver";
@@ -47,38 +48,63 @@ export function canUpdateEnvironmentProvider(provider: ServerProvider) {
 }
 
 const decodeLatestRelease = Schema.decodeUnknownSync(Schema.Struct({ tag_name: Schema.String }));
+const decodeReleaseIndex = Schema.decodeUnknownSync(
+  Schema.Array(
+    Schema.Struct({ tag_name: Schema.String, draft: Schema.optionalKey(Schema.Boolean) }),
+  ),
+);
 const FEED_TAG = /<id>tag:github\.com,2008:Repository\/\d+\/([^<]+)<\/id>/g;
 
-// Reads github.com rather than api.github.com, whose 60 anonymous requests an
-// hour per IP are shared with every other device on the phone's network.
-async function fetchReleases(path: "/latest" | ".atom", accept: string, signal: AbortSignal) {
-  const response = await fetch(`${CLI_RELEASES_PAGE_URL}${path}`, {
-    signal,
-    headers: { Accept: accept },
-  });
+async function fetchReleases(url: string, accept: string, signal: AbortSignal) {
+  const response = await fetch(url, { signal, headers: { Accept: accept } });
   if (!response.ok) throw new Error(`Could not check releases (${response.status}). Try again.`);
   return response;
 }
 
 /**
- * Stable hosts read the latest release. Nightly and preview are never marked
- * latest, so they read the feed of the ten newest releases, which nightly's
- * several-a-day cadence keeps current.
+ * Reads github.com release pages, which unlike api.github.com do not share 60 anonymous
+ * requests an hour with every other device on the phone's network. Stable hosts read the
+ * latest release. Nightly and preview are never marked latest, so they read the feed of
+ * the ten newest releases.
  */
 async function channelReleases(channel: CliReleaseChannel, signal: AbortSignal) {
   if (channel === "stable") {
-    const response = await fetchReleases("/latest", "application/json", signal);
+    const response = await fetchReleases(
+      `${CLI_RELEASES_PAGE_URL}/latest`,
+      "application/json",
+      signal,
+    );
     return [decodeLatestRelease(await response.json())];
   }
-  const response = await fetchReleases(".atom", "application/atom+xml", signal);
+  const response = await fetchReleases(
+    `${CLI_RELEASES_PAGE_URL}.atom`,
+    "application/atom+xml",
+    signal,
+  );
   return Array.from((await response.text()).matchAll(FEED_TAG), ([, tag_name = ""]) => ({
     tag_name,
   }));
 }
 
+/** Pages the API release index, for a preview that later nightlies pushed out of the feed. */
+async function newestInReleaseIndex(channel: CliReleaseChannel, signal: AbortSignal) {
+  for (let page = 1; ; page++) {
+    const response = await fetchReleases(
+      cliReleaseIndexPageUrl(page),
+      "application/vnd.github+json",
+      signal,
+    );
+    const releases = decodeReleaseIndex(await response.json());
+    const version = newestCliReleaseVersion(releases, channel);
+    if (version !== undefined || releases.length < 100) return version;
+  }
+}
+
 export async function findEnvironmentUpdate(currentVersion: string, signal: AbortSignal) {
   const channel = cliReleaseChannelOf(currentVersion);
-  const version = newestCliReleaseVersion(await channelReleases(channel, signal), channel);
+  const version =
+    newestCliReleaseVersion(await channelReleases(channel, signal), channel) ??
+    (await newestInReleaseIndex(channel, signal));
   if (version === undefined) throw new Error(`No ${channel} release was found.`);
   return compareSemverVersions(version, currentVersion) > 0 ? version : null;
 }
