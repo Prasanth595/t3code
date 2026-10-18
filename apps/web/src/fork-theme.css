@@ -171,21 +171,46 @@
   background-color: color-mix(in srgb, var(--primary) 24%, transparent);
 }
 
-/* Fork: Inkwire, a built-in theme (packages/shared/src/themePalettes.ts). Its hand-drawn look
-   is static: uneven corner radii, a second offset pencil pass drawn by the theme shadow, and
-   pencil-pressure separators. Nothing animates or filters, so it costs no repaint work. Only
-   clickable controls get the sketched shape, so an outline always means "clickable". */
+/* Fork: Inkwire, a built-in theme (packages/shared/src/themePalettes.ts). Neon marks meaning:
+   cyan is the primary action and focus, magenta is selected and running. The hand-drawn look
+   is static: uneven corner radii, a second offset graphite pass drawn by the theme shadow, and
+   pencil-pressure separators. Nothing animates continuously or filters, so it adds no repaint
+   work. Only clickable controls get the sketched outline, so an outline always means
+   "clickable"; messages, code and panels stay plain. */
 :root[data-theme-id="inkwire"] {
-  --inkwire-pass: color-mix(in srgb, var(--foreground) 32%, transparent);
+  --inkwire-pass: color-mix(in srgb, var(--input) 70%, transparent);
   --inkwire-live: #c4127a;
-  --inkwire-glow: color-mix(in srgb, var(--primary) 18%, transparent);
+  --inkwire-glow: color-mix(in srgb, var(--primary) 16%, transparent);
+  --inkwire-glow-strong: color-mix(in srgb, var(--primary) 30%, transparent);
   --inkwire-wobble: 7px 12px 6px 11px / 11px 6px 12px 7px;
+  --inkwire-pencil-x: repeating-linear-gradient(
+    90deg,
+    var(--border) 0 19px,
+    color-mix(in srgb, var(--border) 55%, transparent) 19px 25px,
+    var(--border) 25px 44px,
+    transparent 44px 46px
+  );
+  --inkwire-pencil-y: repeating-linear-gradient(
+    180deg,
+    var(--border) 0 19px,
+    color-mix(in srgb, var(--border) 55%, transparent) 19px 25px,
+    var(--border) 25px 44px,
+    transparent 44px 46px
+  );
+  --success: #0f8f5a;
+  --success-foreground: #0b6e45;
+  --info: var(--inkwire-live);
+  --info-foreground: var(--inkwire-live);
 }
 :root.dark[data-theme-id="inkwire"] {
   --inkwire-live: #ff3cac;
-  --inkwire-glow: color-mix(in srgb, var(--primary) 30%, transparent);
+  --inkwire-glow: color-mix(in srgb, var(--primary) 22%, transparent);
+  --inkwire-glow-strong: color-mix(in srgb, var(--primary) 40%, transparent);
+  --success: #3dffa2;
+  --success-foreground: #3dffa2;
 }
 
+/* Clickable controls: a sketched outline with a short, quiet state transition. */
 :root[data-theme-id="inkwire"]
   :is(
     [data-slot="button"]:is(
@@ -201,12 +226,50 @@
     [data-testid="sidebar-row-card"]
   ) {
   border-radius: var(--inkwire-wobble);
+  transition-property: box-shadow, scale, border-color, background-color, color;
+  transition-duration: 140ms;
 }
 :root[data-theme-id="inkwire"] [data-slot="button"]::before {
   border-radius: inherit;
 }
+@media (prefers-reduced-motion: reduce) {
+  :root[data-theme-id="inkwire"] :is([data-slot="button"], [data-testid="sidebar-row-card"]) {
+    transition: none;
+  }
+}
 
-/* The primary action glows. Same specificity as the theme shadow rule above, and later. */
+/* Secondary buttons carry a graphite outline, so they read as clickable without glowing. */
+:root[data-theme-id="inkwire"] [data-slot="button"][data-button-variant="secondary"] {
+  border-color: var(--inkwire-pass);
+}
+:root[data-theme-id="inkwire"]
+  [data-slot="button"]:is([data-button-variant="outline"], [data-button-variant="secondary"]):is(
+    :hover,
+    [data-pressed]
+  ):not(:disabled) {
+  border-color: color-mix(in srgb, var(--input) 55%, var(--foreground));
+}
+
+/* Primary on dark: a cyan outline and label over a faint cyan wash, instead of a solid neon
+   slab. The light variant keeps the stock solid fill, which reads better on paper. */
+:root.dark[data-theme-id="inkwire"] [data-slot="button"][data-button-variant="default"] {
+  border-color: var(--primary);
+  background-color: color-mix(in srgb, var(--primary) 12%, var(--background));
+  color: var(--primary);
+  font-weight: 600;
+}
+:root.dark[data-theme-id="inkwire"]
+  [data-slot="button"][data-button-variant="default"]:is(:hover, [data-pressed]):not(:disabled) {
+  background-color: color-mix(in srgb, var(--primary) 20%, var(--background));
+}
+:root.dark[data-theme-id="inkwire"] [data-slot="button"][data-button-variant="default"]:disabled {
+  border-color: var(--input);
+  background-color: transparent;
+  color: var(--muted-foreground);
+}
+
+/* The primary action glows, a little more on hover and keyboard focus. Same specificity as the
+   theme shadow rule above, and later. */
 :root[data-theme-id="inkwire"]
   [data-slot="button"][data-button-variant="default"]:not(
     :disabled,
@@ -216,7 +279,18 @@
   ) {
   box-shadow:
     var(--theme-shadow),
-    0 0 12px var(--inkwire-glow);
+    0 0 8px var(--inkwire-glow);
+}
+:root[data-theme-id="inkwire"]
+  [data-slot="button"][data-button-variant="default"]:is(:hover, :focus-visible):not(
+    :disabled,
+    :active,
+    [data-pressed],
+    [data-slot="group"] > *
+  ) {
+  box-shadow:
+    var(--theme-shadow),
+    0 0 14px var(--inkwire-glow-strong);
 }
 
 :root[data-theme-id="inkwire"]
@@ -229,20 +303,31 @@
   box-shadow: 0 0 10px var(--inkwire-glow);
 }
 
-/* The open thread gets a solid outline and a magenta marker. */
+/* The open thread gets a graphite outline and a magenta marker. */
 :root[data-theme-id="inkwire"] [data-testid="sidebar-row-card"][aria-current="page"] {
   box-shadow:
     inset 3px 0 0 var(--inkwire-live),
     inset 0 0 0 1px var(--inkwire-pass);
 }
+/* Small status lights: the unread dot glows, thread status reads as technical metadata. */
+:root.dark[data-theme-id="inkwire"] [data-testid="sidebar-row-card"] [aria-label="Unread"] {
+  box-shadow: 0 0 6px var(--primary);
+}
+:root[data-theme-id="inkwire"] [data-sidebar-status] {
+  font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.6875rem;
+}
 
-/* A pencil line drawn with uneven pressure. It keeps the 1px height, so layout is unchanged. */
+/* Pencil lines with uneven pressure. They keep the 1px size, so layout is unchanged. */
 :root[data-theme-id="inkwire"] [data-slot="separator"][data-orientation="horizontal"] {
-  background: repeating-linear-gradient(
-    90deg,
-    var(--border) 0 19px,
-    color-mix(in srgb, var(--border) 55%, transparent) 19px 25px,
-    var(--border) 25px 44px,
-    transparent 44px 46px
-  );
+  background: var(--inkwire-pencil-x);
+}
+:root[data-theme-id="inkwire"] [data-slot="separator"][data-orientation="vertical"] {
+  background: var(--inkwire-pencil-y);
+}
+:root[data-theme-id="inkwire"] [data-slot="sidebar-container"] {
+  border-image: var(--inkwire-pencil-y) 1;
+}
+:root[data-theme-id="inkwire"] [data-slot="dialog-footer"] {
+  border-image: var(--inkwire-pencil-x) 1;
 }
