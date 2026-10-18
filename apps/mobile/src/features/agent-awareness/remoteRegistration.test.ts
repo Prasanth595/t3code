@@ -452,7 +452,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     widgetMocks.getInstances.mockReset();
     widgetMocks.getInstances.mockReturnValue([]);
     widgetMocks.start.mockReset();
-    widgetMocks.start.mockReturnValue({});
+    widgetMocks.start.mockReturnValue({ getId: () => "activity-1", getPushToken: () => Promise.resolve(null), addPushTokenListener: vi.fn() });
     widgetMocks.dismissEnded.mockReset();
     environmentConfigsMock.configs.clear();
     vi.mocked(publishAgentActivityWidget).mockReset().mockReturnValue(true);
@@ -1650,10 +1650,10 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         ).pipe(Effect.provide(layer), Effect.forkChild);
         yield* Effect.promise(() => tokenRead);
         yield* Deferred.succeed(finishRead, undefined);
-        yield* Fiber.join(refresh);
         const startsBeforeTokenResolved = widgetMocks.start.mock.calls.length;
         const readsBeforeTokenResolved = { global: globalReads, scoped: scopedReads };
         finishToken("activity-token");
+        yield* Fiber.join(refresh);
         pending.resolve(yield* Fiber.join(localRegistration));
         expect(readsBeforeTokenResolved).toEqual({ global: 1, scoped: 1 });
         expect(startsBeforeTokenResolved).toBe(1);
