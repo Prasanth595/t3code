@@ -130,7 +130,7 @@ export function RightPanelSurfaceContent(props: {
           getShortcutContext={props.getShortcutContext}
           shortcutsEnabled={visible && props.activeSurfaceId === surface.id}
           // Keyed by thread too, so switching threads reopens on that thread's remembered tab.
-          key={`${scopedThreadKey(threadRef)}:${surface.host ?? ""}:${surface.repository}#${surface.number}`}
+          key={`${scopedThreadKey(threadRef)}:${surface.id}`}
           environmentId={props.environmentId}
           onSelectPullRequest={(reference) => {
             useRightPanelStore.getState().openPullRequest(threadRef, {
