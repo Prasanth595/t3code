@@ -1085,8 +1085,6 @@ export const INKWIRE_THEME: ThemeDefinition = {
   style: {
     radius: "0.625rem",
     shadow: "1.5px 2px 0 -0.5px var(--inkwire-pass)",
-    canvasPattern: "grid",
-    canvasPatternColor: "var(--inkwire-grid)",
     fonts: {
       sans: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
       code: '"JetBrains Mono", "SF Mono", Menlo, Consolas, monospace',

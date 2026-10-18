@@ -177,7 +177,6 @@
    clickable controls get the sketched shape, so an outline always means "clickable". */
 :root[data-theme-id="inkwire"] {
   --inkwire-pass: color-mix(in srgb, var(--foreground) 32%, transparent);
-  --inkwire-grid: color-mix(in srgb, var(--primary) 6%, transparent);
   --inkwire-live: #c4127a;
   --inkwire-glow: color-mix(in srgb, var(--primary) 18%, transparent);
   --inkwire-wobble: 7px 12px 6px 11px / 11px 6px 12px 7px;
