@@ -24,6 +24,7 @@ const FORK_RESTORED_SETTINGS = [
   ["preferOriginRemote", "Prefer origin remote"],
   ["threadLinkChips", "Thread link chips"],
   ["threadLinksOpenDesktopApp", "Thread addresses open the desktop app"],
+  ["previewLocalServerGroups", "All local servers in the browser"],
   ["keybindingSync", "Keybinding sync"],
   ["pullRequestWatchRemarkFilter", "Pull request watch remarks"],
   ["agentSessionImportWindowDays", "Session import window"],

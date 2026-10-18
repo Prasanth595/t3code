@@ -7,17 +7,19 @@ import type { PreviewableServer } from "./useDiscoveredLocalServers";
 interface Props {
   threadRef: ScopedThreadRef;
   server: PreviewableServer;
+  /** Fork: the check state of a grouped listener (forkLocalServerGroups.ts). */
+  note?: string | null;
   onOpen: () => void;
 }
 
-export function PreviewLocalServerCard({ threadRef, server, onOpen }: Props) {
+export function PreviewLocalServerCard({ threadRef, server, note, onOpen }: Props) {
   const subtitle = describeServer(server);
   return (
     <DiscoveryListRow
       onClick={onOpen}
       icon={<PreviewFaviconIcon threadRef={threadRef} url={server.requestedUrl} />}
       title={subtitle}
-      description={`${server.host}:${server.port}`}
+      description={`${server.host}:${server.port}${note ? ` · ${note}` : ""}`}
     />
   );
 }

@@ -410,6 +410,21 @@ The server setting `pullRequestWatchRemarkFilter` selects which comments and rev
 - Check, conflict and push news and the comment wake limit do not change.
 - The code is in `apps/server/src/orchestration-v2/pullRequestWatch.ts`.
 
+## Local server groups
+
+The server setting `previewLocalServerGroups` shows every local server in the Local servers list of a new browser tab. It is off by default. Turn it on in Settings > Integrations > Browser > All local servers in the browser. Off, the list shows only the servers of T3 terminals, as upstream.
+
+- The list has four groups, with a thin labeled divider before each group. A server shows once, in its first group:
+  1. The servers of T3 terminals, as upstream.
+  2. This worktree: the process runs inside the thread's worktree, or inside the project root when the thread has no worktree.
+  3. Other folders of this project: the process runs inside the project root or another worktree of the project.
+  4. All other local servers.
+- The server finds the working folder of each listener process with one `lsof` call on macOS and `/proc/<pid>/cwd` on Linux, once for each process. Windows has no cheap way to read it, so on Windows all servers outside the T3 terminals are in group 4.
+- A request to an unknown app can crash it (upstream pingdotgg/t3code#18377). So the server sends an HTTP check only to the servers in groups 2 and 3. The servers of group 4 show the port and the process name with "not checked". A click opens them anyway.
+- A server in group 2 or 3 that does not serve a page shows "no page found". A click opens it anyway.
+- A new project or worktree counts after up to 30 seconds.
+- The mobile app has no Local servers list.
+
 ## Worktree path template
 
 The server setting `worktreePathTemplate` decides where new worktrees go. It is empty by default, and the worktree location setting then applies. Set it in Settings > Storage > Worktree path template.

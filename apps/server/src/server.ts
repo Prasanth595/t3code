@@ -168,6 +168,7 @@ import * as CursorKeychain from "@t3tools/provider-cursor/server/CursorKeychain"
 import * as CursorUsageAccounts from "@t3tools/provider-cursor/server/CursorUsageAccounts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as ForkChangelog from "./fork/ForkChangelog.ts";
+import * as ForkPreviewServerGroups from "./fork/PreviewServerGroups.ts";
 import * as ForkUpdates from "./fork/ForkUpdates.ts";
 import * as MachineHost from "./fork/machineMap/MachineHost.ts";
 import * as MachineMap from "./fork/machineMap/MachineMap.ts";
@@ -425,7 +426,18 @@ const layerVcs = Layer.empty.pipe(
 
 const layerCheckpointStore = CheckpointStore.layer.pipe(Layer.provide(layerVcsDriverRegistry));
 
-const layerPortScanner = PortScanner.layer.pipe(Layer.provide(ProcessRunner.layer));
+// Fork: one instance for the scanner hook and the fork RPC (fork/PreviewServerGroups.ts).
+const layerForkPreviewServerGroups = ForkPreviewServerGroups.layer.pipe(
+  Layer.provide(ProjectStore.layer),
+  Layer.provide(GitVcsDriver.layer),
+  Layer.provide(ProcessRunner.layer),
+  Layer.provide(layerServerSettings),
+);
+
+const layerPortScanner = PortScanner.layer.pipe(
+  Layer.provide(ProcessRunner.layer),
+  Layer.provideMerge(layerForkPreviewServerGroups),
+);
 
 const layerTerminal = TerminalManager.layer.pipe(
   Layer.provide(layerPtyAdapter),

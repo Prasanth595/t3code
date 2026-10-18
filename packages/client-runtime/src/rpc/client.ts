@@ -74,6 +74,9 @@ export type EnvironmentSubscriptionRpcTag =
   | typeof WS_METHODS.terminalAttach
   | typeof WS_METHODS.terminalObserve
   // Fork: machine map client state (apps/machine-map/SPEC.md).
+
+  // Fork: preview local server groups (forkPreview.ts).
+  | typeof WS_METHODS.forkPreviewSubscribeLocalListeners
   | typeof WS_METHODS.machineMapSubscribe;
 
 export type EnvironmentStreamCommandRpcTag =

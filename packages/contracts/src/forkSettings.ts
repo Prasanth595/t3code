@@ -310,6 +310,12 @@ export const ForkServerSettingsFields = {
    * setting `keybindings` (`KEYBINDINGS_SETTING_KEY`). See docs/fork.md "Machine map".
    */
   keybindingSync: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Fork: the preview "Local servers" list also shows local listeners that no T3 terminal owns,
+   * in groups: same worktree, same project, then all others. A server setting, because this
+   * server reads the process folders and sends the HTTP checks, for every client.
+   */
+  previewLocalServerGroups: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 };
 
 export const ForkServerSettingsPatchFields = {
@@ -330,6 +336,7 @@ export const ForkServerSettingsPatchFields = {
   threadLinkChips: Schema.optionalKey(Schema.Boolean),
   threadLinksOpenDesktopApp: Schema.optionalKey(Schema.Boolean),
   keybindingSync: Schema.optionalKey(Schema.Boolean),
+  previewLocalServerGroups: Schema.optionalKey(Schema.Boolean),
   /** Replaces the saved groups whole: a merge would keep deleted groups and assignments. */
   sidebarGroups: Schema.optionalKey(SidebarGroups),
   /** Per surface: a patched layout replaces the saved one, and `null` restores the built-in card. */

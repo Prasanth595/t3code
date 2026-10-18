@@ -21,6 +21,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
+import * as ForkPreviewServerGroups from "../fork/PreviewServerGroups.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 export class PortDiscovery extends Context.Service<
@@ -391,6 +392,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     ReadonlyMap<string, { readonly pid: number; readonly processName: string | null }>
   >(new Map());
   const socketOwnerMissesRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
+  // Fork: the groups of the preview list. Off, it changes nothing.
+  const forkServerGroups = yield* ForkPreviewServerGroups.scannerHook;
 
   const findSocketOwners = Effect.fn("PortDiscovery.findSocketOwners")(function* (
     inodes: ReadonlySet<string>,
@@ -621,6 +624,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       else configured.set(group.configuredKey, server);
     }
     yield* Ref.set(webProbeCacheRef, nextCache);
+    yield* forkServerGroups.observe({ listeners: servers, shown: discovered, probe: probeWebUrl });
     return { discovered, configured } satisfies WebProbeSnapshot;
   });
 
@@ -693,7 +697,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       }
     }
     if (hostPlatform === "win32") {
-      if (terminalByProcessId.size === 0 && configuredUrls.length === 0) {
+      if (
+        terminalByProcessId.size === 0 &&
+        configuredUrls.length === 0 &&
+        !(yield* forkServerGroups.active)
+      ) {
         return { discovered: [], configured: new Map() } satisfies WebProbeSnapshot;
       }
       const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");

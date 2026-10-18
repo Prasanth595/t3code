@@ -5,6 +5,8 @@ import type { BrowserHistoryEntry } from "~/browserHistoryStore";
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from "~/components/ui/empty";
 import { DiscoveryList } from "../ui/discovery-list";
 
+import { ForkLocalServerSections } from "./ForkLocalServerSections";
+import { forkEmptyDescription, useForkLocalServerSections } from "./forkLocalServerGroups";
 import { PreviewLocalServerCard } from "./PreviewLocalServerCard";
 import { PreviewRecentUrlCard } from "./PreviewRecentUrlCard";
 import { useDiscoveredLocalServers } from "./useDiscoveredLocalServers";
@@ -31,18 +33,17 @@ export function PreviewEmptyState({
     configuredUrls,
   });
   const recents = recentEntries.filter((entry) => URL.canParse(entry.url)).slice(0, 8);
+  const forkSections = useForkLocalServerSections({ threadRef, servers });
+  const serverCount = forkSections ? forkSections.length : servers.length;
 
-  if (servers.length === 0 && recents.length === 0) {
+  if (serverCount === 0 && recents.length === 0) {
     return (
       <Empty>
         <EmptyMedia variant="icon">
           <Globe className="size-4.5 text-muted-foreground" />
         </EmptyMedia>
         <EmptyTitle>No preview yet</EmptyTitle>
-        <EmptyDescription>
-          Type a URL above, or run a dev script. Browser-ready localhost servers will show up here
-          automatically.
-        </EmptyDescription>
+        <EmptyDescription>{forkEmptyDescription(forkSections !== null)}</EmptyDescription>
       </Empty>
     );
   }
@@ -69,22 +70,30 @@ export function PreviewEmptyState({
             </DiscoveryList>
           </div>
         ) : null}
-        {servers.length > 0 ? (
+        {serverCount > 0 ? (
           <div className="flex flex-col gap-3">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <RadioTower className="size-4 shrink-0" />
               <h2 className="font-medium">Local servers</h2>
             </div>
-            <DiscoveryList>
-              {servers.map((server) => (
-                <PreviewLocalServerCard
-                  key={`${server.host}:${server.port}`}
-                  threadRef={threadRef}
-                  server={server}
-                  onOpen={() => onOpenUrl(server.requestedUrl)}
-                />
-              ))}
-            </DiscoveryList>
+            {forkSections ? (
+              <ForkLocalServerSections
+                threadRef={threadRef}
+                sections={forkSections}
+                onOpenUrl={onOpenUrl}
+              />
+            ) : (
+              <DiscoveryList>
+                {servers.map((server) => (
+                  <PreviewLocalServerCard
+                    key={`${server.host}:${server.port}`}
+                    threadRef={threadRef}
+                    server={server}
+                    onOpen={() => onOpenUrl(server.requestedUrl)}
+                  />
+                ))}
+              </DiscoveryList>
+            )}
             <p className="px-1 text-xs text-muted-foreground">
               Select a live local server to open it in this browser tab.
             </p>

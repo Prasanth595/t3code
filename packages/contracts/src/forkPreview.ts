@@ -1,0 +1,47 @@
+/**
+ * Fork: local listeners for the groups of the preview "Local servers" list, while the server
+ * setting `previewLocalServerGroups` is on. The upstream list (`DiscoveredLocalServerList`) keeps
+ * the servers of T3 terminals. This list holds every other local listener.
+ */
+import * as Schema from "effect/Schema";
+
+import { ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { DiscoveredLocalServer } from "./preview.ts";
+
+/**
+ * The project root or worktree that holds the working folder of the listener process. `folder`
+ * is that path as the server stores it, so a client compares it with a thread worktree path or a
+ * project root as a plain string.
+ */
+export const ForkLocalListenerFolder = Schema.Struct({
+  projectId: ProjectId,
+  folder: TrimmedNonEmptyString,
+});
+export type ForkLocalListenerFolder = typeof ForkLocalListenerFolder.Type;
+
+export const ForkLocalListener = Schema.Struct({
+  host: DiscoveredLocalServer.fields.host,
+  port: DiscoveredLocalServer.fields.port,
+  url: DiscoveredLocalServer.fields.url,
+  processName: DiscoveredLocalServer.fields.processName,
+  pid: DiscoveredLocalServer.fields.pid,
+  /** Null: outside every project, or the folder is not known. */
+  folder: Schema.NullOr(ForkLocalListenerFolder),
+  /**
+   * The HTTP check of `url`. The server checks only a listener in a project that a subscriber
+   * named, so a listener outside every project is always `unchecked`.
+   */
+  check: Schema.Literals(["page", "noPage", "unchecked"]),
+});
+export type ForkLocalListener = typeof ForkLocalListener.Type;
+
+export const ForkLocalListenersInput = Schema.Struct({
+  /** The project of the thread that shows the list. */
+  projectId: ProjectId,
+});
+export type ForkLocalListenersInput = typeof ForkLocalListenersInput.Type;
+
+export const ForkLocalListenerList = Schema.Struct({
+  listeners: Schema.Array(ForkLocalListener),
+});
+export type ForkLocalListenerList = typeof ForkLocalListenerList.Type;
