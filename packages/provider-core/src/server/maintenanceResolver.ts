@@ -87,6 +87,12 @@ export interface PackageManagedProviderMaintenanceDefinition {
     readonly isCommandPath?: (commandPath: string) => boolean;
     readonly env?: NodeJS.ProcessEnv;
   } | null;
+  /**
+   * `mise upgrade` installs the newest release mise knows, which can cross a
+   * line T3 Code must not: mise's OpenCode tool carries 1.x and 2.x. False keeps
+   * mise installs manual-only.
+   */
+  readonly miseUpgrade?: boolean;
 }
 
 const NpmLatestVersionResponse = Schema.Struct({
@@ -228,12 +234,6 @@ function isBunGlobalCommandPath(commandPath: string): boolean {
 
 function isYarnGlobalCommandPath(commandPath: string): boolean {
   return /\/yarn\/(?:data\/)?global\/node_modules\//.test(normalizeCommandPath(commandPath));
-}
-
-/** Version-manager installs are pinned in its config, so updating them means editing that. */
-function isMiseCommandPath(commandPath: string): boolean {
-  const normalized = normalizeCommandPath(commandPath);
-  return normalized.includes("/mise/installs/") || normalized.includes("/mise/shims/");
 }
 
 /**
@@ -422,6 +422,142 @@ const resolvePnpmGlobalLatestVersion = Effect.fn("resolvePnpmGlobalLatestVersion
   return nonEmptyString(listedEntries?.[0]?.dependencies?.[packageName]?.version);
 });
 
+const MiseInstalledTools = Schema.Record(
+  Schema.String,
+  Schema.Array(
+    Schema.Struct({
+      install_path: Schema.String,
+      requested_version: Schema.optional(Schema.NullOr(Schema.String)),
+      active: Schema.optional(Schema.Boolean),
+    }),
+  ),
+);
+
+const decodeMiseInstalledTools = Schema.decodeUnknownOption(
+  Schema.fromJsonString(MiseInstalledTools),
+);
+
+/**
+ * The active mise tool whose install directory holds `binaryPath`, read from
+ * `mise ls --json --installed`. Mise's tool names are not recoverable from
+ * install paths (`npm:@scope/pkg` lives in `npm-scope-pkg`), so mise names it.
+ */
+export function miseOwnerFromInstalledTools(
+  listing: string,
+  binaryPath: string,
+): { readonly tool: string; readonly requestedVersion: string | null } | null {
+  const decoded = decodeMiseInstalledTools(listing);
+  if (Option.isNone(decoded)) {
+    return null;
+  }
+  const binary = normalizeCommandPath(binaryPath);
+  for (const [tool, installs] of Object.entries(decoded.value)) {
+    const owner = installs.find(
+      (install) =>
+        install.active === true &&
+        binary.startsWith(`${normalizeCommandPath(install.install_path).replace(/\/+$/, "")}/`),
+    );
+    if (owner) {
+      return { tool, requestedVersion: owner.requested_version ?? null };
+    }
+  }
+  return null;
+}
+
+/**
+ * Mise owns an executable in its install tree, one of its shims (a link to
+ * mise itself), or a wrapper that runs the tool through `mise x`. Ownership is
+ * proven by mise: the binary must sit in the install of a tool active in mise's
+ * config. Only a tool requested as `latest` gets `mise upgrade`; a pinned
+ * version is the user's choice, so T3 Code never edits a mise config and the
+ * install stays manual. Returns null when mise does not manage the executable,
+ * including npm globals under mise's Node, which npm owns.
+ */
+export const resolveMiseProviderMaintenance = Effect.fn("resolveMiseProviderMaintenance")(
+  function* (
+    owner: { readonly provider: ProviderDriverKind; readonly packageName: string | null },
+    context: ProviderMaintenanceResolutionContext,
+  ) {
+    const path = yield* Path.Path;
+    const resolvedPath = normalizeCommandPath(context.resolvedCommandPath);
+    const realPath = normalizeCommandPath(context.realCommandPath);
+    if (
+      resolvedPath.includes("/mise/installs/node/") ||
+      realPath.includes("/mise/installs/node/")
+    ) {
+      return null;
+    }
+    const isInstall = realPath.includes("/mise/installs/");
+    // A shim is a link to mise itself, wherever mise keeps its data.
+    const isShim = path.basename(realPath).replace(/\.exe$/, "") === "mise";
+    if (
+      !isInstall &&
+      !isShim &&
+      !resolvedPath.includes("/mise/shims/") &&
+      !(yield* isMiseWrapperScript(context))
+    ) {
+      return null;
+    }
+
+    const misePath = isShim
+      ? context.realCommandPath
+      : yield* resolveCommandPath("mise", { env: context.env });
+    if (!misePath) {
+      return makeManualOnlyProviderMaintenanceCapabilities({
+        ...owner,
+        installPath: context.realCommandPath,
+      });
+    }
+    // A shim or wrapper runs whatever mise resolves for the command's name.
+    const commandName = path
+      .basename(context.resolvedCommandPath)
+      .replace(/\.(?:exe|cmd|bat|ps1)$/i, "");
+    const which = isInstall
+      ? null
+      : nonEmptyString(yield* runProbe(misePath, ["which", commandName], context.env));
+    const fileSystem = yield* FileSystem.FileSystem;
+    const binaryPath = isInstall
+      ? context.realCommandPath
+      : which
+        ? yield* fileSystem.realPath(which).pipe(Effect.orElseSucceed(() => null))
+        : null;
+    const listing = binaryPath
+      ? yield* runProbe(misePath, ["ls", "--json", "--installed"], context.env)
+      : null;
+    const tool = listing && binaryPath ? miseOwnerFromInstalledTools(listing, binaryPath) : null;
+    // A shim can also lead to an npm global under mise's Node, whose prefix it does not prove.
+    if (!tool || tool.tool === "node" || tool.requestedVersion !== "latest") {
+      // A shim's own path is mise; name the binary it runs.
+      return makeManualOnlyProviderMaintenanceCapabilities({
+        ...owner,
+        installPath: binaryPath ?? context.realCommandPath,
+      });
+    }
+    const args = ["upgrade", tool.tool];
+    const services = yield* Effect.context<ProviderMaintenanceResolverServices>();
+    return makeProviderMaintenanceCapabilities({
+      provider: owner.provider,
+      packageName: owner.packageName,
+      updateExecutable: misePath,
+      updateArgs: args,
+      updateLockKey: "mise",
+      updateCommand: ["mise", ...args.map((arg) => quoteShellWord(arg, context.platform))].join(
+        " ",
+      ),
+      platform: context.platform,
+      // `mise ls` answered for this environment, so the upgrade runs in it too.
+      env: context.env,
+      // Mise settings such as `minimum_release_age` can hold `mise upgrade`
+      // behind the npm registry, so only mise can say what it installs.
+      latestVersion: null,
+      lookupLatestVersion: runProbe(misePath, ["latest", tool.tool], context.env).pipe(
+        Effect.map(nonEmptyString),
+        Effect.provideContext(services),
+      ),
+    });
+  },
+);
+
 export const resolvePackageManagedProviderMaintenance = Effect.fn(
   "resolvePackageManagedProviderMaintenance",
 )(function* (
@@ -451,6 +587,16 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     return manual;
   }
 
+  // Mise goes first: Omarchy's `mise x` wrapper for claude sits at
+  // `~/.local/bin/claude`, the native installer's path.
+  const mise = yield* resolveMiseProviderMaintenance(
+    { provider: definition.provider, packageName },
+    context,
+  );
+  if (mise) {
+    return definition.miseUpgrade === false ? manual : mise;
+  }
+
   const nativeUpdate = definition.nativeUpdate;
   const native = nativeUpdate
     ? makeProviderMaintenanceCapabilities({
@@ -463,13 +609,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
         ...(nativeUpdate.env ? { env: nativeUpdate.env } : {}),
       })
     : manual;
-  // A native-looking launcher can still delegate to a mise-owned install.
-  if (
-    nativeUpdate?.isCommandPath &&
-    commandPaths.some(nativeUpdate.isCommandPath) &&
-    !commandPaths.some(isMiseCommandPath) &&
-    !(yield* isMiseWrapperScript(context))
-  ) {
+  if (nativeUpdate?.isCommandPath && commandPaths.some(nativeUpdate.isCommandPath)) {
     return native;
   }
   // A `node_modules` path not proven below belongs to another package or a
@@ -566,14 +706,6 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   }
 
   const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
-  if (
-    commandPaths.some(isMiseCommandPath) ||
-    // Mise shims resolve to the version manager's keg, not the provider's.
-    (homebrew?.kind === "formula" && homebrew.name.toLowerCase() === "mise") ||
-    (yield* isMiseWrapperScript(context))
-  ) {
-    return manual;
-  }
   if (homebrew) {
     return (
       (yield* resolveHomebrewProviderMaintenance(
@@ -657,7 +789,12 @@ const isMiseWrapperScript = Effect.fn("isMiseWrapperScript")(function* (
   const script = yield* fileSystem
     .readFileString(context.realCommandPath)
     .pipe(Effect.orElseSucceed(() => ""));
-  return script.startsWith("#!") && /\bmise\s+(?:x|exec)\b/.test(script);
+  return (
+    script.startsWith("#!") &&
+    script
+      .split("\n")
+      .some((line) => !line.trimStart().startsWith("#") && /\bmise\s+(?:x|exec)\b/.test(line))
+  );
 });
 
 /**
