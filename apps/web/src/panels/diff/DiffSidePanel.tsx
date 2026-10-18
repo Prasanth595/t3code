@@ -51,7 +51,10 @@ import { DiffFilePathCopyButton } from "~/components/DiffFilePathCopyButton";
 import { DiffPanelLoadingState } from "~/components/diffs/DiffLoadingState";
 import type { SidePanelProps } from "../bundledPanels";
 import { DiffStatLabel } from "~/components/chat/DiffStatLabel";
-import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "~/components/diffs/AnnotatableCodeView";
+import {
+  AnnotatableCodeView,
+  type AnnotatableCodeViewHandle,
+} from "~/components/diffs/AnnotatableCodeView";
 import { DiffFileTree } from "~/components/diffs/DiffFileTree";
 import { diffFileTreeEntries } from "~/components/diffs/diffFileTree.logic";
 import { Button } from "~/components/ui/button";
