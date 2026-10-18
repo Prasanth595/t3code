@@ -2229,6 +2229,207 @@ describe("orchestration v2 provider switching", () => {
     ),
   );
 
+  it.live("runs a PR update queued before a usage-limit takeover on the new provider", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("queued-pr-wake-takeover");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const started = yield* Deferred.make<void>();
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+            holdFirstTurn: started,
+          }),
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
+          }),
+        ]);
+        const wakeThreadId = ThreadId.make("thread:queued-pr-wake-takeover");
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const eventSink = yield* EventSink.EventSinkV2;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${wakeThreadId}:create`),
+            threadId: wakeThreadId,
+            projectId: ProjectId.make(`${wakeThreadId}:project`),
+            title: "Queued PR wake takeover",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${wakeThreadId}:active`),
+            threadId: wakeThreadId,
+            messageId: MessageId.make(`${wakeThreadId}:active`),
+            text: "Original work",
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* Deferred.await(started);
+          const key = { host: "github.com", repository: "pingdotgg/t3code", number: 7 };
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.watch",
+            commandId: CommandId.make(`${wakeThreadId}:watch`),
+            threadId: wakeThreadId,
+            ...key,
+            watching: true,
+            link: { url: "https://github.com/pingdotgg/t3code/pull/7", source: "agent" },
+          });
+          const watch = (yield* orchestrator.getThreadShell(wakeThreadId))!.pullRequests![0]!
+            .watch!;
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request-watch.sync",
+            commandId: CommandId.make(`${wakeThreadId}:wake`),
+            threadId: wakeThreadId,
+            ...key,
+            startedAt: watch.startedAt,
+            watch: { ...watch, wakes: 1 },
+            wake: {
+              messageId: MessageId.make(`${wakeThreadId}:wake`),
+              text: "Review the new PR comments",
+              notification: {
+                source: { kind: "monitor" },
+                outcome: "updated",
+                summary: "#7: new comments",
+              },
+            },
+          });
+          const before = yield* orchestrator.getThreadProjection(wakeThreadId);
+          const [active, wake] = before.runs;
+          assert.equal(wake?.status, "queued");
+          const now = yield* DateTime.now;
+          yield* eventSink.write({
+            events: [
+              {
+                id: EventId.make(`${wakeThreadId}:limit`),
+                type: "turn-item.updated",
+                threadId: wakeThreadId,
+                runId: active!.id,
+                nodeId: active!.rootNodeId!,
+                providerInstanceId: active!.providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  id: TurnItemId.make(`${wakeThreadId}:limit`),
+                  threadId: wakeThreadId,
+                  runId: active!.id,
+                  nodeId: active!.rootNodeId!,
+                  providerThreadId: active!.providerThreadId,
+                  providerTurnId: null,
+                  nativeItemRef: null,
+                  parentItemId: null,
+                  ordinal: 101,
+                  status: "failed",
+                  title: "Usage limit reached",
+                  startedAt: now,
+                  completedAt: now,
+                  updatedAt: now,
+                  type: "error",
+                  failure: makeProviderFailure({
+                    message: "Usage limit reached",
+                    code: "usage_limit",
+                    class: "usage_limit",
+                  }),
+                },
+              },
+              {
+                id: EventId.make(`${wakeThreadId}:failed`),
+                type: "run.updated",
+                threadId: wakeThreadId,
+                runId: active!.id,
+                providerInstanceId: active!.providerInstanceId,
+                occurredAt: now,
+                payload: { ...active!, status: "failed", completedAt: now },
+              },
+            ],
+          });
+          const wakeCompleted = yield* orchestrator.streamStoredEvents.pipe(
+            Stream.filter(
+              ({ event }) =>
+                event.type === "run.updated" &&
+                event.runId === wake!.id &&
+                event.payload.status === "completed",
+            ),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`${wakeThreadId}:takeover`),
+            threadId: wakeThreadId,
+            messageId: MessageId.make(`${wakeThreadId}:takeover`),
+            text: "Take over and finish the work",
+            attachments: [],
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          });
+          yield* Fiber.join(wakeCompleted);
+          yield* worker.drain();
+          const after = yield* orchestrator.getThreadProjection(wakeThreadId);
+          const turns = yield* Ref.get(capturedTurns);
+          assert.deepEqual(
+            turns.map((turn) => turn.driver),
+            [CODEX_DRIVER, CLAUDE_DRIVER, CLAUDE_DRIVER],
+          );
+          assert.include(turns[2]!.text, "Review the new PR comments");
+          assert.deepEqual(after.thread.modelSelection, CLAUDE_MODEL_SELECTION);
+          const delivered = after.runs.find((run) => run.id === wake!.id)!;
+          const takeover = after.runs.at(-1)!;
+          assert.equal(delivered.providerInstanceId, CLAUDE_MODEL_SELECTION.instanceId);
+          assert.equal(delivered.providerThreadId, takeover.providerThreadId);
+          const attempt = after.attempts.find((entry) => entry.id === delivered.activeAttemptId);
+          const root = after.nodes.find((node) => node.id === delivered.rootNodeId);
+          const scope = after.checkpointScopes.find(
+            (entry) => entry.id === root?.checkpointScopeId,
+          );
+          assert.equal(attempt?.providerInstanceId, CLAUDE_MODEL_SELECTION.instanceId);
+          assert.equal(attempt?.providerThreadId, delivered.providerThreadId);
+          assert.equal(root?.providerThreadId, delivered.providerThreadId);
+          assert.equal(scope?.providerThreadId, delivered.providerThreadId);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "queued-pr-wake-takeover",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+            ),
+          ),
+        );
+      }),
+    ),
+  );
+
   it.live("fails an unsupported queued handoff and advances to the next queued provider", () =>
     Effect.scoped(
       Effect.gen(function* () {
