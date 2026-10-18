@@ -16,6 +16,7 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
+import { SidebarGroupSettingsSection } from "./forkSidebarGroupEditor";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -135,6 +136,7 @@ export function SettingsForkRouteScreen() {
                   onValueChange={(value) => write({ threadLinkChips: value })}
                 />
               </SettingsSection>
+              <SidebarGroupSettingsSection />
               <SettingsSection title="New thread opens">
                 {NEW_THREAD_CHOICES.map((choice, index) => (
                   <SettingsChoiceRow
