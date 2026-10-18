@@ -7,6 +7,7 @@ import Constants from "expo-constants";
 import * as Notifications from "expo-notifications";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import { AppState, Platform } from "react-native";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
@@ -73,8 +74,11 @@ export class AgentAwarenessOperationError extends Schema.TaggedError<AgentAwaren
 
 const environmentConnections = new Map<EnvironmentId, SavedRemoteConnection>();
 // Keyed by ActivityKit id: getAgentLiveActivities() wraps the same native
-// activity in a new object on every call.
-const activityPushTokenListeners = new Set<string>();
+// activity in a new object on every call. The relay keeps only the latest token
+// a device registers, so each activity's token reads and registrations run one
+// at a time; otherwise a lookup that read the old token could land after the
+// rotated one.
+const activityPushTokenLocks = new Map<string, Semaphore.Semaphore>();
 // But the registration is not a pure no-op: the relay replays the current
 // aggregate to this device on every accepted registration, and that replay is
 // the foreground reconciliation that repairs drifted or orphaned activities.
@@ -895,7 +899,7 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   androidDeviceReplayedAt = null;
   registrationStatusListeners.clear();
   registeredActivityPushTokens.clear();
-  activityPushTokenListeners.clear();
+  activityPushTokenLocks.clear();
 }
 
 export function unregisterAgentAwarenessDeviceForCurrentUser(
@@ -931,45 +935,53 @@ export function registerLiveActivityPushToken(input: {
       return false;
     }
 
-    observeLiveActivityPushTokens(input.activity);
-    const activityPushToken = yield* Effect.tryPromise({
-      try: () => input.activity.getPushToken(),
-      catch: (cause) =>
-        new AgentAwarenessOperationError({
-          operation: "read-live-activity-push-token",
-          cause,
-        }),
-    });
-    if (!activityPushToken) {
-      logRegistrationDebug("live activity push token not available yet; waiting for token event", {
-        connectionCount: environmentConnections.size,
-      });
-      return false;
-    }
+    const lock = observeLiveActivityPushTokens(input.activity);
+    return yield* lock.withPermit(
+      Effect.gen(function* () {
+        const activityPushToken = yield* Effect.tryPromise({
+          try: () => input.activity.getPushToken(),
+          catch: (cause) =>
+            new AgentAwarenessOperationError({
+              operation: "read-live-activity-push-token",
+              cause,
+            }),
+        });
+        if (!activityPushToken) {
+          logRegistrationDebug(
+            "live activity push token not available yet; waiting for token event",
+            { connectionCount: environmentConnections.size },
+          );
+          return false;
+        }
 
-    return yield* registerLiveActivityPushTokenValue({
-      activityPushToken,
-    });
+        return yield* registerLiveActivityPushTokenValue({ activityPushToken });
+      }),
+    );
   });
 }
 
 // iOS can replace an activity's push token while it runs, not only deliver a
 // late first one. The relay keeps pushing to the old token until APNs rejects
 // it, so every activity needs a listener that registers each new token.
-function observeLiveActivityPushTokens(activity: LiveActivity<AgentActivityProps>): void {
+function observeLiveActivityPushTokens(
+  activity: LiveActivity<AgentActivityProps>,
+): Semaphore.Semaphore {
   const activityId = activity.getId();
-  if (activityPushTokenListeners.has(activityId)) return;
-  activityPushTokenListeners.add(activityId);
+  const existing = activityPushTokenLocks.get(activityId);
+  if (existing) return existing;
+  const lock = Semaphore.makeUnsafe(1);
+  activityPushTokenLocks.set(activityId, lock);
   activity.addPushTokenListener((event) => {
     if (!event.pushToken) return;
     logRegistrationDebug("live activity push token event received", {
       tokenSuffix: event.pushToken.slice(-8),
     });
     runRegistrationInBackground(
-      registerLiveActivityPushTokenValue({ activityPushToken: event.pushToken }),
+      lock.withPermit(registerLiveActivityPushTokenValue({ activityPushToken: event.pushToken })),
       "live activity token listener registration failed",
     );
   });
+  return lock;
 }
 
 function registerLiveActivityPushTokenValue(input: {
