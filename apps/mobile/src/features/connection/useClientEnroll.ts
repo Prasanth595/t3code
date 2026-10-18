@@ -102,31 +102,34 @@ export function useClientEnroll(setSubmitting: (submitting: boolean) => void) {
     async (invite: ClientInvite) => {
       setSubmitting(true);
       setPendingConnectionError(null);
+      // No `finally`: the React Compiler cannot compile a try/finally.
+      let result: Awaited<ReturnType<typeof enrollClient>>;
       try {
-        const result = await enrollClient(invite);
-        const failures = [
-          ...result.failed.map((entry) => `${entry.name}: ${entry.reason}`),
-          ...result.undoFailures,
-        ];
-        if (result.paired.length > 0 && failures.length === 0) {
-          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          // Same as Add environment: return to what opened the sheet, so Home never nests in a sheet.
-          if (navigation.canGoBack()) navigation.goBack();
-          else navigation.dispatch(StackActions.replace("Home"));
-          return;
-        }
-        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-        setPendingConnectionError(
-          result.paired.length === 0 && failures.length === 0
-            ? `"${result.name}" has no machines yet. Give it access in the portal.`
-            : [`Paired: ${result.paired.join(", ") || "none"}.`, ...failures].join("\n"),
-        );
+        result = await enrollClient(invite);
       } catch (cause) {
+        setSubmitting(false);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
         setPendingConnectionError(message(cause));
-      } finally {
-        setSubmitting(false);
+        return;
       }
+      setSubmitting(false);
+      const failures = [
+        ...result.failed.map((entry) => `${entry.name}: ${entry.reason}`),
+        ...result.undoFailures,
+      ];
+      if (result.paired.length > 0 && failures.length === 0) {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        // Same as Add environment: return to what opened the sheet, so Home never nests in a sheet.
+        if (navigation.canGoBack()) navigation.goBack();
+        else navigation.dispatch(StackActions.replace("Home"));
+        return;
+      }
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      setPendingConnectionError(
+        result.paired.length === 0 && failures.length === 0
+          ? `"${result.name}" has no machines yet. Give it access in the portal.`
+          : [`Paired: ${result.paired.join(", ") || "none"}.`, ...failures].join("\n"),
+      );
     },
     [enrollClient, navigation, setSubmitting],
   );
