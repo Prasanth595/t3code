@@ -26,6 +26,7 @@ import {
   ChatAttachmentId,
   ChatFileAttachment,
   ChatImageAttachment,
+  CheckpointId,
   ClaudeSettings,
   EnvironmentId,
   MessageId,
@@ -1925,6 +1926,174 @@ describe("ClaudeAdapterV2 native fork", () => {
 
         assert.equal(openedQueries[0]?.options.resume, "forked-native-session");
         assert.equal(openedQueries[0]?.options.sessionId, undefined);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+});
+
+describe("ClaudeAdapterV2 rollback to thread start", () => {
+  const openRollbackRuntime = Effect.fnUntraced(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "t3-claude-v2-rollback-attachments-",
+    });
+    const openedQueries: Array<ClaudeAdapterV2.ClaudeAgentSdkQueryOpenInput> = [];
+    let allocatedSessions = 0;
+    const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+      instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+      settings: DEFAULT_CLAUDE_SETTINGS,
+      environment: {},
+      attachmentsDir,
+      fileSystem,
+      path: yield* Path.Path,
+      crypto: yield* Crypto.Crypto,
+      idAllocator: yield* IdAllocator.IdAllocatorV2,
+      queryRunner: {
+        allocateSessionId: Effect.sync(() => `native-session-${++allocatedSessions}`),
+        open: (input) =>
+          Effect.sync(() => {
+            openedQueries.push(input);
+            return {
+              messages: Stream.empty,
+              offer: () => Effect.void,
+              setModel: () => Effect.void,
+              applyFlagSettings: () => Effect.void,
+              setPermissionMode: () => Effect.void,
+              backgroundTasks: () => Effect.succeed(false),
+              stopTask: () => Effect.void,
+              interrupt: Effect.void,
+              close: Effect.void,
+            };
+          }),
+        forkSession: () =>
+          Effect.succeed({
+            sessionId: "forked-native-session",
+            headMessageId: "forked-head-message",
+          }),
+        subagentLaunchToolUseId: () => Effect.succeed(null),
+        assertComplete: Effect.void,
+      },
+    });
+    const threadId = ThreadId.make("thread-claude-rollback");
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("provider-session-claude-rollback"),
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+    });
+    const ensureThread = (targetThreadId: ThreadId) =>
+      runtime.ensureThread({
+        threadId: targetThreadId,
+        modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+        runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+      });
+    return { runtime, openedQueries, threadId, ensureThread };
+  });
+
+  const afterFirstRun = (providerThread: OrchestrationV2ProviderThread) =>
+    ({
+      ...providerThread,
+      status: "active",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+    }) satisfies OrchestrationV2ProviderThread;
+
+  const threadStartTarget = {
+    type: "thread_start",
+    checkpointId: CheckpointId.make("checkpoint:rollback-first-run"),
+    appRunOrdinal: 0,
+  } as const;
+
+  it.effect("keeps a fork's inherited history when its first run is rolled back", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { runtime, openedQueries, threadId, ensureThread } = yield* openRollbackRuntime();
+        const sourceProviderThread = yield* ensureThread(ThreadId.make("thread-claude-source"));
+        const forkedProviderThread = yield* runtime.forkThread({
+          sourceProviderThread,
+          targetThreadId: threadId,
+        });
+
+        const rolledBack = yield* runtime.rollbackThread({
+          providerThread: afterFirstRun(forkedProviderThread),
+          target: threadStartTarget,
+          providerThreadTurns: [],
+        });
+
+        assert.equal(rolledBack.providerThread.nativeThreadRef?.nativeId, "forked-native-session");
+        assert.equal(
+          rolledBack.providerThread.nativeConversationHeadRef?.nativeId,
+          "forked-head-message",
+        );
+        assert.equal(
+          rolledBack.providerThread.forkedFrom?.providerThreadId,
+          sourceProviderThread.id,
+        );
+
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread: rolledBack.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-fork-after-rollback"),
+            text: "/compact",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            nativeThreadHasTurns: false,
+          }),
+        );
+
+        const options = openedQueries.at(-1)?.options;
+        assert.equal(options?.resume, "forked-native-session");
+        assert.equal(options?.resumeSessionAt, "forked-head-message");
+        assert.equal(options?.sessionId, undefined);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
+  it.effect("opens a fresh native session when a thread without a fork origin is rolled back", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { runtime, openedQueries, threadId, ensureThread } = yield* openRollbackRuntime();
+        const providerThread = yield* ensureThread(threadId);
+
+        const rolledBack = yield* runtime.rollbackThread({
+          providerThread: afterFirstRun(providerThread),
+          target: threadStartTarget,
+          providerThreadTurns: [],
+        });
+
+        const freshNativeId = rolledBack.providerThread.nativeThreadRef?.nativeId;
+        assert.isString(freshNativeId);
+        assert.notEqual(freshNativeId, providerThread.nativeThreadRef?.nativeId);
+        assert.isNull(rolledBack.providerThread.forkedFrom);
+        assert.isNull(rolledBack.providerThread.nativeConversationHeadRef);
+
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread: rolledBack.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-claude-fresh-after-rollback"),
+            text: "Hello again",
+            attachments: [],
+            providerTurnOrdinal: 2,
+            nativeThreadHasTurns: false,
+          }),
+        );
+
+        const options = openedQueries.at(-1)?.options;
+        assert.equal(options?.sessionId, freshNativeId);
+        assert.equal(options?.resume, undefined);
+        assert.equal(options?.resumeSessionAt, undefined);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
