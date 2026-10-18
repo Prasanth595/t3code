@@ -58,7 +58,7 @@ export function ThreadPullRequestCard({
   );
   const detail = query.data;
   const stackQuery = useEnvironmentQuery(
-    detail?.capabilities.stackActions
+    detail?.state === "open" && detail.capabilities.stackActions
       ? pullRequestStackAtom({ environmentId, input: reference })
       : null,
   );
@@ -109,7 +109,8 @@ export function ThreadPullRequestCard({
   const action =
     resolvedAction === "merge" && detail?.mergeability !== "mergeable" ? null : resolvedAction;
   const stackBlocked =
-    detail?.capabilities.stackActions &&
+    detail?.state === "open" &&
+    detail.capabilities.stackActions &&
     (stackQuery.data !== null || stackQuery.isPending || stackQuery.error !== null);
   const status =
     detail?.state === "merged"
