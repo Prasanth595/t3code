@@ -1018,7 +1018,13 @@ const make = Effect.gen(function* () {
                 targetThreadId: candidateThreadId,
                 sourcePoint: input.forkSource.sourcePoint,
                 title: input.title,
-                workspace: { branch: initialBranch, worktreePath: initialWorktreePath },
+                workspace: {
+                  branch: initialBranch,
+                  worktreePath: initialWorktreePath,
+                  ...(workspaceStrategy.type === "worktree"
+                    ? { workspacePreparationCommandId: input.commandId }
+                    : {}),
+                },
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
               })

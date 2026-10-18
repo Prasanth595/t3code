@@ -83,7 +83,10 @@ export interface ThreadForkServiceV2Shape {
     readonly transferId: ContextTransferId;
     readonly targetThreadId: ThreadId;
     readonly title?: string;
-    readonly workspace?: { readonly branch: string | null; readonly worktreePath: string | null };
+    readonly workspace?: Pick<
+      OrchestrationV2AppThread,
+      "branch" | "worktreePath" | "workspacePreparationCommandId"
+    >;
     readonly createdBy: OrchestrationV2Actor;
     readonly creationSource: OrchestrationV2CreationSource;
     readonly createdAt: DateTime.Utc;
@@ -118,6 +121,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           id: input.targetThreadId,
           title: input.title ?? `${input.sourceProjection.thread.title} fork`,
           ...input.workspace,
+          workspacePreparationCommandId: input.workspace?.workspacePreparationCommandId,
           activeProviderThreadId: null,
           lineage: {
             parentThreadId: input.sourceProjection.thread.id,

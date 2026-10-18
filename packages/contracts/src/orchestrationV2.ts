@@ -364,6 +364,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  workspacePreparationCommandId: Schema.optional(CommandId),
   linkedPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
   pullRequests: Schema.optional(Schema.Array(ThreadPullRequestLink)),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
@@ -2916,6 +2917,7 @@ export const OrchestrationV2Command = Schema.Union([
       Schema.Struct({
         branch: Schema.NullOr(TrimmedNonEmptyString),
         worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+        workspacePreparationCommandId: Schema.optional(CommandId),
       }),
     ),
     title: Schema.optional(TrimmedNonEmptyString),

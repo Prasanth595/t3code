@@ -4567,6 +4567,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      const preparationCommandId = projection.thread.workspacePreparationCommandId;
+      if (preparationCommandId !== undefined) {
+        // Forks have no preparing run. The fork-ready receipt gates every sender,
+        // including other clients, and honors the setup script's wait policy.
+        const ready = yield* commandReceipts
+          .getByCommandId(CommandId.make(`${preparationCommandId}:fork-ready`))
+          .pipe(mapDispatchError(command));
+        if (
+          Option.isNone(ready) ||
+          ready.value.status !== "accepted" ||
+          ready.value.threadId !== command.threadId
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause:
+              "The fork's workspace is not ready. Wait for preparation to finish, or create a new fork if preparation failed.",
+          });
+        }
+      }
       if (command.manualContinuationOfRunId !== undefined) {
         const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
         const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
