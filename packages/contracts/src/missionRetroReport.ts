@@ -54,7 +54,7 @@ export const MAX_MISSION_RETRO_REPORT_SUMMARY = 2048;
 export const MAX_MISSION_RETRO_REPORT_ITEM_SUMMARY = 512;
 
 /** Owner-requested reporter model for retro analysis. */
-export const REQUESTED_RETRO_REPORTER_MODEL = "muse-spark-1.3-contributor";
+export const REQUESTED_RETRO_REPORTER_MODEL = "muse-spark-1.3";
 /** Read-only analysis profile the reporter runs under. */
 export const EXPECTED_RETRO_REPORTER_PROFILE = "muse-review";
 

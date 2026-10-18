@@ -9,6 +9,9 @@ import * as Schema from "effect/Schema";
 import { McpServer } from "effect/ai";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
+import * as BoundaryReceipts from "../orchestration-v2/MissionManagerBoundaryReceipts.ts";
+import * as PlanningFacts from "../orchestration-v2/MissionPlanningFacts.ts";
+import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as CombinedMissionRuntime from "../orchestration-v2/CombinedMissionRuntime.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -21,6 +24,9 @@ import * as MissionMcpAuthority from "./MissionMcpAuthority.ts";
 import * as MissionMcpPolicy from "./MissionMcpPolicy.ts";
 import * as MissionMcpService from "./MissionMcpService.ts";
 import * as MissionMcpToolkit from "./MissionMcpToolkit.ts";
+import * as MissionLifecycleToolkit from "./MissionLifecycleToolkit.ts";
+import * as MissionPlanningToolkit from "./MissionPlanningToolkit.ts";
+import * as MissionPeerToolkit from "./MissionPeerToolkit.ts";
 import * as MissionHandlers from "./toolkits/mission/handlers.ts";
 import { MissionToolkit } from "./toolkits/mission/tools.ts";
 
@@ -258,7 +264,12 @@ export const layer = Layer.unwrap(
 );
 
 /** One policy publication shared by mission tools and the P2/P3 domain runtime. */
-export const layerCombined = CombinedMissionRuntime.layer.pipe(Layer.provideMerge(layer));
+export const layerCombined = CombinedMissionRuntime.layer.pipe(
+  Layer.provide(PlanningFacts.layer),
+  Layer.provide(BoundaryReceipts.layer),
+  Layer.provide(Scheduler.layer),
+  Layer.provideMerge(layer),
+);
 
 const layerMissionToolkit = (service: MissionMcpService.MissionMcpService["Service"]) =>
   McpServer.toolkit(MissionToolkit).pipe(
@@ -290,4 +301,7 @@ export const layerOptionalToolkits = isCatchesPersona()
   : Layer.mergeAll(
       layerMissionToolkitOptional,
       MissionCompletionToolkit.layerOptionalMissionCompletionToolkit,
+      MissionPlanningToolkit.layerOptional,
+      MissionLifecycleToolkit.layerOptional,
+      MissionPeerToolkit.layerOptional,
     );

@@ -22,6 +22,6 @@ if (
     await runAcpMcpCliFastPath(command, process.argv.slice(3));
   } else {
     const { runCli } = await import("./binCli.ts");
-    runCli();
+    runCli({ format: "packed-module-graph", moduleUrl: import.meta.url });
   }
 }

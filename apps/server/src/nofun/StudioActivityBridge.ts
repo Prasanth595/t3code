@@ -10,12 +10,14 @@ import type { OrchestrationProjectShell, OrchestrationV2ThreadShell } from "@t3t
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Startup Keychain lookup explicitly requires execFile with a bounded timeout and no shell.
 import * as NodeChildProcess from "node:child_process";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
@@ -130,7 +132,8 @@ export function makeStudioActivityFileStateStore(
             directory: path.dirname(statePath),
             prefix: "activity-quarantine-",
           });
-          const quarantinePath = path.join(directory, `state-${Date.now()}.json`);
+          const now = yield* Clock.currentTimeMillis;
+          const quarantinePath = path.join(directory, `state-${now}.json`);
           yield* fs.rename(statePath, quarantinePath);
           yield* Effect.logError(
             "studio activity state invalid; quarantined original file; recovering from bridge readback",
@@ -141,7 +144,9 @@ export function makeStudioActivityFileStateStore(
     save: (state) =>
       Effect.runPromise(
         Effect.gen(function* () {
-          yield* fs.writeFileString(`${statePath}.pending`, JSON.stringify(state), { mode: 0o600 });
+          // The publisher owns state validation; this codec handles only the JSON boundary.
+          const text = yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(state);
+          yield* fs.writeFileString(`${statePath}.pending`, text, { mode: 0o600 });
           yield* fs.rename(`${statePath}.pending`, statePath);
         }),
       ),
@@ -216,6 +221,7 @@ export const layerWithBridgeOptions = (options: StudioActivityBridgeOptions = {}
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const projects = yield* ProjectStore.ProjectStoreV2;
       const events = yield* OrchestrationEventStore.OrchestrationEventStore;
+      const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
       const bridgeScope = yield* Effect.scope;
       const scope = readNofunPersonaScope(env);
       const team = nofunTeamFromEnv(env);
@@ -223,17 +229,19 @@ export const layerWithBridgeOptions = (options: StudioActivityBridgeOptions = {}
       // Single flag pair in one Ref so notify/drain coordinate atomically:
       // at most one publish in flight, at most one coalesced rerun.
       const state = yield* Ref.make({ inFlight: false, dirty: false });
+      const nowMs = options.nowMs ?? Date.now;
       let publisherRef: StudioActivityPublisher | null = null;
       const publisher = new StudioActivityPublisher({
         epoch: STUDIO_ACTIVITY_BRIDGE_EPOCH,
         stateStore,
-        nowMs: options.nowMs ?? Date.now,
-        initialSequence: (options.nowMs ?? Date.now)(),
+        nowMs,
+        now: () => DateTime.formatIso(DateTime.makeUnsafe(nowMs())),
+        initialSequence: nowMs(),
         allowedProjectIds: [],
         allowedRoots,
         reads: {
           listActivityThreads: () =>
-            Effect.runPromise(
+            runPromise(
               Effect.gen(function* () {
                 const snapshot = yield* projections.getShellSnapshot();
                 const shells = yield* projects.listShells();
@@ -257,9 +265,9 @@ export const layerWithBridgeOptions = (options: StudioActivityBridgeOptions = {}
       });
       publisherRef = publisher;
       const minIntervalMs = options.minIntervalMs ?? 10_000;
-      const nowMs = options.nowMs ?? Date.now;
+      const idleIntervalMs = options.idleIntervalMs ?? 30_000;
       let recoverAt = 0;
-      let lastPublishAt = Number.NEGATIVE_INFINITY;
+      let lastPublishAt = options.publishOnStart === false ? nowMs() : Number.NEGATIVE_INFINITY;
       let snapshotDue = options.publishOnStart ?? true;
       const reportFailure = (error: unknown) =>
         Effect.logWarning("studio activity delivery pending", {
@@ -273,7 +281,7 @@ export const layerWithBridgeOptions = (options: StudioActivityBridgeOptions = {}
             if (nowMs() >= recoverAt) {
               // Keep each replay turn bounded; subsequent timer ticks drain more pages.
               const more = await publisher.recover();
-              recoverAt = more ? nowMs() : nowMs() + (options.idleIntervalMs ?? 30_000);
+              recoverAt = more ? nowMs() : nowMs() + idleIntervalMs;
             }
             // On restart, retry the exact durable identity before allocating a
             // fresh snapshot. A readback watermark may already have covered it.
@@ -282,7 +290,12 @@ export const layerWithBridgeOptions = (options: StudioActivityBridgeOptions = {}
               if (publisher.pendingCount > 0)
                 return outcomes.find((outcome) => outcome.error)?.error;
             }
-            if (snapshotDue && nowMs() - lastPublishAt >= minIntervalMs) {
+            // Refresh liveness even when no application event arrives. A GET
+            // only observes the bridge; it cannot renew the producer heartbeat.
+            if (
+              (snapshotDue || nowMs() - lastPublishAt >= idleIntervalMs) &&
+              nowMs() - lastPublishAt >= minIntervalMs
+            ) {
               snapshotDue = false;
               lastPublishAt = nowMs();
               const result = await publisher.publishNow();

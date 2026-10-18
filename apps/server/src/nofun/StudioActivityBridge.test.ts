@@ -149,6 +149,20 @@ const decodePostedBody = Schema.decodeEffect(
   ),
 );
 
+const decodePostedReceiptFields = Schema.decodeUnknownSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      stamp: Schema.Struct({
+        producer_id: Schema.String,
+        epoch: Schema.String,
+        sequence: Schema.Number,
+        emitted_at: Schema.String,
+      }),
+      payloadHash: Schema.String,
+    }),
+  ),
+);
+
 interface PostedCall {
   readonly url: string;
   readonly authorization: string | null;
@@ -566,6 +580,7 @@ it.effect(
       let saved: StudioActivityState | null = null;
       let clock = 1000;
       let posts = 0;
+      const sent: string[] = [];
       let reads = 0;
       const firstAttempt = Promise.withResolvers<void>();
       const savedAck = Promise.withResolvers<void>();
@@ -594,6 +609,7 @@ it.effect(
             return Response.json({ events: [], cursor: null, has_more: false, watermark: null });
           }
           posts++;
+          sent.push(String(init.body));
           if (posts === 1) {
             firstAttempt.resolve();
             return new Response("busy", { status: 503 });
@@ -601,7 +617,7 @@ it.effect(
           const input = JSON.parse(String(init.body));
           return Response.json({
             verdict: "replay_duplicate",
-            eventId: "evt_retried",
+            eventId: `evt_retried_${input.stamp.sequence}`,
             stamp: input.stamp,
             payloadHash: input.payloadHash,
           });
@@ -613,11 +629,71 @@ it.effect(
         clock = 3000;
         yield* TestClock.adjust(1100);
         yield* Effect.promise(() => savedAck.promise);
-        assert.equal(posts, 2);
+        // The exact lost POST is retried before the now-due heartbeat refresh.
+        assert.equal(posts, 3);
+        assert.equal(sent[0], sent[1]);
         assert.isAtLeast(reads, 2);
         assert.lengthOf(saved!.pending, 0);
-        assert.equal(saved!.watermark?.eventId, "evt_retried");
+        assert.equal(saved!.watermark?.eventId, "evt_retried_1001");
       }).pipe(Effect.provide(layer));
+    }),
+);
+
+it.effect(
+  "a POST-only bridge receives startup and idle heartbeats without application events",
+  () =>
+    Effect.gen(function* () {
+      let clock = 1000;
+      const posts: Array<{ stamp: { sequence: number }; heartbeat_at: string }> = [];
+      const startupAck = Promise.withResolvers<void>();
+      const idleAck = Promise.withResolvers<void>();
+      let gets = 0;
+      yield* Effect.gen(function* () {
+        yield* Effect.promise(() => startupAck.promise);
+        clock += 30_000;
+        yield* TestClock.adjust(30_000);
+        yield* Effect.promise(() => idleAck.promise);
+        assert.lengthOf(posts, 2);
+        assert.isAbove(posts[1]!.stamp.sequence, posts[0]!.stamp.sequence);
+        assert.equal(posts[0]!.heartbeat_at, "1970-01-01T00:00:01.000Z");
+        assert.equal(posts[1]!.heartbeat_at, "1970-01-01T00:00:31.000Z");
+        assert.equal(gets, 1);
+      }).pipe(
+        Effect.provide(
+          layerBridgeTest({
+            env: {
+              NOFUN_STUDIO_BRIDGE_URL: "http://bridge.test",
+              NOFUN_STUDIO_BRIDGE_TOKEN: "fixture",
+            },
+            publishOnStart: true,
+            nowMs: () => clock,
+            stateStore: {
+              load: async () => null,
+              save: async (state) => {
+                if (state.watermark && state.pending.length === 0) {
+                  assert.equal(state.watermark.eventId, "");
+                  assert.lengthOf(state.seenEventIds, 0);
+                  if (posts.length === 1) startupAck.resolve();
+                  if (posts.length === 2) idleAck.resolve();
+                }
+              },
+            },
+            fetchFn: async (_url, init) => {
+              if (init.method === "GET") {
+                gets++;
+                return new Response(null, { status: 405 });
+              }
+              const input = JSON.parse(String(init.body));
+              posts.push(input);
+              return Response.json({
+                verdict: "accept",
+                stamp: input.stamp,
+                payloadHash: input.payloadHash,
+              });
+            },
+          }),
+        ),
+      );
     }),
 );
 
@@ -645,7 +721,10 @@ it.effect("startup retries the persisted envelope before allocating a fresh snap
     const retried = Promise.withResolvers<string>();
     yield* Effect.gen(function* () {
       const bytes = yield* Effect.promise(() => retried.promise);
-      assert.equal(bytes, JSON.stringify(pending.envelope));
+      assert.equal(
+        bytes,
+        yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))(pending.envelope),
+      );
     }).pipe(
       Effect.provide(
         layerBridgeTest({
@@ -664,7 +743,7 @@ it.effect("startup retries the persisted envelope before allocating a fresh snap
             if (init.method === "GET")
               return Response.json({ events: [], cursor: null, has_more: false, watermark: null });
             retried.resolve(String(init.body));
-            const input = JSON.parse(String(init.body));
+            const input = decodePostedReceiptFields(String(init.body));
             return Response.json({
               verdict: "accept",
               eventId: `evt_${input.stamp.sequence}`,

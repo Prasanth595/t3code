@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import { stableStringify } from "@t3tools/shared/relaySigning";
 import type { Mission } from "../../../../packages/contracts/src/mission.ts";
+import type { OrchestratorMcpHostCapacity } from "@t3tools/contracts";
 import type { ServerProviderUsageLimits } from "../../../../packages/contracts/src/providerUsageLimits.ts";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -122,6 +123,7 @@ export interface MissionAdmissionRouteFacts {
 }
 
 export interface MissionAdmissionHostFacts {
+  readonly capacity?: OrchestratorMcpHostCapacity | undefined;
   readonly hostId: string;
   readonly bootId: string;
   readonly ready: boolean;
@@ -629,6 +631,18 @@ export const decideMissionAdmission = (
   }
   if (!host.buildObserved || !host.toolchainObserved || !host.pressureObserved) {
     return err("host_not_observed", "Host readiness signals were not all observed.");
+  }
+  if (
+    host.capacity !== undefined &&
+    (!freshTimestamp(host.capacity.observedAtMs, facts.nowMs, maxFactAge) ||
+      host.capacity.hostId !== host.hostId ||
+      host.capacity.bootId !== host.bootId ||
+      !host.capacity.ready)
+  ) {
+    return err(
+      "host_not_ready",
+      `Host capacity blocks dispatch: ${host.capacity.reasons.join(", ") || "stale or mismatched observation"}.`,
+    );
   }
   if (!host.ready || !host.buildOk || !host.toolchainOk || !host.pressureAcceptable) {
     return err("host_not_ready", "Host is not ready to dispatch.");

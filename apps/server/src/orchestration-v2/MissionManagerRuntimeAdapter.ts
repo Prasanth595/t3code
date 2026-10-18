@@ -847,18 +847,13 @@ const make = Effect.gen(function* () {
         const commandId = CommandId.make(
           `manager-wake:${canonical.id}:${request.role}:${assignment.epoch}:${request.wakeKey}`,
         );
-        const header = `[manager-wake role=${request.role} epoch=${assignment.epoch} revision=${canonical.revision}]`;
+        // The same logical notification must keep the same body when unrelated
+        // mission revisions arrive before its delivery receipt is recovered.
+        const header = `[manager-wake role=${request.role} epoch=${assignment.epoch}]`;
         const ack =
           request.reservationId === undefined
             ? ""
-            : `\nReread the mission at this revision, then reply with exactly this line when you are ready to act:\n${managerAckLine(
-                {
-                  reservationId: request.reservationId,
-                  role: request.role,
-                  epoch: assignment.epoch,
-                  revision: canonical.revision,
-                },
-              )}`;
+            : `\nReread the latest canonical mission before acting. Acknowledge with one line in this format, replacing <revision> with the revision you actually reread:\n${MANAGER_ACK_PREFIX} reservation=${request.reservationId} role=${request.role} epoch=${assignment.epoch} revision=<revision>`;
         // Queue behind any active turn: a wake must not steer the manager's work.
         yield* threads.sendToThread({
           projectId: targetThread.projectId,

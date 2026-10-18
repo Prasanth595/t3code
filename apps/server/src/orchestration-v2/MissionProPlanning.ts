@@ -22,13 +22,12 @@ import {
  * source slice): prepared → submitted → response_pending → retrieved →
  * reconciled, with explicit blocked / cancelled outcomes.
  *
- * It is dormant and proposal-only. It reads no clock, store, network, or
- * model, schedules nothing, and probes no quota. A decision is a bounded
- * reason code, a finite next action, and (for `advance`) a PROPOSED next
- * record. None of it is durable authorization: the existing mission SQL
- * store and admission path are the future owners that persist a proposed
- * record (compare-and-set on its revision) before the adapter performs the
- * action. No such store exists in this slice, and this module creates none.
+ * Every decision stays `proposal_only`. That word is not a reservation ACK
+ * and it does not mean a row was written. `MissionPlanningStore` is the
+ * owner that compare-and-sets the planning projection in the same SQL
+ * transaction as the canonical mission row, and it returns an ACK only
+ * after that write. This module still reads no clock, store, network, or
+ * model, schedules nothing, and probes no quota.
  *
  * Trust boundary. The event and the record body are untrusted stage claims.
  * Canonical mission, epoch, team, environment, manager, pause/stop,
@@ -136,6 +135,21 @@ const GUI_ACTIONS: ReadonlySet<ProPlanningAction> = new Set([
   "reacquire_gui_and_retrieve",
   "continue_retrieval",
 ]);
+
+/** Actions that drive the GUI. The SQL store is what may authorize one, and only on a fresh commit. */
+export const PRO_PLANNING_GUI_ACTIONS: ReadonlySet<ProPlanningAction> = GUI_ACTIONS;
+
+/**
+ * What a decision allows the SQL owner to write. Holds, denials, and no-ops
+ * write nothing: a proposal is not a persisted reservation.
+ */
+export const proPlanningSqlDisposition = (
+  decision: ProPlanningDecision,
+): "record" | "lease" | "none" => {
+  if (decision.kind === "advance" && decision.record !== null) return "record";
+  if (decision.kind === "act") return "lease";
+  return "none";
+};
 
 /** Stable pointer to the record a decision was made against. */
 export interface ProPlanningStagePointer {
@@ -841,10 +855,69 @@ const evaluate = (input: unknown): ProPlanningDecision => {
   }
 };
 
+const isDeliveryEpoch = (value: unknown): value is number =>
+  typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+
+/**
+ * Restart reading of a record that is already stored. It never proposes
+ * `submit_prompt`: a lost submission acknowledgment locates the existing
+ * conversation, a terminal or prepared stage does not start again, and a
+ * stale or unopened wake does not resubmit. The SQL store still has to
+ * release a GUI lease held by an older delivery epoch; this function does
+ * not persist that release and does not authorize the GUI action it names.
+ */
+export const inspectProPlanningRestart = (input: {
+  readonly current: unknown;
+  readonly nowMs: number;
+  readonly deliveryThreadId: string;
+  readonly deliveryEpoch: number;
+}): ProPlanningDecision => {
+  try {
+    if (!isNowMs(input.nowMs)) return reject(only("clock_invalid"), null);
+    const decoded = decodeRecord(input.current);
+    if (decoded === undefined) return reject(only("record_malformed"), null);
+    if (
+      typeof input.deliveryThreadId !== "string" ||
+      input.deliveryThreadId.length === 0 ||
+      !isDeliveryEpoch(input.deliveryEpoch)
+    ) {
+      return reject(only("facts_malformed"), decoded);
+    }
+    if (decoded.managerEpoch > input.deliveryEpoch) {
+      return reject(only("epoch_mismatch"), decoded);
+    }
+    if (
+      decoded.managerEpoch === input.deliveryEpoch &&
+      decoded.managerThreadId !== input.deliveryThreadId
+    ) {
+      return reject(only("manager_mismatch"), decoded);
+    }
+    if (TERMINAL_STAGES.has(decoded.stage)) return reject(only("terminal_stage"), decoded);
+    if (decoded.stage === "prepared" || decoded.stage === "retrieved") {
+      return decide("noop", "none", pointerOf(decoded), [], null);
+    }
+    if (decoded.stage === "submitted") {
+      return decide("act", "locate_existing", pointerOf(decoded), [], null);
+    }
+    const wake = decoded.wake;
+    if (wake === undefined) return reject(only("record_malformed"), decoded);
+    if (input.nowMs < wake.notBeforeMs) {
+      return decide("hold", "release_gui_and_wait", pointerOf(decoded), ["wake_not_due"], null);
+    }
+    if (input.nowMs > wake.expiresAtMs) {
+      return decide("hold", "operator_review", pointerOf(decoded), ["wake_expired"], null);
+    }
+    return decide("act", "reacquire_gui_and_retrieve", pointerOf(decoded), [], null);
+  } catch {
+    return reject(only("verifier_fault"), null);
+  }
+};
+
 /**
  * Decides one planning event against the current record and the separately
  * trusted facts and receipts. Total over `unknown` input: a malformed or
- * hostile value yields a held decision, never an exception.
+ * hostile value yields a held decision, never an exception. Persistence is
+ * `MissionPlanningStore.commit`; this function never writes.
  */
 export const advanceProPlanning = (input: AdvanceProPlanningInput): ProPlanningDecision => {
   try {

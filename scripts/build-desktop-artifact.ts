@@ -977,6 +977,8 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   "!apps/desktop/resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/browser-secret",
   "!apps/desktop/prod-resources/browser-secret/**/*",
+  "!apps/desktop/resources/muse-agent/**/*",
+  "!apps/desktop/prod-resources/muse-agent/**/*",
   // Windows stages the server sidecar below prod-resources so electron-builder
   // can copy it using project-relative extraResources matchers. Keep those
   // staging inputs out of app.asar; they are emitted once at resources/.
@@ -2709,6 +2711,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       : { asarUnpack: [...NOFUN_ARTIFACTS_ASAR_UNPACK_GLOBS] }),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
+      { from: "apps/desktop/prod-resources/muse-agent", to: "muse-agent" },
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
       ...(platform === "linux" ? LINUX_BROWSER_SECRET_EXTRA_RESOURCES : []),
       ...(platform === "win" ? WINDOWS_SERVER_EXTRA_RESOURCES : []),
@@ -3600,6 +3603,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* Effect.log("[desktop-artifact] Staging release app...");
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
+  // The configured ACP executable is ordinary Node, which cannot read app.asar.
+  // Keep its sibling-only runner modules in installed resources, not a checkout.
+  const museAgentDir = path.join(stageResourcesDir, "muse-agent");
+  yield* fs.makeDirectory(museAgentDir, { recursive: true });
+  for (const name of ["muse-acp.mjs", "muse-acp.logic.mjs", "muse-msp-run.mjs"]) {
+    yield* fs.copyFile(path.join(repoRoot, "scripts/nofun", name), path.join(museAgentDir, name));
+  }
   if (options.platform === "linux") {
     const extensionDir = path.join(stageAppDir, "apps/desktop/gnome-extension");
     yield* fs.makeDirectory(extensionDir, { recursive: true });

@@ -1,3 +1,4 @@
+import { admissionCommand } from "./cli/admission.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -27,6 +28,8 @@ import { servicePreflightCommand } from "./cli/servicePreflight.ts";
 import { themeCommand } from "./cli/theme.ts";
 import { traceCommand } from "./cli/trace.ts";
 import { triageCommand } from "./cli/triage.ts";
+import { MissionPeerEntrypoint } from "./orchestration-v2/MissionPeerConfiguredReceiver.ts";
+import type { PeerBootstrapInputs } from "./orchestration-v2/MissionPeerBootstrap.ts";
 
 const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
@@ -72,6 +75,7 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
       appCommand,
       pairCommand,
       authCommand,
+      admissionCommand,
       browserCommand,
       projectCommand,
       serviceCommand,
@@ -91,10 +95,17 @@ export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
 
 export const cli = makeCli();
 
-export function runCli() {
+export function runCli(peerEntrypoint?: PeerBootstrapInputs["entrypoint"]) {
   Command.run(cli, { version: packageJson.version }).pipe(
     Effect.scoped,
-    Effect.provide(layerCliRuntime),
+    Effect.provide(
+      Layer.mergeAll(
+        layerCliRuntime,
+        peerEntrypoint === undefined
+          ? Layer.empty
+          : Layer.succeed(MissionPeerEntrypoint, peerEntrypoint),
+      ),
+    ),
     NodeRuntime.runMain,
   );
 }

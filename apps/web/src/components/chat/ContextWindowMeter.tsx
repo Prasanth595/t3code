@@ -34,8 +34,10 @@ export function ContextWindowMeter(props: {
     compactDisabled,
     compactDisabledReason,
   } = props;
-  const usedPercentage = formatPercentage(usage?.usedPercentage);
-  const normalizedPercentage = Math.max(0, Math.min(100, usage?.usedPercentage ?? 0));
+  const reportedPercentage = usage?.usedPercentage;
+  const percentageKnown = reportedPercentage != null && Number.isFinite(reportedPercentage);
+  const usedPercentage = formatPercentage(reportedPercentage);
+  const normalizedPercentage = percentageKnown ? Math.max(0, Math.min(100, reportedPercentage)) : 0;
   const radius = 9.75;
   const circumference = 2 * Math.PI * radius;
   const dashOffset = circumference * (1 - normalizedPercentage / 100);
@@ -57,6 +59,7 @@ export function ContextWindowMeter(props: {
             size="sm"
             variant="ghost-muted"
             className="w-20"
+            data-context-window-meter="true"
             aria-label={
               usage?.usedPercentage != null
                 ? `Context window ${usedPercentage} used`
@@ -76,21 +79,26 @@ export function ContextWindowMeter(props: {
                   cy="12"
                   r={radius}
                   fill="none"
-                  className="stroke-muted-foreground/24"
+                  className={
+                    percentageKnown ? "stroke-muted-foreground/24" : "stroke-muted-foreground/55"
+                  }
                   strokeWidth="3"
+                  strokeDasharray={percentageKnown ? undefined : "1.6 2.4"}
                 />
-                <circle
-                  cx="12"
-                  cy="12"
-                  r={radius}
-                  fill="none"
-                  stroke={usageColor}
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeDasharray={circumference}
-                  strokeDashoffset={dashOffset}
-                  className="transition-[stroke-dashoffset,stroke] duration-500 ease-out motion-reduce:transition-none"
-                />
+                {percentageKnown ? (
+                  <circle
+                    cx="12"
+                    cy="12"
+                    r={radius}
+                    fill="none"
+                    stroke={usageColor}
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    strokeDasharray={circumference}
+                    strokeDashoffset={dashOffset}
+                    className="transition-[stroke-dashoffset,stroke] duration-500 ease-out motion-reduce:transition-none"
+                  />
+                ) : null}
               </svg>
             </span>
             <span className="w-8 text-right text-2xs tabular-nums">{usedPercentage}</span>

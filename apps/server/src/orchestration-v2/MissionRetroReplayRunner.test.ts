@@ -606,7 +606,7 @@ it.live("refuses invalid config instead of running anything", () =>
       const good = configFor(world);
       const route = {
         providerInstanceId: "muse-personal",
-        model: "muse-spark-1.3-contributor",
+        model: "muse-spark-1.3",
         billing: "subscription" as const,
       };
       const bad: Array<Runner.MissionRetroReplayRunnerConfig> = [
@@ -802,7 +802,7 @@ it.live(
         const request = requestFor(world);
         const route = {
           providerInstanceId: "muse-personal",
-          model: "muse-spark-1.3-contributor",
+          model: "muse-spark-1.3",
           billing: "subscription" as const,
         };
         // The same deterministic script stands in for a model harness here.

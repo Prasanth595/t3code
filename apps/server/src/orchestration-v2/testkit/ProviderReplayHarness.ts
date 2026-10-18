@@ -1,3 +1,4 @@
+import * as Admission from "../Admission.ts";
 import * as OtelEnvironment from "@t3tools/shared/otelEnvironment";
 import { DEFAULT_SIGNAL_EXPORT } from "@t3tools/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -424,6 +425,7 @@ export function layerWithRegistry<Error>(
   const layerOrchestratorProvided = Orchestrator.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        Admission.layer.pipe(Layer.provide(layerDatabase)),
         layerCheckpointServiceProvided,
         CommandPolicy.layer,
         layerContextHandoffServiceProvided,

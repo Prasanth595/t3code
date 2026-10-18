@@ -45,6 +45,7 @@ const decodeSkillEvaluation = Schema.decodeUnknownSync(MissionRetroSkillEvaluati
 const decodeRetroCheckpoints = Schema.decodeUnknownSync(MissionRetroCheckpoints);
 const decodeRetroSourceRef = Schema.decodeUnknownSync(MissionRetroSourceRef);
 const encodeExecution = Schema.encodeSync(MissionExecution);
+const encodeRetroCheckpoint = Schema.encodeSync(MissionRetroCheckpoint);
 
 const OCCURRED_AT = "2026-10-14T00:00:00.000Z";
 const AUTHORITY = { source: "mission-council", ref: "decision-2026-001" } as const;
@@ -403,7 +404,7 @@ describe("mission wire schemas", () => {
       sourceThreadId: "thread-origin",
       sourceRoot: "thread://thread-origin",
       trigger: "milestone",
-      requestedReporter: "muse-spark-1.3-contributor",
+      requestedReporter: "muse-spark-1.3",
       status: "queued_ready",
       coverage: "full",
       snapshotFingerprint: "a".repeat(64),
@@ -421,6 +422,11 @@ describe("mission wire schemas", () => {
       omissions: [],
       capturedAt: OCCURRED_AT,
     });
+    const legacy = {
+      ...encodeRetroCheckpoint(checkpoint),
+      requestedReporter: "muse-spark-1.3-contributor",
+    };
+    expect(encodeRetroCheckpoint(decodeRetroCheckpoint(legacy))).toEqual(legacy);
     const withCheckpoint = decodeExecution({
       ...emptyMissionExecution(),
       retroCheckpoints: [checkpoint],
@@ -443,7 +449,7 @@ describe("mission wire schemas", () => {
       sourceThreadId: "thread-origin",
       sourceRoot: "thread://thread-origin",
       trigger: "settled",
-      requestedReporter: "muse-spark-1.3-contributor",
+      requestedReporter: "muse-spark-1.3",
       status: "queued_capacity",
       coverage: "unknown",
       snapshotFingerprint: "c".repeat(64),
@@ -591,7 +597,7 @@ it("round-trips bounded retro report receipts and the received event", () => {
     reportRevision: 1,
     accountId: "account",
     providerInstanceId: "muse-personal",
-    modelId: "muse-spark-1.3-contributor",
+    modelId: "muse-spark-1.3",
     profile: "muse-review",
     company: "No Fun",
     originalArtifactRef: "retro-original:abc",
@@ -722,10 +728,13 @@ it("rejects manager reservations beyond the bound at decode", () => {
   expect(() =>
     decodeExecution({
       ...emptyMissionExecution(),
-      managerReservations: Array.from({ length: MAX_MANAGER_TRANSFER_RESERVATIONS + 1 }, (_, i) => ({
-        ...reservationFixture(),
-        reservationId: `mgr-reserve-${String(i).padStart(32, "0")}`,
-      })),
+      managerReservations: Array.from(
+        { length: MAX_MANAGER_TRANSFER_RESERVATIONS + 1 },
+        (_, i) => ({
+          ...reservationFixture(),
+          reservationId: `mgr-reserve-${String(i).padStart(32, "0")}`,
+        }),
+      ),
     }),
   ).toThrow();
 });
@@ -765,14 +774,20 @@ it("round-trips a mission.manager-handoff-reserved event", () => {
   }
 });
 
-
 it("rejects malformed calendar days and mismatched handoff SHA bindings", () => {
-  for (const localDate of ["2026-02-30", "2026-13-01", "0000-01-01"]) expect(() => decodeReservation({ ...reservationFixture(), localDate })).toThrow();
-  expect(() => decodeReservation({ ...reservationFixture(), artifactSha256: "b".repeat(64) })).toThrow();
+  for (const localDate of ["2026-02-30", "2026-13-01", "0000-01-01"])
+    expect(() => decodeReservation({ ...reservationFixture(), localDate })).toThrow();
+  expect(() =>
+    decodeReservation({ ...reservationFixture(), artifactSha256: "b".repeat(64) }),
+  ).toThrow();
 });
 it("bounds reservation identities, counters, and configured timezone", () => {
-  expect(() => decodeReservation({ ...reservationFixture(), currentEpoch: Number.MAX_SAFE_INTEGER + 1 })).toThrow();
-  expect(() => decodeReservation({ ...reservationFixture(), reservationId: "x".repeat(513) })).toThrow();
+  expect(() =>
+    decodeReservation({ ...reservationFixture(), currentEpoch: Number.MAX_SAFE_INTEGER + 1 }),
+  ).toThrow();
+  expect(() =>
+    decodeReservation({ ...reservationFixture(), reservationId: "x".repeat(513) }),
+  ).toThrow();
   expect(() => decodeMission({ ...missionFixture(), projectTimezone: "x".repeat(129) })).toThrow();
 });
 
@@ -912,6 +927,9 @@ it("rejects implausible skill evaluation receipts at decode", () => {
     },
   ];
   for (const overrides of cases) {
-    expect(() => decodeSkillEvaluation(skillEvaluationFixture(overrides)), JSON.stringify(overrides)).toThrow();
+    expect(
+      () => decodeSkillEvaluation(skillEvaluationFixture(overrides)),
+      JSON.stringify(overrides),
+    ).toThrow();
   }
 });

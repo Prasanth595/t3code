@@ -264,7 +264,6 @@ const layerDesktopRuntime = layerDesktopClerk.pipe(
 );
 
 DesktopApp.program.pipe(
-  Effect.provide(layerDesktopRuntime),
-  Effect.provide(layerDesktopConfig),
+  Effect.provide(layerDesktopRuntime.pipe(Layer.provideMerge(layerDesktopConfig))),
   NodeRuntime.runMain,
 );

@@ -5,6 +5,7 @@
  * Native and canonical views share batching, rotation, and retention state so
  * they cannot race while appending to the same thread-scoped file.
  */
+import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
@@ -173,9 +174,27 @@ function logWarning(message: string, context: Record<string, unknown>): Effect.E
   return Effect.logWarning(message, context).pipe(Effect.annotateLogs({ scope: LOG_SCOPE }));
 }
 
-function resolveThreadSegment(raw: string | null | undefined): string {
+export function resolveThreadSegment(raw: string | null | undefined): string {
   const normalized = typeof raw === "string" ? toSafeThreadAttachmentSegment(raw) : null;
-  return normalized ?? GLOBAL_THREAD_SEGMENT;
+  if (normalized === null || typeof raw !== "string") {
+    return normalized ?? GLOBAL_THREAD_SEGMENT;
+  }
+  // toSafeThreadAttachmentSegment caps at 80 chars, so long delegated thread
+  // ids (thread:delegated-task:command:mcp:<uuid>:delegate-task:<id>:<uuid>)
+  // were all cut at the same prefix and sibling children shared one file.
+  // Keep short ids unchanged; give truncated ids a stable unique suffix.
+  const full = raw
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/gi, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-_]+|[-_]+$/g, "");
+  if (full.length <= normalized.length) {
+    return normalized;
+  }
+  const suffix = NodeCrypto.createHash("sha256").update(raw).digest("hex").slice(0, 8);
+  const head = normalized.slice(0, Math.max(0, 80 - suffix.length - 1)).replace(/[-_]+$/g, "");
+  return `${head}-${suffix}`;
 }
 
 function resolveStreamLabel(stream: EventNdjsonStream): string {
