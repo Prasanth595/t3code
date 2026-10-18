@@ -58,10 +58,13 @@ import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
 import {
   basename,
   fileHeaderSubtitle,
+  fileRoutePathSegments,
   isAudioPreviewFile,
   isMarkdownPreviewFile,
   isSvgImagePreviewFile,
   isVideoPreviewFile,
+  resolveWorkspaceFilePath,
+  resolveWorkspaceRelativeFilePath,
 } from "./filePath";
 import { useWorkspaceFileAssetUrlState } from "./workspaceFileAssetUrl";
 
@@ -593,6 +596,32 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
     props.route.params,
   );
+  const fileAccessSession = useEnvironmentQuery(
+    environmentId !== null ? environmentSession.sessionStateAtom(environmentId) : null,
+  );
+  const fileEnvironment = useEnvironmentPresentation(environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
+  const targetPath =
+    cwd !== null && relativePath !== null ? resolveWorkspaceFilePath(cwd, relativePath) : null;
+  const metadata = useEnvironmentQuery(
+    canReadFiles && environmentId !== null && targetPath !== null
+      ? projectEnvironment.fileMetadata({ environmentId, input: { path: targetPath } })
+      : null,
+  );
+  const metadataPending = !metadata.isSuccess && metadata.data === null && metadata.error === null;
+  const directoryPath = metadata.data?.kind === "directory" ? targetPath : null;
+  const [searchQuery, setSearchQuery] = useState("");
+  const entriesQuery = useFileTreeEntries({
+    environmentId,
+    cwd: canReadFiles ? directoryPath : null,
+    searchQuery,
+  });
   const [modeOverride, setModeOverride] = useState<{
     readonly path: string;
     readonly mode: FileViewMode;
@@ -620,7 +649,12 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const resolvedActiveMode =
     isVideoFile || isAudioFile ? "preview" : canPreview ? activeMode : "source";
   const assetPreviewPath =
-    isBrowserFile || isImageFile || isVideoFile || isAudioFile ? relativePath : null;
+    canReadFiles &&
+    !metadataPending &&
+    directoryPath === null &&
+    (isBrowserFile || isImageFile || isVideoFile || isAudioFile)
+      ? relativePath
+      : null;
   const assetPreview = useWorkspaceFileAssetUrlState({
     cwd,
     environmentId,
@@ -678,20 +712,10 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   };
   const needsFileContents =
     relativePath !== null &&
+    directoryPath === null &&
     !isVideoFile &&
     !isAudioFile &&
     (resolvedActiveMode === "source" || isMarkdownPreviewFile(relativePath));
-  const fileAccessSession = useEnvironmentQuery(
-    environmentId !== null ? environmentSession.sessionStateAtom(environmentId) : null,
-  );
-  const fileEnvironment = useEnvironmentPresentation(environmentId);
-  const fileAccess = resolveFilesystemReadAccess({
-    isCatalogReady: fileEnvironment.isReady,
-    connection: fileEnvironment.presentation?.connection ?? null,
-    session: fileAccessSession.data,
-    sessionError: fileAccessSession.error,
-  });
-  const { canReadFiles } = fileAccess;
   const fileQuery = useEnvironmentQuery(
     canReadFiles &&
       environmentId !== null &&
@@ -705,44 +729,68 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       : null,
   );
   const fileData = fileQuery.data as ProjectReadFileResult | null;
+  const fileBrowserCwd = directoryPath ?? params.cwd;
+  const fileBrowserName = directoryPath ?? projectName;
 
   const handleSelectFile = useCallback(
     (path: string) => {
-      const segments = path.split("/").filter(Boolean);
+      const segments = fileRoutePathSegments(
+        fileBrowserCwd === undefined ? path : resolveWorkspaceFilePath(fileBrowserCwd, path),
+      );
       // A draft has no thread. `ThreadFile` would stringify null and then wait forever for a
       // thread to resolve, so a draft stays on its own route and carries its workspace along.
       if (threadId === null) {
         navigation.dispatch(
           StackActions.push("NewTaskFile", {
             environmentId: String(environmentId),
-            ...(cwd === null ? {} : { cwd }),
-            projectName,
+            ...((fileBrowserCwd ?? cwd) === null ? {} : { cwd: fileBrowserCwd ?? cwd }),
+            projectName: fileBrowserName,
             path: segments,
           }),
         );
         return;
       }
-      navigation.navigate("ThreadFile", {
+      const destination = {
         environmentId: String(environmentId),
         threadId: String(threadId),
         path: segments,
-      });
+        ...(fileBrowserCwd === undefined
+          ? {}
+          : { cwd: fileBrowserCwd, projectName: fileBrowserName }),
+      };
+      if (directoryPath !== null) {
+        navigation.dispatch(StackActions.push("ThreadFile", destination));
+      } else {
+        navigation.navigate("ThreadFile", destination);
+      }
     },
-    [cwd, environmentId, navigation, projectName, threadId],
+    [cwd, directoryPath, environmentId, fileBrowserCwd, fileBrowserName, navigation, threadId],
   );
   const renderInspector = useCallback(
     (headerInset: number) =>
       fileInspector.supported && environmentId !== null && cwd !== null ? (
         <ThreadFileNavigatorPane
-          cwd={cwd}
+          cwd={directoryPath ?? cwd}
           environmentId={environmentId}
           headerInset={headerInset}
-          projectName={projectName}
-          selectedPath={relativePath}
+          projectName={directoryPath ?? projectName}
+          selectedPath={
+            directoryPath === null && relativePath !== null
+              ? resolveWorkspaceRelativeFilePath(cwd, relativePath)
+              : null
+          }
           onSelectFile={handleSelectFile}
         />
       ) : undefined,
-    [cwd, environmentId, fileInspector.supported, handleSelectFile, projectName, relativePath],
+    [
+      cwd,
+      directoryPath,
+      environmentId,
+      fileInspector.supported,
+      handleSelectFile,
+      projectName,
+      relativePath,
+    ],
   );
   const safeAreaInsets = useSafeAreaInsets();
   const inspectorHeaderInset = Platform.OS === "ios" ? 0 : safeAreaInsets.top;
@@ -917,6 +965,37 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     );
   }
 
+  if (directoryPath !== null) {
+    return (
+      <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-sheet"}>
+        <FilesBrowserHeader
+          projectName={directoryPath}
+          searchQuery={searchQuery}
+          onSearchQueryChange={setSearchQuery}
+          onRefresh={entriesQuery.refresh}
+          onBack={handleBack}
+        />
+        <ScreenContent>
+          <FileTreeBrowser
+            key={JSON.stringify([environmentId, directoryPath])}
+            entries={entriesQuery.entries}
+            loadingDirectories={entriesQuery.loadingDirectories}
+            onLoadDirectory={entriesQuery.loadDirectory}
+            error={entriesQuery.error}
+            isPending={entriesQuery.isPending}
+            isRefreshing={entriesQuery.isRefreshing}
+            searchQuery={searchQuery}
+            searchTruncated={entriesQuery.searchTruncated}
+            selectedPath={null}
+            onRefresh={entriesQuery.refresh}
+            onSelectFile={handleSelectFile}
+          />
+          <FilesToolbarBottomFade />
+        </ScreenContent>
+      </View>
+    );
+  }
+
   const headerSubtitle = fileHeaderSubtitle(projectName, relativePath);
 
   return (
@@ -932,25 +1011,29 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         actions={fileMenuActions}
       />
       <ScreenContent>
-        <FileContent
-          key={previewKey}
-          activeMode={resolvedActiveMode}
-          cwd={cwd}
-          environmentId={environmentId}
-          previewUri={previewUri}
-          previewFailure={assetPreview._tag === "Failure" ? assetPreview.reason : null}
-          onRetryPreview={handleRetryPreview}
-          videoSource={videoSource}
-          mediaSource={mediaSource}
-          resolveVideoUri={assetPreview.refresh}
-          fileContents={fileData?.contents ?? null}
-          fileError={fileQuery.error}
-          initialLine={targetLine}
-          relativePath={relativePath}
-          threadId={threadId}
-          truncated={fileData?.truncated ?? false}
-          onRefresh={() => fileQuery.refresh()}
-        />
+        {metadataPending && fileData === null ? (
+          <FilePreviewLoading message="Loading file..." />
+        ) : (
+          <FileContent
+            key={previewKey}
+            activeMode={resolvedActiveMode}
+            cwd={cwd}
+            environmentId={environmentId}
+            previewUri={previewUri}
+            previewFailure={assetPreview._tag === "Failure" ? assetPreview.reason : null}
+            onRetryPreview={handleRetryPreview}
+            videoSource={videoSource}
+            mediaSource={mediaSource}
+            resolveVideoUri={assetPreview.refresh}
+            fileContents={fileData?.contents ?? null}
+            fileError={fileQuery.error}
+            initialLine={targetLine}
+            relativePath={relativePath}
+            threadId={threadId}
+            truncated={fileData?.truncated ?? false}
+            onRefresh={() => fileQuery.refresh()}
+          />
+        )}
       </ScreenContent>
       <FilePreviewModal
         source={fullScreenPreview}
