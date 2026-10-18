@@ -7,8 +7,6 @@ import {
   WorktreeMcpHandoffResult,
   WorktreeMcpStatusResult,
   ThreadId,
-  GitHistoryInput,
-  GitHistoryResult,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import * as GitWorkflowService from "../../../git/GitWorkflowService.ts";
@@ -87,26 +85,4 @@ export const WorktreeToolkit = Toolkit.make(
   WorktreeHandoffTool,
   WorktreeStatusTool,
   WorktreeListTool,
-  Tool.make("t3_git_history", {
-    description:
-      "Read up to 40 commits and their parent links for a thread's local head and base branches, plus nearby branch tips. Omit threadId for this thread. Does not fetch or change the checkout. Returns an empty history if the head branch is not available locally.",
-    parameters: Schema.Struct({
-      threadId: Schema.optional(ThreadId),
-      headBranch: GitHistoryInput.fields.headBranch,
-      baseBranch: GitHistoryInput.fields.baseBranch,
-    }),
-    success: GitHistoryResult,
-    failure: OrchestratorMcpFailure,
-    failureMode: "return",
-    dependencies: [
-      McpInvocationContext.McpInvocationContext,
-      ThreadManagementService.ThreadManagementService,
-      ProjectService.ProjectService,
-      GitWorkflowService.GitWorkflowService,
-    ],
-  })
-    .annotate(Tool.Readonly, true)
-    .annotate(Tool.Destructive, false)
-    .annotate(Tool.Idempotent, true)
-    .annotate(Tool.OpenWorld, false),
 );

@@ -10,31 +10,6 @@ import {
 import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceControl.ts";
 import { VcsDriverKind } from "./vcs.ts";
 
-export const GitHistoryInput = Schema.Struct({
-  cwd: TrimmedNonEmptyString,
-  headBranch: TrimmedNonEmptyString,
-  baseBranch: TrimmedNonEmptyString,
-});
-export type GitHistoryInput = typeof GitHistoryInput.Type;
-
-export const GitHistoryCommit = Schema.Struct({
-  sha: TrimmedNonEmptyString,
-  parents: Schema.Array(TrimmedNonEmptyString),
-  subject: Schema.String,
-  author: Schema.String,
-  authoredAt: Schema.String,
-  branches: Schema.Array(Schema.String),
-});
-export type GitHistoryCommit = typeof GitHistoryCommit.Type;
-
-export const GitHistoryResult = Schema.Struct({
-  commits: Schema.Array(GitHistoryCommit),
-  headSha: Schema.NullOr(TrimmedNonEmptyString),
-  baseSha: Schema.NullOr(TrimmedNonEmptyString),
-  truncated: Schema.Boolean,
-});
-export type GitHistoryResult = typeof GitHistoryResult.Type;
-
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GitFilePath = Schema.String.check(Schema.isNonEmpty());
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;

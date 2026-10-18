@@ -2865,7 +2865,6 @@ const layerWsRpc = (
               ),
           ),
         [WS_METHODS.gitResolvePullRequest]: (input) => gitWorkflow.resolvePullRequest(input),
-        [WS_METHODS.gitHistory]: (input) => gitWorkflow.history(input),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           gitWorkflow
             .preparePullRequestThread(input)

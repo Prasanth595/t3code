@@ -56,7 +56,6 @@ import {
   latestPullRequestReviewOutcomes,
   orderPullRequestComments,
   pullRequestFindingKey,
-  pullRequestGraphTarget,
   pullRequestReviewOutcome,
   visibleBody,
   type PullRequestFinding,
@@ -71,8 +70,6 @@ import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
-import { PullRequestBranchGraph } from "./PullRequestBranchGraph";
-import { useProjects } from "~/state/entities";
 
 function reviewerKey(login: string): string {
   return login.toLowerCase();
@@ -387,10 +384,6 @@ export function PullRequestSummaryTab({
   onRefresh: () => void;
   onRefreshChecks?: () => void;
 }) {
-  const projects = useProjects();
-  const graphProject = projects.find(
-    (project) => project.environmentId === environmentId && project.id === reference.projectId,
-  );
   const [shown, setShown] = useState({ url: detail.url, count: COMMENT_PAGE });
   const shownComments = shown.url === detail.url ? shown.count : COMMENT_PAGE;
   const [commentFilter, setCommentFilter] = useLocalStorage(
@@ -622,17 +615,6 @@ export function PullRequestSummaryTab({
 
   return (
     <div ref={scrollerRef} className="h-full overflow-y-auto" data-pull-request-summary-scroll>
-      {graphProject ? (
-        <section className="border-b border-border/50 px-4 py-3" aria-label="Branch graph">
-          <PullRequestBranchGraph
-            environmentId={environmentId}
-            cwd={graphProject.workspaceRoot}
-            headBranch={detail.headBranch}
-            baseBranch={detail.baseBranch}
-            target={pullRequestGraphTarget(detail, false)}
-          />
-        </section>
-      ) : null}
       <section className="px-4 pt-2.5 pb-1">
         <div className="space-y-2">
           <MetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">

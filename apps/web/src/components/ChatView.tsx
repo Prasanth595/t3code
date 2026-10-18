@@ -32,7 +32,6 @@ import { useThreadTerminalActions } from "./terminal/useThreadTerminalActions";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
-import { ThreadPullRequestCard } from "./pullRequest/ThreadPullRequestCard";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
@@ -4164,19 +4163,6 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const scrollToEndStable = useStableCallback(scrollToEnd);
-  // The timeline does not follow footer growth, so the pull request card keeps itself in view
-  // while it loads and builds its graph, as long as the reader was at the end.
-  const followPullRequestCard = useStableCallback((element: HTMLDivElement | null) => {
-    if (!element) return;
-    let height = element.offsetHeight;
-    return observeResize(element, () => {
-      const grew = element.offsetHeight > height;
-      height = element.offsetHeight;
-      if (grew && isAtEndRef.current && timelineScrollModeRef.current === "following-end") {
-        scrollToEndStable();
-      }
-    });
-  });
   useEffect(() => {
     const composer = composerRef;
     let removeListeners: (() => void) | null = null;
@@ -7989,19 +7975,7 @@ export default function ChatView(props: ChatViewProps) {
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
                 footer={
                   paintOnlyDisplayedTimeline ? null : pendingHandoff === null ? (
-                    <>
-                      {pullRequestPanelTarget && activeThreadRef && activeProject ? (
-                        <div ref={followPullRequestCard} className="chat-content-lane py-3">
-                          <ThreadPullRequestCard
-                            key={`${activeThread.environmentId}:${activeThread.id}:${pullRequestPanelTarget.url}`}
-                            threadRef={activeThreadRef}
-                            link={pullRequestPanelTarget}
-                            cwd={gitCwd}
-                          />
-                        </div>
-                      ) : null}
-                      {threadStatusLine}
-                    </>
+                    threadStatusLine
                   ) : (
                     <>
                       <div className="chat-content-lane">
