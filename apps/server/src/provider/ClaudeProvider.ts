@@ -201,10 +201,12 @@ function usesCustomClaudeApiEndpoint(environment: NodeJS.ProcessEnv): boolean {
   const baseUrl = environment.ANTHROPIC_BASE_URL?.trim();
   if (!baseUrl) return false;
   try {
-    return new URL(baseUrl).host !== "api.anthropic.com";
+    // `hostname` drops an explicit port, so `api.anthropic.com:443` stays first-party.
+    return new URL(baseUrl).hostname !== "api.anthropic.com";
   } catch {
-    // A value that is not a URL is still a configured custom endpoint.
-    return true;
+    // An unparseable value is not an endpoint we can confirm, so it does not get
+    // to override the logged-out verdict.
+    return false;
   }
 }
 

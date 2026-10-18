@@ -3231,6 +3231,56 @@ it.layer(
       ),
     );
 
+    it.effect("still reports a logged-out CLI when the base URL spells out the default port", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({
+            tokenSource: "none",
+            apiKeySource: "none",
+            apiProvider: "firstParty",
+          }),
+          { ...process.env, ANTHROPIC_BASE_URL: "https://api.anthropic.com:443" },
+        );
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.auth.status, "unauthenticated");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("still reports a logged-out CLI when the base URL is unparseable", () =>
+      Effect.gen(function* () {
+        // An endpoint we cannot parse is not one we can confirm works, so it
+        // must not stand in for a successful login.
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({
+            tokenSource: "none",
+            apiKeySource: "none",
+            apiProvider: "firstParty",
+          }),
+          { ...process.env, ANTHROPIC_BASE_URL: "openrouter.ai/api" },
+        );
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.auth.status, "unauthenticated");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect("keeps an API key install authenticated when it reports no token source", () =>
       Effect.gen(function* () {
         // `ANTHROPIC_API_KEY` never populates `tokenSource`, so reading that
