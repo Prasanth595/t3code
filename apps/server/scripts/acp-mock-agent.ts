@@ -890,6 +890,29 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       beginAcpMockPrompt(cancelledSessions, requestedSessionId);
       promptCount += 1;
+      const idleOutcome = process.env.T3_ACP_IDLE_OUTCOME;
+      if (idleOutcome !== undefined && promptCount === 1) {
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "state_update",
+            state: "idle",
+            stopReason: idleOutcome.startsWith("error") ? "error" : idleOutcome,
+            ...(idleOutcome === "error-null-details"
+              ? { error: null }
+              : idleOutcome === "error" || idleOutcome === "error-empty-message"
+                ? {
+                    error: {
+                      code: -32000,
+                      message: idleOutcome === "error" ? "Missing Authentication header" : "",
+                      data: { kind: "auth", status: 401 },
+                    },
+                  }
+                : {}),
+          },
+        });
+        return {};
+      }
       if (
         process.env.T3_ACP_CRASH_PROMPT === "1" &&
         request.prompt.some((part) => part.type === "text" && part.text === "crash now")

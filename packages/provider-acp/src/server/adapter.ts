@@ -6674,6 +6674,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   promptGeneration,
                   Effect.gen(function* () {
                     if (context.finalized) return;
+                    if (result.stopReason === "error") {
+                      yield* finalizeTurn(
+                        context,
+                        context.interrupted ? "interrupted" : "failed",
+                        makeProviderFailure({
+                          class: "provider_error",
+                          message: result.error?.message,
+                          code: result.error == null ? null : String(result.error.code),
+                        }),
+                      );
+                      return;
+                    }
                     const status =
                       result.stopReason === "cancelled"
                         ? context.interrupted
