@@ -3611,6 +3611,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               SELECT 1 FROM orchestration_v2_projection_runtime_requests request
               WHERE request.thread_id = t.thread_id AND request.status = 'pending'
             )
+            -- Stop reached this run: only a fresh user action may resume it.
+            AND NOT EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_turn_items stop
+              WHERE stop.thread_id = t.thread_id AND stop.run_id = r.run_id
+                AND stop.type = 'run_interrupt_request'
+            )
           ORDER BY t.thread_id
         `;
         const candidates: Array<ProjectionLimitRecoveryCandidate> = [];
