@@ -7936,12 +7936,15 @@ export default function ChatView(props: ChatViewProps) {
                 footer={
                   paintOnlyDisplayedTimeline ? null : pendingHandoff === null ? (
                     <>
-                      {linkedThreadPullRequest && activeThreadRef ? (
+                      {pullRequestPanelTarget && activeThreadRef && activeProject ? (
                         <div className="chat-content-lane py-3">
                           <ThreadPullRequestCard
-                            key={`${activeThread.environmentId}:${activeThread.id}:${linkedThreadPullRequest.url}`}
+                            key={`${activeThread.environmentId}:${activeThread.id}:${pullRequestPanelTarget.url}`}
                             threadRef={activeThreadRef}
-                            link={linkedThreadPullRequest}
+                            link={{
+                              ...pullRequestPanelTarget,
+                              projectId: activeProject.id,
+                            }}
                             cwd={gitCwd}
                           />
                         </div>
