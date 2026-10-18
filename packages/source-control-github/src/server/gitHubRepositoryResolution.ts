@@ -114,7 +114,7 @@ export function parseGitHubRepositorySelector(
 ): GitHubRepositoryLocator | null {
   // Like gh, a clone URL's `.git` comes off the path, before any trailing slash, query or fragment.
   const withoutGitSuffix = (path: string) => path.replace(/\.git\/*$/i, "");
-  const trimmed = withoutGitSuffix(selector.trim());
+  const trimmed = selector.trim();
   if (/^https?:\/\//i.test(trimmed)) {
     try {
       const url = new URL(trimmed);
@@ -126,7 +126,7 @@ export function parseGitHubRepositorySelector(
       return null;
     }
   }
-  const parts = trimmed.split("/").filter(Boolean);
+  const parts = withoutGitSuffix(trimmed).split("/").filter(Boolean);
   if (parts.length === 2) return { host: defaultHost, owner: parts[0]!, name: parts[1]! };
   if (parts.length === 3)
     return { host: parts[0]!.toLowerCase(), owner: parts[1]!, name: parts[2]! };
