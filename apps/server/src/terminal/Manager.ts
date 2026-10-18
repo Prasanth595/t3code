@@ -412,6 +412,17 @@ function advanceEventSequence(session: TerminalSessionState): {
   return { updatedAt, sequence: session.eventSequence };
 }
 
+// Changes whenever a session gets input or emits an event, such as output.
+function terminalActivityMark(session: TerminalSessionState): number {
+  return session.eventSequence + session.inputCount;
+}
+
+interface QuietTerminalSession {
+  readonly pid: number;
+  readonly mark: number;
+  readonly idleSnapshots: number;
+}
+
 function cleanupProcessHandles(session: TerminalSessionState): void {
   session.unsubscribeData?.();
   session.unsubscribeData = null;
@@ -2377,6 +2388,23 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
   });
 
+  // Running sessions the last snapshots found without a child process, with the
+  // activity mark they had. A shell at its prompt starts a child only after input
+  // or output, so while every running session is quiet the poll skips the
+  // process-table snapshot. Requiring two idle snapshots covers a child forked
+  // just after the snapshot that followed the input.
+  let quietSessions = new Map<string, QuietTerminalSession>();
+  const isQuiet = (session: TerminalSessionState & { pid: number }) => {
+    const quiet = quietSessions.get(toSessionKey(session.threadId, session.terminalId));
+    return (
+      quiet !== undefined &&
+      quiet.idleSnapshots >= 2 &&
+      quiet.pid === session.pid &&
+      quiet.mark === terminalActivityMark(session) &&
+      !session.hasRunningSubprocess
+    );
+  };
+
   const pollSubprocessActivity = Effect.fn("terminal.pollSubprocessActivity")(function* () {
     const state = yield* readManagerState;
     const runningSessions = [...state.sessions.values()].filter(
@@ -2384,7 +2412,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.status === "running" && Number.isInteger(session.pid),
     );
 
-    if (runningSessions.length === 0) {
+    if (runningSessions.every(isQuiet)) {
       return true;
     }
 
@@ -2409,6 +2437,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     const { inspector: subprocessInspector, snapshotSucceeded } = inspectorOption.value;
+    const idleSessionPids = new Map<string, number>();
 
     const checkSubprocessActivity = Effect.fn("terminal.checkSubprocessActivity")(function* (
       session: TerminalSessionState & { pid: number },
@@ -2431,6 +2460,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       const next = inspectResult.value;
+      if (!next.hasRunningSubprocess) {
+        idleSessionPids.set(toSessionKey(session.threadId, session.terminalId), terminalPid);
+      }
       yield* registerTerminalProcesses({
         threadId: session.threadId,
         terminalId: session.terminalId,
@@ -2477,6 +2509,23 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       concurrency: "unbounded",
       discard: true,
     });
+
+    // Read marks after this poll's own activity events, so they count as seen.
+    const liveSessions = (yield* readManagerState).sessions;
+    const nextQuietSessions = new Map<string, QuietTerminalSession>();
+    for (const [key, pid] of idleSessionPids) {
+      const session = liveSessions.get(key);
+      if (session?.status !== "running" || session.pid !== pid) continue;
+      const mark = terminalActivityMark(session);
+      const previous = quietSessions.get(key);
+      nextQuietSessions.set(key, {
+        pid,
+        mark,
+        idleSnapshots:
+          previous?.pid === pid && previous.mark === mark ? previous.idleSnapshots + 1 : 1,
+      });
+    }
+    quietSessions = nextQuietSessions;
     return snapshotSucceeded;
   });
 
@@ -3103,10 +3152,8 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             (input.terminalId === undefined || session.terminalId === input.terminalId),
         );
         if (running.length === 0) return;
-        const activityMark = (session: TerminalSessionState) =>
-          session.eventSequence + session.inputCount;
         const marks = new Map(
-          running.map((session) => [session.terminalId, activityMark(session)]),
+          running.map((session) => [session.terminalId, terminalActivityMark(session)]),
         );
         // Inspect now instead of trusting the last poll, so a command started
         // since then keeps its terminal.
@@ -3117,7 +3164,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             inspector(session.pid).pipe(
               Effect.flatMap((result) =>
                 result.hasRunningSubprocess ||
-                activityMark(session) !== marks.get(session.terminalId)
+                terminalActivityMark(session) !== marks.get(session.terminalId)
                   ? Effect.void
                   : closeSession(input.threadId, session.terminalId, false),
               ),

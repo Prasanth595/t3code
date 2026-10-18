@@ -1083,7 +1083,13 @@ it.layer(
       yield* manager.open(openInput());
       expect((yield* getEvents).some((event) => event.type === "activity")).toBe(false);
 
+      // A child starts after input; an idle shell is not snapshotted again until then.
       inspect = { hasRunningSubprocess: true, childCommand: "vim", processIds: [100, 101] };
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: "vim\r",
+      });
       yield* waitFor(
         Effect.map(getEvents, (events) =>
           events.some(
@@ -1109,6 +1115,68 @@ it.layer(
         "1200 millis",
       );
     }),
+  );
+
+  it.effect("skips process snapshots while an idle shell gets no input or output", () =>
+    Effect.gen(function* () {
+      let snapshots = 0;
+      let processes: Array<{ pid: number; ppid: number; name: string }> = [];
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        processKillGraceMs: 0,
+        subprocessPollIntervalMs: 1_000,
+        processTable: Effect.sync(() => {
+          snapshots += 1;
+          return processes;
+        }),
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
+      const events = yield* Queue.unbounded<TerminalEvent>();
+      const unsubscribe = yield* manager.subscribe((event) =>
+        Queue.offer(events, event).pipe(Effect.asVoid),
+      );
+      yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
+      const takeEvent = Effect.fn(function* (type: TerminalEvent["type"]) {
+        while (true) {
+          const event = yield* Queue.take(events);
+          if (event.type === type) return event;
+        }
+      });
+
+      yield* manager.open(openInput());
+      const shell = ptyAdapter.processes[0]!;
+      const shellOnly = [{ pid: shell.pid, ppid: 1, name: "zsh" }];
+      processes = shellOnly;
+
+      // Two snapshots confirm the shell is idle, then polling stops snapshotting.
+      yield* TestClock.adjust("5 seconds");
+      assert.equal(snapshots, 2);
+
+      // Output resumes snapshots until two more find the shell idle again.
+      shell.emitData("prompt$ ");
+      yield* takeEvent("output");
+      yield* TestClock.adjust("3 seconds");
+      assert.equal(snapshots, 4);
+
+      // A command started from input is found, and polled every tick while it runs.
+      processes = [...shellOnly, { pid: 100, ppid: shell.pid, name: "sleep" }];
+      yield* manager.write({
+        threadId: "thread-1",
+        terminalId: DEFAULT_TERMINAL_ID,
+        data: "sleep 9\r",
+      });
+      yield* TestClock.adjust("1 second");
+      const started = yield* takeEvent("activity");
+      assert.isTrue(started.type === "activity" && started.hasRunningSubprocess);
+      yield* TestClock.adjust("2 seconds");
+      assert.equal(snapshots, 7);
+
+      // Its exit is seen at once, and the quiet shell stops being snapshotted again.
+      processes = shellOnly;
+      yield* TestClock.adjust("1 second");
+      const finished = yield* takeEvent("activity");
+      assert.isTrue(finished.type === "activity" && !finished.hasRunningSubprocess);
+      yield* TestClock.adjust("4 seconds");
+      assert.equal(snapshots, 9);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("does not invoke subprocess polling until a terminal session is running", () =>
