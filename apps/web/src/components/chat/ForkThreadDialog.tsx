@@ -1,8 +1,9 @@
-import { GitForkIcon, LoaderCircleIcon } from "lucide-react";
+import { GitForkIcon } from "lucide-react";
 import { useState } from "react";
 import { threadForkWorkspaceChoices } from "@t3tools/client-runtime/state/thread-workflows";
 import type { OrchestrationV2ThreadLaunchWorkspaceStrategy } from "@t3tools/contracts";
 import { Button } from "../ui/button";
+import { Spinner } from "../ui/spinner";
 import {
   Dialog,
   DialogDescription,
@@ -48,7 +49,7 @@ export function ForkThreadDialog(props: {
                     .finally(() => setSelectedChoice(null));
                 }}
               >
-                {selectedChoice === choice.id ? <LoaderCircleIcon /> : <GitForkIcon />}
+                {selectedChoice === choice.id ? <Spinner /> : <GitForkIcon />}
                 <span className="flex flex-col gap-1 text-left">
                   <span>
                     {selectedChoice === choice.id

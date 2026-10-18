@@ -455,11 +455,23 @@ function AssistantForkButton(props: {
               const result = await pendingResult;
               if (result._tag !== "Success") {
                 // The server deletes a fork whose worktree could not be prepared.
-                if (openedEarly)
-                  navigation.navigate("Thread", {
-                    environmentId: props.environmentId,
-                    threadId: props.threadId,
-                  });
+                if (openedEarly) {
+                  const state = navigation.getState();
+                  const focused = state?.routes[state.index];
+                  if (
+                    focused?.name === "Thread" &&
+                    focused.params !== undefined &&
+                    "threadId" in focused.params &&
+                    focused.params.threadId === targetThreadId &&
+                    "environmentId" in focused.params &&
+                    focused.params.environmentId === props.environmentId
+                  ) {
+                    navigation.navigate("Thread", {
+                      environmentId: props.environmentId,
+                      threadId: props.threadId,
+                    });
+                  }
+                }
                 return;
               }
               if (openedEarly) return;
