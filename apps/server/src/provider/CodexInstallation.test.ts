@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
 import * as Scope from "effect/Scope";
 import * as Sink from "effect/Sink";
@@ -166,6 +167,66 @@ it.effect.each(["0.156.0", "0.156.1", "0.156.2", "0.157.0"])(
       expect(yield* h.fs.exists(h.localBinaryPath)).toBe(true);
       expect((yield* h.installation.state).source).toBe("local");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+// Holds the local `codex --version` probe until the test opens the gate.
+const gatedVersionProbe = Effect.fn("test.gatedVersionProbe")(function* () {
+  const gate = yield* Deferred.make<void>();
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  return {
+    gate,
+    spawner: ChildProcessSpawner.make((command) => {
+      const { args } = command as unknown as { readonly args: ReadonlyArray<string> };
+      return args[0] === "--version"
+        ? Deferred.await(gate).pipe(Effect.andThen(spawner.spawn(command)))
+        : spawner.spawn(command);
+    }),
+  };
+});
+it.effect("construction does not wait for the local Codex probe", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-seed-test-" });
+    const managed = yield* makeHarness({ baseDir });
+    yield* managed.installation.start;
+    expect((yield* terminalState(managed.installation)).phase).toBe("succeeded");
+
+    const probe = yield* gatedVersionProbe();
+    const h = yield* makeHarness({
+      baseDir,
+      local: { version: "0.156.2" },
+      spawner: probe.spawner,
+    });
+    const readers = yield* Effect.all(
+      [h.installation.state, h.installation.resolve(), h.installation.start],
+      { concurrency: "unbounded" },
+    ).pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    // A managed runtime is installed, but readers wait for the local verdict
+    // instead of seeing the managed record or an unseeded state.
+    expect(readers.pollUnsafe()).toBeUndefined();
+    yield* Deferred.succeed(probe.gate, undefined);
+    const [state, executable, started] = yield* Fiber.join(readers);
+    expect(state).toMatchObject({ source: "local", installedVersion: "0.156.2" });
+    expect(executable.source).toBe("local");
+    expect(started).toMatchObject({ source: "local", phase: "succeeded" });
+    expect((yield* h.fs.readFileString(h.probeLog)).trim().split("\n")).toEqual([
+      "--version",
+      "app-server --help",
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+it.effect("closing the service scope interrupts a pending local Codex probe", () =>
+  Effect.gen(function* () {
+    const probe = yield* gatedVersionProbe();
+    const scope = yield* Scope.make();
+    const h = yield* makeHarness({ local: { version: "0.156.1" }, spawner: probe.spawner }).pipe(
+      Scope.provide(scope),
+    );
+    const reader = yield* h.installation.state.pipe(Effect.forkChild);
+    yield* Scope.close(scope, Exit.void);
+    // The probe never answered, so the seed is interrupted rather than left running.
+    expect((yield* Fiber.join(reader)).installedVersion).toBeNull();
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 it.effect.each([
   { version: "0.128.9" },

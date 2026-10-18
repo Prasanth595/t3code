@@ -650,6 +650,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
 
   const remove = Effect.fn("CodexInstallation.remove")(
     function* (protectedBinaryPaths: ReadonlyArray<string> = []) {
+      yield* Fiber.await(seed);
       yield* gate.withPermit(
         Effect.gen(function* () {
           if (isRunning(yield* SubscriptionRef.get(state)) || leases > 0) {
@@ -698,7 +699,16 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     ),
   );
 
-  yield* Effect.gen(function* () {
+  const markIncomplete = SubscriptionRef.update(
+    state,
+    (current) =>
+      ({
+        ...current,
+        phase: "failed",
+        message: "The managed Codex runtime is incomplete. Remove it and reinstall.",
+      }) satisfies ProviderInstallState,
+  );
+  const cleanedUp = yield* Effect.gen(function* () {
     // Two servers can share a home, and writes below a staging directory do not
     // refresh its mtime, so only directories far older than any real install
     // (download is capped at 45 minutes) are treated as abandoned.
@@ -726,7 +736,15 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       canRemove = Option.isNone(remaining) || remaining.value.length > 0;
     }
     yield* SubscriptionRef.update(state, (current) => ({ ...current, canRemove }));
-    if (yield* reuseLocal()) return;
+  }).pipe(
+    Effect.as(true),
+    Effect.catch(() => markIncomplete.pipe(Effect.as(false))),
+  );
+  // Seeding spawns the PATH-resolved `codex`, which can take seconds behind a
+  // version-manager shim. It runs in the background so it does not hold up the
+  // layers built after this one; every public method waits for it instead.
+  const seed = yield* Effect.gen(function* () {
+    if (!cleanedUp || (yield* reuseLocal())) return;
     if (!(yield* fs.exists(activePath))) return;
     const active = yield* readRecord(activePath, ActiveRelease);
     const installed = yield* completedRelease(active.version);
@@ -741,27 +759,20 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         }) satisfies ProviderInstallState,
     );
   }).pipe(
-    Effect.catch(() =>
-      SubscriptionRef.update(
-        state,
-        (current) =>
-          ({
-            ...current,
-            phase: "failed",
-            message: "The managed Codex runtime is incomplete. Remove it and reinstall.",
-          }) satisfies ProviderInstallState,
-      ),
-    ),
+    Effect.catch(() => markIncomplete),
+    Effect.forkIn(serviceScope),
   );
+  const afterSeed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.andThen(Fiber.await(seed), effect);
 
   return CodexInstallation.of({
     managedDirectory,
-    resolve,
-    acquire,
-    start,
+    resolve: () => afterSeed(resolve()),
+    acquire: () => afterSeed(acquire()),
+    start: afterSeed(start),
     cancel,
-    state: SubscriptionRef.get(state),
-    changes: SubscriptionRef.changes(state),
+    state: afterSeed(SubscriptionRef.get(state)),
+    changes: Stream.unwrap(afterSeed(Effect.succeed(SubscriptionRef.changes(state)))),
     remove,
   });
 });
