@@ -1,5 +1,3 @@
-// @vitest-environment jsdom
-
 import {
   BUILT_IN_BROWSER_PROFILES,
   DEFAULT_BROWSER_PROFILE_ID,
@@ -7,6 +5,7 @@ import {
 } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { act } from "react";
+import { userEvent } from "vite-plus/test/browser";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -24,7 +23,7 @@ let opened: string[];
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  // Browser is desktop-only; the launcher offers it once the preview bridge exists.
+  // Expose the preview bridge so the launcher offers Browser.
   vi.stubGlobal("desktopBridge", { preview: {} });
   vi.stubGlobal(
     "ResizeObserver",
@@ -34,8 +33,6 @@ beforeEach(() => {
       disconnect() {}
     },
   );
-  // jsdom lacks the Web Animations API that the tab bar's scroll area waits on.
-  Element.prototype.getAnimations ??= () => [];
   opened = [];
   container = document.createElement("div");
   document.body.append(container);
@@ -115,11 +112,7 @@ function menuItem(label: string): HTMLElement {
 
 async function click(element: Element) {
   await act(async () => {
-    element.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
-    element.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
-    element.dispatchEvent(new MouseEvent("pointerup", { bubbles: true }));
-    element.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
-    element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    await userEvent.click(element);
   });
 }
 
