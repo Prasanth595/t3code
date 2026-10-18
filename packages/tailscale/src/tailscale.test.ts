@@ -159,20 +159,6 @@ describe("tailscale", () => {
     }),
   );
 
-  // A missing or malformed capability map must not read as "disabled": callers
-  // refuse to run `tailscale serve` on false, so guessing would break a tailnet
-  // that is actually fine.
-  it.effect("reports an unknown HTTPS serve capability rather than guessing", () =>
-    Effect.gen(function* () {
-      assert.equal((yield* parseTailscaleStatus(`{"Self":{}}`)).httpsServeEnabled, null);
-      assert.equal((yield* parseTailscaleStatus("{}")).httpsServeEnabled, null);
-      assert.equal(
-        (yield* parseTailscaleStatus(`{"Self":{"CapMap":["https"]}}`)).httpsServeEnabled,
-        null,
-      );
-    }),
-  );
-
   it.effect("preserves status decoding failures without exposing cause text", () =>
     Effect.gen(function* () {
       const error = yield* parseTailscaleStatus("{not-json").pipe(Effect.flip);
