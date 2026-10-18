@@ -501,6 +501,13 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
           .map((item) => item.label)
           .join(", ")}`,
         waiting: pendingBackgroundWork.waiting,
+        onPress: () => {
+          Keyboard.dismiss();
+          navigation.navigate("ThreadBackgroundWork", {
+            environmentId: props.environmentId,
+            threadId: props.selectedThread.id,
+          });
+        },
       };
     }
     if (props.selectedThread.goal !== null && contentPresentationKind === "ready") {
