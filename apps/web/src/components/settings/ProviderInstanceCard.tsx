@@ -744,6 +744,12 @@ export function ProviderInstanceCard({
     onUpdate({ ...instance, enabled: value });
   };
 
+  const updateUsageAccountGroup = (value: string) => {
+    const trimmed = value.trim();
+    const { usageAccountGroup: _omit, ...rest } = instance;
+    onUpdate(trimmed ? { ...rest, usageAccountGroup: trimmed } : rest);
+  };
+
   const updateAccentColor = (value: string) => {
     const normalized = normalizeProviderAccentColor(value);
     const { accentColor: _omit, ...rest } = instance;
@@ -1177,6 +1183,28 @@ export function ProviderInstanceCard({
                 spellCheck={false}
               />
             </div>
+          }
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Usage">
+        <SettingsRow
+          id={`provider-instance-${instanceId}-usage`}
+          title="Usage account group"
+          description="Use the same group on connections that share one subscription to show one limits bar. Leave blank to detect accounts automatically."
+          control={
+            <DraftInput
+              id={`provider-instance-${instanceId}-usage-account-group`}
+              aria-label="Usage account group"
+              size="sm"
+              className="w-full @min-[32rem]/settings-row:w-56"
+              value={instance.usageAccountGroup ?? ""}
+              onCommit={updateUsageAccountGroup}
+              placeholder="Automatic"
+              maxLength={64}
+              disabled={readOnly}
+              spellCheck={false}
+            />
           }
         />
       </SettingsSection>

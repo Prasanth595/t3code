@@ -223,6 +223,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         [personalId]: {
           driver: codexDriverKind,
           displayName: "Codex (personal)",
+          usageAccountGroup: "personal",
           enabled: false,
           config: makeCodexConfig({
             binaryPath: "/opt/codex-personal/bin/codex",
@@ -242,7 +243,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
         },
       };
 
-      const { registry } = yield* makeProviderInstanceRegistry<CodexDriverEnv>({
+      const { registry, mutator } = yield* makeProviderInstanceRegistry<CodexDriverEnv>({
         drivers: [CodexDriver],
         configMap,
       });
@@ -268,6 +269,17 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(personalSnapshot.instanceId).toBe(personalId);
       expect(personalSnapshot.driver).toBe(codexDriverKind);
       expect(personalSnapshot.enabled).toBe(false);
+      expect(personalSnapshot.usageAccountGroup).toBe("personal");
+      expect((yield* personal!.snapshot.refresh).usageAccountGroup).toBe("personal");
+      expect((yield* personal!.snapshotForCwd!("/workspace")).usageAccountGroup).toBe("personal");
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const pull = yield* Stream.toPull(personal!.snapshot.streamChanges);
+          yield* personal!.snapshot.refresh;
+          const [update] = yield* pull;
+          expect(update.usageAccountGroup).toBe("personal");
+        }),
+      );
       const path = yield* Path.Path;
       expect(personalSnapshot.continuation?.groupKey).toBe(
         `codex:home:${path.resolve("/home/julius/.codex_personal")}`,
@@ -277,12 +289,18 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(workSnapshot.instanceId).toBe(workId);
       expect(workSnapshot.driver).toBe(codexDriverKind);
       expect(workSnapshot.enabled).toBe(false);
+      expect(workSnapshot.usageAccountGroup).toBeUndefined();
       expect(workSnapshot.continuation?.groupKey).toBe(
         `codex:home:${path.resolve("/home/julius/.codex")}`,
       );
 
       const unavailable = yield* registry.listUnavailable;
       expect(unavailable).toEqual([]);
+
+      const { usageAccountGroup: _omit, ...ungrouped } = configMap[personalId]!;
+      yield* mutator.reconcile({ ...configMap, [personalId]: ungrouped });
+      const automatic = yield* registry.getInstance(personalId);
+      expect((yield* automatic!.snapshot.getSnapshot).usageAccountGroup).toBeUndefined();
     }).pipe(Effect.provide(layerTest)),
   );
 

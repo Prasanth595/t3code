@@ -220,6 +220,7 @@ export const ServerProvider = Schema.Struct({
   driver: ProviderDriverKind,
   displayName: Schema.optional(TrimmedNonEmptyString),
   accentColor: Schema.optional(TrimmedNonEmptyString),
+  usageAccountGroup: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
   // Optional visual identity supplied by the owning provider driver. Clients
   // must still validate remote URLs against that driver's trusted origin.
   iconUrl: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(2_048))),

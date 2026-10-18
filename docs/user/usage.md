@@ -95,6 +95,12 @@ the bar show each account's quota, countdown, and credits. Tap a row to open its
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.
 
+If a connection cannot report its account identity, open **Settings → Providers** on each
+environment and give the connections the same **Usage account group**, such as `personal`.
+Connections for the same provider and group count as one subscription, using the newest limits
+and keeping any reported reset credits. Use a different group for each subscription. Clear the
+group to restore automatic account detection.
+
 Opening Limits checks the selected connected environments automatically. Each client waits at
 least five minutes between automatic checks of an environment, including after a failed check.
 If a window still looks stale, refresh Limits to re-check every provider and hub.

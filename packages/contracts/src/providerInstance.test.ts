@@ -88,6 +88,7 @@ describe("ProviderInstanceConfig", () => {
     const decoded = decodeProviderInstanceConfig({ driver: "codex" });
     expect(decoded.driver).toBe("codex");
     expect(decoded.displayName).toBeUndefined();
+    expect(decoded.usageAccountGroup).toBeUndefined();
     expect(decoded.enabled).toBeUndefined();
     expect(decoded.config).toBeUndefined();
   });
@@ -105,6 +106,16 @@ describe("ProviderInstanceConfig", () => {
     expect(decoded.accentColor).toBe("#dc2626");
     expect(decoded.enabled).toBe(true);
     expect(decoded.config).toEqual(opaqueConfig);
+  });
+
+  it("accepts a bounded, trimmed usage account group", () => {
+    expect(
+      decodeProviderInstanceConfig({ driver: "codex", usageAccountGroup: "  personal  " })
+        .usageAccountGroup,
+    ).toBe("personal");
+    for (const usageAccountGroup of ["", "   ", "a".repeat(65)]) {
+      expect(() => decodeProviderInstanceConfig({ driver: "codex", usageAccountGroup })).toThrow();
+    }
   });
 
   it("trims provider instance envelope fields", () => {

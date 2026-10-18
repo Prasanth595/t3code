@@ -161,6 +161,145 @@ describe("pools", () => {
   };
   const laptop = { entry: { target: { label: "Laptop" } } };
 
+  it.each([false, true])(
+    "groups an unidentified sandbox with a known account, freshest sandbox: %s",
+    (sandboxIsFresher) => {
+      const sandbox = provider({
+        usageAccountGroup: "personal",
+        usageLimits: {
+          checkedAt: sandboxIsFresher ? "2026-09-03T11:30:00.000Z" : checkedAt,
+          windows: [
+            { ...window, usedPercent: 54 },
+            { ...weekly, usedPercent: 7 },
+          ],
+        },
+      });
+      const desktop = provider({
+        usageAccountGroup: "personal",
+        auth: {
+          status: "authenticated",
+          email: "same@example.com",
+          label: "ChatGPT Plus Subscription",
+          workspaceId: "personal-workspace",
+        },
+        usageLimits: {
+          checkedAt: sandboxIsFresher ? checkedAt : "2026-09-03T11:30:00.000Z",
+          windows: [
+            { ...window, usedPercent: 44 },
+            { ...weekly, usedPercent: 5 },
+          ],
+          resetCredits: { availableCount: 3 },
+        },
+      });
+      const presentations = new Map([
+        [EnvironmentId.make("sandbox"), { ...laptop, serverConfig: { providers: [sandbox] } }],
+        [EnvironmentId.make("desktop"), { ...laptop, serverConfig: { providers: [desktop] } }],
+      ]);
+      const accounts = collectLimitAccounts(presentations);
+      expect(accounts).toHaveLength(1);
+      expect(accounts[0]).toMatchObject({
+        email: "same@example.com",
+        plan: "ChatGPT Plus Subscription",
+        environments: [
+          { environmentId: "sandbox", label: "Laptop" },
+          { environmentId: "desktop", label: "Laptop" },
+        ],
+        redeem: { environmentId: "desktop", input: { instanceId: "codex" } },
+        limits: { resetCredits: { availableCount: 3 } },
+      });
+      const [pool] = collectLimitPools(accounts, now);
+      expect(pool?.windows.map((entry) => entry.columns.length)).toEqual([1, 1]);
+      expect(pool?.windows.map((entry) => entry.remainingPercent)).toEqual(
+        sandboxIsFresher ? [46, 93] : [56, 95],
+      );
+
+      presentations.set(EnvironmentId.make("sandbox"), {
+        ...laptop,
+        serverConfig: { providers: [{ ...sandbox, usageAccountGroup: undefined }] },
+      });
+      expect(collectLimitAccounts(presentations)).toHaveLength(2);
+    },
+  );
+
+  it("keeps distinct usage groups, ungrouped identities, and provider drivers separate", () => {
+    const shared = provider({
+      usageAccountGroup: "personal",
+      auth: { status: "authenticated", email: "same@example.com", workspaceId: "workspace" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const accounts = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [
+                shared,
+                {
+                  ...shared,
+                  instanceId: ProviderInstanceId.make("work"),
+                  usageAccountGroup: "work",
+                },
+                {
+                  ...shared,
+                  instanceId: ProviderInstanceId.make("auto"),
+                  usageAccountGroup: undefined,
+                },
+                { ...shared, instanceId: ProviderInstanceId.make("claude"), driver: claude },
+              ],
+            },
+          },
+        ],
+      ]),
+    );
+    expect(accounts).toHaveLength(4);
+  });
+
+  it("keeps automatically matched hub reports in an explicitly grouped account", () => {
+    const native = provider({
+      usageAccountGroup: "personal",
+      auth: { status: "authenticated", email: "same@example.com", workspaceId: "workspace" },
+      usageLimits: { checkedAt, windows: [window] },
+    });
+    const accounts = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [native],
+              usageLimitSources: [
+                {
+                  ...source,
+                  accounts: [
+                    {
+                      id: "same.json",
+                      driver: native.driver,
+                      email: "SAME@example.com",
+                      usageLimits: {
+                        checkedAt,
+                        windows: [window],
+                        resetCredits: { availableCount: 3, nextCreditId: "hub-credit" },
+                      },
+                    },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      ]),
+    );
+    expect(accounts).toHaveLength(1);
+    expect(accounts[0]?.redeem?.input).toEqual({
+      sourceId: "hub",
+      accountId: "same.json",
+      creditId: "hub-credit",
+    });
+  });
+
   it("merges one account reported natively on two environments and by a hub into one entry", () => {
     const native = provider({
       driver: claude,

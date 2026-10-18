@@ -113,6 +113,7 @@ function accountKey(
 
 interface AccountReport {
   readonly driver: ServerProvider["driver"];
+  readonly usageAccountGroup?: string | undefined;
   readonly email?: string | undefined;
   readonly workspaceId?: string | undefined;
   readonly usageLimits?: ServerProviderUsageLimits | undefined;
@@ -120,6 +121,7 @@ interface AccountReport {
 
 const nativeReport = (provider: ServerProvider): AccountReport => ({
   driver: provider.driver,
+  usageAccountGroup: provider.usageAccountGroup,
   email: provider.auth.email,
   workspaceId: provider.auth.workspaceId,
   usageLimits: provider.usageLimits,
@@ -130,20 +132,35 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
  * counts as one.
  */
 function accountKeyResolver(reports: Iterable<AccountReport>) {
+  const allReports = [...reports];
   const workspaces = new Map<string, Set<string>>();
-  for (const report of reports) {
+  for (const report of allReports) {
     const key = accountKey(report.driver, report.email, report.usageLimits);
     if (key && report.workspaceId) {
       workspaces.set(key, (workspaces.get(key) ?? new Set()).add(report.workspaceId));
     }
   }
-  return (report: AccountReport): string | null => {
+  const resolveAutomaticKey = (report: AccountReport): string | null => {
     const key = accountKey(report.driver, report.email, report.usageLimits);
     if (!key) return null;
     if (report.workspaceId) return `${key}:${report.workspaceId}`;
     const known = workspaces.get(key);
     if (!known) return key;
     return known.size === 1 ? `${key}:${[...known][0]}` : null;
+  };
+  const groups = new Map<string, Set<string>>();
+  for (const report of allReports) {
+    const key = resolveAutomaticKey(report);
+    if (key && report.usageAccountGroup) {
+      groups.set(key, (groups.get(key) ?? new Set()).add(report.usageAccountGroup));
+    }
+  }
+  return (report: AccountReport): string | null => {
+    const key = resolveAutomaticKey(report);
+    const knownGroups = key ? groups.get(key) : undefined;
+    const group =
+      report.usageAccountGroup ?? (knownGroups?.size === 1 ? [...knownGroups][0] : undefined);
+    return group ? JSON.stringify([report.driver, "group", group]) : key;
   };
 }
 
@@ -210,6 +227,7 @@ export function collectLimitAccounts(presentations: LimitPresentations): readonl
     accounts.set(key, {
       ...previous,
       displayName: previous.displayName ?? next.displayName,
+      email: previous.email ?? next.email,
       plan: previous.plan ?? next.plan,
       accentColor: previous.accentColor ?? next.accentColor,
       environments,

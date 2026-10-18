@@ -153,10 +153,35 @@ const buildEntry = <R>(input: {
       };
     }
 
+    const instance = createResult.success;
+    const snapshotForCwd = instance.snapshotForCwd;
+    const withUsageAccountGroup = <A extends ServerProvider>(snapshot: A): A => ({
+      ...snapshot,
+      usageAccountGroup: entry.usageAccountGroup,
+    });
+
     return {
       kind: "live" as const,
       live: {
-        instance: createResult.success,
+        instance: entry.usageAccountGroup
+          ? {
+              ...instance,
+              snapshot: {
+                ...instance.snapshot,
+                getSnapshot: instance.snapshot.getSnapshot.pipe(Effect.map(withUsageAccountGroup)),
+                refresh: instance.snapshot.refresh.pipe(Effect.map(withUsageAccountGroup)),
+                streamChanges: instance.snapshot.streamChanges.pipe(
+                  Stream.map(withUsageAccountGroup),
+                ),
+              },
+              ...(snapshotForCwd
+                ? {
+                    snapshotForCwd: (cwd: string) =>
+                      snapshotForCwd(cwd).pipe(Effect.map(withUsageAccountGroup)),
+                  }
+                : {}),
+            }
+          : instance,
         scope: childScope,
         entry,
       },
