@@ -191,6 +191,8 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
   );
   let signed: string | null = null;
   if (cached === null && response?.headers["content-type"]?.startsWith("text/html")) {
+    // Read the small sign-in page so its connection is released before the media streams.
+    yield* Effect.ignore(response.text);
     signed = yield* signedAttachmentUrl(asset);
     if (signed !== null) response = yield* fetchFollowingRedirects(signed, forwarded, null);
   }
