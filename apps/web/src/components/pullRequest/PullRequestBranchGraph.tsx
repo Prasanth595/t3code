@@ -36,20 +36,35 @@ const WORKING_TREE_LABEL = "Uncommitted changes";
 const COLLAPSED_COMMITS = 8;
 const EASE_OUT = "cubic-bezier(0.22, 1, 0.36, 1)";
 const SCRAMBLE_MS = 560;
+// How long the line takes to climb one row while the graph builds.
+const BUILD_STEP_MS = 75;
+// How long a row takes to open its gap when it is added.
+const INSERT_MS = 280;
+// An added row's line starts growing once the rows below have mostly made room.
+const ARRIVAL_DELAY_MS = 180;
 const GLYPHS = "abcdefghijklmnopqrstuvwxyz0123456789";
 
 const prefersReducedMotion = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 /** Decodes `text` left to right out of `from`, or out of noise when `from` is empty. */
-function ScrambleText({ text, from }: { text: string; from: string | undefined }) {
+function ScrambleText({
+  text,
+  from,
+  delay = 0,
+}: {
+  text: string;
+  from: string | undefined;
+  delay?: number;
+}) {
   const ref = useRef<HTMLSpanElement>(null);
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element || from === undefined || prefersReducedMotion()) return;
-    const start = performance.now();
+    const start = performance.now() + delay;
     let frame = requestAnimationFrame(function tick(now) {
-      const progress = Math.min(1, (now - start) / SCRAMBLE_MS);
-      const bucket = Math.floor((now - start) / 45);
+      const elapsed = Math.max(0, now - start);
+      const progress = Math.min(1, elapsed / SCRAMBLE_MS);
+      const bucket = Math.floor(elapsed / 45);
       let output = "";
       for (let index = 0; index < text.length; index++) {
         const char = text[index]!;
@@ -64,7 +79,7 @@ function ScrambleText({ text, from }: { text: string; from: string | undefined }
       cancelAnimationFrame(frame);
       element.textContent = text;
     };
-  }, [text, from]);
+  }, [text, from, delay]);
   return <span ref={ref}>{text}</span>;
 }
 
@@ -76,13 +91,26 @@ function syntheticCommit(sha: string, subject: string, parents: string[]): GitHi
   return { sha, parents, subject, author: "", authoredAt: "", branches: [] };
 }
 
+// Graphs that already built once this session. Coming back to one shows it settled.
+const builtGraphs = new Set<string>();
+
+/**
+ * When a row starts while the graph builds. The line climbs from the oldest commit shown to the
+ * newest, then the rows above the commits (uncommitted work, the pull request) are added.
+ */
+function entranceStart(index: number, visibleCount: number, leadCount: number) {
+  if (index >= leadCount) return (visibleCount - 1 - index) * BUILD_STEP_MS;
+  const climb = (visibleCount - leadCount) * BUILD_STEP_MS;
+  return climb + INSERT_MS * 0.7 + (leadCount - 1 - index) * INSERT_MS;
+}
+
 export function GitCommitGraph({
   history,
   headBranch,
   baseBranch,
   target = null,
   workingFiles = null,
-  animateEntrance = false,
+  entranceKey = null,
 }: {
   history: GitHistoryResult;
   headBranch: string;
@@ -91,12 +119,14 @@ export function GitCommitGraph({
   target?: PullRequestGraphTarget | null;
   /** Uncommitted files on the checked-out head branch. */
   workingFiles?: number | null;
-  /** Reveal rows one after another, for history that arrived while the graph was showing. */
-  animateEntrance?: boolean;
+  /** Builds the graph line by line the first time this key shows in a session. */
+  entranceKey?: string | null;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [building] = useState(() => entranceKey !== null && !builtGraphs.has(entranceKey));
   const listRef = useRef<HTMLOListElement>(null);
   const positions = useRef(new Map<string, number>());
+  const segments = useRef(new Map<string, ReadonlySet<string>>());
   const wasMerged = useRef(target?.tone === "merged");
   const running = useRef<Animation[]>([]);
   const headSha = history.headSha;
@@ -137,17 +167,22 @@ export function GitCommitGraph({
   const previous = labels.key === historyKey ? labels.before : labels.current;
   // A commit that lands where the uncommitted row was decodes out of that row's label.
   const replacesWorkingTree = previous?.has(WORKING_TREE) === true && !working;
-  const scrambleFrom = (sha: string, label: string) => {
-    if (previous === null) return undefined;
+  const scramble = (sha: string, label: string, index: number) => {
+    if (previous === null) {
+      return building && index < lead.length
+        ? { from: "", delay: entranceStart(index, visible.length, lead.length) + 80 }
+        : { from: undefined, delay: 0 };
+    }
     const before = previous.get(sha);
-    if (before !== undefined) return before === label ? undefined : before;
-    return replacesWorkingTree && sha === headSha ? WORKING_TREE_LABEL : "";
+    if (before !== undefined) return { from: before === label ? undefined : before, delay: 0 };
+    if (replacesWorkingTree && sha === headSha) return { from: WORKING_TREE_LABEL, delay: 0 };
+    return { from: "", delay: ARRIVAL_DELAY_MS };
   };
   const signature = visible.map((row) => `${row.commit.sha}:${row.commit.subject}`).join("\n");
 
   useEffect(() => () => running.current.forEach((animation) => animation.cancel()), []);
-  // Animates whatever changed since the last layout: new history arrives, moved rows slide, and a
-  // merge carries down the branch. Nothing runs while the graph is idle.
+  // Animates whatever changed since the last layout: the first build, arriving commits, moved
+  // rows, and a merge carrying down the branch. Nothing runs while the graph is idle.
   const animateChanges = useEffectEvent((_signature: string, isMerged: boolean) => {
     const list = listRef.current;
     if (!list) return;
@@ -165,31 +200,47 @@ export function GitCommitGraph({
         () => {},
       );
     };
-    const reveal = (row: HTMLElement, delay: number) => {
+    // Paths run top to bottom, so revealing from their end draws the line upward. A row's window
+    // covers the climb from its bottom edge through its node to its top edge.
+    const drawLine = (path: Element, start: number, window: number) => {
+      const d = path.getAttribute("d")?.split(" ") ?? [];
+      const fromNode = d[2] === "16";
+      const intoNode = d.at(-1) === "16";
       play(
-        row,
+        path,
         [
-          { opacity: 0, transform: "translateY(6px)", filter: "blur(4px)" },
-          { opacity: 1, transform: "none", filter: "none" },
+          { strokeDasharray: "1 1", strokeDashoffset: -1 },
+          { strokeDasharray: "1 1", strokeDashoffset: 0 },
         ],
-        { duration: 380, delay },
+        {
+          delay: intoNode ? start + window / 2 : start,
+          duration: fromNode || intoNode ? window / 2 : window,
+          easing: "linear",
+        },
       );
-      for (const path of row.querySelectorAll("path")) {
-        play(
-          path,
-          [
-            { strokeDasharray: "1", strokeDashoffset: 1 },
-            { strokeDasharray: "1", strokeDashoffset: 0 },
-          ],
-          { duration: 420, delay: delay + 40 },
-        );
-      }
+    };
+    const drawRow = (row: HTMLElement, start: number, window: number) => {
+      for (const path of row.querySelectorAll("path")) drawLine(path, start, window);
       for (const node of row.querySelectorAll("[data-graph-node]")) {
         play(node, [{ transform: "scale(0)" }, { transform: "scale(1)" }], {
-          duration: 360,
-          delay: delay + 90,
+          duration: 340,
+          delay: start + window / 2,
           easing: "cubic-bezier(0.34, 1.56, 0.64, 1)",
         });
+      }
+      for (const child of row.children) {
+        if (child instanceof SVGElement) continue;
+        play(
+          child,
+          [
+            { opacity: 0, filter: "blur(4px)" },
+            { opacity: 1, filter: "none" },
+          ],
+          {
+            duration: 320,
+            delay: start + window * 0.35,
+          },
+        );
       }
     };
     const flash = (row: HTMLElement, color: string, delay = 0) =>
@@ -197,7 +248,9 @@ export function GitCommitGraph({
         duration: 1400,
         delay,
         easing: "ease-out",
+        fill: "none",
       });
+    const climb = (visible.length - lead.length) * BUILD_STEP_MS;
     const next = new Map<string, number>();
     let revealed = 0;
     for (const [index, { commit }] of visible.entries()) {
@@ -208,22 +261,56 @@ export function GitCommitGraph({
       if (reduced) continue;
       const previousTop = positions.current.get(commit.sha);
       if (before === null) {
-        if (animateEntrance) reveal(row, Math.min(index, 10) * 32);
+        if (!building) continue;
+        const start = entranceStart(index, visible.length, lead.length);
+        if (index < lead.length) {
+          drawRow(row, start, INSERT_MS * 0.8);
+          flash(row, "rgb(245 158 11 / 0.14)", start);
+        } else {
+          drawRow(row, start, BUILD_STEP_MS);
+          // Hold the commits where they would sit without the rows above, then open the gap.
+          if (lead.length > 0) {
+            const shift = `translateY(${-32 * lead.length}px)`;
+            play(
+              row,
+              [
+                { transform: shift },
+                { transform: shift, offset: climb / (climb + INSERT_MS), easing: EASE_OUT },
+                { transform: "none" },
+              ],
+              { duration: climb + INSERT_MS, easing: "linear" },
+            );
+          }
+        }
       } else if (previousTop !== undefined) {
         if (previousTop !== top) {
           play(row, [{ transform: `translateY(${previousTop - top}px)` }, { transform: "none" }], {
-            duration: 260,
+            duration: INSERT_MS,
           });
         }
+        const drawn = segments.current.get(commit.sha);
+        for (const path of row.querySelectorAll("path")) {
+          if (drawn && !drawn.has(path.getAttribute("d") ?? "")) {
+            drawLine(path, ARRIVAL_DELAY_MS - 60, INSERT_MS);
+          }
+        }
       } else if (before.has(commit.sha)) {
-        reveal(row, Math.min(revealed++, 10) * 24);
+        drawRow(row, Math.min(revealed++, 10) * 24, 160);
       } else if (replacesWorkingTree && commit.sha === headSha) {
+        for (const node of row.querySelectorAll("[data-graph-node]")) {
+          play(node, [{ transform: "scale(0.4)" }, { transform: "scale(1)" }], {
+            duration: 340,
+            easing: "cubic-bezier(0.34, 1.56, 0.64, 1)",
+          });
+        }
         flash(row, "rgb(245 158 11 / 0.12)");
       } else {
-        reveal(row, 0);
-        flash(row, "rgb(245 158 11 / 0.14)");
+        // Rows below slide down to open the gap; the line then grows up into the new commit.
+        drawRow(row, ARRIVAL_DELAY_MS - 60, INSERT_MS);
+        flash(row, "rgb(245 158 11 / 0.14)", ARRIVAL_DELAY_MS - 60);
       }
     }
+    if (before === null && building && entranceKey !== null) builtGraphs.add(entranceKey);
     if (!reduced && before !== null && isMerged && !wasMerged.current) {
       for (const [rank, sha] of cascade.entries()) {
         const row = list.querySelector<HTMLElement>(`[data-graph-row="${sha}"]`);
@@ -232,6 +319,9 @@ export function GitCommitGraph({
     }
     wasMerged.current = isMerged;
     positions.current = next;
+    segments.current = new Map(
+      visible.map((row) => [row.commit.sha, new Set(row.paths.map((path) => path.d))]),
+    );
   });
   useLayoutEffect(() => animateChanges(signature, merged), [signature, merged]);
 
@@ -242,7 +332,8 @@ export function GitCommitGraph({
         aria-label="Branch commit history"
         className="relative max-h-80 overflow-auto overscroll-contain"
       >
-        {visible.map(({ commit, x, color, paths }) => {
+        {visible.map(({ commit, x, color, paths }, index) => {
+          const decode = scramble(commit.sha, commit.subject, index);
           const isTarget = commit.sha === TARGET;
           const isWorking = commit.sha === WORKING_TREE;
           const isHead = commit.sha === headSha;
@@ -340,7 +431,8 @@ export function GitCommitGraph({
                   <ScrambleText
                     key={commit.subject}
                     text={commit.subject}
-                    from={scrambleFrom(commit.sha, commit.subject)}
+                    from={decode.from}
+                    delay={decode.delay}
                   />
                   {isTarget && target!.progress !== null ? (
                     <span
@@ -366,7 +458,8 @@ export function GitCommitGraph({
                         <ScrambleText
                           key={commit.subject}
                           text={commit.subject || "Untitled commit"}
-                          from={scrambleFrom(commit.sha, commit.subject)}
+                          from={decode.from}
+                          delay={decode.delay}
                         />
                       </span>
                     }
@@ -411,7 +504,8 @@ export function GitCommitGraph({
                     <ScrambleText
                       key={commit.sha}
                       text={commit.sha.slice(0, 7)}
-                      from={scrambleFrom(commit.sha, commit.subject) === undefined ? undefined : ""}
+                      from={decode.from === undefined ? undefined : ""}
+                      delay={decode.delay}
                     />
                   </span>
                   <span className="hidden w-24 shrink-0 truncate text-right text-muted-foreground @min-[26rem]/pr-graph:inline">
@@ -455,12 +549,15 @@ export function PullRequestBranchGraph({
   headBranch,
   baseBranch,
   target = null,
+  entranceKey = `${cwd}:${headBranch}:${baseBranch}`,
 }: {
   environmentId: EnvironmentId;
   cwd: string;
   headBranch: string;
   baseBranch: string;
   target?: PullRequestGraphTarget | null;
+  /** Identifies this graph for its one build per session; defaults to the branch pair. */
+  entranceKey?: string;
 }) {
   const configs = useServerConfigs();
   const supported = configs.get(environmentId)?.environment.capabilities.gitHistory === true;
@@ -472,7 +569,6 @@ export function PullRequestBranchGraph({
   const status = useEnvironmentQuery(
     supported ? vcsEnvironment.status({ environmentId, input: { cwd } }) : null,
   ).data;
-  const [cachedAtMount] = useState(query.data !== null);
   // Commits, pushes, and pulls change these, so the graph follows the agent's work live.
   const signature = status
     ? [
@@ -550,7 +646,7 @@ export function PullRequestBranchGraph({
             baseBranch={baseBranch}
             target={target}
             workingFiles={workingFiles}
-            animateEntrance={!cachedAtMount}
+            entranceKey={entranceKey}
           />
         )}
       </AnimatedHeight>
