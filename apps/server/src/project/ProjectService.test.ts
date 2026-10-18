@@ -635,8 +635,8 @@ it.layer(layerTestFor(layerMetadata, { projectSettingsFolded: true }))(
               scripts: [script("lint"), script(id)],
             })
             .pipe(Effect.flip);
-          assert.instanceOf(error, ProjectService.ProjectOperationError);
-          assert.include(String(error.cause), "Script IDs must be 1-24");
+          assert.instanceOf(error, ProjectService.ProjectScriptIdError);
+          assert.include(error.message, "Script IDs must be 1-24");
         }
         assert.isUndefined((yield* settings.getSettings).projectSettingsOverrides[project.id]);
 
@@ -669,7 +669,7 @@ it.layer(layerTestFor(layerMetadata, { projectSettingsFolded: true }))(
         assert.deepEqual((yield* update(edited, "edit")).scripts, edited);
         assert.instanceOf(
           yield* update([...edited, script("another.invalid.id")], "invalid").pipe(Effect.flip),
-          ProjectService.ProjectOperationError,
+          ProjectService.ProjectScriptIdError,
         );
         assert.deepEqual((yield* update([], "remove")).scripts, []);
       }),
@@ -1047,13 +1047,11 @@ it.effect("finishes an update's settings write before a delete cleans the projec
     });
     const gatedSettings = ServerSettings.ServerSettingsService.of({
       ...settings,
-      updateSettings: (patch) =>
-        patch.projectSettingsOverrides?.[projectId]
-          ? Deferred.succeed(updateReachedSettings, undefined).pipe(
-              Effect.andThen(Deferred.await(releaseUpdate)),
-              Effect.andThen(settings.updateSettings(patch)),
-            )
-          : settings.updateSettings(patch),
+      updateProjectSettingsOverride: (id, update) =>
+        Deferred.succeed(updateReachedSettings, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseUpdate)),
+          Effect.andThen(settings.updateProjectSettingsOverride(id, update)),
+        ),
     });
     const service = yield* ProjectService.make.pipe(
       Effect.provideService(EventSink.EventSinkV2, gatedSink),

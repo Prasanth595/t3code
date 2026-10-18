@@ -120,27 +120,34 @@ type ProjectSettingsInput = Pick<
 
 const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 
+export class ProjectScriptIdError extends Schema.TaggedError<ProjectScriptIdError>()(
+  "ProjectScriptIdError",
+  { projectId: ProjectId, idLength: Schema.Number },
+) {
+  override get message(): string {
+    return `Script IDs must be 1-${MAX_SCRIPT_ID_LENGTH} lowercase letters, digits or hyphens, starting with a letter or digit (got ${this.idLength} characters).`;
+  }
+}
+
 /**
  * A script's id becomes its `script.<id>.run` shortcut command. Ids saved
  * before that rule stay editable and removable; only new ids must comply.
  */
-function invalidScriptIdMessage(
+function findInvalidNewScript(
   current: ReadonlyArray<ProjectScript>,
   next: ReadonlyArray<ProjectScript>,
-): string | undefined {
+): ProjectScript | undefined {
   const existingIds = new Set(current.map((script) => script.id));
-  const invalid = next.find(
+  return next.find(
     (script) => !existingIds.has(script.id) && !isScriptRunCommand(`script.${script.id}.run`),
   );
-  return invalid === undefined
-    ? undefined
-    : `Script IDs must be 1-${MAX_SCRIPT_ID_LENGTH} lowercase letters, digits or hyphens, starting with a letter or digit (got ${invalid.id.length} characters).`;
 }
 
 export type ProjectServiceError =
   | ProjectNotFoundError
   | ProjectConflictError
   | ProjectNotEmptyError
+  | ProjectScriptIdError
   | ProjectOperationError;
 
 export class ProjectService extends Context.Service<
@@ -224,9 +231,8 @@ export const make = Effect.gen(function* () {
     return toProject(row, enrichment, yield* readSettings);
   });
 
-  // `updateSettings` replaces a project's whole entry, so the keys this write
-  // does not touch are carried over. A null model or thread mode removes the
-  // override, so the environment default applies again.
+  // A null model or thread mode removes the override, so the environment
+  // default applies again.
   const saveProjectSettings = Effect.fn("ProjectService.saveProjectSettings")(function* (
     projectId: ProjectId,
     input: ProjectSettingsInput,
@@ -242,24 +248,22 @@ export const make = Effect.gen(function* () {
     // A retried command replays its accepted receipt even after the project
     // was deleted; its settings must not come back with it.
     if (Option.isNone(yield* readRow(projectId))) return;
-    const settings = yield* readSettings;
-    const entry: { -readonly [K in keyof ProjectSettingsOverrides]: ProjectSettingsOverrides[K] } =
-      { ...settings.projectSettingsOverrides[projectId] };
-    if (input.defaultModelSelection === null) delete entry.defaultModelSelection;
-    else if (input.defaultModelSelection !== undefined) {
-      entry.defaultModelSelection = input.defaultModelSelection;
-    }
-    if (input.defaultThreadEnvMode === null) delete entry.defaultThreadEnvMode;
-    else if (input.defaultThreadEnvMode !== undefined) {
-      entry.defaultThreadEnvMode = input.defaultThreadEnvMode;
-    }
-    if (input.autoPull !== undefined) entry.defaultAutoPull = input.autoPull;
-    if (input.scripts !== undefined) entry.defaultProjectScripts = input.scripts;
     yield* serverSettings
-      .updateSettings({
-        projectSettingsOverrides: {
-          [projectId]: Object.keys(entry).length === 0 ? null : entry,
-        },
+      .updateProjectSettingsOverride(projectId, (current) => {
+        const entry: {
+          -readonly [K in keyof ProjectSettingsOverrides]: ProjectSettingsOverrides[K];
+        } = { ...current };
+        if (input.defaultModelSelection === null) delete entry.defaultModelSelection;
+        else if (input.defaultModelSelection !== undefined) {
+          entry.defaultModelSelection = input.defaultModelSelection;
+        }
+        if (input.defaultThreadEnvMode === null) delete entry.defaultThreadEnvMode;
+        else if (input.defaultThreadEnvMode !== undefined) {
+          entry.defaultThreadEnvMode = input.defaultThreadEnvMode;
+        }
+        if (input.autoPull !== undefined) entry.defaultAutoPull = input.autoPull;
+        if (input.scripts !== undefined) entry.defaultProjectScripts = input.scripts;
+        return entry;
       })
       .pipe(
         Effect.mapError(
@@ -274,13 +278,9 @@ export const make = Effect.gen(function* () {
     current: ReadonlyArray<ProjectScript>,
     next: ReadonlyArray<ProjectScript> | undefined,
   ) {
-    const message = next === undefined ? undefined : invalidScriptIdMessage(current, next);
-    if (message !== undefined) {
-      return yield* new ProjectOperationError({
-        operation: "save-project-settings",
-        projectId,
-        cause: message,
-      });
+    const invalid = next === undefined ? undefined : findInvalidNewScript(current, next);
+    if (invalid !== undefined) {
+      return yield* new ProjectScriptIdError({ projectId, idLength: invalid.id.length });
     }
   });
 

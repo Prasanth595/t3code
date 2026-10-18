@@ -182,6 +182,16 @@ export class ServerSettingsService extends Context.Service<
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
 
+    /**
+     * A patch replaces a project's whole override entry, so a caller that
+     * edits some keys must build the entry from the current one. This does it
+     * under the write lock, so a concurrent edit is not lost. Null removes it.
+     */
+    readonly updateProjectSettingsOverride: (
+      projectId: ProjectId,
+      update: (entry: ProjectSettingsOverrides | undefined) => ProjectSettingsOverrides | null,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
     readonly updateProviderInstance: (
       mutation: ProviderInstanceMutation,
       patch?: ServerSettingsPatch,
@@ -202,6 +212,19 @@ export class ServerSettingsService extends Context.Service<
 >()("t3/serverSettings/ServerSettingsService") {
   static readonly layerTest = (overrides: DeepPartial<ServerSettings> = {}) => layerTest(overrides);
 }
+
+const projectSettingsOverridePatch = (
+  current: ServerSettings,
+  projectId: ProjectId,
+  update: (entry: ProjectSettingsOverrides | undefined) => ProjectSettingsOverrides | null,
+): ServerSettingsPatch => {
+  const next = update(current.projectSettingsOverrides[projectId]);
+  return {
+    projectSettingsOverrides: {
+      [projectId]: next === null || Object.keys(next).length === 0 ? null : next,
+    },
+  };
+};
 
 const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
   Effect.gen(function* () {
@@ -240,6 +263,15 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
       updateSettings: (patch) =>
         updateTestSettings((currentSettings) =>
           Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
+        ),
+      updateProjectSettingsOverride: (projectId, update) =>
+        updateTestSettings((currentSettings) =>
+          Effect.succeed(
+            applyServerSettingsPatch(
+              currentSettings,
+              projectSettingsOverridePatch(currentSettings, projectId, update),
+            ),
+          ),
         ),
       updateProviderInstance: (mutation, patch = {}) =>
         updateTestSettings((currentSettings) =>
@@ -1151,6 +1183,15 @@ const make = Effect.gen(function* () {
     updateSettings: (patch) =>
       updateAndPersistSettings((current) =>
         Effect.succeed(applyServerSettingsPatch(current, patch)),
+      ),
+    updateProjectSettingsOverride: (projectId, update) =>
+      updateAndPersistSettings((current) =>
+        Effect.succeed(
+          applyServerSettingsPatch(
+            current,
+            projectSettingsOverridePatch(current, projectId, update),
+          ),
+        ),
       ),
     updateProviderInstance: (mutation, patch = {}) =>
       updateAndPersistSettings((current) =>

@@ -130,6 +130,31 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.deepEqual(settings.providerModelPreferences?.[provider]?.modelOrder, ["luna", "sol"]);
     }).pipe(Effect.provide(layerServerSettings())),
   );
+  it.effect("keeps every concurrent edit to one project's override entry", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const projectId = ProjectId.make("project:concurrent-override");
+      const ids = ["a", "b", "c", "d", "e", "f"];
+      yield* Effect.forEach(
+        ids,
+        (id) =>
+          service.updateProjectSettingsOverride(projectId, (entry) => ({
+            ...entry,
+            defaultProjectScripts: [
+              ...(entry?.defaultProjectScripts ?? []),
+              { id, name: id, command: id, icon: "play", runOnWorktreeCreate: false },
+            ],
+          })),
+        { concurrency: "unbounded", discard: true },
+      );
+      const scripts = (yield* service.getSettings).projectSettingsOverrides[projectId]
+        ?.defaultProjectScripts;
+      assert.deepEqual(scripts?.map((script) => script.id).toSorted(), ids);
+
+      yield* service.updateProjectSettingsOverride(projectId, () => null);
+      assert.isUndefined((yield* service.getSettings).projectSettingsOverrides[projectId]);
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
   it.effect("persists and broadcasts model preferences to other connected clients", () =>
     Effect.scoped(
       Effect.gen(function* () {
