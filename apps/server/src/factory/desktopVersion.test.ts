@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics globalDate:off - one test checks the default date is the wall clock's UTC day, as `date -u` gives.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
