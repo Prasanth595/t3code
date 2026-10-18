@@ -242,6 +242,20 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     message: null,
   });
 
+  // The model manifest can withdraw a bad upstream release without a T3 Code release.
+  const isWithdrawn = Effect.fn("AntigravityInstallation.isWithdrawn")(function* (version: string) {
+    const manifest = yield* manifestService.current;
+    const status = (
+      resolveProviderCompatibility(manifest.compatibility, DRIVER, version) ??
+      resolveProviderCompatibility(
+        ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+        DRIVER,
+        version,
+      )
+    )?.status;
+    return status === "broken" || status === "unsupported";
+  });
+
   const lookupUpstream = Effect.gen(function* () {
     const target = resolveAcpRegistryPlatformTarget(platform, arch);
     if (!target) return null;
@@ -263,17 +277,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     if (!/^\d+\.\d+\.\d+$/u.test(agent.version) || !url?.startsWith(UPSTREAM_DOWNLOAD_PREFIX)) {
       return null;
     }
-    // The model manifest can withdraw a bad upstream release without a T3 Code release.
-    const manifest = yield* manifestService.current;
-    const status = (
-      resolveProviderCompatibility(manifest.compatibility, DRIVER, agent.version) ??
-      resolveProviderCompatibility(
-        ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
-        DRIVER,
-        agent.version,
-      )
-    )?.status;
-    if (status === "broken" || status === "unsupported") return null;
+    if (yield* isWithdrawn(agent.version)) return null;
     return { version: agent.version, url } satisfies AntigravityUpstreamRelease;
   });
 
@@ -897,6 +901,8 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.gen(function* () {
         const current = yield* SubscriptionRef.get(state);
         if (isRunning(current)) return current;
+        // The manifest may have withdrawn the cached upstream release since its lookup.
+        if (upstream && (yield* isWithdrawn(upstream.version))) upstream = null;
         const release = selectManagedRelease<AntigravityRelease>(
           current.installedVersion,
           releaseAsset,

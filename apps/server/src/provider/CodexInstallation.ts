@@ -690,6 +690,10 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         if (isRunning(current)) return current;
         if (yield* reuseLocal()) return yield* SubscriptionRef.get(state);
         const installedVersion = managedVersion(current);
+        // The manifest may have withdrawn the cached upstream release since its lookup.
+        if (upstream && (yield* compatibility(upstream.version))?.status !== "supported") {
+          upstream = null;
+        }
         const release = selectManagedRelease(installedVersion, asset, upstream);
         if (!release && installedVersion === null) {
           return yield* installationError(
