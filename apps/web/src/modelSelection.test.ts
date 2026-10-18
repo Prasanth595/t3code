@@ -790,7 +790,9 @@ describe("instance-scoped model selection", () => {
       { id: "effort", value: "high" },
       { id: "contextWindow", value: "1m" },
     ]);
-    const dispatchedSelection = (threadModelSelection: ReturnType<typeof createModelSelection>) => {
+    const dispatchedSelection = (
+      threadModelSelection: ReturnType<typeof createModelSelection> | null,
+    ) => {
       const state = deriveEffectiveComposerModelState({
         draft: null,
         providers,
@@ -825,6 +827,10 @@ describe("instance-scoped model selection", () => {
         { id: "contextWindow", value: "200k" },
       ]);
       expect(dispatchedSelection(threadSelection)).toEqual(threadSelection);
+    });
+
+    it("leaves the settings default's options in place before a thread exists", () => {
+      expect(dispatchedSelection(null)).toEqual(settingsDefault);
     });
   });
 
