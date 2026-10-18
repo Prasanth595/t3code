@@ -3030,6 +3030,13 @@ const layerWsRpc = (
                     Stream.merge(environmentThemeUpdates, usageLimitSourceUpdates),
                   ),
                 ),
+              ).pipe(
+                Stream.merge(
+                  ForkWs.environmentLabelUpdates(
+                    loadServerConfig({ usageLimitsCommand }),
+                    config.environment.label,
+                  ),
+                ),
               );
 
               return Stream.concat(

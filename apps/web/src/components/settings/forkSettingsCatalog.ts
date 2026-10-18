@@ -30,7 +30,11 @@ const FORK_SETTING_GROUPS = [
   },
   {
     title: "Machine map",
-    entries: [{ ids: ["machine-map"] }, { ids: ["keybinding-sync"] }],
+    entries: [
+      { ids: ["machine-map"] },
+      { ids: ["keybinding-sync"] },
+      { ids: ["environment-label-from-machine-map"] },
+    ],
   },
   {
     title: "Updates and releases",

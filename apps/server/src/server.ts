@@ -475,13 +475,17 @@ const layerProjectFaviconResolver = ProjectFaviconResolver.layer.pipe(
   Layer.provide(T3ProjectFileLoader.layer),
 );
 
-const layerServerEnvironment = ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer));
-
 // Fork: machine map (apps/machine-map/SPEC.md). One instance: the auth hooks and the portal
 // connection read the same desired state.
 const layerMachineMapState = MachineMapState.layer.pipe(
   Layer.provide(layerServerSettings),
   Layer.provide(ServerSecretStore.layer),
+);
+
+const layerServerEnvironment = ServerEnvironment.layer.pipe(
+  Layer.provide(ServerSecretStore.layer),
+  Layer.provide(layerMachineMapState),
+  Layer.provide(layerServerSettings),
 );
 
 // One instance for the update RPC and the fork updates, so both share the in-flight guard.
