@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
 import { autoUpdater } from "electron-updater";
+import type { NsisUpdater, VerifyUpdateCodeSignature } from "electron-updater";
 
 type AutoUpdater = typeof autoUpdater;
 
@@ -80,6 +81,29 @@ export class ElectronUpdater extends Context.Service<
   }
 >()("@t3tools/desktop/electron/ElectronUpdater") {}
 
+const isTimedOutChildProcess = (error: unknown) =>
+  error instanceof Error && "killed" in error && error.killed === true;
+
+const signatureChecksWithRetry = new WeakSet<VerifyUpdateCodeSignature>();
+
+// electron-updater's Windows signature check kills PowerShell after 20 s. Endpoint security
+// scanning a freshly downloaded installer can exceed that on the first check, while a repeat
+// check of the scanned file is fast. Retry a timed-out check once; any other outcome, including
+// a rejected signature, is returned unchanged.
+const retrySignatureCheckAfterTimeout = () => {
+  // Only the Windows (NSIS) updater has a signature check.
+  const updater = autoUpdater as AutoUpdater &
+    Partial<Pick<NsisUpdater, "verifyUpdateCodeSignature">>;
+  const verify = updater.verifyUpdateCodeSignature;
+  if (verify === undefined || signatureChecksWithRetry.has(verify)) return;
+  const verifyWithRetry: VerifyUpdateCodeSignature = (publisherNames, path) =>
+    verify(publisherNames, path).catch((error: unknown) =>
+      isTimedOutChildProcess(error) ? verify(publisherNames, path) : Promise.reject(error),
+    );
+  signatureChecksWithRetry.add(verifyWithRetry);
+  updater.verifyUpdateCodeSignature = verifyWithRetry;
+};
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = ElectronUpdater.of({
   setFeedURL: (options) =>
@@ -131,6 +155,7 @@ export const make = ElectronUpdater.of({
     }).pipe(Effect.asVoid);
   }),
   downloadUpdate: Effect.suspend(() => {
+    retrySignatureCheckAfterTimeout();
     const channel = autoUpdater.channel;
     return Effect.tryPromise({
       try: () => autoUpdater.downloadUpdate(),
