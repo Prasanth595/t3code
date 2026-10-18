@@ -144,11 +144,11 @@ export function ThreadPullRequestCard({
         </Button>
         <button
           type="button"
-          className="min-w-0 flex-1 truncate text-left text-xs font-medium hover:underline focus-visible:outline-ring"
+          className="flex min-w-0 flex-1 items-baseline gap-1 text-left text-xs font-medium hover:underline focus-visible:outline-ring"
           onClick={open}
         >
-          {detail?.title ?? `Pull request #${link.number}`}{" "}
-          <span className="font-normal text-muted-foreground">#{link.number}</span>
+          <span className="truncate">{detail?.title ?? "Pull request"}</span>
+          <span className="shrink-0 font-normal text-muted-foreground">#{link.number}</span>
         </button>
         {state ? (
           <span className={cn("flex shrink-0 items-center gap-1 text-3xs", state.toneClassName)}>
