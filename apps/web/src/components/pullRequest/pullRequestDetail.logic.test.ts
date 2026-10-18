@@ -1598,6 +1598,17 @@ describe("pull request panel context beside a thread", () => {
       expect(onHost("github.example.com")).toMatchObject({ host: "github.example.com" });
     });
 
+    it("preserves a linked PR's routing project when the active checkout belongs to another project", () => {
+      const linkedPullRequest = { ...legacy(15046), projectId: ProjectId.make("routing-project") };
+      expect(
+        threadPullRequestPanelTarget({
+          projectId: "local-checkout-project",
+          pullRequests: [link(15046, { source: "agent" })],
+          linkedPullRequest,
+        }),
+      ).toEqual(linkedPullRequest);
+    });
+
     it("falls back to the branch pull request when the thread holds no link", () => {
       expect(
         threadPullRequestPanelTarget({ projectId: "proj-a", branchPullRequest: legacy(3) }),

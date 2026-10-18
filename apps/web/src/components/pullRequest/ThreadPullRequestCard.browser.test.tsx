@@ -93,6 +93,7 @@ vi.mock("./usePullRequestActions", () => ({
 vi.mock("../RelativeTime", () => ({ RelativeTime: () => "now" }));
 
 import { ThreadPullRequestCard } from "./ThreadPullRequestCard";
+import { GitCommitGraph } from "./PullRequestBranchGraph";
 import { useUiStateStore } from "~/uiStateStore";
 
 const environmentId = EnvironmentId.make("environment");
@@ -145,7 +146,19 @@ let root: Root;
 let container: HTMLDivElement;
 const render = () =>
   act(async () =>
-    root.render(<ThreadPullRequestCard threadRef={threadRef} link={detail} cwd="/workspace" />),
+    root.render(
+      <ThreadPullRequestCard threadRef={threadRef} link={{ ...detail }} cwd="/workspace" />,
+    ),
+  );
+const renderHistory = () =>
+  act(async () =>
+    root.render(
+      <GitCommitGraph
+        history={state.history!}
+        headBranch={detail.headBranch}
+        baseBranch={detail.baseBranch}
+      />,
+    ),
   );
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -192,10 +205,80 @@ it("expands history and collapses the card without navigating", async () => {
   await page.getByRole("button", { name: "Show 2 more commits" }).click();
   await expect.element(page.getByText("Commit 9", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Collapse pull request" }).click();
-  expect(container.querySelector('[aria-label="Branch commit history"]')).toBeNull();
+  await expect
+    .poll(() => container.querySelector('[aria-label="Branch commit history"]'))
+    .toBeNull();
   expect(state.open).not.toHaveBeenCalled();
   await page.getByRole("button", { name: "Expand pull request" }).click();
   await expect.element(page.getByText("Commit 0", { exact: true })).toBeVisible();
+});
+it("keeps existing commits in place during a refreshed history and settles without idle animation", async () => {
+  await renderHistory();
+  const row = container.querySelector<HTMLElement>('[data-commit-sha="sha-0"]')!;
+  await Promise.all(row.getAnimations().map((animation) => animation.finished));
+  state.history = {
+    ...state.history!,
+    headSha: "new-head",
+    commits: [
+      { ...state.history!.commits[0]!, sha: "new-head", parents: ["sha-0"], subject: "New commit" },
+      ...state.history!.commits,
+    ],
+  };
+  await renderHistory();
+  expect(container.querySelector('[data-commit-sha="sha-0"]')).toBe(row);
+  expect(
+    row
+      .getAnimations()
+      .some((animation) =>
+        (animation.effect as KeyframeEffect)
+          .getKeyframes()
+          .some((frame) => frame.transform === "translateY(-32px)"),
+      ),
+  ).toBe(true);
+  await Promise.all(row.getAnimations().map((animation) => animation.finished));
+  expect(row.getAnimations()).toHaveLength(0);
+  await expect.element(page.getByText("New commit", { exact: true })).toBeVisible();
+});
+it("does not move existing commits when reduced motion is requested", async () => {
+  const matchMedia = window.matchMedia.bind(window);
+  const reducedMotion = vi
+    .spyOn(window, "matchMedia")
+    .mockImplementation((query) =>
+      query === "(prefers-reduced-motion: reduce)"
+        ? ({ ...matchMedia(query), matches: true } as MediaQueryList)
+        : matchMedia(query),
+    );
+  try {
+    await renderHistory();
+    const row = container.querySelector<HTMLElement>('[data-commit-sha="sha-0"]')!;
+    await Promise.all(row.getAnimations().map((animation) => animation.finished));
+    state.history = {
+      ...state.history!,
+      commits: [
+        {
+          ...state.history!.commits[0]!,
+          sha: "new-head",
+          parents: ["sha-0"],
+          subject: "New commit",
+        },
+        ...state.history!.commits,
+      ],
+    };
+    await renderHistory();
+    expect(row.getAnimations()).toHaveLength(0);
+    await expect.element(page.getByText("New commit", { exact: true })).toBeVisible();
+  } finally {
+    reducedMotion.mockRestore();
+  }
+});
+it("updates to an agent-merged PR without remounting its graph or leaving a merge action", async () => {
+  await render();
+  const graph = container.querySelector('[aria-label="Branch commit history"]');
+  state.detail = { ...detail, state: "merged", mergedAt: "2026-10-18T11:00:00Z" };
+  await render();
+  await expect.element(page.getByText("Pull request merged", { exact: true })).toBeVisible();
+  expect(container.querySelector('[aria-label="Branch commit history"]')).toBe(graph);
+  expect(page.getByRole("button", { name: "Merge", exact: true }).elements()).toHaveLength(0);
 });
 it("requires a second merge click and rechecks fresh detail with the selected method", async () => {
   await render();

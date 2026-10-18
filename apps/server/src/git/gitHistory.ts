@@ -40,15 +40,13 @@ export const readGitHistory = Effect.fn("GitWorkflowService.history.read")(funct
           }),
       ),
     );
-  const exactRefs = yield* readRefs(
-    [
-      `refs/heads/${input.headBranch}`,
-      `refs/heads/${input.baseBranch}`,
-      `refs/remotes/*/${input.headBranch}`,
-      `refs/remotes/*/${input.baseBranch}`,
-    ],
-    64,
-  );
+  const exactRefs = [
+    ...(yield* readRefs([`refs/heads/${input.headBranch}`, `refs/heads/${input.baseBranch}`], 2)),
+    ...(yield* readRefs(
+      [`refs/remotes/*/${input.headBranch}`, `refs/remotes/*/${input.baseBranch}`],
+      64,
+    )),
+  ];
   const local = (branch: string) => exactRefs.find((ref) => ref.ref === `refs/heads/${branch}`);
   const remote = (branch: string) =>
     exactRefs.find((ref) => ref.ref === `refs/remotes/origin/${branch}`) ??

@@ -135,6 +135,49 @@ describe("git branch history", () => {
       }),
     ),
   );
+  it.effect("keeps an older local head when many newer remote refs match the base branch", () =>
+    provide(
+      Effect.gen(function* () {
+        const { cwd, run, commit, history } = yield* fixture;
+        yield* commit("local head");
+        yield* run(["branch", "feature"]);
+        const localHead = (yield* run(["rev-parse", "HEAD"])).stdout.trim();
+        const git = yield* GitVcsDriver.GitVcsDriver;
+        yield* git.execute({
+          operation: "test.history",
+          cwd,
+          args: [
+            "-c",
+            "user.name=Graph Author",
+            "-c",
+            "user.email=graph@test",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "newer remote base",
+          ],
+          env: { GIT_COMMITTER_DATE: "2030-01-01T00:00:00Z" },
+        });
+        yield* git.execute({
+          operation: "test.history",
+          cwd,
+          args: ["update-ref", "--stdin"],
+          stdin: Array.from(
+            { length: 70 },
+            (_, index) => `update refs/remotes/remote-${index}/main HEAD\n`,
+          ).join(""),
+        });
+        const result = yield* history();
+        expect(result.headSha).toBe(localHead);
+        expect(result.commits.some((entry) => entry.sha === localHead)).toBe(true);
+        expect(result.commits.find((entry) => entry.sha === localHead)?.branches).toContain(
+          "feature",
+        );
+      }),
+    ),
+  );
   it.effect("rejects revision expressions and wildcard patterns", () =>
     provide(
       Effect.gen(function* () {
