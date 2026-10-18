@@ -61,4 +61,33 @@ describe("holdRequestsUntilServed", () => {
     expect(await fetchStatus(port, "/third")).toBe(204);
     expect(routed.toSorted()).toEqual(["/first", "/second", "/third"]);
   });
+
+  it("drops a held request whose client disconnects before the router is up", async () => {
+    const server = NodeHttp.createServer();
+    const arrived = Promise.withResolvers<void>();
+    const closed = Promise.withResolvers<void>();
+    server.on("request", (_request, response) => {
+      response.once("close", () => closed.resolve());
+      arrived.resolve();
+    });
+    holdRequestsUntilServed(server);
+    const port = await listen(server);
+
+    const client = NodeNet.connect(port, "127.0.0.1", () => {
+      client.write("GET /gone HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n");
+    });
+    client.on("error", () => {});
+    await arrived.promise;
+    client.destroy();
+    await closed.promise;
+
+    const routed: Array<string | undefined> = [];
+    server.on("request", (request, response) => {
+      routed.push(request.url);
+      response.writeHead(204).end();
+    });
+
+    expect(await fetchStatus(port, "/live")).toBe(204);
+    expect(routed).toEqual(["/live"]);
+  });
 });
