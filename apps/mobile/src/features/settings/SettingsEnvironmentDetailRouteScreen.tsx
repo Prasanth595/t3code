@@ -96,16 +96,16 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
     setPending(label);
     setError(null);
     setNotice(null);
-    try {
-      await action();
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : "The action could not be completed. Try again.",
-      );
-    } finally {
-      pendingRef.current = false;
-      setPending(null);
-    }
+    await action()
+      .catch((cause: unknown) => {
+        setError(
+          cause instanceof Error ? cause.message : "The action could not be completed. Try again.",
+        );
+      })
+      .finally(() => {
+        pendingRef.current = false;
+        setPending(null);
+      });
   }
 
   function requestServerUpdate() {
@@ -268,19 +268,15 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                         const controller = new AbortController();
                         checkController.current = controller;
                         const timeout = setTimeout(() => controller.abort(), 20_000);
-                        try {
-                          const targetVersion = await findEnvironmentUpdate(
-                            config.environment.serverVersion,
-                            controller.signal,
-                          );
-                          setRelease({
-                            fromVersion: config.environment.serverVersion,
-                            targetVersion,
-                          });
-                        } finally {
+                        const fromVersion = config.environment.serverVersion;
+                        const targetVersion = await findEnvironmentUpdate(
+                          fromVersion,
+                          controller.signal,
+                        ).finally(() => {
                           clearTimeout(timeout);
                           checkController.current = null;
-                        }
+                        });
+                        setRelease({ fromVersion, targetVersion });
                       });
                     }}
                   />
