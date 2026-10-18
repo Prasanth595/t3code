@@ -53,6 +53,88 @@ describe("source control presentation", () => {
 });
 
 describe("detectSourceControlProviderFromRemoteUrl", () => {
+  it("uses an explicit mapping before hostname heuristics", () => {
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@github.example.test:team/repo.git", {
+        "github.example.test": { kind: "forgejo" },
+      }),
+    ).toEqual({ kind: "forgejo", name: "Forgejo", baseUrl: "https://github.example.test" });
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@code.aopc.cloud:team/repo.git", {
+        "code.aopc.cloud": { kind: "forgejo" },
+      })?.kind,
+    ).toBe("forgejo");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@github.com:team/repo.git", {
+        "code.aopc.cloud": { kind: "forgejo" },
+      })?.kind,
+    ).toBe("github");
+  });
+
+  it("matches hostnames case-insensitively and never matches subdomains or suffixes", () => {
+    const mappings = { "CODE.Example.TEST": { kind: "forgejo" as const } };
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@Code.EXAMPLE.test:team/repo.git", mappings)
+        ?.kind,
+    ).toBe("forgejo");
+    for (const host of [
+      "sub.code.example.test",
+      "code.example.test.evil.test",
+      "othercode.example.test",
+    ]) {
+      expect(
+        detectSourceControlProviderFromRemoteUrl(`https://${host}/team/repo.git`, mappings)?.kind,
+      ).toBe("unknown");
+    }
+  });
+
+  it("prefers an exact port and falls back to a hostname-only mapping", () => {
+    const mappings = {
+      "code.example.test": { kind: "forgejo" as const },
+      "CODE.EXAMPLE.TEST:8443": { kind: "gitlab" as const },
+      "code.example.test:443": { kind: "github" as const },
+    };
+    expect(
+      detectSourceControlProviderFromRemoteUrl(
+        "https://code.example.test:8443/team/repo.git",
+        mappings,
+      )?.kind,
+    ).toBe("gitlab");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://code.example.test/team/repo.git", mappings)
+        ?.kind,
+    ).toBe("github");
+    expect(
+      detectSourceControlProviderFromRemoteUrl(
+        "https://code.example.test:3000/team/repo.git",
+        mappings,
+      ),
+    ).toEqual({ kind: "forgejo", name: "Forgejo", baseUrl: "https://code.example.test:3000" });
+    expect(
+      detectSourceControlProviderFromRemoteUrl("https://code.example.test:3000/team/repo.git", {
+        "code.example.test:8443": { kind: "forgejo" },
+      })?.kind,
+    ).toBe("unknown");
+  });
+
+  it("matches SSH ports without using them as the web port, and supports explicit base URLs", () => {
+    expect(
+      detectSourceControlProviderFromRemoteUrl("ssh://git@code.example.test:2222/team/repo.git", {
+        "code.example.test:2222": { kind: "forgejo" },
+      })?.baseUrl,
+    ).toBe("https://code.example.test");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("git@code.example.test:team/repo.git", {
+        "code.example.test": { kind: "forgejo", baseUrl: "http://web.example.test:3000/forgejo/" },
+      })?.baseUrl,
+    ).toBe("http://web.example.test:3000/forgejo");
+    expect(
+      detectSourceControlProviderFromRemoteUrl("http://code.example.test:3000/team/repo.git", {
+        "code.example.test": { kind: "forgejo" },
+      })?.baseUrl,
+    ).toBe("http://code.example.test:3000");
+  });
+
   it("detects common source control hosts", () => {
     expect(detectSourceControlProviderFromRemoteUrl("git@github.com:owner/repo.git")?.kind).toBe(
       "github",

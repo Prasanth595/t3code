@@ -706,6 +706,20 @@ export const make = Effect.gen(function* () {
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
   const serverSettingsService = yield* ServerSettings.ServerSettingsService;
+  const readHostOverrides = (cwd: string) =>
+    serverSettingsService.getSettings.pipe(
+      Effect.map((settings) => settings.sourceControlHostOverrides),
+      Effect.mapError(
+        (cause) =>
+          new SourceControlProviderError({
+            provider: SourceControlProviderKind.make("unknown"),
+            operation: "detectProvider",
+            cwd,
+            detail: "The source control host mappings could not be read.",
+            cause,
+          }),
+      ),
+    );
   const threads = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectSettingsFor = Effect.fnUntraced(function* (input: {
@@ -1385,7 +1399,10 @@ export const make = Effect.gen(function* () {
       (yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ??
       (yield* readConfigValueNullable(cwd, "remote.origin.url"));
 
-    const provider = remoteUrl ? detectSourceControlProviderFromGitRemoteUrl(remoteUrl) : null;
+    const overrides = yield* readHostOverrides(cwd);
+    const provider = remoteUrl
+      ? detectSourceControlProviderFromGitRemoteUrl(remoteUrl, overrides)
+      : null;
     if (!remoteUrl || provider?.kind !== "unknown") return provider;
     const handle = yield* sourceControlProviders
       .resolveHandle({
@@ -1415,7 +1432,8 @@ export const make = Effect.gen(function* () {
       /^https?:\/\//iu.test(remoteUrl) &&
       (repositoryNameWithOwner?.split("/").length ?? 0) > 2
     ) {
-      const kind = detectSourceControlProviderFromGitRemoteUrl(remoteUrl)?.kind;
+      const overrides = yield* readHostOverrides(cwd);
+      const kind = detectSourceControlProviderFromGitRemoteUrl(remoteUrl, overrides)?.kind;
       const provider =
         kind === undefined
           ? undefined

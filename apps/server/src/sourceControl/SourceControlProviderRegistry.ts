@@ -11,9 +11,13 @@ import * as Stream from "effect/Stream";
 import {
   SourceControlProviderError,
   type SourceControlProviderDiscoveryItem,
+  type SourceControlHostOverrides,
 } from "@t3tools/contracts";
 import type {} from "@t3tools/contracts";
-import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
+import {
+  detectSourceControlProviderFromRemoteUrl,
+  sourceControlHostOverrideForRemoteUrl,
+} from "@t3tools/shared/sourceControl";
 
 import * as BuiltInDrivers from "./builtInDrivers.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
@@ -136,10 +140,11 @@ function selectProviderContext(
     readonly name: string;
     readonly url: string;
   }>,
+  overrides: SourceControlHostOverrides,
 ): SourceControlProvider.SourceControlProviderContext | null {
   const candidates: Array<SourceControlProvider.SourceControlProviderContext> = [];
   for (const remote of remotes) {
-    const provider = detectSourceControlProviderFromRemoteUrl(remote.url);
+    const provider = detectSourceControlProviderFromRemoteUrl(remote.url, overrides);
     if (provider) {
       candidates.push({
         provider,
@@ -255,23 +260,27 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       },
     );
     const settingsChanges = yield* serverSettings.subscribeChanges;
-    yield* Stream.runForEach(settingsChanges, () => Cache.invalidateAll(unknownRemoteCache)).pipe(
-      Effect.forkScoped,
-    );
+    let hostOverrides = (yield* serverSettings.getSettings).sourceControlHostOverrides;
 
     const refineContext = (
       cwd: string,
       context: SourceControlProvider.SourceControlProviderContext | null,
     ): Effect.Effect<SourceControlProvider.SourceControlProviderContext | null> =>
-      context === null || context.provider.kind !== "unknown"
-        ? Effect.succeed(context)
-        : Cache.get(
-            unknownRemoteCache,
-            new UnknownRemoteLookup(
-              context,
-              refineUnknownRemoteProvider({ specs: discoverySpecs, process, cwd, context }),
-            ),
-          ).pipe(Effect.map(({ provider }) => (provider ? { ...context, provider } : context)));
+      context !== null &&
+      sourceControlHostOverrideForRemoteUrl(context.remoteUrl, hostOverrides) !== undefined
+        ? Effect.succeed({
+            ...context,
+            provider: detectSourceControlProviderFromRemoteUrl(context.remoteUrl, hostOverrides)!,
+          })
+        : context === null || context.provider.kind !== "unknown"
+          ? Effect.succeed(context)
+          : Cache.get(
+              unknownRemoteCache,
+              new UnknownRemoteLookup(
+                context,
+                refineUnknownRemoteProvider({ specs: discoverySpecs, process, cwd, context }),
+              ),
+            ).pipe(Effect.map(({ provider }) => (provider ? { ...context, provider } : context)));
 
     const detectProviderContext = Effect.fn("SourceControlProviderRegistry.detectProviderContext")(
       function* (cwd: string) {
@@ -299,7 +308,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
               }),
           ),
         );
-        return yield* refineContext(cwd, selectProviderContext(remotes.remotes));
+        return yield* refineContext(cwd, selectProviderContext(remotes.remotes, hostOverrides));
       },
     );
 
@@ -311,6 +320,14 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       capacity: PROVIDER_DETECTION_CACHE_CAPACITY,
       timeToLive: (exit) => (Exit.isSuccess(exit) ? PROVIDER_DETECTION_CACHE_TTL : Duration.zero),
     });
+
+    yield* Stream.runForEach(settingsChanges, (settings) =>
+      Effect.gen(function* () {
+        hostOverrides = settings.sourceControlHostOverrides;
+        yield* Cache.invalidateAll(unknownRemoteCache);
+        yield* Cache.invalidateAll(providerContextCache);
+      }),
+    ).pipe(Effect.forkScoped);
 
     const resolveHandle: SourceControlProviderRegistry["Service"]["resolveHandle"] = (input) =>
       (input.context === undefined
@@ -332,7 +349,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
         if (input.url.protocol !== "https:" || input.url.username || input.url.password) {
           return undefined;
         }
-        const kind = detectSourceControlProviderFromRemoteUrl(input.url.href)?.kind;
+        const kind = detectSourceControlProviderFromRemoteUrl(input.url.href, hostOverrides)?.kind;
         return kind ? providers.get(kind)?.resolveLink?.(input) : undefined;
       },
       get,

@@ -23,6 +23,66 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("source control host mappings", () => {
+  it("defaults to no overrides and round-trips mappings", () => {
+    expect(decodeServerSettings({}).sourceControlHostOverrides).toEqual({});
+    const input = {
+      sourceControlHostOverrides: {
+        "code.aopc.cloud": { kind: "forgejo" },
+        "CODE.example.test:3000": {
+          kind: "gitlab",
+          baseUrl: "http://code.example.test:3000/gitlab",
+        },
+      },
+    };
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch(input)).toEqual(input);
+    expect(
+      decodeServerSettingsPatch({ sourceControlHostOverrides: { "code.aopc.cloud": null } }),
+    ).toEqual({ sourceControlHostOverrides: { "code.aopc.cloud": null } });
+  });
+
+  it.each(["unknown", "gitea", "unsupported", "FORGEJO"])(
+    "rejects invalid provider kind %s",
+    (kind) => {
+      const input = { sourceControlHostOverrides: { "code.example.test": { kind } } };
+      expect(() => decodeServerSettings(input)).toThrow();
+      expect(() => decodeServerSettingsPatch(input)).toThrow();
+    },
+  );
+
+  it.each([
+    "https://code.example.test",
+    "code.example.test/path",
+    "*.example.test",
+    "a..example.test",
+    "code.example.test:65536",
+    "code.example.test:0",
+    "user@code.example.test",
+  ])("rejects invalid mapping key %s, including removals", (host) => {
+    expect(() =>
+      decodeServerSettings({ sourceControlHostOverrides: { [host]: { kind: "forgejo" } } }),
+    ).toThrow();
+    expect(() =>
+      decodeServerSettingsPatch({ sourceControlHostOverrides: { [host]: null } }),
+    ).toThrow();
+  });
+
+  it.each([
+    "ftp://code.example.test",
+    "https://user:password@code.example.test",
+    "https://code.example.test?token=secret",
+    "https://code.example.test/#fragment",
+    "not a URL",
+  ])("rejects invalid base URL %s", (baseUrl) => {
+    const input = {
+      sourceControlHostOverrides: { "code.example.test": { kind: "forgejo", baseUrl } },
+    };
+    expect(() => decodeServerSettings(input)).toThrow();
+    expect(() => decodeServerSettingsPatch(input)).toThrow();
+  });
+});
+
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
     expect(decodeServerSettings({}).responseStreamingMode).toBe("paragraph");

@@ -523,6 +523,44 @@ function fakeProvider(
   };
 }
 
+it.effect.each(["forgejo", "azure-devops"] as const)(
+  "resolves mapped %s links without weakening Azure's matching-checkout requirement",
+  (kind) =>
+    Effect.gen(function* () {
+      let reads = 0;
+      const service = yield* makeService({
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          sourceControlHostOverrides: { "code.example.test": { kind } },
+        },
+        projects: [project({ id: "inbox", title: "Inbox", workspaceRoot: "/inbox" })],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make(kind), {
+            getChangeRequestSummary: (input) => {
+              reads++;
+              assert.strictEqual(input.host, "code.example.test");
+              return Effect.succeed(changeRequest(42, "2026-07-02T00:00:00Z"));
+            },
+          }),
+        ],
+      });
+      const ref = {
+        projectId: "inbox" as ProjectId,
+        host: "code.example.test",
+        repository: "team/repo",
+        number: 42,
+      };
+      if (kind === "forgejo") {
+        yield* service.summary(ref, { recoverTransientFailure: false });
+        assert.strictEqual(reads, 1);
+      } else {
+        const error = yield* Effect.flip(service.summary(ref, { recoverTransientFailure: false }));
+        assert.strictEqual(error._tag, "PullRequestUnavailableError");
+        assert.strictEqual(reads, 0);
+      }
+    }),
+);
+
 function makeService(input: {
   readonly settings?: ServerSettings;
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
@@ -569,6 +607,121 @@ function makeService(input: {
     (context) => Effect.provideContext(PullRequestService.make, context),
   );
 }
+
+it.effect.each(["unknown", "github"])(
+  "routes a mapped custom host with stored kind %s through the real Forgejo PR provider",
+  (storedKind) =>
+    Effect.gen(function* () {
+      const calls: Array<{ host: string | undefined; path: string }> = [];
+      const provider = yield* ForgejoPullRequestProvider.make.pipe(
+        Effect.provide(
+          Layer.mock(ForgejoCli.ForgejoCli)({
+            api: (input) => {
+              calls.push({ host: input.host, path: input.path });
+              return Effect.succeed({
+                exitCode: ChildProcessSpawner.ExitCode(0),
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdout: JSON.stringify({
+                  number: 42,
+                  title: "Custom Forgejo PR",
+                  body: null,
+                  html_url: "https://code.aopc.cloud/team/repo/pulls/42",
+                  user: { login: "contributor" },
+                  state: "open",
+                  merged: false,
+                  head: { ref: "feature", sha: "abc", repo: { full_name: "team/repo" } },
+                  base: { ref: "main", sha: "def", repo: { full_name: "team/repo" } },
+                  created_at: "2026-07-01T00:00:00Z",
+                  updated_at: "2026-07-02T00:00:00Z",
+                  closed_at: null,
+                  merged_at: null,
+                  labels: [],
+                }),
+              });
+            },
+          }),
+        ),
+      );
+      const service = yield* makeService({
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          sourceControlHostOverrides: { "code.aopc.cloud": { kind: "forgejo" } },
+        },
+        projects: [
+          project({
+            id: "forge",
+            title: "custom forge",
+            workspaceRoot: "/forge",
+            repository: "team/repo",
+            host: "code.aopc.cloud",
+            provider: storedKind,
+          }),
+        ],
+        providers: [provider],
+      });
+      const summary = yield* service.summary(
+        {
+          projectId: "forge" as ProjectId,
+          host: "code.aopc.cloud",
+          repository: "team/repo",
+          number: 42,
+        },
+        { recoverTransientFailure: false },
+      );
+      assert.strictEqual(summary.title, "Custom Forgejo PR");
+      assert.deepStrictEqual(calls, [
+        { host: "code.aopc.cloud", path: "repos/team/repo/pulls/42" },
+      ]);
+    }),
+);
+
+it.effect(
+  "routes a mapped SSH host through its configured web authority without automatic refinement",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* makeService({
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          sourceControlHostOverrides: {
+            "ssh.example.test:2222": {
+              kind: "forgejo",
+              baseUrl: "http://web.example.test:3000/forgejo",
+            },
+          },
+        },
+        projects: [
+          project({
+            id: "forge",
+            title: "SSH forge",
+            workspaceRoot: "/forge",
+            repository: "team/repo",
+            host: "ssh.example.test",
+            provider: "forgejo",
+            remoteUrl: "ssh://git@ssh.example.test:2222/team/repo.git",
+          }),
+        ],
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("forgejo"), {
+            getChangeRequestSummary: (input) => {
+              assert.strictEqual(input.host, "web.example.test:3000");
+              return Effect.succeed(changeRequest(42, "2026-07-02T00:00:00Z"));
+            },
+          }),
+        ],
+      });
+      yield* service.summary(
+        {
+          projectId: "forge" as ProjectId,
+          host: "web.example.test:3000",
+          repository: "team/repo",
+          number: 42,
+        },
+        { recoverTransientFailure: false },
+      );
+    }),
+);
 
 it.effect("lists GitHub Enterprise PRs for a stored unknown repository after host discovery", () =>
   Effect.gen(function* () {

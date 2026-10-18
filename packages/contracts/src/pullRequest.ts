@@ -966,7 +966,7 @@ export class PullRequestUnavailableError extends Schema.TaggedError<PullRequestU
       case "cli-unauthenticated":
         return requirement?.unauthenticated ?? "This host has no working credentials.";
       case "provider-unsupported":
-        return "Change requests cannot be browsed for this project's host yet.";
+        return "Change requests cannot be browsed for this project's host yet. For a self-hosted server, map its hostname to a supported provider in Settings → Source Control.";
     }
   }
 }

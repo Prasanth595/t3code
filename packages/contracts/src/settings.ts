@@ -45,6 +45,11 @@ import {
   ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+import {
+  SourceControlHostName,
+  SourceControlHostOverride,
+  SourceControlHostOverrides,
+} from "./sourceControl.ts";
 
 export const TimestampFormat = Schema.Literals(["locale", "12-hour", "24-hour"]);
 export type TimestampFormat = typeof TimestampFormat.Type;
@@ -1203,6 +1208,9 @@ export const ServerSettings = Schema.Struct({
   sourceControlHosts: Schema.Record(Schema.String, SourceControlHostSettings).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  sourceControlHostOverrides: SourceControlHostOverrides.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
+  ),
   // Keyed by a user-chosen id so a source keeps its rows across edits. Entries
   // this build cannot decode round-trip untouched, as provider instances do.
   usageLimitSources: Schema.Record(UsageLimitSourceId, UsageLimitSourceConfig).pipe(
@@ -1461,6 +1469,14 @@ export const ServerSettingsPatch = Schema.Struct({
    * secret is removed from the secret store.
    */
   sourceControlHosts: Schema.optionalKey(Schema.Record(Schema.String, SourceControlHostSettings)),
+  // Replace individual mappings; null removes one without racing edits to other hosts.
+  sourceControlHostOverrides: Schema.optionalKey(
+    Schema.Record(Schema.String, Schema.NullOr(SourceControlHostOverride)).check(
+      Schema.makeFilter((entries) => Object.keys(entries).every(Schema.is(SourceControlHostName)), {
+        expected: "host mappings keyed by exact hostname, optionally with a port",
+      }),
+    ),
+  ),
   // Whole-map replacement for the new instance config. Patching individual
   // entries is intentionally out of scope: the map is small, and partial
   // patches risk leaving driver-specific config in a half-merged state.

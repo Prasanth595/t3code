@@ -47,6 +47,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 import { GitIcon, JujutsuIcon, type Icon } from "../Icons";
 import { SourceControlHostSettings } from "./SourceControlHostSettings";
+import { SourceControlHostOverridesSettings } from "./SourceControlHostOverridesSettings";
 import { GitHubAccountSettings } from "./GitHubAccountSettings";
 import { GitHubTokenSettings } from "./GitHubTokenSettings";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
@@ -640,6 +641,9 @@ export function SourceControlSettingsPanel() {
         />
       )}
 
+      {environmentId !== null ? (
+        <SourceControlHostOverridesSettings key={environmentId} environmentId={environmentId} />
+      ) : null}
       <SourceControlWritingSettingsSection />
     </SettingsPageContainer>
   );

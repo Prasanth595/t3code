@@ -449,6 +449,43 @@ it.effect("discovers the repository from cwd remotes when the repository is omit
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("uses a configured host when discovering Bitbucket remotes", () => {
+  const { execute, listRemotes, layer } = makeLayer({
+    response: (request) =>
+      Response.json(request.url.endsWith("/branching-model") ? {} : repositoryJson),
+  });
+  listRemotes.mockImplementation(() =>
+    Effect.succeed({
+      remotes: [
+        {
+          name: "origin",
+          url: "https://code.example.test/pingdotgg/t3code.git",
+          pushUrl: Option.none(),
+          isPrimary: true,
+        },
+      ],
+      freshness: {
+        source: "live-local",
+        observedAt: DateTime.makeUnsafe("2026-01-02T00:00:00.000Z"),
+        expiresAt: Option.none(),
+      },
+    }),
+  );
+  return Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    yield* settings.updateSettings({
+      sourceControlHostOverrides: { "code.example.test": { kind: "bitbucket" } },
+    });
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    assert.strictEqual(yield* bitbucket.getDefaultBranch({ cwd: "/repo" }), "main");
+    assert.isTrue(
+      execute.mock.calls.every(([request]) =>
+        request.url.startsWith("https://api.test.local/2.0/repositories/pingdotgg/t3code"),
+      ),
+    );
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect(
   "prefers the Bitbucket branching model development branch as the default PR target",
   () => {

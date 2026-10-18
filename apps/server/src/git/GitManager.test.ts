@@ -861,6 +861,28 @@ const layerGitManagerTest = GitVcsDriver.layer.pipe(
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
+  it.effect("reports a configured host before applying hostname heuristics", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-host-mapping-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, [
+        "remote",
+        "add",
+        "origin",
+        "https://github.example.test/team/repo.git",
+      ]);
+      const { manager } = yield* makeManager({
+        serverSettings: {
+          sourceControlHostOverrides: { "github.example.test": { kind: "forgejo" } },
+        },
+      });
+      expect((yield* manager.localStatus({ cwd: repoDir })).sourceControlProvider).toEqual({
+        kind: "forgejo",
+        name: "Forgejo",
+        baseUrl: "https://github.example.test",
+      });
+    }),
+  );
   it.effect("passive worktree status streams do not start remote refreshes", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-passive-vcs-");

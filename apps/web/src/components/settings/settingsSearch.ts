@@ -815,6 +815,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     environmentOnly: true,
     scope: "environment-defaults",
   },
+  {
+    id: "source-control-host-overrides",
+    title: "Custom source control hosts",
+    to: "/settings/source-control",
+    searchTerms: [
+      "self hosted custom domain hostname port mapping override forgejo gitea github gitlab bitbucket azure gitcafe",
+    ],
+    environmentOnly: true,
+    scope: "environment-defaults",
+  },
   ...SOURCE_CONTROL_HOST_SEARCH_ITEMS,
   {
     id: "source-control-writing-style",

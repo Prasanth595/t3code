@@ -1,5 +1,9 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
-import type { RepositoryIdentity, SourceControlProviderInfo } from "@t3tools/contracts";
+import type {
+  RepositoryIdentity,
+  SourceControlHostOverrides,
+  SourceControlProviderInfo,
+} from "@t3tools/contracts";
 
 export interface ChangeRequestPresentation {
   readonly icon:
@@ -144,7 +148,7 @@ export function isSshRemoteUrl(remoteUrl: string): boolean {
   return SCP_SSH_REMOTE_PATTERN.test(trimmed) || trimmed.toLowerCase().startsWith("ssh://");
 }
 
-function parseRemoteHost(remoteUrl: string): string | null {
+function parseRemoteHost(remoteUrl: string, includeSshPort = false): string | null {
   const trimmed = remoteUrl.trim();
   if (trimmed.length === 0) {
     return null;
@@ -157,7 +161,7 @@ function parseRemoteHost(remoteUrl: string): string | null {
 
   try {
     const url = new URL(trimmed);
-    return (url.protocol === "ssh:" ? url.hostname : url.host).toLowerCase();
+    return (url.protocol === "ssh:" && !includeSshPort ? url.hostname : url.host).toLowerCase();
   } catch {
     return null;
   }
@@ -207,14 +211,47 @@ function isBitbucketHost(host: string): boolean {
   return host === "bitbucket.org" || hasDnsLabel(host, "bitbucket");
 }
 
+export function sourceControlHostOverrideForRemoteUrl(
+  remoteUrl: string,
+  overrides: SourceControlHostOverrides,
+) {
+  const authority = parseRemoteHost(remoteUrl, true);
+  if (authority === null) return undefined;
+  const entries = Object.entries(overrides);
+  if (/^https?:/iu.test(remoteUrl.trim())) {
+    const url = new URL(remoteUrl.trim());
+    const port = url.port || (url.protocol === "https:" ? "443" : "80");
+    const specific = entries.find(
+      ([host]) => host.toLowerCase() === `${url.hostname}:${port}`,
+    )?.[1];
+    if (specific !== undefined) return specific;
+  }
+  return (
+    entries.find(([host]) => host.toLowerCase() === authority)?.[1] ??
+    entries.find(([host]) => host.toLowerCase() === parseHostName(authority))?.[1]
+  );
+}
+
 export function detectSourceControlProviderFromRemoteUrl(
   remoteUrl: string,
+  overrides: SourceControlHostOverrides = {},
 ): SourceControlProviderInfo | null {
   const host = parseRemoteHost(remoteUrl);
   if (!host) {
     return null;
   }
   const hostname = parseHostName(host);
+  const override = sourceControlHostOverrideForRemoteUrl(remoteUrl, overrides);
+  if (override !== undefined) {
+    const kind = SourceControlProviderKind.make(override.kind);
+    return {
+      kind,
+      name: resolveChangeRequestPresentationForKind(kind).providerName,
+      baseUrl:
+        override.baseUrl?.replace(/\/+$/, "") ??
+        (/^https?:/iu.test(remoteUrl.trim()) ? new URL(remoteUrl.trim()).origin : toBaseUrl(host)),
+    };
+  }
 
   if (isGitCafeHost(hostname)) {
     return {

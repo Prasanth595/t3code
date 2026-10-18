@@ -134,7 +134,11 @@ function makeRegistry(input: {
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         Layer.mock(BitbucketPullRequestApi.BitbucketPullRequestApi)({}),
         input.settings
-          ? Layer.mock(ServerSettings.ServerSettingsService)(input.settings)
+          ? Layer.mock(ServerSettings.ServerSettingsService)({
+              getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+              subscribeChanges: Effect.succeed(Stream.empty),
+              ...input.settings,
+            })
           : ServerSettings.ServerSettingsService.layerTest(),
         Layer.mock(GitHubPullRequestApi.GitHubPullRequestApi)({}),
         // The GitHub provider's GraphQL reads go through these; no test here makes one.
@@ -176,6 +180,92 @@ it.effect("routes GitHub remotes to the GitHub provider", () =>
     const provider = yield* registry.resolve({ cwd: "/repo" });
 
     assert.strictEqual(provider.kind, "github");
+  }),
+);
+
+it.effect(
+  "uses configured hosts before heuristics and account probes, including supplied contexts",
+  () =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry({
+        remotes: [{ name: "origin", url: "ssh://git@gitlab.example.test:2222/team/repo.git" }],
+        settings: {
+          getSettings: Effect.succeed({
+            ...DEFAULT_SERVER_SETTINGS,
+            sourceControlHostOverrides: {
+              "GITLAB.example.test:2222": {
+                kind: "forgejo",
+                baseUrl: "http://web.example.test:3000/forgejo",
+              },
+            },
+          }),
+        },
+        process: { run: () => Effect.die("explicit mapping must not probe other providers") },
+      });
+      for (const input of [
+        { cwd: "/repo" },
+        {
+          cwd: "/repo",
+          context: {
+            provider: {
+              kind: SourceControlProviderKind.make("gitlab"),
+              name: "GitLab",
+              baseUrl: "https://gitlab.example.test",
+            },
+            remoteName: "origin",
+            remoteUrl: "ssh://git@gitlab.example.test:2222/team/repo.git",
+          },
+        },
+      ]) {
+        const handle = yield* registry.resolveHandle(input);
+        assert.strictEqual(handle.provider.kind, "forgejo");
+        assert.strictEqual(
+          handle.context?.provider.baseUrl,
+          "http://web.example.test:3000/forgejo",
+        );
+      }
+    }),
+);
+
+it.effect("invalidates detected contexts when a host mapping is added, changed, or removed", () =>
+  Effect.gen(function* () {
+    const changes = yield* PubSub.unbounded<{
+      settings: typeof DEFAULT_SERVER_SETTINGS;
+      handled: Deferred.Deferred<void>;
+    }>();
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "https://gitlab.example.test/team/repo.git" }],
+      settings: {
+        subscribeChanges: PubSub.subscribe(changes).pipe(
+          Effect.map((subscription) =>
+            Stream.fromSubscription(subscription).pipe(
+              Stream.flatMap(({ settings, handled }) =>
+                Stream.concat(
+                  Stream.make(settings),
+                  Stream.fromEffectDrain(Deferred.succeed(handled, undefined)),
+                ),
+              ),
+            ),
+          ),
+        ),
+      },
+    });
+    assert.strictEqual((yield* registry.resolveHandle({ cwd: "/repo" })).provider.kind, "gitlab");
+    for (const kind of ["forgejo", "github", null] as const) {
+      const handled = yield* Deferred.make<void>();
+      yield* PubSub.publish(changes, {
+        handled,
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          sourceControlHostOverrides: kind === null ? {} : { "gitlab.example.test": { kind } },
+        },
+      });
+      yield* Deferred.await(handled);
+      assert.strictEqual(
+        (yield* registry.resolveHandle({ cwd: "/repo" })).provider.kind,
+        kind ?? "gitlab",
+      );
+    }
   }),
 );
 

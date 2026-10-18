@@ -2,6 +2,7 @@ import type {
   BranchNamingOptions,
   VcsRef,
   SourceControlProviderInfo,
+  SourceControlHostOverrides,
   VcsStatusLocalResult,
   VcsStatusRemoteResult,
   VcsStatusResult,
@@ -299,8 +300,9 @@ export function dedupeRemoteBranchesWithLocalMatches(
 
 export function detectSourceControlProviderFromGitRemoteUrl(
   remoteUrl: string,
+  overrides?: SourceControlHostOverrides,
 ): SourceControlProviderInfo | null {
-  return detectSourceControlProviderFromRemoteUrl(remoteUrl);
+  return detectSourceControlProviderFromRemoteUrl(remoteUrl, overrides);
 }
 
 const EMPTY_GIT_STATUS_REMOTE: VcsStatusRemoteResult = {

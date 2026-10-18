@@ -20,6 +20,62 @@ export const SourceControlProviderInfo = Schema.Struct({
 });
 export type SourceControlProviderInfo = typeof SourceControlProviderInfo.Type;
 
+export const SourceControlHostOverride = Schema.Struct({
+  kind: Schema.Literals(["github", "gitlab", "forgejo", "bitbucket", "azure-devops", "gitcafe"]),
+  baseUrl: Schema.optionalKey(
+    TrimmedNonEmptyString.check(
+      Schema.makeFilter(
+        (value) => {
+          try {
+            const url = new URL(value);
+            return (
+              (url.protocol === "https:" || url.protocol === "http:") &&
+              !url.username &&
+              !url.password &&
+              !url.search &&
+              !url.hash
+            );
+          } catch {
+            return false;
+          }
+        },
+        { expected: "an HTTP or HTTPS base URL without credentials, query, or fragment" },
+      ),
+    ),
+  ),
+});
+export type SourceControlHostOverride = typeof SourceControlHostOverride.Type;
+
+export const SourceControlHostName = Schema.String.check(
+  Schema.makeFilter(
+    (value) => {
+      if (
+        !/^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*|\[[a-f0-9:]+\])(?::\d+)?$/iu.test(
+          value,
+        )
+      )
+        return false;
+      try {
+        const url = new URL(`https://${value}`);
+        return url.hostname.length > 0 && url.port !== "0";
+      } catch {
+        return false;
+      }
+    },
+    { expected: "an exact hostname, optionally with a port" },
+  ),
+);
+
+export const SourceControlHostOverrides = Schema.Record(
+  Schema.String,
+  SourceControlHostOverride,
+).check(
+  Schema.makeFilter((entries) => Object.keys(entries).every(Schema.is(SourceControlHostName)), {
+    expected: "host mappings keyed by exact hostname, optionally with a port",
+  }),
+);
+export type SourceControlHostOverrides = typeof SourceControlHostOverrides.Type;
+
 export const ChangeRequestState = Schema.Literals(["open", "closed", "merged"]);
 export type ChangeRequestState = typeof ChangeRequestState.Type;
 

@@ -73,11 +73,15 @@ import {
   type PullRequestThreadCommentsResult,
   type PullRequestUpdateInput,
   type SourceControlProviderInfo,
+  type SourceControlHostOverrides,
   SourceControlProviderKind,
   type ThreadPullRequestKey,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
-import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
+import {
+  detectSourceControlProviderFromRemoteUrl,
+  sourceControlHostOverrideForRemoteUrl,
+} from "@t3tools/shared/sourceControl";
 
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -589,6 +593,7 @@ export const make = Effect.gen(function* () {
   const refineUnknownProjectKinds = (
     projects: ReadonlyArray<OrchestrationProjectShell>,
     filter: Pick<PullRequestListInput, "projectId" | "host">,
+    overrides: SourceControlHostOverrides,
   ) => {
     type RefinementCandidate = {
       readonly project: OrchestrationProjectShell;
@@ -600,6 +605,11 @@ export const make = Effect.gen(function* () {
     for (const project of projects) {
       if (filter.projectId !== undefined && project.id !== filter.projectId) continue;
       const identity = project.repositoryIdentity;
+      if (
+        identity &&
+        sourceControlHostOverrideForRemoteUrl(identity.locator.remoteUrl, overrides) !== undefined
+      )
+        continue;
       if (
         (identity?.provider !== "unknown" &&
           !(identity?.provider === "forgejo" && isSshRemoteUrl(identity.locator.remoteUrl))) ||
@@ -694,11 +704,27 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((projects) =>
-        refineUnknownProjectKinds(projects, filter).pipe(
-          Effect.map((refinedProviders) => ({ refinedProviders, projects })),
+        serverSettings.getSettings.pipe(
+          Effect.mapError(
+            (cause) =>
+              new PullRequestOperationError({
+                operation: "resolveProvider",
+                detail: "The source control host mappings could not be read.",
+                cause,
+              }),
+          ),
+          Effect.flatMap(({ sourceControlHostOverrides }) =>
+            refineUnknownProjectKinds(projects, filter, sourceControlHostOverrides).pipe(
+              Effect.map((refinedProviders) => ({
+                refinedProviders,
+                projects,
+                overrides: sourceControlHostOverrides,
+              })),
+            ),
+          ),
         ),
       ),
-      Effect.map(({ refinedProviders, projects }) => {
+      Effect.map(({ refinedProviders, projects, overrides }) => {
         const supported: SupportedProject[] = [];
         const unimplemented = new Map<
           string,
@@ -714,7 +740,16 @@ export const make = Effect.gen(function* () {
           const repository = sourceControlRepositorySelector(project.repositoryIdentity);
           if (!identity || kind === undefined || repository === null) continue;
           let refinedProvider: SourceControlProviderInfo | null | undefined;
-          if (
+          const overridden =
+            sourceControlHostOverrideForRemoteUrl(identity.locator.remoteUrl, overrides) !==
+            undefined;
+          if (overridden) {
+            refinedProvider = detectSourceControlProviderFromRemoteUrl(
+              identity.locator.remoteUrl,
+              overrides,
+            );
+            kind = refinedProvider?.kind ?? kind;
+          } else if (
             kind === "unknown" ||
             (kind === "forgejo" && isSshRemoteUrl(identity.locator.remoteUrl))
           ) {
@@ -723,7 +758,7 @@ export const make = Effect.gen(function* () {
             kind = refinedProvider?.kind ?? kind;
           }
           const host =
-            refinedProvider?.kind === "forgejo"
+            refinedProvider && (overridden || refinedProvider.kind === "forgejo")
               ? new URL(refinedProvider.baseUrl).host.toLowerCase()
               : pullRequestHostOf(identity, kind);
           if (filter.host !== undefined && host !== filter.host.toLowerCase()) {
@@ -806,11 +841,30 @@ export const make = Effect.gen(function* () {
               onHost.find((candidate) => candidate.repositoryKey === null);
             if (route === undefined) {
               return Effect.gen(function* () {
-                const provider = ["github.com", "bitbucket.org", "codeberg.org"].includes(host)
-                  ? detectSourceControlProviderFromRemoteUrl(`https://${host}/${repository}.git`)
-                  : null;
+                const settings = yield* serverSettings.getSettings.pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new PullRequestOperationError({
+                        operation: "resolveProvider",
+                        detail: "The source control host mappings could not be read.",
+                        cause,
+                      }),
+                  ),
+                );
+                const remoteUrl = `https://${host}/${repository}.git`;
+                const provider =
+                  ["github.com", "bitbucket.org", "codeberg.org"].includes(host) ||
+                  sourceControlHostOverrideForRemoteUrl(
+                    remoteUrl,
+                    settings.sourceControlHostOverrides,
+                  ) !== undefined
+                    ? detectSourceControlProviderFromRemoteUrl(
+                        remoteUrl,
+                        settings.sourceControlHostOverrides,
+                      )
+                    : null;
                 const api = provider === null ? null : registry.get(provider.kind);
-                if (api !== null) {
+                if (api !== null && provider?.kind !== "azure-devops") {
                   const selected = yield* projects.getShell(ref.projectId).pipe(
                     Effect.mapError(
                       (cause) =>
