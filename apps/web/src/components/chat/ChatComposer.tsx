@@ -1040,6 +1040,7 @@ function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children:
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ShortcutHint } from "../focusLevels/ShortcutHint";
 import { toastManager } from "../ui/toast";
 import {
   BotIcon,
@@ -1324,7 +1325,10 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
             })}
           </SelectPopup>
         </Select>
-        <TooltipPopup side="top">{runtimeModeOption.description}</TooltipPopup>
+        <TooltipPopup side="top">
+          {runtimeModeOption.description}
+          <ShortcutHint command="composer.mode" />
+        </TooltipPopup>
       </Tooltip>
 
       {interactionModeToggle}

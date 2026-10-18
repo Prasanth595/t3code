@@ -1,6 +1,7 @@
 import { ComposerSelectControl } from "./chat/ComposerControl";
 import { ComposerContextLabel } from "./ComposerContextLabel";
 import { Tooltip, TooltipTrigger, TooltipPopup } from "./ui/tooltip";
+import { ShortcutHint } from "./focusLevels/ShortcutHint";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { ScaleIcon } from "lucide-react";
 import { memo } from "react";
@@ -107,7 +108,10 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
             <SelectValue />
           </ComposerContextLabel>
         </TooltipTrigger>
-        <TooltipPopup>{autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}</TooltipPopup>
+        <TooltipPopup>
+          {autoEnvironmentLabel ?? activeEnvironment?.label ?? "Run on"}
+          <ShortcutHint command="composer.host" />
+        </TooltipPopup>
       </Tooltip>
       <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
         <SelectGroup>

@@ -35,3 +35,12 @@ export function approvalShortcutCommands(input: {
   }
   return commands;
 }
+
+/** Fork: the approval key that answers with `decision`, for the tooltip of its button. */
+export function approvalShortcut(decision: ProviderApprovalDecision) {
+  const entry = Object.entries(DECISION_BY_COMMAND).find(([, value]) => value === decision);
+  return {
+    command: entry ? (entry[0] as keyof typeof DECISION_BY_COMMAND) : null,
+    context: { approvalPending: true },
+  };
+}

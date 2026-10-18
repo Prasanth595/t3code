@@ -9,6 +9,8 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { ShortcutHint, ShortcutTooltip } from "../focusLevels/ShortcutHint";
+import { approvalShortcut } from "../focusLevels/approvalShortcuts";
 
 interface ComposerPendingApprovalActionsProps {
   requestId: RuntimeRequestId;
@@ -67,10 +69,19 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
         return option.warning ? (
           <Tooltip key={option.decision}>
             <TooltipTrigger render={button} />
-            <TooltipPopup side="top">{option.warning}</TooltipPopup>
+            <TooltipPopup side="top">
+              {option.warning}
+              <ShortcutHint {...approvalShortcut(option.decision)} />
+            </TooltipPopup>
           </Tooltip>
         ) : (
-          button
+          <ShortcutTooltip
+            key={option.decision}
+            {...approvalShortcut(option.decision)}
+            label={option.label}
+            side="top"
+            render={button}
+          />
         );
       })}
       {moreOptions.length > 0 ? (
@@ -102,10 +113,19 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
               return option.warning ? (
                 <Tooltip key={option.decision}>
                   <TooltipTrigger render={item} />
-                  <TooltipPopup side="top">{option.warning}</TooltipPopup>
+                  <TooltipPopup side="top">
+                    {option.warning}
+                    <ShortcutHint {...approvalShortcut(option.decision)} />
+                  </TooltipPopup>
                 </Tooltip>
               ) : (
-                item
+                <ShortcutTooltip
+                  key={option.decision}
+                  {...approvalShortcut(option.decision)}
+                  label={option.label}
+                  side="top"
+                  render={item}
+                />
               );
             })}
           </MenuPopup>

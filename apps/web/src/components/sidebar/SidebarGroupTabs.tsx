@@ -5,6 +5,8 @@
  */
 import {
   isKnownSidebarGroupRule,
+  type KeybindingCommand,
+  SIDEBAR_GROUP_JUMP_KEYBINDING_COMMANDS,
   type SidebarGroup,
   type SidebarGroupRule,
   type SidebarGroupRuleField,
@@ -42,6 +44,7 @@ import {
 import { Popover, PopoverPopup } from "../ui/popover";
 import { useSidebar } from "../ui/sidebar";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ShortcutHint } from "../focusLevels/ShortcutHint";
 import { SidebarHeaderIconButton } from "./SidebarThreadHeader";
 import {
   DEFAULT_SIDEBAR_GROUP_ID,
@@ -157,6 +160,7 @@ function GroupTab(props: {
   squeezed: boolean;
   project: EnvironmentProject | null;
   routeThreadKey: string | null;
+  jumpCommand: KeybindingCommand | null;
   /** The tab can move by drag. The first tab stays first, and touch layouts do not reorder. */
   sortable: boolean;
   onSelect: () => void;
@@ -224,7 +228,10 @@ function GroupTab(props: {
       >
         <TabLabel tab={tab} project={props.project} squeezed={props.squeezed} />
       </TooltipTrigger>
-      <TooltipPopup side="bottom">{tooltip}</TooltipPopup>
+      <TooltipPopup side="bottom">
+        {tooltip}
+        <ShortcutHint command={props.jumpCommand} context={{ sidebarFocus: true }} />
+      </TooltipPopup>
     </Tooltip>
   );
 }
@@ -460,10 +467,11 @@ export function SidebarGroupTabs(props: {
       >
         <DndContext sensors={reorderSensors} modifiers={TAB_DRAG_MODIFIERS} onDragEnd={reorderTabs}>
           <SortableContext items={sortableTabIds} strategy={horizontalListSortingStrategy}>
-            {visibleTabs.map((tab) => (
+            {visibleTabs.map((tab, index) => (
               <GroupTab
                 key={tab.id}
                 tab={tab}
+                jumpCommand={SIDEBAR_GROUP_JUMP_KEYBINDING_COMMANDS[index] ?? null}
                 selected={tab.id === state.tabId}
                 dropTarget={state.dropTargetId === tab.id}
                 squeezed={squeezedIndex !== null && state.tabs[squeezedIndex] === tab}

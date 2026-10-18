@@ -60,6 +60,7 @@ import { Button } from "~/components/ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { AndroidIcon, AppleIcon } from "~/components/Icons";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { ShortcutTooltip } from "~/components/focusLevels/ShortcutHint";
 import { Kbd } from "~/components/ui/kbd";
 import {
   Menu,
@@ -1345,11 +1346,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 <MenuTrigger
                   ref={addSurfaceTriggerRef}
                   render={
-                    <Button
-                      aria-label="Add panel surface"
-                      className="shrink-0"
-                      size="icon-xs"
-                      variant="ghost-muted"
+                    <ShortcutTooltip
+                      command="rightPanel.new"
+                      context={{ rightPanelOpen: true }}
+                      label="Add panel surface"
+                      render={
+                        <Button
+                          aria-label="Add panel surface"
+                          className="shrink-0"
+                          size="icon-xs"
+                          variant="ghost-muted"
+                        />
+                      }
                     />
                   }
                 >

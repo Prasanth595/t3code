@@ -65,12 +65,17 @@ Up from the first thread reaches the group tabs. Left and Right, or `1` to `9`, 
 
 In the timeline, Up and Down move a cursor between messages. Right goes one level deeper:
 blocks such as paragraphs and list items, then sentences or code lines. Left goes back up.
-Shift with Up or Down extends the selection. Enter cites the selection with a note, and
+Up and Down stay at the depth that Right and Left chose. At the end of a list they continue
+with the next item one level up, then go back down: 1.1, 1.2, 1.3, 2, 2.1.
+After you select text or click in the timeline with the mouse, the next arrow key starts
+from there, and Enter cites exactly the selected text.
+Shift with Up or Down extends the selection within one list. Enter cites the selection with a note, and
 `alt+enter` cites it without one. Only assistant text can be cited. `mod+down` jumps to the
 latest message. PageUp and PageDown still scroll.
 
 These keys work with the setting off too:
 
+- `mod+.` stops the running turn, outside terminals.
 - Thread keys act on the selected sidebar thread, or on the open thread elsewhere.
   `mod+backspace` archives (sidebar and timeline only), `mod+alt+s` snoozes or wakes,
   `mod+alt+r` renames, and `mod+shift+u` marks unread.
@@ -179,8 +184,8 @@ a shortcut.
 
 ## Commands with special behavior
 
-`thread.stop` interrupts the running turn in the focused thread. It has no default
-shortcut; assign one in **Settings → Keybindings**.
+`thread.stop` (`mod+.` by default, outside terminals) interrupts the running turn in
+the focused thread.
 
 `thread.undo` (`mod+z` by default) reverses the actions shown in the notice at the
 bottom of the sidebar, such as unpin, settle, snooze, archive, or discarding a

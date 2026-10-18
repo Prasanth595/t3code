@@ -11,6 +11,7 @@ import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ShortcutHint } from "../focusLevels/ShortcutHint";
 import { composerFloatingLayerProps } from "./composerEventScope";
 import {
   alternateComposerDispatchAction,
@@ -151,7 +152,10 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           <rect x="2" y="2" width="8" height="8" rx="1.5" />
         </svg>
       </TooltipTrigger>
-      <TooltipPopup>Interrupt</TooltipPopup>
+      <TooltipPopup>
+        Interrupt
+        <ShortcutHint command="thread.stop" />
+      </TooltipPopup>
     </Tooltip>
   );
 

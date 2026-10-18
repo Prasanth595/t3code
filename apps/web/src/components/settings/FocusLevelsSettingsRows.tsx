@@ -73,3 +73,34 @@ export function FocusLevelHighlightSettingsRow() {
     />
   );
 }
+
+const selectTooltipShortcuts = (settings: ClientSettings) => settings.tooltipShortcuts;
+
+/** Fork: `tooltipShortcuts`, control tooltips name the keyboard shortcut of the control. */
+export function TooltipShortcutsSettingsRow() {
+  const enabled = useClientSettings(selectTooltipShortcuts);
+  const updateSettings = useUpdateClientSettings();
+  return (
+    <SettingsRow
+      {...searchableSetting("tooltip-shortcuts")}
+      description="Show the keyboard shortcut of a control in its tooltip, such as the stash, the runtime mode or the approval buttons."
+      resetAction={
+        enabled !== DEFAULT_CLIENT_SETTINGS.tooltipShortcuts ? (
+          <SettingResetButton
+            label="shortcuts in tooltips"
+            onClick={() =>
+              void updateSettings({ tooltipShortcuts: DEFAULT_CLIENT_SETTINGS.tooltipShortcuts })
+            }
+          />
+        ) : null
+      }
+      control={
+        <Switch
+          checked={enabled}
+          onCheckedChange={(checked) => void updateSettings({ tooltipShortcuts: Boolean(checked) })}
+          aria-label="Shortcuts in tooltips"
+        />
+      }
+    />
+  );
+}

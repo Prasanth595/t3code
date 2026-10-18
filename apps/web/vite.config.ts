@@ -185,6 +185,8 @@ export default defineConfig(() => {
     ],
     optimizeDeps: {
       include: [
+        // A browser test that finds it late reloads Vite and fails the tests that run beside it.
+        "@base-ui/react/field",
         "@clerk/clerk-js",
         "@clerk/react/internal",
         "@pierre/diffs",
