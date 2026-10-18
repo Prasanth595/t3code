@@ -1,3 +1,4 @@
+import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/assets";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { act } from "react";
@@ -5,6 +6,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
 const mint = vi.hoisted(() => vi.fn());
+const deniedEnvironmentId = vi.hoisted(() => "denied-environment");
 // Atoms derived from the server config run in the real registry over a missing config.
 vi.mock(import("../state/server"), async (original) => {
   const actual = await original();
@@ -25,6 +27,16 @@ vi.mock(import("../state/session"), async (original) => ({
   useEnvironmentScope: () => false,
   readPreparedConnection: (() => ({ httpBaseUrl: "https://host.test" })) as never,
 }));
+vi.mock(import("../state/filesystem"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    useFilesystemReadAccess: ((environmentId: EnvironmentId | null) =>
+      environmentId === deniedEnvironmentId
+        ? { canReadFiles: false, isPending: false, error: null }
+        : actual.useFilesystemReadAccess(environmentId)) as never,
+  };
+});
 
 import ChatMarkdown from "./ChatMarkdown";
 
@@ -67,4 +79,24 @@ it("opens host media through server authorization before the client grant loads"
       }),
     ),
   );
+});
+
+it("explains a host video the connection cannot read instead of offering a retry", async () => {
+  const container = document.body.appendChild(document.createElement("div"));
+  const root = createRoot(container);
+  roots.push(root);
+  await act(async () =>
+    root.render(
+      <ChatMarkdown
+        cwd="/repo"
+        threadRef={{
+          environmentId: EnvironmentId.make(deniedEnvironmentId),
+          threadId: ThreadId.make("media-thread"),
+        }}
+        text="![Demo](/tmp/demo.mp4)"
+      />,
+    ),
+  );
+  await vi.waitFor(() => expect(container.textContent).toContain(MISSING_FILE_ACCESS_MESSAGE));
+  expect(container.textContent).not.toContain("Retry video");
 });

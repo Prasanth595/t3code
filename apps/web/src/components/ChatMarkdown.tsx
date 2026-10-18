@@ -1517,6 +1517,7 @@ function ChatMarkdownVideo(props: {
   readonly copyMarkdown: string | undefined;
   readonly originalUrl?: string | undefined;
   readonly sourceFailed?: boolean | undefined;
+  readonly unavailableDetail?: string | undefined;
   readonly style?: CSSProperties | undefined;
   readonly mediaIdentity?: string | undefined;
   readonly actionsSource?: MediaActionSource | undefined;
@@ -1527,6 +1528,7 @@ function ChatMarkdownVideo(props: {
       key={props.mediaIdentity ?? props.copyMarkdown ?? props.src}
       src={props.src}
       sourceFailed={props.sourceFailed}
+      unavailableDetail={props.unavailableDetail}
       label={props.alt}
       originalUrl={props.originalUrl}
       style={props.style}
@@ -1592,6 +1594,10 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       : undefined;
   const relativePath = reference?.kind === "file" ? reference.relativePath : undefined;
   const fallbackSrc = assetUrl._tag === "Failure" ? props.fallbackSrc : undefined;
+  const missingFileAccess =
+    assetUrl._tag === "Failure" &&
+    assetUrl.reason === "missing-file-access" &&
+    fallbackSrc === undefined;
   const src =
     assetUrl._tag === "Success"
       ? assetUrl.url + (props.srcFragment ?? "")
@@ -1633,12 +1639,14 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       <ChatMarkdownVideo
         src={src}
         sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
+        unavailableDetail={missingFileAccess ? MISSING_FILE_ACCESS_MESSAGE : undefined}
         alt={props.alt}
         copyMarkdown={props.copyMarkdown}
         originalUrl={props.originalUrl}
         style={props.style}
         mediaIdentity={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
-        onRetry={refreshAssetUrl}
+        // A retry signs a new URL; it cannot grant the file access this connection lacks.
+        onRetry={missingFileAccess ? undefined : refreshAssetUrl}
         actionsSource={actionsSource}
       />
     );
@@ -1649,13 +1657,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
       key={JSON.stringify([props.environmentId, props.resource, props.srcFragment])}
       src={src}
       sourceFailed={assetUrl._tag === "Failure" && fallbackSrc === undefined}
-      unavailableDetail={
-        assetUrl._tag === "Failure" &&
-        assetUrl.reason === "missing-file-access" &&
-        fallbackSrc === undefined
-          ? MISSING_FILE_ACCESS_MESSAGE
-          : undefined
-      }
+      unavailableDetail={missingFileAccess ? MISSING_FILE_ACCESS_MESSAGE : undefined}
       alt={props.alt}
       copyMarkdown={props.copyMarkdown}
       standalone={props.standalone ?? true}
