@@ -30,6 +30,7 @@ import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as ServerConfig from "./config.ts";
 import { withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
+import { holdRequestsUntilServed } from "./httpEarlyRequests.ts";
 import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { fixPath } from "./os-jank.ts";
 import * as Ws from "./ws.ts";
@@ -283,10 +284,13 @@ const layerRelayClient = Layer.unwrap(
   }),
 );
 
+const makeNodeHttpServer = () =>
+  holdRequestsUntilServed(guardHttpResponseWriteErrors(NodeHttp.createServer()));
+
 const layerHttpServer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    return NodeHttpServer.layer(() => guardHttpResponseWriteErrors(NodeHttp.createServer()), {
+    return NodeHttpServer.layer(makeNodeHttpServer, {
       host: config.host ?? "127.0.0.1",
       port: config.port,
       gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
