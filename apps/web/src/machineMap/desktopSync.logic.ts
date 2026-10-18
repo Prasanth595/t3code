@@ -25,7 +25,7 @@ export interface SavedEnvironment {
 interface MachineSyncPlan {
   /** Machine origins that keep the token headers. */
   readonly keep: ReadonlyArray<string>;
-  /** Origins to pair: not saved yet, or saved and failing after a level change. */
+  /** Origins to pair: not saved yet, or saved and failing. The caller applies the backoff. */
   readonly pair: ReadonlyArray<string>;
   /** Machine origins that left `reachable`: remove the environment and the headers. */
   readonly remove: ReadonlyArray<{
@@ -44,16 +44,15 @@ function isMachineOrigin(origin: string): boolean {
  *
  * - `managedOrigins` are the origins that this app added for the map. Only those get removed, so
  *   an environment the user saved by hand stays as it is, headers included.
- * - A managed environment in phase `error` pairs again once per failure. The target ends the
- *   session of this machine when the level of the arrow changes (MM-305).
+ * - A managed environment in phase `error` pairs again, for example after the target ended the
+ *   session of this machine on a level change (MM-305) or by hand. The caller limits the rate.
  */
 export function planMachineSync(input: {
   readonly state: Pick<MachineMapClientState, "enabled" | "joined" | "reachable" | "tokenHeaders">;
   readonly managedOrigins: ReadonlySet<string>;
   readonly environments: ReadonlyArray<SavedEnvironment>;
-  readonly repairAttempted: ReadonlySet<string>;
 }): MachineSyncPlan {
-  const { state, managedOrigins, environments, repairAttempted } = input;
+  const { state, managedOrigins, environments } = input;
   const savedByOrigin = new Map(
     environments.flatMap((environment) =>
       environment.origin === null ? [] : [[environment.origin, environment] as const],
@@ -75,7 +74,7 @@ export function planMachineSync(input: {
     if (saved !== undefined && !managedOrigins.has(origin)) continue;
     keep.push(origin);
     if (saved === undefined) pair.push(origin);
-    else if (saved.phase === "error" && !repairAttempted.has(origin)) pair.push(origin);
+    else if (saved.phase === "error") pair.push(origin);
   }
   const remove = [...managedOrigins]
     .filter((origin) => !wanted.has(origin))
