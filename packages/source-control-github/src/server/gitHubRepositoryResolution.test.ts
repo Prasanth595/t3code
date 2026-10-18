@@ -2,6 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 
 import {
   gitHubApiHostForRemote,
+  parseGitHubRepositorySelector,
   selectGitHubBaseRepository,
 } from "./gitHubRepositoryResolution.ts";
 
@@ -70,6 +71,24 @@ describe("selectGitHubBaseRepository", () => {
       },
     ]) {
       assert.strictEqual(select(input), null);
+    }
+  });
+});
+
+describe("parseGitHubRepositorySelector", () => {
+  it("drops a clone URL's .git suffix wherever the selector ends", () => {
+    for (const [selector, host] of [
+      ["https://github.com/acme/web.git", "github.com"],
+      ["https://github.com/acme/web.git/", "github.com"],
+      ["https://github.com/acme/web.git?tab=readme", "github.com"],
+      ["acme/web.git/", "github.com"],
+      ["ghe.example.com/acme/web.git/", "ghe.example.com"],
+    ] as const) {
+      assert.deepStrictEqual(parseGitHubRepositorySelector(selector, "github.com"), {
+        host,
+        owner: "acme",
+        name: "web",
+      });
     }
   });
 });
