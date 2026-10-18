@@ -173,7 +173,7 @@
 
 /* Fork: Inkwire, a built-in theme (packages/shared/src/themePalettes.ts). Neon marks meaning:
    cyan is the primary action and focus, magenta is selected and running. The hand-drawn look
-   is static: uneven corner radii, a second pencil outline drawn a little off and rotated,
+   is static: uneven corner radii, a second pencil outline that follows the same corners, drawn a little off and rotated,
    wavy pencil separators, and dashed outlines on disabled buttons. Nothing animates
    continuously or filters, so it adds no repaint work, and no rule changes layout. */
 :root[data-theme-id="inkwire"] {
@@ -182,9 +182,7 @@
   --inkwire-glow: color-mix(in srgb, var(--primary) 16%, transparent);
   --inkwire-glow-strong: color-mix(in srgb, var(--primary) 30%, transparent);
   --inkwire-wobble: 7px 12px 6px 11px / 11px 6px 12px 7px;
-  --inkwire-wobble-pass: 11px 6px 12px 7px / 7px 12px 6px 11px;
   --inkwire-wobble-lg: 14px 22px 12px 20px / 20px 12px 22px 14px;
-  --inkwire-wobble-lg-pass: 20px 12px 22px 14px / 14px 22px 12px 20px;
   /* One stroke of a pencil line, tiled. It is a mask, so the line takes the theme color. */
   --inkwire-wave-x: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='6'%3E%3Cpath d='M0 3 C 15 1.6, 30 4.4, 45 3 S 75 1.8, 90 3.2 S 110 2.6, 120 3' fill='none' stroke='black' stroke-width='1.2' stroke-linecap='round'/%3E%3C/svg%3E");
   --inkwire-wave-y: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='120'%3E%3Cpath d='M3 0 C 1.6 15, 4.4 30, 3 45 S 1.8 75, 3.2 90 S 2.6 110, 3 120' fill='none' stroke='black' stroke-width='1.2' stroke-linecap='round'/%3E%3C/svg%3E");
@@ -248,7 +246,7 @@
     position: absolute;
     inset: -3px -1px -1px -3px;
     border: 1px solid currentColor;
-    border-radius: var(--inkwire-pass-radius);
+    border-radius: var(--inkwire-radius);
     opacity: 0.45;
     transform: translate(var(--inkwire-dx), var(--inkwire-dy)) rotate(var(--inkwire-rot));
     pointer-events: none;
@@ -260,7 +258,7 @@
   position: absolute;
   inset: -3px -1px -1px -3px;
   border: 1px solid currentColor;
-  border-radius: var(--inkwire-pass-radius);
+  border-radius: var(--inkwire-radius);
   opacity: 0.35;
   transform: translate(var(--inkwire-dx), var(--inkwire-dy)) rotate(calc(var(--inkwire-rot) * 0.25));
   pointer-events: none;
@@ -270,7 +268,7 @@
   position: absolute;
   inset: 2px 1px 1px 2px;
   border: 1px solid currentColor;
-  border-radius: var(--inkwire-pass-radius);
+  border-radius: var(--inkwire-radius);
   opacity: 0.32;
   transform: translate(var(--inkwire-dx), var(--inkwire-dy)) rotate(calc(var(--inkwire-rot) * 0.6));
   pointer-events: none;
@@ -287,8 +285,7 @@
   --inkwire-dx: 0px;
   --inkwire-dy: 0px;
   --inkwire-radius: var(--inkwire-wobble);
-  --inkwire-pass-radius: var(--inkwire-wobble-pass);
-  --inkwire-pass-radius-lg: var(--inkwire-wobble-lg-pass);
+  --inkwire-radius-lg: var(--inkwire-wobble-lg);
 }
 :root[data-theme-id="inkwire"]
   :nth-child(3n + 2)
@@ -351,8 +348,7 @@
     [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
   ) {
   --inkwire-radius: 10px 6px 12px 7px / 7px 11px 6px 12px;
-  --inkwire-pass-radius: 6px 12px 7px 11px / 12px 7px 11px 6px;
-  --inkwire-pass-radius-lg: 12px 22px 14px 20px / 22px 14px 20px 12px;
+  --inkwire-radius-lg: 12px 22px 14px 20px / 22px 14px 20px 12px;
 }
 :root[data-theme-id="inkwire"]
   :nth-child(5n + 3)
@@ -365,8 +361,7 @@
     [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
   ) {
   --inkwire-radius: 8px 11px 7px 12px / 12px 7px 10px 8px;
-  --inkwire-pass-radius: 12px 8px 10px 6px / 9px 12px 6px 11px;
-  --inkwire-pass-radius-lg: 22px 14px 18px 12px / 16px 22px 12px 20px;
+  --inkwire-radius-lg: 22px 14px 18px 12px / 16px 22px 12px 20px;
 }
 :root[data-theme-id="inkwire"]
   :nth-child(5n + 4)
@@ -379,8 +374,7 @@
     [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
   ) {
   --inkwire-radius: 11px 7px 10px 6px / 6px 12px 8px 11px;
-  --inkwire-pass-radius: 7px 11px 12px 6px / 11px 6px 8px 12px;
-  --inkwire-pass-radius-lg: 14px 20px 22px 12px / 20px 12px 14px 22px;
+  --inkwire-radius-lg: 14px 20px 22px 12px / 20px 12px 14px 22px;
 }
 :root[data-theme-id="inkwire"]
   :nth-child(5n)
@@ -393,8 +387,7 @@
     [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
   ) {
   --inkwire-radius: 9px 12px 8px 7px / 10px 7px 12px 9px;
-  --inkwire-pass-radius: 10px 7px 6px 12px / 8px 11px 12px 7px;
-  --inkwire-pass-radius-lg: 18px 12px 14px 22px / 12px 20px 22px 14px;
+  --inkwire-radius-lg: 18px 12px 14px 22px / 12px 20px 22px 14px;
 }
 :root[data-theme-id="inkwire"]
   :is(
@@ -452,8 +445,7 @@
     [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
   ):nth-child(5n + 2) {
   --inkwire-radius: 10px 6px 12px 7px / 7px 11px 6px 12px;
-  --inkwire-pass-radius: 6px 12px 7px 11px / 12px 7px 11px 6px;
-  --inkwire-pass-radius-lg: 12px 22px 14px 20px / 22px 14px 20px 12px;
+  --inkwire-radius-lg: 12px 22px 14px 20px / 22px 14px 20px 12px;
 }
 :root[data-theme-id="inkwire"]
   :is(
@@ -465,8 +457,7 @@
     [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
   ):nth-child(5n + 3) {
   --inkwire-radius: 8px 11px 7px 12px / 12px 7px 10px 8px;
-  --inkwire-pass-radius: 12px 8px 10px 6px / 9px 12px 6px 11px;
-  --inkwire-pass-radius-lg: 22px 14px 18px 12px / 16px 22px 12px 20px;
+  --inkwire-radius-lg: 22px 14px 18px 12px / 16px 22px 12px 20px;
 }
 :root[data-theme-id="inkwire"]
   :is(
@@ -478,8 +469,7 @@
     [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
   ):nth-child(5n + 4) {
   --inkwire-radius: 11px 7px 10px 6px / 6px 12px 8px 11px;
-  --inkwire-pass-radius: 7px 11px 12px 6px / 11px 6px 8px 12px;
-  --inkwire-pass-radius-lg: 14px 20px 22px 12px / 20px 12px 14px 22px;
+  --inkwire-radius-lg: 14px 20px 22px 12px / 20px 12px 14px 22px;
 }
 :root[data-theme-id="inkwire"]
   :is(
@@ -491,8 +481,7 @@
     [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
   ):nth-child(5n) {
   --inkwire-radius: 9px 12px 8px 7px / 10px 7px 12px 9px;
-  --inkwire-pass-radius: 10px 7px 6px 12px / 8px 11px 12px 7px;
-  --inkwire-pass-radius-lg: 18px 12px 14px 22px / 12px 20px 22px 14px;
+  --inkwire-radius-lg: 18px 12px 14px 22px / 12px 20px 22px 14px;
 }
 :root[data-theme-id="inkwire"]
   :is(
@@ -507,8 +496,7 @@
   ) {
   --inkwire-rot: 0.6deg;
   --inkwire-radius: 10px 6px 12px 7px / 7px 11px 6px 12px;
-  --inkwire-pass-radius: 6px 12px 7px 11px / 12px 7px 11px 6px;
-  --inkwire-pass-radius-lg: 12px 22px 14px 20px / 22px 14px 20px 12px;
+  --inkwire-radius-lg: 12px 22px 14px 20px / 22px 14px 20px 12px;
 }
 :root[data-theme-id="inkwire"]
   :is(
@@ -524,8 +512,7 @@
   --inkwire-rot: -0.35deg;
   --inkwire-dx: 1.5px;
   --inkwire-radius: 8px 11px 7px 12px / 12px 7px 10px 8px;
-  --inkwire-pass-radius: 12px 8px 10px 6px / 9px 12px 6px 11px;
-  --inkwire-pass-radius-lg: 22px 14px 18px 12px / 16px 22px 12px 20px;
+  --inkwire-radius-lg: 22px 14px 18px 12px / 16px 22px 12px 20px;
 }
 :root[data-theme-id="inkwire"]
   :is(
@@ -541,8 +528,7 @@
   --inkwire-rot: 0.3deg;
   --inkwire-dy: 1px;
   --inkwire-radius: 11px 7px 10px 6px / 6px 12px 8px 11px;
-  --inkwire-pass-radius: 7px 11px 12px 6px / 11px 6px 8px 12px;
-  --inkwire-pass-radius-lg: 14px 20px 22px 12px / 20px 12px 14px 22px;
+  --inkwire-radius-lg: 14px 20px 22px 12px / 20px 12px 14px 22px;
 }
 :root[data-theme-id="inkwire"]
   :is(
@@ -557,8 +543,7 @@
   ) {
   --inkwire-dx: -0.5px;
   --inkwire-radius: 9px 12px 8px 7px / 10px 7px 12px 9px;
-  --inkwire-pass-radius: 10px 7px 6px 12px / 8px 11px 12px 7px;
-  --inkwire-pass-radius-lg: 18px 12px 14px 22px / 12px 20px 22px 14px;
+  --inkwire-radius-lg: 18px 12px 14px 22px / 12px 20px 22px 14px;
 }
 
 /* Buttons carry the pencil pass instead of the theme's offset shadow. Same specificity as the
@@ -655,7 +640,7 @@
 }
 :root[data-theme-id="inkwire"] :is([data-slot="composer-host"], [data-chat-composer-main-surface]),
 :root[data-theme-id="inkwire"] [data-slot="composer-shell"]::before {
-  border-radius: var(--inkwire-wobble-lg);
+  border-radius: var(--inkwire-radius-lg);
 }
 :root[data-theme-id="inkwire"] [data-slot="composer-shell"]:not([data-with-context])::after {
   content: "";
@@ -663,7 +648,7 @@
   z-index: 20;
   inset: -3px -1px -1px -3px;
   border: 1px solid var(--primary);
-  border-radius: var(--inkwire-pass-radius-lg);
+  border-radius: var(--inkwire-radius-lg);
   opacity: 0.45;
   transform: translate(var(--inkwire-dx), var(--inkwire-dy)) rotate(calc(var(--inkwire-rot) * 0.2));
   pointer-events: none;
@@ -685,7 +670,7 @@
 
 /* Your own messages: a graphite outline with a pencil pass, so they read as drawn cards. */
 :root[data-theme-id="inkwire"] [data-message-role="user"] .bg-message {
-  border-radius: var(--inkwire-wobble-lg);
+  border-radius: var(--inkwire-radius-lg);
   box-shadow: inset 0 0 0 1px var(--inkwire-pass);
 }
 :root[data-theme-id="inkwire"] [data-message-role="user"] .bg-message::after {
@@ -693,7 +678,7 @@
   position: absolute;
   inset: -3px -1px -1px -3px;
   border: 1px solid currentColor;
-  border-radius: var(--inkwire-pass-radius-lg);
+  border-radius: var(--inkwire-radius-lg);
   opacity: 0.3;
   transform: translate(var(--inkwire-dx), var(--inkwire-dy)) rotate(calc(var(--inkwire-rot) * 0.5));
   pointer-events: none;
