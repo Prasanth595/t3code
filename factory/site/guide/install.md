@@ -13,7 +13,7 @@ The factory runs in a T3 server started by a macOS LaunchAgent. The desktop app 
   GH_CONFIG_DIR=~/.config/t3fac/gh gh api user --jq .login
   ```
 
-  The LaunchAgent sets `GH_CONFIG_DIR` to this directory, so the server, its gates and its agent sessions all act as this login.
+  The LaunchAgent sets `GH_CONFIG_DIR` to this directory, so the server's own GitHub calls and its agent sessions act as this login. Gate commands don't inherit `GH_CONFIG_DIR` ([Add a repo](/guide/add-a-repo)); a gate that calls `gh` must set it itself.
 
 ## Install the server
 

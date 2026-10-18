@@ -30,13 +30,13 @@ Errors print as `<file>: <field>: <message>`. A missing file means the factory i
 | `PUT /api/factory/config` (Settings → Factory save) | yes, after validating; a failing body is 422 `invalid_config` and the file is unchanged |
 | Hand edit                                           | no; applies at the next save or restart                                                 |
 
-| Key                    | Applies after a save                                                                                                                                                               |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `poll_seconds`         | at once                                                                                                                                                                            |
-| `max_concurrent_runs`  | next pass                                                                                                                                                                          |
-| `max_concurrent_gates` | next pass                                                                                                                                                                          |
-| `notify`               | next attention item                                                                                                                                                                |
-| `gh_config_dir`        | next pass, for the factory's own `gh` calls. Sessions use the server's `GH_CONFIG_DIR` env (set in `factory/launchd/io.github.rawphp.t3fac.plist`): change it there and reinstall. |
+| Key                    | Applies after a save                                                                                                                                                                                                                                                            |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `poll_seconds`         | at once                                                                                                                                                                                                                                                                         |
+| `max_concurrent_runs`  | next pass                                                                                                                                                                                                                                                                       |
+| `max_concurrent_gates` | next pass                                                                                                                                                                                                                                                                       |
+| `notify`               | next attention item                                                                                                                                                                                                                                                             |
+| `gh_config_dir`        | next pass, for the factory's own `gh` calls. Sessions use the server's `GH_CONFIG_DIR` env (set in `factory/launchd/io.github.rawphp.t3fac.plist`): edit it there, then run `install.sh` on the built archive (`deploy.sh` refuses the uncommitted edit until it is committed). |
 
 Settings → Factory edits `gh_config_dir`, `poll_seconds`, `max_concurrent_runs`, `max_concurrent_gates`. It keeps `notify` and the retired keys, and drops unknown keys.
 
