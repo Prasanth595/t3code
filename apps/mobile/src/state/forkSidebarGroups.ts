@@ -19,6 +19,7 @@ import {
   type EnvironmentId,
   type SidebarGroups,
 } from "@t3tools/contracts";
+import type { NavigationProp } from "@react-navigation/native";
 import * as Equal from "effect/Equal";
 import { Atom } from "effect/reactivity";
 
@@ -132,4 +133,16 @@ export function createMobileSidebarGroup(
   const id = uuidv4();
   editSidebarGroups((current) => change(createSidebarGroup(current, id), id));
   return id;
+}
+
+/** Opens the editor of a group, or of the first tab for `default`. */
+export function openSidebarGroupEditor(
+  navigation: Pick<NavigationProp<ReactNavigation.RootParamList>, "navigate">,
+  groupId: string,
+): void {
+  appAtomRegistry.set(editedSidebarGroupIdAtom, groupId);
+  navigation.navigate("SettingsSheet", {
+    screen: "SettingsContent",
+    params: { screen: "SettingsSidebarGroup" },
+  });
 }

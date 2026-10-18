@@ -4,7 +4,7 @@
  * once through `editSidebarGroups`.
  */
 import { useAtomValue } from "@effect/atom-react";
-import { useNavigation, type NavigationProp } from "@react-navigation/native";
+import { useNavigation } from "@react-navigation/native";
 import {
   buildSidebarGroupProjectFacts,
   buildSidebarGroupRuleOptions,
@@ -39,12 +39,12 @@ import { ListToggleRow } from "../../components/ui/ListToggleRow";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { cn } from "../../lib/cn";
-import { appAtomRegistry } from "../../state/atom-registry";
 import { useProjects, useThreadShells } from "../../state/entities";
 import {
   createMobileSidebarGroup,
   editedSidebarGroupIdAtom,
   editSidebarGroups,
+  openSidebarGroupEditor,
   sidebarGroupsAtom,
 } from "../../state/forkSidebarGroups";
 import { GROUP_ICON_IDS, GroupIcon } from "../home/forkGroupIcons";
@@ -55,18 +55,6 @@ type ValueField = Exclude<SidebarGroupRuleField, "title">;
 const VALUE_FIELDS = SIDEBAR_GROUP_RULE_FIELDS.filter(
   (field): field is ValueField => field !== "title",
 );
-
-/** Opens the editor of a group, or of the first tab for `default`. */
-export function openSidebarGroupEditor(
-  navigation: Pick<NavigationProp<ReactNavigation.RootParamList>, "navigate">,
-  groupId: string,
-): void {
-  appAtomRegistry.set(editedSidebarGroupIdAtom, groupId);
-  navigation.navigate("SettingsSheet", {
-    screen: "SettingsContent",
-    params: { screen: "SettingsSidebarGroup" },
-  });
-}
 
 export function SettingsSidebarGroupRouteScreen() {
   const insets = useSafeAreaInsets();

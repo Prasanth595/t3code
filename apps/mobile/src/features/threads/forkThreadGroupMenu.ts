@@ -20,10 +20,10 @@ import { appAtomRegistry } from "../../state/atom-registry";
 import {
   createMobileSidebarGroup,
   editSidebarGroups,
+  openSidebarGroupEditor,
   sidebarGroupsAtom,
 } from "../../state/forkSidebarGroups";
 import { environmentProjects } from "../../state/projects";
-import { openSidebarGroupEditor } from "../settings/forkSidebarGroupEditor";
 
 const MOVE_PREFIX = "fork-group:";
 const NEW_GROUP_EVENT = `${MOVE_PREFIX}new`;

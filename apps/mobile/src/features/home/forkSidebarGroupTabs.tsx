@@ -45,9 +45,9 @@ import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/
 import {
   createMobileSidebarGroup,
   editSidebarGroups,
+  openSidebarGroupEditor,
   sidebarGroupsAtom,
 } from "../../state/forkSidebarGroups";
-import { openSidebarGroupEditor } from "../settings/forkSidebarGroupEditor";
 import { threadHasUnseenCompletion } from "../threads/threadListV2";
 import { GroupIcon } from "./forkGroupIcons";
 
