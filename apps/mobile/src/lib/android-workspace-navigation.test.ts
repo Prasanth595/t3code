@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   androidWorkspaceBackReturnsToThread,
   androidWorkspaceNavigationState,
+  parentThreadIsBelow,
   resetAndroidWorkspace,
   returnToAndroidWorkspaceList,
   type AndroidWorkspaceDestination,
@@ -220,6 +221,23 @@ describe("Android workspace navigation", () => {
       expect(names(state)).toEqual(["Home"]);
     },
   );
+
+  it("opens a parent by popping back to it, and pushes it when the child came from elsewhere", () => {
+    const parent = select(router.getInitialState(options), thread);
+    const childParams = { ...thread.params, threadId: "child-a" };
+    const child = apply(parent, StackActions.push("Thread", childParams));
+    expect(parentThreadIsBelow(child, thread.params)).toBe(true);
+    expect(parentThreadIsBelow(child, { ...thread.params, threadId: "other" })).toBe(false);
+
+    // Opened straight from the list, the parent is not below the child.
+    const fromList = select(router.getInitialState(options), {
+      name: "Thread",
+      params: childParams,
+    });
+    expect(parentThreadIsBelow(fromList, thread.params)).toBe(false);
+    const opened = apply(fromList, StackActions.push("Thread", thread.params));
+    expect(names(opened)).toEqual(["Home", "Thread", "Thread"]);
+  });
 
   it("still sends a PR above an old chat straight back to its list", () => {
     expect(androidWorkspaceBackReturnsToThread(legacyHistory())).toBe(false);

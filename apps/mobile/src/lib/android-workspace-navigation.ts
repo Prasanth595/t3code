@@ -75,6 +75,21 @@ export function resetAndroidWorkspace(
   });
 }
 
+// A child opened from its parent sits right above it, so opening the parent pops back there
+// instead of stacking a second copy; `navigate` would rewrite the child route in place.
+export function parentThreadIsBelow(
+  state: NavigationState,
+  parent: ReactNavigation.RootParamList["Thread"],
+) {
+  const previous = state.routes[state.index - 1];
+  const params = previous?.params as ReactNavigation.RootParamList["Thread"] | undefined;
+  return (
+    previous?.name === "Thread" &&
+    params?.environmentId === parent.environmentId &&
+    params.threadId === parent.threadId
+  );
+}
+
 /** Workspace Back on Android: a child thread pops to its parent; anything else collapses to the list. */
 export function returnToAndroidWorkspaceList(
   navigation: WorkspaceNavigation & { readonly goBack: () => void },
