@@ -204,13 +204,14 @@ export const make = Effect.gen(function* () {
       yield* Effect.logInfo("Agent scopes are on", {
         slice: AGENT_SLICE,
         ...limits,
-        oomPolicy: scopeOptions.length > 0,
+        oomPolicy: scopeOptions === oomOptions,
       });
       return {
         systemdRun,
         systemctl,
         runtimeDir,
         scopeOptions,
+        oomPolicy: scopeOptions === oomOptions,
       };
     }),
   );
@@ -319,8 +320,18 @@ export const make = Effect.gen(function* () {
       // visible here even when systemd has not handled the kill yet. A stop
       // from here could then end the scope as a plain stop, and the thread
       // would lose its OOM label. An empty scope has nothing left to stop.
+      // Without OOMPolicy=stop (systemd before 253) nothing else stops an
+      // OOM-killed scope, and there is no label to keep, so it is stopped here.
       const state = yield* readScope(scope.systemctl, unit);
-      if (state === undefined || classifyScope(state) !== "running") return;
+      if (state === undefined) return;
+      const status = classifyScope(state);
+      const oomKilledWithoutPolicy =
+        !scope.oomPolicy &&
+        status === "stopping" &&
+        state.oomKills > 0 &&
+        state.populated !== false &&
+        state.activeState !== "deactivating";
+      if (status !== "running" && !oomKilledWithoutPolicy) return;
       yield* run(scope.systemctl, ["--user", "stop", "--no-block", unit]);
     });
 

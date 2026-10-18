@@ -76,6 +76,8 @@ const withFakeSystemd = <A, E>(
     readonly stateDir: string;
     readonly cgroupRoot: string;
   }) => Effect.Effect<A, E>,
+  // A user manager older than systemd 253 rejects OOMPolicy on scopes.
+  { oomPolicy = true }: { readonly oomPolicy?: boolean } = {},
 ) =>
   Effect.gen(function* () {
     const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-agent-scope-"));
@@ -99,6 +101,9 @@ const withFakeSystemd = <A, E>(
       run: ({ args }) =>
         Effect.sync(() => {
           calls.push(args);
+          if (!oomPolicy && args.includes("--property=OOMPolicy=stop")) {
+            return { ...output(""), code: ChildProcessSpawner.ExitCode(1) };
+          }
           const [, verb, unit = ""] = args;
           if (verb === "reset-failed") units.delete(unit);
           if (verb !== "show") return output("");
@@ -239,6 +244,20 @@ describe("AgentScope service", () => {
         units.set(unitOf(agent), { activeState: "failed", result: "oom-kill" });
         expect(yield* scope.oomKilled("a")).toBe(true);
       }),
+    ),
+  );
+
+  it.effect("stops an OOM-killed scope itself when systemd has no OOMPolicy for scopes", () =>
+    withFakeSystemd(
+      ({ scope, units, calls, cgroupRoot }) =>
+        Effect.gen(function* () {
+          const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          expect(agent.args).not.toContain("--property=OOMPolicy=stop");
+          exitedAgent(units, cgroupRoot, unitOf(agent), { populated: true, oomKills: 1 });
+          yield* scope.stop(unitOf(agent));
+          expect(stopsOf(calls)).toEqual([["--user", "stop", "--no-block", unitOf(agent)]]);
+        }),
+      { oomPolicy: false },
     ),
   );
 
