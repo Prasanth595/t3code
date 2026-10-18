@@ -18,8 +18,9 @@ const ROUTE_TREE = "apps/web/src/routeTree.gen.ts";
 // to $SYNC_TEST_LOG.repo. `gh` answers the calls sync.sh reads from:
 // `pr create` prints a URL, `pr list` prints $SYNC_TEST_PR_URL (the open pull
 // request its --jq asks for), and `issue list` prints every issue in
-// $SYNC_TEST_ISSUES as the `number<TAB>title` rows the script's --jq asks for,
-// so the script's own title match is what the test exercises. `vp` fails with
+// $SYNC_TEST_ISSUES as the `number<TAB>title<TAB>labels` rows the script's --jq
+// asks for (labels comma-joined), so the script's own title match is what the
+// test exercises. `vp` fails with
 // $SYNC_TEST_VP_FAIL as its output, the generator with $SYNC_TEST_REGENERATE_FAIL,
 // and `check.sh` with the file $SYNC_TEST_CHECK_OUTPUT, when each is set.
 // `check.sh` also pushes $SYNC_TEST_MOVE_MAIN's HEAD to origin's main when set,
@@ -38,7 +39,7 @@ case "$1 $2" in
   "issue list")
     node -e '
       for (const issue of JSON.parse(process.env.SYNC_TEST_ISSUES || "[]")) {
-        console.log(issue.number + "\\t" + issue.title);
+        console.log(issue.number + "\\t" + issue.title + "\\t" + (issue.labels || []).join(","));
       }
     '
     ;;
@@ -373,7 +374,7 @@ describe("sync.sh", () => {
     expect(git(fork, "status", "--porcelain")).toBe("");
     expect(NodeFS.existsSync(NodePath.join(fork, ".git/MERGE_HEAD"))).toBe(false);
     expect(calls.filter((call) => call.startsWith("gh issue list"))).toEqual([
-      'gh issue list --state open --search "conflicts" in:title --json number,title --jq .[] | "\\(.number)\\t\\(.title)"',
+      'gh issue list --state open --search "conflicts" in:title --json number,title,labels --jq .[] | "\\(.number)\\t\\(.title)\\t\\([.labels[].name] | join(","))"',
     ]);
     expect(calls.at(-1)).toMatch(
       new RegExp(`^gh issue create --title Sync to ${NEWEST} conflicts --body-file `),
@@ -424,6 +425,44 @@ describe("sync.sh", () => {
       expect.stringMatching(/^gh issue comment 3 --body-file /),
     ]);
     expect(calls).not.toContainEqual(expect.stringMatching(/^gh issue create/));
+  });
+
+  it("only comments on a conflicts issue the factory is building", () => {
+    makeFork(`${OLD} ${oldSha}`, { "README.md": "fork edit\n" });
+    const { status, calls } = run({
+      SYNC_TEST_ISSUES: JSON.stringify([
+        { number: 4, title: `Sync to ${MIDDLE} conflicts`, labels: ["factory:building"] },
+      ]),
+    });
+    expect(status).toBe(1);
+    expect(calls.at(-1)).toMatch(/^gh issue comment 4 --body-file /);
+    expect(calls).not.toContainEqual(expect.stringMatching(/^gh issue (edit|create)/));
+  });
+
+  it("only comments on a conflicts issue the factory is about to claim", () => {
+    makeFork(`${OLD} ${oldSha}`, { "README.md": "fork edit\n" });
+    const { status, calls } = run({
+      SYNC_TEST_ISSUES: JSON.stringify([
+        { number: 4, title: `Sync to ${MIDDLE} conflicts`, labels: ["bug", "factory:ready"] },
+      ]),
+    });
+    expect(status).toBe(1);
+    expect(calls.at(-1)).toMatch(/^gh issue comment 4 --body-file /);
+    expect(calls).not.toContainEqual(expect.stringMatching(/^gh issue (edit|create)/));
+  });
+
+  it("still retitles a conflicts issue the factory has not taken", () => {
+    makeFork(`${OLD} ${oldSha}`, { "README.md": "fork edit\n" });
+    const { status, calls } = run({
+      SYNC_TEST_ISSUES: JSON.stringify([
+        { number: 4, title: `Sync to ${MIDDLE} conflicts`, labels: ["factory:stuck"] },
+      ]),
+    });
+    expect(status).toBe(1);
+    expect(calls.slice(-2)).toEqual([
+      `gh issue edit 4 --title Sync to ${NEWEST} conflicts`,
+      expect.stringMatching(/^gh issue comment 4 --body-file /),
+    ]);
   });
 
   it("failing checks open a draft pull request and a factory:proposed issue with the failing step", () => {
