@@ -169,6 +169,7 @@ export interface AcpAdapterV2ExtensionContext {
     readonly childSessionId: string;
     readonly status: "completed" | "failed" | "cancelled";
     readonly result: string | null;
+    readonly willWake?: boolean;
   }) => Effect.Effect<void>;
   readonly applyBackgroundTaskMutation: (mutation: {
     readonly sessionId: string;
@@ -276,6 +277,14 @@ export interface AcpAdapterV2Flavor {
   readonly extractSubagentUpdate?: (
     toolCall: AcpToolCallState,
   ) => AcpAdapterV2SubagentUpdate | undefined;
+  /**
+   * One tool call can report several children (Grok wait_all). When set, this
+   * replaces extractSubagentUpdate for projection. The singular extractor stays
+   * for callers that only need to know the tool is a subagent.
+   */
+  readonly extractSubagentUpdates?: (
+    toolCall: AcpToolCallState,
+  ) => ReadonlyArray<AcpAdapterV2SubagentUpdate>;
   readonly normalizeToolCall?: (toolCall: AcpToolCallState) => AcpToolCallState;
   readonly extractProposedPlanMarkdown?: (toolCall: AcpToolCallState) => string | undefined;
   readonly extractBackgroundTaskId?: (toolCall: AcpToolCallState) => string | undefined;
@@ -338,6 +347,17 @@ export function acpProviderItemNativeId(input: {
   return input.itemIdentityVersion === 2
     ? acpScopedNativeId(input.instanceId, input.nativeId)
     : input.nativeId;
+}
+
+function acpSubagentUpdatesFromTool(
+  flavor: Pick<AcpAdapterV2Flavor, "extractSubagentUpdate" | "extractSubagentUpdates">,
+  toolCall: AcpToolCallState,
+): ReadonlyArray<AcpAdapterV2SubagentUpdate> {
+  if (flavor.extractSubagentUpdates !== undefined) {
+    return flavor.extractSubagentUpdates(toolCall);
+  }
+  const update = flavor.extractSubagentUpdate?.(toolCall);
+  return update === undefined ? [] : [update];
 }
 
 export interface AcpAdapterV2SubagentUpdate {
@@ -1752,16 +1772,71 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           readonly reports: ReadonlyMap<string, BackgroundWorkReport>;
           readonly offered: ReadonlySet<string>;
         }>(noWakeReports);
+        const commitWakeReport = Effect.fnUntraced(function* (
+          key: string,
+          report: BackgroundWorkReport,
+        ) {
+          yield* Ref.update(wakeReports, ({ reports, offered }) => ({
+            reports: new Map(reports).set(key, report),
+            offered,
+          }));
+        });
         const recordWakeReport = Effect.fnUntraced(function* (
           key: string,
           report: BackgroundWorkReport,
         ) {
           const context = yield* Ref.get(activeTurn);
           if (context !== null && !context.promptSettled && !context.finalized) return;
-          yield* Ref.update(wakeReports, ({ reports, offered }) => ({
-            reports: new Map(reports).set(key, report),
-            offered,
-          }));
+          yield* commitWakeReport(key, report);
+        });
+        // will_wake during an open parent prompt. Grok does not start
+        // subagent-completed-<id> until that prompt returns, and it skips the
+        // wake entirely when the model keeps going. Flush these into one
+        // continuation when the prompt settles, unless a tool result already
+        // delivered the child. A will_wake after the prompt has settled stays
+        // on Grok's own wake so we do not double-prompt.
+        const pendingWillWakeSubagents = yield* Ref.make<
+          ReadonlyMap<
+            string,
+            {
+              readonly report: BackgroundWorkReport;
+              readonly result: string | null;
+            }
+          >
+        >(new Map());
+        const unobservedWillWakeDetail = yield* Ref.make<string | null>(null);
+        const midTurnUnreportedCompletedTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
+        const forgetUnobservedWillWake = (taskId: string) =>
+          Ref.update(pendingWillWakeSubagents, (current) => {
+            if (!current.has(taskId)) return current;
+            const next = new Map(current);
+            next.delete(taskId);
+            return next;
+          });
+        const flushUnobservedWillWakes = Effect.fnUntraced(function* () {
+          const pending = yield* Ref.getAndSet(pendingWillWakeSubagents, new Map());
+          if (pending.size === 0) return;
+          const blocks: string[] = [];
+          for (const [childSessionId, entry] of pending) {
+            yield* commitWakeReport(childSessionId, entry.report);
+            yield* Ref.update(midTurnUnreportedCompletedTaskIds, (current) =>
+              new Set(current).add(childSessionId),
+            );
+            const name = entry.report.label?.trim() || childSessionId;
+            const body = entry.result?.trim();
+            blocks.push(
+              body === undefined || body.length === 0
+                ? `Subagent "${name}" ${entry.report.outcome}.`
+                : `Subagent "${name}" ${entry.report.outcome}.\n${body}`,
+            );
+          }
+          yield* Ref.set(
+            unobservedWillWakeDetail,
+            [
+              "A background subagent finished while you were still in this turn, and its result was not in a tool response you received.",
+              ...blocks,
+            ].join("\n\n"),
+          );
         });
         const continuationRequested = yield* Ref.make(false);
         const continuationGeneration = yield* Ref.make(0);
@@ -1779,7 +1854,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
-        const midTurnUnreportedCompletedTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
         // A monitor-event can arrive after its task and the user-facing provider
         // turn already completed. Grok starts another internal prompt for that
         // stale notification; suppress its agent output until a genuine terminal
@@ -2881,10 +2955,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             projectedStatus === undefined
               ? (flavor.extractBackgroundTaskCompletion?.(toolCall) ?? [])
               : [];
-          let hydratedRegisteredMonitor = false;
           for (const backgroundCompletion of backgroundCompletions) {
             yield* applyBackgroundTaskMutationRunning(backgroundCompletion);
             if (backgroundCompletion.status !== "running") {
+              yield* forgetUnobservedWillWake(backgroundCompletion.taskId);
               yield* Ref.update(handledBackgroundTaskIdsInActiveTurn, (current) =>
                 new Set(current).add(backgroundCompletion.taskId),
               );
@@ -2901,9 +2975,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const targetToolCallId = context.toolCallIdsByBackgroundTaskId.get(
               backgroundCompletion.taskId,
             );
-            if (targetToolCallId !== undefined) {
-              hydratedRegisteredMonitor = true;
-            }
             const target =
               targetToolCallId !== undefined ? context.tools.get(targetToolCallId) : undefined;
             if (target !== undefined && target.toolCallId !== toolCall.toolCallId) {
@@ -2932,12 +3003,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
           // Monitor TaskOutput shares the get_command tool shape with subagent
           // hydration; do not spawn a phantom subagent for a registered monitor.
-          const subagentUpdate = hydratedRegisteredMonitor
-            ? undefined
-            : flavor.extractSubagentUpdate?.(toolCall);
-          if (subagentUpdate !== undefined) {
-            yield* emitSubagent(context, subagentUpdate);
-            if (subagentUpdate.suppressNormalTool !== false) {
+          // A wait_all can mix monitors and subagents, so only the monitor ids
+          // are skipped.
+          const subagentUpdates = acpSubagentUpdatesFromTool(flavor, toolCall).filter(
+            (update) =>
+              update.childSessionId === null ||
+              !context.toolCallIdsByBackgroundTaskId.has(update.childSessionId),
+          );
+          if (subagentUpdates.length > 0) {
+            for (const subagentUpdate of subagentUpdates) {
+              yield* emitSubagent(context, subagentUpdate);
+            }
+            if (subagentUpdates.every((update) => update.suppressNormalTool !== false)) {
               yield* rearmDeferredFinalize(context);
               return;
             }
@@ -3443,6 +3520,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
           if (Option.isNone(pending)) return false;
           const { route, generation, reports } = pending.value;
+          const detail = yield* Ref.getAndSet(unobservedWillWakeDetail, null);
           const notification = backgroundWorkNotification([...reports.values()]);
           yield* Effect.logInfo("orchestration-v2.acp-wake-turn-detected", {
             driver,
@@ -3454,7 +3532,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             threadId: route.threadId,
             providerThreadId: route.providerThreadId,
             driver,
-            detail: null,
+            detail,
             ...(notification === null ? {} : { notification }),
             clearIfCurrent: () =>
               continuationPermit.withPermit(
@@ -3626,6 +3704,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     alreadyHandledToolUpdate ||
                     (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).has(completion.taskId);
                   yield* applyBackgroundTaskMutationRunning(completion);
+                  if (completion.status !== "running") {
+                    yield* forgetUnobservedWillWake(completion.taskId);
+                  }
                 }
               }
             }
@@ -3863,37 +3944,38 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const projectCarryover = rootTerminalCanStillProject;
             let carryoverTerminalized = false;
             if (
-              flavor.extractSubagentUpdate !== undefined &&
+              (flavor.extractSubagentUpdate !== undefined ||
+                flavor.extractSubagentUpdates !== undefined) &&
               (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update")
             ) {
               for (const event of parseSessionUpdateEvent(notification).events) {
                 if (event._tag !== "ToolCallUpdated") continue;
                 const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
-                const subagentUpdate = flavor.extractSubagentUpdate(toolCall);
-                if (subagentUpdate === undefined) continue;
-                if (!acpSubagentStatusIsTerminal(subagentUpdate.status)) {
-                  continue;
-                }
-                if (
-                  yield* updateCarryoverSubagentStatus(
-                    subagentUpdate.nativeTaskId,
-                    subagentUpdate.status,
-                    subagentUpdate.result,
-                    { project: projectCarryover },
-                  )
-                ) {
-                  carryoverTerminalized = true;
-                }
-                if (
-                  subagentUpdate.childSessionId !== null &&
-                  (yield* updateCarryoverSubagentStatus(
-                    subagentUpdate.childSessionId,
-                    subagentUpdate.status,
-                    subagentUpdate.result,
-                    { project: projectCarryover },
-                  ))
-                ) {
-                  carryoverTerminalized = true;
+                for (const subagentUpdate of acpSubagentUpdatesFromTool(flavor, toolCall)) {
+                  if (!acpSubagentStatusIsTerminal(subagentUpdate.status)) {
+                    continue;
+                  }
+                  if (
+                    yield* updateCarryoverSubagentStatus(
+                      subagentUpdate.nativeTaskId,
+                      subagentUpdate.status,
+                      subagentUpdate.result,
+                      { project: projectCarryover },
+                    )
+                  ) {
+                    carryoverTerminalized = true;
+                  }
+                  if (
+                    subagentUpdate.childSessionId !== null &&
+                    (yield* updateCarryoverSubagentStatus(
+                      subagentUpdate.childSessionId,
+                      subagentUpdate.status,
+                      subagentUpdate.result,
+                      { project: projectCarryover },
+                    ))
+                  ) {
+                    carryoverTerminalized = true;
+                  }
                 }
               }
             }
@@ -4008,7 +4090,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const rootSessionId = yield* Ref.get(activeSessionId);
           if (notification.sessionId !== rootSessionId) {
             if (context.finalized) return;
-            if (flavor.extractSubagentUpdate === undefined) return;
+            if (
+              flavor.extractSubagentUpdate === undefined &&
+              flavor.extractSubagentUpdates === undefined
+            ) {
+              return;
+            }
             const subagent = context.subagentsBySessionId.get(notification.sessionId);
             if (
               update.sessionUpdate === "tool_call" ||
@@ -4020,13 +4107,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               for (const event of parseSessionUpdateEvent(notification).events) {
                 if (event._tag !== "ToolCallUpdated") continue;
                 const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
-                const subagentUpdate = flavor.extractSubagentUpdate(toolCall);
-                if (subagentUpdate !== undefined) {
-                  if (
-                    subagentUpdate.nativeTaskId === nativeTaskId ||
-                    subagentUpdate.childSessionId === notification.sessionId
-                  ) {
-                    yield* emitSubagent(context, subagentUpdate);
+                const subagentUpdates = acpSubagentUpdatesFromTool(flavor, toolCall);
+                if (subagentUpdates.length > 0) {
+                  for (const subagentUpdate of subagentUpdates) {
+                    if (
+                      subagentUpdate.nativeTaskId === nativeTaskId ||
+                      subagentUpdate.childSessionId === notification.sessionId
+                    ) {
+                      yield* emitSubagent(context, subagentUpdate);
+                    }
                   }
                   continue;
                 }
@@ -4855,7 +4944,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           readonly childSessionId: string;
           readonly status: "completed" | "failed" | "cancelled";
           readonly result: string | null;
+          readonly willWake?: boolean;
         }) {
+          // Tombstone before any early return. A later wait_all that still
+          // lists this child as running must not put it back in the running set
+          // and hold the parent on Working.
+          yield* markBackgroundTaskEnded(notice.childSessionId);
           const context = yield* Ref.get(activeTurn);
           const subagent =
             context === null ? undefined : context.subagentsBySessionId.get(notice.childSessionId);
@@ -4866,6 +4960,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 candidate.childSessionId === notice.childSessionId ||
                 candidate.task.nativeTaskRef?.nativeId === notice.childSessionId,
             );
+          const modelStillInTurn = context !== null && !context.promptSettled && !context.finalized;
+          if (
+            notice.willWake === true &&
+            modelStillInTurn &&
+            (known === undefined || acpSubagentStatusBlocksTurnSettlement(known.task.status))
+          ) {
+            yield* Ref.update(pendingWillWakeSubagents, (current) => {
+              const next = new Map(current);
+              next.set(notice.childSessionId, {
+                report: {
+                  kind: "subagent",
+                  label: known?.task.title ?? known?.task.prompt,
+                  outcome: notice.status,
+                  ...(known === undefined ? {} : { childThreadId: known.childThreadId }),
+                },
+                result: notice.result,
+              });
+              return next;
+            });
+          }
           if (known !== undefined && acpSubagentStatusBlocksTurnSettlement(known.task.status)) {
             yield* recordWakeReport(notice.childSessionId, {
               kind: "subagent",
@@ -4907,7 +5021,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           context: ActiveAcpTurn,
           notification: EffectAcpSchema.SessionNotification,
         ) {
-          if (flavor.extractSubagentUpdate === undefined) return false;
+          if (
+            flavor.extractSubagentUpdate === undefined &&
+            flavor.extractSubagentUpdates === undefined
+          ) {
+            return false;
+          }
 
           const applyTerminal = Effect.fnUntraced(function* (
             subagent: ActiveAcpSubagent,
@@ -4935,31 +5054,29 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             for (const event of parseSessionUpdateEvent(notification).events) {
               if (event._tag !== "ToolCallUpdated") continue;
               const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
-              const subagentUpdate = flavor.extractSubagentUpdate(toolCall);
-              if (
-                subagentUpdate === undefined ||
-                !acpSubagentStatusIsTerminal(subagentUpdate.status)
-              ) {
-                continue;
+              let applied = false;
+              for (const subagentUpdate of acpSubagentUpdatesFromTool(flavor, toolCall)) {
+                if (!acpSubagentStatusIsTerminal(subagentUpdate.status)) continue;
+                const subagent =
+                  context.subagents.get(subagentUpdate.nativeTaskId) ??
+                  (subagentUpdate.childSessionId === null
+                    ? undefined
+                    : context.subagentsBySessionId.get(subagentUpdate.childSessionId)) ??
+                  context.subagentsBySessionId.get(notification.sessionId);
+                if (subagent === undefined) continue;
+                const nativeTaskId =
+                  subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
+                if (
+                  subagentUpdate.nativeTaskId !== nativeTaskId &&
+                  (subagentUpdate.childSessionId === null ||
+                    (subagentUpdate.childSessionId !== subagent.childSessionId &&
+                      subagentUpdate.childSessionId !== notification.sessionId))
+                ) {
+                  continue;
+                }
+                if (yield* applyTerminal(subagent, subagentUpdate)) applied = true;
               }
-              const subagent =
-                context.subagents.get(subagentUpdate.nativeTaskId) ??
-                (subagentUpdate.childSessionId === null
-                  ? undefined
-                  : context.subagentsBySessionId.get(subagentUpdate.childSessionId)) ??
-                context.subagentsBySessionId.get(notification.sessionId);
-              if (subagent === undefined) continue;
-              const nativeTaskId =
-                subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
-              if (
-                subagentUpdate.nativeTaskId !== nativeTaskId &&
-                (subagentUpdate.childSessionId === null ||
-                  (subagentUpdate.childSessionId !== subagent.childSessionId &&
-                    subagentUpdate.childSessionId !== notification.sessionId))
-              ) {
-                continue;
-              }
-              if (yield* applyTerminal(subagent, subagentUpdate)) return true;
+              if (applied) return true;
             }
           }
 
@@ -6100,6 +6217,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(stoppedRunQuarantine, true);
               yield* Ref.set(wakeBuffer, []);
               yield* Ref.set(wakeReports, noWakeReports);
+              yield* Ref.set(pendingWillWakeSubagents, new Map());
+              yield* Ref.set(unobservedWillWakeDetail, null);
               yield* Ref.set(continuationRequested, false);
               yield* Ref.set(runningBackgroundTaskIds, new Set());
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
@@ -6680,6 +6799,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           ? "interrupted"
                           : "cancelled"
                         : "completed";
+                    if (context.interrupted || status !== "completed") {
+                      yield* Ref.set(pendingWillWakeSubagents, new Map());
+                      yield* Ref.set(unobservedWillWakeDetail, null);
+                    } else {
+                      yield* flushUnobservedWillWakes();
+                    }
                     if (
                       flavor.deferFinalizeForBackgroundWork === true &&
                       !context.interrupted &&
@@ -6702,6 +6827,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   promptGeneration,
                   Effect.gen(function* () {
                     if (context.finalized) return;
+                    yield* Ref.set(pendingWillWakeSubagents, new Map());
+                    yield* Ref.set(unobservedWillWakeDetail, null);
                     yield* finalizeTurn(
                       context,
                       context.interrupted ? "interrupted" : "failed",

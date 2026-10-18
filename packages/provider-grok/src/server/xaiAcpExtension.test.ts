@@ -14,6 +14,7 @@ import {
   extractXAiAcpBackgroundToolMutation,
   extractXAiAcpSubagentEndNotice,
   extractXAiAcpSubagentUpdate,
+  extractXAiAcpSubagentUpdates,
   extractXAiAskUserQuestions,
   extractXAiBackgroundTaskCompletion,
   extractXAiKilledBackgroundTasks,
@@ -21,6 +22,7 @@ import {
   isGenericAcpToolTitle,
   isXAiMonitorTool,
   isXAiPersistentMonitor,
+  isXAiTaskCompletedWakeNotification,
   makeXAiAskUserQuestionResponse,
   makeXAiPromptCompletionRuntime,
   normalizeXAiAcpToolCallState,
@@ -72,6 +74,16 @@ describe("xAiPromptCompleteFromSessionUpdate", () => {
         update: {
           sessionUpdate: "turn_completed",
           prompt_id: "task-completed-call-abc",
+          stop_reason: "end_turn",
+        },
+      }),
+    ).toBeNull();
+    expect(
+      xAiPromptCompleteFromSessionUpdate({
+        sessionId: "root",
+        update: {
+          sessionUpdate: "turn_completed",
+          prompt_id: "subagent-completed-00000000-0000-4000-8000-000000000002",
           stop_reason: "end_turn",
         },
       }),
@@ -768,6 +780,121 @@ describe("XAiAcpExtension", () => {
         appendOutput: "No task has reached a terminal state.",
       },
     ]);
+  });
+
+  it("reads each wait_all MultiResult instead of stamping every id running", () => {
+    const done = "019f44a6-4820-7402-925d-bc862ee711dd";
+    const still = "019f44b0-1b73-7f32-bb1b-1ff696f536e3";
+    const absent = "019f44b8-8e98-7c80-a40e-df1e26a5f9e3";
+    const toolCall = {
+      toolCallId: "call-wait-all",
+      title: "multi-wait (wait_all)",
+      status: "completed" as const,
+      data: {
+        rawInput: {
+          task_ids: [done, still, absent],
+          timeout_ms: 360000,
+        },
+        rawOutput: {
+          type: "TaskOutput",
+          MultiResult: {
+            mode: "wait_all",
+            summary: "2 of 3 finished",
+            results: [
+              {
+                task_id: done,
+                status: "completed",
+                exit_code: 0,
+                output: "FIRST_DONE\n<subagent_meta>id=hidden</subagent_meta>\n",
+              },
+              {
+                task_id: still,
+                status: "running",
+                output: "still working",
+              },
+              {
+                task_id: "not-a-uuid",
+                status: "failed",
+                output: "ignored",
+              },
+            ],
+          },
+        },
+      },
+    };
+
+    expect(extractXAiBackgroundTaskCompletion(toolCall)).toEqual([
+      { taskId: done, status: "completed", appendOutput: "FIRST_DONE" },
+      { taskId: still, status: "running", appendOutput: "still working" },
+    ]);
+    expect(extractXAiAcpSubagentUpdates(toolCall)).toEqual([
+      {
+        nativeTaskId: "call-wait-all",
+        prompt: "",
+        title: null,
+        model: null,
+        status: "completed",
+        childSessionId: done,
+        result: "FIRST_DONE",
+        suppressNormalTool: true,
+      },
+      {
+        nativeTaskId: "call-wait-all",
+        prompt: "",
+        title: null,
+        model: null,
+        status: "running",
+        childSessionId: still,
+        result: "still working",
+        suppressNormalTool: true,
+      },
+    ]);
+    expect(extractXAiAcpSubagentUpdate(toolCall)?.childSessionId).toBe(done);
+  });
+
+  it("maps a failed or cancelled MultiResult row to failed", () => {
+    const failed = "019f44a6-4820-7402-925d-bc862ee711dd";
+    const cancelled = "019f44b0-1b73-7f32-bb1b-1ff696f536e3";
+    expect(
+      extractXAiBackgroundTaskCompletion({
+        toolCallId: "call-wait-all-failed",
+        title: "multi-wait (wait_all)",
+        status: "completed",
+        data: {
+          rawOutput: {
+            type: "TaskOutput",
+            MultiResult: {
+              mode: "wait_all",
+              results: [
+                { task_id: failed, status: "failed", output: "boom" },
+                { task_id: cancelled, status: "cancelled", error: "stopped" },
+              ],
+            },
+          },
+        },
+      }),
+    ).toEqual([
+      { taskId: failed, status: "failed", appendOutput: "boom" },
+      { taskId: cancelled, status: "failed", appendOutput: "stopped" },
+    ]);
+  });
+
+  it("treats subagent-completed prompt ids as provider wakes", () => {
+    expect(
+      isXAiTaskCompletedWakeNotification({
+        _meta: { promptId: "task-completed-call-abc" },
+      } as never),
+    ).toBe(true);
+    expect(
+      isXAiTaskCompletedWakeNotification({
+        _meta: { promptId: "subagent-completed-00000000-0000-4000-8000-000000000002" },
+      } as never),
+    ).toBe(true);
+    expect(
+      isXAiTaskCompletedWakeNotification({
+        _meta: { promptId: "t3-xai-prompt-1" },
+      } as never),
+    ).toBe(false);
   });
 
   it("treats Exit Code: -1 text envelopes as failed", () => {
@@ -1470,6 +1597,13 @@ describe("XAiAcpExtension", () => {
       childSessionId: "child-session",
       status: "completed",
       result: "SUBAGENT_DONE",
+      willWake: true,
+    });
+    expect(
+      finished({ status: "completed", output: "SUBAGENT_DONE", will_wake: false }),
+    ).toMatchObject({ willWake: false });
+    expect(finished({ status: "completed", output: "SUBAGENT_DONE" })).toMatchObject({
+      willWake: false,
     });
     expect(finished({ status: "failed", error: "tool crashed" })).toMatchObject({
       status: "failed",
@@ -1532,6 +1666,7 @@ describe("XAiAcpExtension", () => {
           childSessionId: "child-session",
           status: "completed",
           result: "SUBAGENT_DONE",
+          willWake: false,
         },
       ]);
 
