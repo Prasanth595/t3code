@@ -309,7 +309,26 @@ export interface InviteResponse {
 export type ApprovalsStatus =
   /** `warning` names a token permission that another owner action needs, for example MM-903. */
   | { readonly _tag: "ready"; readonly warning: string | null }
-  | { readonly _tag: "missing"; readonly reason: string };
+  | { readonly _tag: "missing"; readonly reason: string }
+  /** The owner does a step in the Zero Trust dashboard first, because the portal cannot. */
+  | { readonly _tag: "cloudflareStep"; readonly step: CloudflareStep };
+
+/**
+ * MM-1208: `allowPasskey` turns on independent MFA (MM-1207). `appLauncher` adds the App Launcher
+ * app, which passkey enrollment needs, when the API token cannot create it.
+ */
+export type CloudflareStep = "allowPasskey" | "appLauncher";
+
+/** MM-1205: the token permission that lets the portal do each step itself. */
+export const CLOUDFLARE_STEP_PERMISSION: Readonly<Record<CloudflareStep, string>> = {
+  allowPasskey: "Access: Organizations, Identity Providers, and Groups Edit",
+  appLauncher: "Access: Apps and Policies Edit",
+};
+
+/** GET /api/passkey (MM-1207): the Cloudflare page where the owner registers a passkey. */
+export interface PasskeyResponse {
+  readonly enrollUrl: string;
+}
 
 /** POST /api/machines/:id/thresholds (MM-1504). Null returns the machine to the defaults. */
 export const ThresholdsRequest = Schema.Struct({ thresholds: Schema.NullOr(HealthThresholds) });

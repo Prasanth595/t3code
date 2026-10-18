@@ -31,6 +31,7 @@ import {
 } from "../rules/map.ts";
 import { DEFAULT_COMMAND_MINUTES } from "../rules/queue.ts";
 import { callApi, StepUpNeeded } from "./apiClient.ts";
+import { ApprovalsSetup, confirmWithPasskey, PasskeyStepUp } from "./Approvals.tsx";
 import { usePortalContext, type CommandOptions, type Portal } from "./context.ts";
 import { buildStandings } from "./build.ts";
 import { BuildLabel, BuildSticker } from "./BuildLabel.tsx";
@@ -1399,9 +1400,6 @@ function PendingSignIn({ pending }: { pending: PendingClient }) {
   }, []);
 
   const seenOn = findMachine(map, pending.seenOn);
-  const confirmPasskey = () => {
-    location.href = `/api/grant/start?then=${encodeURIComponent(location.hash)}`;
-  };
   const approve = () => {
     const request: ApproveClientRequest = {
       thumbprint: pending.thumbprint,
@@ -1468,23 +1466,18 @@ function PendingSignIn({ pending }: { pending: PendingClient }) {
       ) : (
         <>
           {status?._tag === "ready" && status.warning && <p className="hint">{status.warning}</p>}
-          {status?._tag === "missing" && (
-            <div className="row callout">
-              <div className="v">{status.reason}</div>
-              <button
-                type="button"
-                className="btn small"
-                onClick={() =>
-                  portal.call(async () => {
-                    const next = await callApi<ApprovalsStatus>("POST", "/api/clients/approvals");
-                    setStatus(next);
-                    return next._tag === "ready" ? "Approvals are ready." : next.reason;
-                  })
-                }
-              >
-                Set up approvals
-              </button>
-            </div>
+          {status !== null && status._tag !== "ready" && (
+            <ApprovalsSetup
+              status={status}
+              setUp={() =>
+                portal.call(async () => {
+                  const next = await callApi<ApprovalsStatus>("POST", "/api/clients/approvals");
+                  setStatus(next);
+                  if (next._tag === "ready") return "Approvals are ready.";
+                  return next._tag === "missing" ? next.reason : "Do the Cloudflare steps first.";
+                })
+              }
+            />
           )}
 
           <Section>Client</Section>
@@ -1555,7 +1548,7 @@ function PendingSignIn({ pending }: { pending: PendingClient }) {
 
           <div className="actions spaced">
             {status?._tag === "ready" && stepUp === "needed" ? (
-              <button type="button" className="btn primary" onClick={confirmPasskey}>
+              <button type="button" className="btn primary" onClick={confirmWithPasskey}>
                 Confirm with passkey
               </button>
             ) : (
@@ -1585,6 +1578,7 @@ function PendingSignIn({ pending }: { pending: PendingClient }) {
               Reject
             </button>
           </div>
+          {status?._tag === "ready" && stepUp === "needed" && <PasskeyStepUp />}
           <p className="hint">
             Approving asks Cloudflare for your passkey, at most once in 10 minutes. Agents never
             approve.

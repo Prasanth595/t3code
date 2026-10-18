@@ -22,6 +22,7 @@ import { usesText } from "../rules/access.ts";
 import { findArrow, LEVELS } from "../rules/map.ts";
 import { savePresetChange } from "../rules/presets.ts";
 import { callApi, StepUpNeeded } from "./apiClient.ts";
+import { ApprovalsSetup, confirmWithPasskey, PasskeyStepUp } from "./Approvals.tsx";
 import { usePortalContext, type Dialog } from "./context.ts";
 import { confirmResume, EmergencyButton } from "./emergency.tsx";
 import { COMMAND_LABEL, LEVEL_LABEL, timeUntil } from "./format.ts";
@@ -707,22 +708,16 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
             The app gets its own token. Remove the client to end the token at once.
           </p>
           {status?._tag === "ready" && status.warning && <p className="hint">{status.warning}</p>}
-          {status?._tag === "missing" && (
-            <div className="row callout">
-              <div className="v">{status.reason}</div>
-              <button
-                type="button"
-                className="btn small"
-                disabled={pending}
-                onClick={() =>
-                  run(async () => {
-                    setStatus(await callApi<ApprovalsStatus>("POST", "/api/clients/approvals"));
-                  })
-                }
-              >
-                Set up approvals
-              </button>
-            </div>
+          {status !== null && status._tag !== "ready" && (
+            <ApprovalsSetup
+              status={status}
+              disabled={pending}
+              setUp={() =>
+                run(async () => {
+                  setStatus(await callApi<ApprovalsStatus>("POST", "/api/clients/approvals"));
+                })
+              }
+            />
           )}
           {!existing && (
             <>
@@ -762,19 +757,13 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
               The app token of {existing.name} ends when the new invite is used.
             </p>
           )}
-          <ErrorLine error={error} />
+          {needsPasskey ? <PasskeyStepUp /> : <ErrorLine error={error} />}
           <div className="actions end">
             <button type="button" className="btn" onClick={close}>
               Cancel
             </button>
             {needsPasskey ? (
-              <button
-                type="button"
-                className="btn primary"
-                onClick={() => {
-                  location.href = `/api/grant/start?then=${encodeURIComponent(location.hash)}`;
-                }}
-              >
+              <button type="button" className="btn primary" onClick={confirmWithPasskey}>
                 Confirm with passkey
               </button>
             ) : (

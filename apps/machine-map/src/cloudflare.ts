@@ -2,10 +2,12 @@
  * The Cloudflare API calls of the portal (MM-1205). The token needs "Access: Service Tokens Edit"
  * and "Access: Apps and Policies Edit". The machine tunnels (MM-213) also need "Cloudflare Tunnel:
  * Edit" on the account and "DNS: Edit" on the zone of the machine hostnames. Client approvals
- * (MM-1208) also need "Access: Organizations, Identity Providers, and Groups Read".
+ * (MM-1208) also need "Access: Organizations, Identity Providers, and Groups Edit".
  * Field names come from the Cloudflare OpenAPI spec of the Access, Tunnel and DNS endpoints.
  */
 import * as Schema from "effect/Schema";
+
+import { CLOUDFLARE_STEP_PERMISSION } from "./api.ts";
 
 const decodeEnvelope = Schema.decodeUnknownSync(
   Schema.Struct({
@@ -106,6 +108,8 @@ export const APPROVALS_PATH = "/api/grant";
 export const APPROVALS_MAX_SECONDS = 10 * 60;
 const APPROVALS_DURATION = "10m";
 const APPROVALS_AUTHENTICATORS = ["biometrics", "security_key"];
+/** The Access API refuses an app with `mfa_config` while the organization allows no MFA method. */
+const MFA_NOT_ALLOWED_CODE = 12130;
 
 const decodeApprovalsApp = Schema.decodeUnknownSync(
   Schema.Struct({
@@ -138,6 +142,9 @@ const decodeApprovalsApp = Schema.decodeUnknownSync(
 );
 const decodeApprovalsApps = Schema.decodeUnknownSync(
   Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String })),
+);
+const decodeAppTypes = Schema.decodeUnknownSync(
+  Schema.Array(Schema.Struct({ type: Schema.optionalKey(Schema.String) })),
 );
 const decodeOrganization = Schema.decodeUnknownSync(
   Schema.Struct({
@@ -208,18 +215,60 @@ export interface OwnerSession {
 const isoFromSeconds = (seconds: number | undefined): string | null =>
   seconds === undefined ? null : new Date(seconds * 1000).toISOString();
 
-/** A refused Cloudflare API call, with its HTTP status. */
 /** An address under the reserved `.invalid` domain: no Access user can have it. */
 const REVOKE_PROBE_EMAIL = "permission-check@t3-machine-map.invalid";
 
+/** A refused Cloudflare API call, with its HTTP status and the error codes of the answer. */
 export class CloudflareApiError extends Error {
   override readonly name = "CloudflareApiError";
   readonly status: number;
-  constructor(status: number, message: string) {
+  readonly codes: ReadonlyArray<number>;
+  constructor(status: number, message: string, codes: ReadonlyArray<number> = []) {
     super(message);
     this.status = status;
+    this.codes = codes;
   }
 }
+
+/** The API token does not have the permission for the call. */
+export const isPermissionRefusal = (error: unknown): boolean =>
+  error instanceof CloudflareApiError && (error.status === 401 || error.status === 403);
+
+/** MM-1207: Cloudflare refused the approvals app because the organization allows no MFA method. */
+export const isMfaNotAllowed = (error: unknown): boolean =>
+  error instanceof CloudflareApiError && error.codes.includes(MFA_NOT_ALLOWED_CODE);
+
+/** MM-1207: the organization allows a passkey or a security key, which the approvals app asks for. */
+export const allowsApprovalsMfa = (organizationMethods: ReadonlyArray<string>): boolean =>
+  organizationMethods.some((method) => APPROVALS_AUTHENTICATORS.includes(method));
+
+/** Fields of the organization that GET gives and PUT does not take. */
+const READ_ONLY_ORGANIZATION_FIELDS = ["created_at", "updated_at", "trusted_accounts"];
+
+/**
+ * MM-1207: the PUT body that adds the approvals MFA methods to the organization, or null when it
+ * allows one already. PUT replaces the organization, so the body keeps every other field.
+ */
+export function organizationMfaUpdate(
+  organization: Readonly<Record<string, unknown>>,
+): Record<string, unknown> | null {
+  const methods = decodeOrganization(organization).mfa_config?.allowed_authenticators ?? [];
+  if (allowsApprovalsMfa(methods)) return null;
+  const body: Record<string, unknown> = { ...organization };
+  for (const field of READ_ONLY_ORGANIZATION_FIELDS) delete body[field];
+  const mfa = organization.mfa_config;
+  body.mfa_config = {
+    ...(mfa === undefined || mfa === null ? {} : decodeRecord(mfa)),
+    allowed_authenticators: [...new Set([...methods, ...APPROVALS_AUTHENTICATORS])],
+  };
+  return body;
+}
+
+const ownerPolicy = (owners: ReadonlyArray<string>) => ({
+  name: "t3 owner",
+  decision: "allow",
+  include: owners.map((email) => ({ email: { email } })),
+});
 
 /** Runs a delete that may meet a resource that is gone already. A 404 counts as done. */
 export const goneIsDone = (work: Promise<void>): Promise<void> =>
@@ -264,6 +313,7 @@ export class CloudflareApi {
       throw new CloudflareApiError(
         response.status,
         `Cloudflare API ${method} ${path} failed: ${detail || response.status}`,
+        envelope.errors.map((e) => e.code),
       );
     }
     return decode(envelope.result);
@@ -411,10 +461,7 @@ export class CloudflareApi {
       await this.revokeOwner(REVOKE_PROBE_EMAIL);
       return true;
     } catch (error) {
-      return !(
-        error instanceof CloudflareApiError &&
-        (error.status === 401 || error.status === 403)
-      );
+      return !isPermissionRefusal(error);
     }
   }
 
@@ -523,14 +570,29 @@ export class CloudflareApi {
         session_duration: APPROVALS_DURATION,
         allowed_authenticators: APPROVALS_AUTHENTICATORS,
       },
-      policies: [
-        {
-          name: "t3 owner",
-          decision: "allow",
-          include: owners.map((email) => ({ email: { email } })),
-        },
-      ],
+      policies: [ownerPolicy(owners)],
     });
+  }
+
+  /**
+   * MM-1208: the App Launcher app, which the passkey enrollment page `/AddMfaDevice` needs. Creates
+   * it once, for the owner emails. Cloudflare sets its name and domain. Without the permission to
+   * create it, `cannotCreate`.
+   */
+  async ensureAppLauncher(owners: ReadonlyArray<string>): Promise<"present" | "cannotCreate"> {
+    try {
+      // One page holds 1000 apps, the most the API returns. Revisit if the account has more apps.
+      const apps = await this.#call("GET", "/access/apps?per_page=1000", decodeAppTypes);
+      if (apps.some((app) => app.type === "app_launcher")) return "present";
+      await this.#call("POST", "/access/apps", ignoreResult, {
+        type: "app_launcher",
+        policies: [ownerPolicy(owners)],
+      });
+      return "present";
+    } catch (error) {
+      if (isPermissionRefusal(error)) return "cannotCreate";
+      throw error;
+    }
   }
 
   /**
@@ -569,8 +631,36 @@ export class CloudflareApi {
 
   /** MM-1207: the MFA methods that the Zero Trust organization allows. Empty when MFA is off. */
   async organizationMfaMethods(): Promise<ReadonlyArray<string>> {
-    const org = await this.#call("GET", "/access/organizations", decodeOrganization);
+    const org = decodeOrganization(await this.#organization());
     return org.mfa_config?.allowed_authenticators ?? [];
+  }
+
+  /**
+   * MM-1207: allows a passkey and a security key in the organization when it allows neither. Needs
+   * "Access: Organizations, Identity Providers, and Groups Edit"; without it, `cannotEdit`.
+   */
+  async ensureOrganizationMfa(): Promise<"allowed" | "cannotEdit"> {
+    const body = organizationMfaUpdate(await this.#organization());
+    if (body === null) return "allowed";
+    try {
+      await this.#call("PUT", "/access/organizations", ignoreResult, body);
+      return "allowed";
+    } catch (error) {
+      if (isPermissionRefusal(error)) return "cannotEdit";
+      throw error;
+    }
+  }
+
+  async #organization(): Promise<Record<string, unknown>> {
+    try {
+      return await this.#call("GET", "/access/organizations", decodeRecord);
+    } catch (error) {
+      if (!isPermissionRefusal(error)) throw error;
+      throw new CloudflareApiError(
+        403,
+        `The CF_API_TOKEN cannot read the Zero Trust organization. Add "${CLOUDFLARE_STEP_PERMISSION.allowPasskey}" to the token (MM-1205).`,
+      );
+    }
   }
 
   /** The audience tag of an Access app: `T3CODE_CLOUDFLARE_ACCESS_AUD` of its hostnames. */

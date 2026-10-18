@@ -12,6 +12,7 @@ import { touchesOwnerOnlySettings } from "../rules/access.ts";
 import { applyChanges } from "../rules/map.ts";
 import { DEFAULT_COMMAND_MINUTES } from "../rules/queue.ts";
 import { callApi, StepUpNeeded } from "./apiClient.ts";
+import { confirmWithPasskey, PasskeyStepUp } from "./Approvals.tsx";
 import {
   PortalContext,
   type CommandOptions,
@@ -73,7 +74,7 @@ const failedNotice = (error: unknown): Notice =>
   error instanceof StepUpNeeded
     ? {
         kind: "error",
-        text: "Confirm with your passkey, then make the change again.",
+        text: "This change needs a fresh passkey check. Make it again after the check.",
         passkey: true,
       }
     : { kind: "error", text: errorText(error) };
@@ -563,7 +564,10 @@ export function App() {
             role={notice.kind === "error" ? "alert" : "status"}
           >
             {notice.kind === "error" && <span className="sticker">error</span>}
-            <span className="text">{notice.text}</span>
+            <div className="text">
+              {notice.text}
+              {notice.passkey === true && <PasskeyStepUp />}
+            </div>
             {notice.undo !== undefined && (
               <button
                 type="button"
@@ -579,13 +583,7 @@ export function App() {
               </button>
             )}
             {notice.passkey === true && (
-              <button
-                type="button"
-                className="btn small"
-                onClick={() => {
-                  location.href = `/api/grant/start?then=${encodeURIComponent(location.hash)}`;
-                }}
-              >
+              <button type="button" className="btn small" onClick={confirmWithPasskey}>
                 Confirm with passkey
               </button>
             )}
