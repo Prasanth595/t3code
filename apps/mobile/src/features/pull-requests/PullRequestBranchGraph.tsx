@@ -9,16 +9,25 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { gitEnvironment } from "../../state/git";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
+import { environmentProjects } from "../../state/projects";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
 
 const COLORS = ["#3b82f6", "#10b981", "#8b5cf6", "#f59e0b", "#f43f5e"];
 
-function BranchHistory({ pr, params }: { pr: PullRequestDetail; params: PullRequestParams }) {
+function BranchHistory({
+  pr,
+  params,
+  cwd,
+}: {
+  pr: PullRequestDetail;
+  params: PullRequestParams;
+  cwd: string;
+}) {
   const { environmentId } = pullRequestTarget(params);
   const query = useEnvironmentQuery(
     gitEnvironment.history({
       environmentId,
-      input: { cwd: pr.workspaceRoot, headBranch: pr.headBranch, baseBranch: pr.baseBranch },
+      input: { cwd, headBranch: pr.headBranch, baseBranch: pr.baseBranch },
     }),
   );
   const [showAll, setShowAll] = useState(false);
@@ -125,10 +134,13 @@ export function PullRequestBranchGraph(props: {
   pr: PullRequestDetail;
   params: PullRequestParams;
 }) {
-  const { environmentId } = pullRequestTarget(props.params);
+  const { environmentId, input } = pullRequestTarget(props.params);
+  const project = useAtomValue(
+    environmentProjects.projectAtom({ environmentId, projectId: input.projectId }),
+  );
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const [expanded, setExpanded] = useState(false);
-  if (config?.environment.capabilities.gitHistory !== true) return null;
+  if (config?.environment.capabilities.gitHistory !== true || project === null) return null;
   return (
     <View className="overflow-hidden rounded-xl border border-border/60 px-3">
       <Pressable
@@ -148,7 +160,7 @@ export function PullRequestBranchGraph(props: {
       </Pressable>
       {expanded ? (
         <View className="pb-3">
-          <BranchHistory {...props} />
+          <BranchHistory {...props} cwd={project.workspaceRoot} />
         </View>
       ) : null}
     </View>
