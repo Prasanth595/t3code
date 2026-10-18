@@ -146,7 +146,7 @@ const exitedAgent = (
   units: Map<string, FakeUnit>,
   cgroupRoot: string,
   unit: string,
-  { populated, oomKills }: { readonly populated: boolean; readonly oomKills: number },
+  { populated, oomKills }: { readonly populated: boolean; readonly oomKills: number | undefined },
 ) => {
   const controlGroup = `/${unit}`;
   NodeFS.mkdirSync(NodePath.join(cgroupRoot, controlGroup), { recursive: true });
@@ -154,10 +154,13 @@ const exitedAgent = (
     NodePath.join(cgroupRoot, controlGroup, "cgroup.events"),
     `populated ${populated ? 1 : 0}\nfrozen 0\n`,
   );
-  NodeFS.writeFileSync(
-    NodePath.join(cgroupRoot, controlGroup, "memory.events"),
-    `low 0\nhigh 0\nmax 0\noom ${oomKills}\noom_kill ${oomKills}\noom_group_kill 0\n`,
-  );
+  // An undefined count leaves memory.events unreadable.
+  if (oomKills !== undefined) {
+    NodeFS.writeFileSync(
+      NodePath.join(cgroupRoot, controlGroup, "memory.events"),
+      `low 0\nhigh 0\nmax 0\noom ${oomKills}\noom_kill ${oomKills}\noom_group_kill 0\n`,
+    );
+  }
   units.set(unit, { activeState: "active", result: "success", controlGroup });
 };
 
@@ -243,6 +246,17 @@ describe("AgentScope service", () => {
 
         units.set(unitOf(agent), { activeState: "failed", result: "oom-kill" });
         expect(yield* scope.oomKilled("a")).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("leaves a scope alone while its OOM count can't be read", () =>
+    withFakeSystemd(({ scope, units, calls, cgroupRoot }) =>
+      Effect.gen(function* () {
+        const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        exitedAgent(units, cgroupRoot, unitOf(agent), { populated: true, oomKills: undefined });
+        yield* scope.stop(unitOf(agent));
+        expect(stopsOf(calls)).toEqual([]);
       }),
     ),
   );

@@ -51,6 +51,8 @@ export interface ScopeState {
   readonly activeState: string;
   readonly result: string;
   readonly oomKills: number;
+  /** False when `memory.events` could not be read, so `oomKills` is unknown. */
+  readonly oomKillsKnown?: boolean | undefined;
   readonly populated: boolean | undefined;
 }
 
@@ -232,11 +234,13 @@ export const make = Effect.gen(function* () {
       const memoryEvents = controlGroup ? yield* readCgroupFile(controlGroup, "memory.events") : "";
       const cgroupEvents = controlGroup ? yield* readCgroupFile(controlGroup, "cgroup.events") : "";
       const populated = parseCgroupCounter(cgroupEvents, "populated");
+      const oomKills = parseCgroupCounter(memoryEvents, "oom_kill");
       return {
         loadState: values.get("LoadState") ?? "",
         activeState: values.get("ActiveState") ?? "",
         result: values.get("Result") ?? "",
-        oomKills: parseCgroupCounter(memoryEvents, "oom_kill") ?? 0,
+        oomKills: oomKills ?? 0,
+        oomKillsKnown: oomKills !== undefined,
         populated: populated === undefined ? undefined : populated === 1,
       } satisfies ScopeState;
     });
@@ -322,8 +326,9 @@ export const make = Effect.gen(function* () {
       // would lose its OOM label. An empty scope has nothing left to stop.
       // Without OOMPolicy=stop (systemd before 253) nothing else stops an
       // OOM-killed scope, and there is no label to keep, so it is stopped here.
+      // With it, a scope whose OOM count can't be read is left alone.
       const state = yield* readScope(scope.systemctl, unit);
-      if (state === undefined) return;
+      if (state === undefined || (scope.oomPolicy && state.oomKillsKnown === false)) return;
       const status = classifyScope(state);
       const oomKilledWithoutPolicy =
         !scope.oomPolicy &&
