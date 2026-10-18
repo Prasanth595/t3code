@@ -48,6 +48,7 @@ import { useAtomRefresh } from "@effect/atom-react";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import { type PullRequestDetail, type PullRequestListEntry } from "@t3tools/contracts";
 import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
+import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestStatus } from "./pullRequestStatus";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -165,7 +166,7 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
   return {
     rows,
     hiddenCount: filtered?.hiddenCount ?? 0,
-    pending: result.isPending,
+    pending: result.isPending && !result.data,
     error: result.error,
   };
 }
@@ -282,7 +283,6 @@ function PullRequestOverview(props: {
 
 function usePullRequestToolbarHeight(bottomInset: number) {
   const { buttonSize } = useAndroidControlSizing();
-  // Reserve the controls, native toolbar padding, and outer gaps before onLayout measures them.
   return useState(() => (Platform.OS === "android" ? bottomInset + buttonSize + 40 : 0));
 }
 
@@ -296,7 +296,6 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   usePullRequestEnvironmentFallback(params);
   const connected = usePullRequestConnected(params.environmentId);
   const [section, setSection] = useState<"overview" | "activity" | "guide">("overview");
-  // Keep each tab's native list and measured rows alive when it is hidden.
   const requestedSection = useRef(section);
   const [listAnimationsReady, setListAnimationsReady] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
@@ -314,7 +313,6 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     if (next === section) return;
     scrollOffsets.current[section] = currentScrollOffset.current;
     const headerEnd = Math.max(-insets.top, bodyY.current - insets.top);
-    // The shared header stays in place. Once collapsed, retain each tab's own reading position.
     const offset = pullRequestTabOffset(
       currentScrollOffset.current,
       scrollOffsets.current[next],
@@ -423,12 +421,24 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                     },
                   ]
                 : []),
-              ...(pr
+              ...(identity
                 ? [
                     {
-                      accessibilityLabel: openOnProviderLabel(pr.provider),
+                      accessibilityLabel: openOnProviderLabel(identity.provider),
                       icon: "arrow.up.right" as const,
-                      onPress: () => void Linking.openURL(pr.url),
+                      onPress: () => void Linking.openURL(identity.url),
+                    },
+                    {
+                      accessibilityLabel: "Copy link",
+                      icon: "link" as const,
+                      overflowOnly: true,
+                      onPress: () => copyPullRequestLink(identity),
+                    },
+                    {
+                      accessibilityLabel: "Share…",
+                      icon: "square.and.arrow.up" as const,
+                      overflowOnly: true,
+                      onPress: () => sharePullRequestLink(identity),
                     },
                   ]
                 : []),
@@ -473,12 +483,25 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 <Toolbar.Label>Add comment</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
-            {pr ? (
+            {identity ? (
               <Toolbar.MenuAction
                 icon="arrow.up.right"
-                onPress={() => void Linking.openURL(pr.url)}
+                onPress={() => void Linking.openURL(identity.url)}
               >
-                <Toolbar.Label>{openOnProviderLabel(pr.provider)}</Toolbar.Label>
+                <Toolbar.Label>{openOnProviderLabel(identity.provider)}</Toolbar.Label>
+              </Toolbar.MenuAction>
+            ) : null}
+            {identity ? (
+              <Toolbar.MenuAction icon="link" onPress={() => copyPullRequestLink(identity)}>
+                <Toolbar.Label>Copy link</Toolbar.Label>
+              </Toolbar.MenuAction>
+            ) : null}
+            {identity ? (
+              <Toolbar.MenuAction
+                icon="square.and.arrow.up"
+                onPress={() => sharePullRequestLink(identity)}
+              >
+                <Toolbar.Label>Share…</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
             {showsDeleteBranch ? (
@@ -688,7 +711,6 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                         >
                           <PullRequestIdentity pr={identity} params={params} />
                           <SegmentedControl
-                            className={Platform.OS === "android" ? undefined : "bg-grouped-card"}
                             options={[
                               { value: "overview", label: "Overview" },
                               ...(guidesEnabled
@@ -847,7 +869,6 @@ export function PullRequestFileRouteScreen({
   const nativeView = useRef<NativeReviewDiffViewHandle>(null);
   const jumpStarted = useRef(false);
   const lastSelection = useRef({ path: route.params.path, id: route.params.fileSelectionId });
-  // Each sheet selection jumps in this reader, including reselecting its original file.
   useEffect(() => {
     if (
       lastSelection.current.path === route.params.path &&
@@ -891,7 +912,6 @@ export function PullRequestFileRouteScreen({
     canHighlight: true,
   });
   const [NativeDiffView] = useState(() => resolveNativeReviewDiffView());
-  // A file picked from a later page must be fetched before we can jump to its header.
   useEffect(() => {
     if (!targetFile) loadMore();
   }, [targetFile, loadMore]);
