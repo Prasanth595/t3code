@@ -1581,6 +1581,44 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("learns routes from the replacement session after a token handoff", () =>
+    Effect.gen(function* () {
+      const learnCalls = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          Effect.succeed({
+            ...PREPARED_CONNECTION,
+            target: RELAY_TARGET,
+            httpAuthorization: {
+              _tag: "Dpop",
+              accessToken: `access-token-${attempt}`,
+              expiresAtEpochMs: 3_600_000 * attempt,
+            },
+          }),
+        initialConfig: () =>
+          Effect.succeed({ directEndpoints: [] } as Pick<
+            ServerConfig,
+            "directEndpoints"
+          > as ServerConfig),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(RELAY_ENTRY, {
+        initiallyDesired: true,
+        learnRoutes: () =>
+          Ref.update(learnCalls, (count) => count + 1).pipe(Effect.as(Option.none())),
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      const first = Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session));
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Ref.get(learnCalls)).toBe(1);
+
+      yield* TestClock.adjust("58 minutes");
+      yield* awaitNewSession(supervisor.session, first);
+      yield* TestClock.adjust("1 second");
+      expect(yield* Ref.get(learnCalls)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("keeps the session while a failed replacement retries before expiry", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

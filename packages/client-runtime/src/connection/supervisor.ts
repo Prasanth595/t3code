@@ -851,6 +851,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       yield* SubscriptionRef.set(prepared, Option.some(replacement.lease.prepared));
       yield* SubscriptionRef.set(session, Option.some(replacement.lease.session));
       yield* Ref.set(probeUnanswered, false);
+      // The replacement session reports its own direct endpoints, as a reconnect would.
+      if (options?.learnRoutes !== undefined) {
+        yield* learnRoutesFrom(options.learnRoutes, replacement.lease).pipe(Effect.forkScoped);
+      }
       // Requests already running on the previous socket finish on it; the
       // server closes it at expiry, within the refresh skew.
       yield* Scope.close(activeScope, Exit.void).pipe(
