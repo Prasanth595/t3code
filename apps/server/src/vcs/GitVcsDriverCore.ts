@@ -1430,7 +1430,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             key.startsWith("includeif.") ||
             key === "core.bare" ||
             key === "core.worktree" ||
-            key === "extensions.worktreeconfig"
+            key === "core.repositoryformatversion" ||
+            key === "extensions.worktreeconfig" ||
+            key === "extensions.refstorage"
           )
             continue;
           const sectionEnd = key.indexOf(".");

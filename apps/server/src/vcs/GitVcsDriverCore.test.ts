@@ -2801,6 +2801,74 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         ),
     );
 
+    it.effect.each([
+      { objectFormat: "sha1", sourceRefFormat: "reftable", isolatedRefFormat: "files" },
+      { objectFormat: "sha256", sourceRefFormat: "reftable", isolatedRefFormat: "files" },
+      { objectFormat: "sha1", sourceRefFormat: "files", isolatedRefFormat: "reftable" },
+      { objectFormat: "sha256", sourceRefFormat: "files", isolatedRefFormat: "reftable" },
+    ] as const)(
+      "refreshes status across ref backends ($objectFormat, $sourceRefFormat to $isolatedRefFormat)",
+      ({ objectFormat, sourceRefFormat, isolatedRefFormat }) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+          const updater = yield* makeTmpDir("git-vcs-driver-updater-");
+          yield* git(cwd, [
+            "init",
+            `--ref-format=${sourceRefFormat}`,
+            `--object-format=${objectFormat}`,
+          ]);
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* git(remote, ["init", "--bare", `--object-format=${objectFormat}`]);
+          yield* git(cwd, ["remote", "add", "origin", remote]);
+          yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+          yield* git(updater, ["clone", "--branch", initialBranch, remote, "."]);
+          yield* git(updater, ["config", "user.email", "test@test.com"]);
+          yield* git(updater, ["config", "user.name", "Test"]);
+          yield* writeTextFile(updater, "remote.txt", "reftable remote update\n");
+          yield* git(updater, ["add", "remote.txt"]);
+          yield* git(updater, ["commit", "-m", "remote update"]);
+          yield* git(updater, ["push"]);
+          const expectedCommit = yield* git(updater, ["rev-parse", "HEAD"]);
+
+          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+          const spawner = ChildProcessSpawner.make((command) =>
+            delegate.spawn(
+              ChildProcess.isStandardCommand(command) &&
+                command.args[0] === "init" &&
+                command.args.includes("--bare")
+                ? ChildProcess.make(command.command, command.args, {
+                    ...command.options,
+                    env: { ...command.options.env, GIT_DEFAULT_REF_FORMAT: isolatedRefFormat },
+                  })
+                : command,
+            ),
+          );
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            Effect.provide(layerServerConfig),
+          );
+          const status = yield* driver.statusDetailsRemote(cwd);
+          assert.equal(status.behindCount, 1);
+          assert.equal(
+            yield* git(cwd, ["rev-parse", `refs/remotes/origin/${initialBranch}`]),
+            expectedCommit,
+          );
+          assert.equal(
+            yield* git(cwd, ["show", `origin/${initialBranch}:remote.txt`]),
+            "reftable remote update",
+          );
+          assert.equal(yield* git(cwd, ["rev-parse", "--show-ref-format"]), sourceRefFormat);
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          assert.deepStrictEqual(
+            yield* fs.readDirectory(path.join(cwd, ".git", "objects", "t3-status-fetch")),
+            [],
+          );
+          yield* git(cwd, ["fsck", "--full", "--no-dangling"]);
+        }),
+    );
+
     it.effect("refreshes status without a second upload-pack process", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
