@@ -1,12 +1,12 @@
+import * as Dialog from "../../components/ui/Dialog";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestAction } from "@t3tools/contracts";
-import * as Clipboard from "expo-clipboard";
 import { Atom } from "effect/reactivity";
 import { use, useCallback, useMemo, useRef, useState } from "react";
-import { Alert, Linking, Platform, Share } from "react-native";
-import type { ControlPillMenuProps } from "../../components/ControlPillMenu.types";
+import { Linking, Platform } from "react-native";
+import type { MenuProps } from "../../components/ui/Menu.types";
 import { composerPullRequests } from "../../state/pull-requests";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -15,7 +15,9 @@ import {
   PR_ACTION_LABELS,
 } from "./pullRequestActions";
 import { scopedPullRequestListKey, type EnvironmentPullRequestListEntry } from "./pullRequestList";
+import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestTarget } from "./usePullRequestDiff";
+import { useAndroidWorkspaceSelection } from "../workspace/useAndroidWorkspaceSelection";
 
 export function usePullRequestListActions(
   environmentIds: readonly EnvironmentId[],
@@ -26,6 +28,7 @@ export function usePullRequestListActions(
 ) {
   const registry = use(RegistryContext);
   const navigation = useNavigation();
+  const selectAndroidWorkspace = useAndroidWorkspaceSelection();
   const permissionKey = JSON.stringify(environmentIds);
   const permissionAtom = useMemo(() => {
     const ids: readonly EnvironmentId[] = JSON.parse(permissionKey);
@@ -59,7 +62,7 @@ export function usePullRequestListActions(
       setBusyKey(scopedPullRequestListKey(entry));
       try {
         const target = pullRequestTarget(params(entry));
-        // List rows do not subscribe to expensive detail reads. Check fresh permissions on intent.
+        // List rows do not subscribe to expensive detail reads.
         const response = await executeAtomQuery(registry, composerPullRequests.detail(target), {
           refresh: true,
           reportFailure: false,
@@ -74,7 +77,9 @@ export function usePullRequestListActions(
             !pr.viewerPermissions.requestReviewers
           )
             throw new Error("Review requests aren't available for this pull request.");
-          navigation.navigate("PullRequestReviewers", params(entry));
+          if (Platform.OS === "android") {
+            selectAndroidWorkspace({ name: "PullRequest", params: params(entry) }, params(entry));
+          } else navigation.navigate("PullRequestReviewers", params(entry));
           return;
         }
         if (
@@ -93,7 +98,7 @@ export function usePullRequestListActions(
               : { isDraft: action === "draft" },
         );
       } catch (cause) {
-        Alert.alert(
+        Dialog.alert(
           "Couldn't update this pull request",
           cause instanceof Error ? cause.message : "Try again.",
         );
@@ -102,12 +107,14 @@ export function usePullRequestListActions(
         setBusyKey(null);
       }
     },
-    [registry, navigation, params, run, onChanged],
+    [registry, navigation, params, run, onChanged, selectAndroidWorkspace],
   );
   const select = useCallback(
     (entry: EnvironmentPullRequestListEntry, action: string) => {
       if (action === "open") {
-        navigation.navigate("PullRequest", params(entry));
+        if (Platform.OS === "android")
+          selectAndroidWorkspace({ name: "PullRequest", params: params(entry) });
+        else navigation.navigate("PullRequest", params(entry));
         return;
       }
       if (action === "request-review") {
@@ -115,7 +122,7 @@ export function usePullRequestListActions(
         return;
       }
       if (action === "copy") {
-        void Clipboard.setStringAsync(entry.url);
+        copyPullRequestLink(entry);
         return;
       }
       if (action === "provider") {
@@ -123,18 +130,14 @@ export function usePullRequestListActions(
         return;
       }
       if (action === "share") {
-        void Share.share(
-          Platform.OS === "ios"
-            ? { url: entry.url, title: entry.title }
-            : { message: entry.url, title: entry.title },
-        );
+        sharePullRequestLink(entry);
         return;
       }
       const supported = (["close", "reopen", "ready", "draft"] as const).find(
         (value) => value === action,
       );
       if (!supported) return;
-      Alert.alert(`${PR_ACTION_LABELS[supported]}?`, `#${entry.number} · ${entry.title}`, [
+      Dialog.alert(`${PR_ACTION_LABELS[supported]}?`, `#${entry.number} · ${entry.title}`, [
         { text: "Cancel", style: "cancel" },
         {
           text: PR_ACTION_LABELS[supported],
@@ -143,10 +146,10 @@ export function usePullRequestListActions(
         },
       ]);
     },
-    [navigation, params, perform],
+    [navigation, params, perform, selectAndroidWorkspace],
   );
   const actions = useCallback(
-    (entry: EnvironmentPullRequestListEntry): ControlPillMenuProps["actions"] => [
+    (entry: EnvironmentPullRequestListEntry): MenuProps["actions"] => [
       {
         id: "open",
         title: "Open pull request",
