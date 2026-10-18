@@ -852,6 +852,39 @@ describe("XAiAcpExtension", () => {
     expect(extractXAiAcpSubagentUpdate(toolCall)?.childSessionId).toBe(done);
   });
 
+  it("keeps a row's own status when the outer wait_all call failed", () => {
+    const done = "019f44a6-4820-7402-925d-bc862ee711dd";
+    const byExit = "019f44b0-1b73-7f32-bb1b-1ff696f536e3";
+    const still = "019f44b8-8e98-7c80-a40e-df1e26a5f9e3";
+    const silent = "019f44c0-1111-7222-8333-444455556666";
+    expect(
+      extractXAiBackgroundTaskCompletion({
+        toolCallId: "call-wait-all-outer-failed",
+        title: "multi-wait (wait_all)",
+        status: "failed",
+        data: {
+          rawOutput: {
+            type: "TaskOutput",
+            MultiResult: {
+              mode: "wait_all",
+              results: [
+                { task_id: done, status: "completed", exit_code: 0, output: "ok" },
+                { task_id: byExit, exit_code: 0, output: "from exit" },
+                { task_id: still, status: "running", output: "working" },
+                { task_id: silent, output: "no status" },
+              ],
+            },
+          },
+        },
+      }),
+    ).toEqual([
+      { taskId: done, status: "completed", appendOutput: "ok" },
+      { taskId: byExit, status: "completed", appendOutput: "from exit" },
+      { taskId: still, status: "running", appendOutput: "working" },
+      { taskId: silent, status: "failed", appendOutput: "no status" },
+    ]);
+  });
+
   it("maps a failed or cancelled MultiResult row to failed", () => {
     const failed = "019f44a6-4820-7402-925d-bc862ee711dd";
     const cancelled = "019f44b0-1b73-7f32-bb1b-1ff696f536e3";

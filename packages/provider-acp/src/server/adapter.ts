@@ -6605,6 +6605,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 if (!isContinuationTurn && !isAppOwnedWakeTurn && !preserveBufferedContinuation) {
                   yield* Ref.set(wakeBuffer, []);
                   yield* Ref.set(wakeReports, noWakeReports);
+                  // A will_wake detail that never became a continuation belongs
+                  // to the previous turn. Leaving it here lets a later offer
+                  // replay that child result.
+                  yield* Ref.set(pendingWillWakeSubagents, new Map());
+                  yield* Ref.set(unobservedWillWakeDetail, null);
                 }
                 if (preserveBufferedContinuation) return wasRequested;
                 yield* Ref.update(continuationGeneration, (value) => value + 1);
@@ -7524,6 +7529,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                             yield* Ref.set(stoppedRunQuarantine, false);
                             yield* Ref.set(wakeBuffer, []);
                             yield* Ref.set(wakeReports, noWakeReports);
+                            yield* Ref.set(pendingWillWakeSubagents, new Map());
+                            yield* Ref.set(unobservedWillWakeDetail, null);
                             yield* Ref.set(continuationRequested, false);
                             yield* Ref.set(runningBackgroundTaskIds, new Set());
                             yield* Ref.set(endedBackgroundTaskIds, new Set());

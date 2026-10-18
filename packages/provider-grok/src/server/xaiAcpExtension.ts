@@ -374,7 +374,9 @@ function xAiStatusFromTaskOutputRecord(
   record: Record<string, unknown>,
   toolFailed: boolean,
 ): "running" | "completed" | "failed" {
-  if (toolFailed) return "failed";
+  // The wrapper can be "failed" because one sibling failed. A row that names
+  // its own status or exit code keeps that result. The wrapper applies only
+  // when this row says nothing.
   const structuredStatus = nonEmptyString(record.status)?.toLowerCase();
   if (structuredStatus === "completed" || structuredStatus === "success") return "completed";
   if (
@@ -389,7 +391,7 @@ function xAiStatusFromTaskOutputRecord(
   if (typeof record.exit_code === "number") {
     return record.exit_code === 0 ? "completed" : "failed";
   }
-  return "running";
+  return toolFailed ? "failed" : "running";
 }
 
 function xAiBackgroundCompletionsFromMultiResult(
