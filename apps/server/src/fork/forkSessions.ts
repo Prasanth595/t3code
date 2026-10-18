@@ -43,7 +43,7 @@ type ForkSession = Pick<
 >;
 
 /** A session that the fork issues: a map machine (MM-1305), a map client or an Access sign-in. */
-export const isForkSession = (session: {
+const isForkSession = (session: {
   readonly subject: string;
   readonly client: { readonly label?: string | undefined };
 }): boolean =>
@@ -57,7 +57,7 @@ const isIdle = (session: ForkSession, nowMs: number) =>
   !session.connected && nowMs - lastSeenMs(session) >= Duration.toMillis(FORK_SESSION_IDLE_LIMIT);
 
 /** The fork sessions that the cleanup ends. Upstream sessions are never in the list. */
-export const idleForkSessions = (
+const idleForkSessions = (
   sessions: ReadonlyArray<ForkSession>,
   nowMs: number,
 ): ReadonlyArray<AuthSessionId> =>
@@ -80,7 +80,7 @@ const sameScopes = (
  * again when it has the same scopes, more than half of its life left, and is not idle. A connected
  * session is never ended here: a level change ends it through MM-1306.
  */
-export const planReuse = (
+const planReuse = (
   wanted: {
     readonly subject: string;
     readonly method: AuthClientSession["method"];
