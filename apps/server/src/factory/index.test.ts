@@ -79,6 +79,7 @@ const stubSessions = Sessions.FactorySessions.of({
   send: () => Effect.die("not sent"),
   archive: () => Effect.die("not archived"),
   removeWorktree: () => Effect.die("not removed"),
+  checkedOutBranch: () => Effect.succeed(null),
 });
 const noSessions = Layer.succeed(Sessions.FactorySessions, stubSessions);
 
@@ -107,7 +108,8 @@ const noGate = Layer.succeed(
 );
 
 /** Attention that keeps nothing: a world whose items are not under test. */
-const noAttention: Pick<Attention["Service"], "raise" | "clear"> = {
+const noAttention: Pick<Attention["Service"], "list" | "raise" | "clear"> = {
+  list: () => Effect.succeed([]),
   raise: () => Effect.void,
   clear: () => Effect.void,
 };
@@ -1587,6 +1589,7 @@ describe("the gate in the background", () => {
         () => 1_000,
         "mac-mini",
         {
+          list: () => Effect.succeed([]),
           raise: (item) => Effect.sync(() => void raised.push(item)),
           clear: () => Effect.void,
         },

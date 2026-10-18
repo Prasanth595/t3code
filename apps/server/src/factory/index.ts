@@ -354,7 +354,7 @@ export const liveWorld = (
   sessions: T3Sessions.FactorySessions["Service"],
   clock: () => number,
   host: string,
-  attention: Pick<Attention["Service"], "raise" | "clear">,
+  attention: Pick<Attention["Service"], "list" | "raise" | "clear">,
   live: LiveGate,
   gateRemoteBase?: string,
   onProject?: (repo: string, reading: RepoConfigReading) => void,
@@ -584,6 +584,11 @@ export const liveWorld = (
           Effect.map((tip) => tip.toLowerCase()),
           Effect.mapError(asPassError("tracker")),
         ),
+    issueClosed: (repo, issue) =>
+      withProcess(githubFor(repo.watched).issue(issue)).pipe(
+        Effect.map((detail) => detail.closed),
+        Effect.mapError(asPassError("tracker")),
+      ),
     openHead: (repo, pr) =>
       trackerFor(repo.watched)
         .pullRequest(pr)
