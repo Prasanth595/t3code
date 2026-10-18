@@ -453,7 +453,7 @@ Published themes can set shape, fonts, a canvas pattern and user CSS, in the the
 
 The mobile app uses the themes that its servers publish.
 
-- **Setting:** server setting `mobilePublishedThemes` (off by default). Settings > Appearance > Mobile app. The machine map syncs it.
+- **Setting:** server setting `mobilePublishedThemes` (off by default). Settings > Appearance > Mobile app, or Fork in the mobile Settings. The machine map syncs it.
 - **Works on:** mobile.
 - Appearance in the mobile app shows the published themes under "From your servers". A theme with colors for one appearance offers that appearance only.
 - The app takes the server setting `defaultTheme` once for each theme id, for the appearances that the theme has colors for. The color scheme mode stays as set on the phone.
@@ -468,6 +468,13 @@ The mobile app uses the themes that its servers publish.
   - Other fonts keep the stock font. The composer takes the `sans` font, and the terminal and diff views keep the platform monospace font.
   - `noise`, user CSS and icon packs have no mobile form. The text of the Android buttons keeps the system font.
   - Setting the same `defaultTheme` again does not apply it again on the phone, because `defaultThemeSetAt` is local to each machine.
+
+### Fork settings on mobile
+
+Fork in the mobile Settings holds the fork settings that apply to the mobile app: published themes and thread link chips. A change writes the setting to each selected environment.
+
+- **Works on:** mobile.
+- **Limits:** a change on the phone is the own value of each server, not the shared value of the machine map. Set the shared value in the portal or from a machine with the map role `edit`.
 
 ### Theme icon packs
 

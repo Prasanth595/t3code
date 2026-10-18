@@ -86,6 +86,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - **[Theme style](docs/fork/features.md#theme-style):** published themes set shape, fonts, a canvas pattern and user CSS.
 - **[Theme icon packs](docs/fork/features.md#theme-icon-packs):** a published theme replaces app icons with its own SVGs.
 - **[Themes on mobile](docs/fork/features.md#themes-on-mobile):** the mobile app uses the published themes of its servers, with their fonts, shape and canvas pattern.
+- **[Fork settings on mobile](docs/fork/features.md#fork-settings-on-mobile):** a Fork page in the mobile Settings.
 - **[Lightning icon](docs/fork/features.md#lightning-icon):** the fork app uses its own icon.
 
 **Command line and MCP**
