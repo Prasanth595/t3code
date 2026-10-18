@@ -2594,7 +2594,11 @@ function useChatMarkdownState({
     const cause = squashAtomCommandFailure(result);
     return (
       isProjectReadFileError(cause) &&
-      (cause.failure === "binary_file" || cause.failure === "path_not_file")
+      (cause.failure === "binary_file" ||
+        cause.failure === "path_not_file" ||
+        // The server only reads or closes after confirming a regular file.
+        (cause.failure === "operation_failed" &&
+          (cause.operation === "read" || cause.operation === "close")))
     );
   };
   const findWorkspaceBasenameMatch = async (workspaceRelativePath: string) => {
