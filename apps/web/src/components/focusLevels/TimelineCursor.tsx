@@ -437,9 +437,11 @@ export function TimelineCursor(props: {
     const onFocusOut = (event: FocusEvent) => {
       if (event.target === scroller()) paint(null);
     };
+    // A click in the timeline also focuses the scroller, so focus repaints the cursor without
+    // scrolling to it. Scrolling there would undo the user's own scroll.
     const onFocusIn = (event: FocusEvent) => {
       const at = current();
-      if (event.target === scroller() && at) show(at);
+      if (event.target === scroller() && at) paint(selectedRange(at));
     };
     document.addEventListener("focusout", onFocusOut);
     document.addEventListener("focusin", onFocusIn);
