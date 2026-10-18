@@ -55,6 +55,7 @@ const resource = <T,>(overrides: Partial<FactoryResource<T>>): FactoryResource<T
   status: "ready",
   data: null,
   error: null,
+  readAt: 0,
   refresh: vi.fn(),
   ...overrides,
 });

@@ -187,6 +187,25 @@ describe("useFactoryStatus", () => {
     expect(result.current.data?.attention).toHaveLength(2);
   });
 
+  it("stamps when each answer landed, failed or not, and not in between", async () => {
+    let fail = false;
+    __setFactoryApiForTests(
+      api({
+        status: async () => {
+          if (fail) throw new Error("down");
+          return status(0);
+        },
+      }),
+    );
+    const result = await mount(() => useFactoryStatus(ENV_1));
+    expect(result.current.readAt).toBe(day);
+    await settle(10_000);
+    expect(result.current.readAt).toBe(day);
+    fail = true;
+    await settle(20_000);
+    expect(result.current.readAt).toBe(day + 30_000);
+  });
+
   it("fetches again every 30 seconds and on refresh, and not in between", async () => {
     const fetchStatus = vi.fn(async () => status(0));
     __setFactoryApiForTests(api({ status: fetchStatus }));

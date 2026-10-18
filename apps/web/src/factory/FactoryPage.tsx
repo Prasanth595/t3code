@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
 import { Alert, AlertAction, AlertDescription } from "~/components/ui/alert";
 import { Button } from "~/components/ui/button";
@@ -49,8 +49,7 @@ export function FactoryPage() {
     status.refresh();
     runs.refresh();
   };
-  // The age labels move on when a poll lands, not on every render.
-  const nowMs = useMemo(() => Date.now(), [status.data, runs.data]);
+  const nowMs = Math.max(status.readAt, runs.readAt);
   const report = status.data;
   const paused = report?.paused_by_hand ?? null;
   const attention = (report?.attention ?? []).filter((item) => !dismissed.has(attentionKey(item)));
