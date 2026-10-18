@@ -1797,8 +1797,7 @@ export class MachineMapObject extends DurableObject<Env> {
         .map((subject) => subject.trim())
         .filter((subject) => subject.length > 0),
     ];
-    if (first === undefined)
-      throw new PortalError(503, "Set OWNER_EMAILS in wrangler.jsonc first.");
+    if (first === undefined) throw new PortalError(503, "Set the OWNER_EMAILS secret first.");
     return {
       hostname: row.hostname,
       token,

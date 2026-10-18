@@ -54,7 +54,8 @@ const fakeAccess = (request: Request, env: Env): boolean => {
 };
 
 export const ownerEmails = (env: Env): ReadonlyArray<string> =>
-  env.OWNER_EMAILS.split(",")
+  (env.OWNER_EMAILS ?? "")
+    .split(",")
     .map((email) => email.trim().toLowerCase())
     .filter((email) => email.length > 0);
 

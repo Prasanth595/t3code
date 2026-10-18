@@ -4,7 +4,8 @@ import type { MachineMapObject } from "./MachineMapObject.ts";
 export interface Env {
   readonly MAP: DurableObjectNamespace<MachineMapObject>;
   readonly TEAM_DOMAIN: string;
-  readonly OWNER_EMAILS: string;
+  /** A secret, so the owner emails stay out of the public repository. Comma separated. */
+  readonly OWNER_EMAILS?: string;
   readonly ACCOUNT_ID: string;
   /** The Access app of the machine hostnames. MM-201 adds new machine tokens to its policy. */
   readonly MACHINE_ACCESS_APP_ID: string;

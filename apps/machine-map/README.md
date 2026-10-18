@@ -45,6 +45,7 @@ Cloudflare asks you to register the passkey at the first approval.
 
 Set secrets with `wrangler secret put <NAME>` in this folder.
 
+- `OWNER_EMAILS` (required). The emails of the owners, comma separated. A secret keeps them out of the public repository. They must match the allow policy of the portal Access app.
 - `SECRET_KEY` (required for joins and rotations). The AES-GCM key that encrypts a token secret while it waits for its machine (MM-1201). Make it with `openssl rand -base64 32`. A new key makes waiting join codes and rotations unreadable. Make new join codes after you change it.
 - `CF_API_TOKEN` (optional, MM-1205). A Cloudflare API token with "Access: Service Tokens Edit", "Access: Apps and Policies Edit", "Access: Organizations, Identity Providers, and Groups Read", "Access: Organizations Revoke" and "Cloudflare Tunnel: Edit" on the account, and "DNS: Edit" on the zone of `MACHINE_ZONE_ID`. Client approvals need the organization read permission (MM-1207). "Sign out everywhere" needs the revoke permission to end Access sessions (MM-903); without it, it ends only T3 sessions, and "Set up approvals" names the missing permission. With it, "Add machine" creates the machine token and its tunnel (MM-213), "Rotate token" works, "Remove machine" deletes what "Add machine" made, and the Clients view lists Access sessions. Without the tunnel and DNS permissions, "Add machine" makes no tunnel and the join dialog says why. Without the token, "Add machine" takes the client id and secret of an existing machine token (MM-210). Then delete removed tokens in the Zero Trust dashboard yourself.
 - `MACHINE_ACCESS_SUBJECTS` (optional, MM-213). Access subjects that a joined machine allows next to the owner emails, comma separated, for example the client id of the desktop service token. A secret keeps the client id out of the repository.
@@ -63,7 +64,7 @@ Merge to main. The workflow "Machine map deploy" (`.github/workflows/fork-machin
 
 ## Develop
 
-1. Put `SECRET_KEY=<base64 key>` in `.dev.vars` in this folder. Git ignores the file.
+1. Put `OWNER_EMAILS=<your email>` and `SECRET_KEY=<base64 key>` in `.dev.vars` in this folder. Git ignores the file.
 2. Run `vp run dev` in this folder. Open `http://localhost:8787`.
 3. To test push, also put `VAPID_JWK=<JSON Web Key>` in `.dev.vars`. `localhost` counts as a secure origin, so the service worker and push work there.
 

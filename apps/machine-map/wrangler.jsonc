@@ -17,20 +17,19 @@
   },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MachineMapObject"] }],
   "vars": {
-    "TEAM_DOMAIN": "REPLACE_TEAM_DOMAIN",
-    "OWNER_EMAILS": "REPLACE_OWNER_EMAILS",
-    "ACCOUNT_ID": "REPLACE_ACCOUNT_ID",
+    "TEAM_DOMAIN": "tomcohen.cloudflareaccess.com",
+    "ACCOUNT_ID": "0190d74990bca0aacde75809935dc721",
     // The Access app of the machine hostnames. MM-201 adds new machine tokens to its policy.
-    "MACHINE_ACCESS_APP_ID": "REPLACE_MACHINE_ACCESS_APP_ID",
+    "MACHINE_ACCESS_APP_ID": "91226391-b1d9-44f3-acb6-e49328b619a8",
     // Create the Access apps of the README, then replace these values before the first deploy.
     // The Worker refuses every owner and machine request while a value starts with REPLACE_.
-    "PAGE_AUD": "REPLACE_PAGE_AUD",
-    "CONNECT_AUD": "REPLACE_CONNECT_AUD",
-    "CONNECT_ACCESS_APP_ID": "REPLACE_CONNECT_ACCESS_APP_ID",
+    "PAGE_AUD": "68ee9b1548549a03783b692b36f3566a193e32d928870c217439b8784e1307df",
+    "CONNECT_AUD": "ff3b6a766321e10ffa4762fed121de0303d8b1522d467dbad8645efb10825137",
+    "CONNECT_ACCESS_APP_ID": "3879af70-5455-45d8-9723-1a2a51ae1051",
     // MM-213: the tunnel of a new machine is `t3-<slug>.<MACHINE_DOMAIN>` in this zone.
     "MACHINE_DOMAIN": "tomcohen.dev",
-    "MACHINE_ZONE_ID": "REPLACE_MACHINE_ZONE_ID",
+    "MACHINE_ZONE_ID": "7c7f4395b6cc34c7e530e32eb8196eea",
   },
-  // Secrets (`wrangler secret put`): SECRET_KEY (required for joins), CF_API_TOKEN (optional),
-  // MACHINE_ACCESS_SUBJECTS (optional, MM-213).
+  // Secrets (`wrangler secret put`): OWNER_EMAILS (required), SECRET_KEY (required for joins),
+  // CF_API_TOKEN (optional), MACHINE_ACCESS_SUBJECTS (optional, MM-213).
 }
