@@ -64,10 +64,16 @@ const walk = async (
   const files: Array<string> = [];
   let declaredBytes = 0;
   const visit = async (relative: string) => {
-    const entries = await NodeFSP.readdir(NodePath.join(root, relative), { withFileTypes: true });
+    const entries = await NodeFSP.readdir(NodePath.join(root, relative), {
+      withFileTypes: true,
+      encoding: "buffer",
+    });
     for (const entry of entries) {
       if (signal.aborted) throw new Refusal("the inspection was cancelled.");
-      const child = relative === "" ? entry.name : `${relative}/${entry.name}`;
+      const name = entry.name.toString("utf8");
+      if (!Buffer.from(name, "utf8").equals(entry.name))
+        throw new Refusal("a filename is not valid UTF-8.");
+      const child = relative === "" ? name : `${relative}/${name}`;
       if (entry.isSymbolicLink()) throw new Refusal(`${child} is a symbolic link.`);
       if (entry.isDirectory()) {
         await visit(child);

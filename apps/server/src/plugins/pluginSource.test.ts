@@ -1,4 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Raw filename bytes are not supported by Effect FileSystem paths.
+import * as NodeFSP from "node:fs/promises";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -41,6 +45,36 @@ it.layer(NodeServices.layer)("digestPluginSource", (it) => {
         yield* fs.writeFileString(path.join(directory, "extra.txt"), "");
         expect((yield* digestPluginSource(directory)).digest).not.toBe(renamed.digest);
       }),
+    );
+
+    it.effect("covers valid filenames containing the Unicode replacement character", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* makeTree({ "a�.js": "A" });
+        const first = yield* digestPluginSource(directory);
+        yield* fs.writeFileString(path.join(directory, "a�.js"), "B");
+        expect((yield* digestPluginSource(directory)).digest).not.toBe(first.digest);
+      }),
+    );
+
+    it.effect.each(["file", "directory"] as const)(
+      "refuses invalid UTF-8 %s names",
+      (kind, context) =>
+        Effect.gen(function* () {
+          const platform = yield* HostProcess.Platform;
+          if (platform !== "linux") context.skip();
+          const directory = yield* makeTree({ "a�.js": "B" });
+          const raw = Buffer.concat([
+            Buffer.from(`${directory}/`),
+            Buffer.from([0x61, 0xff, 0x2e, 0x6a, 0x73]),
+          ]);
+          yield* Effect.tryPromise(() =>
+            kind === "file" ? NodeFSP.writeFile(raw, "A") : NodeFSP.mkdir(raw),
+          );
+          const error = yield* digestPluginSource(directory).pipe(Effect.flip);
+          expect(error.reason).toBe("a filename is not valid UTF-8.");
+        }),
     );
 
     it.effect("covers hidden paths, which an entry or import may use", () =>
