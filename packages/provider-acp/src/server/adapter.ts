@@ -1493,6 +1493,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
+        // Per-session count of context compactions since the last instruction injection. A
+        // nonzero generation marks the session to re-inject the T3 instruction block on its
+        // next prompt. A generation (rather than a flag) lets the post-prompt tap tell a
+        // compaction that completed while the prompt was running apart from the one the
+        // prompt already re-injected for.
+        const compactionGenerations = yield* Ref.make(new Map<string, number>());
         const runtimeRestartRequired = yield* Ref.make(false);
         const runtimeTeardownState = yield* Ref.make<AcpRuntimeTeardownState>({ _tag: "Idle" });
         const runtimeCallbackGeneration = yield* Ref.make(0);
@@ -3057,6 +3063,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.update(contextUsageBySessionId, (current) => {
                 const updated = new Map(current);
                 updated.delete(context.nativeThreadId);
+                return updated;
+              });
+              yield* Ref.update(compactionGenerations, (current) => {
+                const updated = new Map(current);
+                updated.set(context.nativeThreadId, (current.get(context.nativeThreadId) ?? 0) + 1);
                 return updated;
               });
             }
@@ -6152,6 +6163,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             settledStatus === "completed"
           ) {
             const nativeItemId = `${context.nativeTurnId}:compaction`;
+            yield* Ref.update(compactionGenerations, (current) => {
+              const updated = new Map(current);
+              updated.set(context.nativeThreadId, (current.get(context.nativeThreadId) ?? 0) + 1);
+              return updated;
+            });
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver,
@@ -6311,6 +6327,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             hasT3Mcp: (yield* readMcpContext(turnInput.threadId)).servers.length > 0,
           } satisfies T3AcpInstructionState;
           const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
+          const compactionGeneration = (yield* Ref.get(compactionGenerations)).get(sessionId) ?? 0;
           const messageText = providerMessageTextWithAttachmentPaths({
             text: turnInput.message.text,
             attachments: turnInput.message.attachments,
@@ -6322,6 +6339,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             ...(previousInstructionState === undefined
               ? {}
               : { previousState: previousInstructionState }),
+            ...(compactionGeneration > 0 ? { compactedSinceLastInjection: true } : {}),
           });
           if (text.length > 0) {
             prompt.push({ type: "text", text });
@@ -6372,7 +6390,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               model: turnInput.modelSelection.model,
             }),
           });
-          return { prompt, instructionState: text === messageText ? undefined : instructionState };
+          return {
+            prompt,
+            instructionState: text === messageText ? undefined : instructionState,
+            compactionGeneration,
+          };
         });
 
         const restartRuntimeAfterTeardownIfRequired = Effect.fnUntraced(function* (
@@ -6660,6 +6682,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   if (promptParts?.instructionState === undefined) return current;
                   const updated = new Map(current);
                   updated.set(requestedSessionId, promptParts.instructionState);
+                  return updated;
+                }),
+              ),
+              Effect.tap(() =>
+                Ref.update(compactionGenerations, (current) => {
+                  if (promptParts?.instructionState === undefined) return current;
+                  const observed = promptParts.compactionGeneration;
+                  // A compaction that completed while the prompt was running bumped the
+                  // generation after prompt construction; keep it so the next prompt
+                  // re-injects the T3 instruction block.
+                  if (observed === 0 || current.get(requestedSessionId) !== observed)
+                    return current;
+                  const updated = new Map(current);
+                  updated.delete(requestedSessionId);
                   return updated;
                 }),
               ),
@@ -7370,6 +7406,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         yield* Ref.set(activeSelection, null);
                         yield* Ref.set(activeInteractionMode, null);
                         yield* Ref.set(promptInstructionStates, new Map());
+                        yield* Ref.set(compactionGenerations, new Map());
                         yield* Ref.set(providerTurns, new Map());
                         yield* Ref.set(snapshot, {
                           order: [],

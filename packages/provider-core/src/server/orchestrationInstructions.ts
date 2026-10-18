@@ -68,15 +68,20 @@ export interface T3AcpInstructionState {
 /**
  * ACP has no system/developer prompt field, so send T3-owned context in the
  * first user prompt and whenever the available tools or interaction mode change.
+ * After a compaction the model's context is replaced by a summary that may no
+ * longer contain the instructions, so a compaction since the last injection
+ * forces re-injection on the next prompt even when the state is unchanged.
  */
 export function t3AcpPromptWithInstructions(input: {
   readonly prompt: string;
   readonly state: T3AcpInstructionState;
   readonly previousState?: T3AcpInstructionState;
+  readonly compactedSinceLastInjection?: boolean;
 }): string {
   // Native slash commands must remain at the start of the prompt.
   if (input.prompt.trimStart().startsWith("/")) return input.prompt;
   if (
+    input.compactedSinceLastInjection !== true &&
     input.previousState?.interactionMode === input.state.interactionMode &&
     input.previousState.hasT3Mcp === input.state.hasT3Mcp
   ) {
