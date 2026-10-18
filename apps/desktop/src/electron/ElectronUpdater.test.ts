@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import type { VerifyUpdateCodeSignature } from "electron-updater";
+import type { Logger, VerifyUpdateCodeSignature } from "electron-updater";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { autoUpdaterMock } = vi.hoisted(() => ({
@@ -14,6 +14,7 @@ const { autoUpdaterMock } = vi.hoisted(() => ({
     fullChangelog: false,
     checkForUpdates: vi.fn(() => Promise.resolve(null)),
     downloadUpdate: vi.fn(() => Promise.resolve([])),
+    logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as Logger | null,
     on: vi.fn(),
     quitAndInstall: vi.fn(),
     removeListener: vi.fn(),
@@ -148,7 +149,7 @@ describe("ElectronUpdater", () => {
       Object.assign(new Error("Command failed: powershell.exe"), { killed: true });
 
     // NsisUpdater runs the verifier after the download and fails on any non-null result.
-    const downloadVerifyingSignature = (verify: VerifyUpdateCodeSignature) => {
+    const downloadVerifyingSignature = (verify = autoUpdaterMock.verifyUpdateCodeSignature) => {
       autoUpdaterMock.verifyUpdateCodeSignature = verify;
       autoUpdaterMock.downloadUpdate.mockImplementationOnce(async () => {
         const rejection = await autoUpdaterMock.verifyUpdateCodeSignature?.(
@@ -191,6 +192,37 @@ describe("ElectronUpdater", () => {
           assert.instanceOf(error, ElectronUpdater.ElectronUpdaterDownloadUpdateError);
           assert.equal(verify.mock.calls.length, expectedCalls);
         }
+      }).pipe(Effect.provide(ElectronUpdater.layer)),
+    );
+
+    it.effect("rejects a retried check that electron-updater skipped", () =>
+      Effect.gen(function* () {
+        // After a failed check, electron-updater resolves null when its PowerShell probe also fails.
+        const verify = vi
+          .fn<VerifyUpdateCodeSignature>()
+          .mockRejectedValueOnce(timedOut())
+          .mockImplementationOnce(async () => {
+            autoUpdaterMock.logger?.warn(
+              "Cannot execute ConvertTo-Json: spawnSync powershell.exe ETIMEDOUT. Ignoring signature validation due to unsupported powershell version. Please upgrade to powershell 3 or higher.",
+            );
+            return null;
+          });
+
+        const error = yield* downloadVerifyingSignature(verify).pipe(Effect.flip);
+
+        assert.instanceOf(error, ElectronUpdater.ElectronUpdaterDownloadUpdateError);
+        assert.equal(verify.mock.calls.length, 2);
+      }).pipe(Effect.provide(ElectronUpdater.layer)),
+    );
+
+    it.effect("retries once per download when the verifier is reused", () =>
+      Effect.gen(function* () {
+        const verify = vi.fn<VerifyUpdateCodeSignature>(() => Promise.reject(timedOut()));
+
+        yield* downloadVerifyingSignature(verify).pipe(Effect.flip);
+        yield* downloadVerifyingSignature().pipe(Effect.flip);
+
+        assert.equal(verify.mock.calls.length, 4);
       }).pipe(Effect.provide(ElectronUpdater.layer)),
     );
   });
