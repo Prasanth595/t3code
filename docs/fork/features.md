@@ -48,6 +48,14 @@ One portal at `https://t3.yarden-zamir.com` (a Cloudflare Worker) maps every T3 
 - **Works on:** server and desktop. The portal is a web app that also works in a phone browser. The mobile app joins through [app invites](#app-invites-and-app-tokens), but has no Settings > Machines and no Machines panel.
 - **Reference:** the requirements are in [apps/machine-map/SPEC.md](../../apps/machine-map/SPEC.md) (MM-xxx). Portal setup, client access steps and sync details are in [apps/machine-map/README.md](../../apps/machine-map/README.md). Agents use [fork-agents.md](../fork-agents.md).
 
+### Environment name from machine map
+
+Use the machine map name as the server environment name. A name change in the portal updates connected clients without a restart. Turn the setting off to use the operating system name again.
+
+- **Setting:** `environmentLabelFromMachineMap` (server setting, off by default). Settings > Fork > Machine map > Environment name from machine map.
+- **Works on:** server, web, desktop and mobile, through direct and relay connections.
+- **Limits:** the server must join the map and receive its machine record. Without a name, it keeps the operating system name. An offline server keeps the last map name until the portal connects again. Disconnected clients get the current name when they connect. Older clients need an update for live display changes.
+
 ### Portal views
 
 The portal has the views Map, Table, Health, Settings, Queue, Tasks, History, Inbox and Clients (MM-1102). Each view and each selected item has its own link. Agents use the `machines_*` and `machine_tool_call` tools for machine operations. Client approvals, invites and the resume after an emergency pause stay with the owner.

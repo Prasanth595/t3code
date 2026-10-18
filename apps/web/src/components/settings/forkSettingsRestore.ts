@@ -30,6 +30,7 @@ const FORK_RESTORED_SETTINGS = [
   ["mobileComposerCamera", "Camera on mobile"],
   ["mobileSidebarGroups", "Sidebar groups on mobile"],
   ["keybindingSync", "Keybinding sync"],
+  ["environmentLabelFromMachineMap", "Environment name from machine map"],
   ["pullRequestWatchRemarkFilter", "Pull request watch remarks"],
   ["agentSessionImportWindowDays", "Session import window"],
   ["agentSessionImportMaxMessages", "Imported messages per session"],

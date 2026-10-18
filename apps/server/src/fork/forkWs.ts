@@ -7,6 +7,7 @@ import {
   ForkWsRpcGroup,
   OrchestrationV2ThreadLaunchError,
   type OrchestrationV2ThreadLaunchInput,
+  type ServerConfig,
 } from "@t3tools/contracts";
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as Effect from "effect/Effect";
@@ -16,6 +17,8 @@ import { HttpServerResponse } from "effect/http";
 
 import type * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import type * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as PortScanner from "../preview/PortScanner.ts";
 import * as ForkChangelog from "./ForkChangelog.ts";
 import { requireLocalDesktop } from "./machineMap/browserAccess.ts";
@@ -27,6 +30,41 @@ import * as WebPush from "./webPush/WebPush.ts";
 
 /** The fork RPC tags, which the upstream handler object in `ws.ts` omits. */
 export const FORK_WS_RPC_TAGS = Object.values(FORK_WS_METHODS);
+
+// Reuse snapshots so older clients do not need a new config event type.
+export const environmentLabelUpdates = <E>(
+  loadConfig: Effect.Effect<ServerConfig, E>,
+  initialLabel: string,
+) =>
+  Stream.unwrap(
+    Effect.gen(function* () {
+      const map = yield* Effect.serviceOption(MachineMapState.MachineMapState);
+      if (Option.isNone(map)) return Stream.empty;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const environment = yield* ServerEnvironment.ServerEnvironment;
+      const changes = Stream.merge(
+        map.value.changes.pipe(
+          Stream.map(
+            (local) =>
+              `${local.enabled}:${local.token !== null}:${local.saved.desired?.self.name ?? ""}`,
+          ),
+          Stream.changes,
+        ),
+        settings.streamChanges.pipe(
+          Stream.map((value) => String(value.environmentLabelFromMachineMap)),
+          Stream.changes,
+        ),
+      ).pipe(
+        Stream.mapEffect(() => environment.getDescriptor.pipe(Effect.map((value) => value.label))),
+      );
+      return Stream.concat(Stream.make(initialLabel), changes).pipe(
+        Stream.changes,
+        Stream.drop(1),
+        Stream.mapEffect(() => loadConfig),
+        Stream.map((config) => ({ version: 1 as const, type: "snapshot" as const, config })),
+      );
+    }),
+  );
 
 // A handler layer of its own: one handler object for every RPC is too deep a type for tsc.
 export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSession) =>

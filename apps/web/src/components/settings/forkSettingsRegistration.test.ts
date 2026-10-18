@@ -57,6 +57,7 @@ const FORK_PAGE_ROWS: Record<
   threadCardLayouts: "thread-card-layout",
   sidebarGroups: { notListed: "Content that the user builds in the sidebar." },
   keybindingSync: "keybinding-sync",
+  environmentLabelFromMachineMap: "environment-label-from-machine-map",
   previewLocalServerGroups: "preview-local-server-groups",
   mobilePublishedThemes: "mobile-published-themes",
   mobileNewThreadProject: "mobile-new-thread-project",

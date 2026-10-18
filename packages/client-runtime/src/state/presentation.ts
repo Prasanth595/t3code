@@ -19,6 +19,7 @@ import {
 } from "../connection/presentation.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import { hasRelayRoute } from "../connection/routes.ts";
+import { machineMapEnvironmentEntry } from "../fork/environmentLabel.ts";
 
 function mapsEqual<K, V>(left: ReadonlyMap<K, V>, right: ReadonlyMap<K, V>): boolean {
   if (left.size !== right.size) {
@@ -87,7 +88,7 @@ export function createEnvironmentPresentationAtoms<E>(input: {
           ? presentEnvironmentConnection(state)
           : { phase: "unsupported", error: entry.unsupportedReason, traceId: null };
       const next = {
-        entry,
+        entry: machineMapEnvironmentEntry(entry, get(input.serverConfigValueAtom(environmentId))),
         connection:
           previous !== null && sameConnection(previous.connection, connection)
             ? previous.connection
@@ -228,7 +229,7 @@ export function createEnvironmentSummaryAtoms(input: {
   const identitiesAtom = Atom.make((get) => {
     const next = [...get(input.catalogValueAtom).entries].map(([environmentId, entry]) => ({
       environmentId,
-      label: entry.target.label,
+      label: get(input.presentationAtom(environmentId))?.entry.target.label ?? entry.target.label,
     }));
     const previous = Option.getOrNull(
       get.self<ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly label: string }>>(),

@@ -289,6 +289,13 @@ export const TUNNEL_PAIRING_ITEMS = [
 // Fork: machine map (apps/machine-map/SPEC.md MM-203).
 export const MACHINE_MAP_ITEMS = [
   {
+    id: "environment-label-from-machine-map",
+    title: "Environment name from machine map",
+    to: "/settings/fork",
+    searchTerms: ["machine map environment label name hostname computer portal"],
+    environmentOnly: true,
+  },
+  {
     id: "machine-map",
     title: "Machine map",
     to: "/settings/machines",

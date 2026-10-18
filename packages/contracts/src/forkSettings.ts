@@ -246,6 +246,10 @@ export const MobileNewThreadProject = Schema.Literals(["picker", "last", "none"]
 export type MobileNewThreadProject = typeof MobileNewThreadProject.Type;
 
 export const ForkServerSettingsFields = {
+  /** Fork: use the joined machine map name as the environment label. */
+  environmentLabelFromMachineMap: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   /**
    * Fork: where new worktrees go, such as `{repoDir}/{branchLeaf}`. Empty
    * keeps the `worktreesDirectory` layout. See docs/fork/features.md.
@@ -357,6 +361,7 @@ export const ForkServerSettingsFields = {
 };
 
 export const ForkServerSettingsPatchFields = {
+  environmentLabelFromMachineMap: Schema.optionalKey(Schema.Boolean),
   worktreePathTemplate: Schema.optionalKey(TrimmedString),
   recoverInterruptedTurns: Schema.optionalKey(Schema.Boolean),
   recoverInterruptedTurnsMessage: Schema.optionalKey(TrimmedNonEmptyString),

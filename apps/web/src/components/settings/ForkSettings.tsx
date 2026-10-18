@@ -2,6 +2,7 @@ import { Link } from "@tanstack/react-router";
 import type { ComponentType } from "react";
 
 import { Button } from "../ui/button";
+import { EnvironmentLabelSettingsRow } from "./EnvironmentLabelSettingsRow";
 import { AppToggleShortcutsSettingsRow } from "./AppToggleShortcutsSettingsRow";
 import {
   FocusLevelHighlightSettingsRow,
@@ -64,6 +65,7 @@ import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchIte
  * link-only.
  */
 const FORK_SETTING_ROWS: Readonly<Record<ForkSettingRowId, ComponentType>> = {
+  "environment-label-from-machine-map": EnvironmentLabelSettingsRow,
   "tunnel-pairing": TunnelPairingSettingsRow,
   "installed-app": InstalledAppSettingsRow,
   "web-push": WebPushSettingsRow,
