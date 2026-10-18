@@ -164,3 +164,29 @@ describe("subagentDetailPreview", () => {
     expect(subagentDetailPreview({ status: "pending" })).toBeNull();
   });
 });
+
+it.each([279, 280, 281])("preserves the preview boundary at %i characters", (length) => {
+  const result = "x".repeat(length);
+  expect(subagentDetailPreview({ status: "completed", result })).toBe(
+    length > 280 ? "x".repeat(280) + "…" : result,
+  );
+});
+
+it("normalizes Unicode whitespace and ignores a large hidden suffix", () => {
+  const progress = " \u00a0Reading\tfiles\n" + "x".repeat(1_000_000);
+  expect(subagentDetailPreview({ status: "running", progress })).toBe(
+    "Reading files " + "x".repeat(266) + "…",
+  );
+  expect(
+    subagentDetailPreview({ status: "completed", result: "x".repeat(280) + " \n\u2028" }),
+  ).toBe("x".repeat(280));
+  expect(subagentDetailPreview({ status: "completed", result: "x".repeat(279) + " \n y" })).toBe(
+    "x".repeat(279) + "…",
+  );
+  expect(
+    subagentDetailPreview({ status: "running", progress: "\uFEFF\u2029", result: " Done " }),
+  ).toBe("Done");
+  expect(subagentDetailPreview({ status: "failed", result: "x".repeat(279) + "😀" })).toBe(
+    "x".repeat(279) + "\uD83D…",
+  );
+});
