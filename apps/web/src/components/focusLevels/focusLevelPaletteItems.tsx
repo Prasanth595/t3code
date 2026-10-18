@@ -2,6 +2,7 @@ import type { ForkKeybindingCommand } from "@t3tools/contracts";
 import {
   ArchiveIcon,
   ClockIcon,
+  KeyboardIcon,
   type LucideIcon,
   MailOpenIcon,
   MessageSquareTextIcon,
@@ -26,6 +27,7 @@ const THREAD_ITEMS: ReadonlyArray<[ForkKeybindingCommand, string, LucideIcon]> =
   ["thread.snooze", "Snooze or wake thread", ClockIcon],
   ["thread.rename", "Rename thread", PencilIcon],
   ["thread.markUnread", "Mark thread unread", MailOpenIcon],
+  ["keyboard.cheatSheet", "Show keyboard shortcuts", KeyboardIcon],
 ];
 
 /** The palette restores focus as it closes, so a focus move waits until that is done. */

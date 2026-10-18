@@ -84,6 +84,8 @@ These keys work with the setting off too:
   `mod+shift+y` always allows for the session, and `mod+alt+y` declines.
 - In the desktop app, `ctrl+tab` and `ctrl+shift+tab` switch right panel tabs.
 - In a browser, `mod+,` opens settings.
+- `mod+/` lists every shortcut, with the keys for the area you are in first. It also works with
+  the setting off.
 
 ## Copy pull request references
 

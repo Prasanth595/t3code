@@ -14,6 +14,7 @@ import { getLocalStorageItem, removeLocalStorageItem } from "../hooks/useLocalSt
 import { isRichTextBoldShortcut, resolveShortcutCommand } from "../keybindings";
 import { isEditableFocused } from "../lib/editableFocus";
 import { isPreviewFocused } from "../lib/previewFocus";
+import { KeyboardCheatSheet } from "./focusLevels/KeyboardCheatSheet";
 import { useFocusLevelShortcuts } from "./focusLevels/useFocusLevelShortcuts";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
@@ -347,6 +348,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         style={sidebarProviderStyle}
       >
         <SidebarBrandWidthProbe onWidthChange={setBrandWidth} />
+        <KeyboardCheatSheet />
         <ProjectProjectionRetention />
         <Sidebar
           side="left"
