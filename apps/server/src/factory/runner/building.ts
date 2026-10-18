@@ -46,6 +46,7 @@ import {
 import {
   MessageRejectedError,
   ThreadNotFoundError,
+  isLaunchBranch,
   type FactorySessions,
   type RunStatus,
   type ThreadStatus,
@@ -523,7 +524,8 @@ export interface Unbound {
 
 /**
  * Binds a pull request to a run: it exists, is in this repo and not a fork, merges into `base`,
- * and has as its head the session's own `branch`, or the branch it `resumedFrom`. The text came from a session that issue text
+ * and has as its head the session's own `branch`, the branch it `resumedFrom`, or the branch T3
+ * made its `worktreePath` on. The text came from a session that issue text
  * can steer, so it must not be able to name someone else's pull request. Whether it is a draft
  * is asked after, so only a bound one is ever put back to draft. `resumedFrom` is the branch a
  * relaunched session was started from: its pull request is the session's too.
@@ -535,6 +537,7 @@ export const checkBinding = (
   branch: string | null,
   mustBeDraft = false,
   resumedFrom: string | null = null,
+  worktreePath: string | null = null,
 ): Unbound | null => {
   const reported = `the session reported PR #${pr} but`;
   if (pull === null) return { public: `${reported} it does not exist` };
@@ -546,13 +549,14 @@ export const checkBinding = (
       detail: `${reported} its base ${prepareSessionText(pull.baseRef)} is not the configured base branch`,
     };
   }
-  if (branch === null && resumedFrom === null) {
+  const launched = isLaunchBranch(pull.headRef, worktreePath);
+  if (branch === null && resumedFrom === null && !launched) {
     return { public: `${reported} the session has no branch` };
   }
   // A session relaunched for a failed re-gate pushes to the pull request's branch, which its
   // `session_launched` line names; a resumed run may hold the draft its earlier session opened on
   // the branch it resumed from.
-  if (pull.headRef !== branch && pull.headRef !== resumedFrom) {
+  if (!launched && pull.headRef !== branch && pull.headRef !== resumedFrom) {
     return {
       public: `${reported} its branch is not this session's branch`,
       detail: `${reported} its branch ${prepareSessionText(pull.headRef)} is not this session's branch`,
@@ -807,6 +811,7 @@ export const advance = (
             status.branch,
             false,
             seen.resumedFrom,
+            status.worktreePath,
           );
           if (unbound !== null) {
             return yield* stuck(

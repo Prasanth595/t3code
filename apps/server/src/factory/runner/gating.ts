@@ -692,6 +692,7 @@ const buildingMode = (
               branch,
               mustBeDraft,
               seen.resumedFrom,
+              status.worktreePath,
             );
             if (unbound !== null || pull === null) {
               return stuckUnbound(

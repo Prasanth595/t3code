@@ -107,7 +107,8 @@ const noGate = Layer.succeed(
 );
 
 /** Attention that keeps nothing: a world whose items are not under test. */
-const noAttention: Pick<Attention["Service"], "raise" | "clear"> = {
+const noAttention: Pick<Attention["Service"], "list" | "raise" | "clear"> = {
+  list: () => Effect.succeed([]),
   raise: () => Effect.void,
   clear: () => Effect.void,
 };
@@ -1509,7 +1510,11 @@ describe("the gate in the background", () => {
         wake: Effect.void,
         scope: yield* Scope.make(),
       };
-      const shared = { gating: new Set<string>(), claimMemo: new ClaimMemo() };
+      const shared = {
+        gating: new Set<string>(),
+        claimMemo: new ClaimMemo(),
+        stuckReads: new Map<string, number>(),
+      };
       const build = () =>
         liveWorld(
           gateMachine,
@@ -1530,6 +1535,8 @@ describe("the gate in the background", () => {
       // What a reload does: a new world, on the state the old one shares.
       const after = build();
       assert.strictEqual(after.gateRunning(run), true);
+      // Nor does a reload read every stuck item's issue again at once.
+      assert.strictEqual(after.stuckReads, before.stuckReads);
       assert.deepStrictEqual(yield* after.gate(gateRepo, other), {
         kind: "queued",
         running: 1,
@@ -1587,6 +1594,7 @@ describe("the gate in the background", () => {
         () => 1_000,
         "mac-mini",
         {
+          list: () => Effect.succeed([]),
           raise: (item) => Effect.sync(() => void raised.push(item)),
           clear: () => Effect.void,
         },

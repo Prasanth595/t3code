@@ -6,6 +6,7 @@ import {
   ThreadId,
   type ModelSelection,
 } from "@t3tools/contracts";
+import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -124,6 +125,18 @@ export interface ThreadStatus extends Thread {
   /** The text of the last assistant message of that same run; `null` when the run has none. */
   readonly lastAssistantMessage: string | null;
 }
+
+/**
+ * Whether `branch` is the temporary `t3/<hex>` branch T3 made the worktree at
+ * `worktreePath` on. T3 can rename the thread's branch after launch while the
+ * session pushes the one it started on. T3 names a new worktree's folder after
+ * that branch, `/` written `-`, and its record of the folder is one the
+ * session cannot change, unlike the branch git has checked out there.
+ */
+export const isLaunchBranch = (branch: string, worktreePath: string | null): boolean =>
+  worktreePath !== null &&
+  isTemporaryWorktreeBranch(branch) &&
+  branch.replaceAll("/", "-") === worktreePath.split(/[\\/]/).pop();
 
 export class ThreadNotFoundError extends Schema.TaggedError<ThreadNotFoundError>()(
   "FactoryThreadNotFoundError",

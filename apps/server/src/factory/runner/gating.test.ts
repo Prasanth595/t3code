@@ -1469,6 +1469,22 @@ describe("gate: the session's PR becomes ready, or it does not", () => {
       }),
   );
 
+  it.effect("a PR on the branch T3 made the session's worktree on is gated", () =>
+    Effect.gen(function* () {
+      // T3 renamed the thread's branch; the session pushed the worktree's own `t3/<hash>`.
+      const rig = rigFor();
+      rig.t3.status = () =>
+        statusOf("completed", DONE_MESSAGE, {
+          runOrdinal: 1,
+          worktreePath: "/t3/worktrees/softfac/t3-2e8db933",
+        });
+      rig.gh.pr = { ...defaultPr(), headRef: "t3/2e8db933" };
+      assert.strictEqual((yield* advanceIn(rig)).kind, "ready-for-gate");
+      clearCalls(rig);
+      assert.deepStrictEqual(yield* gateIn(rig), { kind: "passed", pr: 12 });
+    }),
+  );
+
   it.effect("the PR is checked again at gate time and a changed one sends the issue to stuck", () =>
     Effect.gen(function* () {
       const cases: ReadonlyArray<[string, Partial<PullRequest>, string?]> = [

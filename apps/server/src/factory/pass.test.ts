@@ -30,6 +30,7 @@ import { newRunId, runIdToString, type RunId } from "./ledger/runId.ts";
 import { useTempDirs } from "./ledger/testSupport.ts";
 import { formatTs } from "./ledger/time.ts";
 import {
+  STUCK_READ_EVERY_MS,
   runPass,
   type Loaded,
   type PassError,
@@ -169,6 +170,9 @@ class Fake implements PassWorld {
   baseTips: Record<string, string | "error"> = {};
   /** The head of each open pull request per `"<repo>#<pr>"`: `HEAD` unless scripted; `null` is one that ended, `"error"` a read that fails. */
   openHeads: Record<string, string | null | "error"> = {};
+  /** The issues GitHub has closed, per `"<repo>#<issue>"`; `"error"` is a read that fails. Open otherwise. */
+  closedIssues: Record<string, boolean | "error"> = {};
+  stuckReads = new Map<string, number>();
   /** The repos the T3 projects list as watched; set per pass by `pass`. */
   watched: Array<WatchedProject> = [];
   /** The repos whose every T3 project was deleted since the reader watched them. */
@@ -185,7 +189,8 @@ class Fake implements PassWorld {
 
   /** The open attention items, as the service keeps them: one per id. */
   items: Array<AttentionItem> = [];
-  attention: Pick<Attention["Service"], "raise" | "clear"> = {
+  attention: Pick<Attention["Service"], "list" | "raise" | "clear"> = {
+    list: () => Effect.sync(() => [...this.items]),
     raise: (item) =>
       Effect.sync(() => {
         if (!this.items.some((open) => open.id === item.id)) {
@@ -521,6 +526,13 @@ class Fake implements PassWorld {
   baseTip(repo: Repo) {
     this.calls.push(`base_tip ${repo.watched.repo}`);
     const found = this.baseTips[repo.watched.repo] ?? BASE;
+    return found === "error" ? Effect.fail(trackerFailure()) : Effect.succeed(found);
+  }
+
+  issueClosed(repo: Repo, issue: number) {
+    const key = `${repo.watched.repo}#${issue}`;
+    this.calls.push(`issue_closed ${key}`);
+    const found = this.closedIssues[key] ?? false;
     return found === "error" ? Effect.fail(trackerFailure()) : Effect.succeed(found);
   }
 
@@ -3205,6 +3217,83 @@ describe("attention items", () => {
         ];
         yield* pass(fake, [REPO], 5);
         assert.deepEqual(ids(fake), ["live", "stuck", "needs-info"]);
+      }),
+  );
+
+  it.effect(
+    "a stuck item whose issue is closed is cleared at the pass end, an open one stays",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.closedIssues[`${REPO}#41`] = true;
+        fake.items = [
+          open({ id: "closed", kind: "stuck", issue: 41, run: runIdToString(rid(41)) }),
+          open({ id: "open", kind: "stuck", issue: 42, run: runIdToString(rid(42)) }),
+          // Only stuck items are asked about.
+          open({ id: "asks", kind: "needs-info", issue: 41, run: runIdToString(rid(41)) }),
+          // A repo that is not watched is not asked about.
+          open({ id: "paused", kind: "stuck", repo: "rawphp/paused", issue: 41 }),
+        ];
+        yield* pass(fake, [REPO], 5);
+        assert.deepEqual(ids(fake), ["open", "asks", "paused"]);
+        assert.deepEqual(
+          fake.calls.filter((c) => c.startsWith("issue_closed")),
+          [`issue_closed ${REPO}#41`, `issue_closed ${REPO}#42`],
+        );
+      }),
+  );
+
+  it.effect("a stuck item's issue is read at most once every ten minutes", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.items = [open({ id: "stuck", kind: "stuck", issue: 41, run: runIdToString(rid(41)) })];
+      const reads = () => fake.calls.filter((c) => c.startsWith("issue_closed")).length;
+      yield* pass(fake, [REPO], 5);
+      fake.now += STUCK_READ_EVERY_MS - 1;
+      yield* pass(fake, [REPO], 5);
+      assert.strictEqual(reads(), 1);
+      fake.now += 1;
+      fake.closedIssues[`${REPO}#41`] = true;
+      yield* pass(fake, [REPO], 5);
+      assert.strictEqual(reads(), 2);
+      assert.deepEqual(ids(fake), []);
+      // The read time of a cleared item is not kept.
+      assert.strictEqual(fake.stuckReads.size, 0);
+    }),
+  );
+
+  it.effect("a stuck item whose issue could not be read is read again ten minutes later", () =>
+    Effect.gen(function* () {
+      const fake = new Fake();
+      fake.closedIssues[`${REPO}#41`] = "error";
+      fake.items = [open({ id: "stuck", kind: "stuck", issue: 41, run: runIdToString(rid(41)) })];
+      const reads = () => fake.calls.filter((c) => c.startsWith("issue_closed")).length;
+      yield* pass(fake, [REPO], 5);
+      fake.now += STUCK_READ_EVERY_MS - 1;
+      yield* pass(fake, [REPO], 5);
+      assert.strictEqual(reads(), 1);
+      fake.now += 1;
+      yield* pass(fake, [REPO], 5);
+      assert.strictEqual(reads(), 2);
+    }),
+  );
+
+  it.effect(
+    "a stuck item whose issue cannot be read stays, said in a line that is not an error",
+    () =>
+      Effect.gen(function* () {
+        const fake = new Fake();
+        fake.closedIssues[`${REPO}#41`] = "error";
+        fake.items = [open({ id: "stuck", kind: "stuck", issue: 41, run: runIdToString(rid(41)) })];
+        const { report, lines } = yield* pass(fake, [REPO], 5);
+        assert.deepEqual(ids(fake), ["stuck"]);
+        // An issue that can never be read again (deleted, transferred) must not fail every pass.
+        assert.equal(report.errors, 0);
+        assert.deepEqual(errorEvents(fake), []);
+        assert.deepEqual(
+          lines.filter((l) => l.includes("cannot read whether the issue is closed")),
+          [`${REPO}#41: cannot read whether the issue is closed: ${trackerFailure().message}`],
+        );
       }),
   );
 
