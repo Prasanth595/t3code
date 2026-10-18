@@ -18,28 +18,32 @@ export function StandalonePage({
   readonly masthead?: ReactNode;
   readonly children: ReactNode;
 }) {
+  // body and #root clip overflow for the app shell, so the page can't scroll the document.
+  // It scrolls itself instead, and m-auto centers a short card without cutting off a tall one.
   return (
-    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-10 text-foreground sm:px-6">
-      <div className="pointer-events-none absolute inset-0 opacity-80" aria-hidden>
-        <div className={backdropClassNames[tone]} />
-        {tone === "pairing" ? (
-          <div className="absolute inset-y-0 left-0 w-72 bg-[radial-gradient(28rem_18rem_at_left,color-mix(in_srgb,var(--color-sky-500)_10%,transparent),transparent)]" />
-        ) : null}
-        <div
-          className={
-            tone === "brand"
-              ? "absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_94%,var(--color-black))_0%,var(--background)_62%)]"
-              : "absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_90%,var(--color-black))_0%,var(--background)_55%)]"
-          }
-        />
-      </div>
+    <div className="fixed inset-0 overflow-y-auto overscroll-contain scrollbar-gutter-both bg-background text-foreground">
+      <div className="relative flex min-h-full overflow-hidden px-4 pt-[calc(2.5rem+env(safe-area-inset-top))] pb-[calc(2.5rem+env(safe-area-inset-bottom))] sm:px-6">
+        <div className="pointer-events-none absolute inset-0 opacity-80" aria-hidden>
+          <div className={backdropClassNames[tone]} />
+          {tone === "pairing" ? (
+            <div className="absolute inset-y-0 left-0 w-72 bg-[radial-gradient(28rem_18rem_at_left,color-mix(in_srgb,var(--color-sky-500)_10%,transparent),transparent)]" />
+          ) : null}
+          <div
+            className={
+              tone === "brand"
+                ? "absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_94%,var(--color-black))_0%,var(--background)_62%)]"
+                : "absolute inset-0 bg-[linear-gradient(145deg,color-mix(in_srgb,var(--background)_90%,var(--color-black))_0%,var(--background)_55%)]"
+            }
+          />
+        </div>
 
-      <section
-        className={`relative w-full max-w-xl rounded-2xl border border-border/80 shadow-2xl shadow-black/20 backdrop-blur-md ${tone === "brand" ? "overflow-hidden bg-card/94" : "bg-card/90"}`}
-      >
-        {masthead}
-        <div className="p-6 sm:p-8">{children}</div>
-      </section>
+        <section
+          className={`relative m-auto w-full max-w-xl rounded-2xl border border-border/80 shadow-2xl shadow-black/20 backdrop-blur-md ${tone === "brand" ? "overflow-hidden bg-card/94" : "bg-card/90"}`}
+        >
+          {masthead}
+          <div className="p-6 sm:p-8">{children}</div>
+        </section>
+      </div>
     </div>
   );
 }
