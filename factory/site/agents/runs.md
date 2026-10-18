@@ -28,6 +28,26 @@
 
 Any other transition is refused.
 
+```mermaid
+stateDiagram-v2
+  state "needs-info" as needs_info
+  state "pr-open" as pr_open
+  proposed --> ready: approved
+  needs_info --> ready: approved
+  stuck --> ready: approved
+  ready --> proposed: unapproved
+  ready --> triage: claimed
+  triage --> building: session started
+  triage --> needs_info: questions raised
+  building --> needs_info: questions raised
+  triage --> stuck: failed
+  building --> stuck: failed
+  pr_open --> stuck: failed
+  building --> building: instructor comment, body edit, gate failed
+  building --> pr_open: gate passed
+  pr_open --> building: re-gate failed, instructor feedback
+```
+
 ## The session's launch message
 
 The factory starts a T3 thread on the project's default model, full access, in a new worktree from `base`. Its first message is:
@@ -53,6 +73,26 @@ The whole last non-empty line of the session's last message:
 | `FACTORY-STOP: stuck` with first line `the session's gh account is <x>, not <login>` |                                                                                     | `stuck`: wrong GitHub account.                            |
 | `FACTORY-DONE:` with a malformed URL, or a PR on another repo                        |                                                                                     | `stuck` at once, no reminder.                             |
 | no result line, or no message                                                        |                                                                                     | One reminder message; then `stuck`.                       |
+
+```mermaid
+sequenceDiagram
+  participant Factory
+  participant Session
+  participant GitHub
+  participant Gate
+  Session->>GitHub: push the branch, open a draft PR
+  Session->>Factory: FACTORY-DONE: #lt;PR URL#gt;
+  Factory->>Gate: run the gate on a fresh checkout
+  loop gate failed, up to gate_retries
+    Gate-->>Factory: failed, with output
+    Factory->>Session: The factory gate failed. (output)
+    Session->>GitHub: fix, commit, push
+    Session->>Factory: FACTORY-DONE: #lt;PR URL#gt;
+    Factory->>Gate: run the gate on a fresh checkout
+  end
+  Gate-->>Factory: passed
+  Factory->>GitHub: mark the PR ready for review, set factory:pr-open
+```
 
 ## Messages the factory sends into the session
 

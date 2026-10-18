@@ -1,8 +1,9 @@
 import { defineConfig, type DefaultTheme } from "vitepress";
+import { withMermaid } from "vitepress-plugin-mermaid";
 
 import { writeLlmsFiles } from "./llms.ts";
 
-const SITE_URL = "https://factory.originalsolutions.com.au";
+const SITE_URL = "https://t3code-factory-docs.originalsolutions.com.au";
 const REPO_URL = "https://github.com/original-solutions/t3code-factory";
 const UPSTREAM_DOCS_URL = "https://github.com/pingdotgg/t3code/tree/main/docs/user";
 
@@ -25,12 +26,14 @@ const agents: DefaultTheme.SidebarItem[] = [
   { text: "Scripts", link: "/agents/scripts" },
 ];
 
-export default defineConfig({
+const config = defineConfig({
   title: "t3code factory",
   description:
     "A software factory inside a fork of T3 Code: GitHub issues in, draft pull requests out.",
   base: "/",
   cleanUrls: true,
+  // The site's own maintainer notes, not a page.
+  srcExclude: ["README.md"],
   themeConfig: {
     siteTitle: "t3code factory",
     nav: [
@@ -59,3 +62,6 @@ export default defineConfig({
     });
   },
 });
+
+// Renders ```mermaid blocks in the page markdown as diagrams.
+export default withMermaid(config);

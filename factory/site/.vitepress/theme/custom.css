@@ -17,3 +17,20 @@
   font-weight: 600;
   letter-spacing: -0.01em;
 }
+
+/* Each screenshot comes in a light and a dark version; show the one for the current theme. */
+.dark .light-only,
+html:not(.dark) .dark-only {
+  display: none;
+}
+
+.vp-doc img.screenshot {
+  border: 1px solid var(--vp-c-divider);
+  border-radius: 8px;
+}
+
+/* The click-to-zoom overlay sits above the nav bar. */
+.medium-zoom-overlay,
+.medium-zoom-image--opened {
+  z-index: 100;
+}

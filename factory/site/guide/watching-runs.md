@@ -6,7 +6,8 @@ The pages work in a phone's browser too, paired over your tailnet as described i
 
 ## The Factory page
 
-<!-- screenshot: factory-page -->
+<img class="screenshot light-only" src="/screenshots/factory-page-light.png" alt="The Factory page: two Needs attention items above the runs table, with one run each building, needs-info, pr-open and stuck, and a finished run, each with its step, age and pull request" />
+<img class="screenshot dark-only" src="/screenshots/factory-page-dark.png" alt="The Factory page: two Needs attention items above the runs table, with one run each building, needs-info, pr-open and stuck, and a finished run, each with its step, age and pull request" />
 
 Use it to see what the factory is doing now. It lists every unfinished run and the runs that finished in the last week, newest first, with each run's repo, issue, state, current step, age and pull request. Show all runs to read the full history. It refreshes every 30 seconds.
 
@@ -14,7 +15,8 @@ It also says when the factory is idle and why (no machine config, or one that fa
 
 ## A run's page
 
-<!-- screenshot: run-page -->
+<img class="screenshot light-only" src="/screenshots/run-page-light.png" alt="A pr-open run's page: its state and step, the Thread link, the last gate's commands with exit code 0, and the ledger, where gate attempt 1 failed and was sent back before attempt 2 passed" />
+<img class="screenshot dark-only" src="/screenshots/run-page-dark.png" alt="A pr-open run's page: its state and step, the Thread link, the last gate's commands with exit code 0, and the ledger, where gate attempt 1 failed and was sent back before attempt 2 passed" />
 
 Open a run from the list to see why it is where it is. The page shows the run's state and step, links to its T3 thread so you can read the session, and shows the last gate: each command with its exit code and duration, and the failure output the factory sent back to the session. Below that is the run's ledger, every event the factory recorded for it, in order.
 
@@ -22,7 +24,8 @@ A run in `factory:building` can be stopped from here. See [Stopping a run by han
 
 ## Needs attention
 
-<!-- screenshot: needs-attention -->
+<img class="screenshot light-only" src="/screenshots/needs-attention-light.png" alt="The Needs attention list: a needs-info item and a stuck item, each with View run and Dismiss, and Dismiss all above them" />
+<img class="screenshot dark-only" src="/screenshots/needs-attention-dark.png" alt="The Needs attention list: a needs-info item and a stuck item, each with View run and Dismiss, and Dismiss all above them" />
 
 The top of the Factory page lists what needs a person, and the sidebar's Factory item shows how many. An item is raised when:
 
@@ -37,7 +40,8 @@ An item clears itself when its cause goes away: the config loads, a pass succeed
 
 ## Settings → Factory
 
-<!-- screenshot: settings-factory -->
+<img class="screenshot light-only" src="/screenshots/settings-factory-light.png" alt="Settings, Factory: the machine config form with the GitHub config directory, poll seconds and the run and gate limits, then Watched repos, empty because no T3 project here has a factory block" />
+<img class="screenshot dark-only" src="/screenshots/settings-factory-dark.png" alt="Settings, Factory: the machine config form with the GitHub config directory, poll seconds and the run and gate limits, then Watched repos, empty because no T3 project here has a factory block" />
 
 Use it to change the [machine config](/guide/machine-config) and to check which repos are watched. The form edits the GitHub config directory, the poll interval and the run and gate limits, and saves to `~/.config/t3fac/factory/config.yml`. Saving needs a session that may change settings.
 

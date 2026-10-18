@@ -264,7 +264,8 @@ const t3Started = (ms: number): string =>
 const RESTART_GRACE_MS = 10 * 60 * 1000;
 
 /**
- * The server start that cut the session's run off, or null: the run started before it and ended
+ * The server start that cut the session's run off, or null: the run began before it (a run the
+ * stop cancelled while it was still being prepared counts from its request) and ended
  * at or after the stop that start follows, with the grace before either. The stop is the newest
  * `server_stopping` after the start before it; a start with none uses its own time. The oldest
  * such start is the one the run's end matches, so a server started again before any pass decided

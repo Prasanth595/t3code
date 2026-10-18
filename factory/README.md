@@ -1,6 +1,6 @@
 # Factory
 
-This is `original-solutions/t3code-factory`, a fork of `pingdotgg/t3code` that runs the software factory inside the T3 server. The docs for installing, running and filing work for the factory are at [factory.originalsolutions.com.au](https://factory.originalsolutions.com.au), built from [site/](site/). The design is in [docs/design.md](docs/design.md).
+This is `original-solutions/t3code-factory`, a fork of `pingdotgg/t3code` that runs the software factory inside the T3 server. The docs for installing, running and filing work for the factory are at [t3code-factory-docs.originalsolutions.com.au](https://t3code-factory-docs.originalsolutions.com.au), built from [site/](site/). The design is in [docs/design.md](docs/design.md).
 
 ## Seam rule
 
