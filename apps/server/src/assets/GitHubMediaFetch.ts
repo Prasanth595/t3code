@@ -53,9 +53,8 @@ const SVG_CONTENT_TYPE = "image/svg+xml";
 // body cannot run script against this origin.
 const SVG_CONTENT_SECURITY_POLICY = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
 
-const githubToken = GitHubCredentials.GitHubCredentials.pipe(
+const githubCredential = GitHubCredentials.GitHubCredentials.pipe(
   Effect.flatMap((credentials) => credentials.get("github.com")),
-  Effect.map((credential) => credential.token),
   Effect.orElseSucceed(() => null),
 );
 
@@ -75,8 +74,8 @@ const SIGNED_URL_CACHE_TTL_MS = 4 * 60_000;
 const SIGNED_URL_CACHE_MAX_ENTRIES = 64;
 const signedUrlCache = new Map<string, { readonly at: number; readonly url: string }>();
 
-const cachedSignedUrl = (url: string, now: number) => {
-  const cached = signedUrlCache.get(url);
+const cachedSignedUrl = (key: string, now: number) => {
+  const cached = signedUrlCache.get(key);
   return cached !== undefined && now - cached.at < SIGNED_URL_CACHE_TTL_MS ? cached.url : null;
 };
 
@@ -127,11 +126,11 @@ const signedAttachmentUrl = Effect.fn("GitHubMediaFetch.signedAttachmentUrl")(fu
   return SIGNED_ATTACHMENT_URL_PATTERN.exec(html)?.[1]?.replaceAll("&amp;", "&") ?? null;
 });
 
-const cacheSignedUrl = (url: string, signed: string, now: number) => {
+const cacheSignedUrl = (key: string, signed: string, now: number) => {
   if (signedUrlCache.size >= SIGNED_URL_CACHE_MAX_ENTRIES) {
     signedUrlCache.delete(signedUrlCache.keys().next().value!);
   }
-  signedUrlCache.set(url, { at: now, url: signed });
+  signedUrlCache.set(key, { at: now, url: signed });
 };
 
 const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedirects")(function* (
@@ -175,7 +174,10 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
   requestHeaders: Record<string, string | undefined>,
 ) {
   // Both media hosts are served by github.com's account, which is the host `gh` stores it under.
-  const token = yield* githubToken;
+  const credential = yield* githubCredential;
+  const token = credential?.token ?? null;
+  // A signed URL grants what the account that minted it can read, so it is reused only by that one.
+  const cacheKey = `${credential?.fingerprint ?? ""}\n${asset.url}`;
   const forwarded: Record<string, string> = {};
   for (const name of FORWARDED_REQUEST_HEADERS) {
     const value = requestHeaders[name];
@@ -183,7 +185,7 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
   }
   // A signed URL authorizes on its own, so it is fetched without the token.
   const now = yield* Clock.currentTimeMillis;
-  const cached = cachedSignedUrl(asset.url, now);
+  const cached = cachedSignedUrl(cacheKey, now);
   let response = yield* fetchFollowingRedirects(
     cached ?? asset.url,
     forwarded,
@@ -197,7 +199,7 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
     if (signed !== null) response = yield* fetchFollowingRedirects(signed, forwarded, null);
   }
   if (cached !== null && (response === null || response.status >= 400)) {
-    signedUrlCache.delete(asset.url);
+    signedUrlCache.delete(cacheKey);
   }
   const remainingSeconds = Math.floor((asset.expiresAt - (yield* Clock.currentTimeMillis)) / 1000);
   const headers: Record<string, string> = {
@@ -223,7 +225,7 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
     return HttpServerResponse.empty({ status: 415, headers });
   }
   // Only a signed URL that served media is reused; a failed one is rendered again next time.
-  if (signed !== null) cacheSignedUrl(asset.url, signed, now);
+  if (signed !== null) cacheSignedUrl(cacheKey, signed, now);
   for (const name of FORWARDED_RESPONSE_HEADERS) {
     const value = response.headers[name];
     if (value !== undefined) headers[name] = value;

@@ -241,7 +241,9 @@ describe("AssetAccess", () => {
       readonly checkout: string | null;
       readonly rendersTo: string;
       readonly signedStatus?: number;
+      readonly accounts?: readonly [string, string];
     }) => {
+      let credentialReads = 0;
       const rendered: Array<unknown> = [];
       const resolvedCheckouts: Array<string> = [];
       const requests: Array<{ url: string; authorization: string | undefined }> = [];
@@ -290,7 +292,7 @@ describe("AssetAccess", () => {
                   host,
                   token: Redacted.make("signed-in"),
                   source: "gh" as const,
-                  fingerprint: "fingerprint",
+                  fingerprint: input.accounts?.[credentialReads++] ?? "fingerprint",
                 }),
             }),
           ),
@@ -367,6 +369,20 @@ describe("AssetAccess", () => {
         expect(result.statuses).toEqual([415, 415]);
         expect(result.rendered).toEqual([]);
         expect(result.requests.map((request) => request.url)).toEqual([url, url]);
+      }),
+    );
+
+    it.effect("signs them again for a different GitHub account", () =>
+      Effect.gen(function* () {
+        const url = "https://github.com/user-attachments/assets/0f5c0e6e-two-accounts";
+        const result = yield* loadTwice({
+          asset: { url, cwd: "/checkout", repository: "enterprise/private" },
+          checkout: null,
+          rendersTo: signed,
+          accounts: ["work", "personal"],
+        });
+        expect(result.statuses).toEqual([200, 200]);
+        expect(result.rendered).toHaveLength(2);
       }),
     );
 
