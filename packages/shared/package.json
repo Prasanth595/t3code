@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./gitGraph": {
+      "types": "./src/gitGraph.ts",
+      "import": "./src/gitGraph.ts"
+    },
     "./githubMarkdownLinks": {
       "types": "./src/githubMarkdownLinks.ts",
       "import": "./src/githubMarkdownLinks.ts"

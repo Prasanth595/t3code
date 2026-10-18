@@ -5,6 +5,8 @@ import * as Layer from "effect/Layer";
 import {
   GitManagerError,
   GitCommandError,
+  type GitHistoryInput,
+  type GitHistoryResult,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
   type VcsCreateRefInput,
@@ -31,11 +33,13 @@ import {
 import * as GitManager from "./GitManager.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import { readGitHistory } from "./gitHistory.ts";
 
 export class GitWorkflowService extends Context.Service<
   GitWorkflowService,
   {
     readonly isRepository: (cwd: string) => Effect.Effect<boolean, GitManagerServiceError>;
+    readonly history: (input: GitHistoryInput) => Effect.Effect<GitHistoryResult, GitCommandError>;
     readonly hasCommit: (input: {
       readonly cwd: string;
       readonly refName: string;
@@ -279,6 +283,10 @@ export const make = Effect.gen(function* () {
       ensureGit(operation, input.cwd).pipe(Effect.andThen(run(input)));
 
   return GitWorkflowService.of({
+    history: (input) =>
+      ensureGitCommand("GitWorkflowService.history", input.cwd).pipe(
+        Effect.andThen(readGitHistory(git, input)),
+      ),
     isRepository: (cwd) =>
       registry.detect({ cwd }).pipe(
         Effect.map((handle) => handle?.kind === "git"),
