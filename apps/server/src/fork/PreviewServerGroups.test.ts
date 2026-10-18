@@ -5,7 +5,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { placeListeners, resolveProjectFolders } from "./PreviewServerGroups.ts";
+import {
+  findOwnerThread,
+  nativeIdsUpTheTree,
+  parseProcessTable,
+  placeListeners,
+  resolveProjectFolders,
+} from "./PreviewServerGroups.ts";
 
 const listener = (port: number, pid: number): DiscoveredLocalServer => ({
   host: "localhost",
@@ -61,6 +67,7 @@ it.layer(NodeServices.layer)("PreviewServerGroups", (it) => {
             [3, path.join(temp, "second")],
             [4, path.join(temp, "elsewhere")],
           ]),
+          threadByPid: new Map(),
           folders,
           sharedPorts: new Set(),
           checks: {
@@ -114,6 +121,7 @@ it.layer(NodeServices.layer)("PreviewServerGroups", (it) => {
       const placed = yield* placeListeners({
         listeners: [listener(5201, 1)],
         cwdByPid: new Map([[1, temp]]),
+        threadByPid: new Map(),
         folders,
         sharedPorts: new Set([5201]),
         checks: {
@@ -129,4 +137,33 @@ it.layer(NodeServices.layer)("PreviewServerGroups", (it) => {
       expect(probed).toEqual([]);
     }),
   );
+
+  it("links a server only to the thread that its nearest known ancestor names", () => {
+    const session = "232926df-731f-488a-b51d-d2cc11a7c489";
+    const other = "0b5f2c36-363c-4323-92b5-b453fb4e7dda";
+    const table = parseProcessTable(
+      [
+        "  500     1 /Applications/T3 Code.app/Contents/MacOS/T3 Code",
+        ` 1000   500 claude --resume ${session} --output-format stream-json`,
+        " 1100  1000 /bin/zsh -c npm run dev",
+        " 1200  1100 node vite --port 5173",
+        // A shell that exited: the server now has launchd as its parent.
+        " 1300     1 node vite --port 5174",
+        ` 1400   500 claude --resume ${other}`,
+        ` 1500  1400 /bin/zsh -c diff ${session} ${other}`,
+        " 1600  1500 python3 -m http.server 5175",
+      ].join("\n"),
+    );
+    const threadByNativeId = new Map([
+      [session, "thread-a"],
+      [other, "thread-b"],
+    ]);
+    const owner = (pid: number) =>
+      findOwnerThread(nativeIdsUpTheTree(pid, table), threadByNativeId);
+
+    expect(owner(1200)).toBe("thread-a");
+    expect(owner(1300)).toBeNull();
+    // One process names two threads, so the match is not certain.
+    expect(owner(1600)).toBeNull();
+  });
 });
