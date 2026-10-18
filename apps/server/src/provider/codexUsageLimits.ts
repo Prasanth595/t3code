@@ -210,12 +210,25 @@ export function codexUsageLimitMessage(
   return `Codex usage limit reached.${reset}${codexUsageLimitNextStep(snapshot?.rateLimitReachedType)}`;
 }
 
-/** All exhausted windows must reset before a continuation can run. */
+/**
+ * Called after a confirmed usage-limit failure. All exhausted windows must reset
+ * before a continuation can run. Codex reports whole percentages, so a refusal
+ * can arrive while the window that ran out still reads 99%; that is only clear
+ * when no window reads 100% and exactly one reads 99%.
+ */
 export function codexUsageLimitResetAt(
   snapshot: CodexRateLimitSnapshot | undefined,
+  atIso: string,
 ): string | null {
-  if (!snapshot) return null;
-  const windows = codexRateLimitsToWindows(snapshot).filter((window) => window.usedPercent >= 100);
+  const atMs = Date.parse(atIso);
+  if (!snapshot || !Number.isFinite(atMs)) return null;
+  // A window whose reset has passed has renewed since it was observed.
+  const activeWindows = codexRateLimitsToWindows(snapshot).filter(
+    (window) => !window.resetsAt || Date.parse(window.resetsAt) > atMs,
+  );
+  const exhausted = activeWindows.filter((window) => window.usedPercent >= 100);
+  const nearFull = activeWindows.filter((window) => window.usedPercent >= 99);
+  const windows = exhausted.length > 0 ? exhausted : nearFull.length === 1 ? nearFull : [];
   if (windows.length === 0 || windows.some((window) => !window.resetsAt)) return null;
   return windows.reduce<string | null>(
     (latest, window) =>

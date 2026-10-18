@@ -7,6 +7,7 @@ import {
   codexRateLimitsToUpdate,
   codexResetCreditsToContract,
   codexUsageLimitMessage,
+  codexUsageLimitResetAt,
   mergeCodexRateLimits,
 } from "./codexUsageLimits.ts";
 
@@ -298,19 +299,93 @@ describe("mergeCodexRateLimits", () => {
   });
 });
 
-import { codexUsageLimitResetAt } from "./codexUsageLimits.ts";
-
 describe("codexUsageLimitResetAt", () => {
+  const at = "2026-10-17T21:52:06.961Z";
+  const resetAt = "2026-10-18T01:42:09.000Z";
+
+  it("keeps the reset when the last whole-percent update before refusal reads 99%", () => {
+    const snapshot = mergeCodexRateLimits(
+      {
+        limitId: "codex",
+        primary: { usedPercent: 99, resetsAt: 1792287729, windowDurationMins: 300 },
+        secondary: { usedPercent: 16, resetsAt: 1792874529, windowDurationMins: 10080 },
+      },
+      { limitId: "premium", primary: null, secondary: null },
+    );
+    expect(codexUsageLimitResetAt(snapshot, at)).toBe(resetAt);
+  });
+
+  it("does not guess when more than one window reads 99%", () => {
+    expect(
+      codexUsageLimitResetAt(
+        {
+          primary: { usedPercent: 99, resetsAt: 1792287729 },
+          secondary: { usedPercent: 99, resetsAt: 1792874529 },
+        },
+        at,
+      ),
+    ).toBeNull();
+  });
+
+  it("prefers an explicitly exhausted window over a rounded near-full window", () => {
+    expect(
+      codexUsageLimitResetAt(
+        {
+          primary: { usedPercent: 100, resetsAt: 1792287729 },
+          secondary: { usedPercent: 99, resetsAt: 1792874529 },
+        },
+        at,
+      ),
+    ).toBe(resetAt);
+  });
+
   it("waits for every exhausted window and never invents an unknown reset", () => {
     expect(
-      codexUsageLimitResetAt({
-        primary: { usedPercent: 100, resetsAt: 2000000000 },
-        secondary: { usedPercent: 100, resetsAt: 2000100000 },
-      }),
+      codexUsageLimitResetAt(
+        {
+          primary: { usedPercent: 100, resetsAt: 2000000000 },
+          secondary: { usedPercent: 100, resetsAt: 2000100000 },
+        },
+        at,
+      ),
     ).toBe("2033-05-19T07:20:00.000Z");
-    expect(codexUsageLimitResetAt({ primary: { usedPercent: 100 } })).toBeNull();
+    expect(codexUsageLimitResetAt({ primary: { usedPercent: 100 } }, at)).toBeNull();
+    expect(codexUsageLimitResetAt({ primary: { usedPercent: 99 } }, at)).toBeNull();
     expect(
-      codexUsageLimitResetAt({ primary: { usedPercent: 50, resetsAt: 2000000000 } }),
+      codexUsageLimitResetAt(
+        { primary: { usedPercent: 100, resetsAt: 1792287729 }, secondary: { usedPercent: 100 } },
+        at,
+      ),
     ).toBeNull();
+    expect(
+      codexUsageLimitResetAt(
+        { primary: { usedPercent: 100, resetsAt: 1792287729 }, secondary: { usedPercent: 99 } },
+        at,
+      ),
+    ).toBe(resetAt);
+    expect(
+      codexUsageLimitResetAt({ primary: { usedPercent: 98, resetsAt: 2000000000 } }, at),
+    ).toBeNull();
+    expect(codexUsageLimitResetAt(undefined, at)).toBeNull();
+  });
+
+  it("ignores renewed windows and invalid observation times", () => {
+    for (const usedPercent of [99, 100]) {
+      expect(
+        codexUsageLimitResetAt({ primary: { usedPercent, resetsAt: 1792287729 } }, resetAt),
+      ).toBeNull();
+      expect(
+        codexUsageLimitResetAt({ primary: { usedPercent, resetsAt: 1792287729 } }, "invalid"),
+      ).toBeNull();
+    }
+    expect(
+      codexUsageLimitResetAt(
+        {
+          primary: { usedPercent: 100, resetsAt: 1792270000 },
+          secondary: { usedPercent: 99, resetsAt: 1792874529 },
+        },
+        at,
+      ),
+    ).toBe("2026-10-24T20:42:09.000Z");
   });
 });

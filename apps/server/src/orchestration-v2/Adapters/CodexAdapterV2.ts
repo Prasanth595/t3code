@@ -4312,7 +4312,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             yield* Ref.update(rateLimitSnapshot, (previous) =>
               mergeCodexRateLimits(previous, payload.rateLimits),
             );
-            const resetAt = codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot));
+            const resetAt = codexUsageLimitResetAt(
+              yield* Ref.get(rateLimitSnapshot),
+              DateTime.formatIso(yield* DateTime.now),
+            );
             for (const item of (yield* Ref.get(limitedTurnItems)).values()) {
               if (resetAt === null || item.failure.resetAt != null) continue;
               const updated = {
@@ -5554,7 +5557,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   failure.class === "usage_limit"
                     ? {
                         ...failure,
-                        resetAt: codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
+                        resetAt: codexUsageLimitResetAt(
+                          yield* Ref.get(rateLimitSnapshot),
+                          DateTime.formatIso(yield* DateTime.now),
+                        ),
                       }
                     : failure,
                 ...(input.providerRetry === undefined
@@ -5591,7 +5597,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     ...event.failure,
                     resetAt:
                       event.failure.resetAt ??
-                      codexUsageLimitResetAt(yield* Ref.get(rateLimitSnapshot)),
+                      codexUsageLimitResetAt(
+                        yield* Ref.get(rateLimitSnapshot),
+                        DateTime.formatIso(yield* DateTime.now),
+                      ),
                   },
                 }
               : event;
