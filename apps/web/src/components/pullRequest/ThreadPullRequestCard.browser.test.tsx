@@ -278,8 +278,14 @@ it("hides the card when the environment cannot read pull requests", async () => 
   expect(container.textContent).toBe("");
 });
 it("shows terminal PR states and never offers merge again", async () => {
-  state.detail = { ...detail, state: "merged" };
+  state.detail = {
+    ...detail,
+    state: "merged",
+    capabilities: { ...detail.capabilities, stackActions: true },
+  };
+  state.stack = {};
   await render();
   await expect.element(page.getByText("Pull request merged", { exact: true })).toBeVisible();
   expect(page.getByRole("button", { name: "Merge", exact: true }).elements()).toHaveLength(0);
+  expect(page.getByRole("button", { name: "Open stack", exact: true }).elements()).toHaveLength(0);
 });
