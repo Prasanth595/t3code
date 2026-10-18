@@ -412,6 +412,36 @@ export function pullRequestCheckoutMismatch(
   return hosted.some(holds) ? null : baseKey;
 }
 
+/**
+ * The remote to fetch the pull request at `pullRequestUrl` by number from, in a checkout with
+ * `remotes` by name and `primaryRemote`. The number belongs to the pull request's repository, and
+ * a fork or an unrelated repository can have a pull request of its own under it. So this is the
+ * primary remote when it names the repository, else the first remote that does. A primary remote
+ * that is not hosted, or a pull request URL this cannot read, is no evidence, so the primary
+ * remote is kept. It is null when no remote names the repository and the primary one is hosted.
+ */
+export function pullRequestRefRemote(
+  remotes: ReadonlyMap<string, string>,
+  primaryRemote: string | null,
+  pullRequestUrl: string,
+): string | null {
+  const baseKey = pullRequestBaseRepositoryKey(pullRequestUrl);
+  const primaryUrl = primaryRemote === null ? undefined : remotes.get(primaryRemote);
+  if (baseKey === null) {
+    return primaryRemote;
+  }
+  const hosted = (url: string) => parseRepositoryNameWithOwnerFromRemoteUrl(url) !== null;
+  const namesBase = (url: string) => hosted(url) && namesRepository(url, pullRequestUrl, baseKey);
+  if (primaryUrl !== undefined && namesBase(primaryUrl)) {
+    return primaryRemote;
+  }
+  const named = [...remotes].find(([, url]) => namesBase(url));
+  if (named !== undefined) {
+    return named[0];
+  }
+  return primaryUrl !== undefined && hosted(primaryUrl) ? null : primaryRemote;
+}
+
 function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null {
   const trimmed = nameWithOwner?.trim() ?? "";
   if (trimmed.length === 0) {
@@ -1035,7 +1065,8 @@ export const make = Effect.gen(function* () {
     function* (
       cwd: string,
       pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
-      localBranch = pullRequest.headBranch,
+      localBranch: string,
+      pullRequestRemote: string | null,
     ) {
       const repositoryNameWithOwner = resolveHeadRepositoryNameWithOwner(pullRequest) ?? "";
 
@@ -1043,6 +1074,7 @@ export const make = Effect.gen(function* () {
         yield* gitCore
           .fetchPullRequestBranch({
             cwd,
+            remoteName: pullRequestRemote,
             prNumber: pullRequest.number,
             branch: localBranch,
           })
@@ -1116,13 +1148,15 @@ export const make = Effect.gen(function* () {
   const materializePullRequestHeadBranch = (
     cwd: string,
     pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
-    localBranch = pullRequest.headBranch,
+    localBranch: string,
+    pullRequestRemote: string | null,
   ) =>
-    materializePullRequestHeadBranchBase(cwd, pullRequest, localBranch).pipe(
+    materializePullRequestHeadBranchBase(cwd, pullRequest, localBranch, pullRequestRemote).pipe(
       Effect.catch((primaryCause) =>
         gitCore
           .fetchPullRequestBranch({
             cwd,
+            remoteName: pullRequestRemote,
             prNumber: pullRequest.number,
             branch: localBranch,
           })
@@ -2672,19 +2706,22 @@ export const make = Effect.gen(function* () {
   });
 
   // Each of a checkout's remotes by name, at its URL as configured: the first of the remote's
-  // URLs, the one fetch uses, before `insteadOf` rewrites it.
+  // URLs, the one fetch uses, before `insteadOf` rewrites it. Since Git 2.46 an empty URL clears
+  // the ones before it, so which URL a remote with one fetches from depends on the version. Its
+  // URL reads as empty, which names no repository.
   const readCheckoutRemoteUrls = Effect.fn("readCheckoutRemoteUrls")(function* (cwd: string) {
     const { stdout } = yield* gitCore.execute({
       operation: "GitManager.readCheckoutRemoteUrls",
       cwd,
-      args: ["config", "--get-regexp", "^remote\\..+\\.url$"],
+      args: ["config", "-z", "--get-regexp", "^remote\\..+\\.url$"],
       allowNonZeroExit: true,
       timeoutMs: 5_000,
     });
     const urls = new Map<string, string>();
-    for (const line of stdout.split("\n")) {
-      const [, name = "", url = ""] = /^remote\.(.+)\.url\s+(.+)$/.exec(line.trim()) ?? [];
-      if (name.length > 0 && url.length > 0 && !urls.has(name)) urls.set(name, url);
+    for (const entry of stdout.split("\0")) {
+      const [key = "", url = ""] = entry.split(/\n(.*)/su);
+      const name = key.slice("remote.".length, -".url".length);
+      if (name.length > 0 && (url.length === 0 || !urls.has(name))) urls.set(name, url);
     }
     return urls;
   });
@@ -2779,6 +2816,13 @@ export const make = Effect.gen(function* () {
 
       const localPullRequestBranch =
         resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
+      // Any remote may have let the checkout through, but the pull request's number is fetched
+      // only from one naming its repository.
+      const pullRequestRemote = pullRequestRefRemote(
+        remotes,
+        yield* gitCore.resolvePrimaryRemoteName(input.cwd).pipe(Effect.orElseSucceed(() => null)),
+        pullRequest.url,
+      );
 
       // Git refuses to move a branch that is checked out in a worktree, so the
       // reuse paths cannot go through materializePullRequestHeadBranch and instead
@@ -2817,7 +2861,11 @@ export const make = Effect.gen(function* () {
           // head. The branch's upstream does not: configuring it is best-effort, so a branch cut
           // from `origin/main` whose head branch has since been deleted still resolves — and
           // following it would move the checkout onto main and call that the pull request.
-          .fetchPullRequestHeadCommit({ cwd: worktreePath, prNumber: pullRequest.number })
+          .fetchPullRequestHeadCommit({
+            cwd: worktreePath,
+            remoteName: pullRequestRemote,
+            prNumber: pullRequest.number,
+          })
           .pipe(
             // A host that publishes no `refs/pull/<n>/head` leaves the remote-tracking branch,
             // taken only where it is the head branch's own rather than whatever the checkout
@@ -2926,6 +2974,7 @@ export const make = Effect.gen(function* () {
         input.cwd,
         pullRequestWithRemoteInfo,
         localPullRequestBranch,
+        pullRequestRemote,
       );
 
       const existingBranchAfterFetch = yield* findLocalHeadBranch(input.cwd);

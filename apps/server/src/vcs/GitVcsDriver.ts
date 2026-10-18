@@ -199,12 +199,16 @@ export interface GitRenameBranchResult {
 
 export interface GitFetchPullRequestBranchInput {
   cwd: string;
+  /** The remote naming the pull request's repository, which its number belongs to; null if none. */
+  remoteName: string | null;
   prNumber: number;
   branch: string;
 }
 
 export interface GitFetchPullRequestHeadCommitInput {
   cwd: string;
+  /** The remote naming the pull request's repository, which its number belongs to; null if none. */
+  remoteName: string | null;
   prNumber: number;
 }
 
