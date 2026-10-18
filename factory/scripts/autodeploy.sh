@@ -21,7 +21,7 @@ env_file="$HOME/.config/t3fac/env"
 logs="$HOME/Library/Logs/t3fac"
 build_log="$logs/autodeploy-build.log"
 failed_file="$root/autodeploy.failed"
-lock="$root/autodeploy.lock"
+lock="$root/deploy.lock"
 job=io.github.rawphp.t3fac.autodeploy
 # T3FAC_PORT exists only so tests can point at a stub API; the server listens on 3876.
 port=${T3FAC_PORT:-3876}
@@ -41,21 +41,25 @@ token=${T3FAC_AUTODEPLOY_TOKEN:-}
 [[ -n $clone ]] || exit 0
 
 mkdir -p "$root" "$logs"
-# launchd never starts a second copy of the job, but a run by hand could overlap one. A lock
-# whose holder has gone is taken over; one with no pid yet is being taken right now.
-if ! mkdir "$lock" 2> /dev/null; then
-  holder=$(cat "$lock/pid" 2> /dev/null || true)
-  if [[ -z $holder ]] || kill -0 "$holder" 2> /dev/null; then
-    say "another autodeploy is running${holder:+ (pid $holder)}"
+# The deploy lock install.sh and rollback.sh take too (lib/t3fac.sh's take_deploy_lock, copied
+# here because this copy runs without the lib): a symlink to the holder's pid, taken over when
+# that process has gone. Exported, so the install.sh this runs knows it already holds it.
+if ! ln -s "$$" "$lock" 2> /dev/null; then
+  holder=$(readlink "$lock" 2> /dev/null || true)
+  if [[ -n $holder ]] && kill -0 "$holder" 2> /dev/null; then
+    say "another deploy is running (pid $holder)"
     exit 0
   fi
-  rm -rf "$lock"
-  mkdir "$lock" 2> /dev/null || exit 0
+  rm -f "$lock"
+  ln -s "$$" "$lock" 2> /dev/null || exit 0
 fi
-echo $$ > "$lock/pid"
-trap 'rm -rf "$lock"' EXIT
+export T3FAC_DEPLOY_LOCK=$$
+trap 'if [[ $(readlink "$lock" 2> /dev/null || true) == "$$" ]]; then rm -f "$lock"; fi' EXIT
 
-if ! git -C "$clone" fetch -q origin 2> /dev/null; then
+# launchd starts no tick while this one runs, so a fetch that hangs would stop autodeploy for
+# good: give up on a connection that stalls, and never wait on a prompt.
+if ! GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND=${GIT_SSH_COMMAND:-"ssh -o BatchMode=yes -o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"} \
+  git -C "$clone" -c http.lowSpeedLimit=1000 -c http.lowSpeedTime=60 fetch -q origin 2> /dev/null; then
   say "cannot fetch origin in $clone"
   exit 1
 fi

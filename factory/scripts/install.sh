@@ -28,11 +28,14 @@ fi
 
 dest="$root/versions/$version"
 
+take_deploy_lock || exit 1
+trap release_deploy_lock EXIT
+
 mkdir -p "$root/versions"
 # Unpack beside the destination and swap in only a good archive, so a bad one never
 # damages the version that `current` may already point at.
 tmp=$(mktemp -d "$root/versions/.t3fac-install.XXXXXX")
-trap 'rm -rf "$tmp"' EXIT
+trap 'rm -rf "$tmp"; release_deploy_lock' EXIT
 chmod 755 "$tmp"
 tar -xzf "$archive" -C "$tmp" --strip-components=1
 if [[ ! -e $tmp/t3 ]]; then

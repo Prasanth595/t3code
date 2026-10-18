@@ -6,6 +6,9 @@ set -euo pipefail
 
 source "$(dirname "$0")/lib/t3fac.sh"
 
+take_deploy_lock || exit 1
+trap release_deploy_lock EXIT
+
 if [[ ! -L $root/previous || ! -e $root/previous ]]; then
   echo "no earlier version to roll back to" >&2
   exit 1

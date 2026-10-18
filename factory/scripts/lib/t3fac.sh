@@ -14,6 +14,39 @@ log="$HOME/Library/Logs/t3fac/t3fac.log"
 # exists only so tests can point the health check at a stub listener; the plist still says 3876.
 port=${T3FAC_PORT:-3876}
 
+# One deploy at a time: a symlink whose target is its holder's pid, so it is never seen half made.
+deploy_lock="$root/deploy.lock"
+
+# Takes $deploy_lock for this script and the scripts it runs; release_deploy_lock, run on exit,
+# gives it back. Returns 1 naming the holder when another live process has it, and takes over one
+# whose holder has gone. A script whose caller holds it (T3FAC_DEPLOY_LOCK is the pid the lock
+# points at, which the taker exports) runs under the caller's lock and leaves it alone, so
+# install.sh can run rollback.sh and autodeploy.sh can run install.sh. autodeploy.sh carries its
+# own copy of this, as it runs without the lib.
+take_deploy_lock() {
+  local holder
+  holder=$(readlink "$deploy_lock" 2> /dev/null || true)
+  if [[ -n $holder && $holder == "${T3FAC_DEPLOY_LOCK:-}" ]]; then return 0; fi
+  mkdir -p "$root"
+  if ! ln -s "$$" "$deploy_lock" 2> /dev/null; then
+    holder=$(readlink "$deploy_lock" 2> /dev/null || true)
+    if [[ -n $holder ]] && kill -0 "$holder" 2> /dev/null; then
+      echo "another deploy is running (pid $holder)" >&2
+      return 1
+    fi
+    rm -f "$deploy_lock"
+    if ! ln -s "$$" "$deploy_lock" 2> /dev/null; then
+      echo "another deploy is running" >&2
+      return 1
+    fi
+  fi
+  export T3FAC_DEPLOY_LOCK=$$
+}
+
+release_deploy_lock() {
+  if [[ $(readlink "$deploy_lock" 2> /dev/null || true) == "$$" ]]; then rm -f "$deploy_lock"; fi
+}
+
 # Waits for launchd to report job $2 unloaded, up to T3FAC_UNLOAD_WAIT seconds (10).
 wait_unloaded() {
   local uid=$1 job=$2 wait=${T3FAC_UNLOAD_WAIT:-10} i
