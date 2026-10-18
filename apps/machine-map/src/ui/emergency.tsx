@@ -23,13 +23,7 @@ const HINTS = {
  * MM-708: the big red button. Lifting the cover is the confirmation, so one press then pauses
  * everything. `onPressed` lets a dialog close itself after the press.
  */
-export function EmergencyButton({
-  size,
-  onPressed,
-}: {
-  size: "header" | "dialog";
-  onPressed?: () => void;
-}) {
+export function EmergencyButton({ onPressed }: { onPressed?: () => void }) {
   const portal = usePortalContext();
   const [coverOpen, setCoverOpen] = useState(false);
   const paused = portal.pause !== null;
@@ -48,7 +42,7 @@ export function EmergencyButton({
   const hint: keyof typeof HINTS = paused ? "paused" : coverOpen ? "open" : "closed";
 
   return (
-    <div className={`panic ${size}${paused ? " is-paused" : ""}`}>
+    <div className={`panic dialog${paused ? " is-paused" : ""}`}>
       <span className="sticker panic-note">hands off</span>
       <PauseInfo />
       <div className="panic-inner">

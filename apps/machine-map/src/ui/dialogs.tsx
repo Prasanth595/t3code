@@ -188,7 +188,7 @@ export function DialogHost({ dialog, close }: { dialog: Dialog; close: () => voi
             Stops every agent on every machine, sets every arrow and map role to none, and refuses
             agent tool calls until you resume. Your own access stays.
           </p>
-          <EmergencyButton size="dialog" onPressed={close} />
+          <EmergencyButton onPressed={close} />
           <div className="actions end">
             <button type="button" className="btn" onClick={close} data-autofocus>
               Cancel

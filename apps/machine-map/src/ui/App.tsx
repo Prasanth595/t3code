@@ -22,7 +22,7 @@ import {
 } from "./context.ts";
 import { machineQueue } from "./derive.ts";
 import { DialogHost, Palette } from "./dialogs.tsx";
-import { EmergencyButton, PausedBanner } from "./emergency.tsx";
+import { PausedBanner } from "./emergency.tsx";
 import { COMMAND_LABEL, DANGEROUS_COMMANDS, machineName } from "./format.ts";
 import { CloseIcon, UndoIcon } from "./icons.tsx";
 import { MapView } from "./MapView.tsx";
@@ -451,7 +451,6 @@ export function App() {
               ))}
             </nav>
           </div>
-          <EmergencyButton size="header" />
         </header>
 
         <PausedBanner />
