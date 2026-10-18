@@ -54,6 +54,8 @@ import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import ChatMarkdown from "../ChatMarkdown";
 import { Button } from "../ui/button";
+import { Textarea } from "../ui/textarea";
+import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 
 const release = (file: ComposerImageAttachment | ComposerFileAttachment) => {
   releaseAttachmentUpload(file.id);
@@ -165,18 +167,27 @@ export function SideChatSession({
     setPreparing(true);
     setError(null);
     const added: Array<ComposerImageAttachment | ComposerFileAttachment> = [];
+    let attachmentError: string | null = null;
     try {
       for (let file of incoming) {
-        if (filesRef.current.length + added.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS)
-          throw new Error("Too many attachments.");
+        if (filesRef.current.length + added.length >= PROVIDER_SEND_TURN_MAX_ATTACHMENTS) {
+          attachmentError = "Too many attachments.";
+          break;
+        }
         const kind = classifyComposerAttachmentFile(file);
-        if (kind === "unsupported-image") throw new Error(`Unsupported image: ${file.name}`);
+        if (kind === "unsupported-image") {
+          attachmentError = `Unsupported image: ${file.name}`;
+          break;
+        }
         if (kind === "image") {
           const prepared = await prepareImageForAttachment(
             normalizeComposerImageFileMimeType(file),
             PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
           );
-          if (!prepared.ok) throw new Error(`Cannot prepare image: ${file.name}`);
+          if (!prepared.ok) {
+            attachmentError = `Cannot prepare image: ${file.name}`;
+            break;
+          }
           file = prepared.file;
           added.push({
             type: "image",
@@ -188,8 +199,10 @@ export function SideChatSession({
             previewUrl: URL.createObjectURL(file),
           });
         } else {
-          if (file.size > PROVIDER_SEND_TURN_MAX_FILE_BYTES)
-            throw new Error(`File is too large: ${file.name}`);
+          if (file.size > PROVIDER_SEND_TURN_MAX_FILE_BYTES) {
+            attachmentError = `File is too large: ${file.name}`;
+            break;
+          }
           added.push({
             type: "file",
             id: randomUUID(),
@@ -201,17 +214,17 @@ export function SideChatSession({
         }
       }
     } catch (error) {
-      if (alive.current) setError(String(error));
-    } finally {
-      if (alive.current) {
-        for (const file of added) startAttachmentUpload({ environmentId, image: file });
-        setFiles((current) => [...current, ...added]);
-        setPreparing(false);
-      } else {
-        for (const file of added) release(file);
-      }
-      preparingRef.current = false;
+      attachmentError = String(error);
     }
+    if (alive.current) {
+      setError(attachmentError);
+      for (const file of added) startAttachmentUpload({ environmentId, image: file });
+      setFiles((current) => [...current, ...added]);
+      setPreparing(false);
+    } else {
+      for (const file of added) release(file);
+    }
+    preparingRef.current = false;
   };
 
   useEffect(() => {
@@ -234,20 +247,14 @@ export function SideChatSession({
     submitting.current = true;
     setPending(true);
     setError(null);
-    try {
-      const result = await operation();
-      if (result._tag === "Failure") {
-        setError(String(Cause.squash(result.cause)));
-        return false;
-      }
-      return true;
-    } catch (cause) {
-      setError(String(cause));
+    const result = await operation();
+    submitting.current = false;
+    setPending(false);
+    if (result._tag === "Failure") {
+      setError(String(Cause.squash(result.cause)));
       return false;
-    } finally {
-      submitting.current = false;
-      setPending(false);
     }
+    return true;
   };
 
   const send = async () => {
@@ -287,12 +294,18 @@ export function SideChatSession({
       if (active) textarea.current?.focus();
     }
   };
-  const respond = (
+  const respond = async (
     requestId: Parameters<typeof approve>[0]["input"]["requestId"],
     decision: ProviderApprovalDecision,
-  ) =>
-    threadId &&
-    void act(() => approve({ environmentId, input: { threadId, requestId, decision } }));
+  ) => {
+    if (
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
+      requests.approvals.find((approval) => approval.requestId === requestId)
+        ?.responseCapability !== "live"
+    )
+      return;
+    await act(() => approve({ environmentId, input: { threadId, requestId, decision } }));
+  };
 
   return (
     <section data-side-chat className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -361,23 +374,14 @@ export function SideChatSession({
           >
             <p>{approval.detail ?? `Permission requested: ${approval.requestKind}`}</p>
             <div className="mt-2 flex flex-wrap gap-2">
-              {(
-                approval.options ?? [
-                  { decision: "accept" as const, label: "Allow once" },
-                  { decision: "decline" as const, label: "Decline" },
-                ]
-              ).map((option) => (
-                <Button
-                  key={option.decision}
-                  variant="outline"
-                  size="sm"
-                  disabled={pending}
-                  aria-label={option.warning ? `${option.label}: ${option.warning}` : option.label}
-                  onClick={() => respond(approval.requestId, option.decision)}
-                >
-                  {option.label}
-                </Button>
-              ))}
+              <ComposerPendingApprovalActions
+                requestId={approval.requestId}
+                isResponding={pending}
+                canRespond={canOperateThread && approval.responseCapability === "live"}
+                disabled={!canOperateThread || approval.responseCapability !== "live"}
+                options={approval.options}
+                onRespondToApproval={respond}
+              />
             </div>
           </div>
         ))}
@@ -392,13 +396,15 @@ export function SideChatSession({
             ]),
           );
           const resolved = buildPendingUserInputAnswers(input.questions, drafts);
+          const responseDisabled =
+            pending || !canOperateThread || input.responseCapability === "not_resumable";
           return (
             <form
               key={input.requestId}
               className="my-3 space-y-3 rounded-lg border border-border p-3"
               onSubmit={(event) => {
                 event.preventDefault();
-                if (threadId && resolved)
+                if (!responseDisabled && resolved)
                   void act(() =>
                     answer({
                       environmentId,
@@ -408,66 +414,70 @@ export function SideChatSession({
               }}
             >
               {input.questions.map((question) => (
-                <fieldset key={question.id} className="text-sm">
+                <fieldset key={question.id} disabled={responseDisabled} className="text-sm">
                   <legend>{question.question}</legend>
                   {question.options.map((option) => {
                     const value = option.value ?? option.label;
                     const selected =
                       drafts[question.id]?.selectedOptionValues?.includes(value) ?? false;
                     return (
-                      <button
-                        type="button"
-                        key={value}
-                        aria-pressed={selected}
-                        aria-label={
-                          option.description
-                            ? `${option.label}: ${option.description}`
-                            : option.label
-                        }
-                        className={`mt-2 block rounded border px-2 py-1 text-left text-xs ${selected ? "border-primary bg-primary/10" : "border-border"}`}
-                        onClick={() =>
+                      <div key={value} className="mt-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={selected ? "default" : "outline"}
+                          aria-pressed={selected}
+                          aria-label={
+                            option.description
+                              ? `${option.label}: ${option.description}`
+                              : option.label
+                          }
+                          onClick={() =>
+                            setAnswers((current) => ({
+                              ...current,
+                              [input.requestId]: {
+                                ...current[input.requestId],
+                                [question.id]: togglePendingUserInputOptionSelection(
+                                  question,
+                                  current[input.requestId]?.[question.id],
+                                  value,
+                                ),
+                              },
+                            }))
+                          }
+                        >
+                          {option.label}
+                        </Button>
+                      </div>
+                    );
+                  })}
+                  {question.allowCustomAnswer !== false && (
+                    <div className="mt-2">
+                      <Textarea
+                        size="sm"
+                        rows={2}
+                        aria-label={question.header || question.question}
+                        placeholder="Your answer…"
+                        value={drafts[question.id]?.customAnswer ?? ""}
+                        onChange={(event) =>
                           setAnswers((current) => ({
                             ...current,
                             [input.requestId]: {
                               ...current[input.requestId],
-                              [question.id]: togglePendingUserInputOptionSelection(
-                                question,
+                              [question.id]: setPendingUserInputCustomAnswer(
                                 current[input.requestId]?.[question.id],
-                                value,
+                                event.target.value,
+                                question,
                               ),
                             },
                           }))
                         }
-                      >
-                        {option.label}
-                      </button>
-                    );
-                  })}
-                  {question.allowCustomAnswer !== false && (
-                    <textarea
-                      rows={2}
-                      aria-label={question.header || question.question}
-                      placeholder="Your answer…"
-                      className="mt-2 w-full rounded border border-border bg-transparent p-2 text-sm"
-                      value={drafts[question.id]?.customAnswer ?? ""}
-                      onChange={(event) =>
-                        setAnswers((current) => ({
-                          ...current,
-                          [input.requestId]: {
-                            ...current[input.requestId],
-                            [question.id]: setPendingUserInputCustomAnswer(
-                              current[input.requestId]?.[question.id],
-                              event.target.value,
-                              question,
-                            ),
-                          },
-                        }))
-                      }
-                    />
+                      />
+                    </div>
                   )}
                 </fieldset>
               ))}
-              <Button type="submit" size="sm" disabled={pending || !resolved}>
+              <Button type="submit" size="sm" disabled={responseDisabled || !resolved}>
                 Reply
               </Button>
             </form>
@@ -479,7 +489,7 @@ export function SideChatSession({
           {error ?? runtime?.lastError}
         </p>
       )}
-      <div className="side-chat-composer-padding shrink-0 px-3 pt-1.5 sm:px-5 sm:pt-2">
+      <div className="shrink-0 px-3 pt-1.5 sm:px-5 sm:pt-2">
         <ComposerSurface.Shell>
           <ComposerSurface.Host>
             <form
@@ -566,7 +576,7 @@ export function SideChatSession({
                     aria-label="Message side chat"
                     placeholder="Ask a side question…"
                     rows={1}
-                    className="block max-h-50 min-h-17.5 w-full resize-none overflow-y-auto bg-transparent leading-relaxed text-foreground outline-none placeholder:text-placeholder/75 [field-sizing:content] side-chat-input"
+                    className="block max-h-50 min-h-17.5 w-full resize-none overflow-y-auto bg-transparent leading-relaxed text-foreground outline-none placeholder:text-placeholder/75 [field-sizing:content] font-(family-name:--font-composer,var(--font-sans)) text-(length:--font-size-prompt) max-sm:pointer-coarse:text-(length:--font-size-prompt-touch)"
                     value={draft}
                     disabled={pending}
                     onChange={(event) => setDraft(event.target.value)}
@@ -684,6 +694,10 @@ export function SideChatSession({
           </ComposerSurface.Host>
         </ComposerSurface.Shell>
       </div>
+      <div
+        aria-hidden
+        className="h-[calc(env(safe-area-inset-bottom)+1rem)] shrink-0 sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
+      />
     </section>
   );
 }

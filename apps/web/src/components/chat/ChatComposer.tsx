@@ -3995,22 +3995,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       const prompt = promptRef.current;
+      const records = buildMessageContext({
+        terminalContexts: composerTerminalContexts,
+        reviewComments: composerReviewComments,
+        previewAnnotations: composerPreviewAnnotations,
+      })?.records;
       if (
         applyPromptReplacement(0, prompt.length, "", {
           expectedText: prompt,
           focusEditorAfterReplace: false,
         })
-      )
-        onSideChat(
-          parseSideChatPrompt(
-            prompt,
-            buildMessageContext({
-              terminalContexts: composerTerminalContexts,
-              reviewComments: composerReviewComments,
-              previewAnnotations: composerPreviewAnnotations,
-            })?.records,
-          ) ?? side,
-        );
+      ) {
+        clearComposerDraftTerminalContexts(composerDraftTarget);
+        for (const comment of composerReviewComments)
+          removeComposerDraftReviewComment(composerDraftTarget, comment.id);
+        for (const annotation of composerPreviewAnnotations)
+          removeComposerDraftPreviewAnnotation(composerDraftTarget, annotation.id);
+        onSideChat(parseSideChatPrompt(prompt, records) ?? side);
+      }
       return;
     }
     // A send while a pasted image is still compressing would strand that image:

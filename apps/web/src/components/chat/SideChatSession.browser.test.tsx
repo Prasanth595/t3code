@@ -1,4 +1,10 @@
-import type { OrchestrationV2ProjectedTurnItem, UserInputQuestion } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import {
+  RuntimeRequestId,
+  type OrchestrationV2ProjectedTurnItem,
+  type UserInputQuestion,
+} from "@t3tools/contracts";
+import type { PendingApproval } from "../../session-logic";
 import { page, userEvent } from "vite-plus/test/browser";
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -9,7 +15,13 @@ const state = vi.hoisted(() => ({
   start: vi.fn(),
   interrupt: vi.fn(),
   answer: vi.fn(),
-  userInputs: [] as { requestId: string; questions: UserInputQuestion[] }[],
+  approve: vi.fn(),
+  approvals: [] as PendingApproval[],
+  userInputs: [] as {
+    requestId: string;
+    questions: UserInputQuestion[];
+    responseCapability?: string;
+  }[],
   status: "running",
   visibleTurnItems: [] as OrchestrationV2ProjectedTurnItem[],
   ctrlKey: false,
@@ -41,7 +53,7 @@ vi.mock("@t3tools/client-runtime/state/thread-execution", () => ({
   deriveThreadRuntime: () => ({ status: state.status }),
 }));
 vi.mock("@t3tools/client-runtime/state/thread-requests", () => ({
-  derivePendingThreadRequests: () => ({ approvals: [], userInputs: state.userInputs }),
+  derivePendingThreadRequests: () => ({ approvals: state.approvals, userInputs: state.userInputs }),
 }));
 vi.mock("../../state/session", () => ({
   readEnvironmentScope: () => true,
@@ -52,10 +64,11 @@ vi.mock("../../state/threads", () => ({
     startTurn: "start",
     interruptTurn: "interrupt",
     respondToUserInput: "answer",
+    respondToApproval: "approve",
   },
 }));
 vi.mock("../../state/use-orchestration-command", () => ({
-  useOrchestrationCommand: (name: "start" | "interrupt" | "answer") => state[name],
+  useOrchestrationCommand: (name: "start" | "interrupt" | "answer" | "approve") => state[name],
 }));
 vi.mock("../../lib/attachmentUploadQueue", () => ({
   useAttachmentUploadStore: () => ({}),
@@ -140,6 +153,8 @@ beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.status = "running";
   state.userInputs = [];
+  state.approvals = [];
+  state.approve.mockReset().mockResolvedValue({ _tag: "Success" });
   state.answer.mockReset().mockResolvedValue({ _tag: "Success" });
   state.visibleTurnItems = [];
   state.ctrlKey = false;
@@ -174,7 +189,10 @@ it("steers the side thread with the inherited model and clears only accepted inp
   expect(state.interrupt).not.toHaveBeenCalled();
 });
 it("keeps the failed steer draft for retry", async () => {
-  state.start.mockRejectedValueOnce(new Error("Steering unavailable"));
+  state.start.mockResolvedValueOnce({
+    _tag: "Failure",
+    cause: Cause.fail(new Error("Steering unavailable")),
+  });
   await act(async () => send().click());
   expect(draft().value).toBe("Change direction");
   expect(container.querySelector('[role="alert"]')?.textContent).toContain("Steering unavailable");
@@ -299,5 +317,44 @@ it("preserves edits and an intentionally empty editor answer across projection r
   await userEvent.click(page.getByRole("button", { name: "Reply", exact: true }));
   expect(state.answer).toHaveBeenCalledWith(
     expect.objectContaining({ input: expect.objectContaining({ answers: { proposal: "" } }) }),
+  );
+});
+
+it("keeps stale approvals and non-resumable questions visible but prevents responses", async () => {
+  state.approvals = [
+    {
+      requestId: RuntimeRequestId.make("stale-approval"),
+      createdAt: "2026-10-18T12:00:00.000Z",
+      requestKind: "command",
+      detail: "Run command?",
+      responseCapability: "not_resumable",
+      options: [
+        { decision: "accept", label: "Allow once" },
+        { decision: "acceptForSession", label: "Always allow" },
+      ],
+    },
+  ];
+  state.userInputs = editorRequest().map((request) => ({
+    ...request,
+    responseCapability: "not_resumable",
+  }));
+  await render();
+  await expect
+    .element(page.getByRole("button", { name: "Allow once", exact: true }))
+    .toBeDisabled();
+  await expect.element(page.getByRole("button", { name: "Reply", exact: true })).toBeDisabled();
+  expect(state.approve).not.toHaveBeenCalled();
+  expect(state.answer).not.toHaveBeenCalled();
+  state.approvals = state.approvals.map((approval) => ({
+    ...approval,
+    responseCapability: "live",
+  }));
+  state.userInputs = [];
+  await render();
+  await userEvent.click(page.getByRole("button", { name: "Allow once", exact: true }));
+  expect(state.approve).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: { threadId: "side", requestId: "stale-approval", decision: "accept" },
+    }),
   );
 });

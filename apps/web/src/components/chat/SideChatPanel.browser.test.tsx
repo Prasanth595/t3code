@@ -1,3 +1,4 @@
+import * as Cause from "effect/Cause";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -114,7 +115,10 @@ it("a failed close retains both independent drafts and allows a successful retry
   state.threads.push(
     ...state.branch.mock.calls.map(([request]) => ({ id: request.input.targetThreadId })),
   );
-  state.remove.mockRejectedValueOnce(new Error("Disconnected"));
+  state.remove.mockResolvedValueOnce({
+    _tag: "Failure",
+    cause: Cause.fail(new Error("Disconnected")),
+  });
   await act(async () => button("Close side chat 1").click());
   expect(textareas().map((item) => item.value)).toEqual(["first draft", "second draft"]);
   expect(close).not.toHaveBeenCalled();
@@ -126,7 +130,10 @@ it("a failed close retains both independent drafts and allows a successful retry
 
 it("offers to close older snapshots only after a new main user message", async () => {
   const withMessage = (id: string, role: "user" | "assistant", createdAt: string) => {
-    if (role === "user") state.threads[0]!.latestUserMessageAt = createdAt;
+    if (role === "user")
+      state.threads = state.threads.map((thread) =>
+        thread.id === "source" ? { ...thread, latestUserMessageAt: createdAt } : thread,
+      );
     return {
       ...props,
       source: { ...props.source, messages: [{ id, role, createdAt }] },

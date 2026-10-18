@@ -149,6 +149,21 @@ it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
       assert.include(handoff.summaryText, "SIDE_LOCAL_QUESTION");
       assert.include(handoff.history!.coverage, snapshotHistory.coverage);
       assert.deepEqual(snapshotHistory.messages, initial.history!.messages);
+      const delta = yield* service.prepareProviderHandoff({
+        ...handoff,
+        transferId: handoff.transferId,
+        strategy: "delta_since_target_last_seen",
+        initialHistory: snapshotHistory,
+        fromProviderInstanceId: ProviderInstanceId.make("claudeAgent"),
+        toProviderInstanceId: ProviderInstanceId.make("codex"),
+        items: [
+          importedItem({ role: "user", id: "new-question", text: "NEW_SIDE_QUESTION", ordinal: 2 }),
+        ],
+        createdAt: DateTime.makeUnsafe("2026-01-04T00:00:00.000Z"),
+      });
+      assert.include(delta.summaryText, "NEW_SIDE_QUESTION");
+      assert.notInclude(delta.summaryText, "FROZEN_MAIN_PARTIAL");
+      assert.notInclude(delta.history!.coverage, snapshotHistory.coverage);
     }),
   );
 

@@ -88,20 +88,20 @@ export function SideChat({
     const id = newThreadId();
     setTabs((current) => [...current, { id, prompt, pending: true }]);
     setActiveId(id);
-    try {
-      const result = await branch({
-        environmentId: source.environmentId,
-        input: { targetThreadId: id, sourceThreadId: source.id },
-      });
-      if (result._tag === "Failure") throw Cause.squash(result.cause);
-      setTabs((current) => current.map((t) => (t.id === id ? { ...t, pending: false } : t)));
-    } catch (error) {
-      setTabs((current) =>
-        current.map((t) =>
-          t.id === id ? { ...t, pending: false, error: String(error), unavailable: true } : t,
-        ),
-      );
-    }
+    const result = await branch({
+      environmentId: source.environmentId,
+      input: { targetThreadId: id, sourceThreadId: source.id },
+    });
+    const error = result._tag === "Failure" ? String(Cause.squash(result.cause)) : null;
+    setTabs((current) =>
+      current.map((tab) =>
+        tab.id !== id
+          ? tab
+          : error
+            ? { ...tab, pending: false, error, unavailable: true }
+            : { ...tab, pending: false },
+      ),
+    );
   });
   useEffect(() => {
     if (!request || handled.current === request.serial) return;
@@ -123,20 +123,17 @@ export function SideChat({
     }
     actionInFlight.current = true;
     setClosing(tab.id);
-    try {
-      const result = await remove({
-        environmentId: source.environmentId,
-        input: { threadId: tab.id },
-      });
-      if (result._tag === "Failure") throw Cause.squash(result.cause);
+    const result = await remove({
+      environmentId: source.environmentId,
+      input: { threadId: tab.id },
+    });
+    actionInFlight.current = false;
+    setClosing(null);
+    if (result._tag === "Failure") {
+      const error = String(Cause.squash(result.cause));
+      setTabs((current) => current.map((item) => (item.id === tab.id ? { ...item, error } : item)));
+    } else {
       forget(tab.id);
-    } catch (error) {
-      setTabs((current) =>
-        current.map((t) => (t.id === tab.id ? { ...t, error: String(error) } : t)),
-      );
-    } finally {
-      actionInFlight.current = false;
-      setClosing(null);
     }
   };
   return (

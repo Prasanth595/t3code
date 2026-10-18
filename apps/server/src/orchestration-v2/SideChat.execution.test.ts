@@ -238,11 +238,31 @@ it.effect.each(cases)(
       assert.deepEqual(kept.contextHandoffs, b.contextHandoffs);
       assert.lengthOf(kept.runs, 1);
       yield* orchestrator.dispatch({
+        type: "thread.side-chat.keep",
+        commandId: CommandId.make("keep-second-again"),
+        threadId: second,
+      });
+      const keptAgain = yield* orchestrator.getThreadProjection(second);
+      assert.deepEqual(keptAgain.thread, kept.thread);
+      assert.deepEqual(keptAgain.runs, kept.runs);
+
+      yield* orchestrator.dispatch({
         type: "thread.delete",
         commandId: CommandId.make("close-first"),
         threadId: first,
       });
       assert.isNotNull((yield* orchestrator.getThreadProjection(first)).thread.deletedAt);
+      const deleted = yield* orchestrator.getThreadProjection(first);
+      const keepDeleted = yield* orchestrator
+        .dispatch({
+          type: "thread.side-chat.keep",
+          commandId: CommandId.make("keep-deleted"),
+          threadId: first,
+        })
+        .pipe(Effect.flip);
+      assert.equal(keepDeleted._tag, "OrchestratorDispatchError");
+      assert.deepEqual((yield* orchestrator.getThreadProjection(first)).thread, deleted.thread);
+
       assert.isNull((yield* orchestrator.getThreadProjection(source)).thread.deletedAt);
     }).pipe(Effect.provide(layer)),
 );

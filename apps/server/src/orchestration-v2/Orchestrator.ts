@@ -10765,7 +10765,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         break;
       case "thread.side-chat.keep": {
         const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
-        if (!projection.thread.sideChatOf) break;
+        if (projection.thread.deletedAt !== null) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} is deleted.`,
+          });
+        }
         const now = yield* DateTime.now;
         yield* emit(
           events,
@@ -10775,7 +10781,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           threadId: command.threadId,
           providerInstanceId: projection.thread.providerInstanceId,
           occurredAt: now,
-          payload: { ...projection.thread, sideChatOf: null, updatedAt: now },
+          payload: projection.thread.sideChatOf
+            ? { ...projection.thread, sideChatOf: null, updatedAt: now }
+            : projection.thread,
         });
         break;
       }
