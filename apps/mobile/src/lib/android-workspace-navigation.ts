@@ -75,6 +75,17 @@ export function resetAndroidWorkspace(
   });
 }
 
+/** Workspace Back on Android: a child thread pops to its parent; anything else collapses to the list. */
+export function returnToAndroidWorkspaceList(
+  navigation: WorkspaceNavigation & { readonly goBack: () => void },
+  selectTab: () => void,
+) {
+  const state = navigation.getState();
+  if (state && androidWorkspaceBackReturnsToThread(state)) return navigation.goBack();
+  selectTab();
+  resetAndroidWorkspace(navigation);
+}
+
 // In the split view these destinations swap the detail pane beside the sidebar instead of
 // stacking over Home, so the default slide-in would show a layer that is not there.
 export function androidWorkspaceDestinationAnimation(routeName: string, usesSplitView: boolean) {

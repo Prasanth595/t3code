@@ -4,6 +4,7 @@ import {
   androidWorkspaceBackReturnsToThread,
   androidWorkspaceNavigationState,
   resetAndroidWorkspace,
+  returnToAndroidWorkspaceList,
   type AndroidWorkspaceDestination,
   type AndroidWorkspaceResetAction,
 } from "./android-workspace-navigation";
@@ -194,12 +195,29 @@ describe("Android workspace navigation", () => {
           : apply(parent, StackActions.push("Thread", childParams));
       expect(names(child)).toEqual(["Home", "Thread", "Thread"]);
 
-      expect(androidWorkspaceBackReturnsToThread(child)).toBe(true);
-      const back = apply(child, StackActions.pop());
-      expect(back.routes[back.index]?.key).toBe(parent.routes[1]?.key);
+      let state = child;
+      const calls: string[] = [];
+      const navigation = {
+        dispatch: (action: AndroidWorkspaceResetAction) => {
+          calls.push("reset");
+          state = apply(state, action);
+        },
+        getParent: () => undefined,
+        getState: () => state,
+        goBack: () => {
+          calls.push("goBack");
+          state = apply(state, StackActions.pop());
+        },
+      };
+      const back = () => returnToAndroidWorkspaceList(navigation, () => calls.push("select"));
 
-      expect(androidWorkspaceBackReturnsToThread(back)).toBe(false);
-      expect(names(select(back))).toEqual(["Home"]);
+      back();
+      expect(calls).toEqual(["goBack"]);
+      expect(state.routes[state.index]?.key).toBe(parent.routes[1]?.key);
+
+      back();
+      expect(calls).toEqual(["goBack", "select", "reset"]);
+      expect(names(state)).toEqual(["Home"]);
     },
   );
 
