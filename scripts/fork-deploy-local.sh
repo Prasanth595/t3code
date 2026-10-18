@@ -7,7 +7,7 @@
 # The script builds the `t3` executable and the web client here, and takes the native packages
 # and the resource monitor from the newest fork release. It unpacks the result into
 # <T3 home>/runtime/versions/<version> on the server, and runs `t3 update <version> --yes`
-# there. The restart stops running agent turns. See docs/fork.md "Deploy a local build".
+# there. The restart stops running agent turns. See docs/fork/operations.md "Deploy a local build".
 set -euo pipefail
 
 readonly FORK_REPOSITORY="Yarden-zamir/t3code"
@@ -130,7 +130,7 @@ echo "Built $archive"
 [[ -n "$host" ]] || exit 0
 
 # `t3 update` checks that the new `t3` runs and reports the version, then points the service at it
-# and restarts it. It does not go back by itself: see docs/fork.md for the way back.
+# and restarts it. It does not go back by itself: see docs/fork/operations.md for the way back.
 remote_archive="/tmp/$stem.tar.gz"
 scp -q "$archive" "$host:$remote_archive"
 ssh "$host" bash -s -- "$version" "$remote_archive" <<'REMOTE'

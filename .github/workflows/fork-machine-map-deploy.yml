@@ -1,7 +1,7 @@
 name: Machine map deploy
 
 # Deploys the machine map portal (apps/machine-map) to Cloudflare from main.
-# Only this workflow deploys, so a deploy always matches main. See docs/fork.md.
+# Only this workflow deploys, so a deploy always matches main. See apps/machine-map/README.md "Deploy".
 
 on:
   push:

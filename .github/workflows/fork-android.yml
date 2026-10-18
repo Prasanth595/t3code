@@ -6,7 +6,7 @@ name: Fork Android
 # release. It never creates a release, and a failure only marks this workflow.
 # A run from a branch builds that branch and uploads the APK as a workflow
 # artifact instead. After a release, it builds only when the app changed since
-# the newest earlier release with an APK. See docs/fork.md "Android app".
+# the newest earlier release with an APK. See docs/fork/operations.md "Android APK build".
 
 on:
   workflow_run:

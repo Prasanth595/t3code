@@ -1,5 +1,5 @@
 /**
- * The fork Android app in Obtainium, with the release settings of docs/fork.md "Android app".
+ * The fork Android app in Obtainium, with the release settings of docs/fork/features.md "Android APK".
  * Fork releases are prereleases, and most have no APK, so Obtainium falls back to older ones.
  */
 const FORK_ANDROID_APP = {

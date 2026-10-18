@@ -1,4 +1,4 @@
-# Install T3 Code from the Yarden-zamir/t3code fork on Windows. See docs/fork.md "Install the fork".
+# Install T3 Code from the Yarden-zamir/t3code fork on Windows. See docs/fork/operations.md "Install the fork".
 #
 #   irm https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.ps1 | iex
 #   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.ps1))) -Join <code>

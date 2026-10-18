@@ -3,7 +3,7 @@ name: Fork CI
 # The commands of ci.yml on GitHub-hosted runners. ci.yml uses upstream's
 # Blacksmith runners, which this fork does not have, so the fork disables it.
 # Limit: this file copies the ci.yml commands by hand. When upstream changes
-# them, update this file. A failure on main calls the repair agent. See docs/fork.md.
+# them, update this file. A failure on main calls the repair agent. See docs/fork/operations.md "Fork CI".
 #
 # The heavy jobs run only when the push or pull request changes code. The changes job
 # compares a push with the last green run, so a cancelled or failed run never hides a

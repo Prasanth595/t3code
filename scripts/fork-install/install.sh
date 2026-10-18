@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install or update T3 Code from the Yarden-zamir/t3code fork. See docs/fork.md "Install the fork".
+# Install or update T3 Code from the Yarden-zamir/t3code fork. See docs/fork/operations.md "Install the fork".
 #
 #   curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.sh | bash
 #   curl -fsSL .../install.sh | bash -s -- --join <code>
@@ -7,7 +7,7 @@
 # Linux with a display: the script installs the newest nightly AppImage from the fork releases.
 # Linux without a display: the script runs scripts/install.sh (the upstream installer, pointed at
 #   the fork releases) and the upstream background service `t3 service install`, on loopback.
-#   The server then updates itself (docs/fork.md "Server updates").
+#   The server then updates itself (docs/fork/operations.md "Server updates").
 # macOS: the script installs the newest nightly app from the fork releases.
 set -euo pipefail
 
@@ -165,7 +165,7 @@ EOF
 
 # Installs the newest fork release with scripts/install.sh, the upstream installer: the runtime in
 # <T3 home>/runtime/versions/<version> and the link ~/.local/bin/t3. The upstream background service
-# (`t3 service install`) runs it and updates it (docs/fork.md "Server updates"). The machine needs
+# (`t3 service install`) runs it and updates it (docs/fork/operations.md "Server updates"). The machine needs
 # no Node.
 install_linux_server() {
   need curl "Install it with your package manager, for example: $APT_HINT"
@@ -200,7 +200,7 @@ install_upstream_service() {
   # The server starts provider CLIs (claude, codex), so it gets the PATH of this shell.
   # Run the installer again after a PATH change.
   cat >"$unit_dir/$UPSTREAM_SERVICE.d/fork.conf" <<EOF
-# Written by the T3 Code fork installer. Loopback only: publish it with a tunnel (docs/fork.md).
+# Written by the T3 Code fork installer. Loopback only: publish it with a tunnel (docs/fork/operations.md).
 [Service]
 Environment=PATH=$PATH
 Environment=T3CODE_HOST=127.0.0.1

@@ -1,7 +1,7 @@
 /**
  * Fork feature: the changelog of the fork releases, the upstream commits that fork main does not
  * have yet, and the Fork Sync workflow. Reads go through the server's GitHub client, so they use
- * the credential of `gh` on this machine. See docs/fork.md.
+ * the credential of `gh` on this machine. See docs/fork/features.md "Changelog".
  *
  * @module fork/ForkChangelog
  */
