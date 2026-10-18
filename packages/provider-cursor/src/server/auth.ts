@@ -27,7 +27,18 @@ interface AuthFlow {
   fiber?: Fiber.Fiber<void>;
 }
 
+export type CursorCredentialState =
+  | { readonly status: "absent" }
+  | {
+      readonly status: "valid";
+      readonly apiKey: string;
+      readonly backendUrl: string;
+      readonly apiKeyExpiresAtMs?: number;
+    }
+  | { readonly status: "expired" };
+
 export interface CursorAuth {
+  readonly readCredentialState: Effect.Effect<CursorCredentialState, ProviderSetupError>;
   readonly controller: ProviderAuthController;
   readonly readApiKey: Effect.Effect<string | undefined, ProviderSetupError>;
   readonly requireApiKey: Effect.Effect<string, ProviderSetupError>;
@@ -72,8 +83,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
       state: { ...current.state, ...patch },
     }));
 
-  const readApiKey = Effect.gen(function* () {
-    if (configuredKey) return configuredKey;
+  const readCredentialState: CursorAuth["readCredentialState"] = Effect.gen(function* () {
     const credentials = yield* Effect.tryPromise({
       try: () => options.store.load(),
       catch: (cause) =>
@@ -84,12 +94,24 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
           cause,
         }),
     });
+    if (!credentials) return { status: "absent" } as const;
     const now = yield* Clock.currentTimeMillis;
-    return credentials &&
-      (credentials.apiKeyExpiresAtMs === undefined || credentials.apiKeyExpiresAtMs > now)
-      ? credentials.apiKey
-      : undefined;
+    if (credentials.apiKeyExpiresAtMs !== undefined && credentials.apiKeyExpiresAtMs <= now)
+      return { status: "expired" } as const;
+    return {
+      status: "valid",
+      apiKey: credentials.apiKey,
+      backendUrl: credentials.backendUrl,
+      ...(credentials.apiKeyExpiresAtMs === undefined
+        ? {}
+        : { apiKeyExpiresAtMs: credentials.apiKeyExpiresAtMs }),
+    } as const;
   });
+  const readApiKey = configuredKey
+    ? Effect.succeed(configuredKey)
+    : readCredentialState.pipe(
+        Effect.map((credential) => (credential.status === "valid" ? credential.apiKey : undefined)),
+      );
 
   const requireApiKey = Effect.gen(function* () {
     if (operation !== "idle") {
@@ -485,6 +507,7 @@ export const makeCursorAuth = Effect.fn("makeCursorAuth")(function* (options: Cu
 
   return {
     controller,
+    readCredentialState,
     readApiKey,
     requireApiKey,
     withAccess,

@@ -87,6 +87,7 @@ export const CursorDriver: ProviderDriver<
       const host = yield* ProviderHost.ProviderHost;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      const crypto = yield* Crypto.Crypto;
       const httpClient = yield* HttpClient.HttpClient;
       const keychain = yield* CursorKeychain.CursorKeychain;
       const sdkRunner = yield* CursorAgentSdk.CursorAgentSdkRunner;
@@ -205,9 +206,20 @@ export const CursorDriver: ProviderDriver<
         auth.withAccess,
       );
 
-      const checkProvider = auth.readApiKey.pipe(
-        Effect.orElseSucceed(() => undefined),
-        Effect.flatMap((apiKey) =>
+      const checkProvider = Effect.gen(function* () {
+        const credential = auth.usesApiKey
+          ? ({ status: "absent" } as const)
+          : yield* auth.readCredentialState.pipe(
+              Effect.orElseSucceed(() => ({ status: "absent" }) as const),
+            );
+        const apiKey = auth.usesApiKey
+          ? yield* auth.readApiKey.pipe(Effect.orElseSucceed(() => undefined))
+          : credential.status === "valid"
+            ? credential.apiKey
+            : undefined;
+        return { credential, apiKey };
+      }).pipe(
+        Effect.flatMap(({ credential, apiKey }) =>
           checkCursorProviderStatus(
             effectiveConfig,
             {
@@ -219,13 +231,15 @@ export const CursorDriver: ProviderDriver<
             Effect.flatMap((snapshot) =>
               effectiveConfig.enabled &&
               snapshot.installed &&
-              snapshot.auth.status === "authenticated"
+              (snapshot.auth.status === "authenticated" ||
+                (!auth.usesApiKey && credential.status === "expired"))
                 ? host.settings.get.pipe(
                     Effect.flatMap((settings) =>
                       readCursorUsageLimits(
                         effectiveConfig,
-                        { ...processEnv, CURSOR_API_KEY: apiKey },
+                        auth.usesApiKey ? { ...processEnv, CURSOR_API_KEY: apiKey } : processEnv,
                         settings.cursorKeychainUsageEnabled,
+                        auth.usesApiKey ? undefined : { instanceId, credential },
                       ),
                     ),
                     Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
@@ -234,6 +248,7 @@ export const CursorDriver: ProviderDriver<
             ),
           ),
         ),
+        Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
