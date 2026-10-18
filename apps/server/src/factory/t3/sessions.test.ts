@@ -191,9 +191,14 @@ describe("threadStatusOf", () => {
     assert.strictEqual(running.runStartedAt, 1791182378376);
     assert.strictEqual(running.runCompletedAt, null);
     assert.strictEqual(statusOf([unstartedRun(1, "cancelled")]).runStartedAt, null);
-    // A run that never started counts from when it was requested.
-    const requested = { ...unstartedRun(1, "cancelled"), requestedAt: "2026-10-04T09:36:15.113Z" };
-    assert.strictEqual(statusOf([requested]).runStartedAt, 1791106575113);
+    // A run cancelled before it started counts from when it was requested; one that failed did not begin.
+    const requestedAt = "2026-10-04T09:36:15.113Z";
+    const cancelled = { ...unstartedRun(1, "cancelled"), requestedAt };
+    assert.strictEqual(statusOf([cancelled]).runStartedAt, 1791106575113);
+    assert.strictEqual(
+      statusOf([{ ...unstartedRun(1, "failed"), requestedAt }]).runStartedAt,
+      null,
+    );
     // A wake run's work start is copied from an earlier run, so its own start counts.
     const woken = { ...run(1, "running"), workStartedAt: "2026-10-04T09:36:15.242Z" };
     assert.strictEqual(statusOf([woken]).runStartedAt, 1791182378376);

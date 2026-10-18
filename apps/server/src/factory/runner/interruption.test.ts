@@ -1123,8 +1123,13 @@ describe("interrupted: a T3 restart", () => {
     }),
   );
 
-  /** T3's record of a sole run cancelled while its workspace was still being prepared. */
-  const cancelledBeforeStarting = (rig: Rig, requestedAt: number, completedAt: number) => {
+  /** T3's record of a sole run that ended while its workspace was still being prepared. */
+  const endedBeforeStarting = (
+    rig: Rig,
+    status: "cancelled" | "failed",
+    requestedAt: number,
+    completedAt: number,
+  ) => {
     rig.world.status = () =>
       threadStatusOf({
         thread: { branch: "t3code/abc", worktreePath: "/t3/wt", archivedAt: null },
@@ -1132,7 +1137,7 @@ describe("interrupted: a T3 restart", () => {
           {
             id: "run-1",
             ordinal: 1,
-            status: "cancelled",
+            status,
             requestedAt: DateTime.makeUnsafe(requestedAt),
             startedAt: null,
             completedAt: DateTime.makeUnsafe(completedAt),
@@ -1147,7 +1152,7 @@ describe("interrupted: a T3 restart", () => {
       // Claimed seconds before a redeploy: the old server cancelled the run while it was still
       // preparing its workspace, so T3 never gave it a start time.
       const rig = rigFor();
-      cancelledBeforeStarting(rig, T3_STARTED - 9_000, T3_STARTED - 6_000);
+      endedBeforeStarting(rig, "cancelled", T3_STARTED - 9_000, T3_STARTED - 6_000);
       assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
       const outcome = yield* decide(rig, evidence(null, 1, [T3_STARTED]));
       assert.strictEqual(outcome.kind, "resumed");
@@ -1159,13 +1164,28 @@ describe("interrupted: a T3 restart", () => {
   it.effect("sends a run requested and cancelled after the server started to stuck", () =>
     Effect.gen(function* () {
       const rig = rigFor();
-      cancelledBeforeStarting(rig, T0 - 3 * MINUTE, T0 - MINUTE);
+      endedBeforeStarting(rig, "cancelled", T0 - 3 * MINUTE, T0 - MINUTE);
       assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("cancelled"));
       assert.deepStrictEqual(yield* decide(rig, evidence(null, 1, [T3_STARTED])), {
         kind: "stuck",
         reason: "the session run ended as cancelled",
       });
     }),
+  );
+
+  it.effect(
+    "sends a run that failed before it had started to stuck, even just before a shutdown",
+    () =>
+      Effect.gen(function* () {
+        // Preparing the workspace broke on its own; only a cancel is the shutdown's doing.
+        const rig = rigFor();
+        endedBeforeStarting(rig, "failed", T3_STARTED - 9_000, T3_STARTED - 6_000);
+        assert.deepStrictEqual(yield* advanceIn(rig), endedBadly("failed"));
+        assert.deepStrictEqual(yield* decide(rig, evidence(null, 1, [T3_STARTED])), {
+          kind: "stuck",
+          reason: "the session run ended as failed",
+        });
+      }),
   );
 
   it.effect("does not relaunch a thread that is gone on the start alone", () =>
