@@ -211,6 +211,38 @@ describe("workspaceAssetResource", () => {
     });
   });
 
+  it.each([
+    ["/repo", "/repo/image.png", "workspace-file"],
+    ["/repo", "/tmp/image.png", "media-file"],
+    ["/repo", "/repo-other/image.png", "media-file"],
+    ["/repo", "/repo/../image.png", "media-file"],
+    ["C:\\repo", "c:\\REPO\\image.png", "workspace-file"],
+    ["C:\\repo", "C:\\Temp\\image.png", "media-file"],
+    ["C:\\repo", "D:\\images\\image.png", "media-file"],
+    ["\\\\host\\share\\repo", "\\\\host\\share\\images\\image.png", "media-file"],
+  ])("previews %s image %s with %s", (workspaceRoot, absolutePath, kind) => {
+    expect(workspaceAssetResource({ ...input, workspaceRoot, absolutePath, draft: false })).toEqual(
+      { _tag: kind, threadId: "thread-1", path: absolutePath },
+    );
+  });
+
+  it("keeps explicit media requests inside the workspace", () => {
+    expect(
+      workspaceAssetResource({
+        ...input,
+        kind: "media-file",
+        absolutePath: "/repo/video.mp4",
+        draft: false,
+      }),
+    ).toEqual({ _tag: "media-file", threadId: "thread-1", path: "/repo/video.mp4" });
+  });
+
+  it("keeps outside-workspace images on the draft resource", () => {
+    expect(
+      workspaceAssetResource({ ...input, absolutePath: "/tmp/image.png", draft: true }),
+    ).toEqual({ _tag: "draft-workspace-file", cwd: "/repo", path: "/tmp/image.png" });
+  });
+
   it("names the workspace root for a draft, which the server cannot resolve from a thread", () => {
     expect(workspaceAssetResource({ ...input, draft: true })).toEqual({
       _tag: "draft-workspace-file",

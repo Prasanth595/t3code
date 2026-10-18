@@ -1,4 +1,5 @@
 import type { AssetResource, ProjectReadFileError, ScopedThreadRef } from "@t3tools/contracts";
+import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { isAbsolutePath, workspaceRelativeFilePath } from "@t3tools/shared/path";
 
 export function resolveFilePreviewPath(path: string | null, cwd: string): string | null {
@@ -65,5 +66,10 @@ export function workspaceAssetResource(input: {
   if (input.draft) {
     return { _tag: "draft-workspace-file", cwd: input.workspaceRoot, path: input.absolutePath };
   }
-  return { _tag: input.kind, threadId: input.threadRef.threadId, path: input.absolutePath };
+  const kind =
+    input.kind === "workspace-file" &&
+    mediaFileReference(input.absolutePath, input.workspaceRoot).relativePath === undefined
+      ? "media-file"
+      : input.kind;
+  return { _tag: kind, threadId: input.threadRef.threadId, path: input.absolutePath };
 }
