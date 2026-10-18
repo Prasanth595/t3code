@@ -22,7 +22,10 @@ import { GlobalScriptsSettingsRows } from "./GlobalScriptsSettings";
 import { InstalledAppSettingsRow } from "./InstalledAppSettingsRow";
 import { KeybindingSyncSettingsRow } from "./KeybindingSyncSettingsRow";
 import { MachineMapSettingsRows } from "./MachinesSettings";
-import { MobilePublishedThemesSettingsRow } from "./MobileAppSettings";
+import {
+  MobileNewThreadProjectSettingsRow,
+  MobilePublishedThemesSettingsRow,
+} from "./MobileAppSettings";
 import { PreferOriginRemoteSettingsRow } from "./PreferOriginRemoteSettings";
 import { PreviewLocalServerGroupsSettingsRow } from "./PreviewLocalServerGroupsSettingsRow";
 import { PullRequestFilterChipsSettingsRow } from "./PullRequestFilterChipsSettingsRow";
@@ -92,6 +95,7 @@ const FORK_SETTING_ROWS: Readonly<Record<ForkSettingRowId, ComponentType>> = {
   "machine-map": MachineMapSettingsRows,
   "keybinding-sync": KeybindingSyncSettingsRow,
   "mobile-published-themes": MobilePublishedThemesSettingsRow,
+  "mobile-new-thread-project": MobileNewThreadProjectSettingsRow,
 };
 
 /** Opens the row of `item` in its usual place, the way a search result does. */

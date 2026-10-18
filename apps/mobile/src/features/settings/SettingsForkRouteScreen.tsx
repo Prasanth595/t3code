@@ -1,4 +1,8 @@
-import { AuthSettingsWriteScope, type ServerSettingsPatch } from "@t3tools/contracts";
+import {
+  AuthSettingsWriteScope,
+  type MobileNewThreadProject,
+  type ServerSettingsPatch,
+} from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -11,6 +15,7 @@ import {
   AndroidSettingsEnvironmentFilter,
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
+import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -20,6 +25,20 @@ import {
   resolveMobileSettingsTargets,
   uniformMobileSetting,
 } from "./settings-scoped-server";
+
+const NEW_THREAD_CHOICES: ReadonlyArray<{
+  readonly mode: MobileNewThreadProject;
+  readonly label: string;
+  readonly description: string;
+}> = [
+  { mode: "picker", label: "Choose a project", description: "Show the project list first." },
+  {
+    mode: "last",
+    label: "Last project",
+    description: "Open a draft in the project of the last new thread on this phone.",
+  },
+  { mode: "none", label: "No project", description: "Open a draft without a project." },
+];
 
 /**
  * Fork: the fork settings that apply to the mobile app, like the Fork page of web settings. Each
@@ -63,6 +82,7 @@ export function SettingsForkRouteScreen() {
       setPendingWrites((count) => count - 1);
     });
   };
+  const newThreadProject = uniformMobileSetting(targets, "mobileNewThreadProject");
 
   return (
     <>
@@ -98,6 +118,19 @@ export function SettingsForkRouteScreen() {
                   disabled={disabled}
                   onValueChange={(value) => write({ threadLinkChips: value })}
                 />
+              </SettingsSection>
+              <SettingsSection title="New thread opens">
+                {NEW_THREAD_CHOICES.map((choice, index) => (
+                  <SettingsChoiceRow
+                    key={choice.mode}
+                    label={choice.label}
+                    description={choice.description}
+                    selected={newThreadProject === choice.mode}
+                    separated={index > 0}
+                    disabled={disabled}
+                    onPress={() => write({ mobileNewThreadProject: choice.mode })}
+                  />
+                ))}
               </SettingsSection>
             </>
           )}

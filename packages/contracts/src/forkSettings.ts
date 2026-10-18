@@ -237,6 +237,14 @@ export const ForkClientSettingsPatchFields = {
   tooltipShortcutLimit: Schema.optionalKey(TooltipShortcutLimit),
 };
 
+/**
+ * Fork: what "New thread" opens in the mobile app. `picker` shows the project picker, `last`
+ * opens a draft in the project of the last new thread on the phone, and `none` opens a draft
+ * without a project. A thread link, a share or a prompt link keeps its own project.
+ */
+export const MobileNewThreadProject = Schema.Literals(["picker", "last", "none"]);
+export type MobileNewThreadProject = typeof MobileNewThreadProject.Type;
+
 export const ForkServerSettingsFields = {
   /**
    * Fork: where new worktrees go, such as `{repoDir}/{branchLeaf}`. Empty
@@ -335,6 +343,10 @@ export const ForkServerSettingsFields = {
    * and the mobile app reads it.
    */
   mobilePublishedThemes: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Fork: what "New thread" opens in the mobile app. See `MobileNewThreadProject`. */
+  mobileNewThreadProject: MobileNewThreadProject.pipe(
+    Schema.withDecodingDefault(Effect.succeed("picker")),
+  ),
 };
 
 export const ForkServerSettingsPatchFields = {
@@ -357,6 +369,7 @@ export const ForkServerSettingsPatchFields = {
   keybindingSync: Schema.optionalKey(Schema.Boolean),
   previewLocalServerGroups: Schema.optionalKey(Schema.Boolean),
   mobilePublishedThemes: Schema.optionalKey(Schema.Boolean),
+  mobileNewThreadProject: Schema.optionalKey(MobileNewThreadProject),
   /** Replaces the saved groups whole: a merge would keep deleted groups and assignments. */
   sidebarGroups: Schema.optionalKey(SidebarGroups),
   /** Per surface: a patched layout replaces the saved one, and `null` restores the built-in card. */

@@ -56,6 +56,13 @@ export const APPEARANCE_ITEMS = [
     searchTerms: ["mobile phone android app theme published fonts shape radius canvas pattern"],
     environmentOnly: true,
   },
+  {
+    id: "mobile-new-thread-project",
+    title: "New thread on mobile",
+    to: "/settings/appearance",
+    searchTerms: ["mobile phone android app new thread project picker last scratch no project"],
+    environmentOnly: true,
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export const GLOBAL_SCRIPTS_ITEMS = [

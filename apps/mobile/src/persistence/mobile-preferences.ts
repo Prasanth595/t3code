@@ -53,6 +53,15 @@ const isThreadListFilters = Schema.is(ThreadListFilters);
 const isPullRequestListPreferences = Schema.is(PullRequestListPreferences);
 const isPublishedThemes = Schema.is(Schema.Array(EnvironmentTheme));
 
+/** Fork: a scratch project is kept as `scratch`, because its id differs per environment. */
+const LastNewThreadProject = Schema.Struct({
+  environmentId: EnvironmentId,
+  projectId: Schema.String,
+  scratch: Schema.Boolean,
+});
+export type LastNewThreadProject = typeof LastNewThreadProject.Type;
+const isLastNewThreadProject = Schema.is(LastNewThreadProject);
+
 export interface Preferences {
   readonly pullRequestHideTestFiles?: boolean;
   readonly pullRequestMergeMethod?: PullRequestMergeMethod;
@@ -91,6 +100,8 @@ export interface Preferences {
   readonly publishedThemes?: ReadonlyArray<EnvironmentTheme>;
   /** Fork: the server `defaultTheme` that the app took last. */
   readonly publishedDefaultThemeApplied?: string;
+  /** Fork: the project of the last new thread, for `mobileNewThreadProject: "last"`. */
+  readonly lastNewThreadProject?: LastNewThreadProject;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -162,6 +173,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     pullRequestListFilters?: PullRequestListPreferences;
     publishedThemes?: ReadonlyArray<EnvironmentTheme>;
     publishedDefaultThemeApplied?: string;
+    lastNewThreadProject?: LastNewThreadProject;
   } = {};
 
   if (typeof parsed.pullRequestHideTestFiles === "boolean") {
@@ -295,6 +307,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.publishedDefaultThemeApplied === "string") {
     preferences.publishedDefaultThemeApplied = parsed.publishedDefaultThemeApplied;
+  }
+  if (isLastNewThreadProject(parsed.lastNewThreadProject)) {
+    preferences.lastNewThreadProject = parsed.lastNewThreadProject;
   }
   return preferences;
 }

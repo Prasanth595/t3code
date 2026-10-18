@@ -72,6 +72,7 @@ const FORK_SETTING_GROUPS = [
     entries: [
       { ids: ["sidebar-groups", "sidebar-group-single-thread"] },
       { ids: ["snooze-quick-options"] },
+      { ids: ["mobile-new-thread-project"] },
       { ids: ["storage-worktree-path-template"] },
       {
         ids: ["storage-worktrees-location"],

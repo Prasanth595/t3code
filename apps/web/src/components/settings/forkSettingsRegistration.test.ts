@@ -59,6 +59,7 @@ const FORK_PAGE_ROWS: Record<
   keybindingSync: "keybinding-sync",
   previewLocalServerGroups: "preview-local-server-groups",
   mobilePublishedThemes: "mobile-published-themes",
+  mobileNewThreadProject: "mobile-new-thread-project",
 };
 
 /** The settings that Restore defaults keeps, with the reason. */

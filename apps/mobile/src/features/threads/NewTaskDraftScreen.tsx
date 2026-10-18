@@ -29,6 +29,7 @@ import Animated from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useFontFamily } from "../../lib/useFontFamily";
+import { useRememberNewThreadProject } from "./forkNewThreadStart";
 import {
   AuthOrchestrationOperateScope,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -642,6 +643,7 @@ export function NewTaskDraftScreen(props: {
   const theme = useUniwindTheme();
   const foregroundColor = theme["--color-foreground"];
   const regularFontFamily = useFontFamily("regular");
+  const rememberNewThreadProject = useRememberNewThreadProject();
   const bodyText = useScaledTextRole("body");
 
   const lastInitialProjectRefRef = useRef(props.initialProjectRef);
@@ -1311,6 +1313,7 @@ export function NewTaskDraftScreen(props: {
     } finally {
       flow.setSubmitting(false);
     }
+    rememberNewThreadProject(selectedProject, flow.isScratchDraft);
     const draftSnapshot = getComposerDraftSnapshot(draftKey);
     if (editingPendingTask) {
       flow.finishEditingPendingTask();

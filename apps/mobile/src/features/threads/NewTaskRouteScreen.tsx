@@ -34,6 +34,7 @@ import { useWorkspaceState } from "../../state/workspace";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { usePromptLinkResolver } from "../prompt-links/usePromptLinkResolver";
 import { useIncomingShare } from "../sharing/IncomingShareProvider";
+import { useForkNewThreadStart } from "./forkNewThreadStart";
 import { useNewTaskFlow } from "./new-task-flow-provider";
 import { filterProjectScopes, getProjectScopeSelectionTarget } from "./new-task-project-selection";
 
@@ -256,6 +257,19 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
       scratchStartInFlightRef.current = false;
     }
   }
+
+  // Fork: `mobileNewThreadProject` can skip the picker for a plain new thread.
+  const navigationState = navigation.getState();
+  useForkNewThreadStart({
+    enabled:
+      navigationState?.routes[navigationState.index - 1]?.name !== "NewTaskDraft" &&
+      routeShareId === undefined &&
+      Object.values(route.params ?? {}).every((value) => value === undefined),
+    projects,
+    canStartScratch,
+    startScratch,
+    selectProject,
+  });
 
   useEffect(() => {
     const destination = incomingShare?.destination;

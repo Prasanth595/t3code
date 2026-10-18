@@ -336,6 +336,15 @@ A thread address opened from outside T3 Code, for example from Slack or GitHub, 
   - When the desktop app is not running, the link that starts it is lost (upstream pingdotgg/t3code#18613). Revisit when pingdotgg/t3code#18422 merges upstream.
   - With `threadLinkChips` off, a thread address clicked in T3 web chat opens a new tab that counts as a link from outside, so it goes to the desktop app too. Revisit if users keep `threadLinkChips` off while this setting is on.
 
+### New thread on mobile
+
+What New thread opens in the mobile app.
+
+- **Setting:** server setting `mobileNewThreadProject`: `picker` (default, the project list), `last` (a draft in the project of the last new thread on the phone) or `none` (a draft without a project). Settings > Appearance > Mobile app, or Fork in the mobile Settings.
+- **Works on:** mobile.
+- Back from the draft shows the project list. A share, a prompt link and "Choose a project" in the draft keep the project list.
+- **Limits:** `none` needs a server that offers threads without a project. Without one, and with `last` and no earlier new thread, the project list shows.
+
 ### Thread card layouts
 
 Build the thread card from its elements, for desktop and web and for mobile.
@@ -471,7 +480,7 @@ The mobile app uses the themes that its servers publish.
 
 ### Fork settings on mobile
 
-Fork in the mobile Settings holds the fork settings that apply to the mobile app: published themes and thread link chips. A change writes the setting to each selected environment.
+Fork in the mobile Settings holds the fork settings that apply to the mobile app: published themes, thread link chips and what New thread opens. A change writes the setting to each selected environment.
 
 - **Works on:** mobile.
 - **Limits:** a change on the phone is the own value of each server, not the shared value of the machine map. Set the shared value in the portal or from a machine with the map role `edit`.
