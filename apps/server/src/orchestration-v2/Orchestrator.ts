@@ -1318,7 +1318,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // every waiting message and drop it from the queue as each one fails.
       const sessionError =
         projection.providerSessions
-          .filter((session) => session.providerInstanceId === projection.thread.providerInstanceId)
+          .filter((session) => session.providerInstanceId === queuedRun.providerInstanceId)
           .toSorted(
             (left, right) =>
               DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
