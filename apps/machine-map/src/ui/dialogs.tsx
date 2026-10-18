@@ -27,6 +27,7 @@ import { usePortalContext, type Dialog } from "./context.ts";
 import { confirmResume, EmergencyButton } from "./emergency.tsx";
 import { COMMAND_LABEL, LEVEL_LABEL, timeUntil } from "./format.ts";
 import { CopyIcon, KindIcon } from "./icons.tsx";
+import { OBTAINIUM_ADD_URL } from "./obtainium.ts";
 import { playJoinSound, showJoinEffects } from "./panicEffects.ts";
 import { QrCodeSvg } from "./QrCode.tsx";
 import {
@@ -706,6 +707,13 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
         >
           <p className="small muted">
             The app gets its own token. Remove the client to end the token at once.
+          </p>
+          <p className="small muted">
+            No fork app on the Android phone yet?{" "}
+            <a href={OBTAINIUM_ADD_URL} target="_blank" rel="noreferrer">
+              Add with Obtainium
+            </a>
+            . It installs and updates the APK from the fork releases.
           </p>
           {status?._tag === "ready" && status.warning && <p className="hint">{status.warning}</p>}
           {status !== null && status._tag !== "ready" && (
