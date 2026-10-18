@@ -202,7 +202,12 @@ function usesCustomClaudeApiEndpoint(environment: NodeJS.ProcessEnv): boolean {
   if (!baseUrl) return false;
   try {
     // `hostname` drops an explicit port, so `api.anthropic.com:443` stays first-party.
-    return new URL(baseUrl).hostname !== "api.anthropic.com";
+    const endpoint = new URL(baseUrl);
+    return (
+      (endpoint.protocol === "http:" || endpoint.protocol === "https:") &&
+      !!endpoint.hostname &&
+      endpoint.hostname !== "api.anthropic.com"
+    );
   } catch {
     // An unparseable value is not an endpoint we can confirm, so it does not get
     // to override the logged-out verdict.
