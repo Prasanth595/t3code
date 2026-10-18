@@ -24,10 +24,16 @@ const SCRIPT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"]
 const TEST_SUFFIXES = [".test.ts", ".test.tsx", ".browser.test.ts", ".browser.test.tsx"];
 /** Tests that run on every check. */
 const ALWAYS_TESTS = ["apps/web/src/components/settings/forkSettingsRegistration.test.ts"];
-/** React Compiler coverage fails on a bailout anywhere in its app, so it runs on any change there. */
-const COMPILER_COVERAGE_TESTS = {
-  "apps/web/": "apps/web/src/reactCompilerCoverage.test.ts",
-  "apps/mobile/": "apps/mobile/src/reactCompilerCoverage.test.ts",
+/**
+ * Tests that fail on a change anywhere in their app, so they run on any change there: React
+ * Compiler coverage, and the mobile import cycle check (about 1.5 s).
+ */
+const APP_WIDE_TESTS = {
+  "apps/web/": ["apps/web/src/reactCompilerCoverage.test.ts"],
+  "apps/mobile/": [
+    "apps/mobile/src/reactCompilerCoverage.test.ts",
+    "apps/mobile/src/dependency-graph.test.ts",
+  ],
 };
 
 interface WorkspacePackage {
@@ -141,8 +147,9 @@ function testSteps(): ReadonlyArray<Step> {
     ...ALWAYS_TESTS.filter((test) => NodeFS.existsSync(test)),
     ...changed.flatMap(testsFor),
   ]);
-  for (const [prefix, test] of Object.entries(COMPILER_COVERAGE_TESTS)) {
-    if (changed.some((file) => file.startsWith(prefix))) tests.add(test);
+  for (const [prefix, appTests] of Object.entries(APP_WIDE_TESTS)) {
+    if (changed.some((file) => file.startsWith(prefix)))
+      for (const test of appTests) tests.add(test);
   }
   const browserTests = [...tests].filter((test) => test.includes(".browser.test."));
   const steps: Array<Step> = [];
