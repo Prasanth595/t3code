@@ -48,6 +48,7 @@ import {
   codexContinuationIdentity,
   materializeCodexShadowHome,
   resolveCodexHomeLayout,
+  withCodexSqliteHome,
 } from "./CodexHomeLayout.ts";
 import { makeManagedCodexProvider } from "./CodexManagedProvider.ts";
 import { codexUsageReader } from "./codexUsage.ts";
@@ -125,8 +126,11 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
       const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
       const modelCatalog = yield* ModelCatalog.ModelCatalog;
       const currentCatalog = modelCatalog.current(DRIVER_KIND);
-      const processEnv = yield* mergeProviderInstanceEnvironment(environment);
       const homeLayout = yield* resolveCodexHomeLayout(config);
+      const processEnv = withCodexSqliteHome(
+        yield* mergeProviderInstanceEnvironment(environment),
+        homeLayout,
+      );
       const continuationIdentity = codexContinuationIdentity(homeLayout);
       const stampIdentity = withInstanceIdentity({
         instanceId,

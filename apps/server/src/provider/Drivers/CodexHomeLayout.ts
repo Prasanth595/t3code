@@ -34,6 +34,10 @@ const SHADOW_LOCAL_ENTRY_NAMES = new Set(["log", "memories", "tmp", ".DS_Store"]
 // Codex creates these runtime locks itself when it starts in a shadow home before the shared
 // home has one. They guard shared state, so a local copy is replaced with the shared link.
 const REPLACEABLE_SHARED_RUNTIME_ENTRIES = new Set(["mcp-oauth-locks", ".sqlite-maintenance.lock"]);
+// Shadow homes reach SQLite state through CODEX_SQLITE_HOME instead (see withCodexSqliteHome).
+// A linked database splits from the -wal and -shm files SQLite writes beside the link, and a
+// database Codex creates after setup would block the next setup as a real file.
+const SQLITE_ENTRY_PATTERN = /\.sqlite(?:-wal|-shm|-journal)?$/;
 
 function resolveHomePath(path: Path.Path, home: string, value: string | undefined): string {
   const expanded =
@@ -65,6 +69,20 @@ export const resolveCodexHomeLayout = Effect.fn("resolveCodexHomeLayout")(functi
     continuationKey: `codex:home:${sharedHomePath}`,
   };
 });
+
+/**
+ * Codex keeps its SQLite state (session index, goals, memories) under
+ * CODEX_SQLITE_HOME, falling back to CODEX_HOME. Every account of an
+ * auth-overlay instance opens those databases in the shared home directly, so
+ * they stay whole and shared. A value set on the instance wins.
+ */
+export function withCodexSqliteHome(
+  environment: NodeJS.ProcessEnv,
+  layout: CodexHomeLayout,
+): NodeJS.ProcessEnv {
+  if (layout.mode !== "authOverlay" || environment.CODEX_SQLITE_HOME?.trim()) return environment;
+  return { ...environment, CODEX_SQLITE_HOME: layout.sharedHomePath };
+}
 
 const CodexShadowHomeContext = {
   sharedHomePath: Schema.String,
@@ -185,27 +203,27 @@ const readLinkState = Effect.fn("CodexHomeLayout.readLinkState")(function* (inpu
   );
 });
 
-const removePrivateSymlink = Effect.fn("CodexHomeLayout.removePrivateSymlink")(function* (input: {
+const removeShadowSymlink = Effect.fn("CodexHomeLayout.removeShadowSymlink")(function* (input: {
   readonly fileSystem: FileSystem.FileSystem;
   readonly sharedHomePath: string;
   readonly effectiveHomePath: string;
   readonly entryName: string;
 }): Effect.fn.Return<void, CodexShadowHomeError, Path.Path> {
   const path = yield* Path.Path;
-  const privatePath = path.join(input.effectiveHomePath, input.entryName);
+  const shadowPath = path.join(input.effectiveHomePath, input.entryName);
   const state = yield* readLinkState({
     ...input,
-    linkPath: privatePath,
+    linkPath: shadowPath,
   });
   if (state._tag === "Symlink") {
-    yield* input.fileSystem.remove(privatePath).pipe(
+    yield* input.fileSystem.remove(shadowPath).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
           new CodexShadowHomeFileSystemError({
             sharedHomePath: input.sharedHomePath,
             effectiveHomePath: input.effectiveHomePath,
             operation: "remove",
-            path: privatePath,
+            path: shadowPath,
             entryName: input.entryName,
             cause,
           }),
@@ -373,22 +391,41 @@ export const materializeCodexShadowHome = Effect.fn("materializeCodexShadowHome"
   );
   const entries = new Set<string>(KNOWN_SHARED_DIRECTORIES);
   for (const entryName of sharedEntryNames) {
-    if (!PRIVATE_ENTRY_NAMES.has(entryName) && !SHADOW_LOCAL_ENTRY_NAMES.has(entryName)) {
+    if (
+      !PRIVATE_ENTRY_NAMES.has(entryName) &&
+      !SHADOW_LOCAL_ENTRY_NAMES.has(entryName) &&
+      !SQLITE_ENTRY_PATTERN.test(entryName)
+    ) {
       entries.add(entryName);
     }
   }
 
+  const shadowEntryNames = yield* fileSystem.readDirectory(effectiveHomePath).pipe(
+    Effect.catchTags({
+      PlatformError: (cause) =>
+        new CodexShadowHomeFileSystemError({
+          sharedHomePath: layout.sharedHomePath,
+          effectiveHomePath,
+          operation: "readDirectory",
+          path: effectiveHomePath,
+          cause,
+        }),
+    }),
+  );
+  // Real SQLite files in the shadow home are left alone: they may hold an account's data.
+  const unlinkedEntryNames = [
+    ...[...PRIVATE_ENTRY_NAMES].filter((entryName) => entryName !== "auth.json"),
+    ...shadowEntryNames.filter((entryName) => SQLITE_ENTRY_PATTERN.test(entryName)),
+  ];
   yield* Effect.forEach(
-    PRIVATE_ENTRY_NAMES,
+    unlinkedEntryNames,
     (entryName) =>
-      entryName === "auth.json"
-        ? Effect.void
-        : removePrivateSymlink({
-            fileSystem,
-            sharedHomePath: layout.sharedHomePath,
-            effectiveHomePath,
-            entryName,
-          }),
+      removeShadowSymlink({
+        fileSystem,
+        sharedHomePath: layout.sharedHomePath,
+        effectiveHomePath,
+        entryName,
+      }),
     { discard: true },
   );
 
