@@ -561,6 +561,40 @@ it.effect.each(["forgejo", "azure-devops"] as const)(
     }),
 );
 
+it.effect("uses the configured provider's repository selector for a mapped Azure checkout", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      settings: {
+        ...DEFAULT_SERVER_SETTINGS,
+        sourceControlHostOverrides: { "code.example.test": { kind: "azure-devops" } },
+      },
+      projects: [
+        project({
+          id: "azure",
+          title: "Azure",
+          workspaceRoot: "/azure",
+          repository: "org/project/_git/web",
+          host: "code.example.test",
+          provider: "unknown",
+        }),
+      ],
+      providers: [
+        fakeProvider(SourceControlProviderKind.make("azure-devops"), {
+          getChangeRequestSummary: (input) => {
+            assert.strictEqual(input.repository, "web");
+            assert.strictEqual(input.host, "code.example.test");
+            return Effect.succeed(changeRequest(42, "2026-07-02T00:00:00Z"));
+          },
+        }),
+      ],
+    });
+    yield* service.summary(
+      { projectId: "azure" as ProjectId, host: "code.example.test", repository: "web", number: 42 },
+      { recoverTransientFailure: false },
+    );
+  }),
+);
+
 function makeService(input: {
   readonly settings?: ServerSettings;
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
