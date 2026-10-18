@@ -203,6 +203,8 @@ export const ForkClientSettingsFields = {
   keyboardFocusLevels: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Fork: a short outline fade on the screen area that takes focus: composer, timeline, sidebar or right panel. */
   focusLevelHighlight: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Fork: control tooltips name the keyboard shortcut of the control, such as "Stash (⌘S)". */
+  tooltipShortcuts: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 };
 
 export const ForkClientSettingsPatchFields = {
@@ -222,6 +224,7 @@ export const ForkClientSettingsPatchFields = {
   snoozeQuickOptions: Schema.optionalKey(SnoozeQuickOptions),
   keyboardFocusLevels: Schema.optionalKey(Schema.Boolean),
   focusLevelHighlight: Schema.optionalKey(Schema.Boolean),
+  tooltipShortcuts: Schema.optionalKey(Schema.Boolean),
 };
 
 export const ForkServerSettingsFields = {

@@ -5,6 +5,7 @@ import { Button } from "../ui/button";
 import { AppToggleShortcutsSettingsRow } from "./AppToggleShortcutsSettingsRow";
 import {
   FocusLevelHighlightSettingsRow,
+  TooltipShortcutsSettingsRow,
   KeyboardFocusLevelsSettingsRow,
 } from "./FocusLevelsSettingsRows";
 import { ForkChangelogSettingsRow } from "./ForkChangelogSettingsRow";
@@ -77,6 +78,7 @@ const FORK_SETTING_ROWS: Readonly<Record<ForkSettingRowId, ComponentType>> = {
   "terminal-app-shortcuts-first": TerminalAppShortcutsFirstSettingsRow,
   "keyboard-focus-levels": KeyboardFocusLevelsSettingsRow,
   "focus-level-highlight": FocusLevelHighlightSettingsRow,
+  "tooltip-shortcuts": TooltipShortcutsSettingsRow,
   "terminal-close-confirmation": TerminalCloseConfirmationSettingsRow,
   "thread-card-layout": ThreadCardLayoutSettingsRows,
   "thread-link-chips": ThreadLinkChipsSettingsRow,

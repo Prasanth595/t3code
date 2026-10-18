@@ -297,6 +297,7 @@ import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarT
 import * as ForkSidebar from "./sidebar/ForkSidebar";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuShortcut, MenuTrigger } from "./ui/menu";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { ShortcutHint } from "./focusLevels/ShortcutHint";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import {
   composerDraftHasUserContent,
@@ -2054,7 +2055,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             className="hidden size-3 shrink-0 group-hover/unpin:block group-focus-visible/unpin:block"
           />
         </TooltipTrigger>
-        <TooltipPopup>Unpin thread</TooltipPopup>
+        <TooltipPopup>
+          Unpin thread
+          <ShortcutHint command={props.isActive ? "thread.pin" : null} />
+        </TooltipPopup>
       </Tooltip>
     ) : (
       <PinIcon aria-label="Pinned" role="img" className={THREAD_CARD_PIN_CLASS} />
@@ -2192,7 +2196,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     >
                       <Undo2Icon className="mb-px size-3.5" />
                     </TooltipTrigger>
-                    <TooltipPopup side="top">Un-settle thread</TooltipPopup>
+                    <TooltipPopup side="top">
+                      Un-settle thread
+                      <ShortcutHint command={props.isActive ? "thread.settle" : null} />
+                    </TooltipPopup>
                   </Tooltip>
                 ) : (
                   <button
@@ -2334,7 +2341,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 <CheckIcon className="size-3.5" />
                 Settle
               </TooltipTrigger>
-              <TooltipPopup>Settle thread</TooltipPopup>
+              <TooltipPopup>
+                Settle thread
+                <ShortcutHint command={props.isActive ? "thread.settle" : null} />
+              </TooltipPopup>
             </Tooltip>
           ) : null}
         </span>

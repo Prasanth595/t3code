@@ -7,6 +7,7 @@ import type { ThreadPanelPresentation } from "../../rightPanelLayout";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
 import { Toggle } from "../ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ShortcutHint } from "../focusLevels/ShortcutHint";
 
 export interface PanelLayoutControlsProps {
   showThreadPanelControl?: boolean;
@@ -155,7 +156,10 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
           </Toggle>
         }
       />
-      <TooltipPopup side="bottom">{label}</TooltipPopup>
+      <TooltipPopup side="bottom">
+        {label}
+        <ShortcutHint command="rightPanel.toggleMaximized" />
+      </TooltipPopup>
     </Tooltip>
   );
 });
