@@ -2820,13 +2820,13 @@ describe("html renders", () => {
     expect(expanded.map((entry) => entry.type)).toEqual([
       "message",
       "run-fold",
-      "work-toggle",
+      "activity-group",
       "html-render",
-      "work-toggle",
+      "activity-group",
       "message",
     ]);
     expect(expanded[3]).toMatchObject({ type: "html-render", render: page, runId });
-    expect(expanded[2]?.continuesWorkLog).toBeUndefined();
+    expect(expanded[2]?.continuesWorkLog).toBe(true);
   });
 
   it("keeps a render visible and in order when its run folds", () => {
