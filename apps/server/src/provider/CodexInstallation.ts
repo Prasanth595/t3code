@@ -337,8 +337,9 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         if (upstreamCheckedAt !== null && now - upstreamCheckedAt < UPDATE_CHECK_INTERVAL_MS) {
           return;
         }
-        upstream = yield* lookupUpstream.pipe(Effect.timeout(UPDATE_CHECK_TIMEOUT));
+        // A failed lookup counts too, and keeps whatever release was offered before.
         upstreamCheckedAt = now;
+        upstream = yield* lookupUpstream.pipe(Effect.timeout(UPDATE_CHECK_TIMEOUT));
         // A running install already published the release it is installing.
         yield* SubscriptionRef.update(state, (current) =>
           isRunning(current) ? current : { ...current, ...offer(managedVersion(current)) },

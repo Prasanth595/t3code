@@ -1180,6 +1180,10 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       registry: registryListing("https://example.com/agy.zip"),
     },
     {
+      name: "from an oversized registry index",
+      registry: { ...registryListing(), padding: "x".repeat(1024 * 1024) },
+    },
+    {
       name: "escaping Google's releases path",
       registry: registryListing(
         "https://dl.google.com/agy-extensions/releases/%2e%2e/%2e%2e/other.zip",
@@ -1213,6 +1217,18 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
         installedVersion: "1.3.0",
         version: "1.3.0",
       });
+    }),
+  );
+
+  it.effect("does not retry a failed registry lookup within the hour", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.installation.checkForUpdate;
+      yield* h.installation.checkForUpdate;
+      expect(h.requests).toEqual([ACP_REGISTRY_URL]);
+      yield* TestClock.adjust("1 hour");
+      yield* h.installation.checkForUpdate;
+      expect(h.requests).toEqual([ACP_REGISTRY_URL, ACP_REGISTRY_URL]);
     }),
   );
 });

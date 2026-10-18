@@ -25,8 +25,10 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 
+import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
 import {
   ACP_REGISTRY_URL,
+  MAX_REGISTRY_BYTES,
   resolveAcpRegistryPlatformTarget,
 } from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
 
@@ -58,12 +60,12 @@ const UPDATE_CHECK_TIMEOUT = "20 seconds";
 const UPSTREAM_AGENT_ID = "antigravity-acp";
 const UPSTREAM_DOWNLOAD_PREFIX = "https://dl.google.com/agy-extensions/releases/";
 // An upstream release has no pinned sizes. Current archives are about 340 MB
-// and the largest executable about 930 MB.
+// and extract to about 1.1 GB.
 const UPSTREAM_MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
-const UPSTREAM_MAX_MEMBER_BYTES = 2 * 1024 * 1024 * 1024;
+const UPSTREAM_MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024;
 
 const decodeRegistryIndex = Schema.decodeUnknownEffect(
-  Schema.Struct({ agents: Schema.Array(Schema.Unknown) }),
+  Schema.fromJsonString(Schema.Struct({ agents: Schema.Array(Schema.Unknown) })),
 );
 const isUpstreamAgent = Schema.is(Schema.Struct({ id: Schema.Literal(UPSTREAM_AGENT_ID) }));
 const decodeRegistryAgent = Schema.decodeUnknownEffect(
@@ -246,7 +248,12 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     const response = yield* http
       .execute(HttpClientRequest.get(ACP_REGISTRY_URL))
       .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
-    const index = yield* response.json.pipe(Effect.flatMap(decodeRegistryIndex));
+    const body = yield* collectUint8StreamText({
+      stream: response.stream,
+      maxBytes: MAX_REGISTRY_BYTES + 1,
+    });
+    if (body.truncated || body.bytes > MAX_REGISTRY_BYTES || body.invalidUtf8) return null;
+    const index = yield* decodeRegistryIndex(body.text);
     const entry = index.agents.find(isUpstreamAgent);
     if (!entry) return null;
     const agent = yield* decodeRegistryAgent(entry);
@@ -278,8 +285,9 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         if (upstreamCheckedAt !== null && now - upstreamCheckedAt < UPDATE_CHECK_INTERVAL_MS) {
           return;
         }
-        upstream = yield* lookupUpstream.pipe(Effect.timeout(UPDATE_CHECK_TIMEOUT));
+        // A failed lookup counts too, and keeps whatever release was offered before.
         upstreamCheckedAt = now;
+        upstream = yield* lookupUpstream.pipe(Effect.timeout(UPDATE_CHECK_TIMEOUT));
         // A running install already published the release it is installing.
         yield* SubscriptionRef.update(state, (current) =>
           isRunning(current) ? current : { ...current, ...offer(current.installedVersion) },
@@ -608,23 +616,31 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         return yield* reuse(pin.sha256);
       }
 
-      // Without recorded sizes there is nothing to reserve, so an upstream
-      // release relies on the write failing cleanly instead.
-      if (pin) {
+      const ensureFreeSpace = Effect.fn("AntigravityInstallation.ensureFreeSpace")(function* (
+        operation: string,
+        bytes: number,
+      ) {
         const available = yield* Effect.tryPromise(() =>
           NodeFSP.statfs(versionsDirectory, { bigint: true }),
         ).pipe(Effect.option);
-        const required =
-          pin.archiveBytes + pin.executable.bytes + pin.harness.bytes + FREE_SPACE_MARGIN;
+        const required = bytes + FREE_SPACE_MARGIN;
         if (
           Option.isSome(available) &&
           available.value.bavail * available.value.bsize < BigInt(required)
         ) {
           return yield* installationError(
-            "download",
+            operation,
             `Antigravity needs at least ${Math.ceil(required / 1024 / 1024)} MiB of free space to install.`,
           );
         }
+      });
+      // An upstream release has no recorded sizes, so each member is checked
+      // against free space once the archive declares it.
+      if (pin) {
+        yield* ensureFreeSpace(
+          "download",
+          pin.archiveBytes + pin.executable.bytes + pin.harness.bytes,
+        );
       }
       const staging = yield* fs.makeTempDirectoryScoped({
         directory: versionsDirectory,
@@ -708,6 +724,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
 
       yield* report("extracting", "Extracting the verified runtime.");
       const extracted = new Map<string, number>();
+      let extractedTotal = 0;
       yield* Effect.gen(function* () {
         const archive = yield* openZipArchive(archivePath, (detail, cause) =>
           installationError("extract", detail, cause),
@@ -735,14 +752,16 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             ![0, 8].includes(entry.compressionMethod) ||
             entry.uncompressedSize !== expectedBytes ||
             expectedBytes <= 0 ||
-            expectedBytes > UPSTREAM_MAX_MEMBER_BYTES
+            extractedTotal + expectedBytes > UPSTREAM_MAX_EXTRACTED_BYTES
           ) {
             return yield* installationError(
               "extract",
               "The archive contains an unexpected, unsafe, or incorrectly sized member.",
             );
           }
+          if (!pin) yield* ensureFreeSpace("extract", expectedBytes);
           extracted.set(entry.fileName, expectedBytes);
+          extractedTotal += expectedBytes;
           yield* Effect.gen(function* () {
             const readable = yield* archive.streamEntry(entry);
             let extractedBytes = 0;

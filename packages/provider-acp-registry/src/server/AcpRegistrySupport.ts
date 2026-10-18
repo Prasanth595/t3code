@@ -49,7 +49,7 @@ import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSession
 export const ACP_REGISTRY_URL =
   "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 
-const MAX_REGISTRY_BYTES = 1024 * 1024;
+export const MAX_REGISTRY_BYTES = 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;
 const MAX_PACKAGE_MANIFEST_BYTES = 1024 * 1024;
 const MAX_SEARCH_RESULTS = 20;
