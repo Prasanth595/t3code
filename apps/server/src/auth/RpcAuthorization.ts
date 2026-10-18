@@ -1,5 +1,6 @@
 import {
   CLIENT_GUARDED_RPC_SCOPES,
+  PLUGIN_MANAGEMENT_REQUIRED_SCOPES,
   type DeviceListInput,
   clientRpcRequiredScopes,
   authScopeRequiredResponse,
@@ -117,8 +118,7 @@ export const RPC_REQUIRED_SCOPES = {
   // Delivery logs hold request bodies, so they need the same scope as the URL.
   [WS_METHODS.scheduledTasksListWebhookDeliveries]: AuthOrchestrationOperateScope,
   [WS_METHODS.scheduledTasksGetWebhookDelivery]: AuthOrchestrationOperateScope,
-  // Plugins run as the server's OS user, so changing what runs takes the administrative scope
-  // that also manages pairing and sessions; standard pairing never grants it.
+  // Plugin management also requires execution authority; see requiredScopesForRpcCall.
   [WS_METHODS.pluginsList]: AuthOrchestrationReadScope,
   [WS_METHODS.pluginsSubscribe]: AuthOrchestrationReadScope,
   [WS_METHODS.pluginsAdd]: AuthAccessWriteScope,
@@ -273,10 +273,26 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
 
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 
+const pluginManagementMethods: ReadonlySet<string> = new Set([
+  WS_METHODS.pluginsAdd,
+  WS_METHODS.pluginsRefresh,
+  WS_METHODS.pluginsConsent,
+  WS_METHODS.pluginsEnable,
+  WS_METHODS.pluginsDisable,
+  WS_METHODS.pluginsRemove,
+  WS_METHODS.pluginsResume,
+  WS_METHODS.pluginsSettingsUpdate,
+  WS_METHODS.pluginsNpmAdd,
+  WS_METHODS.pluginsNpmStageUpdate,
+  WS_METHODS.pluginsNpmApplyUpdate,
+  WS_METHODS.pluginsNpmDiscardUpdate,
+]);
+
 const requiredScopesForRpcCall = (
   method: string,
   payload: unknown,
 ): ReadonlyArray<AuthEnvironmentScope> => {
+  if (pluginManagementMethods.has(method)) return PLUGIN_MANAGEMENT_REQUIRED_SCOPES;
   if (method === WS_METHODS.serverRetryResourceTelemetry) {
     return [AuthEnvironmentMaintainScope, AuthDiagnosticsReadScope];
   }

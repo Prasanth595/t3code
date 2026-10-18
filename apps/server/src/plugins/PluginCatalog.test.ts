@@ -538,16 +538,18 @@ it.layer(NodeServices.layer)("PluginCatalog", (it) => {
 
   describe("interrupted management", () => {
     /** An approved, enabled installation in a catalogue that can be restarted on the same database. */
-    const enabledInStub = Effect.fn("enabledInStub")(function* () {
+    const enabledInStub = Effect.fn("enabledInStub")(function* (
+      fileSystem?: FileSystem.FileSystem,
+    ) {
       const stub = yield* makeStubSupervisor;
       const before = yield* Scope.make();
-      const catalog = yield* startStubCatalog(before, stub.service);
+      const catalog = yield* startStubCatalog(before, stub.service, fileSystem);
       const plugin = yield* preparePlugin("test.interrupted");
       const { installation } = yield* catalog.add({ directory: plugin.directory });
       const installationId = installation.installationId;
       yield* catalog.consent({ installationId, digest: installation.source!.digest });
       yield* catalog.enable({ installationId });
-      return { stub, before, catalog, installationId };
+      return { stub, before, catalog, installationId, directory: installation.directory };
     });
 
     /** Starts the catalogue again and waits until its startup re-registration has run. */
@@ -618,6 +620,37 @@ it.layer(NodeServices.layer)("PluginCatalog", (it) => {
           expect(installation).toMatchObject({ enabled: false });
           expect(installation.hostState).toBeUndefined();
           expect(stub.registrations.size).toBe(0);
+        }),
+      ),
+    );
+
+    it.effect("waits for an interrupted stop before inspecting and enabling again", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* makeHoldingFileSystem;
+          const { stub, catalog, installationId, directory } = yield* enabledInStub(fs.fileSystem);
+          const stopping = yield* makeHold;
+          stub.holds.disable = stopping;
+          const disabling = yield* catalog
+            .disable({ installationId })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(stopping.reached);
+          yield* Fiber.interrupt(disabling);
+
+          const inspection = yield* fs.holdDirectory(directory);
+          const enabling = yield* catalog
+            .enable({ installationId })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          const inspectedBeforeStop = yield* Deferred.isDone(inspection.reached);
+          expect(stub.registrations.size).toBe(0);
+
+          yield* Deferred.succeed(stopping.release, undefined);
+          yield* Deferred.await(inspection.reached);
+          yield* Deferred.succeed(inspection.release, undefined);
+          const { installation } = yield* Fiber.join(enabling);
+          expect(inspectedBeforeStop).toBe(false);
+          expect(installation).toMatchObject({ enabled: true, generation: 2 });
+          expect(stub.registrations.size).toBe(1);
         }),
       ),
     );

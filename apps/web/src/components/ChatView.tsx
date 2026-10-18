@@ -3621,13 +3621,14 @@ export default function ChatView(props: ChatViewProps) {
   const addPullRequestsSurfaceStable = useStableCallback(addPullRequestsSurface);
   const sessionPluginViews = usePluginViews(activeThreadRef?.environmentId ?? null).views;
   const pluginViews = sidePanelPluginViews(sessionPluginViews);
-  const pluginViewLaunchers: PluginViewLauncher[] = activeThreadRef === null
-    ? []
-    : pluginViews.map((view) => ({
-        surfaceId: pluginViewSurfaceId(view),
-        title: view.title,
-        onOpen: () => useRightPanelStore.getState().openPluginView(activeThreadRef, view),
-      }));
+  const pluginViewLaunchers: PluginViewLauncher[] =
+    activeThreadRef === null
+      ? []
+      : pluginViews.map((view) => ({
+          surfaceId: pluginViewSurfaceId(view),
+          title: view.title,
+          onOpen: () => useRightPanelStore.getState().openPluginView(activeThreadRef, view),
+        }));
   const { state: deviceState, loaded: deviceStateLoaded } = useDeviceState(
     activeThreadRef?.environmentId ?? null,
   );

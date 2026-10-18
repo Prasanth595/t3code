@@ -9,7 +9,7 @@ import {
 } from "@t3tools/contracts";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import { act, Suspense, type ComponentProps, type ReactElement, type ReactNode } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { useComposerDraftStore } from "~/composerDraftStore";
@@ -216,7 +216,8 @@ const refOn = (environmentId: string): ScopedThreadRef => ({
   threadId,
 });
 const reference = { projectId: detail.projectId, repository: detail.repository, number: 7 };
-let renderer: ReactTestRenderer;
+let root: Root;
+let container: HTMLDivElement;
 
 // Lets the body's code arrive and settles it before rendering, so mounts finish inside one act().
 async function loadBody() {
@@ -233,7 +234,7 @@ async function renderFor(threadRef: ScopedThreadRef) {
     sendAnnotation: () => undefined,
   };
   await act(async () => {
-    renderer = create(
+    root.render(
       <PanelHostContext value={host}>
         <Suspense fallback={null}>
           <RegisteredSidePanel
@@ -256,30 +257,22 @@ async function renderFor(threadRef: ScopedThreadRef) {
   });
 }
 
-const hasText = (text: string) =>
-  renderer.root.findAll((node) => node.children.includes(text)).length > 0;
+const hasText = (text: string) => container.textContent?.includes(text) ?? false;
 
 async function click(label: string) {
-  const button = renderer.root
-    .findAllByType("button")
-    .find(
-      (node) =>
-        node.props["aria-label"] === label ||
-        node.findAll((child) => child.children.includes(label)).length > 0,
-    );
-  expect(button, label).toBeDefined();
-  await act(async () =>
-    button!.props.onClick({
-      nativeEvent: new Event("click"),
-      preventDefault() {},
-      stopPropagation() {},
-    }),
+  const button = Array.from(container.querySelectorAll<HTMLButtonElement>("button")).find(
+    (node) => node.getAttribute("aria-label") === label || node.textContent?.includes(label),
   );
+  expect(button, label).toBeDefined();
+  await act(async () => button!.click());
 }
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  vi.stubGlobal("window", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+
   capabilities.clear();
   capabilities.set("environment-old", false);
   capabilities.set("environment-new", true);
@@ -291,15 +284,14 @@ beforeEach(() => {
     userActionRevisionByThreadKey: {},
   });
 });
-afterEach(() => {
-  act(() => renderer?.unmount());
+afterEach(async () => {
+  await act(() => root.unmount());
+  container.remove();
   vi.unstubAllGlobals();
 });
 
 const isLoading = () =>
-  renderer.root.findAll(
-    (node) => node.props.role === "status" && node.props["aria-label"] === "Loading pull request",
-  ).length > 0;
+  container.querySelector('[role="status"][aria-label="Loading pull request"]') !== null;
 
 describe("pull request side panel", () => {
   // Runs first, while the body's code is still held back.

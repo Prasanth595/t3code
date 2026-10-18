@@ -1,6 +1,6 @@
 import { act, Suspense, useEffect } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { createPanelRegistry } from "./panelRegistry";
 
@@ -13,6 +13,21 @@ const metadata = {
 
 // These exercise lazy evaluation and actual mount/disposal, without inspecting markup.
 describe("panel registry", () => {
+  let root: Root;
+  let container: HTMLDivElement;
+
+  beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    container = document.createElement("div");
+    document.body.append(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+  });
   it("rejects duplicate ids without loading either panel", () => {
     const load = vi.fn();
     const definition = { ...metadata, id: "diff", title: "Diff", load } as const;
@@ -38,9 +53,8 @@ describe("panel registry", () => {
     const registry = createPanelRegistry([{ ...metadata, id: "diff", title: "Diff", load }]);
     expect(load).not.toHaveBeenCalled();
     const Component = registry.get("diff").Component;
-    let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(
+      root.render(
         <Suspense fallback={null}>
           <Component />
         </Suspense>,
@@ -57,7 +71,7 @@ describe("panel registry", () => {
     const Again = registry.get("diff").Component;
     expect(Again).toBe(Component);
     await act(async () => {
-      renderer.update(
+      root.render(
         <Suspense fallback={null}>
           <Again />
         </Suspense>,
@@ -66,9 +80,7 @@ describe("panel registry", () => {
     expect(load).toHaveBeenCalledTimes(1);
     expect(mounted).toHaveBeenCalledTimes(1);
     expect(disposed).not.toHaveBeenCalled();
-    await act(async () => {
-      renderer.unmount();
-    });
+    await act(() => root.render(null));
     expect(disposed).toHaveBeenCalledTimes(1);
   });
 
@@ -110,16 +122,15 @@ describe("panel registry", () => {
     expect(loadNotes).not.toHaveBeenCalled();
     expect(loadCounter).not.toHaveBeenCalled();
 
-    let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(
+      root.render(
         <Suspense fallback={null}>
           <NotesPanel text="a" />
         </Suspense>,
       );
     });
     await act(async () => {
-      renderer.update(
+      root.render(
         <Suspense fallback={null}>
           <NotesPanel text="a" />
         </Suspense>,
@@ -131,7 +142,7 @@ describe("panel registry", () => {
 
     const CounterPanel = registry.get("counter").Component;
     await act(async () => {
-      renderer.update(
+      root.render(
         <Suspense fallback={null}>
           <CounterPanel count={2} />
         </Suspense>,

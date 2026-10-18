@@ -24,6 +24,9 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
+
+import styles from "./PluginSettingsForm.module.css";
 
 /**
  * The settings a plugin declares, for one installation on one environment.
@@ -65,15 +68,14 @@ export function PluginSettingsForm({
     // Disabled controls are the affordance; this keeps a read-only form from saving by any path.
     if (readOnly || saving) return;
     setSaving(true);
-    try {
-      const saved = await update({ environmentId, input: { installationId, changes: next } });
-      if (saved._tag === "Success")
-        setDrafts((current) =>
-          clearDrafts ? new Map() : pluginSettingDraftsAfterSave(current, next),
-        );
-    } finally {
-      setSaving(false);
-    }
+    return update({ environmentId, input: { installationId, changes: next } })
+      .then((saved) => {
+        if (saved._tag === "Success")
+          setDrafts((current) =>
+            clearDrafts ? new Map() : pluginSettingDraftsAfterSave(current, next),
+          );
+      })
+      .finally(() => setSaving(false));
   };
 
   return (
@@ -123,25 +125,38 @@ export function PluginSettingsForm({
                     ))}
                   </SelectPopup>
                 </Select>
-              ) : field.type === "boolean" ? null : (
+              ) : field.type === "boolean" ? null : field.type === "number" ? (
                 <Input
                   id={id}
                   size="sm"
                   autoComplete="off"
-                  {...(field.type === "secret"
-                    ? {
-                        type: "password",
-                        maxLength: PLUGIN_SETTING_SECRET_MAX_LENGTH,
-                        placeholder: row.saved
-                          ? "Saved. Enter a new value to replace it."
-                          : "Not set",
-                      }
-                    : field.type === "number"
-                      ? { inputMode: "decimal" as const }
-                      : { maxLength: PLUGIN_SETTING_TEXT_MAX_LENGTH })}
+                  inputMode="decimal"
                   value={String(draft)}
                   onChange={(event) => setDraft(field.key, event.target.value)}
                 />
+              ) : (
+                <div className={field.type === "secret" ? styles.secret : undefined}>
+                  <Textarea
+                    id={id}
+                    size="sm"
+                    autoComplete="off"
+                    spellCheck={field.type !== "secret"}
+                    maxLength={
+                      field.type === "secret"
+                        ? PLUGIN_SETTING_SECRET_MAX_LENGTH
+                        : PLUGIN_SETTING_TEXT_MAX_LENGTH
+                    }
+                    placeholder={
+                      field.type === "secret"
+                        ? row.saved
+                          ? "Saved. Enter a new value to replace it."
+                          : "Not set"
+                        : undefined
+                    }
+                    value={String(draft)}
+                    onChange={(event) => setDraft(field.key, event.target.value)}
+                  />
+                </div>
               )}
               <div className="flex items-start justify-between gap-3">
                 <p className="text-xs text-muted-foreground">

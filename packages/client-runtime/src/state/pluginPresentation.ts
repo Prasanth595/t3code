@@ -1,5 +1,5 @@
 import {
-  AuthAccessWriteScope,
+  PLUGIN_MANAGEMENT_REQUIRED_SCOPES,
   type AuthSessionState,
   type PluginInstallation,
   type PluginInstallationId,
@@ -213,20 +213,20 @@ export function pluginDirectoryLocation(
 }
 
 /**
- * For web and desktop, where a browser or app can pair with an administrative
- * link. Mobile always pairs with standard scopes and shows plugins view-only instead.
+ * Web and desktop management requires credential administration and host execution.
+ * Mobile currently shows plugins view-only.
  */
 export const PLUGIN_MANAGE_ACCESS_REQUIRED =
-  "Managing plugins needs administrative access (access:write) to this environment. Pair with an administrative link to add, approve, enable, or remove plugins.";
+  "Managing plugins needs credential administration and permission to run code on this environment. Pair with a link that grants both to add, approve, enable, or remove plugins.";
 
 export const PLUGIN_MANAGE_ACCESS_UNREADABLE =
   "Could not check your access to this environment, so plugin management is off. Try again.";
 
-/** `unreadable`: the session could not be read, so there is no evidence of access:write. */
+/** `unreadable`: the session could not be read, so there is no evidence of management authority. */
 export type PluginManageAccess = "granted" | "denied" | "pending" | "unreadable";
 
 /**
- * Management needs positive evidence of `access:write` from the session read
+ * Management needs positive evidence of both management scopes from the session read
  * that is current now. Any server with the plugin catalogue reports its scopes,
  * so a missing list means denied. While a read is failing or in flight, an
  * earlier read grants nothing: it may belong to a previous credential.
@@ -239,14 +239,15 @@ export function resolvePluginManageAccess(input: {
 }): PluginManageAccess {
   if (input.hasError) return "unreadable";
   if (input.isPending) return "pending";
-  return input.session?.authenticated && input.session.scopes?.includes(AuthAccessWriteScope)
+  return input.session?.authenticated &&
+    PLUGIN_MANAGEMENT_REQUIRED_SCOPES.every((scope) => input.session?.scopes?.includes(scope))
     ? "granted"
     : "denied";
 }
 
 /**
  * Plugin settings save through an administrative RPC, so every session without
- * proven access:write (denied, unreadable, or still checking) sees them read-only.
+ * proven management authority (denied, unreadable, or still checking) sees them read-only.
  */
 export function pluginSettingsReadOnly(access: PluginManageAccess): boolean {
   return access !== "granted";
@@ -279,7 +280,7 @@ export function resolvePluginCatalogState(input: {
   return { _tag: "available", view: input.data };
 }
 
-/** Controls need access:write and a live, current catalogue. */
+/** Controls need both management scopes and a live, current catalogue. */
 export function canManagePlugins(access: PluginManageAccess, catalog: PluginCatalogState): boolean {
   return access === "granted" && catalog._tag === "available";
 }

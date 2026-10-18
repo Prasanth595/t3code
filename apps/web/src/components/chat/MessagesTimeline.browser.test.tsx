@@ -238,7 +238,8 @@ describe("MessagesTimeline work rows", () => {
         }),
       ]);
       for (const value of detail) expect(text()).not.toContain(value);
-      await click(button(title));
+      const accessibleTitle = status === "failed" ? `${title}, tool call failed` : title;
+      await click(button(accessibleTitle));
       expect(text()).toContain("From Context fixture (test.context)");
       for (const value of detail) expect(text()).toContain(value);
       expect(text()).not.toContain("INSTALLATION_INPUT");
