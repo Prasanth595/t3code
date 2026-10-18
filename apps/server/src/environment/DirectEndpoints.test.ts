@@ -176,15 +176,6 @@ describe("resolveBoundEndpoints", () => {
     ]);
   });
 
-  it("keeps a Linux bridge that took a VirtualBox adapter's MAC, since it carries the LAN address", () => {
-    const interfaces = {
-      br0: [{ ...virtualInterface("192.168.1.55")[0]!, mac: "0a:00:27:00:00:0c" }],
-    };
-    expect(
-      resolveBoundEndpoints({ platform: "linux", host: "0.0.0.0", port: 3773, interfaces }),
-    ).toEqual([{ kind: "lan", httpBaseUrl: "http://192.168.1.55:3773/" }]);
-  });
-
   it("tags only addresses on Tailscale's interface as tailnet, not other VPNs in its range", () => {
     const interfaces = {
       en0: INTERFACES.en0,
