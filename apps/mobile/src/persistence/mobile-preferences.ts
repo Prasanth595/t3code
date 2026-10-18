@@ -8,6 +8,7 @@ import * as Semaphore from "effect/Semaphore";
 import {
   EnvironmentId,
   EnvironmentTheme,
+  MobileNewThreadProject,
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
@@ -61,6 +62,10 @@ const LastNewThreadProject = Schema.Struct({
 });
 export type LastNewThreadProject = typeof LastNewThreadProject.Type;
 const isLastNewThreadProject = Schema.is(LastNewThreadProject);
+const ScratchProjectRef = Schema.Struct({ environmentId: EnvironmentId, projectId: Schema.String });
+export type ScratchProjectRef = typeof ScratchProjectRef.Type;
+const isScratchProjectRef = Schema.is(ScratchProjectRef);
+const isMobileNewThreadProject = Schema.is(MobileNewThreadProject);
 
 export interface Preferences {
   readonly pullRequestHideTestFiles?: boolean;
@@ -102,6 +107,10 @@ export interface Preferences {
   readonly publishedDefaultThemeApplied?: string;
   /** Fork: the project of the last new thread, for `mobileNewThreadProject: "last"`. */
   readonly lastNewThreadProject?: LastNewThreadProject;
+  /** Fork: the project of the last thread without a project, so a new one opens without the server. */
+  readonly scratchProject?: ScratchProjectRef;
+  /** Fork: the last `mobileNewThreadProject` of a server, so a cold start uses it before connecting. */
+  readonly newThreadProjectMode?: MobileNewThreadProject;
   /** Fork: the open sidebar group tab of the home thread list. */
   readonly sidebarGroupTabId?: string;
 }
@@ -176,6 +185,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     publishedThemes?: ReadonlyArray<EnvironmentTheme>;
     publishedDefaultThemeApplied?: string;
     lastNewThreadProject?: LastNewThreadProject;
+    scratchProject?: ScratchProjectRef;
+    newThreadProjectMode?: MobileNewThreadProject;
     sidebarGroupTabId?: string;
   } = {};
 
@@ -313,6 +324,12 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isLastNewThreadProject(parsed.lastNewThreadProject)) {
     preferences.lastNewThreadProject = parsed.lastNewThreadProject;
+  }
+  if (isScratchProjectRef(parsed.scratchProject)) {
+    preferences.scratchProject = parsed.scratchProject;
+  }
+  if (isMobileNewThreadProject(parsed.newThreadProjectMode)) {
+    preferences.newThreadProjectMode = parsed.newThreadProjectMode;
   }
   if (typeof parsed.sidebarGroupTabId === "string") {
     preferences.sidebarGroupTabId = parsed.sidebarGroupTabId;

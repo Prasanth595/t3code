@@ -350,7 +350,9 @@ What New thread opens in the mobile app.
 - **Setting:** server setting `mobileNewThreadProject`: `picker` (default, the project list), `last` (a draft in the project of the last new thread on the phone) or `none` (a draft without a project). Settings > Appearance > Mobile app, or Fork in the mobile Settings.
 - **Works on:** mobile.
 - Back from the draft shows the project list. A share, a prompt link and "Choose a project" in the draft keep the project list.
-- **Limits:** `none` needs a server that offers threads without a project. Without one, and with `last` and no earlier new thread, the project list shows.
+- The "New task" launcher shortcut on Android opens the same draft, also when the app was closed.
+- The draft opens at once when the phone knows its project, also before a server connects: the last project, or the project of the last thread without a project. Sending waits for the connection.
+- **Limits:** `none` needs a server that offers threads without a project. Without one, and with `last` and no earlier new thread, the project list shows. The first thread without a project on a phone waits for the server to make that project.
 
 ### Camera in the mobile composer
 
