@@ -1,4 +1,5 @@
 import { defineConfig, type DefaultTheme } from "vitepress";
+import { withMermaid } from "vitepress-plugin-mermaid";
 
 import { writeLlmsFiles } from "./llms.ts";
 
@@ -25,7 +26,7 @@ const agents: DefaultTheme.SidebarItem[] = [
   { text: "Scripts", link: "/agents/scripts" },
 ];
 
-export default defineConfig({
+const config = defineConfig({
   title: "t3code factory",
   description:
     "A software factory inside a fork of T3 Code: GitHub issues in, draft pull requests out.",
@@ -61,3 +62,6 @@ export default defineConfig({
     });
   },
 });
+
+// Renders ```mermaid blocks in the page markdown as diagrams.
+export default withMermaid(config);
