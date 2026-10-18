@@ -127,6 +127,12 @@ describe("parseMarkdownFileLink", () => {
     ["AGENTS.md", "AGENTS.md"],
     ["script.ts:10", "script.ts"],
     ["/tmp/clip%23one.mp4#t=2", "/tmp/clip#one.mp4"],
+    [
+      "Summer 2026/線性代數/2025_midterm_易志偉.pdf",
+      "Summer 2026/線性代數/2025_midterm_易志偉.pdf",
+    ],
+    ["%E7%B7%9A%E6%80%A7%E4%BB%A3%E6%95%B8.pdf", "線性代數.pdf"],
+    ["docs/cafe\u0301.md", "docs/cafe\u0301.md"],
   ])("recognizes %s as a file", (href, path) => {
     expect(parseMarkdownFileLink(href)?.path).toBe(path);
   });
@@ -142,6 +148,7 @@ describe("parseMarkdownFileLink", () => {
     "/chat/settings#L3",
     "/app#L1",
     "readme",
+    "線性代數",
     "TODO:12",
   ])("does not treat %s as a file", (href) => {
     expect(parseMarkdownFileLink(href)).toBeNull();
