@@ -3716,40 +3716,45 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("removes a worktree whose tracked folder was replaced by a junction", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        yield* writeTextFile(cwd, "src/keep.txt", "keep\n");
-        yield* git(cwd, ["add", "src"]);
-        yield* git(cwd, ["commit", "-m", "add src"]);
-        const fileSystem = yield* FileSystem.FileSystem;
-        const pathService = yield* Path.Path;
-        const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "linked");
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* driver.createWorktree({
-          cwd,
-          path: worktreePath,
-          refName: initialBranch,
-          newRefName: "feature/linked",
-        });
-        // Same bytes as the checkout, so Git sees neither a change nor an untracked file.
-        const outside = yield* makeTmpDir("git-worktree-link-target-");
-        NodeFS.copyFileSync(
-          pathService.join(worktreePath, "src", "keep.txt"),
-          pathService.join(outside, "keep.txt"),
-        );
-        NodeFS.rmSync(pathService.join(worktreePath, "src"), { recursive: true });
-        NodeFS.symlinkSync(outside, pathService.join(worktreePath, "src"), "junction");
+    // Git for Windows reads a junction as a plain folder, so the swap is invisible
+    // to `status`. Elsewhere the link is a symlink, which shows up as a typechange
+    // and makes a non-forced remove refuse.
+    it.effect.skipIf(HostProcess.Platform.defaultValue() !== "win32")(
+      "removes a worktree whose tracked folder was replaced by a junction",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          yield* writeTextFile(cwd, "src/keep.txt", "keep\n");
+          yield* git(cwd, ["add", "src"]);
+          yield* git(cwd, ["commit", "-m", "add src"]);
+          const fileSystem = yield* FileSystem.FileSystem;
+          const pathService = yield* Path.Path;
+          const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "linked");
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/linked",
+          });
+          // Same bytes as the checkout, so Git sees neither a change nor an untracked file.
+          const outside = yield* makeTmpDir("git-worktree-link-target-");
+          NodeFS.copyFileSync(
+            pathService.join(worktreePath, "src", "keep.txt"),
+            pathService.join(outside, "keep.txt"),
+          );
+          NodeFS.rmSync(pathService.join(worktreePath, "src"), { recursive: true });
+          NodeFS.symlinkSync(outside, pathService.join(worktreePath, "src"), "junction");
 
-        yield* driver.removeWorktree({ cwd, path: worktreePath });
+          yield* driver.removeWorktree({ cwd, path: worktreePath });
 
-        assert.deepEqual(NodeFS.readdirSync(pathService.dirname(worktreePath)), []);
-        assert.equal(
-          yield* fileSystem.readFileString(pathService.join(outside, "keep.txt")),
-          "keep\n",
-        );
-      }),
+          assert.deepEqual(NodeFS.readdirSync(pathService.dirname(worktreePath)), []);
+          assert.equal(
+            yield* fileSystem.readFileString(pathService.join(outside, "keep.txt")),
+            "keep\n",
+          );
+        }),
     );
 
     it.effect("leaves a folder alone that only shares the worktree's short name", () =>
