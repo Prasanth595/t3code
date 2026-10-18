@@ -4,7 +4,8 @@ Most runs end at `factory:pr-open`. The rest end in one of two labels, each with
 
 ## needs-info
 
-<!-- screenshot: run-needs-info -->
+<img class="screenshot light-only" src="/screenshots/run-needs-info-light.png" alt="A needs-info run's page: no gate has run, and the ledger's questions_posted line holds the questions the session posted on the issue" />
+<img class="screenshot dark-only" src="/screenshots/run-needs-info-dark.png" alt="A needs-info run's page: no gate has run, and the ledger's questions_posted line holds the questions the session posted on the issue" />
 
 The session decided the issue can't be built as written: the outcome is unclear, two readings would give different code, or the issue holds two separate pieces of work. It ends with its questions, and the factory posts them as a comment, sets `factory:needs-info` and unassigns the issue.
 

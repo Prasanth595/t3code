@@ -31,6 +31,8 @@ export default defineConfig({
     "A software factory inside a fork of T3 Code: GitHub issues in, draft pull requests out.",
   base: "/",
   cleanUrls: true,
+  // The site's own maintainer notes, not a page.
+  srcExclude: ["README.md"],
   themeConfig: {
     siteTitle: "t3code factory",
     nav: [
