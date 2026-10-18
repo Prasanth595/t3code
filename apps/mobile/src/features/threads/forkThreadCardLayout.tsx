@@ -38,6 +38,7 @@ import {
   getThreadListV2RowAppearance,
   selectedThreadRowColors,
 } from "./thread-list-v2-row-appearance";
+import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { RUNTIME_MODE_DETAILS } from "./thread-settings-options";
 import type { ThreadListV2Status } from "./threadListV2";
@@ -239,7 +240,7 @@ export function ForkThreadCardLayout(props: {
   const prBadge = pr ? (
     <View className="flex-row items-center gap-1" accessibilityLabel={pr.accessibilityLabel}>
       <SymbolView
-        name={pr.kind === "stack" ? "square.3.layers.3d" : "arrow.triangle.pull"}
+        name={pr.kind === "stack" ? PullRequestGlyph.stack : PullRequestGlyph.pullRequest}
         size={12}
         tintColorClassName={
           pr.state === null || pr.isDraft
@@ -387,6 +388,8 @@ export function ForkThreadCardLayout(props: {
         return info.backgroundTaskCount === null
           ? null
           : metaItem({
+              // Background tasks, not a pull request: the same layers glyph as the web card.
+              // oxlint-disable-next-line t3code/no-mobile-pull-request-glyph-literals
               icon: "square.3.layers.3d",
               label: `${info.backgroundTaskCount} background ${info.backgroundTaskCount === 1 ? "task" : "tasks"}`,
               text: info.backgroundTaskCount,
