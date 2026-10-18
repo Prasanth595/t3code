@@ -2,6 +2,7 @@ import { sourceControlClients } from "@t3tools/client-runtime/source-control-cli
 import * as Schema from "effect/Schema";
 
 import {
+  ProjectId,
   PullRequestDetail,
   PullRequestOperationError,
   pullRequestHostOf,
@@ -232,7 +233,7 @@ export function threadPullRequestPanelTarget(thread: {
   }
   if (current !== null) {
     return {
-      projectId: thread.projectId,
+      projectId: ProjectId.make(thread.projectId),
       host: current.host,
       repository: current.repository,
       number: current.number,

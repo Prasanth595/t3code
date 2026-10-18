@@ -7941,10 +7941,7 @@ export default function ChatView(props: ChatViewProps) {
                           <ThreadPullRequestCard
                             key={`${activeThread.environmentId}:${activeThread.id}:${pullRequestPanelTarget.url}`}
                             threadRef={activeThreadRef}
-                            link={{
-                              ...pullRequestPanelTarget,
-                              projectId: activeProject.id,
-                            }}
+                            link={pullRequestPanelTarget}
                             cwd={gitCwd}
                           />
                         </div>

@@ -1,14 +1,16 @@
 import type { EnvironmentId, GitHistoryResult } from "@t3tools/contracts";
 import { layoutGitGraph } from "@t3tools/shared/gitGraph";
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { GitBranchIcon, RefreshCwIcon } from "lucide-react";
 import { useServerConfigs } from "~/state/entities";
 import { gitEnvironment } from "~/state/git";
 import { useEnvironmentQuery } from "~/state/query";
 import { cn } from "~/lib/utils";
 import { RelativeTime } from "../RelativeTime";
+import { AnimatedHeight } from "../AnimatedHeight";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import styles from "./pullRequestMotion.module.css";
 
 const COLORS = [
   "text-info",
@@ -28,16 +30,53 @@ export function GitCommitGraph({
   baseBranch: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const listRef = useRef<HTMLOListElement>(null);
+  const positions = useRef(new Map<string, number>());
   const { rows, width } = layoutGitGraph(history.commits);
   const visible = expanded ? rows : rows.slice(0, 8);
+  // Measure only when the visible history changes. Existing commits keep their
+  // position as new commits arrive, with no animation work while the graph is idle.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const next = new Map<string, number>();
+    const animations: Animation[] = [];
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    for (const [index, { commit }] of visible.entries()) {
+      const row = list.children[index];
+      if (!(row instanceof HTMLElement)) continue;
+      const sha = commit.sha;
+      const top = row.offsetTop;
+      next.set(sha, top);
+      const previous = positions.current.get(sha);
+      if (!reducedMotion && previous !== undefined && previous !== top) {
+        animations.push(
+          row.animate(
+            [{ transform: `translateY(${previous - top}px)` }, { transform: "translateY(0)" }],
+            { duration: 220, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+          ),
+        );
+      }
+    }
+    positions.current = next;
+    return () => animations.forEach((animation) => animation.cancel());
+  }, [visible]);
   return (
     <div>
-      <ol aria-label="Branch commit history" className="max-h-80 overflow-auto overscroll-contain">
+      <ol
+        ref={listRef}
+        aria-label="Branch commit history"
+        className="relative max-h-80 overflow-auto overscroll-contain"
+      >
         {visible.map(({ commit, x, color, paths }) => {
           const isHead = commit.sha === history.headSha;
           const isBase = commit.sha === history.baseSha;
           return (
-            <li key={commit.sha} className="flex h-8 min-w-0 items-center gap-2 text-xs">
+            <li
+              key={commit.sha}
+              data-commit-sha={commit.sha}
+              className={cn(styles.graphRow, "flex h-8 min-w-0 items-center gap-2 text-xs")}
+            >
               <svg
                 width={Math.min(width, 96)}
                 height={32}
@@ -179,34 +218,36 @@ export function PullRequestBranchGraph({
           </Button>
         ) : null}
       </div>
-      {!supported ? (
-        <p className="py-3 text-xs text-muted-foreground">
-          Update this environment to see its branch history.
-        </p>
-      ) : query.error ? (
-        <div role="status" className="py-3 text-xs text-muted-foreground">
-          <p>Could not load branch history.</p>
-          <p className="mt-1 break-words">{query.error}</p>
-          <Button variant="ghost" size="xs" onClick={query.refresh}>
-            Try again
-          </Button>
-        </div>
-      ) : query.data === null ? (
-        <p role="status" className="py-3 text-xs text-muted-foreground">
-          Loading branch history…
-        </p>
-      ) : query.data.commits.length === 0 ? (
-        <p className="py-3 text-xs text-muted-foreground">
-          Check out this branch to see its commit history.
-        </p>
-      ) : (
-        <GitCommitGraph
-          key={`${cwd}:${headBranch}:${baseBranch}`}
-          history={query.data}
-          headBranch={headBranch}
-          baseBranch={baseBranch}
-        />
-      )}
+      <AnimatedHeight>
+        {!supported ? (
+          <p className="py-3 text-xs text-muted-foreground">
+            Update this environment to see its branch history.
+          </p>
+        ) : query.error ? (
+          <div role="status" className="py-3 text-xs text-muted-foreground">
+            <p>Could not load branch history.</p>
+            <p className="mt-1 break-words">{query.error}</p>
+            <Button variant="ghost" size="xs" onClick={query.refresh}>
+              Try again
+            </Button>
+          </div>
+        ) : query.data === null ? (
+          <p role="status" className="py-3 text-xs text-muted-foreground">
+            Loading branch history…
+          </p>
+        ) : query.data.commits.length === 0 ? (
+          <p className="py-3 text-xs text-muted-foreground">
+            Check out this branch to see its commit history.
+          </p>
+        ) : (
+          <GitCommitGraph
+            key={`${cwd}:${headBranch}:${baseBranch}`}
+            history={query.data}
+            headBranch={headBranch}
+            baseBranch={baseBranch}
+          />
+        )}
+      </AnimatedHeight>
     </div>
   );
 }

@@ -3,6 +3,7 @@ import type { PullRequestDetail } from "@t3tools/contracts";
 import { layoutGitGraph } from "@t3tools/shared/gitGraph";
 import { useState } from "react";
 import { Pressable, View } from "react-native";
+import Animated from "react-native-reanimated";
 import Svg, { Circle, Path } from "react-native-svg";
 import { AppText as Text } from "../../components/ui/AppText";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -11,6 +12,12 @@ import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
 import { environmentProjects } from "../../state/projects";
 import { pullRequestTarget, type PullRequestParams } from "./usePullRequestDiff";
+import {
+  PR_ROW_LAYOUT,
+  PR_ROW_ENTER,
+  PR_ROW_EXIT,
+  PR_DISCLOSURE_ENTER,
+} from "./pullRequestAnimations";
 
 const COLORS = ["#3b82f6", "#10b981", "#8b5cf6", "#f59e0b", "#f43f5e"];
 
@@ -59,7 +66,7 @@ function BranchHistory({
       </Text>
     );
   return (
-    <View>
+    <Animated.View layout={PR_ROW_LAYOUT}>
       {rows.map(({ commit, x, color, paths }) => {
         const branch =
           commit.sha === query.data?.headSha
@@ -68,8 +75,11 @@ function BranchHistory({
               ? pr.baseBranch
               : commit.branches[0];
         return (
-          <View
+          <Animated.View
             key={commit.sha}
+            layout={PR_ROW_LAYOUT}
+            entering={PR_ROW_ENTER}
+            exiting={PR_ROW_EXIT}
             className="h-8 flex-row items-center gap-2"
             accessible
             accessibilityLabel={`${commit.subject}, ${commit.author}${branch ? `, ${branch}` : ""}`}
@@ -106,7 +116,7 @@ function BranchHistory({
                 {commit.sha.slice(0, 7)}
               </Text>
             )}
-          </View>
+          </Animated.View>
         );
       })}
       {graph.rows.length > 8 ? (
@@ -126,7 +136,7 @@ function BranchHistory({
           Showing the 40 most recent commits
         </Text>
       ) : null}
-    </View>
+    </Animated.View>
   );
 }
 
@@ -142,7 +152,10 @@ export function PullRequestBranchGraph(props: {
   const [expanded, setExpanded] = useState(false);
   if (config?.environment.capabilities.gitHistory !== true || project === null) return null;
   return (
-    <View className="overflow-hidden rounded-xl border border-border/60 px-3">
+    <Animated.View
+      layout={PR_ROW_LAYOUT}
+      className="overflow-hidden rounded-xl border border-border/60 px-3"
+    >
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Local branch history"
@@ -159,10 +172,10 @@ export function PullRequestBranchGraph(props: {
         />
       </Pressable>
       {expanded ? (
-        <View className="pb-3">
+        <Animated.View entering={PR_DISCLOSURE_ENTER} exiting={PR_ROW_EXIT} className="pb-3">
           <BranchHistory {...props} cwd={project.workspaceRoot} />
-        </View>
+        </Animated.View>
       ) : null}
-    </View>
+    </Animated.View>
   );
 }

@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { PullRequestRef, ScopedThreadRef, ThreadLinkedPullRequest } from "@t3tools/contracts";
-import { ChevronDownIcon, ChevronRightIcon, ArrowUpRightIcon, RefreshCwIcon } from "lucide-react";
+import { ChevronRightIcon, ArrowUpRightIcon, RefreshCwIcon } from "lucide-react";
 import { useState } from "react";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useServerConfigs } from "~/state/entities";
@@ -9,6 +9,7 @@ import { useEnvironmentQuery } from "~/state/query";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
+import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { PullRequestBranchGraph } from "./PullRequestBranchGraph";
 import { PullRequestChecksPopover } from "./PullRequestChecksPopover";
 import {
@@ -32,6 +33,7 @@ import { useInlineActionConfirm } from "./useInlineActionConfirm";
 import { usePullRequestChecksRefresh } from "~/hooks/usePullRequestChecksRefresh";
 import { useUiStateStore } from "~/uiStateStore";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
+import styles from "./pullRequestMotion.module.css";
 
 export function ThreadPullRequestCard({
   threadRef,
@@ -129,20 +131,26 @@ export function ThreadPullRequestCard({
                   ? `No conflicts with ${detail.baseBranch}`
                   : "Checking mergeability…";
   return (
-    <section
-      aria-label={`Pull request #${link.number}`}
-      className="@container/pr-card overflow-hidden rounded-xl border border-border/70 bg-card/40 text-card-foreground"
+    <Collapsible
+      open={expanded}
+      onOpenChange={setExpanded}
+      render={
+        <section
+          aria-label={`Pull request #${link.number}`}
+          className={cn(
+            styles.cardEnter,
+            "@container/pr-card overflow-hidden rounded-xl border border-border/70 bg-card/40 text-card-foreground",
+          )}
+        />
+      }
     >
       <div className="flex min-w-0 items-center gap-2 px-4 py-3">
-        <Button
-          variant="ghost-muted"
-          size="icon-micro"
+        <CollapsibleTrigger
+          render={<Button variant="ghost-muted" size="icon-micro" />}
           aria-label={expanded ? "Collapse pull request" : "Expand pull request"}
-          aria-expanded={expanded}
-          onClick={() => setExpanded(!expanded)}
         >
-          {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
-        </Button>
+          <ChevronRightIcon className={cn(styles.chevron, expanded && "rotate-90")} />
+        </CollapsibleTrigger>
         <button
           type="button"
           className="flex min-w-0 flex-1 items-baseline gap-1 text-left text-xs font-medium hover:underline focus-visible:outline-ring"
@@ -152,7 +160,14 @@ export function ThreadPullRequestCard({
           <span className="shrink-0 font-normal text-muted-foreground">#{link.number}</span>
         </button>
         {state ? (
-          <span className={cn("flex shrink-0 items-center gap-1 text-3xs", state.toneClassName)}>
+          <span
+            key={state.label}
+            className={cn(
+              styles.status,
+              "flex shrink-0 items-center gap-1 text-3xs",
+              state.toneClassName,
+            )}
+          >
             <state.Icon aria-hidden className="size-3" />
             {state.label}
           </span>
@@ -166,96 +181,92 @@ export function ThreadPullRequestCard({
           <ArrowUpRightIcon />
         </Button>
       </div>
-      {expanded ? (
-        <>
-          {detail ? (
-            <div className="px-4 pb-3">
-              <PullRequestBranchGraph
-                environmentId={environmentId}
-                cwd={cwd ?? detail.workspaceRoot}
-                headBranch={detail.headBranch}
-                baseBranch={detail.baseBranch}
-              />
-            </div>
-          ) : (
-            <div role="status" className="px-4 pb-4 text-xs text-muted-foreground">
-              {query.error ? (
-                <>
-                  <p>Could not load this pull request.</p>
-                  <Button variant="ghost" size="xs" onClick={query.refresh}>
-                    Try again
-                  </Button>
-                </>
-              ) : (
-                "Loading pull request…"
+      <CollapsiblePanel>
+        {detail ? (
+          <div className="px-4 pb-3">
+            <PullRequestBranchGraph
+              environmentId={environmentId}
+              cwd={cwd ?? detail.workspaceRoot}
+              headBranch={detail.headBranch}
+              baseBranch={detail.baseBranch}
+            />
+          </div>
+        ) : (
+          <div role="status" className="px-4 pb-4 text-xs text-muted-foreground">
+            {query.error ? (
+              <>
+                <p>Could not load this pull request.</p>
+                <Button variant="ghost" size="xs" onClick={query.refresh}>
+                  Try again
+                </Button>
+              </>
+            ) : (
+              "Loading pull request…"
+            )}
+          </div>
+        )}
+        {detail ? (
+          <div className="flex flex-wrap items-center gap-2 border-t border-border/50 px-4 py-2.5">
+            <span
+              role="status"
+              className={cn(
+                "min-w-0 flex-1 truncate text-2xs",
+                detail.mergeability === "conflicting"
+                  ? "text-warning-foreground"
+                  : "text-muted-foreground",
               )}
-            </div>
-          )}
-          {detail ? (
-            <div className="flex flex-wrap items-center gap-2 border-t border-border/50 px-4 py-2.5">
-              <span
-                role="status"
-                className={cn(
-                  "min-w-0 flex-1 truncate text-2xs",
-                  detail.mergeability === "conflicting"
-                    ? "text-warning-foreground"
-                    : "text-muted-foreground",
-                )}
-              >
+            >
+              <span key={status} className={cn(styles.status, "inline-block")}>
                 {status}
               </span>
-              <PullRequestDiffStat additions={detail.additions} deletions={detail.deletions} />
-              {checks ? (
-                <PullRequestChecksPopover
-                  checksState={checks}
-                  checks={detail.checks}
-                  threadRef={threadRef}
-                  variant="count"
-                />
-              ) : null}
-              {action === "resolve" ? (
-                <Button
-                  size="xs"
-                  variant="warning-outline"
-                  disabled={handoff !== null}
-                  onClick={() =>
-                    void startHandoff("conflicts", { prompt: buildResolveConflictsPrompt(detail) })
-                  }
-                >
-                  {handoff ? "Preparing…" : "Resolve conflicts"}
-                </Button>
-              ) : action === "merge" && !stackBlocked ? (
-                <Button
-                  size="xs"
-                  variant="outline"
-                  disabled={!canWrite || actionPending || query.isPending}
-                  {...confirm.props("merge", () => void perform("merge"))}
-                >
-                  {actionPending ? <Spinner size="xs" /> : <PullRequestGlyph.merged aria-hidden />}
-                  {actionPending
-                    ? "Merging…"
-                    : confirm.isArmed("merge")
-                      ? "Confirm merge?"
-                      : "Merge"}
-                </Button>
-              ) : stackBlocked ? (
-                <Button size="xs" variant="outline" onClick={open}>
-                  Open stack
-                </Button>
-              ) : null}
+            </span>
+            <PullRequestDiffStat additions={detail.additions} deletions={detail.deletions} />
+            {checks ? (
+              <PullRequestChecksPopover
+                checksState={checks}
+                checks={detail.checks}
+                threadRef={threadRef}
+                variant="count"
+              />
+            ) : null}
+            {action === "resolve" ? (
               <Button
-                variant="ghost-muted"
-                size="icon-micro"
-                aria-label="Refresh pull request"
-                disabled={query.isPending}
-                onClick={query.refresh}
+                size="xs"
+                variant="warning-outline"
+                disabled={handoff !== null}
+                onClick={() =>
+                  void startHandoff("conflicts", { prompt: buildResolveConflictsPrompt(detail) })
+                }
               >
-                <RefreshCwIcon />
+                {handoff ? "Preparing…" : "Resolve conflicts"}
               </Button>
-            </div>
-          ) : null}
-        </>
-      ) : null}
-    </section>
+            ) : action === "merge" && !stackBlocked ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={!canWrite || actionPending || query.isPending}
+                {...confirm.props("merge", () => void perform("merge"))}
+              >
+                {actionPending ? <Spinner size="xs" /> : <PullRequestGlyph.merged aria-hidden />}
+                {actionPending ? "Merging…" : confirm.isArmed("merge") ? "Confirm merge?" : "Merge"}
+              </Button>
+            ) : stackBlocked ? (
+              <Button size="xs" variant="outline" onClick={open}>
+                Open stack
+              </Button>
+            ) : null}
+            <Button
+              variant="ghost-muted"
+              size="icon-micro"
+              aria-label="Refresh pull request"
+              disabled={query.isPending}
+              onClick={query.refresh}
+            >
+              <RefreshCwIcon />
+            </Button>
+          </div>
+        ) : null}
+      </CollapsiblePanel>
+    </Collapsible>
   );
 }
