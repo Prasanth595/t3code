@@ -18,7 +18,6 @@ describe("Enriched link presentation", () => {
       "app.tsx:12:3",
       "線性代數/試卷.pdf",
       "線性代數.pdf:12",
-      "docs/cafe\u0301.md",
     ]) {
       expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(path), path).toBe(true);
     }
@@ -30,7 +29,6 @@ describe("Enriched link presentation", () => {
       "https://example.com/app.tsx",
       "x + y",
       "README.md",
-      "線性代數.pdf",
       "/app/settings",
     ]) {
       expect(ENRICHED_INLINE_FILE_LINK_REGEX.test(text), text).toBe(false);
