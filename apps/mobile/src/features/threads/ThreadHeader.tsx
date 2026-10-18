@@ -84,6 +84,7 @@ export function ThreadHeader(
       key={scopedThreadKey(props.thread.environmentId, props.thread.id)}
       thread={props.thread}
       subtitle={props.subtitle}
+      maxWidth={native.titleMaxWidth}
     />
   ) : undefined;
 
@@ -103,6 +104,7 @@ export function ThreadHeader(
         optionsVersion={[
           native.optionsVersion,
           props.subtitle,
+          native.titleMaxWidth,
           threadTitleMenuVersion(props.thread),
         ]}
         trailing={

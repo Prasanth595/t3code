@@ -6,12 +6,14 @@ import { Menu } from "../../components/ui/Menu";
 export function ThreadTitleMenuTrigger(props: {
   readonly actions: MenuAction[];
   readonly title: string;
+  readonly maxWidth: number;
   readonly onOpen: () => void;
   readonly onAction: (id: string) => void;
   readonly children: ReactNode;
 }) {
   return (
     <Menu
+      style={{ maxWidth: props.maxWidth, flexShrink: 1 }}
       actions={props.actions}
       title={props.title}
       onMenuInteractionStart={props.onOpen}

@@ -1,8 +1,9 @@
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { useMemo } from "react";
+import { useSafeAreaFrame, useSafeAreaInsets } from "react-native-safe-area-context";
 import { isDuoDevice } from "../../lib/device-type";
 import type { AppNativeStackNavigationOptions } from "../../native/StackHeader";
-import { useDeviceType } from "../../native/native-layout-metrics";
+import { useDeviceType, useNativeLayoutMetrics } from "../../native/native-layout-metrics";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
@@ -26,6 +27,10 @@ export function useThreadHeaderOptions(props: {
   const deviceType = useDeviceType();
   const usesDuoHeader = usesNativeWorkspaceColumns && isDuoDevice(deviceType);
   const navigation = useNavigation();
+  const frame = useSafeAreaFrame();
+  const metrics = useNativeLayoutMetrics();
+  const verticalBar = metrics != null && metrics.verticalBarEdge !== "none";
+  const insets = useSafeAreaInsets();
   const { layout, panes, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const threadCenterHeaderItems = useThreadGitCenterHeaderItems(props.gitControls);
   const compactRightHeaderItems = useThreadGitRightHeaderItems(props.gitControls);
@@ -143,9 +148,37 @@ export function useThreadHeaderOptions(props: {
     unstable_headerSubtitle: props.usesNativeHeaderGlass ? props.subtitle : undefined,
     contentStyle: undefined,
   };
+  const rightItems = usesDuoHeader
+    ? duoRightHeaderItems
+    : layout.usesSplitView
+      ? threadCenterHeaderItems
+      : compactRightHeaderItems;
+  const itemWidth = (items: NativeHeaderItems) =>
+    items.reduce((width, item) => {
+      if (
+        verticalBar &&
+        (item.type === "spacing" || (item.icon != null && item.axisBehavior !== "horizontalOnly"))
+      )
+        return width;
+      return width + (item.type === "spacing" ? Number(item.spacing) : 60);
+    }, 0);
+  const leadingWidth = layout.usesSplitView
+    ? itemWidth(splitLeftHeaderItems) + 16
+    : verticalBar
+      ? 16
+      : 72;
+  const paneWidth = Math.min(frame.width, panes.contentPaneWidth);
+  // Native-stack only returns the title's position to Yoga, so custom content needs
+  // its own width cap. Reserve horizontal controls and gaps, retaining a 44-point trigger
+  // when UIKit must compress or overflow controls in a narrow pane.
+  const titleMaxWidth = Math.max(
+    44,
+    paneWidth - insets.left - insets.right - leadingWidth - itemWidth(rightItems) - 16,
+  );
   const { environmentId, threadId, gitStatus } = props.gitControls;
   return {
     options,
+    titleMaxWidth,
     // Header item factories are stabilized, so the native header only re-reads them when
     // this version changes. Keying on the items keeps the Git menu status live; the menu
     // callbacks also read state the items do not display (a "Push" item runs `push` or

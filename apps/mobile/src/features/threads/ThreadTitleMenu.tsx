@@ -20,6 +20,7 @@ import { View } from "react-native";
 export function ThreadTitleMenu(props: {
   readonly thread: EnvironmentThreadShell;
   readonly subtitle: string;
+  readonly maxWidth: number;
 }) {
   const { thread } = props;
   const configs = useAtomValue(environmentServerConfigsAtom);
@@ -48,6 +49,7 @@ export function ThreadTitleMenu(props: {
   return (
     <>
       <ThreadTitleMenuTrigger
+        maxWidth={props.maxWidth}
         actions={actions}
         title={thread.title}
         onOpen={() => setNow(new Date())}
@@ -93,8 +95,8 @@ export function ThreadTitleMenu(props: {
             );
         }}
       >
-        <View className="min-w-0 items-center">
-          <View className="flex-row items-center gap-1">
+        <View className="min-w-0">
+          <View className="min-w-0 flex-row items-center justify-center gap-1">
             <AppText
               numberOfLines={1}
               className="shrink text-[17px] font-t3-bold text-header-foreground"
@@ -108,7 +110,7 @@ export function ThreadTitleMenu(props: {
             />
           </View>
           {props.subtitle ? (
-            <AppText numberOfLines={1} className="text-xs text-foreground-muted">
+            <AppText numberOfLines={1} className="text-center text-xs text-foreground-muted">
               {props.subtitle}
             </AppText>
           ) : null}

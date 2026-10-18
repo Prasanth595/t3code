@@ -10,6 +10,10 @@ import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 // navigation snapshots the right items at each setOptions, as native-stack does.
 const harness = vi.hoisted(() => ({
   setOptionsCalls: 0,
+  headerWidth: 402,
+  usesDuo: false,
+  split: false,
+  titleMaxWidth: 0,
   renderedRightItems: [] as Array<ReadonlyArray<Record<string, unknown>>>,
   navigatedRoutes: [] as string[],
 }));
@@ -23,7 +27,12 @@ vi.mock("@react-navigation/native", () => {
       harness.navigatedRoutes.push(route);
     },
     addListener: () => () => {},
-    setOptions: (options: { unstable_headerRightItems?: () => Array<Record<string, unknown>> }) => {
+    setOptions: (options: {
+      unstable_headerRightItems?: () => Array<Record<string, unknown>>;
+      headerTitle?: string | (() => { props: { maxWidth: number } });
+    }) => {
+      harness.titleMaxWidth =
+        typeof options.headerTitle === "function" ? options.headerTitle().props.maxWidth : 0;
       harness.setOptionsCalls += 1;
       harness.renderedRightItems.push(options.unstable_headerRightItems?.() ?? []);
     },
@@ -44,11 +53,26 @@ vi.mock("../../components/ui/AppBar", async () => {
     ),
   };
 });
+vi.mock("../../native/native-layout-metrics", () => ({
+  useDeviceType: () => (harness.usesDuo ? "duo-folded" : "phone"),
+  useNativeLayoutMetrics: () => (harness.usesDuo ? { verticalBarEdge: "right" } : null),
+}));
+vi.mock("../../native/NativeWorkspaceColumns", () => ({
+  useNativeWorkspaceColumnsSupported: () => harness.usesDuo,
+}));
+vi.mock("react-native-safe-area-context", () => ({
+  useSafeAreaFrame: () => ({ width: harness.headerWidth, height: 874 }),
+  useSafeAreaInsets: () => ({ left: 0, right: 0, top: 62, bottom: 34 }),
+}));
 vi.mock("react-native", () => ({ Alert: { alert: () => {} }, Linking: {}, Platform: {} }));
 vi.mock("../layout/AdaptiveWorkspaceLayout", () => ({
   useAdaptiveWorkspaceLayout: () => ({
-    layout: { usesSplitView: false },
-    panes: { primarySidebarVisible: false, auxiliaryPaneVisible: false },
+    layout: { usesSplitView: harness.split },
+    panes: {
+      primarySidebarVisible: false,
+      auxiliaryPaneVisible: false,
+      contentPaneWidth: harness.headerWidth,
+    },
     togglePrimarySidebar: () => {},
     toggleAuxiliaryPane: () => {},
   }),
@@ -164,6 +188,30 @@ afterEach(() => {
 });
 
 describe("ThreadHeader", () => {
+  it.each([
+    { name: "compact Duo with a vertical bar", duo: true, split: false, minimum: 200 },
+    { name: "minimum-width split pane", duo: false, split: true, minimum: 44 },
+  ])("keeps the title action target usable in a $name", ({ duo, split, minimum }) => {
+    harness.headerWidth = 320;
+    harness.usesDuo = duo;
+    harness.split = split;
+    render(<Header gitStatus={status([])} thread={makeThreadShellFixture()} />);
+    expect(harness.titleMaxWidth).toBeGreaterThanOrEqual(minimum);
+    harness.headerWidth = 402;
+    harness.usesDuo = false;
+    harness.split = false;
+  });
+
+  it("updates native title content when the available pane width changes", () => {
+    const thread = makeThreadShellFixture();
+    render(<Header gitStatus={status([])} thread={thread} />);
+    const applied = harness.setOptionsCalls;
+    harness.headerWidth = 600;
+    render(<Header gitStatus={status([])} thread={thread} />);
+    expect(harness.setOptionsCalls).toBe(applied + 1);
+    harness.headerWidth = 402;
+  });
+
   it("does not reapply native options for streaming-only shell updates", () => {
     const thread = makeThreadShellFixture();
     render(<Header gitStatus={status([])} thread={thread} />);
