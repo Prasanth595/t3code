@@ -67,6 +67,8 @@ Settings > Machines joins or leaves the map with a code. It shows the connection
 
 The desktop app adds each machine that its server can use as an environment, with the machine token headers, and removes it when the arrow drops to `none` (MM-1401). It applies the shared client settings, and runs the commands Reload windows and Install update (MM-1402). Environments that you saved by hand stay as they are.
 
+When a machine refuses the connection, the app pairs again with a backoff: at least 30 seconds between two pairings of one machine, and up to 10 minutes after repeated failures. The target gives a machine its live session again, so a new pairing adds no session (MM-1305). Machine, client and Cloudflare Access sessions without a connection for 7 days end. The Clients view shows one row for each machine, client or sign-in on a machine (MM-903).
+
 ### Settings and theme sync
 
 A setting with a shared value syncs to every machine, also to an offline or a new machine (MM-406). In T3 Settings, a change with "All environments" selected sets the shared value, when the machine has the map role `edit` (MM-411). A change for one environment becomes the own value of that machine. A synced row shows a sync marker.

@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type {
+  MachineClientSession,
   MachineCommand,
   MachineMapDocument,
   MapActor,
@@ -21,7 +22,7 @@ import { callApi } from "./apiClient.ts";
 import { usePortalContext } from "./context.ts";
 import { buildStandings } from "./build.ts";
 import { BuildLabel, BuildSticker } from "./BuildLabel.tsx";
-import { machineQueue, settingEntries } from "./derive.ts";
+import { groupClientSessions, machineQueue, settingEntries, type SessionGroup } from "./derive.ts";
 import {
   actorText,
   ALERT_STICKER,
@@ -1385,39 +1386,87 @@ export function ClientsView() {
             {clients.length === 0 ? (
               <p className="small muted">No sessions reported.</p>
             ) : (
-              <ul className="list">
-                {clients.map((client) => (
-                  <li key={client.sessionId} className="item static">
-                    <span className="grow">
-                      <b>{client.label ?? client.deviceType ?? "Client"}</b>
-                      <span className="sub">
-                        {[client.os, client.browser, client.subject].filter(Boolean).join(" · ")} ·{" "}
-                        {client.connected ? "connected" : `seen ${timeAgo(client.lastSeenAt, now)}`}
-                      </span>
-                    </span>
-                    {client.connected && <span className="sticker ok">live</span>}
-                    {/* MM-502: only a machine that reports the command can sign a session out. */}
-                    {presence?.status?.commands.includes("revokeClient") && (
-                      <button
-                        type="button"
-                        className="btn small danger"
-                        onClick={() =>
+              <SessionGroups
+                clients={clients}
+                now={now}
+                // MM-502: only a machine that reports the command can sign a session out.
+                signOut={
+                  presence?.status?.commands.includes("revokeClient") === true
+                    ? (group) => {
+                        for (const session of group.sessions.slice(0, SIGN_OUT_LIMIT)) {
                           portal.command(machine.id, {
                             _tag: "revokeClient",
-                            sessionId: client.sessionId,
-                          })
+                            sessionId: session.sessionId,
+                          });
                         }
-                      >
-                        Sign out
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
+                      }
+                    : null
+                }
+              />
             )}
           </div>
         );
       })}
     </div>
+  );
+}
+
+/**
+ * The most "revoke client" commands that one "Sign out" sends, newest sessions first, so a big row
+ * never queues thousands of commands for an offline machine. Older fork sessions end after 7 days
+ * without use (MM-1305); others end with the next "Sign out". Revisit when a machine can revoke by
+ * subject and label in one command.
+ */
+const SIGN_OUT_LIMIT = 20;
+
+/**
+ * MM-903: the T3 sessions of one machine, one row per machine, client or sign-in. Groups with no
+ * live session and no use for a day fold away.
+ */
+function SessionGroups({
+  clients,
+  now,
+  signOut,
+}: {
+  readonly clients: ReadonlyArray<MachineClientSession>;
+  readonly now: number;
+  readonly signOut: ((group: SessionGroup) => void) | null;
+}) {
+  const { shown, folded } = groupClientSessions(clients, now);
+  const row = (group: SessionGroup) => {
+    const { newest } = group;
+    const count = group.sessions.length;
+    return (
+      <li key={group.key} className="item static">
+        <span className="grow">
+          <b>{newest.label ?? newest.deviceType ?? "Client"}</b>
+          <span className="sub">
+            {[newest.os, newest.browser, newest.subject].filter(Boolean).join(" · ")} ·{" "}
+            {group.connected ? "connected" : `seen ${timeAgo(newest.lastSeenAt, now)}`}
+            {count > 1 && ` · ${count} sessions`}
+          </span>
+        </span>
+        {group.connected && <span className="sticker ok">live</span>}
+        {signOut !== null && (
+          <button type="button" className="btn small danger" onClick={() => signOut(group)}>
+            Sign out
+          </button>
+        )}
+      </li>
+    );
+  };
+  return (
+    <>
+      {shown.length > 0 && <ul className="list">{shown.map(row)}</ul>}
+      {folded.length > 0 && (
+        <details className="more">
+          <summary>
+            {folded.length} not used for a day (
+            {folded.reduce((total, group) => total + group.sessions.length, 0)} sessions)
+          </summary>
+          <ul className="list">{folded.map(row)}</ul>
+        </details>
+      )}
+    </>
   );
 }

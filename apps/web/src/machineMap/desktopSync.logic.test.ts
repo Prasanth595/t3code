@@ -54,7 +54,6 @@ describe("planMachineSync", () => {
       state: state({ reachable: [peer(VPS), peer(WINDOWS)] }),
       managedOrigins: none,
       environments: [],
-      repairAttempted: none,
     });
     expect(plan).toEqual({ keep: [VPS, WINDOWS], pair: [VPS, WINDOWS], remove: [] });
   });
@@ -64,7 +63,6 @@ describe("planMachineSync", () => {
       state: state({ reachable: [peer(VPS)] }),
       managedOrigins: new Set([VPS]),
       environments: [saved(VPS)],
-      repairAttempted: none,
     });
     expect(plan).toEqual({ keep: [VPS], pair: [], remove: [] });
   });
@@ -74,7 +72,6 @@ describe("planMachineSync", () => {
       state: state({ reachable: [peer(VPS)] }),
       managedOrigins: none,
       environments: [saved(VPS)],
-      repairAttempted: none,
     });
     expect(plan).toEqual({ keep: [], pair: [], remove: [] });
   });
@@ -90,7 +87,6 @@ describe("planMachineSync", () => {
       }),
       managedOrigins: none,
       environments: [],
-      repairAttempted: none,
     });
     expect(plan.keep).toEqual([VPS]);
     expect(plan.pair).toEqual([VPS]);
@@ -101,7 +97,6 @@ describe("planMachineSync", () => {
       state: state({ reachable: [peer(VPS)] }),
       managedOrigins: new Set([VPS, WINDOWS]),
       environments: [saved(VPS), saved(WINDOWS)],
-      repairAttempted: none,
     });
     expect(plan.remove).toEqual([{ origin: WINDOWS, environmentId: EnvironmentId.make(WINDOWS) }]);
   });
@@ -111,7 +106,6 @@ describe("planMachineSync", () => {
       state: state({ joined: false, tokenHeaders: null, reachable: [] }),
       managedOrigins: new Set([VPS, WINDOWS]),
       environments: [saved(VPS)],
-      repairAttempted: none,
     });
     expect(plan).toEqual({
       keep: [],
@@ -128,19 +122,17 @@ describe("planMachineSync", () => {
       state: state({ tokenHeaders: null, reachable: [peer(VPS)] }),
       managedOrigins: new Set([WINDOWS]),
       environments: [],
-      repairAttempted: none,
     });
     expect(plan).toEqual({ keep: [], pair: [], remove: [] });
   });
 
-  it("pairs a failing managed machine again once per failure", () => {
-    const input = {
+  it("pairs a failing managed machine again", () => {
+    const plan = planMachineSync({
       state: state({ reachable: [peer(VPS)] }),
       managedOrigins: new Set([VPS]),
       environments: [saved(VPS, "error")],
-    };
-    expect(planMachineSync({ ...input, repairAttempted: none }).pair).toEqual([VPS]);
-    expect(planMachineSync({ ...input, repairAttempted: new Set([VPS]) }).pair).toEqual([]);
+    });
+    expect(plan.pair).toEqual([VPS]);
   });
 });
 

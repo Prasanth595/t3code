@@ -16,7 +16,7 @@ import {
   readRequestHeaders as readRequestHeadersAtom,
   saveRequestHeaders as saveRequestHeadersAtom,
 } from "../../connection/onboarding";
-import { pairSiblingOrigin } from "../../connection/siblingEnvironments";
+import { pairSiblingWhenDue } from "../../connection/siblingEnvironments";
 import {
   ensureClientSettingsHydrated,
   getClientSettings,
@@ -88,6 +88,12 @@ function writeManagedOrigins(origins: ReadonlySet<string>): void {
   globalThis.localStorage.setItem(MANAGED_ORIGINS_KEY, JSON.stringify([...origins]));
 }
 
+/**
+ * The least time between two pairings of one machine. Short, so a level change (MM-305) repairs
+ * fast; the target gives the same session again (MM-1305), so a pairing adds no session.
+ */
+const MACHINE_PAIRING_GAP_MS = 30_000;
+
 function MachineCatalogSync({
   state,
   primaryEnvironmentId,
@@ -100,7 +106,6 @@ function MachineCatalogSync({
   const readRequestHeaders = useAtomCommand(readRequestHeadersAtom, { reportFailure: false });
   const saveRequestHeaders = useAtomCommand(saveRequestHeadersAtom, { reportFailure: false });
   const removeEnvironment = useAtomCommand(environmentCatalog.remove, { reportFailure: false });
-  const repairAttempted = useRef(new Set<string>());
   const running = useRef(false);
   const runAgain = useRef(false);
 
@@ -114,18 +119,11 @@ function MachineCatalogSync({
   const savedKey = stableStringify(saved);
 
   const syncOnce = async () => {
-    for (const environment of saved) {
-      // A working connection ends the failure, so the next failure may pair again.
-      if (environment.origin !== null && environment.phase === "connected") {
-        repairAttempted.current.delete(environment.origin);
-      }
-    }
     const managed = readManagedOrigins();
     const plan = planMachineSync({
       state,
       managedOrigins: managed,
       environments: saved,
-      repairAttempted: repairAttempted.current,
     });
 
     for (const { origin, environmentId } of plan.remove) {
@@ -136,7 +134,6 @@ function MachineCatalogSync({
       const cleared = await saveRequestHeaders({ origin, headers: [] });
       if (cleared._tag === "Failure") continue;
       managed.delete(origin);
-      repairAttempted.current.delete(origin);
       writeManagedOrigins(managed);
     }
 
@@ -152,12 +149,15 @@ function MachineCatalogSync({
     }
 
     for (const origin of plan.pair) {
-      if (saved.some((environment) => environment.origin === origin)) {
-        repairAttempted.current.add(origin);
+      // Each pairing changes the saved list, which starts the next sync, so only the backoff
+      // limits the rate. Electron adds the token headers to this request, for this origin only.
+      const outcome = await pairSiblingWhenDue(origin, connectPairing, {
+        credentials: "omit",
+        afterSuccessMs: MACHINE_PAIRING_GAP_MS,
+      });
+      if (outcome !== "skipped" && outcome.error !== null) {
+        console.warn("Machine map: could not add a machine.", origin, outcome.error);
       }
-      // Electron adds the token headers to this request, and only for this origin.
-      const error = await pairSiblingOrigin(origin, connectPairing, "omit");
-      if (error !== null) console.warn("Machine map: could not add a machine.", origin, error);
     }
   };
 
@@ -194,7 +194,12 @@ function MachineCatalogSync({
   useEffect(() => {
     const onFocus = () => void sync();
     globalThis.addEventListener("focus", onFocus);
-    return () => globalThis.removeEventListener("focus", onFocus);
+    // A pairing that the backoff skipped has no other event to run it later.
+    const timer = globalThis.setInterval(() => void sync(), MACHINE_PAIRING_GAP_MS);
+    return () => {
+      globalThis.removeEventListener("focus", onFocus);
+      globalThis.clearInterval(timer);
+    };
   }, []);
 
   return null;
