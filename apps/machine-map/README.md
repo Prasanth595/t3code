@@ -4,6 +4,79 @@ Fork feature. The portal shows every T3 machine on one map and controls what eac
 
 The portal is one Cloudflare Worker with one Durable Object, at `t3.yarden-zamir.com`.
 
+## First-time setup
+
+Do these steps once, in this order.
+
+### 1. Create the API token
+
+In the Cloudflare dashboard, go to **My Profile** > **API Tokens** > **Create Token** > **Create Custom Token**. Add these permissions:
+
+| Permission                                                 | Scope                     | What the portal does with it                                                                                                                                                                                                                                           |
+| ---------------------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Access: Service Tokens Edit                                | Account                   | "Add machine" creates the machine token, "Rotate token" works, and "Remove machine" deletes the token (MM-1205).                                                                                                                                                       |
+| Access: Apps and Policies Edit                             | Account                   | The portal adds machine and app tokens to the policies of the Access apps. "Set up approvals" creates the approval app, the `/client` app and the App Launcher app.                                                                                                    |
+| Access: Organizations, Identity Providers, and Groups Edit | Account                   | Approvals read the Zero Trust organization (MM-1207). "Set up approvals" allows the passkey MFA methods. Edit includes Read. Edit can also change every other organization setting, such as login design and session lengths. With only Read, do the MFA step by hand. |
+| Access: Organizations Revoke                               | Account                   | "Sign out everywhere" ends Access sessions (MM-903). Without it, it ends only T3 sessions, and "Set up approvals" names the missing permission.                                                                                                                        |
+| Cloudflare Tunnel: Edit                                    | Account                   | "Add machine" creates the machine tunnel (MM-213).                                                                                                                                                                                                                     |
+| DNS: Edit                                                  | Zone of `MACHINE_ZONE_ID` | "Add machine" adds the CNAME of the tunnel.                                                                                                                                                                                                                            |
+
+Without the tunnel and DNS permissions, "Add machine" makes no tunnel and the join dialog says why. With the token, the Clients view lists Access sessions. Without the token, "Add machine" takes the client id and secret of an existing machine token (MM-210). Then delete removed tokens in the Zero Trust dashboard yourself. When the token lacks a permission for a step, the portal shows the manual step with links and the name of the permission (MM-1209).
+
+### 2. Set the secrets
+
+Sign in once with `./node_modules/.bin/wrangler login` in this folder. Set each secret with `./node_modules/.bin/wrangler secret put <NAME>`, and paste the value when it asks.
+
+- `SECRET_KEY` (required for joins and rotations). The AES-GCM key that encrypts a token secret while it waits for its machine (MM-1201). Make it and set it in one step:
+
+  ```sh
+  openssl rand -base64 32 | ./node_modules/.bin/wrangler secret put SECRET_KEY
+  ```
+
+  A new key makes waiting join codes and rotations unreadable. Make new join codes after you change it.
+
+- `VAPID_JWK` (optional, MM-1807). The P-256 private key that signs push messages, as a JSON Web Key. Without it, push is off and the Clients view says so. Make it and set it in one step:
+
+  ```sh
+  node -e 'const { generateKeyPairSync } = require("node:crypto"); console.log(JSON.stringify(generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "jwk" })))' | ./node_modules/.bin/wrangler secret put VAPID_JWK
+  ```
+
+  A new key turns off the push subscription of every device. Turn notifications on again in the Clients view of each device.
+
+- `CF_API_TOKEN` (optional, MM-1205). The token of step 1.
+- `MACHINE_ACCESS_SUBJECTS` (optional, MM-213). Access subjects that a joined machine allows next to the owner emails, comma separated, for example the client id of the desktop service token. A secret keeps the client id out of the repository.
+
+### 3. Create the Access apps
+
+In Zero Trust, go to **Access controls** > **Applications** and create these self-hosted apps:
+
+1. **Portal pages and API.** For `t3.yarden-zamir.com`, session duration 30 days (MM-103). Allow only the owner email. Copy its audience tag into `PAGE_AUD` in `wrangler.jsonc`.
+2. **Machine connections.** For `t3.yarden-zamir.com/connect`. Give it no identity login. The portal adds a "Service Auth" policy named `t3 machine map tokens` for the machine tokens. Copy its audience tag into `CONNECT_AUD` and its app id into `CONNECT_ACCESS_APP_ID`.
+3. **Enrollment.** For `t3.yarden-zamir.com/enroll`, with one Bypass policy for everyone. The join code is the credential (MM-204). This app also covers the app invite path `/enroll/client` (MM-913).
+
+Then check the other values in `wrangler.jsonc`:
+
+- `TEAM_DOMAIN` is the team domain of the Zero Trust organization, `<team>.cloudflareaccess.com`. `OWNER_EMAILS` and `ACCOUNT_ID` name the owner and the account.
+- `MACHINE_ACCESS_APP_ID` is the Access app of the machine hostnames. The portal adds each new machine token to its `t3 machine map tokens` policy, and each app token of a native client to its `t3 client tokens` policy (MM-911). It edits no other policy. It also adds and removes the hostname of each machine tunnel (MM-213). That update sends back the whole app with its policies, and the portal checks that the app keeps each policy.
+- `MACHINE_DOMAIN` and `MACHINE_ZONE_ID` name the DNS zone of the machine hostnames. A new machine gets `t3-<slug>.<MACHINE_DOMAIN>`.
+
+The Worker refuses every owner and machine request while a value in `wrangler.jsonc` starts with `REPLACE_`.
+
+### 4. Deploy
+
+Merge the `wrangler.jsonc` values to main. The workflow deploys the portal, see [Deploy](#deploy).
+
+### 5. Set up approvals (MM-1207, MM-1208)
+
+Open `https://t3.yarden-zamir.com`, go to Clients, and select "Invite an app". Select "Set up approvals" in the dialog. A waiting sign-in shows the same button. It does these steps itself, and skips each step that is done already:
+
+- It allows "Biometrics" (a passkey such as Touch ID or Face ID) and "Security key" in **Access controls** > **Access settings** > **Allow multi-factor authentication (MFA)**. It keeps the other organization settings and does not turn on **Apply global MFA settings by default**.
+- It creates the App Launcher app with an Allow policy for the owner emails. Cloudflare needs the App Launcher to register a passkey.
+- It creates the Access app of `t3.yarden-zamir.com/api/grant` with the owner emails, a 10-minute session and independent MFA.
+- It creates the Access app `t3 portal client tokens` for `t3.yarden-zamir.com/client` (MM-914). It lets in any service token of the account, and the Worker answers only for a token that a client holds.
+
+Registering the passkey stays manual. The first approval asks for it. To register it before, open `https://super-bird-2876.cloudflareaccess.com/AddMfaDevice`. "Confirm with passkey" opens a Cloudflare page that asks for the passkey, not a browser prompt.
+
 ## Code
 
 - `src/worker.ts`: routes, Cloudflare Access checks, request decoding.
@@ -15,52 +88,9 @@ The portal is one Cloudflare Worker with one Durable Object, at `t3.yarden-zamir
 - `packages/shared/src/webPush.ts`: Web Push with Web Crypto: the VAPID JWT and the `aes128gcm` encryption (MM-1807). The T3 server uses it too.
 - `public/`: the favicon, the app icons, the web app manifest and the offline page. The PNG icons are `favicon.svg` rendered at each size; the full-bleed ones (`apple-touch-icon.png`, `icon-maskable-512.png`) put it on the canvas colour with a margin.
 
-## Set up Cloudflare Access
-
-Create these Access apps before the first deploy:
-
-1. **Portal pages and API.** Self-hosted app for `t3.yarden-zamir.com`, session duration 30 days (MM-103). Allow only the owner email. Copy its audience tag into `PAGE_AUD` in `wrangler.jsonc`.
-2. **Machine connections.** Self-hosted app for `t3.yarden-zamir.com/connect`. Give it no identity login. The portal adds a "Service Auth" policy named `t3 machine map tokens` for the machine tokens. Copy its audience tag into `CONNECT_AUD` and its app id into `CONNECT_ACCESS_APP_ID`.
-3. **Enrollment.** Self-hosted app for `t3.yarden-zamir.com/enroll` with one Bypass policy for everyone. The join code is the credential (MM-204).
-
-`MACHINE_ACCESS_APP_ID` is the Access app of the machine hostnames. The portal adds each new machine token to its `t3 machine map tokens` policy, and each app token of a native client to its `t3 client tokens` policy (MM-911). It edits no other policy. It also adds and removes the hostname of each machine tunnel (MM-213). That update sends back the whole app with its policies, and the portal checks that the app keeps each policy.
-
-`MACHINE_DOMAIN` and `MACHINE_ZONE_ID` in `wrangler.jsonc` name the DNS zone of the machine hostnames. A new machine gets `t3-<slug>.<MACHINE_DOMAIN>`.
-
-The Worker refuses every owner and machine request while a value in `wrangler.jsonc` starts with `REPLACE_`.
-
-### Client approvals (MM-1207, MM-1208)
-
-The portal makes the Access app of `t3.yarden-zamir.com/api/grant` itself: "Set up approvals" on a waiting sign-in creates it with the owner emails, a 10-minute session and independent MFA. Before that, it does two Cloudflare steps when they are missing, and skips each step that is done already:
-
-- It allows "Biometrics" (a passkey such as Touch ID or Face ID) and "Security key" in **Access controls** > **Access settings** > **Allow multi-factor authentication (MFA)**. It keeps the other organization settings and does not turn on **Apply global MFA settings by default**. This needs "Access: Organizations, Identity Providers, and Groups Edit".
-- It creates the App Launcher app with an Allow policy for the owner emails. Cloudflare needs the App Launcher to register a passkey. This needs "Access: Apps and Policies Edit".
-
-When the token lacks a permission, the portal shows the manual step with links and the name of the permission (MM-1209).
-
-The first approval asks you to register the passkey. To register it before, open `https://super-bird-2876.cloudflareaccess.com/AddMfaDevice`. "Confirm with passkey" opens a Cloudflare page that asks for the passkey, not a browser prompt.
-
-"Set up approvals" also creates the Access app `t3 portal client tokens` for `t3.yarden-zamir.com/client` (MM-914). It lets in any service token of the account, and the Worker answers only for a token that a client holds. The `/enroll` Bypass app above also covers the app invite path `/enroll/client` (MM-913).
-
-## Secrets
-
-Set secrets with `wrangler secret put <NAME>` in this folder.
-
-- `SECRET_KEY` (required for joins and rotations). The AES-GCM key that encrypts a token secret while it waits for its machine (MM-1201). Make it with `openssl rand -base64 32`. A new key makes waiting join codes and rotations unreadable. Make new join codes after you change it.
-- `CF_API_TOKEN` (optional, MM-1205). A Cloudflare API token with "Access: Service Tokens Edit", "Access: Apps and Policies Edit", "Access: Organizations, Identity Providers, and Groups Edit", "Access: Organizations Revoke" and "Cloudflare Tunnel: Edit" on the account, and "DNS: Edit" on the zone of `MACHINE_ZONE_ID`. Client approvals need to read the organization (MM-1207). The Edit level of that permission includes Read. It also lets "Set up approvals" allow the passkey MFA methods of the organization, and it can change every other Zero Trust organization setting, such as login design and session lengths. With only the Read level, do the MFA step by hand. "Sign out everywhere" needs the revoke permission to end Access sessions (MM-903); without it, it ends only T3 sessions, and "Set up approvals" names the missing permission. With it, "Add machine" creates the machine token and its tunnel (MM-213), "Rotate token" works, "Remove machine" deletes what "Add machine" made, and the Clients view lists Access sessions. Without the tunnel and DNS permissions, "Add machine" makes no tunnel and the join dialog says why. Without the token, "Add machine" takes the client id and secret of an existing machine token (MM-210). Then delete removed tokens in the Zero Trust dashboard yourself.
-- `MACHINE_ACCESS_SUBJECTS` (optional, MM-213). Access subjects that a joined machine allows next to the owner emails, comma separated, for example the client id of the desktop service token. A secret keeps the client id out of the repository.
-
-- `VAPID_JWK` (optional, MM-1807). The P-256 private key that signs push messages, as a JSON Web Key. Without it, push is off and the Clients view says so. Make it and set it in one step:
-
-  ```sh
-  node -e 'const { generateKeyPairSync } = require("node:crypto"); console.log(JSON.stringify(generateKeyPairSync("ec", { namedCurve: "P-256" }).privateKey.export({ format: "jwk" })))' | ./node_modules/.bin/wrangler secret put VAPID_JWK
-  ```
-
-  A new key turns off the push subscription of every device. Turn notifications on again in the Clients view of each device.
-
 ## Deploy
 
-Merge to main. The workflow "Machine map deploy" (`.github/workflows/fork-machine-map-deploy.yml`) tests and deploys the portal when `apps/machine-map` or the contracts it reads change. Do not deploy by hand: a deploy from a branch rolls back main.
+Merge to main. The workflow "Machine map deploy" (`.github/workflows/fork-machine-map-deploy.yml`) tests and deploys the portal when `apps/machine-map` or the contracts it reads change. It needs the GitHub secret `CLOUDFLARE_DEPLOY_TOKEN`, a Cloudflare API token with "Workers Scripts: Edit" and "Workers Routes: Edit". Do not deploy by hand: a deploy from a branch rolls back main.
 
 ## Develop
 
