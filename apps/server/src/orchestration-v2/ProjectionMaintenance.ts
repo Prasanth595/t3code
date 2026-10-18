@@ -6,6 +6,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -226,8 +227,8 @@ export const layer: Layer.Layer<
     const supersedableThreadEventTypes = new Set(SUPERSEDABLE_THREAD_EVENT_TYPES);
     const readStateThreadEventTypes = new Set(READ_STATE_THREAD_EVENT_TYPES);
     // Keep subagent.updated and turn-item.updated rows: slimmed payloads reference their prompts.
-    // Discovery runs on the shared synchronous connection; json_extract over
-    // large payloads made 500-row pages block the event loop for ~90ms.
+    // Discovery reads every event, so it runs on the reader worker where one is
+    // available; small pages keep other reads from queueing behind it.
     const COMPACTION_PAGE_SIZE = 50;
 
     /**
@@ -299,7 +300,7 @@ export const layer: Layer.Layer<
           WHERE event.sequence <= ${throughSequence}
           ORDER BY event.sequence DESC
           LIMIT ${COMPACTION_PAGE_SIZE}
-        `;
+        `.pipe(NodeSqliteClient.readOnly);
         const obsolete: number[] = [];
         for (const row of rows) {
           if (row.imported_legacy_thread === 1) {
@@ -342,8 +343,8 @@ export const layer: Layer.Layer<
             }
           }
         }
-        // Both discovery and deletion use the synchronous connection. Yield even
-        // when this page has nothing to delete so startup and requests can progress.
+        // Without a reader worker discovery shares the synchronous connection.
+        // Yield even when this page has nothing to delete so requests can progress.
         yield* Effect.yieldNow;
         if (obsolete.length > 0) {
           yield* sql`DELETE FROM orchestration_events WHERE sequence IN ${sql.in(obsolete)}`;
@@ -376,7 +377,7 @@ export const layer: Layer.Layer<
           WHERE receipt.rowid <= ${throughReceiptRowId}
           ORDER BY receipt.rowid DESC
           LIMIT ${COMPACTION_PAGE_SIZE}
-        `;
+        `.pipe(NodeSqliteClient.readOnly);
         const obsolete = rows
           .filter((row) => row.imported_legacy_thread === 1)
           .map((row) => row.command_id);

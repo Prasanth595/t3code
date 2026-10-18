@@ -1,7 +1,10 @@
 import type { DatabaseStorageStatus } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Schedule from "effect/Schedule";
@@ -16,6 +19,7 @@ import { forkParked } from "../serverActivation.ts";
 
 /** Pages returned per reclaim pass; one minute of churn, not a backlog. */
 const RECLAIM_PAGES_PER_PASS = 1024;
+const COMPACTION_INTERVAL = Duration.hours(6);
 
 export class DatabaseStorage extends Context.Service<
   DatabaseStorage,
@@ -37,6 +41,7 @@ const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
   const config = yield* ServerConfig.ServerConfig;
+  const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const statusRef = yield* SubscriptionRef.make<DatabaseStorageStatus | null>(null);
 
@@ -89,21 +94,45 @@ const make = Effect.gen(function* () {
     Effect.catch((cause) => Effect.logWarning("Database space reclamation failed", { cause })),
   );
 
+  // A pass reads the whole event store, gigabytes on a long-lived install.
+  // Remembering when one last finished keeps the six-hour cadence across
+  // restarts instead of rescanning a minute into every launch.
+  const compactedAtPath = path.join(path.dirname(config.dbPath), "compacted-at");
   const compact = maintenance.compactEventStore.pipe(
     Effect.tap((result) =>
       result.deletedEventCount > 0 || result.deletedReceiptCount > 0
         ? Effect.logInfo("Compacted orchestration history", result)
         : Effect.void,
     ),
+    Effect.tap(() =>
+      Clock.currentTimeMillis.pipe(
+        Effect.flatMap((now) => fs.writeFileString(compactedAtPath, String(now))),
+        Effect.ignore,
+      ),
+    ),
     Effect.catch((cause) =>
       Effect.logWarning("Orchestration history compaction failed", { cause }),
     ),
   );
+  const lastCompactedAt = yield* fs.readFileString(compactedAtPath).pipe(
+    Effect.map(Number),
+    Effect.orElseSucceed(() => Number.NaN),
+  );
+  const intervalMs = Duration.toMillis(COMPACTION_INTERVAL);
+  const untilDueMs = Number.isFinite(lastCompactedAt)
+    ? lastCompactedAt + intervalMs - (yield* Clock.currentTimeMillis)
+    : 0;
+  const firstCompactionDelay = Duration.millis(
+    Math.min(intervalMs, Math.max(Duration.toMillis(Duration.minutes(1)), untilDueMs)),
+  );
 
   yield* forkParked(
-    Effect.sleep("1 minute").pipe(
+    Effect.sleep(firstCompactionDelay).pipe(
       Effect.andThen(
-        compact.pipe(Effect.andThen(publishStatus), Effect.repeat(Schedule.spaced("6 hours"))),
+        compact.pipe(
+          Effect.andThen(publishStatus),
+          Effect.repeat(Schedule.spaced(COMPACTION_INTERVAL)),
+        ),
       ),
     ),
   );
