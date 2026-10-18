@@ -23,10 +23,18 @@ import {
  * rows), a block into nested blocks, and a block without nested blocks into sentences, or a code
  * block into lines. The cursor paints with the CSS Custom Highlight API, so it never changes the
  * message DOM, and citing reuses the citation code of a mouse selection.
+ *
+ * Inside a message, each control is a stop too, after the unit that holds it: a sentence, then its
+ * links, then the next sentence. Enter clicks a control. A disclosure, such as a `<details>`
+ * summary or a tool call group, is a block: Right opens it, and Left closes it.
  */
 
 const HIGHLIGHT_NAME = "timeline-cursor";
-const BLOCK_SELECTOR = "p, li, pre, h1, h2, h3, h4, h5, h6, blockquote, table, tr";
+// A trigger with `aria-expanded` and no popup is a disclosure, which shows or hides content in place.
+const DISCLOSURE_SELECTOR = "[aria-expanded]:not([aria-haspopup])";
+const BLOCK_SELECTOR = `p, li, pre, h1, h2, h3, h4, h5, h6, blockquote, table, tr, ${DISCLOSURE_SELECTOR}`;
+const CONTROL_SELECTOR =
+  "a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), summary, [tabindex]:not([tabindex='-1'])";
 const ROW_CONTENT_SELECTOR = "[data-assistant-citation-source], [data-user-message-body]";
 /** Leaves this much of the timeline above or below the cursor when it scrolls into view. */
 const SCROLL_MARGIN_PX = 32;
@@ -48,6 +56,8 @@ interface Cursor {
   readonly anchor: number;
   /** The depth that Right and Left chose. Up and Down walk the outline down to this depth. */
   readonly workDepth: number;
+  /** A control stop inside the unit at `index`, as an index into its controls. */
+  readonly control: number | null;
 }
 
 function elementRange(element: Element): Range {
@@ -122,9 +132,13 @@ function textUnits(element: Element): Unit[] {
   return units.length > 1 ? units : [];
 }
 
-/** The blocks inside `root` that no other block inside `root` contains. */
+/**
+ * The blocks inside `root` that no other block inside `root` contains. A closed section can stay
+ * mounted but hidden, for find in page, so hidden blocks do not count.
+ */
 function topLevelBlocks(root: Element): Element[] {
   return Array.from(root.querySelectorAll(BLOCK_SELECTOR)).filter((block) => {
+    if (!block.checkVisibility()) return false;
     const parentBlock = block.parentElement?.closest(BLOCK_SELECTOR) ?? null;
     return parentBlock === null || parentBlock === root || !root.contains(parentBlock);
   });
@@ -137,6 +151,31 @@ function childUnits(unit: Unit): Unit[] {
   if (blocks.length > 0)
     return blocks.map((block) => ({ element: block, range: elementRange(block) }));
   return textUnits(element);
+}
+
+/** Where a control starts: its first text, so that a sentence that starts with a link holds it. */
+function controlStart(control: Element): [Node, number] {
+  const text = document.createTreeWalker(control, NodeFilter.SHOW_TEXT).nextNode();
+  return text ? [text, 0] : [control, 0];
+}
+
+/**
+ * The controls whose start is inside `unit`, outermost only. A control without text paints no
+ * highlight, so its stop is invisible. Revisit if message content gets icon-only controls.
+ */
+function unitControls(unit: Unit): HTMLElement[] {
+  const common = unit.range.commonAncestorContainer;
+  const scope = common instanceof Element ? common : common.parentElement;
+  if (!scope) return [];
+  return Array.from(scope.querySelectorAll<HTMLElement>(CONTROL_SELECTOR)).filter((control) => {
+    const outer = control.parentElement?.closest(CONTROL_SELECTOR);
+    return (
+      control !== unit.element &&
+      (!outer || !scope.contains(outer)) &&
+      control.checkVisibility() &&
+      unit.range.isPointInRange(...controlStart(control))
+    );
+  });
 }
 
 function rowUnit(row: Element): Unit {
@@ -223,7 +262,28 @@ export function TimelineCursor(props: {
       }
       return units;
     };
+    /**
+     * The control stops of the unit at the cursor. A unit that the walk descends into has none, so
+     * each control is a stop once. Message level has none, so Up and Down still skip whole messages.
+     */
+    const controlsOf = (at: Cursor): HTMLElement[] => {
+      if (at.parents.length === 0) return [];
+      const unit = siblings(at)?.[at.index];
+      if (!unit) return [];
+      if (at.parents.length < at.workDepth && childUnits(unit).length > 0) return [];
+      return unitControls(unit);
+    };
+    /** The control that the cursor is on: a control stop, or a unit that is a control itself. */
+    const controlTarget = (at: Cursor): HTMLElement | null => {
+      if (at.control !== null) return controlsOf(at)[at.control] ?? null;
+      const element = siblings(at)?.[at.index]?.element;
+      return element instanceof HTMLElement && element.matches(CONTROL_SELECTOR) ? element : null;
+    };
     const selectedRange = (at: Cursor): Range | null => {
+      if (at.control !== null) {
+        const control = controlsOf(at)[at.control];
+        return control ? elementRange(control) : null;
+      }
       const units = siblings(at);
       if (!units) return null;
       const first = units[Math.min(at.index, at.anchor)];
@@ -271,7 +331,9 @@ export function TimelineCursor(props: {
         return rect !== undefined && rect.top < bottom;
       });
       const rowId = visible.at(-1) ?? ids.at(-1);
-      return rowId ? { rowId, parents: [], index: 0, anchor: 0, workDepth: 0 } : null;
+      return rowId
+        ? { rowId, parents: [], index: 0, anchor: 0, workDepth: 0, control: null }
+        : null;
     };
     const current = (): Cursor | null =>
       cursor && rowIds().includes(cursor.rowId) ? cursor : null;
@@ -313,7 +375,16 @@ export function TimelineCursor(props: {
         units = children;
         index = child;
       }
-      return { rowId, parents, index, anchor: index, workDepth: parents.length };
+      const at: Cursor = {
+        rowId,
+        parents,
+        index,
+        anchor: index,
+        workDepth: parents.length,
+        control: null,
+      };
+      const control = controlsOf(at).findIndex((candidate) => candidate.contains(element));
+      return control >= 0 ? { ...at, control } : at;
     };
     /** Takes over a fresh mouse selection as the cursor, and clears it so only the cursor shows. */
     const adoptSelection = (): Cursor | null => {
@@ -330,6 +401,7 @@ export function TimelineCursor(props: {
       index: 0,
       anchor: 0,
       workDepth,
+      control: null,
     });
     /**
      * The next unit in document order, never deeper than `workDepth`: 1.1, 1.2, 1.3, 2, 2.1. Past
@@ -373,6 +445,24 @@ export function TimelineCursor(props: {
       }
       return { ...at, parents, index, anchor: index };
     };
+    /** `walkDown` with the control stops of each unit after the unit. */
+    const stepDown = (at: Cursor): Cursor | null => {
+      const next = at.control === null ? 0 : at.control + 1;
+      if (next < controlsOf(at).length) return { ...at, control: next };
+      return walkDown({ ...at, control: null });
+    };
+    /** `walkUp` with the control stops. Back into a unit, the cursor lands on its last control. */
+    const stepUp = (at: Cursor): Cursor | null => {
+      if (at.control !== null) return { ...at, control: at.control > 0 ? at.control - 1 : null };
+      const previous = walkUp(at);
+      const count = previous ? controlsOf(previous).length : 0;
+      return previous && count > 0 ? { ...previous, control: count - 1 } : previous;
+    };
+    const showStep = (from: Cursor, next: Cursor | null) => {
+      if (!next) return;
+      if (next.rowId === from.rowId) show(next);
+      else showRow(next);
+    };
     const move =
       (direction: 1 | -1, extend: boolean): FocusLevelCommandHandler =>
       () => {
@@ -387,13 +477,10 @@ export function TimelineCursor(props: {
         if (extend && at.parents.length > 0) {
           const count = siblings(at)?.length ?? 0;
           const index = Math.max(0, Math.min(count - 1, at.index + direction));
-          show({ ...at, index });
+          show({ ...at, index, control: null });
           return true;
         }
-        const next = direction === 1 ? walkDown(at) : walkUp(at);
-        if (!next) return true;
-        if (next.rowId === at.rowId) show(next);
-        else showRow(next);
+        showStep(at, direction === 1 ? stepDown(at) : stepUp(at));
         return true;
       };
     const cite =
@@ -405,6 +492,12 @@ export function TimelineCursor(props: {
         const fromMouse = selected && !selected.collapsed ? selected : null;
         const at = adoptSelection() ?? current();
         if (at) show(at);
+        // On a control, Enter clicks it: a link opens, a section opens or closes, a button runs.
+        const target = !fromMouse && at ? controlTarget(at) : null;
+        if (target) {
+          target.click();
+          return true;
+        }
         const viewport = latest.current.viewport;
         const { threadRef, onCite } = latest.current;
         const range = fromMouse ?? (at ? selectedRange(at) : null);
@@ -455,6 +548,13 @@ export function TimelineCursor(props: {
         if (!active()) return false;
         const at = adoptSelection() ?? current();
         if (!at) return move(1, false)(event);
+        const target = controlTarget(at);
+        if (target?.matches(DISCLOSURE_SELECTOR)) {
+          if (target.getAttribute("aria-expanded") === "false") target.click();
+          else showStep(at, stepDown(at));
+          return true;
+        }
+        if (at.control !== null) return true;
         const units = siblings(at);
         const unit = units?.[at.index];
         if (unit && childUnits(unit).length > 0) {
@@ -464,6 +564,7 @@ export function TimelineCursor(props: {
             index: 0,
             anchor: 0,
             workDepth: at.parents.length + 1,
+            control: null,
           });
         }
         return true;
@@ -471,6 +572,18 @@ export function TimelineCursor(props: {
       "timeline.shallower": () => {
         if (!active()) return false;
         const at = adoptSelection() ?? current();
+        const target = at ? controlTarget(at) : null;
+        if (
+          target?.matches(DISCLOSURE_SELECTOR) &&
+          target.getAttribute("aria-expanded") === "true"
+        ) {
+          target.click();
+          return true;
+        }
+        if (at && at.control !== null) {
+          show({ ...at, control: null });
+          return true;
+        }
         const parentIndex = at?.parents.at(-1);
         if (at && parentIndex !== undefined) {
           show({
@@ -479,14 +592,29 @@ export function TimelineCursor(props: {
             index: parentIndex,
             anchor: parentIndex,
             workDepth: at.parents.length - 1,
+            control: null,
           });
         }
         return true;
       },
-      // Escape climbs out of the cursor one depth at a time, then out of the timeline.
+      // Escape on a control that has focus returns to the cursor, on that control. From the cursor,
+      // it leaves a control stop, then climbs one depth at a time, then out of the timeline.
       "focus.up": () => {
-        if (!active()) return false;
+        if (!active()) {
+          const node = scroller();
+          const focused = document.activeElement;
+          const viewport = latest.current.viewport;
+          if (!node || !viewport || !(focused instanceof HTMLElement)) return false;
+          if (!viewport.contains(focused)) return false;
+          cursor = cursorAt(elementRange(focused)) ?? current();
+          node.focus({ preventScroll: true });
+          return true;
+        }
         const at = current();
+        if (at && at.control !== null) {
+          show({ ...at, control: null });
+          return true;
+        }
         const parentIndex = at?.parents.at(-1);
         if (at && parentIndex !== undefined) {
           show({
@@ -495,6 +623,7 @@ export function TimelineCursor(props: {
             index: parentIndex,
             anchor: parentIndex,
             workDepth: at.parents.length - 1,
+            control: null,
           });
           return true;
         }

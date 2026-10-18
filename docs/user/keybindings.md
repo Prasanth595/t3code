@@ -73,6 +73,9 @@ from there, and Enter cites exactly the selected text.
 Shift with Up or Down extends the selection within one list. Enter cites the selection with a note, and
 `alt+enter` cites it without one. Only assistant text can be cited. `mod+down` jumps to the
 latest message. PageUp and PageDown still scroll.
+Inside a message, Up and Down also stop on each link, section header and button, after the text
+that holds it. Enter clicks it. Right opens a closed section, and Left closes an open one. Escape
+goes back to the text, and Escape on a link that has focus returns to the cursor.
 
 These keys work with the setting off too:
 

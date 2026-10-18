@@ -419,7 +419,7 @@ Global keys that show and hide the desktop app.
 
 ### Keyboard focus levels
 
-Escape moves focus from the composer to the timeline, then to the sidebar. Arrow keys move a cursor there to open threads, switch groups and cite parts of messages.
+Escape moves focus from the composer to the timeline, then to the sidebar. Arrow keys move a cursor there to open threads, switch groups and cite parts of messages. Inside a message, the cursor also stops on links, section headers and buttons, and Enter clicks them.
 
 - **Setting:** client settings `keyboardFocusLevels` (off by default) and `focusLevelHighlight` (on by default). Settings > General > "Keyboard focus levels" and "Focus highlight". Change the keys in Settings > Keybindings (`focus.*`, `sidebar.*` and `timeline.*` commands).
 - **Works on:** web, desktop.
