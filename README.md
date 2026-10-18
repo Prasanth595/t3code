@@ -104,6 +104,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 - Worktree launch: a worktree request in Scratch runs in a thread folder. A worktree request outside a Git repository runs in the project folder and says so in the thread. A launch refuses a new worktree branch that already exists.
 - Queue: a resumed queued turn shows after the turns that ran before it. A paused queue shows while a turn runs. Resume waits for an edit and for a usage limit.
 - Machine map: an expired machine arrow ends the sessions that it granted.
+- Device panel: a Homebrew Android SDK (`android-commandlinetools`) works without `ANDROID_HOME`, also when the `adb` on `PATH` has no emulator.
 
 ---
 
