@@ -13,6 +13,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { TestClock } from "effect/testing";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { withHostOverrideSettingsFailure } from "../testUtils/hostOverrideSettingsFailure.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
@@ -41,6 +42,25 @@ const layerRepositoryIdentityResolverTest = (options: {
   ).pipe(Layer.provide(ProcessRunner.layer), Layer.provide(ServerSettings.layerTest()));
 
 it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
+  it.effect("uses hostname heuristics and warns when settings fail", () =>
+    withHostOverrideSettingsFailure((settings, warnings) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-identity-settings-failure-" });
+        yield* git(cwd, ["init"]);
+        yield* git(cwd, ["remote", "add", "origin", "git@gitlab.example.test:team/repo.git"]);
+        const resolver = yield* RepositoryIdentityResolver.make().pipe(
+          Effect.provideService(ServerSettings.ServerSettingsService, settings),
+          Effect.provide(ProcessRunner.layer),
+        );
+        expect(warnings.length).toBe(1); // Subscription snapshot also falls back.
+        const identity = yield* resolver.resolve(cwd);
+        expect(identity?.provider).toBe("gitlab");
+        expect(warnings.length).toBe(2);
+      }),
+    ),
+  );
+
   it.effect("refreshes the Git root only when requested", () => {
     const calls: Array<ReadonlyArray<string>> = [];
     let rootPath = "/repo";

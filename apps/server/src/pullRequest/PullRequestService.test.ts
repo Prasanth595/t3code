@@ -27,6 +27,7 @@ import type {
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import type { ServerSettings } from "@t3tools/contracts";
+import { withHostOverrideSettingsFailure } from "../testUtils/hostOverrideSettingsFailure.ts";
 import * as ServerSettingsService from "../serverSettings.ts";
 import { makeSettingsChanges } from "../testUtils/settingsChanges.ts";
 import { PullRequestOperationError } from "@t3tools/contracts";
@@ -798,6 +799,67 @@ it.effect("uses the configured provider's repository selector for a mapped Azure
       { recoverTransientFailure: false },
     );
   }),
+);
+
+it.effect(
+  "uses hostname heuristics and warns for workspace and linked PRs when settings fail",
+  () =>
+    withHostOverrideSettingsFailure((settingsService, warnings) =>
+      Effect.gen(function* () {
+        const service = yield* makeService({
+          settingsService,
+          projects: [
+            project({ id: "p1", title: "web", workspaceRoot: "/repo", repository: "team/repo" }),
+          ],
+          providers: [
+            fakeProvider(SourceControlProviderKind.make("github"), {
+              getChangeRequest: ({ number }) =>
+                Effect.succeed({ ...hostedChangeRequest("PR body"), number }),
+            }),
+          ],
+        });
+        warnings.length = 0;
+        const listed = yield* service.list({ state: "open", involvement: "all" });
+        assert.isAbove(listed.providers.length, 0);
+        assert.isAbove(warnings.length, 0);
+        warnings.length = 0;
+        const summary = yield* service.summary(
+          {
+            projectId: "p1" as ProjectId,
+            host: "github.com",
+            repository: "other/repo",
+            number: 42,
+          },
+          { recoverTransientFailure: false },
+        );
+        assert.strictEqual(summary.repository, "other/repo");
+        assert.isAbove(warnings.length, 0);
+
+        // No checkout on the requested host exercises the direct-link fallback read.
+        const linked = yield* makeService({
+          settingsService,
+          projects: [project({ id: "inbox", title: "Inbox", workspaceRoot: "/inbox" })],
+          providers: [
+            fakeProvider(SourceControlProviderKind.make("github"), {
+              getChangeRequest: ({ number }) =>
+                Effect.succeed({ ...hostedChangeRequest("PR body"), number }),
+            }),
+          ],
+        });
+        warnings.length = 0;
+        const linkedSummary = yield* linked.summary(
+          {
+            projectId: "inbox" as ProjectId,
+            host: "github.com",
+            repository: "team/repo",
+            number: 42,
+          },
+          { recoverTransientFailure: false },
+        );
+        assert.strictEqual(linkedSummary.repository, "team/repo");
+        assert.isAtLeast(warnings.length, 2);
+      }),
+    ),
 );
 
 function makeService(input: {

@@ -195,19 +195,6 @@ export class BitbucketRepositoryRemoteNotFoundError extends Schema.TaggedError<B
   }
 }
 
-export class BitbucketHostSettingsReadError extends Schema.TaggedError<BitbucketHostSettingsReadError>()(
-  "BitbucketHostSettingsReadError",
-  { cause: Schema.Defect() },
-) {
-  get detail(): string {
-    return "The source control host mappings could not be read.";
-  }
-
-  override get message(): string {
-    return this.detail;
-  }
-}
-
 export class BitbucketPullRequestBodyReadError extends Schema.TaggedError<BitbucketPullRequestBodyReadError>()(
   "BitbucketPullRequestBodyReadError",
   {
@@ -264,7 +251,6 @@ export class BitbucketUntrustedUrlError extends Schema.TaggedError<BitbucketUntr
 }
 
 export const BitbucketApiError = Schema.Union([
-  BitbucketHostSettingsReadError,
   BitbucketUntrustedUrlError,
   BitbucketRepositoryLocatorError,
   BitbucketRequestError,
@@ -764,14 +750,9 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-    const settings = yield* host.settings.get.pipe(
-      Effect.mapError((cause) => new BitbucketHostSettingsReadError({ cause })),
-    );
+    const overrides = yield* SourceControlHost.readHostOverrides(host.settings.get);
     for (const remote of remotes.remotes) {
-      if (
-        detectSourceControlProviderFromRemoteUrl(remote.url, settings.sourceControlHostOverrides)
-          ?.kind !== "bitbucket"
-      )
+      if (detectSourceControlProviderFromRemoteUrl(remote.url, overrides)?.kind !== "bitbucket")
         continue;
       const parsed = parseBitbucketRemoteUrl(remote.url);
       if (parsed) return parsed;

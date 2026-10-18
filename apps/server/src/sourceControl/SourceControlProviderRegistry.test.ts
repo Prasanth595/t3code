@@ -21,6 +21,7 @@ import {
   VcsRepositoryDetectionError,
 } from "@t3tools/contracts";
 
+import { withHostOverrideSettingsFailure } from "../testUtils/hostOverrideSettingsFailure.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServerConfig from "../config.ts";
 import type * as VcsDriver from "../vcs/VcsDriver.ts";
@@ -170,6 +171,19 @@ function makeRegistry(input: {
     ),
   );
 }
+
+it.effect("uses hostname heuristics and warns when settings fail", () =>
+  withHostOverrideSettingsFailure((settings) =>
+    Effect.gen(function* () {
+      const registry = yield* makeRegistry({
+        remotes: [{ name: "origin", url: "git@github.com:team/repo.git" }],
+        settings,
+      });
+      const provider = yield* registry.resolve({ cwd: "/repo" });
+      assert.strictEqual(provider.kind, "github");
+    }),
+  ),
+);
 
 it.effect("routes GitHub remotes to the GitHub provider", () =>
   Effect.gen(function* () {

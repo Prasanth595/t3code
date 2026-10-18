@@ -72,6 +72,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import { withHostOverrideSettingsFailure } from "../testUtils/hostOverrideSettingsFailure.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeSettingsChanges } from "../testUtils/settingsChanges.ts";
 import * as GitManager from "./GitManager.ts";
@@ -865,6 +866,49 @@ const layerGitManagerTest = GitVcsDriver.layer.pipe(
 );
 
 it.layer(layerGitManagerTest)("GitManager", (it) => {
+  it.effect("uses hostname heuristics and warns when settings fail", () =>
+    withHostOverrideSettingsFailure((settingsService, warnings) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3-git-settings-failure-");
+        yield* initRepo(repoDir);
+        yield* runGit(repoDir, [
+          "remote",
+          "add",
+          "origin",
+          "https://github.example.test/team/repo.git",
+        ]);
+        const { manager } = yield* makeManager({ settingsService });
+        warnings.length = 0;
+        const status = yield* manager.localStatus({ cwd: repoDir });
+        expect(status.sourceControlProvider?.kind).toBe("github");
+      }),
+    ),
+  );
+
+  it.effect("warns and preserves nested remote PR lookup when settings fail", () =>
+    withHostOverrideSettingsFailure((settingsService, warnings) =>
+      Effect.gen(function* () {
+        const repoDir = yield* makeTempDir("t3-git-remote-settings-failure-");
+        yield* initRepo(repoDir);
+        const remoteDir = yield* createBareRemote();
+        yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+        yield* runGit(repoDir, ["checkout", "-b", "feature/settings"]);
+        yield* runGit(repoDir, ["push", "-u", "origin", "feature/settings"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "https://github.example.test/team/nested/repo.git",
+          remoteDir,
+        );
+        const { manager, ghCalls } = yield* makeManager({ settingsService });
+        warnings.length = 0;
+        const status = yield* manager.remoteStatus({ cwd: repoDir }, { refreshUpstream: false });
+        expect(status).not.toBeNull();
+        expect(ghCalls.some((call) => call.startsWith("pr list "))).toBe(true);
+      }),
+    ),
+  );
+
   it.effect("reports a configured host before applying hostname heuristics", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-host-mapping-");

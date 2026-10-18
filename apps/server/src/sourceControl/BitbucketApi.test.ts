@@ -14,6 +14,7 @@ import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } fr
 
 import { GitCommandError } from "@t3tools/contracts";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
+import { withHostOverrideSettingsFailure } from "../testUtils/hostOverrideSettingsFailure.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -62,6 +63,7 @@ const repositoryJson = {
 };
 
 function makeLayer(input: {
+  readonly settingsService?: ServerSettings.ServerSettingsService["Service"];
   readonly response: (request: HttpClientRequest.HttpClientRequest) => Response;
   readonly requestFailure?: (
     request: HttpClientRequest.HttpClientRequest,
@@ -171,12 +173,37 @@ function makeLayer(input: {
         }),
       ),
     ),
-    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(
+      input.settingsService
+        ? Layer.succeed(ServerSettings.ServerSettingsService, input.settingsService)
+        : ServerSettings.layerTest(),
+    ),
     Layer.provideMerge(NodeServices.layer),
   );
 
   return { execute, git: gitMock, resolve, listRemotes: driver.listRemotes, layer };
 }
+
+it.effect(
+  "uses hostname heuristics and warns for fallback remote discovery when settings fail",
+  () =>
+    withHostOverrideSettingsFailure((settingsService) => {
+      const { layer, execute } = makeLayer({
+        settingsService,
+        response: (request) =>
+          Response.json(request.url.endsWith("/branching-model") ? {} : repositoryJson),
+      });
+      return Effect.gen(function* () {
+        const bitbucket = yield* BitbucketApi.BitbucketApi;
+        assert.strictEqual(yield* bitbucket.getDefaultBranch({ cwd: "/repo" }), "main");
+        assert.isTrue(
+          execute.mock.calls.every(([request]) =>
+            request.url.startsWith("https://api.test.local/2.0/repositories/pingdotgg/t3code"),
+          ),
+        );
+      }).pipe(Effect.provide(layer));
+    }),
+);
 
 it.effect("parses pull request responses from the Bitbucket REST API", () => {
   const { execute, layer } = makeLayer({

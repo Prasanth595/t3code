@@ -84,6 +84,7 @@ import {
 } from "@t3tools/shared/sourceControl";
 
 import * as ProjectService from "../project/ProjectService.ts";
+import { readHostOverrides } from "@t3tools/source-control-core/server/SourceControlHost";
 import * as ServerSettings from "../serverSettings.ts";
 import { subscribeHostOverrideChanges } from "../sourceControl/hostOverrideChanges.ts";
 import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
@@ -719,16 +720,8 @@ export const make = Effect.gen(function* () {
         ),
       ),
       Effect.flatMap((projects) =>
-        serverSettings.getSettings.pipe(
-          Effect.mapError(
-            (cause) =>
-              new PullRequestOperationError({
-                operation: "resolveProvider",
-                detail: "The source control host mappings could not be read.",
-                cause,
-              }),
-          ),
-          Effect.flatMap(({ sourceControlHostOverrides }) =>
+        readHostOverrides(serverSettings.getSettings).pipe(
+          Effect.flatMap((sourceControlHostOverrides) =>
             refineUnknownProjectKinds(projects, filter, sourceControlHostOverrides).pipe(
               Effect.map((refinedProviders) => ({
                 refinedProviders,
@@ -878,33 +871,15 @@ export const make = Effect.gen(function* () {
               onHost.find((candidate) => candidate.repositoryKey === null);
             if (route === undefined) {
               return Effect.gen(function* () {
-                const settings = yield* serverSettings.getSettings.pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new PullRequestOperationError({
-                        operation: "resolveProvider",
-                        detail: "The source control host mappings could not be read.",
-                        cause,
-                      }),
-                  ),
-                );
+                const overrides = yield* readHostOverrides(serverSettings.getSettings);
                 const remoteUrl = `https://${host}/${repository}.git`;
                 const provider =
                   ["github.com", "bitbucket.org", "codeberg.org"].includes(host) ||
-                  sourceControlHostOverrideForRemoteUrl(
-                    remoteUrl,
-                    settings.sourceControlHostOverrides,
-                  ) !== undefined
-                    ? detectSourceControlProviderFromRemoteUrl(
-                        remoteUrl,
-                        settings.sourceControlHostOverrides,
-                      )
+                  sourceControlHostOverrideForRemoteUrl(remoteUrl, overrides) !== undefined
+                    ? detectSourceControlProviderFromRemoteUrl(remoteUrl, overrides)
                     : null;
                 const baseUrl =
-                  sourceControlHostOverrideForRemoteUrl(
-                    remoteUrl,
-                    settings.sourceControlHostOverrides,
-                  )?.baseUrl === undefined
+                  sourceControlHostOverrideForRemoteUrl(remoteUrl, overrides)?.baseUrl === undefined
                     ? undefined
                     : provider?.baseUrl;
                 const normalizedRepository = repositoryWithoutMount(repository, baseUrl);

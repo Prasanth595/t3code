@@ -15,6 +15,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { readHostOverrides } from "@t3tools/source-control-core/server/SourceControlHost";
 import * as ServerSettings from "../serverSettings.ts";
 import { subscribeHostOverrideChanges } from "../sourceControl/hostOverrideChanges.ts";
 import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
@@ -172,7 +173,7 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   }
 
   const settings = yield* ServerSettings.ServerSettingsService;
-  const hostOverrides = (yield* settings.getSettings.pipe(Effect.orDie)).sourceControlHostOverrides;
+  const hostOverrides = yield* readHostOverrides(settings.getSettings);
   const remotes = parseRemoteFetchUrls(remoteResult.value.stdout);
   const remote = pickPrimaryRemote(remotes);
   return remote

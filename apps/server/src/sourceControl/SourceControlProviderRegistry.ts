@@ -30,6 +30,7 @@ import {
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 
 import * as ServerConfig from "../config.ts";
+import { readHostOverrides } from "@t3tools/source-control-core/server/SourceControlHost";
 import * as ServerSettings from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
@@ -260,7 +261,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
       },
     );
     const settingsChanges = yield* serverSettings.subscribeChanges;
-    let hostOverrides = (yield* serverSettings.getSettings).sourceControlHostOverrides;
+    let hostOverrides = yield* readHostOverrides(serverSettings.getSettings);
 
     const refineContext = (
       cwd: string,

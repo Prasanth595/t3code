@@ -80,6 +80,7 @@ import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.t
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
+import { readHostOverrides } from "@t3tools/source-control-core/server/SourceControlHost";
 import * as ServerSettings from "../serverSettings.ts";
 import { subscribeHostOverrideChanges } from "../sourceControl/hostOverrideChanges.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
@@ -707,20 +708,6 @@ export const make = Effect.gen(function* () {
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
   const serverSettingsService = yield* ServerSettings.ServerSettingsService;
-  const readHostOverrides = (cwd: string) =>
-    serverSettingsService.getSettings.pipe(
-      Effect.map((settings) => settings.sourceControlHostOverrides),
-      Effect.mapError(
-        (cause) =>
-          new SourceControlProviderError({
-            provider: SourceControlProviderKind.make("unknown"),
-            operation: "detectProvider",
-            cwd,
-            detail: "The source control host mappings could not be read.",
-            cause,
-          }),
-      ),
-    );
   const threads = yield* ProjectionStore.ProjectionStoreV2;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const projectSettingsFor = Effect.fnUntraced(function* (input: {
@@ -1407,7 +1394,7 @@ export const make = Effect.gen(function* () {
       (yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ??
       (yield* readConfigValueNullable(cwd, "remote.origin.url"));
 
-    const overrides = yield* readHostOverrides(cwd);
+    const overrides = yield* readHostOverrides(serverSettingsService.getSettings);
     const provider = remoteUrl
       ? detectSourceControlProviderFromGitRemoteUrl(remoteUrl, overrides)
       : null;
@@ -1440,7 +1427,7 @@ export const make = Effect.gen(function* () {
       /^https?:\/\//iu.test(remoteUrl) &&
       (repositoryNameWithOwner?.split("/").length ?? 0) > 2
     ) {
-      const overrides = yield* readHostOverrides(cwd);
+      const overrides = yield* readHostOverrides(serverSettingsService.getSettings);
       const kind = detectSourceControlProviderFromGitRemoteUrl(remoteUrl, overrides)?.kind;
       const provider =
         kind === undefined
