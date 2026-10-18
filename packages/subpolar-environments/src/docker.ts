@@ -37,6 +37,7 @@ export class DockerEnvironmentError extends Error {
       | "DEV_CONTAINER_CONFIGURATION_SELECTION_REQUIRED"
       | "DEV_CONTAINER_BUILD_UNAVAILABLE"
       | "DEV_CONTAINER_BUILD_FAILED"
+      | "DEV_CONTAINER_SETUP_FAILED"
       | "PROCESS_EXECUTION_UNAVAILABLE"
       | "PROCESS_REQUEST_INVALID"
       | "EGRESS_UNAVAILABLE",
@@ -209,6 +210,30 @@ interface ResolvedDevContainerConfiguration {
   readonly image: string;
   readonly build?: DockerImageBuildRequest;
   readonly containerEnvironment: Readonly<Record<string, string>>;
+  readonly postCreateCommand?: DevContainerLifecycleCommand;
+  readonly postStartCommand?: DevContainerLifecycleCommand;
+}
+
+type DevContainerLifecycleCommand =
+  | { readonly kind: "shell"; readonly value: string }
+  | { readonly kind: "argv"; readonly value: readonly string[] };
+
+function lifecycleCommand(value: unknown, name: string, configuration: string): DevContainerLifecycleCommand | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value === "string") {
+    if (!value.trim() || value.includes("\0") || Buffer.byteLength(value) > 16 * 1024) {
+      throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${configuration} ${name} must be a non-empty command under 16 KiB`);
+    }
+    return { kind: "shell", value };
+  }
+  if (Array.isArray(value) && value.length > 0 && value.length <= 128 && value.every((part) =>
+    typeof part === "string" && part.length > 0 && !part.includes("\0") && Buffer.byteLength(part) <= 8192)) {
+    return { kind: "argv", value: [...value] as string[] };
+  }
+  throw new DockerEnvironmentError(
+    "DEV_CONTAINER_CONFIGURATION_UNSUPPORTED",
+    `${configuration} ${name} must be a shell string or a non-empty argv array`,
+  );
 }
 
 function parseJsonc(source: string): unknown {
@@ -321,7 +346,7 @@ async function resolveDevContainerConfiguration(
     throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} must contain a JSON object`);
   }
   const value = parsed as Record<string, unknown>;
-  const unsupported = Object.keys(value).filter((key) => !["$schema", "name", "image", "build", "containerEnv"].includes(key));
+  const unsupported = Object.keys(value).filter((key) => !["$schema", "name", "image", "build", "containerEnv", "postCreateCommand", "postStartCommand"].includes(key));
   if (unsupported.length > 0) {
     throw new DockerEnvironmentError(
       "DEV_CONTAINER_CONFIGURATION_UNSUPPORTED",
@@ -329,6 +354,8 @@ async function resolveDevContainerConfiguration(
     );
   }
   const containerEnvironment: Record<string, string> = {};
+  const postCreateCommand = lifecycleCommand(value.postCreateCommand, "postCreateCommand", selected);
+  const postStartCommand = lifecycleCommand(value.postStartCommand, "postStartCommand", selected);
   if (value.containerEnv !== undefined) {
     if (typeof value.containerEnv !== "object" || value.containerEnv === null || Array.isArray(value.containerEnv)) {
       throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} containerEnv must be an object of literal strings`);
@@ -344,7 +371,12 @@ async function resolveDevContainerConfiguration(
   if (value.image !== undefined && (typeof value.image !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$/.test(value.image))) {
     throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} must specify a literal Docker image reference`);
   }
-  if (value.build === undefined) return { image: typeof value.image === "string" ? value.image : config.image, containerEnvironment };
+  if (value.build === undefined) return {
+    image: typeof value.image === "string" ? value.image : config.image,
+    containerEnvironment,
+    ...(postCreateCommand === undefined ? {} : { postCreateCommand }),
+    ...(postStartCommand === undefined ? {} : { postStartCommand }),
+  };
   if (value.image !== undefined || typeof value.build !== "object" || value.build === null || Array.isArray(value.build)) {
     throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} must specify either image or build, not both`);
   }
@@ -395,7 +427,11 @@ async function resolveDevContainerConfiguration(
     throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} Dockerfile resolves outside the Docker host build context`);
   }
   const image = `subpolar-devcontainer:${hash(`${identity.id}\0${selected}\0${realGatewayDockerfile}\0${realGatewayContext}`).slice(0, 32)}`;
-  return { image, build: { contextPath: hostContext, dockerfilePath, image }, containerEnvironment };
+  return {
+    image, build: { contextPath: hostContext, dockerfilePath, image }, containerEnvironment,
+    ...(postCreateCommand === undefined ? {} : { postCreateCommand }),
+    ...(postStartCommand === undefined ? {} : { postStartCommand }),
+  };
 }
 
 async function mapGatewayPathToDockerHost(
@@ -441,6 +477,33 @@ function within(root: string, candidate: string): boolean {
 
 function hash(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function lifecycleArgv(command: DevContainerLifecycleCommand): readonly string[] {
+  return command.kind === "shell" ? ["/bin/sh", "-c", command.value] : command.value;
+}
+
+function postCreateArgv(command: DevContainerLifecycleCommand, containerId: string): readonly string[] {
+  const generation = hash(`${containerId}\0${JSON.stringify(command)}`);
+  const marker = `/var/lib/subpolar/lifecycle/post-create-${generation}.done`;
+  const lock = `/tmp/subpolar-post-create-${generation}.lock`;
+  const script = [
+    'marker="$1"; lock="$2"; shift 2',
+    'if [ -f "$marker" ]; then exit 0; fi',
+    'mkdir -p "${marker%/*}" || exit 125',
+    'attempt=0',
+    'while ! mkdir "$lock" 2>/dev/null; do',
+    '  [ -f "$marker" ] && exit 0',
+    '  attempt=$((attempt + 1)); [ "$attempt" -lt 100 ] || exit 125',
+    '  sleep 0.1',
+    'done',
+    'trap \'rmdir "$lock" 2>/dev/null || true\' EXIT HUP INT TERM',
+    '[ -f "$marker" ] && exit 0',
+    '"$@"; result=$?',
+    '[ "$result" -eq 0 ] || exit "$result"',
+    ': > "$marker"',
+  ].join("\n");
+  return ["/bin/sh", "-c", script, "subpolar-post-create", marker, lock, ...lifecycleArgv(command)];
 }
 
 function containerName(environmentId: string): string {
@@ -791,6 +854,42 @@ export function createDockerEnvironmentBackend(
     return inspectLifecycleVerified(identity);
   };
 
+  const runLifecycleCommand = async (
+    identity: EnvironmentIdentity,
+    inspection: DockerContainerInspection,
+    command: readonly string[],
+  ): Promise<EnvironmentProcessResult> => {
+    if (!client.executeContainer) {
+      throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_UNSUPPORTED", "Docker client does not support Dev Container lifecycle commands");
+    }
+    const worktreeRelativePath = path.relative(identity.storageRoot, identity.worktreePath);
+    if (!worktreeRelativePath || worktreeRelativePath === ".." || worktreeRelativePath.startsWith(`..${path.sep}`) || path.isAbsolute(worktreeRelativePath)) {
+      throw new DockerEnvironmentError("WORKTREE_MAPPING_INVALID", "Environment worktree cannot be mapped inside the container");
+    }
+    const worktreeDirectory = containerPath(containerStorageRoot, worktreeRelativePath);
+    return client.executeContainer(inspection.id, {
+      command,
+      worktreeDirectory,
+      workingDirectory: worktreeDirectory,
+      environment: {},
+    });
+  };
+
+  const failLifecycleCommand = async (environment: ManagedEnvironment, inspection: DockerContainerInspection, hook: string, cause?: unknown): Promise<never> => {
+    try {
+      await client.stopContainer(inspection.id, { timeoutSeconds: 10 });
+      const stopped = await inspectLifecycle(environment);
+      if (!stopped || stopped.record.resourceId !== environment.resourceId || stopped.record.status !== "stopped") {
+        throw new DockerEnvironmentError("DOCKER_IDENTITY_MISMATCH", "Docker container did not reach the verified stopped state after lifecycle failure");
+      }
+    } catch (stopCause) {
+      throw new DockerEnvironmentError("DEV_CONTAINER_SETUP_FAILED", `Dev Container ${hook} failed and its worker could not be verified stopped`, {
+        cause: stopCause,
+      });
+    }
+    throw new DockerEnvironmentError("DEV_CONTAINER_SETUP_FAILED", `Dev Container ${hook} failed; the worker was stopped`, { cause });
+  };
+
   return {
     id: backendId,
     async inspect(identity) {
@@ -819,6 +918,9 @@ export function createDockerEnvironmentBackend(
         await client.removeContainer(stopped.inspection.id, { force: false, removeVolumes: false });
       }
       const resolved = await resolveDevContainerConfiguration(identity, config);
+      if ((resolved.postCreateCommand || resolved.postStartCommand) && !client.executeContainer) {
+        throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_UNSUPPORTED", "Docker client does not support Dev Container lifecycle commands");
+      }
       if (resolved.build) {
         if (!client.buildImage) {
           throw new DockerEnvironmentError("DEV_CONTAINER_BUILD_UNAVAILABLE", "Docker client does not support manager-owned Dev Container image builds");
@@ -856,6 +958,29 @@ export function createDockerEnvironmentBackend(
       const started = await inspectVerified(environment);
       if (!started || started.record.resourceId !== environment.resourceId || started.record.status !== "ready") {
         throw new DockerEnvironmentError("DOCKER_IDENTITY_MISMATCH", "Docker container did not reach the verified running state");
+      }
+      const resolved = await resolveDevContainerConfiguration(environment, config);
+      if (resolved.postCreateCommand) {
+        let result: EnvironmentProcessResult;
+        try {
+          result = await runLifecycleCommand(environment, started.inspection, postCreateArgv(resolved.postCreateCommand, started.record.resourceId));
+        } catch (cause) {
+          return failLifecycleCommand(started.record, started.inspection, "postCreateCommand", cause);
+        }
+        if (result.exitCode !== 0 || result.cancelled) {
+          return failLifecycleCommand(started.record, started.inspection, "postCreateCommand", result);
+        }
+      }
+      if (current.record.status !== "ready" && resolved.postStartCommand) {
+        let result: EnvironmentProcessResult;
+        try {
+          result = await runLifecycleCommand(environment, started.inspection, lifecycleArgv(resolved.postStartCommand));
+        } catch (cause) {
+          return failLifecycleCommand(started.record, started.inspection, "postStartCommand", cause);
+        }
+        if (result.exitCode !== 0 || result.cancelled) {
+          return failLifecycleCommand(started.record, started.inspection, "postStartCommand", result);
+        }
       }
       return started.record;
     },

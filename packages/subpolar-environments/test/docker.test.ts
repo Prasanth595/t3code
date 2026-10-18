@@ -64,6 +64,9 @@ class FakeDockerClient implements DockerClient {
   readonly createVolumeCalls: DockerVolumeCreateOptions[] = [];
   readonly removeVolumeCalls: string[] = [];
   readonly processCalls: Array<{ id: string; request: DockerContainerProcessRequest }> = [];
+  readonly processExitCodes: number[] = [];
+  readonly postCreateRuns: string[] = [];
+  private readonly completedPostCreateMarkers = new Set<string>();
   readonly managedSessionCalls: Array<{ id: string; request: DockerContainerManagedSessionRequest }> = [];
   readonly imageBuildCalls: Array<{ contextPath: string; dockerfilePath: string; image: string }> = [];
   wrongOwner = false;
@@ -143,7 +146,15 @@ class FakeDockerClient implements DockerClient {
   async executeContainer(id: string, request: DockerContainerProcessRequest) {
     this.processCalls.push({ id, request });
     await request.onOutput?.({ stream: "stdout", data: new TextEncoder().encode("hello") });
-    return { processId: "exec-1", exitCode: 7, cancelled: request.signal?.aborted ?? false };
+    const exitCode = this.processExitCodes.shift() ?? 7;
+    const [shell, option, script, , marker, , ...command] = request.command;
+    if (shell === "/bin/sh" && option === "-c" && script?.includes('marker="$1"') && marker) {
+      if (!this.completedPostCreateMarkers.has(marker) && exitCode === 0) {
+        this.postCreateRuns.push(command.join(" "));
+        this.completedPostCreateMarkers.add(marker);
+      }
+    }
+    return { processId: "exec-1", exitCode, cancelled: request.signal?.aborted ?? false };
   }
 
   async startManagedSessionContainer(id: string, request: DockerContainerManagedSessionRequest): Promise<EnvironmentManagedProcessSession> {
@@ -317,6 +328,97 @@ describe("Docker environment backend", () => {
         { type: "volume", target: "/var/lib/subpolar", readOnly: false },
       ],
     });
+  });
+
+  test("runs postCreate once per persistent marker and postStart on each worker start", async () => {
+    const { client, manager, request, identity } = await fixture();
+    await mkdir(path.join(identity.worktreePath, ".devcontainer"), { recursive: true });
+    await Bun.write(path.join(identity.worktreePath, ".devcontainer", "devcontainer.json"), JSON.stringify({
+      image: "project:latest",
+      postCreateCommand: "npm install",
+      postStartCommand: ["node", "setup.js"],
+    }));
+    client.processExitCodes.push(0, 0, 0, 0);
+
+    const first = await manager.ensure(request);
+    expect(client.processCalls).toHaveLength(2);
+    expect(client.processCalls[0]?.request.command).toEqual(expect.arrayContaining([
+      expect.stringContaining("post-create-"),
+      "npm install",
+    ]));
+    expect(client.processCalls[0]?.request.workingDirectory).toBe("/workspaces/repo/worktree-a");
+    expect(client.processCalls[1]?.request.command).toEqual(["node", "setup.js"]);
+
+    await manager.stop(request);
+    const restarted = await manager.start(request);
+    expect(restarted.resourceId).toBe(first.resourceId);
+    expect(client.createCalls).toHaveLength(1);
+    expect(client.startCalls).toHaveLength(2);
+    expect(client.processCalls).toHaveLength(4);
+    expect(client.processCalls[2]?.request.command).toEqual(client.processCalls[0]?.request.command);
+    expect(client.processCalls[3]?.request.command).toEqual(["node", "setup.js"]);
+    expect(client.postCreateRuns).toEqual(["/bin/sh -c npm install"]);
+  });
+
+  test("stops and fails closed when postCreate fails, then retries on the same container", async () => {
+    const { client, backend, identity } = await fixture();
+    await mkdir(path.join(identity.worktreePath, ".devcontainer"), { recursive: true });
+    await Bun.write(path.join(identity.worktreePath, ".devcontainer", "devcontainer.json"), JSON.stringify({
+      image: "project:latest",
+      postCreateCommand: ["./setup.sh"],
+    }));
+    client.processExitCodes.push(9, 0);
+    const created = await backend.create(identity);
+
+    await expect(backend.start(created)).rejects.toMatchObject({ code: "DEV_CONTAINER_SETUP_FAILED" });
+    expect(client.stopCalls).toEqual([created.resourceId]);
+    expect(client.containers.get(client.createCalls[0]!.name)?.state).toBe("exited");
+
+    const retried = await backend.start(created);
+    expect(retried.resourceId).toBe(created.resourceId);
+    expect(retried.status).toBe("ready");
+    expect(client.createCalls).toHaveLength(1);
+    expect(client.processCalls).toHaveLength(2);
+    expect(client.postCreateRuns).toEqual(["./setup.sh"]);
+  });
+
+  test("reruns postCreate for a rebuilt container generation", async () => {
+    const { client, manager, request, identity } = await fixture();
+    await mkdir(path.join(identity.worktreePath, ".devcontainer"), { recursive: true });
+    await Bun.write(path.join(identity.worktreePath, ".devcontainer", "devcontainer.json"), JSON.stringify({
+      image: "project:latest",
+      postCreateCommand: ["./setup.sh"],
+    }));
+    client.processExitCodes.push(0, 0);
+
+    const first = await manager.ensure(request);
+    const rebuilt = await manager.rebuild!(request);
+
+    expect(rebuilt.resourceId).not.toBe(first.resourceId);
+    expect(client.createCalls).toHaveLength(2);
+    expect(client.postCreateRuns).toEqual(["./setup.sh", "./setup.sh"]);
+    const firstMarker = client.processCalls[0]?.request.command[4];
+    const rebuiltMarker = client.processCalls[1]?.request.command[4];
+    expect(firstMarker).toBeDefined();
+    expect(rebuiltMarker).toBeDefined();
+    expect(rebuiltMarker).not.toBe(firstMarker);
+    expect(client.processCalls[0]?.request.command[5]).toMatch(/^\/tmp\/subpolar-post-create-/);
+    expect(client.processCalls[1]?.request.command[5]).toMatch(/^\/tmp\/subpolar-post-create-/);
+  });
+
+  test("stops a worker when postStart fails", async () => {
+    const { client, backend, identity } = await fixture();
+    await mkdir(path.join(identity.worktreePath, ".devcontainer"), { recursive: true });
+    await Bun.write(path.join(identity.worktreePath, ".devcontainer", "devcontainer.json"), JSON.stringify({
+      image: "project:latest",
+      postStartCommand: "./start.sh",
+    }));
+    client.processExitCodes.push(12);
+    const created = await backend.create(identity);
+
+    await expect(backend.start(created)).rejects.toMatchObject({ code: "DEV_CONTAINER_SETUP_FAILED" });
+    expect(client.stopCalls).toEqual([created.resourceId]);
+    expect(client.containers.get(client.createCalls[0]!.name)?.state).toBe("exited");
   });
 
   test("applies literal Dev Container containerEnv values and verifies them on inspection", async () => {
