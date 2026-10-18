@@ -4,7 +4,8 @@ import type { ThreadId } from "@t3tools/contracts";
 import type { UnifiedSettings } from "@t3tools/contracts/settings";
 import * as Cause from "effect/Cause";
 import { InfoIcon, PlusIcon, XIcon } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { newThreadId } from "../../lib/utils";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { environmentSnapshotAtom } from "../../state/shell";
@@ -83,28 +84,25 @@ export function SideChat({
     reportFailure: false,
   });
   const remove = useOrchestrationCommand(threadEnvironment.delete, { reportFailure: false });
-  const add = useCallback(
-    async (prompt = "") => {
-      const id = newThreadId();
-      setTabs((current) => [...current, { id, prompt, pending: true }]);
-      setActiveId(id);
-      try {
-        const result = await branch({
-          environmentId: source.environmentId,
-          input: { targetThreadId: id, sourceThreadId: source.id },
-        });
-        if (result._tag === "Failure") throw Cause.squash(result.cause);
-        setTabs((current) => current.map((t) => (t.id === id ? { ...t, pending: false } : t)));
-      } catch (error) {
-        setTabs((current) =>
-          current.map((t) =>
-            t.id === id ? { ...t, pending: false, error: String(error), unavailable: true } : t,
-          ),
-        );
-      }
-    },
-    [branch, source.environmentId, source.id],
-  );
+  const add = useStableCallback(async (prompt: string = "") => {
+    const id = newThreadId();
+    setTabs((current) => [...current, { id, prompt, pending: true }]);
+    setActiveId(id);
+    try {
+      const result = await branch({
+        environmentId: source.environmentId,
+        input: { targetThreadId: id, sourceThreadId: source.id },
+      });
+      if (result._tag === "Failure") throw Cause.squash(result.cause);
+      setTabs((current) => current.map((t) => (t.id === id ? { ...t, pending: false } : t)));
+    } catch (error) {
+      setTabs((current) =>
+        current.map((t) =>
+          t.id === id ? { ...t, pending: false, error: String(error), unavailable: true } : t,
+        ),
+      );
+    }
+  });
   useEffect(() => {
     if (!request || handled.current === request.serial) return;
     handled.current = request.serial;

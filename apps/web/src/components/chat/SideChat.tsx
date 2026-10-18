@@ -37,7 +37,7 @@ import { type ThreadId, type ProviderApprovalDecision } from "@t3tools/contracts
 
 import * as Cause from "effect/Cause";
 import { XIcon, PaperclipIcon } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   buildPendingUserInputAnswers,
   togglePendingUserInputOptionSelection,
@@ -81,10 +81,7 @@ export function SideChatSession({
 }) {
   const environmentId = source.environmentId;
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
-  const threadRef = useMemo(
-    () => (threadId ? { environmentId, threadId } : null),
-    [environmentId, threadId],
-  );
+  const threadRef = threadId ? { environmentId, threadId } : null;
   const shell = useThreadShell(threadRef);
   const thread = useThreadProjection(
     resolveThreadDetailRef(threadRef, { shellExists: shell !== null, waitForShell: true }),
@@ -123,19 +120,15 @@ export function SideChatSession({
     setInteractionMode(thread.thread.interactionMode);
   }, [thread]);
   const entry = instanceEntries.find((item) => item.instanceId === selection.instanceId);
-  const models = useMemo(
-    () =>
-      new Map(
-        instanceEntries.map((item) => [
-          item.instanceId,
-          getAppModelOptionsForInstance(
-            settings,
-            item,
-            item.instanceId === selection.instanceId ? selection.model : null,
-          ),
-        ]),
+  const models = new Map(
+    instanceEntries.map((item) => [
+      item.instanceId,
+      getAppModelOptionsForInstance(
+        settings,
+        item,
+        item.instanceId === selection.instanceId ? selection.model : null,
       ),
-    [instanceEntries, settings, selection.instanceId, selection.model],
+    ]),
   );
   const [files, setFiles] = useState<Array<ComposerImageAttachment | ComposerFileAttachment>>([]);
   const filesRef = useRef(files);
@@ -232,9 +225,10 @@ export function SideChatSession({
   useEffect(() => {
     if (followOutput.current && scroll.current)
       scroll.current.scrollTop = scroll.current.scrollHeight;
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Streamed messages and tool output change the scroll height.
   }, [thread?.messages, thread?.turnItems]);
 
-  const act = useCallback(async (operation: () => Promise<AtomCommandResult<unknown, unknown>>) => {
+  const act = async (operation: () => Promise<AtomCommandResult<unknown, unknown>>) => {
     if (submitting.current) return false;
     submitting.current = true;
     setPending(true);
@@ -253,7 +247,7 @@ export function SideChatSession({
       submitting.current = false;
       setPending(false);
     }
-  }, []);
+  };
 
   const send = async () => {
     const text = draft.trim();
