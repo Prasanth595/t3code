@@ -5,9 +5,11 @@
   "scripts": {
     "dev": "vitepress dev",
     "build": "vitepress build",
-    "preview": "vitepress preview"
+    "preview": "vitepress preview",
+    "screenshots": "node scripts/screenshots.ts"
   },
   "devDependencies": {
+    "playwright": "^1.64.1",
     "vitepress": "^1.6.4"
   }
 }
