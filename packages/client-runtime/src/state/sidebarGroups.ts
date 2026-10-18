@@ -58,7 +58,7 @@ export type SidebarGroupThreadStatus =
  * `resolveSidebarThreadStatus`, mobile `resolveThreadListV2Status`), because a rule value saved
  * on one client must match the same threads on the other.
  */
-export function sidebarGroupThreadStatus(
+function sidebarGroupThreadStatus(
   thread: Pick<
     EnvironmentThreadShell,
     "hasPendingApprovals" | "hasPendingUserInput" | "pendingSubagentRequest" | "runtime"
@@ -530,7 +530,7 @@ export function buildSidebarGroupRuleOptions(input: {
   const distinct = (values: ReadonlyArray<readonly [string | null, string]>, none: string) =>
     [...new Map(values)]
       .map(([value, label]) => ({ value, label: value === null ? none : label }))
-      .toSorted((left, right) =>
+      .sort((left, right) =>
         left.value === null ? 1 : right.value === null ? -1 : left.label.localeCompare(right.label),
       );
   const facts = (thread: SidebarGroupThread) => projectFactsOf(thread, input.projects);
