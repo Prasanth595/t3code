@@ -245,6 +245,8 @@ export interface DeviceStreamClient {
   /** Normalized 0..1 coordinates in the displayed frame. */
   readonly sendTouch: (phase: "begin" | "move" | "end", x: number, y: number) => void;
   readonly sendKey: (event: KeyboardEvent, phase: "down" | "up") => void;
+  /** Android only: iOS input is HID key codes, which cannot carry arbitrary text. */
+  readonly sendText: (text: string) => void;
   readonly pressButton: (button: DeviceHardwareButton) => void;
   readonly rotate: () => void;
   readonly setOrientation: (orientation: DeviceScreenSize["orientation"]) => void;
@@ -1053,6 +1055,9 @@ export function createDeviceStreamClient(
       if (event.key.length === 1 && !event.metaKey && !event.ctrlKey) {
         send(JSON.stringify({ type: "text", text: event.key }));
       }
+    },
+    sendText: (text) => {
+      if (platform === "android" && text.length > 0) send(JSON.stringify({ type: "text", text }));
     },
     pressButton: (button) => {
       if (platform === "ios") {

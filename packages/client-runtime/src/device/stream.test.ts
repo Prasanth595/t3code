@@ -161,6 +161,27 @@ describe("native device stream transport", () => {
     expect(socket.close).toHaveBeenCalledTimes(1);
   });
 
+  it("types pasted text on Android and drops it on iOS, which only takes HID key codes", async () => {
+    const android = setup("android");
+    android.client.start();
+    const androidSocket = await android.opened;
+    android.client.sendText("pässwörd 1");
+    android.client.sendText("");
+    expect(
+      androidSocket.send.mock.calls.map(([message]) => JSON.parse(message as string) as unknown),
+    ).toEqual([{ type: "text", text: "pässwörd 1" }]);
+    android.client.stop();
+    vi.unstubAllGlobals();
+
+    const ios = setup("ios");
+    ios.client.start();
+    const iosSocket = await ios.opened;
+    iosSocket.onmessage?.({ data: Uint8Array.of(0x83).buffer });
+    ios.client.sendText("hello");
+    expect(iosSocket.send).not.toHaveBeenCalled();
+    ios.client.stop();
+  });
+
   it("renews an expired Android ticket when the HTTP upgrade is rejected instead of retrying it forever", async () => {
     const { client, opened, events } = setup("android");
     client.start();

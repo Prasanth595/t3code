@@ -109,7 +109,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function setup(h264 = false) {
+async function setup(h264 = false, platform: "ios" | "android" = "ios") {
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   let videoBody: ReadableStreamDefaultController<Uint8Array> | undefined;
@@ -159,6 +159,7 @@ async function setup(h264 = false) {
     return Promise.resolve(new Response("prime"));
   });
   const sockets: Array<{ onmessage?: (event: { data: ArrayBuffer }) => void }> = [];
+  const sent: unknown[] = [];
   vi.stubGlobal(
     "WebSocket",
     class {
@@ -168,7 +169,9 @@ async function setup(h264 = false) {
         sockets.push(this);
       }
       onmessage?: (event: { data: ArrayBuffer }) => void;
-      send() {}
+      send(message: unknown) {
+        sent.push(message);
+      }
       close() {}
     },
   );
@@ -177,7 +180,7 @@ async function setup(h264 = false) {
       hostId="local"
       environmentId={EnvironmentId.make("test")}
       deviceId="test"
-      platform="ios"
+      platform={platform}
       visible={visible}
       allowPhoneView={h264}
     />
@@ -185,6 +188,7 @@ async function setup(h264 = false) {
   await act(async () => root.render(view(true)));
   return {
     images,
+    sent,
     view,
     configure() {
       const json = new TextEncoder().encode(
@@ -270,4 +274,27 @@ it("keeps the 3D viewer mounted across iOS video recovery and releases it when h
   await act(async () => root.render(view(false)));
   expect(viewerUnmounts).toBe(1);
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("types a paste on the Android screen into the device and lets Ctrl+V reach the paste", async () => {
+  const { sent } = await setup(true, "android");
+  const screen = container.querySelector<HTMLElement>('[role="application"]')!;
+  screen.focus();
+  const chord = new KeyboardEvent("keydown", {
+    key: "v",
+    code: "KeyV",
+    ctrlKey: true,
+    bubbles: true,
+    cancelable: true,
+  });
+  screen.dispatchEvent(chord);
+  expect(chord.defaultPrevented).toBe(false);
+  const clipboardData = new DataTransfer();
+  clipboardData.setData("text/plain", "hunter2");
+  const paste = new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true });
+  screen.dispatchEvent(paste);
+  expect(paste.defaultPrevented).toBe(true);
+  expect(sent.map((message) => JSON.parse(message as string) as unknown)).toEqual([
+    { type: "text", text: "hunter2" },
+  ]);
 });
