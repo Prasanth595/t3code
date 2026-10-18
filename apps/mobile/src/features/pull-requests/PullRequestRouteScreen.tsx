@@ -421,24 +421,24 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                     },
                   ]
                 : []),
-              ...(pr
+              ...(identity
                 ? [
                     {
-                      accessibilityLabel: openOnProviderLabel(pr.provider),
+                      accessibilityLabel: openOnProviderLabel(identity.provider),
                       icon: "arrow.up.right" as const,
-                      onPress: () => void Linking.openURL(pr.url),
+                      onPress: () => void Linking.openURL(identity.url),
                     },
                     {
                       accessibilityLabel: "Copy link",
                       icon: "link" as const,
                       overflowOnly: true,
-                      onPress: () => copyPullRequestLink(pr),
+                      onPress: () => copyPullRequestLink(identity),
                     },
                     {
                       accessibilityLabel: "Share…",
                       icon: "square.and.arrow.up" as const,
                       overflowOnly: true,
-                      onPress: () => sharePullRequestLink(pr),
+                      onPress: () => sharePullRequestLink(identity),
                     },
                   ]
                 : []),
@@ -483,23 +483,23 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 <Toolbar.Label>Add comment</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
-            {pr ? (
+            {identity ? (
               <Toolbar.MenuAction
                 icon="arrow.up.right"
-                onPress={() => void Linking.openURL(pr.url)}
+                onPress={() => void Linking.openURL(identity.url)}
               >
-                <Toolbar.Label>{openOnProviderLabel(pr.provider)}</Toolbar.Label>
+                <Toolbar.Label>{openOnProviderLabel(identity.provider)}</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
-            {pr ? (
-              <Toolbar.MenuAction icon="link" onPress={() => copyPullRequestLink(pr)}>
+            {identity ? (
+              <Toolbar.MenuAction icon="link" onPress={() => copyPullRequestLink(identity)}>
                 <Toolbar.Label>Copy link</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
-            {pr ? (
+            {identity ? (
               <Toolbar.MenuAction
                 icon="square.and.arrow.up"
-                onPress={() => sharePullRequestLink(pr)}
+                onPress={() => sharePullRequestLink(identity)}
               >
                 <Toolbar.Label>Share…</Toolbar.Label>
               </Toolbar.MenuAction>
