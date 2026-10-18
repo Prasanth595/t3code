@@ -2429,7 +2429,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   const makeWakeHarnessWithOptions = (options?: {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
-    readonly interrupt?: Effect.Effect<void>;
+    readonly interrupt?: Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
     readonly stopTask?: (
       taskId: string,
     ) => Effect.Effect<void, ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError>;
@@ -7663,6 +7663,70 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         ),
       ),
     ),
+  );
+
+  it.effect.each(["is never answered", "fails"] as const)(
+    "closes the CLI and ends the turn interrupted when Stop's interrupt %s",
+    (outcome) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          let closes = 0;
+          const interruptSent = yield* Deferred.make<void>();
+          const harness = yield* makeWakeHarnessWithOptions({
+            interrupt: Deferred.succeed(interruptSent, undefined).pipe(
+              Effect.andThen(
+                outcome === "fails"
+                  ? Effect.fail(
+                      new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                        method: "interrupt",
+                        cause: new Error("Claude Code control request failed (interrupt)"),
+                      }),
+                    )
+                  : Effect.never,
+              ),
+            ),
+            close: (sdkMessages) =>
+              Effect.sync(() => {
+                closes++;
+              }).pipe(Effect.andThen(Queue.shutdown(sdkMessages))),
+          });
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const attemptId = RunAttemptId.make("attempt-claude-stop-without-interrupt-answer");
+          const providerTurnId = idAllocator.derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          });
+          yield* harness.runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId,
+              text: "Work until stopped.",
+              attachments: [],
+            }),
+          );
+
+          const stop = yield* harness.runtime
+            .interruptTurn({ providerThread: harness.providerThread, providerTurnId })
+            .pipe(Effect.forkScoped);
+          yield* Deferred.await(interruptSent);
+          if (outcome === "is never answered") {
+            assert.equal(closes, 0, "Stop gives the CLI time to answer before closing it");
+            yield* TestClock.adjust("10 seconds");
+          }
+          yield* awaitUntil(() => stop.pollUnsafe() !== undefined, "Stop to finish");
+          yield* Fiber.join(stop);
+
+          assert.equal(closes, 1);
+          assert.equal((yield* Queue.take(harness.terminalReceipts)).status, "interrupted");
+          assert.lengthOf(harness.terminalEvents(), 1);
+        }).pipe(
+          Effect.provide(
+            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          ),
+        ),
+      ),
   );
 
   it.effect("fails a positive task-notification error result", () =>

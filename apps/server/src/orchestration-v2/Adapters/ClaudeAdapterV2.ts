@@ -8912,7 +8912,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               next.add(turnInput.providerTurnId);
               return next;
             });
-            yield* existing.query.interrupt;
+            // The SDK puts no deadline on the interrupt, and a CLI that is alive
+            // but frozen (memory-throttled, swapping, stopped) never answers it.
+            // Closing the query is what stops the CLI, so Stop closes it whether
+            // the interrupt is answered, times out or fails.
+            yield* existing.query.interrupt.pipe(
+              Effect.timeout("10 seconds"),
+              Effect.catch((cause) =>
+                Effect.logWarning("orchestration-v2.claude-query-interrupt-failed", {
+                  providerSessionId: input.providerSessionId,
+                  providerThreadId: turnInput.providerThread.id,
+                  providerTurnId: turnInput.providerTurnId,
+                  cause,
+                }),
+              ),
+            );
             yield* existing.query.close.pipe(Effect.ignore);
             const closed = yield* Deferred.await(existing.closed).pipe(
               Effect.timeoutOption("10 seconds"),
