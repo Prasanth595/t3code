@@ -183,11 +183,13 @@ const streamingItem = (projection: OrchestrationV2ThreadProjection) =>
     (item) => (item.type === "assistant_message" || item.type === "reasoning") && item.streaming,
   );
 
-/** An open thread streams a long reply while the composer is idle. */
+/** A thread streams a long reply: the open one, or with `route` a thread the app never shows. */
 const measureStreamReply = Effect.fn("measure.streamReply")(function* (
   options: Options,
   run: number,
+  route: Option.Option<string>,
 ) {
+  if (Option.isSome(route)) yield* reloadAndOpen(options, route.value);
   const evaluate = yield* connectInspector(options.metro);
   const { client, environmentId, projectId } = yield* connectServer(options);
   const threadId = ThreadId.make(yield* uuid);
@@ -222,9 +224,10 @@ const measureStreamReply = Effect.fn("measure.streamReply")(function* (
       });
     }).pipe(Effect.ignore),
   );
-  yield* evaluate(
-    `__t3RenderCounterOpen(${encodeJson(`${options.scheme}://threads/${environmentId}/${threadId}`)})`,
-  );
+  if (Option.isNone(route))
+    yield* evaluate(
+      `__t3RenderCounterOpen(${encodeJson(`${options.scheme}://threads/${environmentId}/${threadId}`)})`,
+    );
   const projectionOf = (item: { kind: string; projection?: OrchestrationV2ThreadProjection }) =>
     item.kind === "snapshot" && item.projection
       ? Effect.succeed(item.projection)
@@ -241,7 +244,8 @@ const measureStreamReply = Effect.fn("measure.streamReply")(function* (
   yield* Effect.sleep(`${options.windowSeconds} seconds`);
   const report = yield* decodeReport(yield* evaluate("JSON.stringify(__t3RenderCounterStop())"));
   // React commits on every streamed delta, so an empty window means the app is not on the thread.
-  if (report.commits === 0)
+  // A thread streaming out of view may rightly commit nothing.
+  if (report.commits === 0 && Option.isNone(route))
     return yield* new MeasureError({
       message: `Run ${run}: no React commits in the window. Check the device for a red box.`,
     });
@@ -249,11 +253,13 @@ const measureStreamReply = Effect.fn("measure.streamReply")(function* (
   return { report, stillStreaming: streamingItem(after) !== undefined };
 }, Effect.scoped);
 
-/** Opens a screen from a freshly loaded Home and records its mount and data settling. */
-const measureRouteOpen = Effect.fn("measure.routeOpen")(function* (
+const appLink = (options: Options, route: string) =>
+  `__t3RenderCounterOpen(${encodeJson(`${options.scheme}://${route.replace(/^\//, "")}`)})`;
+
+/** Reloads onto Home, then opens `route` and lets it settle; `/` stays on Home. */
+const reloadAndOpen = Effect.fn("measure.reloadAndOpen")(function* (
   options: Options,
   route: string,
-  run: number,
 ) {
   // A link to an already-open screen only refocuses it, so each run starts from a reload.
   yield* Effect.scoped(
@@ -262,11 +268,30 @@ const measureRouteOpen = Effect.fn("measure.routeOpen")(function* (
     ),
   );
   yield* Effect.sleep("15 seconds");
+  if (route === "/" || route === "") return;
+  yield* Effect.scoped(
+    Effect.flatMap(connectInspector(options.metro), (evaluate) =>
+      evaluate(appLink(options, route)),
+    ),
+  );
+  yield* Effect.sleep("5 seconds");
+});
+
+/** Opens a screen from a freshly loaded Home and records its mount and data settling. */
+const measureRouteOpen = Effect.fn("measure.routeOpen")(function* (
+  options: Options,
+  route: string,
+  run: number,
+) {
+  yield* Effect.scoped(
+    Effect.flatMap(connectInspector(options.metro), (evaluate) =>
+      evaluate("__t3RenderCounterReload()"),
+    ),
+  );
+  yield* Effect.sleep("15 seconds");
   const evaluate = yield* connectInspector(options.metro);
   yield* evaluate("__t3RenderCounterStart()");
-  yield* evaluate(
-    `__t3RenderCounterOpen(${encodeJson(`${options.scheme}://${route.replace(/^\//, "")}`)})`,
-  );
+  yield* evaluate(appLink(options, route));
   yield* Effect.sleep(`${options.windowSeconds} seconds`);
   const report = yield* decodeReport(yield* evaluate("JSON.stringify(__t3RenderCounterStop())"));
   if (report.commits === 0)
@@ -328,7 +353,9 @@ const command = Command.make(
       Flag.withDefault(""),
     ),
     route: Flag.String("route").pipe(
-      Flag.withDescription("App path to open and measure instead of streaming a reply."),
+      Flag.withDescription(
+        "App path to open and measure. With --server, the path stays open while a new thread streams.",
+      ),
       Flag.optional,
     ),
     metro: Flag.String("metro").pipe(Flag.withDefault("http://127.0.0.1:8081")),
@@ -349,17 +376,21 @@ const command = Command.make(
     const route = flags.route;
     const options: Options = {
       ...flags,
-      windowSeconds: Option.getOrElse(flags.window, () => (Option.isSome(route) ? 6 : 12)),
+      windowSeconds: Option.getOrElse(flags.window, () =>
+        Option.isSome(route) && !flags.server ? 6 : 12,
+      ),
     };
-    if (Option.isNone(route) && (!flags.server || !flags.token || !flags.projectRoot))
+    const streams = Option.isNone(route) || flags.server !== "";
+    if (streams && (!flags.server || !flags.token || !flags.projectRoot))
       return yield* new MeasureError({
         message: "Streaming a reply needs --server, --token and --project-root.",
       });
     const reports: RenderReport[] = [];
     for (let run = 1; run <= flags.runs; run++) {
-      const { report, stillStreaming } = Option.isSome(route)
-        ? yield* measureRouteOpen(options, route.value, run)
-        : yield* measureStreamReply(options, run);
+      const { report, stillStreaming } =
+        Option.isSome(route) && !streams
+          ? yield* measureRouteOpen(options, route.value, run)
+          : yield* measureStreamReply(options, run, route);
       yield* Console.error(
         `run ${run}: ${report.totalRenders} renders in ${report.commits} commits${stillStreaming === false ? " (warning: streaming ended inside the window)" : ""}`,
       );

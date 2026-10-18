@@ -60,6 +60,8 @@ node apps/mobile/scripts/measure-renders.mts --server <server-origin> --token <t
 
 `--route /settings/usage` instead reloads the app, opens that path from Home and records a 6 s window over
 mount and data settling, with no provider turn and no `--server`, `--token` or `--project-root`.
+With `--server` as well, the app reloads, opens that path (`/` stays on Home) and the reply streams in a
+new thread the app never shows, which measures what streaming elsewhere costs the screen in front.
 
 Compare before and after on the same base, on the same device, with the median of three runs.
 Provider output varies run to run, so a single run or a comparison across bases is noise.
