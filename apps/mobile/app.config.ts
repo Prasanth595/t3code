@@ -118,6 +118,8 @@ const androidVersionCode = repoEnv.T3CODE_ANDROID_VERSION_CODE
 if (androidVersionCode !== undefined && !Number.isSafeInteger(androidVersionCode)) {
   throw new Error("T3CODE_ANDROID_VERSION_CODE must be an integer.");
 }
+// The GitHub repository whose releases a fork APK installs updates from (src/features/updates).
+const forkApkUpdatesRepo = repoEnv.T3CODE_FORK_APK_UPDATES_REPO?.trim() || null;
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
   : variant.iosBundleIdentifier;
@@ -322,6 +324,7 @@ const config: ExpoConfig = {
     predictiveBackGestureEnabled: true,
     // expo-sensors declares this for its pedometer, which the app does not use.
     blockedPermissions: ["android.permission.ACTIVITY_RECOGNITION"],
+    ...(forkApkUpdatesRepo ? { permissions: ["android.permission.REQUEST_INSTALL_PACKAGES"] } : {}),
   },
   web: {
     favicon: variant.assets.appIcon,
@@ -473,6 +476,7 @@ const config: ExpoConfig = {
   ],
   extra: {
     appVariant: APP_VARIANT,
+    forkApkUpdatesRepo,
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,

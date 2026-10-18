@@ -12,6 +12,8 @@ import {
   type AppUpdateEnvironment,
 } from "./app-updates";
 
+vi.mock("./fork-apk-updates", () => ({ forkApkUpdateClient: { isEnabled: false } }));
+
 vi.mock("expo-updates", () => ({
   isEnabled: true,
   checkForUpdateAsync: vi.fn(),

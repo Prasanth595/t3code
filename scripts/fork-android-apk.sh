@@ -33,6 +33,8 @@ case "${1:-}" in
     export T3CODE_MOBILE_UPDATES_ENABLED=0
     export MOBILE_VERSION_POLICY=appVersion
     export T3CODE_ANDROID_PACKAGE="${T3CODE_ANDROID_PACKAGE:-dev.tomcohen.t3code}"
+    # The APK updates itself from the releases of this repository instead.
+    export T3CODE_FORK_APK_UPDATES_REPO="${T3CODE_FORK_APK_UPDATES_REPO:-${GITHUB_REPOSITORY:-TomCohenDev/t3code}}"
     export EXPO_NO_GIT_STATUS=1
     export CI=1
     vp exec expo prebuild --clean --platform android --no-install

@@ -8,6 +8,8 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 
+import { forkApkUpdateClient } from "./fork-apk-updates";
+
 export type AppUpdateCheckState =
   | "idle"
   | "checking"
@@ -60,6 +62,11 @@ export function createAppUpdateDeferral(): AppUpdateDeferral {
 
 const appUpdateDeferral = createAppUpdateDeferral();
 
+/** The fork APK has OTA updates off and installs new APKs instead. */
+const defaultAppUpdateClient: AppUpdateClient = forkApkUpdateClient.isEnabled
+  ? forkApkUpdateClient
+  : Updates;
+
 interface AppUpdateCheckOptions {
   readonly applyMode?: "background" | "immediate";
   readonly client?: AppUpdateClient;
@@ -95,7 +102,9 @@ const UPDATE_CHECK_UNAVAILABLE_ERROR_CODES = new Set([
 let appUpdateCheckInFlight: AppUpdateCheckInFlight | undefined;
 
 /** Expo's development launcher reports updates as enabled even though its OTA APIs reject. */
-export function isAppUpdateCheckAvailable(client: Pick<AppUpdateClient, "isEnabled"> = Updates) {
+export function isAppUpdateCheckAvailable(
+  client: Pick<AppUpdateClient, "isEnabled"> = defaultAppUpdateClient,
+) {
   return client.isEnabled && !(typeof __DEV__ !== "undefined" && __DEV__);
 }
 
@@ -117,7 +126,7 @@ export function registerHiddenUpdateTap(count: number): {
 }
 
 export async function runAppUpdateCheck(options: AppUpdateCheckOptions = {}): Promise<void> {
-  const client = options.client ?? Updates;
+  const client = options.client ?? defaultAppUpdateClient;
   if (!isAppUpdateCheckAvailable(client)) return;
 
   if (appUpdateCheckInFlight) {
@@ -492,7 +501,7 @@ function isAppUpdateUnavailableError(error: unknown): boolean {
 }
 
 export function createAppUpdateLaunchCheck(
-  client: AppUpdateClient = Updates,
+  client: AppUpdateClient = defaultAppUpdateClient,
 ): () => Promise<void> | undefined {
   let started = false;
 
@@ -520,7 +529,7 @@ export function shouldRecheckAppUpdateOnForeground(
 }
 
 export function createAppUpdateForegroundRecheck(
-  client: AppUpdateClient = Updates,
+  client: AppUpdateClient = defaultAppUpdateClient,
   deferral: AppUpdateDeferral = appUpdateDeferral,
 ): () => void {
   let started = false;
