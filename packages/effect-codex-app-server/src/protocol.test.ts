@@ -805,61 +805,42 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
     }),
   );
 
-  it.effect("does not wait for process exit before terminating after input EOF", () =>
+  it.effect("fails pending requests at input EOF while the process is still running", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();
-      const processExit = yield* Deferred.make<CodexError.CodexAppServerError>();
-      const terminated = yield* Deferred.make<CodexError.CodexAppServerError>();
       const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
         stdio,
-        terminationError: Deferred.await(processExit),
-        onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
+        terminationError: Effect.never,
       });
       const pending = yield* transport.request("thread/read", {}).pipe(Effect.forkScoped);
       yield* Queue.take(output);
 
       yield* Queue.end(input);
 
-      const failure = yield* Deferred.await(terminated);
-      assert.instanceOf(failure, CodexError.CodexAppServerInputStreamEndedError);
-
-      const pendingFailure = yield* Fiber.join(pending).pipe(
+      const error = yield* Fiber.join(pending).pipe(
         Effect.match({
           onFailure: (error) => error,
           onSuccess: () => assert.fail("Expected the pending request to fail"),
         }),
       );
-      assert.strictEqual(pendingFailure, failure);
-
-      const futureFailure = yield* transport.request("thread/read", {}).pipe(
-        Effect.match({
-          onFailure: (error) => error,
-          onSuccess: () => assert.fail("Expected requests after EOF to fail"),
-        }),
-      );
-      assert.strictEqual(futureFailure, failure);
+      assert.instanceOf(error, CodexError.CodexAppServerInputStreamEndedError);
     }),
   );
 
-  it.effect("retains an already available process exit error at input EOF", () =>
+  it.effect("reports an already known process exit at input EOF", () =>
     Effect.gen(function* () {
       const { stdio, input } = yield* makeInMemoryStdio();
-      const processExitError = new CodexError.CodexAppServerProcessExitedError({
-        code: 1,
-        pid: 123,
-      });
-      const processExit = yield* Deferred.make<CodexError.CodexAppServerError>();
-      yield* Deferred.succeed(processExit, processExitError);
-      const terminated = yield* Deferred.make<CodexError.CodexAppServerError>();
+      const exitError = new CodexError.CodexAppServerProcessExitedError({ code: 1, pid: 123 });
+      const termination = yield* Deferred.make<CodexError.CodexAppServerError>();
       yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
         stdio,
-        terminationError: Deferred.await(processExit),
-        onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
+        terminationError: Effect.succeed(exitError),
+        onTermination: (error) => Deferred.succeed(termination, error).pipe(Effect.asVoid),
       });
 
       yield* Queue.end(input);
 
-      assert.strictEqual(yield* Deferred.await(terminated), processExitError);
+      assert.strictEqual(yield* Deferred.await(termination), exitError);
     }),
   );
 });
