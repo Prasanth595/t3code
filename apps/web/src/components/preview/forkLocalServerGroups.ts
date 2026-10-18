@@ -85,6 +85,7 @@ const CHECK_NOTES: Readonly<Record<ForkLocalListener["check"], string | null>> =
   page: null,
   noPage: "no page found",
   unchecked: "not checked",
+  checking: "checking…",
 };
 
 /**

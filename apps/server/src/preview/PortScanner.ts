@@ -558,6 +558,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   ) {
     const nowMillis = yield* Clock.currentTimeMillis;
     const cached = yield* Ref.get(webProbeCacheRef);
+    // Fork: starts the groups of the preview list next to these checks (fork/PreviewServerGroups.ts).
+    yield* forkServerGroups.observe({
+      listeners: servers,
+      sharedPorts: forkSharedPorts,
+      probe: probeWebUrl,
+    });
     const groups = makeWebProbeGroups(servers, configuredUrls);
     const batchProbes = new Map<
       string,
@@ -629,12 +635,6 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       else configured.set(group.configuredKey, server);
     }
     yield* Ref.set(webProbeCacheRef, nextCache);
-    yield* forkServerGroups.observe({
-      listeners: servers,
-      shown: discovered,
-      sharedPorts: forkSharedPorts,
-      probe: probeWebUrl,
-    });
     return { discovered, configured } satisfies WebProbeSnapshot;
   });
 

@@ -12,6 +12,9 @@
  *
  * `PortScanner.ts` calls `scannerHook` once per scan, so the upstream scan keeps its cost while
  * nobody subscribes or the setting is off.
+ *
+ * The list fills in progressively: every listener shows as soon as its folder is known, and each
+ * HTTP check updates its own row when it ends. Rows keep the order in which they first appeared.
  */
 import {
   type DiscoveredLocalServer,
@@ -50,6 +53,8 @@ const FOLDERS_TTL_MS = Duration.toMillis(Duration.seconds(30));
 const GIT_WORKTREES_TTL_MS = Duration.toMillis(Duration.minutes(5));
 const PROBE_TTL_MS = Duration.toMillis(Duration.seconds(15));
 const PROBE_CONCURRENCY = 16;
+// Checks that end together send one list, not one list each.
+const PUBLISH_WINDOW = Duration.millis(50);
 const GIT_CONCURRENCY = 4;
 
 /** A project root or worktree as the server stores it, and the folder it resolves to. */
@@ -62,8 +67,6 @@ export interface ProjectFolder {
 export interface ScanObservation {
   /** Every local listener of the scan. */
   readonly listeners: ReadonlyArray<DiscoveredLocalServer>;
-  /** The listeners that the upstream list shows. */
-  readonly shown: ReadonlyArray<DiscoveredLocalServer>;
   /**
    * Ports with more than one owner process, such as one on IPv4 and one on IPv6. A listener keeps
    * only the first owner, so a request to the port can reach the other process.
@@ -126,45 +129,77 @@ export const resolveProjectFolders = Effect.fn("PreviewServerGroups.resolveProje
   },
 );
 
+/** The HTTP checks that a pass knows about. */
+export interface ListenerChecks {
+  /** The last result: a page URL, null for no page, or undefined before the first check. */
+  readonly last: (listener: DiscoveredLocalServer) => string | null | undefined;
+  /** A new check, or null while the last result is fresh. */
+  readonly run: (listener: DiscoveredLocalServer) => Effect.Effect<string | null> | null;
+}
+
+const withCheck = (row: ForkLocalListener, url: string | null | undefined): ForkLocalListener =>
+  url === undefined
+    ? { ...row, check: "checking" }
+    : url === null
+      ? { ...row, check: "noPage" }
+      : { ...row, url, check: "page" };
+
 /**
- * Places each listener by the real working folder of its process. Only a listener inside a
- * project folder, on a port with one owner, gets `probe`.
+ * Places each listener by the real working folder of its process and publishes every row at once.
+ * Only a listener inside a project folder, on a port with one owner, gets a check. It shows its
+ * last result, or "checking" before the first one, and each check publishes again when it ends.
  */
 export const placeListeners = Effect.fn("PreviewServerGroups.placeListeners")(function* (input: {
   readonly listeners: ReadonlyArray<DiscoveredLocalServer>;
   readonly cwdByPid: ReadonlyMap<number, string | null>;
   readonly folders: ReadonlyArray<ProjectFolder>;
   readonly sharedPorts: ReadonlySet<number>;
-  readonly probe: (listener: DiscoveredLocalServer) => Effect.Effect<string | null>;
+  readonly checks: ListenerChecks;
+  readonly publish: (rows: ReadonlyArray<ForkLocalListener>) => Effect.Effect<void>;
 }) {
   const path = yield* Path.Path;
-  return yield* Effect.forEach(
-    input.listeners,
-    Effect.fnUntraced(function* (listener) {
-      const cwd = listener.pid === null ? null : (input.cwdByPid.get(listener.pid) ?? null);
-      // Deepest first, so a worktree inside a project root wins over the root.
-      const folder =
-        cwd === null
-          ? undefined
-          : input.folders.find((entry) => isWithinRoot(path, cwd, entry.realPath));
-      const placed: ForkLocalListener = {
-        host: listener.host,
-        port: listener.port,
-        url: listener.url,
-        processName: listener.processName,
-        pid: listener.pid,
-        folder:
-          folder === undefined ? null : { projectId: folder.projectId, folder: folder.folder },
-        check: "unchecked",
-      };
-      if (folder === undefined || input.sharedPorts.has(listener.port)) return placed;
-      const pageUrl = yield* input.probe(listener);
-      return pageUrl === null
-        ? { ...placed, check: "noPage" as const }
-        : { ...placed, url: pageUrl, check: "page" as const };
-    }),
-    { concurrency: PROBE_CONCURRENCY },
+  const checkable: Array<{
+    readonly index: number;
+    readonly listener: DiscoveredLocalServer;
+    readonly row: ForkLocalListener;
+  }> = [];
+  const rows = input.listeners.map((listener, index) => {
+    const cwd = listener.pid === null ? null : (input.cwdByPid.get(listener.pid) ?? null);
+    // Deepest first, so a worktree inside a project root wins over the root.
+    const folder =
+      cwd === null
+        ? undefined
+        : input.folders.find((entry) => isWithinRoot(path, cwd, entry.realPath));
+    const row: ForkLocalListener = {
+      host: listener.host,
+      port: listener.port,
+      url: listener.url,
+      processName: listener.processName,
+      pid: listener.pid,
+      folder: folder === undefined ? null : { projectId: folder.projectId, folder: folder.folder },
+      check: "unchecked",
+    };
+    if (folder === undefined || input.sharedPorts.has(listener.port)) return row;
+    checkable.push({ index, listener, row });
+    return withCheck(row, input.checks.last(listener));
+  });
+  yield* input.publish([...rows]);
+  yield* Effect.forEach(
+    checkable,
+    ({ index, listener, row }) => {
+      const check = input.checks.run(listener);
+      return check === null
+        ? Effect.void
+        : check.pipe(
+            Effect.flatMap((url) => {
+              rows[index] = withCheck(row, url);
+              return input.publish([...rows]);
+            }),
+          );
+    },
+    { concurrency: PROBE_CONCURRENCY, discard: true },
   );
+  return rows;
 });
 
 /** `lsof -Fn` output of `-d cwd`: a `p<pid>` line, then the `n<path>` line of its cwd. */
@@ -214,9 +249,16 @@ export const make = Effect.gen(function* () {
     readonly worktrees: ReadonlyArray<{ readonly projectId: ProjectId; readonly folder: string }>;
     readonly expiresAtMillis: number;
   }>({ worktrees: [], expiresAtMillis: 0 });
+  // An expired entry still shows its result while the next check runs, so a row does not flip.
   const probeCacheRef = yield* Ref.make<
     ReadonlyMap<string, { readonly url: string | null; readonly expiresAtMillis: number }>
   >(new Map());
+  // The order in which ports first appeared. A new server goes to the end of its group, so the
+  // rows above it do not move.
+  const orderRef = yield* Ref.make<{
+    readonly seqByPort: ReadonlyMap<number, number>;
+    readonly next: number;
+  }>({ seqByPort: new Map(), next: 0 });
 
   const enabled = settings.getSettings.pipe(
     Effect.map((current) => current.previewLocalServerGroups),
@@ -235,6 +277,25 @@ export const make = Effect.gen(function* () {
       ),
     );
   const clear = publish([]);
+
+  const pendingRef = yield* Ref.make<ReadonlyArray<ForkLocalListener> | null>(null);
+  const publishSoon = (rows: ReadonlyArray<ForkLocalListener>) =>
+    Ref.getAndSet(pendingRef, rows).pipe(
+      Effect.flatMap((waiting) =>
+        waiting !== null
+          ? Effect.void
+          : Effect.sleep(PUBLISH_WINDOW).pipe(
+              Effect.andThen(Ref.getAndSet(pendingRef, null)),
+              Effect.flatMap((latest) =>
+                latest === null
+                  ? Effect.void
+                  : // The setting can turn off while the checks run.
+                    active.pipe(Effect.flatMap((on) => (on ? publish(latest) : clear))),
+              ),
+              Effect.forkIn(scope),
+            ),
+      ),
+    );
 
   // Windows has no cheap way to read the folder of another process, so every listener there is
   // `outside`. Revisit if a Windows API exposes it without a process per PID.
@@ -359,41 +420,62 @@ export const make = Effect.gen(function* () {
     return folders;
   });
 
+  const inFirstSeenOrder = Effect.fn("PreviewServerGroups.inFirstSeenOrder")(function* (
+    listeners: ReadonlyArray<DiscoveredLocalServer>,
+  ) {
+    const known = yield* Ref.get(orderRef);
+    const seqByPort = new Map<number, number>();
+    let next = known.next;
+    for (const { port } of listeners) seqByPort.set(port, known.seqByPort.get(port) ?? next++);
+    yield* Ref.set(orderRef, { seqByPort, next });
+    return listeners.toSorted(
+      (left, right) => (seqByPort.get(left.port) ?? 0) - (seqByPort.get(right.port) ?? 0),
+    );
+  });
+
   const pass = Effect.fn("PreviewServerGroups.pass")(function* (scan: ScanObservation) {
-    const shownPorts = new Set(scan.shown.map((server) => server.port));
-    // A listener of a T3 terminal that the upstream list hides serves no page. Upstream checked
+    // A listener of a T3 terminal that the upstream list hides serves no page. Upstream checks
     // it already, so it gets no second request.
-    const listeners = scan.listeners.filter(
-      (listener) => listener.terminal === null && !shownPorts.has(listener.port),
+    const listeners = yield* inFirstSeenOrder(
+      scan.listeners.filter((listener) => listener.terminal === null),
     );
     const cwdByPid = yield* cwdsFor(listeners);
     const folders = yield* currentFolders();
     const nowMillis = yield* Clock.currentTimeMillis;
-    const probeCache = yield* Ref.get(probeCacheRef);
-    const nextProbeCache = new Map<string, { url: string | null; expiresAtMillis: number }>();
-    const probe = Effect.fnUntraced(function* (listener: DiscoveredLocalServer) {
-      const key = `${listener.pid ?? ""}\u0000${listener.port}`;
-      const cached = probeCache.get(key);
-      if (cached !== undefined && cached.expiresAtMillis > nowMillis) {
-        nextProbeCache.set(key, cached);
-        return cached.url;
-      }
-      const base = `${listener.host}:${listener.port}`;
-      const url = (yield* scan.probe(`http://${base}`)) ?? (yield* scan.probe(`https://${base}`));
-      nextProbeCache.set(key, { url, expiresAtMillis: nowMillis + PROBE_TTL_MS });
-      return url;
-    });
-    const placed = yield* placeListeners({
+    const cache = yield* Ref.get(probeCacheRef);
+    const keyOf = (listener: DiscoveredLocalServer) =>
+      `${listener.pid ?? ""}\u0000${listener.port}`;
+    const checks: ListenerChecks = {
+      last: (listener) => cache.get(keyOf(listener))?.url,
+      run: (listener) => {
+        const key = keyOf(listener);
+        const cached = cache.get(key);
+        if (cached !== undefined && cached.expiresAtMillis > nowMillis) return null;
+        const base = `${listener.host}:${listener.port}`;
+        return Effect.gen(function* () {
+          const url =
+            (yield* scan.probe(`http://${base}`)) ?? (yield* scan.probe(`https://${base}`));
+          const checkedAtMillis = yield* Clock.currentTimeMillis;
+          yield* Ref.update(probeCacheRef, (current) =>
+            new Map(current).set(key, { url, expiresAtMillis: checkedAtMillis + PROBE_TTL_MS }),
+          );
+          return url;
+        });
+      },
+    };
+    yield* placeListeners({
       listeners,
       cwdByPid,
       folders,
       sharedPorts: scan.sharedPorts,
-      probe,
+      checks,
+      publish: publishSoon,
     }).pipe(Effect.provideService(Path.Path, path));
-    yield* Ref.set(probeCacheRef, nextProbeCache);
-    // The setting can turn off while the checks run.
-    if (!(yield* active)) return yield* clear;
-    yield* publish(placed);
+    const keys = new Set(listeners.map(keyOf));
+    yield* Ref.update(
+      probeCacheRef,
+      (current) => new Map([...current].filter(([key]) => keys.has(key))),
+    );
   });
 
   const observe: PreviewServerGroups["Service"]["observe"] = (scan) =>

@@ -1,6 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
-import { type DiscoveredLocalServer, ProjectId } from "@t3tools/contracts";
+import { type DiscoveredLocalServer, type ForkLocalListener, ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -46,6 +46,7 @@ it.layer(NodeServices.layer)("PreviewServerGroups", (it) => {
           { projectId: other, folder: path.join(temp, "missing") },
         ]);
         const probed: number[] = [];
+        const published: Array<ReadonlyArray<ForkLocalListener>> = [];
         const placed = yield* placeListeners({
           listeners: [
             listener(5101, 1),
@@ -62,12 +63,26 @@ it.layer(NodeServices.layer)("PreviewServerGroups", (it) => {
           ]),
           folders,
           sharedPorts: new Set(),
-          probe: (server) =>
-            Effect.sync(() => {
-              probed.push(server.port);
-              return server.port === 5101 ? `https://localhost:${server.port}` : null;
-            }),
+          checks: {
+            last: () => undefined,
+            run: (server) =>
+              Effect.sync(() => {
+                // Every row shows before the first check ends.
+                expect(published.length).toBeGreaterThan(0);
+                probed.push(server.port);
+                return server.port === 5101 ? `https://localhost:${server.port}` : null;
+              }),
+          },
+          publish: (rows) => Effect.sync(() => published.push(rows)),
         });
+
+        expect(published[0]?.map(({ port, check }) => ({ port, check }))).toEqual([
+          { port: 5101, check: "checking" },
+          { port: 5102, check: "checking" },
+          { port: 5103, check: "checking" },
+          { port: 5104, check: "unchecked" },
+          { port: 5105, check: "unchecked" },
+        ]);
 
         expect(placed.map(({ port, folder, check }) => ({ port, folder, check }))).toEqual([
           { port: 5101, folder: { projectId: project, folder: rootFolder }, check: "page" },
@@ -101,7 +116,11 @@ it.layer(NodeServices.layer)("PreviewServerGroups", (it) => {
         cwdByPid: new Map([[1, temp]]),
         folders,
         sharedPorts: new Set([5201]),
-        probe: (server) => Effect.sync(() => (probed.push(server.port), null)),
+        checks: {
+          last: () => undefined,
+          run: (server) => Effect.sync(() => (probed.push(server.port), null)),
+        },
+        publish: () => Effect.void,
       });
 
       expect(placed.map(({ folder, check }) => ({ folder, check }))).toEqual([

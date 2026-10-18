@@ -461,6 +461,8 @@ A published theme can replace app icons with its own SVGs, in the theme JSON fie
 
 The Local servers list of a new browser tab also shows servers that no T3 terminal started. They are in groups: this worktree, other folders of this project, and all others.
 
+The list fills in progressively. Every server shows as soon as the server knows its folder. A server that gets a check shows "checking…" until its first check ends, then "no page found" or no note. Rows keep the order in which they first appeared.
+
 - **Setting:** server setting `previewLocalServerGroups` (off by default). Settings > Integrations > Browser > "All local servers in the browser".
 - **Works on:** web, desktop. The mobile app has no Local servers list.
 - **Limits:**

@@ -29,9 +29,9 @@ export const ForkLocalListener = Schema.Struct({
   folder: Schema.NullOr(ForkLocalListenerFolder),
   /**
    * The HTTP check of `url`. The server checks only a listener inside a project folder, so a
-   * listener outside every project is always `unchecked`.
+   * listener outside every project is always `unchecked`. `checking`: the first check runs.
    */
-  check: Schema.Literals(["page", "noPage", "unchecked"]),
+  check: Schema.Literals(["page", "noPage", "unchecked", "checking"]),
 });
 export type ForkLocalListener = typeof ForkLocalListener.Type;
 
