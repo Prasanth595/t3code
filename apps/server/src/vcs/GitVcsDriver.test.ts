@@ -709,7 +709,7 @@ it.effect("checkpoint capture keeps the legacy path when Git lacks add --sparse"
 
 it.effect.each(
   (["normal", "flags", "sparse"] as const).flatMap((indexMode) =>
-    [1, 3].map((chunkSize) => ({ indexMode, chunkSize })),
+    [1, 3, 4096].map((chunkSize) => ({ indexMode, chunkSize })),
   ),
 )(
   "checkpoint index inspection handles entries beyond the output cap (index=$indexMode, chunk=$chunkSize)",
