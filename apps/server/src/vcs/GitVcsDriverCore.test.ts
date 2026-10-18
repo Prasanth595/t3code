@@ -851,6 +851,28 @@ it.effect("refreshes the current branch after an external checkout", () =>
   ).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("lists a branch named exactly the query before others containing it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeTmpDir();
+      yield* initRepoWithCommit(cwd);
+      yield* git(cwd, ["checkout", "-B", "work"]);
+      yield* git(cwd, ["branch", "-f", "main"]);
+      // Same commit, so these sort by name ahead of `main`.
+      yield* git(cwd, ["branch", "domain-a"]);
+      yield* git(cwd, ["branch", "domain-b"]);
+
+      const refs = yield* driver.listRefs({ cwd, refresh: true, query: "main", limit: 1 });
+      assert.deepEqual(
+        refs.refs.map((ref) => ref.name),
+        ["main"],
+      );
+      assert.equal(refs.totalCount, 3);
+    }),
+  ).pipe(Effect.provide(layerTest)),
+);
+
 it.effect("backs off and logs failed fetch attempts across linked worktrees", () =>
   Effect.scoped(
     Effect.gen(function* () {

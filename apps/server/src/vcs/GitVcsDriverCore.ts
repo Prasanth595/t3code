@@ -259,7 +259,20 @@ function filterBranchesForListQuery(
   }
 
   const normalizedQuery = query.toLowerCase();
-  return refs.filter((refName) => refName.name.toLowerCase().includes(normalizedQuery));
+  // A branch named exactly the query (locally or on a remote) leads, so a
+  // lookup by name finds it on the first page however many names contain it.
+  const isExact = (ref: VcsRef) => {
+    const name = ref.name.toLowerCase();
+    return (
+      name === normalizedQuery ||
+      (ref.isRemote === true &&
+        ref.remoteName !== undefined &&
+        name === `${ref.remoteName.toLowerCase()}/${normalizedQuery}`)
+    );
+  };
+  return refs
+    .filter((ref) => ref.name.toLowerCase().includes(normalizedQuery))
+    .toSorted((left, right) => Number(isExact(right)) - Number(isExact(left)));
 }
 
 function paginateBranches(input: {
