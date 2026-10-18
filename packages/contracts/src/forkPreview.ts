@@ -28,18 +28,12 @@ export const ForkLocalListener = Schema.Struct({
   /** Null: outside every project, or the folder is not known. */
   folder: Schema.NullOr(ForkLocalListenerFolder),
   /**
-   * The HTTP check of `url`. The server checks only a listener in a project that a subscriber
-   * named, so a listener outside every project is always `unchecked`.
+   * The HTTP check of `url`. The server checks only a listener inside a project folder, so a
+   * listener outside every project is always `unchecked`.
    */
   check: Schema.Literals(["page", "noPage", "unchecked"]),
 });
 export type ForkLocalListener = typeof ForkLocalListener.Type;
-
-export const ForkLocalListenersInput = Schema.Struct({
-  /** The project of the thread that shows the list. */
-  projectId: ProjectId,
-});
-export type ForkLocalListenersInput = typeof ForkLocalListenersInput.Type;
 
 export const ForkLocalListenerList = Schema.Struct({
   listeners: Schema.Array(ForkLocalListener),

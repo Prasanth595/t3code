@@ -50,7 +50,7 @@ const groupsEnabledAtom = Atom.family((environmentId: EnvironmentId) =>
 const localListeners = createEnvironmentRpcSubscriptionAtomFamily(connectionAtomRuntime, {
   label: "environment-data:fork-preview:local-listeners",
   tag: WS_METHODS.forkPreviewSubscribeLocalListeners,
-  // The project is part of the key. Dispose at once, so the server stops its checks for it.
+  // Dispose at once, so the server stops reading folders and checking servers.
   idleTtlMs: 0,
 });
 
@@ -96,11 +96,7 @@ export function useForkLocalServerSections(input: {
   const enabled = useAtomValue(groupsEnabledAtom(environmentId));
   const thread = useThreadShell(input.threadRef);
   const project = useProject(thread ? { environmentId, projectId: thread.projectId } : null);
-  const query = useEnvironmentQuery(
-    enabled && thread
-      ? localListeners({ environmentId, input: { projectId: thread.projectId } })
-      : null,
-  );
+  const query = useEnvironmentQuery(enabled ? localListeners({ environmentId, input: {} }) : null);
   if (!enabled) return null;
 
   const worktreePath = thread?.worktreePath ?? null;

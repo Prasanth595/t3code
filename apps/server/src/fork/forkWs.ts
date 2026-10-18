@@ -70,10 +70,8 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
         [FORK_WS_METHODS.webPushSubscribe]: (input) => webPush.subscribe(input).pipe(Effect.as({})),
         [FORK_WS_METHODS.webPushTest]: (input) => webPush.test(input.endpoint),
         // The scanner polls only while retained, as for `subscribeDiscoveredLocalServers`.
-        [FORK_WS_METHODS.forkPreviewSubscribeLocalListeners]: (input) =>
-          Stream.unwrap(
-            portDiscovery.retain.pipe(Effect.as(previewServerGroups.listeners(input.projectId))),
-          ),
+        [FORK_WS_METHODS.forkPreviewSubscribeLocalListeners]: (_input) =>
+          Stream.unwrap(portDiscovery.retain.pipe(Effect.as(previewServerGroups.listeners))),
       });
     }),
   );

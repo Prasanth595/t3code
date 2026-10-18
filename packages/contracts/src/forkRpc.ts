@@ -20,7 +20,7 @@ import {
   ForkSyncStatus,
   ForkUpstreamPending,
 } from "./forkChangelog.ts";
-import { ForkLocalListenerList, ForkLocalListenersInput } from "./forkPreview.ts";
+import { ForkLocalListenerList } from "./forkPreview.ts";
 import {
   MachineMapClientState,
   MachineMapDesktopReport,
@@ -152,7 +152,7 @@ const WsWebPushTestRpc = Rpc.make(FORK_WS_METHODS.webPushTest, {
 const WsForkPreviewSubscribeLocalListenersRpc = Rpc.make(
   FORK_WS_METHODS.forkPreviewSubscribeLocalListeners,
   {
-    payload: ForkLocalListenersInput,
+    payload: Schema.Struct({}),
     success: ForkLocalListenerList,
     error: EnvironmentAuthorizationError,
     stream: true,

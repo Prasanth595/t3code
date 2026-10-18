@@ -5,11 +5,10 @@
  * project, then all others.
  *
  * Upstream sends HTTP only to listeners of T3 terminals, because a request to an unknown app can
- * crash it (pingdotgg/t3code#18377). This service keeps that rule for the "all others" group: it
- * lists those listeners with the port and the process name only. It checks a listener only when
- * its process runs inside a root or worktree of a project that a subscriber shows, because there
- * the user runs their own dev servers. With two lists open on two projects, each list can show
- * the checks of the other project in its "all others" group.
+ * crash it (pingdotgg/t3code#18377). This service keeps that rule for every listener outside the
+ * projects: it lists them with the port and the process name only. It checks a listener only when
+ * its process runs inside a root or worktree of a project of this server, because there the user
+ * runs their own dev servers.
  *
  * `PortScanner.ts` calls `scannerHook` once per scan, so the upstream scan keeps its cost while
  * nobody subscribes or the setting is off.
@@ -73,15 +72,14 @@ export class PreviewServerGroups extends Context.Service<
     /** True while a client subscribes and the setting is on. */
     readonly active: Effect.Effect<boolean>;
     readonly observe: (scan: ScanObservation) => Effect.Effect<void>;
-    /** The listeners for a list of a thread in `projectId`, again on each change. */
-    readonly listeners: (projectId: ProjectId) => Stream.Stream<ForkLocalListenerList>;
+    readonly listeners: Stream.Stream<ForkLocalListenerList>;
   }
 >()("t3/fork/PreviewServerGroups") {}
 
 const INACTIVE: PreviewServerGroups["Service"] = {
   active: Effect.succeed(false),
   observe: () => Effect.void,
-  listeners: () => Stream.empty,
+  listeners: Stream.empty,
 };
 
 /** The hook of `PortScanner.ts`. Without the service (for example in its tests) it does nothing. */
@@ -116,13 +114,12 @@ export const resolveProjectFolders = Effect.fn("PreviewServerGroups.resolveProje
 
 /**
  * Places each listener by the real working folder of its process. Only a listener inside a
- * folder of a `checkedProjects` project gets `probe`.
+ * project folder gets `probe`.
  */
 export const placeListeners = Effect.fn("PreviewServerGroups.placeListeners")(function* (input: {
   readonly listeners: ReadonlyArray<DiscoveredLocalServer>;
   readonly cwdByPid: ReadonlyMap<number, string | null>;
   readonly folders: ReadonlyArray<ProjectFolder>;
-  readonly checkedProjects: ReadonlySet<ProjectId>;
   readonly probe: (listener: DiscoveredLocalServer) => Effect.Effect<string | null>;
 }) {
   const path = yield* Path.Path;
@@ -145,7 +142,7 @@ export const placeListeners = Effect.fn("PreviewServerGroups.placeListeners")(fu
           folder === undefined ? null : { projectId: folder.projectId, folder: folder.folder },
         check: "unchecked",
       };
-      if (folder === undefined || !input.checkedProjects.has(folder.projectId)) return placed;
+      if (folder === undefined) return placed;
       const pageUrl = yield* input.probe(listener);
       return pageUrl === null
         ? { ...placed, check: "noPage" as const }
@@ -187,8 +184,7 @@ export const make = Effect.gen(function* () {
   const git = yield* GitVcsDriver.GitVcsDriver;
   const scope = yield* Effect.scope;
 
-  // Subscriber count of each project. Only these projects get HTTP checks.
-  const subscribersRef = yield* Ref.make<ReadonlyMap<ProjectId, number>>(new Map());
+  const subscribersRef = yield* Ref.make(0);
   const listenersRef = yield* SubscriptionRef.make<ReadonlyArray<ForkLocalListener>>([]);
   const passSemaphore = yield* Semaphore.make(1);
   // A server rarely changes its folder after it listens, so each PID is read once.
@@ -209,7 +205,7 @@ export const make = Effect.gen(function* () {
   );
 
   const active = Effect.gen(function* () {
-    return (yield* Ref.get(subscribersRef)).size > 0 && (yield* enabled);
+    return (yield* Ref.get(subscribersRef)) > 0 && (yield* enabled);
   });
 
   // `SubscriptionRef.set` notifies on every call, so each write first checks for a change.
@@ -353,14 +349,9 @@ export const make = Effect.gen(function* () {
       nextProbeCache.set(key, { url, expiresAtMillis: nowMillis + PROBE_TTL_MS });
       return url;
     });
-    const checkedProjects = new Set((yield* Ref.get(subscribersRef)).keys());
-    const placed = yield* placeListeners({
-      listeners,
-      cwdByPid,
-      folders,
-      checkedProjects,
-      probe,
-    }).pipe(Effect.provideService(Path.Path, path));
+    const placed = yield* placeListeners({ listeners, cwdByPid, folders, probe }).pipe(
+      Effect.provideService(Path.Path, path),
+    );
     yield* Ref.set(probeCacheRef, nextProbeCache);
     // The setting can turn off while the checks run.
     if (!(yield* active)) return yield* clear;
@@ -369,7 +360,7 @@ export const make = Effect.gen(function* () {
 
   const observe: PreviewServerGroups["Service"]["observe"] = (scan) =>
     Effect.gen(function* () {
-      if ((yield* Ref.get(subscribersRef)).size === 0) return;
+      if ((yield* Ref.get(subscribersRef)) === 0) return;
       if (!(yield* enabled)) return yield* clear;
       // In the background, so the upstream list does not wait for the folder reads and checks.
       // A scan that comes while a pass runs is skipped; the next scan is 3 seconds later.
@@ -383,29 +374,21 @@ export const make = Effect.gen(function* () {
         );
     });
 
-  const changeSubscribers = (projectId: ProjectId, delta: 1 | -1) =>
-    Ref.modify(subscribersRef, (current) => {
-      const next = new Map(current);
-      const count = (next.get(projectId) ?? 0) + delta;
-      if (count > 0) next.set(projectId, count);
-      else next.delete(projectId);
-      return [next.size, next] as const;
-    });
-
-  const listeners: PreviewServerGroups["Service"]["listeners"] = (projectId) =>
-    Stream.unwrap(
-      Effect.acquireRelease(changeSubscribers(projectId, 1), () =>
-        changeSubscribers(projectId, -1).pipe(
+  const listeners: PreviewServerGroups["Service"]["listeners"] = Stream.unwrap(
+    Effect.acquireRelease(
+      Ref.update(subscribersRef, (count) => count + 1),
+      () =>
+        Ref.updateAndGet(subscribersRef, (count) => count - 1).pipe(
           Effect.flatMap((remaining) => (remaining === 0 ? clear : Effect.void)),
         ),
-      ).pipe(
-        Effect.as(
-          SubscriptionRef.changes(listenersRef).pipe(
-            Stream.map((current) => ({ listeners: current })),
-          ),
+    ).pipe(
+      Effect.as(
+        SubscriptionRef.changes(listenersRef).pipe(
+          Stream.map((current) => ({ listeners: current })),
         ),
       ),
-    );
+    ),
+  );
 
   return PreviewServerGroups.of({ active, observe, listeners });
 });
