@@ -134,11 +134,7 @@ export function FileTreeBrowser(props: {
     loadingDirectories,
     selectedPath: controlledSelectedPath,
   } = props;
-  const controlledSelectedPathRef = useRef(controlledSelectedPath);
   const pendingSelectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    controlledSelectedPathRef.current = controlledSelectedPath;
-  }, [controlledSelectedPath]);
 
   const selectedPath =
     pendingSelection?.selectedPathAtPress === controlledSelectedPath
@@ -199,7 +195,7 @@ export function FileTreeBrowser(props: {
     }
     setPendingSelection({
       path,
-      selectedPathAtPress: controlledSelectedPathRef.current,
+      selectedPathAtPress: controlledSelectedPath,
     });
     pendingSelectionTimeoutRef.current = setTimeout(() => {
       pendingSelectionTimeoutRef.current = null;
