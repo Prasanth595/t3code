@@ -193,23 +193,24 @@ function useThreadActionExecutor(
   return executeAction;
 }
 
-function useConfirmDeleteThread(
+// A plain function, not a hook: a `use*` function that calls no hooks is skipped by
+// the compiler, so the delete handler it returned was a new closure every render.
+function confirmThreadDeletion(
   executeAction: (action: ThreadListAction, thread: EnvironmentThreadShell) => Promise<boolean>,
+  thread: EnvironmentThreadShell,
 ) {
-  return (thread: EnvironmentThreadShell) => {
-    if (!checkThreadOperationPermission(thread, actionFailureTitle("delete"))) return;
-    const title = "Delete thread?";
-    const message = `“${thread.title}” will be permanently deleted, including its terminal history.`;
-    Dialog.confirm({
-      title,
-      message,
-      confirmText: "Delete",
-      destructive: true,
-      onConfirm: () => {
-        void executeAction("delete", thread);
-      },
-    });
-  };
+  if (!checkThreadOperationPermission(thread, actionFailureTitle("delete"))) return;
+  const title = "Delete thread?";
+  const message = `“${thread.title}” will be permanently deleted, including its terminal history.`;
+  Dialog.confirm({
+    title,
+    message,
+    confirmText: "Delete",
+    destructive: true,
+    onConfirm: () => {
+      void executeAction("delete", thread);
+    },
+  });
 }
 
 export function useThreadListActions(): {
@@ -662,7 +663,8 @@ export function useThreadListActions(): {
     return moved;
   };
 
-  const confirmDeleteThread = useConfirmDeleteThread(executeAction);
+  const confirmDeleteThread = (thread: EnvironmentThreadShell) =>
+    confirmThreadDeletion(executeAction, thread);
 
   return {
     archiveThread,
@@ -693,7 +695,8 @@ export function useArchivedThreadListActions(
   const unarchiveThread = (thread: EnvironmentThreadShell) => {
     void executeAction("unarchive", thread);
   };
-  const confirmDeleteThread = useConfirmDeleteThread(executeAction);
+  const confirmDeleteThread = (thread: EnvironmentThreadShell) =>
+    confirmThreadDeletion(executeAction, thread);
 
   return { unarchiveThread, confirmDeleteThread };
 }
