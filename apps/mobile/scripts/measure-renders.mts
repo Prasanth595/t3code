@@ -249,6 +249,31 @@ const measureStreamReply = Effect.fn("measure.streamReply")(function* (
   return { report, stillStreaming: streamingItem(after) !== undefined };
 }, Effect.scoped);
 
+/** Opens a screen from Home and records its mount and data settling. */
+const measureRouteOpen = Effect.fn("measure.routeOpen")(function* (
+  options: Options,
+  route: string,
+  run: number,
+) {
+  const evaluate = yield* connectInspector(options.metro);
+  const open = (path: string) =>
+    evaluate(
+      `__t3RenderCounterOpen(${encodeJson(`${options.scheme}://${path.replace(/^\//, "")}`)})`,
+    );
+  // Each run mounts the screen fresh rather than refocusing the previous one.
+  yield* open("");
+  yield* Effect.sleep("3 seconds");
+  yield* evaluate("__t3RenderCounterStart()");
+  yield* open(route);
+  yield* Effect.sleep(`${options.windowSeconds} seconds`);
+  const report = yield* decodeReport(yield* evaluate("JSON.stringify(__t3RenderCounterStop())"));
+  if (report.commits === 0)
+    return yield* new MeasureError({
+      message: `Run ${run}: no React commits in the window. Check that ${route} is a valid app path.`,
+    });
+  return { report, stillStreaming: undefined };
+}, Effect.scoped);
+
 const medianTable = (
   title: string,
   reports: ReadonlyArray<RenderReport>,
@@ -294,27 +319,47 @@ const command = Command.make(
   {
     server: Flag.String("server").pipe(
       Flag.withDescription("T3 server origin the app is paired with."),
+      Flag.withDefault(""),
     ),
     token: Flag.String("token").pipe(
       Flag.withDescription("Bearer token from `t3 auth session issue --token-only`."),
+      Flag.withDefault(""),
+    ),
+    route: Flag.String("route").pipe(
+      Flag.withDescription("App path to open and measure instead of streaming a reply."),
+      Flag.optional,
     ),
     metro: Flag.String("metro").pipe(Flag.withDefault("http://127.0.0.1:8081")),
     scheme: Flag.String("scheme").pipe(Flag.withDefault("t3code-dev")),
     runs: Flag.Int("runs").pipe(Flag.withDefault(3)),
-    window: Flag.Int("window").pipe(Flag.withDefault(12)),
+    window: Flag.Int("window").pipe(
+      Flag.withDescription("Seconds to record; defaults to 12 for a reply and 6 for --route."),
+      Flag.optional,
+    ),
     provider: Flag.String("provider").pipe(Flag.withDefault("claudeAgent")),
     model: Flag.String("model").pipe(Flag.withDefault("claude-haiku-5-5")),
     projectRoot: Flag.String("project-root").pipe(
       Flag.withDescription("Scratch directory for the measurement project; created if missing."),
+      Flag.withDefault(""),
     ),
   },
   Effect.fn("measure.main")(function* (flags) {
-    const options: Options = { ...flags, windowSeconds: flags.window };
+    const route = flags.route;
+    const options: Options = {
+      ...flags,
+      windowSeconds: Option.getOrElse(flags.window, () => (Option.isSome(route) ? 6 : 12)),
+    };
+    if (Option.isNone(route) && (!flags.server || !flags.token || !flags.projectRoot))
+      return yield* new MeasureError({
+        message: "Streaming a reply needs --server, --token and --project-root.",
+      });
     const reports: RenderReport[] = [];
     for (let run = 1; run <= flags.runs; run++) {
-      const { report, stillStreaming } = yield* measureStreamReply(options, run);
+      const { report, stillStreaming } = Option.isSome(route)
+        ? yield* measureRouteOpen(options, route.value, run)
+        : yield* measureStreamReply(options, run);
       yield* Console.error(
-        `run ${run}: ${report.totalRenders} renders in ${report.commits} commits${stillStreaming ? "" : " (warning: streaming ended inside the window)"}`,
+        `run ${run}: ${report.totalRenders} renders in ${report.commits} commits${stillStreaming === false ? " (warning: streaming ended inside the window)" : ""}`,
       );
       reports.push(report);
       // Let the interrupted turn settle so the next run starts from a quiet app.

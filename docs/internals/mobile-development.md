@@ -58,6 +58,9 @@ node apps/mobile/scripts/measure-renders.mts --server <server-origin> --token <t
   --metro http://<metro-lan-host>:8081 --project-root <scratch-dir>
 ```
 
+`--route /settings/usage` instead opens that app path from Home and records a 6 s window over
+mount and data settling, with no provider turn and no `--server`, `--token` or `--project-root`.
+
 Compare before and after on the same base, on the same device, with the median of three runs.
 Provider output varies run to run, so a single run or a comparison across bases is noise.
 
