@@ -79,6 +79,7 @@ import {
   acpProviderItemNativeId,
   acpScopedNativeId,
   acpCarryoverTerminalShouldClearContinuation,
+  acpContinuationDelivery,
   acpPostSettleContinuationOfferEvidence,
   acpIsAppOwnedWakeTurn,
   acpPostSettleMonitorPromptShouldSuppress,
@@ -226,6 +227,11 @@ describe("ACP continuation ownership", () => {
         wakeBufferLength: 1,
       }),
     );
+  });
+
+  it("prompts a will_wake result and keeps native wakes buffered", () => {
+    assert.equal(acpContinuationDelivery('Subagent "review" completed.\n\ndone'), "message_text");
+    assert.equal(acpContinuationDelivery(null), "adapter_buffered");
   });
 });
 

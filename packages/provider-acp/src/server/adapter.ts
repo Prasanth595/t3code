@@ -1152,6 +1152,18 @@ export function acpIsAppOwnedWakeTurn(message: {
   return message.createdBy === "agent" && message.creationSource === "server";
 }
 
+/**
+ * A `will_wake` result never arrives as a session frame. Message-text delivery
+ * prompts the provider with it. Native wakes stay adapter-buffered so the
+ * continuation turn drains the frames already captured instead of prompting
+ * that text again.
+ */
+export function acpContinuationDelivery(
+  detail: string | null,
+): "adapter_buffered" | "message_text" {
+  return detail === null ? "adapter_buffered" : "message_text";
+}
+
 function acpIsProviderContinuationMessage(message: {
   readonly createdBy: string;
   readonly creationSource: string;
@@ -3533,6 +3545,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             providerThreadId: route.providerThreadId,
             driver,
             detail,
+            delivery: acpContinuationDelivery(detail),
             ...(notification === null ? {} : { notification }),
             clearIfCurrent: () =>
               continuationPermit.withPermit(
