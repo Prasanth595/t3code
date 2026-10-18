@@ -18,7 +18,10 @@ import { layerDesktopEnvironment } from "./testing.ts";
 
 // Runs the real instance `start` with a config that always fails to resolve, so a start that
 // is not skipped returns without spawning and the test only counts what it reached.
-const startInstance = (id: string, environment: Layer.Layer<never> | null) => {
+const startInstance = (
+  id: string,
+  environment: ReturnType<typeof layerDesktopEnvironment> | null,
+) => {
   const calls = { configResolve: 0, spawn: 0 };
   const spawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,

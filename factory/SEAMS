@@ -20,6 +20,7 @@ apps/desktop/src/app/DesktopStatePaths.test.ts
 apps/desktop/src/app/DesktopStatePaths.ts
 apps/desktop/src/app/DesktopUserData.test.ts
 apps/desktop/src/app/DesktopUserData.ts
+apps/desktop/src/backend/DesktopBackendManager.ts
 apps/desktop/src/compileCache.ts
 apps/desktop/src/electron/ElectronProtocol.test.ts
 apps/desktop/src/electron/ElectronProtocol.ts
