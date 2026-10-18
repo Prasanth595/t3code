@@ -1598,9 +1598,9 @@ export class MachineMapObject extends DurableObject<Env> {
 
   /** MM-1205: null when the Worker has no Cloudflare API token. */
   #cloudflare(): CloudflareApi | null {
-    return this.env.CF_API_TOKEN
-      ? new CloudflareApi(this.env.CF_API_TOKEN, this.env.ACCOUNT_ID)
-      : null;
+    // A secret piped in from a shell can end with a line break, which breaks the auth header.
+    const token = this.env.CF_API_TOKEN?.trim();
+    return token ? new CloudflareApi(token, this.env.ACCOUNT_ID) : null;
   }
 
   async #tokenId(api: CloudflareApi, machine: MachineRecord): Promise<string | null> {
