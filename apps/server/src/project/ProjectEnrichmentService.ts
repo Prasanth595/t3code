@@ -13,6 +13,7 @@ import * as Ref from "effect/Ref";
 import type * as Scope from "effect/Scope";
 
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
+import { subscribeHostOverrideChanges } from "../sourceControl/hostOverrideChanges.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const DEFAULT_CACHE_CAPACITY = 512;
@@ -289,6 +290,8 @@ export const make = Effect.fn("ProjectEnrichmentService.make")(function* (
       { discard: true },
     );
   });
+
+  yield* subscribeHostOverrideChanges(Cache.invalidateAll(repositoryIdentityCache));
 
   return ProjectEnrichmentService.of({
     peek,

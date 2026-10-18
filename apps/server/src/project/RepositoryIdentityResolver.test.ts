@@ -13,6 +13,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { TestClock } from "effect/testing";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
 const normalizePathSeparators = (value: string) => value.replaceAll("\\", "/");
@@ -37,7 +38,7 @@ const layerRepositoryIdentityResolverTest = (options: {
       cacheCapacity: 16,
       ...options,
     }),
-  ).pipe(Layer.provide(ProcessRunner.layer));
+  ).pipe(Layer.provide(ProcessRunner.layer), Layer.provide(ServerSettings.layerTest()));
 
 it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
   it.effect("refreshes the Git root only when requested", () => {
@@ -89,7 +90,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
           );
         },
       }),
-    ).pipe(Layer.provide(layerProcessRunner));
+    ).pipe(Layer.provide(layerProcessRunner), Layer.provide(ServerSettings.layerTest()));
 
     return Effect.gen(function* () {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -157,7 +158,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     const layerResolver = Layer.effect(
       RepositoryIdentityResolver.RepositoryIdentityResolver,
       RepositoryIdentityResolver.make(),
-    ).pipe(Layer.provide(layerProcessRunner));
+    ).pipe(Layer.provide(layerProcessRunner), Layer.provide(ServerSettings.layerTest()));
 
     return Effect.gen(function* () {
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
@@ -200,7 +201,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity?.provider).toBe("github");
       expect(identity?.owner).toBe("t3tools");
       expect(identity?.name).toBe("t3code");
-    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+    }).pipe(
+      Effect.provide(
+        RepositoryIdentityResolver.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+      ),
+    ),
   );
 
   it.effect("returns the git top-level root path when resolving from a nested workspace", () =>
@@ -227,7 +232,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(normalizeResolvedPath(resolvedIdentityRoot)).toBe(
         normalizeResolvedPath(resolvedRepoRoot),
       );
-    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+    }).pipe(
+      Effect.provide(
+        RepositoryIdentityResolver.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+      ),
+    ),
   );
 
   it.effect("returns null for non-git folders and repos without remotes", () =>
@@ -248,7 +257,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
       expect(nonGitIdentity).toBeNull();
       expect(noRemoteIdentity).toBeNull();
-    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+    }).pipe(
+      Effect.provide(
+        RepositoryIdentityResolver.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+      ),
+    ),
   );
 
   it.effect.each(["add", "replace"] as const)(
@@ -286,7 +299,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
         expect(identity?.displayName).toBe("t3tools/t3code");
         expect(yield* resolver.resolve(cwd)).toEqual(identity);
-      }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+      }).pipe(
+        Effect.provide(
+          RepositoryIdentityResolver.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+        ),
+      ),
   );
 
   it.effect("reports a fork's own remote as origin next to the upstream identity", () =>
@@ -309,7 +326,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         canonicalKey: "github.com/julius/t3code-fork",
         displayName: "julius/t3code-fork",
       });
-    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+    }).pipe(
+      Effect.provide(
+        RepositoryIdentityResolver.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+      ),
+    ),
   );
 
   it.effect("uses the last remote path segment as the repository name for nested groups", () =>
@@ -330,7 +351,11 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect(identity?.displayName).toBe("t3tools/platform/t3code");
       expect(identity?.owner).toBe("t3tools");
       expect(identity?.name).toBe("t3code");
-    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+    }).pipe(
+      Effect.provide(
+        RepositoryIdentityResolver.layer.pipe(Layer.provide(ServerSettings.layerTest())),
+      ),
+    ),
   );
 
   it.effect(

@@ -85,6 +85,7 @@ import {
 
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { subscribeHostOverrideChanges } from "../sourceControl/hostOverrideChanges.ts";
 import * as PullRequestFilesViewed from "../persistence/PullRequestFilesViewed.ts";
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -998,7 +999,15 @@ export const make = Effect.gen(function* () {
     readonly viewer: string | null;
     readonly error: PullRequestProviderError | null;
   };
-  const viewersByHost = new Map<string, { readonly at: number; readonly result: ResolvedViewer }>();
+  const viewerEndpointKey = (
+    host: string,
+    kind: SourceControlProviderKind,
+    baseUrl: string | undefined,
+  ) => JSON.stringify([host, kind, baseUrl ?? null]);
+  const viewersByEndpoint = new Map<
+    string,
+    { readonly at: number; readonly result: ResolvedViewer }
+  >();
   const viewerFlights = yield* Cache.makeWith(
     (key: string): Effect.Effect<ResolvedViewer> => {
       const [host, kind, roots, baseUrl] = JSON.parse(key) as [
@@ -1023,7 +1032,9 @@ export const make = Effect.gen(function* () {
           error: null as PullRequestProviderError | null,
         })),
         Effect.tap((result) =>
-          Effect.map(Clock.currentTimeMillis, (at) => viewersByHost.set(host, { at, result })),
+          Effect.map(Clock.currentTimeMillis, (at) =>
+            viewersByEndpoint.set(viewerEndpointKey(host, kind, baseUrl), { at, result }),
+          ),
         ),
         Effect.catch((error) =>
           Effect.succeed({
@@ -1053,12 +1064,14 @@ export const make = Effect.gen(function* () {
       [...new Set(projects.map(({ host }) => host))],
       (host) =>
         Effect.flatMap(Clock.currentTimeMillis, (now): Effect.Effect<ResolvedViewer> => {
-          const held = viewersByHost.get(host);
+          const forHost = projects.filter((project) => project.host === host);
+          const api = forHost[0]!.api;
+          const held = viewersByEndpoint.get(
+            viewerEndpointKey(host, api.kind, forHost[0]!.baseUrl),
+          );
           if (held !== undefined && now - held.at <= Duration.toMillis(VIEWER_CACHE_TTL)) {
             return Effect.succeed(held.result);
           }
-          const forHost = projects.filter((project) => project.host === host);
-          const api = forHost[0]!.api;
           // Every checkout on the host, not just the ones that survived de-duplication: one
           // unreadable worktree would otherwise report the whole host as signed out.
           const roots =
@@ -2730,6 +2743,7 @@ export const make = Effect.gen(function* () {
     const key = [
       operation,
       project.api.kind,
+      project.baseUrl ?? "",
       project.host.toLowerCase(),
       project.repository.toLowerCase(),
       project.project.id,
@@ -3255,13 +3269,26 @@ export const make = Effect.gen(function* () {
     } else {
       listingsEpoch = ++epochCounter;
       everyFileRevisionEpoch = ++epochCounter;
-      viewersByHost.clear();
+      viewersByEndpoint.clear();
       yield* Cache.invalidateAll(viewerFlights);
     }
     if (options?.notifyReaders) {
       yield* SubscriptionRef.set(pullRequestRefreshes, ++epochCounter);
     }
   });
+
+  yield* subscribeHostOverrideChanges(
+    Effect.gen(function* () {
+      projectEpochFloor = ++epochCounter;
+      searchVisibleAt.clear();
+      detailStates.clear();
+      reportedStates.clear();
+      projectEpochs.clear();
+      refEpochs.clear();
+      mergedEpochs.clear();
+      yield* invalidate({}, { notifyReaders: true });
+    }),
+  );
 
   const refreshAfterTurn: PullRequestService["Service"]["refreshAfterTurn"] = (projectId) =>
     Effect.suspend(() => {

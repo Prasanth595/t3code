@@ -27,6 +27,7 @@ import type {
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
 import type { ServerSettings } from "@t3tools/contracts";
 import * as ServerSettingsService from "../serverSettings.ts";
+import { makeSettingsChanges } from "../testUtils/settingsChanges.ts";
 import { PullRequestOperationError } from "@t3tools/contracts";
 
 import * as ProjectService from "../project/ProjectService.ts";
@@ -525,6 +526,96 @@ function fakeProvider(
   };
 }
 
+it.effect("host mapping changes invalidate PR listings, viewers, details and persisted reads", () =>
+  Effect.gen(function* () {
+    const settings = yield* makeSettingsChanges;
+    const saved = project({
+      id: "p1",
+      title: "custom",
+      workspaceRoot: "/w",
+      repository: "team/repo",
+      host: "github.example.test",
+    });
+    const calls: string[] = [];
+    const provider = (kind: "github" | "forgejo") =>
+      fakeProvider(SourceControlProviderKind.make(kind), {
+        getViewer: () =>
+          Effect.sync(() => {
+            calls.push(`${kind}:viewer`);
+            return kind;
+          }),
+        listChangeRequests: () =>
+          Effect.sync(() => {
+            calls.push(`${kind}:list`);
+            return {
+              items: [changeRequest(1, "2026-07-02T00:00:00Z")],
+              truncated: false,
+              continues: false,
+            };
+          }),
+        getChangeRequest: () =>
+          Effect.gen(function* () {
+            const endpoint = yield* PullRequestBaseUrl;
+            calls.push(`${kind}:detail:${endpoint}`);
+            return {
+              ...hostedChangeRequest("mapped"),
+              ...changeRequest(1, "2026-07-02T00:00:00Z"),
+              title: `${kind}:${endpoint}`,
+            };
+          }),
+        getChangeRequestActivity: () =>
+          Effect.succeed({
+            comments: [],
+            commentCount: 0,
+            commentsTruncated: false,
+            reviewThreads: [],
+            commits: [],
+          }),
+      });
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* makeService({
+          settingsService: settings.service,
+          projects: [saved],
+          providers: [provider("github"), provider("forgejo")],
+        });
+        const ref = { projectId: saved.id, repository: "team/repo", number: 1 };
+        const read = Effect.gen(function* () {
+          yield* service.list({ state: "open" });
+          const detail = yield* service.detail(ref);
+          const summary = yield* service.summary(ref);
+          assert.strictEqual(detail.title, summary.title);
+          return summary;
+        });
+        const first = yield* read;
+        const warmCalls = calls.length;
+        yield* settings.publish({ ...DEFAULT_SERVER_SETTINGS, worktreesDirectory: "/unrelated" });
+        assert.deepStrictEqual(yield* read, first);
+        assert.strictEqual(calls.length, warmCalls);
+        for (const baseUrl of [
+          "https://github.example.test/Forge",
+          "https://github.example.test/Other",
+        ]) {
+          yield* settings.publish({
+            ...DEFAULT_SERVER_SETTINGS,
+            sourceControlHostOverrides: { "github.example.test": { kind: "forgejo", baseUrl } },
+          });
+          const next = yield* read;
+          assert.strictEqual(next.title, `forgejo:${baseUrl}`);
+          assert.strictEqual(calls.at(-1), `forgejo:detail:${baseUrl}`);
+        }
+        assert.strictEqual(calls.filter((call) => call === "forgejo:viewer").length, 2);
+        assert.strictEqual(calls.filter((call) => call === "forgejo:list").length, 2);
+        yield* settings.publish(DEFAULT_SERVER_SETTINGS);
+        // Reverting the mapping can reuse the corresponding persisted endpoint's data.
+        assert.deepStrictEqual(yield* read, first);
+        assert.strictEqual(calls.filter((call) => call === "github:list").length, 2);
+      }),
+    );
+    assert.strictEqual(settings.subscribers(), 0);
+  }),
+);
+
 it.effect.each(["forgejo", "azure-devops"] as const)(
   "resolves mapped %s links without weakening Azure's matching-checkout requirement",
   (kind) =>
@@ -603,6 +694,7 @@ it.effect("uses the configured provider's repository selector for a mapped Azure
 
 function makeService(input: {
   readonly settings?: ServerSettings;
+  readonly settingsService?: ServerSettingsService.ServerSettingsService["Service"];
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly providers: ReadonlyArray<PullRequestProviderApi>;
   readonly resolveHandle?: SourceControlProviderRegistry.SourceControlProviderRegistry["Service"]["resolveHandle"];
@@ -615,6 +707,8 @@ function makeService(input: {
       Layer.mergeAll(
         Layer.mock(ServerSettingsService.ServerSettingsService)({
           getSettings: Effect.succeed(input.settings ?? DEFAULT_SERVER_SETTINGS),
+          subscribeChanges: Effect.succeed(Stream.empty),
+          ...input.settingsService,
         }),
         Layer.succeed(
           PullRequestProviderRegistry.PullRequestProviderRegistry,

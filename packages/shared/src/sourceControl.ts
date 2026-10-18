@@ -211,6 +211,18 @@ function isBitbucketHost(host: string): boolean {
   return host === "bitbucket.org" || hasDnsLabel(host, "bitbucket");
 }
 
+export function sourceControlHostOverridesKey(overrides: SourceControlHostOverrides): string {
+  return JSON.stringify(
+    Object.entries(overrides)
+      .sort(([left], [right]) => left.toLowerCase().localeCompare(right.toLowerCase()))
+      .map(([host, value]) => [
+        host.toLowerCase(),
+        value.kind,
+        value.baseUrl === undefined ? null : new URL(value.baseUrl).toString().replace(/\/+$/, ""),
+      ]),
+  );
+}
+
 export function sourceControlHostOverrideForRemoteUrl(
   remoteUrl: string,
   overrides: SourceControlHostOverrides,

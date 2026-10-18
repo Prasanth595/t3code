@@ -81,6 +81,7 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { extractBranchNameFromRemoteRef } from "./remoteRefs.ts";
 import { detachStackFrame } from "./detachStackFrame.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { subscribeHostOverrideChanges } from "../sourceControl/hostOverrideChanges.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
@@ -1108,6 +1109,7 @@ export const make = Effect.gen(function* () {
     normalizeStatusCacheKey(cwd).pipe(
       Effect.flatMap((cacheKey) => Cache.invalidate(localStatusResultCache, cacheKey)),
     );
+  let hostOverridesEpoch = 0;
   const prLookupEpochByCwd = new Map<string, number>();
   const prLookupEpoch = (cwd: string) => prLookupEpochByCwd.get(cwd) ?? 0;
   const bumpPrLookupEpoch = (cwd: string) =>
@@ -1134,6 +1136,7 @@ export const make = Effect.gen(function* () {
       details.localBranchExists === false ? "0" : "1",
       details.remoteName ?? "",
       String(prLookupEpoch(cwd)),
+      String(hostOverridesEpoch),
     ].join("\u0000");
   const prLookupFailureStreakByKey = new Map<string, number>();
   const nextPrLookupFailureTtl = (key: string) => {
@@ -1210,7 +1213,9 @@ export const make = Effect.gen(function* () {
             ? PR_LOOKUP_CACHE_TTL
             : PR_LOOKUP_NO_OPEN_PR_CACHE_TTL;
         }
-        return nextPrLookupFailureTtl(key);
+        return key.split("\u0000").at(-1) === String(hostOverridesEpoch)
+          ? nextPrLookupFailureTtl(key)
+          : Duration.zero;
       },
     },
   );
@@ -1276,6 +1281,7 @@ export const make = Effect.gen(function* () {
   ) {
     // Keyed by (cwd, branch) only: the upstream ref changing (e.g. a first
     // `push -u`) must not orphan the fallback value for the same branch.
+    const epoch = hostOverridesEpoch;
     const branchKey = `${cwd}\u0000${details.branch}`;
     const cacheKey = prLookupCacheKey(cwd, details);
     if (refreshMissingPullRequest) {
@@ -1296,30 +1302,32 @@ export const make = Effect.gen(function* () {
         return { pr: toStatusPr(latest), headContext };
       }),
       Effect.tap(({ pr, headContext }) =>
-        Effect.sync(() =>
+        Effect.sync(() => {
+          if (epoch !== hostOverridesEpoch) return;
           rememberLastKnownPr(branchKey, {
             pr,
             upstreamRef: details.upstreamRef,
             headBranch: headContext.headBranch,
             remoteName: headContext.remoteName,
             headRemoteUrlKey: headContext.headRemoteUrlKey,
-          }),
-        ),
+          });
+        }),
       ),
       Effect.map(({ pr }) => pr),
       Effect.catch((error) => {
-        const fallback = lastKnownPrByBranchKey.get(branchKey)?.pr
-          ? resolveLookupHeadContext(cwd, details).pipe(
-              Effect.map(({ headContext }) =>
-                resolveLastKnownPr(branchKey, {
-                  upstreamRef: details.upstreamRef,
-                  headBranch: headContext.headBranch,
-                  remoteName: headContext.remoteName,
-                  headRemoteUrlKey: headContext.headRemoteUrlKey,
-                }),
-              ),
-            )
-          : Effect.succeed(null);
+        const fallback =
+          epoch === hostOverridesEpoch && lastKnownPrByBranchKey.get(branchKey)?.pr
+            ? resolveLookupHeadContext(cwd, details).pipe(
+                Effect.map(({ headContext }) =>
+                  resolveLastKnownPr(branchKey, {
+                    upstreamRef: details.upstreamRef,
+                    headBranch: headContext.headBranch,
+                    remoteName: headContext.remoteName,
+                    headRemoteUrlKey: headContext.headRemoteUrlKey,
+                  }),
+                ),
+              )
+            : Effect.succeed(null);
         return Effect.logWarning("PR lookup failed.").pipe(
           Effect.annotateLogs({
             operation: "lookupStatusPr",
@@ -3101,6 +3109,17 @@ export const make = Effect.gen(function* () {
         ),
       );
     },
+  );
+
+  yield* subscribeHostOverrideChanges(
+    Effect.gen(function* () {
+      hostOverridesEpoch++;
+      lastKnownPrByBranchKey.clear();
+      prLookupFailureStreakByKey.clear();
+      yield* Cache.invalidateAll(localStatusResultCache);
+      yield* Cache.invalidateAll(remoteStatusResultCache);
+      yield* Cache.invalidateAll(prLookupCache);
+    }),
   );
 
   return GitManager.of({

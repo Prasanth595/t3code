@@ -11,6 +11,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import * as ProcessRunner from "../processRunner.ts";
+import { subscribeHostOverrideChanges } from "../sourceControl/hostOverrideChanges.ts";
 import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
@@ -198,6 +199,8 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
       ),
     { capacity: cacheCapacity, timeToLive },
   );
+
+  yield* subscribeHostOverrideChanges(Cache.invalidateAll(repositoryIdentityCache));
 
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fnUntraced(
     function* (cwd, options) {

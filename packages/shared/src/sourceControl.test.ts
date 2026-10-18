@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   sourceControlRepositorySelector,
+  sourceControlHostOverridesKey,
   detectSourceControlProviderFromRemoteUrl,
   getChangeRequestTerminologyForKind,
   isSshRemoteUrl,
@@ -327,4 +328,29 @@ it("puts owner and name back together for an identity recorded before displayNam
 it("names nothing for a project with no remote to name it by", () => {
   expect(sourceControlRepositorySelector(null)).toBeNull();
   expect(sourceControlRepositorySelector({ provider: "github" })).toBeNull();
+});
+
+it("compares host mappings independently of entry order, hostname case, and URL spelling", () => {
+  const original = sourceControlHostOverridesKey({
+    "CODE.EXAMPLE.TEST": { kind: "forgejo", baseUrl: "https://WEB.example.test:443/Forge/" },
+    "other.example.test": { kind: "gitlab" },
+  });
+  expect(
+    sourceControlHostOverridesKey({
+      "other.example.test": { kind: "gitlab" },
+      "code.example.test": { baseUrl: "https://web.example.test/Forge", kind: "forgejo" },
+    }),
+  ).toBe(original);
+  for (const mapping of [
+    { kind: "github" as const, baseUrl: "https://web.example.test/Forge" },
+    { kind: "forgejo" as const, baseUrl: "https://web.example.test/forge" },
+    { kind: "forgejo" as const },
+  ]) {
+    expect(
+      sourceControlHostOverridesKey({
+        "code.example.test": mapping,
+        "other.example.test": { kind: "gitlab" },
+      }),
+    ).not.toBe(original);
+  }
 });

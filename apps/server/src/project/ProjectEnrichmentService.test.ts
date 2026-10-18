@@ -1,14 +1,19 @@
 import { assert, it } from "@effect/vitest";
-import type { RepositoryIdentity } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, type RepositoryIdentity } from "@t3tools/contracts";
+import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/sourceControl";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import { TestClock } from "effect/testing";
 
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { makeSettingsChanges } from "../testUtils/settingsChanges.ts";
+import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 import * as ProjectEnrichment from "./ProjectEnrichmentService.ts";
 import * as ProjectFaviconResolver from "./ProjectFaviconResolver.ts";
@@ -46,6 +51,7 @@ const layer = (
 ) =>
   Layer.effect(ProjectEnrichment.ProjectEnrichmentService, ProjectEnrichment.make(options)).pipe(
     Layer.provide(metadataLayer),
+    Layer.provide(ServerSettings.layerTest()),
   );
 
 it.effect("preserves either enrichment field when the other resolver fails", () =>
@@ -478,4 +484,87 @@ it.effect(
         assert.equal(yield* Ref.get(faviconScans), 1);
       }).pipe(Effect.provide(layer(layerMetadata)));
     }),
+);
+
+it.effect("host mapping changes clear both identity caches and preserve unrelated enrichment", () =>
+  Effect.gen(function* () {
+    const settings = yield* makeSettingsChanges;
+    let reads = 0;
+    let faviconReads = 0;
+    const initial = {
+      ...DEFAULT_SERVER_SETTINGS,
+      sourceControlHostOverrides: {
+        "code.example.test": { kind: "forgejo" as const, baseUrl: "https://code.example.test/Old" },
+      },
+    };
+    yield* settings.publish(initial);
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const resolver = yield* RepositoryIdentityResolver.make({
+          refine: (identity) =>
+            settings.service.getSettings.pipe(
+              Effect.map((value) => ({
+                ...identity,
+                webUrl: `${detectSourceControlProviderFromRemoteUrl(identity.locator.remoteUrl, value.sourceControlHostOverrides)!.baseUrl}/team/repo`,
+              })),
+            ),
+        }).pipe(
+          Effect.provideService(ServerSettings.ServerSettingsService, settings.service),
+          Effect.provideService(ProcessRunner.ProcessRunner, {
+            run: (input) =>
+              Effect.sync(() => {
+                reads++;
+                return {
+                  stdout: input.args.includes("rev-parse")
+                    ? "/repo\n"
+                    : "origin\tgit@code.example.test:team/repo.git (fetch)\n",
+                  stderr: "",
+                  code: ChildProcessSpawner.ExitCode(0),
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                  stdoutInvalidUtf8: false,
+                  stderrInvalidUtf8: false,
+                };
+              }),
+          }),
+        );
+        const service = yield* ProjectEnrichment.make().pipe(
+          Effect.provideService(ServerSettings.ServerSettingsService, settings.service),
+          Effect.provideService(RepositoryIdentityResolver.RepositoryIdentityResolver, resolver),
+          Effect.provideService(ProjectFaviconResolver.ProjectFaviconResolver, {
+            resolvePath: () =>
+              Effect.sync(() => {
+                faviconReads++;
+                return "/repo/favicon.svg";
+              }),
+          }),
+        );
+        const changes = yield* service.subscribeChanges;
+        yield* service.request("/repo");
+        const first = (yield* PubSub.take(changes)).enrichment.repositoryIdentity;
+        yield* Effect.yieldNow;
+        assert.strictEqual(first?.webUrl, "https://code.example.test/Old/team/repo");
+        const warmReads = reads;
+        yield* settings.publish({ ...initial, worktreesDirectory: "/unrelated" });
+        assert.strictEqual((yield* service.peek("/repo")).repositoryIdentity, first);
+        assert.strictEqual(yield* resolver.resolve("/repo"), first);
+        assert.strictEqual(reads, warmReads);
+        yield* settings.publish({
+          ...initial,
+          sourceControlHostOverrides: {
+            "code.example.test": { kind: "forgejo", baseUrl: "https://code.example.test/New" },
+          },
+        });
+        assert.isNull((yield* service.peek("/repo")).repositoryIdentity);
+        yield* service.request("/repo");
+        const next = (yield* PubSub.take(changes)).enrichment.repositoryIdentity;
+        assert.strictEqual(next?.webUrl, "https://code.example.test/New/team/repo");
+        assert.strictEqual(reads, warmReads + 1);
+        assert.strictEqual(faviconReads, 1);
+        assert.strictEqual(settings.subscribers(), 2);
+      }),
+    );
+    assert.strictEqual(settings.subscribers(), 0);
+  }),
 );
