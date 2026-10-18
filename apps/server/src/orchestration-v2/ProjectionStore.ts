@@ -2957,6 +2957,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             ? cohortJson("nodeId")
             : encodeIdList(
                 (yield* sql<{ readonly node_id: string }>`
+            -- One arm per lookup so each seeks its own index, as the windowed reads below.
             WITH RECURSIVE retained(node_id) AS (
               SELECT value FROM json_each(${cohortJson("nodeId")})
               UNION
@@ -2964,16 +2965,22 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE thread_id = ${threadId} AND status IN ('pending','starting','running','waiting')
               UNION
               SELECT root_node_id FROM orchestration_v2_projection_run_attempts
-              WHERE thread_id = ${threadId} AND (
-                status IN ('pending','starting','running','waiting')
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR run_id = ${window.requiredRunId ?? null})
+              WHERE thread_id = ${threadId} AND status IN ('pending','starting','running','waiting')
+              UNION
+              SELECT root_node_id FROM orchestration_v2_projection_run_attempts
+              WHERE thread_id = ${threadId} AND run_id IN (SELECT value FROM json_each(${cohortRunIds}))
+              UNION
+              SELECT root_node_id FROM orchestration_v2_projection_run_attempts
+              WHERE thread_id = ${threadId} AND run_id = ${window.requiredRunId ?? null}
               UNION
               SELECT json_extract(payload_json, '$.rootNodeId') FROM orchestration_v2_projection_runs
-              WHERE thread_id = ${threadId} AND (
-                status IN ('queued','preparing','starting','running','waiting')
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR run_id = ${window.requiredRunId ?? null})
+              WHERE thread_id = ${threadId} AND status IN ('queued','preparing','starting','running','waiting')
+              UNION
+              SELECT json_extract(payload_json, '$.rootNodeId') FROM orchestration_v2_projection_runs
+              WHERE +thread_id = ${threadId} AND run_id IN (SELECT value FROM json_each(${cohortRunIds}))
+              UNION
+              SELECT json_extract(payload_json, '$.rootNodeId') FROM orchestration_v2_projection_runs
+              WHERE +thread_id = ${threadId} AND run_id = ${window.requiredRunId ?? null}
               UNION
               SELECT node_id FROM orchestration_v2_projection_runtime_requests
               WHERE thread_id = ${threadId} AND status IN ('pending','waiting')
@@ -3005,6 +3012,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const cohortCheckpointIds = cohortJson("checkpointId");
         const cohortHandoffIds = cohortJson("contextHandoffId");
 
+        // Windowed reads OR a live-status lookup with cohort ID lookups. Each arm
+        // carries its own thread filter and `+thread_id` keeps ID arms off the
+        // thread index. With `thread_id = ?` outside the OR, SQLite reads every
+        // row of a long thread whenever its stats say threads are small, as they
+        // are in most databases. Live arms use the *_live_idx partial indexes.
         const [
           thread,
           runRows,
@@ -3035,10 +3047,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           `
               : sql<PayloadRow>`
             SELECT payload_json FROM orchestration_v2_projection_runs
-            WHERE thread_id = ${threadId}
-              AND (status IN ('queued','preparing','starting','running','waiting')
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR run_id = ${window.requiredRunId ?? null})
+            WHERE (thread_id = ${threadId}
+                AND status IN ('queued','preparing','starting','running','waiting'))
+              OR (+thread_id = ${threadId}
+                AND run_id IN (SELECT value FROM json_each(${cohortRunIds})))
+              OR (+thread_id = ${threadId} AND run_id = ${window.requiredRunId ?? null})
             ORDER BY ordinal ASC
           `,
           fields !== undefined && !fields.includes("attempts")
@@ -3052,9 +3065,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           `
               : sql<PayloadRow>`
             SELECT payload_json FROM orchestration_v2_projection_run_attempts
-            WHERE thread_id = ${threadId}
-              AND (status IN ('pending','starting','running','waiting')
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds})))
+            WHERE (thread_id = ${threadId} AND status IN ('pending','starting','running','waiting'))
+              OR (+thread_id = ${threadId}
+                AND run_id IN (SELECT value FROM json_each(${cohortRunIds})))
             ORDER BY run_id ASC, attempt_ordinal ASC
           `,
           fields !== undefined && !fields.includes("nodes")
@@ -3171,10 +3184,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           `
               : sql<PayloadRow>`
             SELECT payload_json FROM orchestration_v2_projection_provider_turns
-            WHERE thread_id = ${threadId}
-              AND (status IN ('starting','running','waiting')
-                OR provider_turn_id IN (SELECT value FROM json_each(${cohortProviderTurnIds}))
-                OR node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
+            WHERE (thread_id = ${threadId} AND status IN ('starting','running','waiting'))
+              OR (+thread_id = ${threadId}
+                AND provider_turn_id IN (SELECT value FROM json_each(${cohortProviderTurnIds})))
+              OR (+thread_id = ${threadId}
+                AND node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
             ORDER BY provider_thread_id ASC, ordinal ASC
           `,
           fields !== undefined && !fields.includes("runtimeRequests")
@@ -3207,12 +3221,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               `
               : sql<PayloadRow>`
                 SELECT payload_json FROM orchestration_v2_projection_messages AS message
-                WHERE message.thread_id = ${threadId}
-                  AND (
-                    message.message_id IN (
+                WHERE (
+                    +message.thread_id = ${threadId}
+                    AND message.message_id IN (
                       SELECT value FROM json_each(${cohortMessageIds})
                     )
-                    OR message.run_id IN (
+                  )
+                  OR (
+                    +message.thread_id = ${threadId}
+                    AND message.run_id IN (
                       SELECT run_id FROM orchestration_v2_projection_runs
                       WHERE thread_id = ${threadId}
                         AND status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
@@ -3265,11 +3282,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           `
               : sql<PayloadRow>`
             SELECT payload_json FROM orchestration_v2_projection_checkpoints
-            WHERE thread_id = ${threadId}
-              AND (status IN ('pending','capturing')
-                OR checkpoint_id IN (SELECT value FROM json_each(${cohortCheckpointIds}))
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
-                OR node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
+            WHERE (thread_id = ${threadId} AND status IN ('pending','capturing'))
+              OR (+thread_id = ${threadId}
+                AND checkpoint_id IN (SELECT value FROM json_each(${cohortCheckpointIds})))
+              OR (+thread_id = ${threadId}
+                AND run_id IN (SELECT value FROM json_each(${cohortRunIds})))
+              OR (+thread_id = ${threadId}
+                AND node_id IN (SELECT value FROM json_each(${cohortNodeIds})))
             ORDER BY scope_id ASC, ordinal_within_scope ASC
           `,
           fields !== undefined && !fields.includes("contextHandoffs")
@@ -3658,6 +3677,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   )
               `;
             case "delegated-completions":
+              // Matches orchestration_v2_projection_runs_delegated_delivery_idx (migration 64).
               return sql`
                 SELECT thread_id FROM orchestration_v2_projection_runs
                 WHERE CASE WHEN json_valid(payload_json)
