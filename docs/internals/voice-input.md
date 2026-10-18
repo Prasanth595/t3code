@@ -2,8 +2,11 @@
 
 Transcription edits a composer draft. It does not submit an agent turn. Audio is
 temporary client input, and only normal message submission sends the resulting
-text. The current implementation transcribes locally on supported iOS devices;
-environment-backed transcription is not implemented.
+text. Supported iOS devices transcribe locally with Apple Speech. Every other
+surface (and iOS when local transcription is unavailable) uploads the recording
+as a pending attachment and asks the environment to transcribe it with the
+OpenAI key in `voiceTranscriptionOpenAiApiKey`. The server deletes the
+recording once that request settles.
 
 The [shared controller](../../packages/client-runtime/src/voice-input/controller.ts)
 owns the operation while the client supplies capture and transcription. Preparation

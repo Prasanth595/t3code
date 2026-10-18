@@ -173,6 +173,7 @@ import * as MachineHost from "./fork/machineMap/MachineHost.ts";
 import * as MachineMap from "./fork/machineMap/MachineMap.ts";
 import * as MachineMapState from "./fork/machineMap/MachineMapState.ts";
 import * as WebPush from "./fork/webPush/WebPush.ts";
+import * as VoiceTranscription from "./fork/voiceInput/VoiceTranscription.ts";
 import * as MachinePeers from "./fork/machineMap/MachinePeers.ts";
 import * as MachineResources from "./fork/machineMap/MachineResources.ts";
 import * as MachineTunnel from "./fork/machineMap/MachineTunnel.ts";
@@ -631,6 +632,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerMachineMap,
   // Fork: Web Push to the browsers that subscribed on this server.
   WebPush.layerWorker.pipe(Layer.provideMerge(WebPush.layer)),
+  // Fork: environment-backed voice input transcription.
+  VoiceTranscription.layer,
 ).pipe(
   Layer.provideMerge(layerOrchestrationApplication),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),

@@ -1,0 +1,32 @@
+{
+  "displayName": "Codex",
+  "showInteractionModeToggle": true,
+  "reportsContextWindow": true,
+  "enabled": true,
+  "installed": false,
+  "version": null,
+  "status": "error",
+  "auth": {
+    "status": "unknown"
+  },
+  "checkedAt": "2026-10-18T19:15:53.777Z",
+  "message": "Could not start Codex CLI (`codex`). Check Settings → Providers → Codex → Binary path on the server. Installing ChatGPT or Codex desktop may not add codex to PATH.",
+  "models": [],
+  "slashCommands": [],
+  "skills": [],
+  "instanceId": "codex",
+  "driver": "codex",
+  "continuation": {
+    "groupKey": "codex:home:C:\\Users\\tomco\\.codex"
+  },
+  "versionAdvisory": {
+    "status": "unknown",
+    "currentVersion": null,
+    "latestVersion": null,
+    "updateCommand": null,
+    "canUpdate": false,
+    "canInstallVersion": false,
+    "checkedAt": "2026-10-18T19:15:53.777Z",
+    "message": null
+  }
+}

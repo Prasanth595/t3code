@@ -1116,7 +1116,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --placeholder: var(--muted-foreground);
   --secondary-label: var(--muted-foreground);
   --icon-muted: var(--muted-foreground);
-  --message-surface: var(--accent);
+  --message-surface: color-mix(in oklab, var(--accent) 90%, oklch(0.55 0.2 300));
   --message-foreground: var(--foreground);
   --message-action: var(--primary);
   --message-action-foreground: var(--primary-foreground);

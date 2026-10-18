@@ -28,6 +28,8 @@ import { WebPushSettingsRow } from "./WebPushSettingsRow";
 
 export { GlobalScriptsSettings } from "./GlobalScriptsSettings";
 export { RecoverInterruptedTurnsSettings } from "./RecoverInterruptedTurnsSettings";
+/** General: after the send shortcut. */
+export { VoiceInputSettingsRow } from "./VoiceInputSettings";
 export { AgentSessionImportSettingsRows } from "./ForkSettingsRows";
 export { FORK_SETTINGS_RESTORE_PATCH, forkChangedSettingLabels } from "./forkSettingsRestore";
 export {

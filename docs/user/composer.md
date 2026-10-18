@@ -167,27 +167,31 @@ Stashes containing uploaded files must be restored in their original environment
 Those files are retained for 24 hours. After an upload expires, restore the prompt
 and use **Attach again** or remove the missing file before sending.
 
-## Voice input on iPhone
+## Voice input
 
-On supported iPhones with iOS 26 or later, use the composer's microphone to record,
-then confirm to transcribe. Text is inserted where your selection was when
-recording started, ready for you to review and edit before sending.
+Use the composer's microphone to record, then confirm to transcribe. Text is
+inserted where your selection was when recording started, ready for you to review
+and edit before sending. Recordings can be up to five minutes long. Canceling,
+leaving the screen, or an audio interruption discards the recording and preserves
+your existing draft.
 
-The first use may download Apple's speech model and needs a network connection.
-Later transcription works offline for that language. Recordings can be up to five
-minutes long. Canceling, leaving the screen, or an audio interruption discards the
-recording and preserves your existing draft. While recording, the screen stays
-awake; it can sleep normally once recording stops.
+On web, desktop, and Android, add an OpenAI API key under **Settings →
+General → Voice input** (or **Settings → Microphone** on mobile). The environment
+sends the recording to OpenAI and deletes it after transcription; only the
+message text is sent when you submit.
 
-Voice input records from the first connected microphone in **Settings → Microphone**.
-The list mixes kinds (built-in, other wired, other Bluetooth, CarPlay) with wired and
-Bluetooth devices you have dictated with, listed by name. Drag to rank them together:
-for example, put **Other Bluetooth** above your AirPods so a new headset is preferred
-while the AirPods microphone stays low. By default, CarPlay comes after the built-in
-microphone.
+On supported iPhones with iOS 26 or later, transcription runs on the device.
+The first use may download Apple's speech model and needs a network connection;
+later transcription works offline for that language. When on-device transcription
+is unavailable, the same OpenAI key is used as a fallback. While recording,
+the screen stays awake; it can sleep normally once recording stops.
 
-Transcription runs on your device. T3 Code deletes the temporary audio after
-transcription or cancellation; only the message text is sent when you submit.
+On iPhone, voice input records from the first connected microphone in
+**Settings → Microphone**. The list mixes kinds (built-in, other wired, other
+Bluetooth, CarPlay) with wired and Bluetooth devices you have dictated with,
+listed by name. Drag to rank them together: for example, put **Other Bluetooth**
+above your AirPods so a new headset is preferred while the AirPods microphone
+stays low. By default, CarPlay comes after the built-in microphone.
 
 ## Queued messages
 

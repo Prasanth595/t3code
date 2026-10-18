@@ -21,11 +21,18 @@ export type VoiceTranscriptionErrorCode =
 
 export class VoiceTranscriptionError extends Error {
   readonly code: VoiceTranscriptionErrorCode;
+  /** Shown to the user in place of the generic failure text; `message` stays diagnostic. */
+  readonly userMessage: string | null;
 
-  constructor(code: VoiceTranscriptionErrorCode, message: string, options?: ErrorOptions) {
+  constructor(
+    code: VoiceTranscriptionErrorCode,
+    message: string,
+    options?: ErrorOptions & { readonly userMessage?: string },
+  ) {
     super(message, options);
     this.name = "VoiceTranscriptionError";
     this.code = code;
+    this.userMessage = options?.userMessage ?? null;
   }
 }
 

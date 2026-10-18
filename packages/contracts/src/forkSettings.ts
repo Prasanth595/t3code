@@ -317,6 +317,14 @@ export const ForkServerSettingsFields = {
    * setting `keybindings` (`KEYBINDINGS_SETTING_KEY`). See docs/fork.md "Machine map".
    */
   keybindingSync: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Fork: the OpenAI API key that transcribes voice input for every client of this environment.
+   * Empty turns environment voice input off. A secret: `settings.ts` imports this module, so the
+   * key annotation is written here instead of through `secretSetting`.
+   */
+  voiceTranscriptionOpenAiApiKey: TrimmedString.pipe(
+    Schema.withDecodingDefault(Effect.succeed("")),
+  ).annotateKey({ settingsSecret: true }),
 };
 
 export const ForkServerSettingsPatchFields = {
@@ -337,6 +345,8 @@ export const ForkServerSettingsPatchFields = {
   threadLinkChips: Schema.optionalKey(Schema.Boolean),
   threadLinksOpenDesktopApp: Schema.optionalKey(Schema.Boolean),
   keybindingSync: Schema.optionalKey(Schema.Boolean),
+  /** An empty value removes the saved key; the redaction marker keeps it. */
+  voiceTranscriptionOpenAiApiKey: Schema.optionalKey(TrimmedString),
   /** Replaces the saved groups whole: a merge would keep deleted groups and assignments. */
   sidebarGroups: Schema.optionalKey(SidebarGroups),
   /** Per surface: a patched layout replaces the saved one, and `null` restores the built-in card. */

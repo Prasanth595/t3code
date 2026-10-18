@@ -56,6 +56,7 @@ const FORK_SETTING_GROUPS = [
         linkOnly: true,
       },
       { ids: ["background-work-details"] },
+      { ids: ["voice-input-openai-key"] },
       { ids: ["prefer-origin-remote"] },
       {
         ids: [

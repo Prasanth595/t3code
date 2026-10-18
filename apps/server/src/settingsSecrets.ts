@@ -142,5 +142,18 @@ export function mapSettingsSecrets(
     ]),
   ) as ServerSettings["usageLimitSources"];
 
-  return { ...settings, providerInstances, sourceControlHosts, usageLimitSources };
+  // Fork: the OpenAI key of environment voice input.
+  const { voiceTranscriptionOpenAiApiKey } = mapFields(
+    { voiceTranscriptionOpenAiApiKey: settings.voiceTranscriptionOpenAiApiKey },
+    ["voiceTranscriptionOpenAiApiKey"],
+    () => "voice-transcription-openai-api-key",
+  ) as Pick<ServerSettings, "voiceTranscriptionOpenAiApiKey">;
+
+  return {
+    ...settings,
+    providerInstances,
+    sourceControlHosts,
+    usageLimitSources,
+    voiceTranscriptionOpenAiApiKey,
+  };
 }

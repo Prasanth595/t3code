@@ -21,6 +21,8 @@ import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/
 import { SettingsActionRow } from "./components/SettingsActionRow";
 import { SettingsDragHandle } from "./components/SettingsDragHandle";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsEnvironmentFilterHeader } from "./components/SettingsEnvironmentFilterHeader";
+import { VoiceTranscriptionKeySection } from "./VoiceTranscriptionKeySection";
 
 const REMOVE_SIZE = 20;
 
@@ -137,6 +139,7 @@ export function SettingsMicrophoneRouteScreen() {
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
+      <SettingsEnvironmentFilterHeader />
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -217,6 +220,7 @@ export function SettingsMicrophoneRouteScreen() {
           devices are added by name after you use voice input with them connected; until then, the
           Other row ranks them.
         </Text>
+        <VoiceTranscriptionKeySection />
       </ScrollView>
     </View>
   );

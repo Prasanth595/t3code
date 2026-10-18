@@ -2734,6 +2734,8 @@ export function GeneralSettingsPanel() {
           }
         />
 
+        <Fork.VoiceInputSettingsRow />
+
         <SettingsRow
           {...searchableSetting("follow-up-behavior")}
           description={

@@ -429,6 +429,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["enter return command ctrl multiline prompt new line composer"],
   },
+  ...ForkSearch.VOICE_INPUT_ITEMS,
   {
     id: "follow-up-behavior",
     title: "Follow-up behavior",
