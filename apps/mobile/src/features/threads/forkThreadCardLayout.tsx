@@ -320,9 +320,9 @@ export function ForkThreadCardLayout(props: {
     </View>
   );
 
-  // The relative times (age, limit reset) refresh when the row re-renders,
-  // not on the list's minute tick. Precompute them on the list item, as
-  // timeLabel is, if a stale value shows.
+  // The relative times (age, limit reset) refresh only when the thread changes:
+  // the React Compiler caches them on `info`, not on the list's minute tick.
+  // Precompute them on the list item, as timeLabel is, if a stale value shows.
   const renderLayoutElement = (
     element: MobileThreadCardElement,
     info: ThreadCardInfo,

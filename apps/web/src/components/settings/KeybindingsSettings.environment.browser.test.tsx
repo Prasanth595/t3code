@@ -46,9 +46,14 @@ vi.mock(import("../../state/session"), async (original) => {
       new Set(state.canWriteSettings ? ["primary-settings"] : [])) as never,
   };
 });
+// Fork: the machine map rows need a settings scope and a map that this test does not set up.
 vi.mock(import("../../machineMap/shareSettings"), async (original) => ({
   ...(await original()),
   useShareKeybindingsToMachineMap: (() => () => {}) as never,
+}));
+vi.mock(import("./KeybindingSyncSettingsRow"), async (original) => ({
+  ...(await original()),
+  KeybindingSyncSettingsRow: (() => null) as never,
 }));
 vi.mock(import("../../editorPreferences"), async (original) => ({
   ...(await original()),
