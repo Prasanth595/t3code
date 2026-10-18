@@ -114,7 +114,6 @@ export function PullRequestCommentForm({
             size="xs"
             variant={followUpAction === "close" ? "destructive-outline" : "outline"}
             disabled={body.trim().length === 0 || submitting !== null || actionPending}
-            // Closing asks first, like Close pull request in the header menu.
             {...(followUpAction === "close"
               ? inlineConfirm.props("close", () => void submit("close"))
               : { onClick: () => void submit("reopen") })}
@@ -124,13 +123,7 @@ export function PullRequestCommentForm({
             ) : (
               <PullRequestGlyph.reopen className="size-3.5" />
             )}
-            {followUpAction === "reopen" ? (
-              submitting === "reopen" ? (
-                "Reopening..."
-              ) : (
-                "Reopen with comment"
-              )
-            ) : (
+            {followUpAction === "close" ? (
               // The longest label holds the width, so the confirming click lands on the button.
               <span className="inline-grid">
                 <span aria-hidden className="invisible col-start-1 row-start-1">
@@ -144,6 +137,10 @@ export function PullRequestCommentForm({
                       : "Close with comment"}
                 </span>
               </span>
+            ) : submitting === "reopen" ? (
+              "Reopening..."
+            ) : (
+              "Reopen with comment"
             )}
           </Button>
         )}
