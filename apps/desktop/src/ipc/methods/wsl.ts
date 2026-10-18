@@ -22,9 +22,10 @@ const readWslState: Effect.Effect<
   const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
   const settings = yield* appSettings.get;
   const available = settings.localEnvironmentEnabled && (yield* wslEnvironment.isAvailable);
-  // Only enumerate distros when WSL is actually available — listDistros on a
-  // non-WSL host would spawn wsl.exe and hit the timeout for nothing.
-  const distros = available ? yield* wslEnvironment.listDistros : [];
+  // Only enumerate distros once the WSL backend is on. Windows 11 ships a
+  // wsl.exe stub even without WSL installed, and running it there pops the
+  // Windows WSL install prompt.
+  const distros = available && settings.wslBackendEnabled ? yield* wslEnvironment.listDistros : [];
   const preflightError = yield* wslBackend.lastPreflightError;
   return {
     enabled: settings.wslBackendEnabled,
