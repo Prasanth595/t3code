@@ -6,6 +6,7 @@ import {
   BUILT_IN_THEMES,
   EMBER_THEME,
   GROVE_THEME,
+  INKWIRE_THEME,
   IRIS_THEME,
   OCEAN_THEME,
   T3_CHAT_THEME,
@@ -21,7 +22,15 @@ import {
   type ThemeVariants,
 } from "@t3tools/shared/themePalettes";
 
-export { EMBER_THEME, GROVE_THEME, IRIS_THEME, OCEAN_THEME, T3_CHAT_THEME, THEME_COLOR_ROLES };
+export {
+  EMBER_THEME,
+  GROVE_THEME,
+  INKWIRE_THEME,
+  IRIS_THEME,
+  OCEAN_THEME,
+  T3_CHAT_THEME,
+  THEME_COLOR_ROLES,
+};
 export type {
   ThemeAppearance,
   ThemeColorRole,

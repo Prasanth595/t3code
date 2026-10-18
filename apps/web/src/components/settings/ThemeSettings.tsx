@@ -25,6 +25,7 @@ import {
   T3_CHAT_THEME,
   EMBER_THEME,
   GROVE_THEME,
+  INKWIRE_THEME,
   IRIS_THEME,
   OCEAN_THEME,
 } from "../../themePalette";
@@ -60,6 +61,7 @@ const MAINTAINER_THEMES: ReadonlyArray<ThemeDefinition> = [
   OCEAN_THEME,
   EMBER_THEME,
   IRIS_THEME,
+  INKWIRE_THEME,
 ];
 
 function collectionVariantLabels(themes: ReadonlyArray<ThemeDefinition>): ReadonlyArray<string> {
