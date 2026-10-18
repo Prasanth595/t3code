@@ -1437,19 +1437,24 @@ export const make = (
               cause: new Error("Contained ACP command was not found on PATH"),
             });
           });
-    const scopedSpawnCommand =
+    const agentScope = yield* AgentScope;
+    const scopedLaunch =
       linuxCgroupLease !== undefined || spawnCommand.shell
-        ? spawnCommand
-        : {
-            ...(yield* (yield* AgentScope).wrap({
-              command: spawnCommand.command,
-              args: spawnCommand.args,
-              name: "acp",
-              threadId: yield* AgentScopeThreadId,
-              env: { ...process.env, ...options.spawn.env },
-            })),
-            shell: false,
-          };
+        ? undefined
+        : yield* agentScope.wrap({
+            command: spawnCommand.command,
+            args: spawnCommand.args,
+            name: "acp",
+            threadId: yield* AgentScopeThreadId,
+            env: { ...process.env, ...options.spawn.env },
+          });
+    const scopedSpawnCommand =
+      scopedLaunch === undefined ? spawnCommand : { ...scopedLaunch, shell: false };
+    // Registered before the spawn, so it runs after the finalizers that end the agent.
+    const scopeUnit = scopedLaunch?.unit;
+    if (scopeUnit !== undefined) {
+      yield* Scope.addFinalizer(runtimeScope, agentScope.stop(scopeUnit));
+    }
     const containedSpawnCommand =
       linuxCgroupLease === undefined
         ? scopedSpawnCommand

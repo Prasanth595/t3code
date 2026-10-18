@@ -7,12 +7,14 @@ import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import { vi } from "vite-plus/test";
 
 import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   CLAUDE_AGENT_SDK_QUERY_PROTOCOL,
@@ -152,5 +154,34 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
       yield* session.close;
       yield* Effect.promise(() => leftoverStopped);
     }).pipe(Effect.provide(realQueryRunner)),
+  );
+
+  // A daemon a tool detached with setsid (agent-browser and its Chrome) leaves
+  // the CLI's process group but stays in its systemd scope.
+  it.effect("stops the CLI's scope once the CLI exits", () =>
+    Effect.gen(function* () {
+      const cli = fakeClaudeCli("exit 0");
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(NodePath.dirname(cli), { recursive: true, force: true })),
+      );
+      const stopped = yield* Deferred.make<string>();
+      const runner = layerQueryRunner.pipe(
+        Layer.provide(
+          Layer.succeed(AgentScope, {
+            ...AgentScope.defaultValue(),
+            wrap: ({ command, args }) =>
+              Effect.succeed({ command, args, unit: "t3code-claude-test.scope" }),
+            stop: (unit) => Deferred.succeed(stopped, unit).pipe(Effect.asVoid),
+          }),
+        ),
+        Layer.provide(
+          Layer.succeed(ProviderEventLoggers, { native: undefined, canonical: undefined }),
+        ),
+        Layer.provide(NodeServices.layer),
+      );
+      const session = yield* openFakeCli(cli).pipe(Effect.provide(runner));
+      assert.strictEqual(yield* Deferred.await(stopped), "t3code-claude-test.scope");
+      yield* session.close.pipe(Effect.ignore);
+    }),
   );
 });

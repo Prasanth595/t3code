@@ -38,6 +38,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { handoffBudget } from "@t3tools/provider-core/server/handoffBudget";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { toolOutputImages, compactDynamicToolOutput } from "@t3tools/shared/toolOutput";
 import {
@@ -1338,6 +1339,28 @@ describe("PiAdapterV2", () => {
           sessionError.providerSession.lastError?.includes("invisible tool execution") === true,
       );
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
+  // A daemon a tool detached with setsid leaves pi's process group but stays
+  // in its systemd scope.
+  it.effect("stops pi's scope once the session closes", () =>
+    Effect.gen(function* () {
+      const stopped: Array<string> = [];
+      const fake = yield* makeFakePi;
+      yield* Effect.gen(function* () {
+        yield* openRuntime(fake);
+        assert.deepStrictEqual(stopped, []);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(AgentScope, {
+          ...AgentScope.defaultValue(),
+          wrap: ({ command, args }) =>
+            Effect.succeed({ command, args, unit: "t3code-pi-test.scope" }),
+          stop: (unit) => Effect.sync(() => void stopped.push(unit)),
+        }),
+      );
+      assert.deepStrictEqual(stopped, ["t3code-pi-test.scope"]);
+    }).pipe(Effect.provide(layerTest)),
   );
 
   it.effect("injects the T3 MCP extension and bearer when a session exists", () =>

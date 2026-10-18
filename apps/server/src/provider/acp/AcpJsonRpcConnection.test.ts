@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 import { describe, expect } from "vite-plus/test";
 
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import type * as EffectAcpProtocol from "effect-acp/protocol";
 import * as EffectAcpErrors from "effect-acp/errors";
 
@@ -92,6 +93,28 @@ describe("AcpSessionRuntime", () => {
           (yield* runtime.getConfigOptions).find((option) => option.category === "model"),
         ).toMatchObject({ currentValue: "gpt-5.4" });
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  // A daemon a tool detached with setsid leaves the agent's process group but
+  // stays in its systemd scope.
+  it.effect("stops the agent's scope once the runtime has ended the agent", () =>
+    Effect.gen(function* () {
+      const stopped: Array<string> = [];
+      yield* Effect.gen(function* () {
+        const runtime = yield* AcpSessionRuntime.make(mockRuntimeOptions);
+        yield* runtime.start();
+        expect(stopped).toEqual([]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(AgentScope, {
+          ...AgentScope.defaultValue(),
+          wrap: ({ command, args }) =>
+            Effect.succeed({ command, args, unit: "t3code-acp-test.scope" }),
+          stop: (unit) => Effect.sync(() => void stopped.push(unit)),
+        }),
+      );
+      expect(stopped).toEqual(["t3code-acp-test.scope"]);
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect("publishes model changes returned by a config request and live notifications", () =>

@@ -18,6 +18,7 @@ import {
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
 } from "@t3tools/contracts";
+import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { MuseSettings } from "../settings.ts";
 import * as DateTime from "effect/DateTime";
@@ -808,6 +809,26 @@ describe("MuseAdapterV2", () => {
       const fake = yield* makeFakeMuse();
       yield* makeHarness(fake).pipe(Effect.scoped);
       assert.strictEqual(fake.closeCount(), 1);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  // A daemon a tool detached with setsid leaves Muse's process group but stays
+  // in its systemd scope.
+  it.effect("stops the host's scope after closing the host", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const stopped: Array<{ readonly unit: string; readonly hostCloses: number }> = [];
+      yield* makeHarness(fake).pipe(
+        Effect.scoped,
+        Effect.provideService(AgentScope, {
+          ...AgentScope.defaultValue(),
+          wrap: ({ command, args }) =>
+            Effect.succeed({ command, args, unit: "t3code-muse-test.scope" }),
+          stop: (unit) =>
+            Effect.sync(() => void stopped.push({ unit, hostCloses: fake.closeCount() })),
+        }),
+      );
+      assert.deepStrictEqual(stopped, [{ unit: "t3code-muse-test.scope", hostCloses: 1 }]);
     }).pipe(Effect.provide(testLayer)),
   );
 

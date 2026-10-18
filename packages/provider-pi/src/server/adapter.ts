@@ -481,6 +481,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         threadId: input.threadId,
         env: launch.env,
       });
+      // Registered before the connection, so it runs after the connection stops pi.
+      const scopeUnit = scopedLaunch.unit;
+      if (scopeUnit !== undefined) yield* Effect.addFinalizer(() => agentScope.stop(scopeUnit));
       const connection: PiRpcConnection = yield* makePiRpcConnection({
         command: scopedLaunch.command,
         args: scopedLaunch.args,

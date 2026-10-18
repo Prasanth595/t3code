@@ -10,6 +10,7 @@ import {
 } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveCommandPath } from "@t3tools/shared/shell";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -19,6 +20,11 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 const AGENT_SLICE = "app-t3code-agents.slice";
+
+/** Where the cgroup2 hierarchy is mounted. Tests point it at a temp dir. */
+export const CgroupRoot = Context.Reference<string>("t3/process/agentScope/CgroupRoot", {
+  defaultValue: () => "/sys/fs/cgroup",
+});
 
 export function ownedAgentSlice(stateDir: string): string {
   const hash = NodeCrypto.createHash("sha256").update(stateDir).digest("hex").slice(0, 12);
@@ -101,6 +107,7 @@ export const make = Effect.gen(function* () {
   const hostEnvironment = yield* HostProcess.Environment;
   const { stateDir } = yield* ServerConfig.ServerConfig;
   const ownedSlice = ownedAgentSlice(stateDir);
+  const cgroupRoot = yield* CgroupRoot;
   const layerScope = yield* Effect.scope;
 
   const resolve = (command: string, env: NodeJS.ProcessEnv) =>
@@ -115,7 +122,7 @@ export const make = Effect.gen(function* () {
 
   const readCgroupFile = (controlGroup: string, file: string) =>
     fileSystem
-      .readFileString(path.join("/sys/fs/cgroup", controlGroup, file))
+      .readFileString(path.join(cgroupRoot, controlGroup, file))
       .pipe(Effect.orElseSucceed(() => ""));
 
   // Old agents keep their scopes when the server is killed, and the restarted
@@ -303,6 +310,20 @@ export const make = Effect.gen(function* () {
       return false;
     });
 
+  const stop: AgentScopeShape["stop"] = (unit) =>
+    Effect.gen(function* () {
+      if (!unit.startsWith("t3code-") || !unit.endsWith(".scope")) return;
+      const scope = yield* systemd;
+      if (scope === undefined) return;
+      // The kernel counts an OOM kill before it sends the kill, so the count is
+      // visible here even when systemd has not handled the kill yet. A stop
+      // from here could then end the scope as a plain stop, and the thread
+      // would lose its OOM label. An empty scope has nothing left to stop.
+      const state = yield* readScope(scope.systemctl, unit);
+      if (state === undefined || classifyScope(state) !== "running") return;
+      yield* run(scope.systemctl, ["--user", "stop", "--no-block", unit]);
+    });
+
   const clear: AgentScopeShape["clear"] = (threadId) =>
     Effect.gen(function* () {
       if (!scopeByThread.has(threadId)) return;
@@ -334,9 +355,10 @@ export const make = Effect.gen(function* () {
         // the unit even when it fails.
         options: threadId === undefined ? [...scope.scopeOptions, "--collect"] : scope.scopeOptions,
       };
-      return agentScopeCommand({ command: resolved, args, scope: systemdScope });
+      return { ...agentScopeCommand({ command: resolved, args, scope: systemdScope }), unit };
     }),
     oomKilled,
+    stop,
     clear,
   } satisfies AgentScopeShape;
 });

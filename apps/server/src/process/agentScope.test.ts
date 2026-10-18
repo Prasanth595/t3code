@@ -14,6 +14,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import {
   agentSliceMemoryLimits,
+  CgroupRoot,
   classifyScope,
   make,
   ownedAgentSlice,
@@ -61,12 +62,19 @@ describe("agentSliceMemoryLimits", () => {
   });
 });
 
+interface FakeUnit {
+  activeState: string;
+  result: string;
+  controlGroup?: string;
+}
+
 const withFakeSystemd = <A, E>(
   body: (input: {
     readonly scope: Effect.Success<typeof make>;
-    readonly units: Map<string, { activeState: string; result: string }>;
+    readonly units: Map<string, FakeUnit>;
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
     readonly stateDir: string;
+    readonly cgroupRoot: string;
   }) => Effect.Effect<A, E>,
 ) =>
   Effect.gen(function* () {
@@ -74,7 +82,8 @@ const withFakeSystemd = <A, E>(
     for (const name of ["systemd-run", "systemctl", "agent"]) {
       NodeFS.writeFileSync(NodePath.join(bin, name), "", { mode: 0o755 });
     }
-    const units = new Map<string, { activeState: string; result: string }>();
+    const cgroupRoot = NodePath.join(bin, "cgroup");
+    const units = new Map<string, FakeUnit>();
     const calls: Array<ReadonlyArray<string>> = [];
     const output = (stdout: string): ProcessRunner.ProcessRunOutput => ({
       stdout,
@@ -97,7 +106,8 @@ const withFakeSystemd = <A, E>(
           return output(
             state === undefined
               ? "LoadState=not-found\nActiveState=inactive\nResult=success\n"
-              : `LoadState=loaded\nActiveState=${state.activeState}\nResult=${state.result}\n`,
+              : `LoadState=loaded\nActiveState=${state.activeState}\nResult=${state.result}\n` +
+                  `ControlGroup=${state.controlGroup ?? ""}\n`,
           );
         }),
     });
@@ -105,9 +115,10 @@ const withFakeSystemd = <A, E>(
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HostProcess.Environment, { PATH: bin, XDG_RUNTIME_DIR: "/run/user/1" }),
+      Effect.provideService(CgroupRoot, cgroupRoot),
     );
     const { stateDir } = yield* ServerConfig.ServerConfig;
-    return yield* body({ scope, units, calls, stateDir }).pipe(
+    return yield* body({ scope, units, calls, stateDir, cgroupRoot }).pipe(
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(bin, { recursive: true, force: true }))),
     );
   }).pipe(
@@ -124,6 +135,29 @@ const unitOf = (launch: { readonly args: ReadonlyArray<string> }) =>
 
 const sliceOf = (launch: { readonly args: ReadonlyArray<string> }) =>
   launch.args.find((arg) => arg.startsWith("--slice="))?.slice("--slice=".length) ?? "";
+
+/** An active scope as systemd and the kernel report it, with the agent itself gone. */
+const exitedAgent = (
+  units: Map<string, FakeUnit>,
+  cgroupRoot: string,
+  unit: string,
+  { populated, oomKills }: { readonly populated: boolean; readonly oomKills: number },
+) => {
+  const controlGroup = `/${unit}`;
+  NodeFS.mkdirSync(NodePath.join(cgroupRoot, controlGroup), { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(cgroupRoot, controlGroup, "cgroup.events"),
+    `populated ${populated ? 1 : 0}\nfrozen 0\n`,
+  );
+  NodeFS.writeFileSync(
+    NodePath.join(cgroupRoot, controlGroup, "memory.events"),
+    `low 0\nhigh 0\nmax 0\noom ${oomKills}\noom_kill ${oomKills}\noom_group_kill 0\n`,
+  );
+  units.set(unit, { activeState: "active", result: "success", controlGroup });
+};
+
+const stopsOf = (calls: ReadonlyArray<ReadonlyArray<string>>) =>
+  calls.filter(([, verb]) => verb === "stop");
 
 describe("AgentScope service", () => {
   it.effect("labels a thread from its newest scope until its next session clears it", () =>
@@ -177,6 +211,46 @@ describe("AgentScope service", () => {
         });
         expect(sliceOf(terminal)).toBe("app-t3code-agents.slice");
         expect(calls.filter(([, verb]) => verb === "stop")).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.effect("stops an exited agent's scope with the daemons it left running", () =>
+    withFakeSystemd(({ scope, units, calls, cgroupRoot }) =>
+      Effect.gen(function* () {
+        const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        expect(agent.unit).toBe(unitOf(agent));
+        exitedAgent(units, cgroupRoot, unitOf(agent), { populated: true, oomKills: 0 });
+        yield* scope.stop(unitOf(agent));
+        expect(stopsOf(calls)).toEqual([["--user", "stop", "--no-block", unitOf(agent)]]);
+      }),
+    ),
+  );
+
+  it.effect("leaves a scope the kernel OOM-killed to systemd, so the thread keeps its label", () =>
+    withFakeSystemd(({ scope, units, calls, cgroupRoot }) =>
+      Effect.gen(function* () {
+        const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        // The kernel has counted the kill; systemd has not handled it yet.
+        exitedAgent(units, cgroupRoot, unitOf(agent), { populated: true, oomKills: 1 });
+        yield* scope.stop(unitOf(agent));
+        expect(stopsOf(calls)).toEqual([]);
+
+        units.set(unitOf(agent), { activeState: "failed", result: "oom-kill" });
+        expect(yield* scope.oomKilled("a")).toBe(true);
+      }),
+    ),
+  );
+
+  it.effect("does not stop an empty scope or a unit it did not start", () =>
+    withFakeSystemd(({ scope, units, calls, cgroupRoot }) =>
+      Effect.gen(function* () {
+        const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+        exitedAgent(units, cgroupRoot, unitOf(agent), { populated: false, oomKills: 0 });
+        yield* scope.stop(unitOf(agent));
+        yield* scope.stop("session-2.scope");
+        expect(stopsOf(calls)).toEqual([]);
+        expect(calls.some((args) => args.includes("session-2.scope"))).toBe(false);
       }),
     ),
   );

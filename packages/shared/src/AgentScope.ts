@@ -17,6 +17,15 @@ export interface AgentScopeShape {
   }) => Effect.Effect<AgentScopeCommand>;
   readonly oomKilled: (threadId: string) => Effect.Effect<boolean>;
   /**
+   * Stops a scope from `wrap` once its agent has exited, with every process
+   * still in it. A scope lives while any process is in it, and a daemon a tool
+   * detached with `setsid` (the agent-browser daemon and its Chrome) leaves
+   * the agent's process group, so killing the group misses it. A scope
+   * systemd is already stopping after an OOM kill is left alone, so the
+   * thread keeps its OOM label.
+   */
+  readonly stop: (unit: string) => Effect.Effect<void>;
+  /**
    * Forgets the thread's scope. The session manager calls it before it opens
    * a provider session, so a scope only answers for the session that launched
    * it, even when the next session runs without one (Cursor, OpenCode).
@@ -27,12 +36,15 @@ export interface AgentScopeShape {
 export interface AgentScopeCommand {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
+  /** The systemd scope the command runs in, for `stop`. */
+  readonly unit?: string | undefined;
 }
 
 export const AgentScope = Context.Reference<AgentScopeShape>("@t3tools/shared/AgentScope", {
   defaultValue: () => ({
     wrap: ({ command, args }) => Effect.succeed({ command, args }),
     oomKilled: () => Effect.succeed(false),
+    stop: () => Effect.void,
     clear: () => Effect.void,
   }),
 });
