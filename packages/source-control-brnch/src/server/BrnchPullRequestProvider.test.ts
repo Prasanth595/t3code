@@ -175,6 +175,65 @@ describe("BrnchPullRequestProvider", () => {
     }).pipe(Effect.provide(brnch.layer));
   });
 
+  it.effect("picks out the viewer's own changes while walking, so a slice is full of them", () => {
+    // Two pages; the viewer wrote every third change.
+    const brnch = fakeBrnch((args: ReadonlyArray<string>) => {
+      const cursor = args.includes("--cursor") ? args[args.indexOf("--cursor") + 1] : null;
+      const numbers =
+        cursor === null
+          ? Array.from({ length: 12 }, (_, i) => 24 - i)
+          : Array.from({ length: 12 }, (_, i) => 12 - i);
+      return {
+        items: numbers.map((number) =>
+          change(
+            number,
+            number % 3 === 0 ? actor("usr_me", "human", { handle: "alice" }) : actor("usr_other"),
+          ),
+        ),
+        next_cursor: cursor === null ? "page-2" : null,
+      };
+    });
+    return Effect.gen(function* () {
+      const provider = yield* BrnchPullRequestProvider.make;
+      const page = yield* provider.listChangeRequests({
+        ...ref,
+        state: "all",
+        involvement: "authored",
+        viewer: "alice",
+        limit: 5,
+      });
+      assert.deepStrictEqual(
+        page.items.map((item) => item.number),
+        [24, 21, 18, 15, 12],
+      );
+      assert.isTrue(page.truncated);
+      assert.strictEqual(page.cursorAdvance, 5);
+    }).pipe(Effect.provide(brnch.layer));
+  });
+
+  it.effect("counts a change's files from its diff listing", () => {
+    const brnch = fakeBrnch((args: ReadonlyArray<string>) =>
+      args[1] === "diff"
+        ? {
+            files: [{ new_path: "README.md" }, { new_path: "install.sh" }, { new_path: null }],
+            truncated: false,
+          }
+        : change(12, actor("usr_me", "human", { handle: "alice" })),
+    );
+    return Effect.gen(function* () {
+      const provider = yield* BrnchPullRequestProvider.make;
+      const detail = yield* provider.getChangeRequest(ref);
+      assert.strictEqual(detail.changedFiles, 3);
+      assert.deepStrictEqual(
+        brnch.runs.map((run) => run.args.slice(0, 2)),
+        [
+          ["change", "view"],
+          ["change", "diff"],
+        ],
+      );
+    }).pipe(Effect.provide(brnch.layer));
+  });
+
   it.effect("reports a blocked merge with Brnch's blockers", () => {
     const brnch = fakeBrnch(
       {

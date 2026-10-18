@@ -86,6 +86,12 @@ export const BrnchThreads = Schema.Struct({
   next_cursor: Schema.NullOr(Schema.String),
 });
 
+/** `brnch change diff` without `--path`: the files a change touches. */
+export const BrnchChangeFiles = Schema.Struct({
+  files: Schema.Array(Schema.Struct({ new_path: Schema.NullOr(Schema.String) })),
+  truncated: Schema.Boolean,
+});
+
 export const BrnchPromotion = Schema.Struct({
   state: Schema.String,
   blockers: Schema.Array(Schema.Struct({ message: Schema.String })),
@@ -112,9 +118,12 @@ const sourceRepository = (change: BrnchChange, repository: string) =>
  * An actor reads under the handle of the person accountable for it, the sponsor for an agent
  * session. A response from before Brnch named actors carries only a user id, which stands in.
  */
+/** The handle an actor reads under, which is what the viewer's own handle compares against. */
+export const actorLogin = (actor: Actor) => actor.handle ?? actor.user_id ?? actor.id;
+
 function toActor(actor: Actor): PullRequestActor {
   return {
-    login: actor.handle ?? actor.user_id ?? actor.id,
+    login: actorLogin(actor),
     name: actor.display_name ?? actor.user_name ?? null,
     avatarUrl: null,
     ...(actor.type === "integration" || actor.type === "service" ? { isBot: true } : {}),

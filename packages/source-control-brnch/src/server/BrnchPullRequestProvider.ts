@@ -135,10 +135,16 @@ export const make = Effect.gen(function* () {
      * Brnch's cursors are opaque and one list per state, while the service pages by rows
      * delivered, so each read walks its lists from the top to the slice asked for. Lists arrive
      * newest first and the slice keeps that order, so a list read as far as the slice's end
-     * contributes everything that can fall inside it.
+     * contributes everything that can fall inside it. The CLI has no author filter, so the
+     * viewer's own changes are picked out while walking, before rows count toward the slice.
      */
     listChangeRequests: Effect.fn("BrnchPullRequestProvider.listChangeRequests")(function* (input) {
       const repo = yield* repoArgs("listChangeRequests", input);
+      // Brnch names no reviewers on a change, so nothing is under review by the viewer.
+      if (input.involvement === "reviewing")
+        return { items: [], truncated: false, continues: false };
+      const wanted = (change: Json.BrnchChange) =>
+        input.involvement !== "authored" || Json.actorLogin(change.author) === input.viewer;
       const offset = input.cursor?.delivered ?? 0;
       const end = offset + Math.max(1, input.limit);
       // Brnch keeps drafts apart from open changes; both are open here.
@@ -165,7 +171,7 @@ export const make = Effect.gen(function* () {
               ],
               Json.BrnchChanges,
             );
-            items.push(...page.items);
+            items.push(...page.items.filter(wanted));
             if (page.next_cursor === null || cursors.has(page.next_cursor))
               return { items, more: false };
             cursors.add(page.next_cursor);
@@ -186,21 +192,34 @@ export const make = Effect.gen(function* () {
         cursorAdvance: items.length,
       };
     }),
-    getChangeRequest: (input) =>
-      readChange("getChangeRequest", input).pipe(
-        Effect.map((change) => ({
-          ...Json.toProviderChangeRequest(change, input.repository),
-          headSha: change.current_revision.head_oid,
-          body: change.description,
-          changedFiles: 0,
-          mergedAt: change.merged?.at ?? null,
-          closedAt: null,
-          reviewers: [],
-          checks: [],
-          mergeCapabilities: { merge: true, squash: true, rebase: true },
-          viewerPermissions: viewerPermissions(change),
-        })),
-      ),
+    getChangeRequest: Effect.fn("BrnchPullRequestProvider.getChangeRequest")(function* (input) {
+      const repo = yield* repoArgs("getChangeRequest", input);
+      const [change, files] = yield* Effect.all(
+        [
+          readChange("getChangeRequest", input),
+          // The file list is what the CLI has of a change's size; it carries no line counts.
+          brnch(
+            "getChangeRequest",
+            input,
+            ["change", "diff", String(input.number), ...repo],
+            Json.BrnchChangeFiles,
+          ),
+        ],
+        { concurrency: 2 },
+      );
+      return {
+        ...Json.toProviderChangeRequest(change, input.repository),
+        headSha: change.current_revision.head_oid,
+        body: change.description,
+        changedFiles: files.files.length,
+        mergedAt: change.merged?.at ?? null,
+        closedAt: null,
+        reviewers: [],
+        checks: [],
+        mergeCapabilities: { merge: true, squash: true, rebase: true },
+        viewerPermissions: viewerPermissions(change),
+      };
+    }),
     getChangeRequestActivity: Effect.fn("BrnchPullRequestProvider.getChangeRequestActivity")(
       function* (input) {
         const repo = yield* repoArgs("getChangeRequestActivity", input);
