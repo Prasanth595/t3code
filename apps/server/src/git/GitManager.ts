@@ -413,12 +413,9 @@ export function pullRequestCheckoutMismatch(
 }
 
 /**
- * The remote to fetch the pull request at `pullRequestUrl` by number from, in a checkout with
- * `remotes` by name and `primaryRemote`. The number belongs to the pull request's repository, and
- * a fork or an unrelated repository can have a pull request of its own under it. So this is the
- * primary remote when it names the repository, else the first remote that does. A primary remote
- * that is not hosted, or a pull request URL this cannot read, is no evidence, so the primary
- * remote is kept. It is null when no remote names the repository and the primary one is hosted.
+ * The remote of `remotes` to fetch the pull request at `pullRequestUrl` by number from: the primary
+ * or else the first remote naming its repository, as a fork can have its own pull request under
+ * that number. With none, a hosted primary gives null; without hosted evidence it is the primary.
  */
 export function pullRequestRefRemote(
   remotes: ReadonlyMap<string, string>,
@@ -426,20 +423,14 @@ export function pullRequestRefRemote(
   pullRequestUrl: string,
 ): string | null {
   const baseKey = pullRequestBaseRepositoryKey(pullRequestUrl);
-  const primaryUrl = primaryRemote === null ? undefined : remotes.get(primaryRemote);
-  if (baseKey === null) {
-    return primaryRemote;
-  }
-  const hosted = (url: string) => parseRepositoryNameWithOwnerFromRemoteUrl(url) !== null;
-  const namesBase = (url: string) => hosted(url) && namesRepository(url, pullRequestUrl, baseKey);
-  if (primaryUrl !== undefined && namesBase(primaryUrl)) {
-    return primaryRemote;
-  }
-  const named = [...remotes].find(([, url]) => namesBase(url));
-  if (named !== undefined) {
-    return named[0];
-  }
-  return primaryUrl !== undefined && hosted(primaryUrl) ? null : primaryRemote;
+  const url = (name: string | null) => remotes.get(name ?? "") ?? "";
+  const hosted = (name: string | null) =>
+    parseRepositoryNameWithOwnerFromRemoteUrl(url(name)) !== null;
+  const named = [primaryRemote, ...remotes.keys()].find(
+    (name) =>
+      hosted(name) && baseKey !== null && namesRepository(url(name), pullRequestUrl, baseKey),
+  );
+  return named ?? (baseKey !== null && hosted(primaryRemote) ? null : primaryRemote);
 }
 
 function parseRepositoryOwnerLogin(nameWithOwner: string | null): string | null {
@@ -1065,8 +1056,8 @@ export const make = Effect.gen(function* () {
     function* (
       cwd: string,
       pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
-      localBranch: string,
       pullRequestRemote: string | null,
+      localBranch = pullRequest.headBranch,
     ) {
       const repositoryNameWithOwner = resolveHeadRepositoryNameWithOwner(pullRequest) ?? "";
 
@@ -1148,10 +1139,10 @@ export const make = Effect.gen(function* () {
   const materializePullRequestHeadBranch = (
     cwd: string,
     pullRequest: ResolvedPullRequest & PullRequestHeadRemoteInfo,
-    localBranch: string,
     pullRequestRemote: string | null,
+    localBranch = pullRequest.headBranch,
   ) =>
-    materializePullRequestHeadBranchBase(cwd, pullRequest, localBranch, pullRequestRemote).pipe(
+    materializePullRequestHeadBranchBase(cwd, pullRequest, pullRequestRemote, localBranch).pipe(
       Effect.catch((primaryCause) =>
         gitCore
           .fetchPullRequestBranch({
@@ -2707,20 +2698,18 @@ export const make = Effect.gen(function* () {
 
   // Each of a checkout's remotes by name, at its URL as configured: the first of the remote's
   // URLs, the one fetch uses, before `insteadOf` rewrites it. Since Git 2.46 an empty URL clears
-  // the ones before it, so which URL a remote with one fetches from depends on the version. Its
-  // URL reads as empty, which names no repository.
+  // those before it, so the URL a remote with one fetches from depends on the version: it is empty.
   const readCheckoutRemoteUrls = Effect.fn("readCheckoutRemoteUrls")(function* (cwd: string) {
     const { stdout } = yield* gitCore.execute({
       operation: "GitManager.readCheckoutRemoteUrls",
       cwd,
-      args: ["config", "-z", "--get-regexp", "^remote\\..+\\.url$"],
+      args: ["config", "--get-regexp", "^remote\\..+\\.url$"],
       allowNonZeroExit: true,
       timeoutMs: 5_000,
     });
     const urls = new Map<string, string>();
-    for (const entry of stdout.split("\0")) {
-      const [key = "", url = ""] = entry.split(/\n(.*)/su);
-      const name = key.slice("remote.".length, -".url".length);
+    for (const line of stdout.split("\n")) {
+      const [, name = "", url = ""] = /^remote\.(.+?)\.url(?:\s+(.*))?$/.exec(line.trim()) ?? [];
       if (name.length > 0 && (url.length === 0 || !urls.has(name))) urls.set(name, url);
     }
     return urls;
@@ -2816,8 +2805,7 @@ export const make = Effect.gen(function* () {
 
       const localPullRequestBranch =
         resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
-      // Any remote may have let the checkout through, but the pull request's number is fetched
-      // only from one naming its repository.
+      // Any remote may vouch, but only one naming the repository serves its pull request numbers.
       const pullRequestRemote = pullRequestRefRemote(
         remotes,
         yield* gitCore.resolvePrimaryRemoteName(input.cwd).pipe(Effect.orElseSucceed(() => null)),
@@ -2973,8 +2961,8 @@ export const make = Effect.gen(function* () {
       yield* materializePullRequestHeadBranch(
         input.cwd,
         pullRequestWithRemoteInfo,
-        localPullRequestBranch,
         pullRequestRemote,
+        localPullRequestBranch,
       );
 
       const existingBranchAfterFetch = yield* findLocalHeadBranch(input.cwd);

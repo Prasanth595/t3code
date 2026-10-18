@@ -30,7 +30,6 @@ import type {
   GitActionProgressEvent,
   GitManagerServiceError,
   GitPreparePullRequestThreadInput,
-  GitPreparePullRequestThreadResult,
   ModelSelection,
 } from "@t3tools/contracts";
 
@@ -2529,70 +2528,18 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     expect(holdsPullRequest(remoteUrls, onGitHub)).toBe(holds);
   });
 
-  // A pull request's number belongs to its repository, so only a remote naming that serves it.
+  // Only a remote naming the base serves its pull request numbers; "0" is the primary remote.
   it.each([
-    [[["origin", "https://github.com/acme/app.git"]], "origin", onGitHub, "origin"],
-    [
-      [
-        ["upstream", "https://github.com/acme/app.git"],
-        ["origin", "git@github.com:acme/app.git"],
-      ],
-      "origin",
-      onGitHub,
-      "origin",
-    ],
-    [
-      [
-        ["origin", "https://github.com/me/app.git"],
-        ["acme", "https://github.com/acme/app.git"],
-        ["upstream", "https://github.com/acme/app.git"],
-      ],
-      "origin",
-      onGitHub,
-      "acme",
-    ],
-    // The head's fork vouches for a checkout, but its own pull requests are not the base's.
-    [[["origin", "https://github.com/contributor/app.git"]], "origin", onGitHub, null],
-    [
-      [
-        ["origin", "https://github.com/someone/unrelated.git"],
-        ["mirror", "/tmp/bare-remote"],
-      ],
-      "origin",
-      onGitHub,
-      null,
-    ],
-    [
-      [
-        ["origin", "/tmp/bare-remote"],
-        ["acme", "https://github.com/acme/app.git"],
-      ],
-      "origin",
-      onGitHub,
-      "acme",
-    ],
-    // No evidence: a primary remote at a local path or an emptied URL, or an unreadable PR URL.
-    [
-      [
-        ["origin", "/tmp/bare-remote"],
-        ["contributor", "https://github.com/contributor/app.git"],
-      ],
-      "origin",
-      onGitHub,
-      "origin",
-    ],
-    [[["origin", ""]], "origin", onGitHub, "origin"],
-    [
-      [["origin", "https://github.com/someone/unrelated.git"]],
-      "origin",
-      "https://example.com/acme",
-      "origin",
-    ],
-    [[], null, onGitHub, null],
+    [["https://github.com/me/app.git", "https://github.com/acme/app.git"], onGitHub, "1"],
+    [["https://github.com/contributor/app.git"], onGitHub, null],
+    [["/tmp/bare-remote", "https://github.com/acme/app.git"], onGitHub, "1"],
+    [["/tmp/bare-remote", "https://github.com/contributor/app.git"], onGitHub, "0"],
+    [["https://github.com/someone/unrelated.git"], "https://example.com/acme", "0"],
   ] as const)(
-    "a checkout with the remotes %j and primary remote %s fetches the PR at %s through %s",
-    (remotes, primaryRemote, url, expected) => {
-      expect(GitManager.pullRequestRefRemote(new Map(remotes), primaryRemote, url)).toBe(expected);
+    "a checkout with the remotes %j fetches the PR at %s from remote %s",
+    (urls, url, from) => {
+      const remotes = new Map(urls.map((remoteUrl, index) => [`${index}`, remoteUrl] as const));
+      expect(GitManager.pullRequestRefRemote(remotes, "0", url)).toBe(from);
     },
   );
 
@@ -5455,15 +5402,15 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
   );
 
   /**
-   * Prepares a pull request of pingdotgg/Codething-MVP, from a fork unless `crossRepository` is
-   * false, in a checkout with `remotes`, each a name and URL; a name given twice gets a second URL.
-   * Hosted URLs are rewritten to local bare repositories holding the head, so nothing reaches the
-   * network.
+   * Prepares pull request #64 of pingdotgg/Codething-MVP twice, in a checkout with `remotes`, each
+   * "name URL"; a name given twice gets a second URL. Hosted URLs are rewritten to local bare
+   * repositories. The base and the head's fork, unless "without the head", hold the head, and every
+   * repository but the base has a pull request #64 of its own at another commit.
    */
   const prepareInCheckout = (
-    remotes: ReadonlyArray<readonly [string, string]>,
+    remotes: ReadonlyArray<string>,
     mode: "local" | "worktree" = "worktree",
-    crossRepository = true,
+    pullRequest: "fork" | "same-repository" | "fork without the head" = "fork",
   ) =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -5474,20 +5421,30 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       yield* runGit(repoDir, ["commit", "-m", "Pull request head"]);
       const head = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
       yield* runGit(repoDir, ["checkout", "main"]);
-      const bareWithHead = Effect.gen(function* () {
-        const bareDir = yield* createBareRemote();
-        const heads = [`${head}:refs/heads/feature/elsewhere`, `${head}:refs/pull/64/head`];
-        yield* runGit(repoDir, ["push", bareDir, "main", ...heads]);
-        return bareDir;
-      });
-      const forkDir = yield* bareWithHead;
+      const other = (yield* runGit(repoDir, ["commit-tree", "-m", "PR", "main:"])).stdout.trim();
+      const bareWith = (pullHead: string, withHead = true) =>
+        Effect.gen(function* () {
+          const bareDir = yield* createBareRemote();
+          const heads = withHead ? [`${head}:refs/heads/feature/elsewhere`] : [];
+          yield* runGit(repoDir, [
+            "push",
+            bareDir,
+            "main",
+            `${pullHead}:refs/pull/64/head`,
+            ...heads,
+          ]);
+          return bareDir;
+        });
+      const forkDir = yield* bareWith(other, pullRequest !== "fork without the head");
       yield* runGit(repoDir, ["branch", "-D", "feature/elsewhere"]);
-      for (const [name, url] of remotes) {
+      for (const [name = "", url = ""] of remotes.map((remote) => remote.split(" "))) {
         const added = (yield* runGit(repoDir, ["remote"])).stdout.split("\n").includes(name);
         if (added) {
           yield* runGit(repoDir, ["config", "--add", `remote.${name}.url`, url]);
         } else if (url.startsWith("https://")) {
-          const localDir = url.includes("/contributor/") ? forkDir : yield* bareWithHead;
+          const localDir = url.includes("/contributor/")
+            ? forkDir
+            : yield* bareWith(url === base ? head : other);
           yield* runGit(repoDir, ["remote", "add", "--", name, localDir]);
           yield* configureVisibleRemoteUrlWithLocalRewrite(repoDir, name, url, localDir);
         } else {
@@ -5495,6 +5452,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         }
       }
       const setupCalls: ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput[] = [];
+      const fromFork = pullRequest !== "same-repository";
       const { manager, ghCalls } = yield* makeManager({
         ghScenario: {
           pullRequest: {
@@ -5504,8 +5462,8 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             baseRefName: "main",
             headRefName: "feature/elsewhere",
             state: "open",
-            isCrossRepository: crossRepository,
-            ...(crossRepository
+            isCrossRepository: fromFork,
+            ...(fromFork
               ? {
                   headRepositoryNameWithOwner: "contributor/codething-mvp",
                   headRepositoryOwnerLogin: "contributor",
@@ -5526,15 +5484,14 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         runGit(repoDir, [...args]).pipe(Effect.map(({ stdout }) => stdout.trim().split("\n")));
       const remoteConfig = listed(["config", "--get-regexp", "^remote\\."]);
       const remoteConfigBefore = yield* remoteConfig;
-      const result = yield* preparePullRequestThread(manager, {
+      const prepare = preparePullRequestThread(manager, {
         cwd: repoDir,
         reference: "https://github.com/pingdotgg/Codething-MVP/pull/64",
         mode,
         threadId: asThreadId("thread-pr-elsewhere"),
       }).pipe(Effect.result);
       return {
-        repoDir,
-        result,
+        results: [yield* prepare, yield* prepare] as const,
         head,
         remoteConfigBefore,
         remoteConfigAfter: yield* remoteConfig,
@@ -5546,73 +5503,46 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       };
     });
 
-  const unrelated = "https://github.com/someone/unrelated.git";
+  const unrelatedOrigin = "origin https://github.com/someone/unrelated.git";
   const base = "https://github.com/pingdotgg/codething-mvp.git";
   const someonesFork = "https://github.com/someone/codething-mvp.git";
 
   it.effect.each([
-    {
-      layout: "an unrelated origin in local mode",
-      mode: "local",
-      remotes: [["origin", unrelated]],
-    },
-    { layout: "an unrelated origin", remotes: [["origin", unrelated]] },
+    { layout: "an unrelated origin in local mode", mode: "local", remotes: [unrelatedOrigin] },
+    { layout: "an unrelated origin", remotes: [unrelatedOrigin] },
     // Fetch only ever contacts a remote's first URL, so a later one vouches for nothing.
+    { layout: "the base in a later URL", remotes: [unrelatedOrigin, `origin ${base}`] },
+    // Since Git 2.46 an empty URL clears those before it, so a remote with one vouches for nothing.
     {
-      layout: "the base in a later URL",
-      remotes: [
-        ["origin", unrelated],
-        ["origin", base],
-      ],
-    },
-    // Since Git 2.46 an empty URL clears the ones before it, so a remote with one vouches for
-    // nothing: which URL it fetches from depends on the version.
-    {
-      layout: "the base after an emptied URL",
-      remotes: [
-        ["origin", unrelated],
-        ["mirror", ""],
-        ["mirror", base],
-      ],
+      layout: "the base after an empty URL",
+      remotes: [unrelatedOrigin, "mirror ", `mirror ${base}`],
     },
     {
-      layout: "the base before an emptied URL",
-      remotes: [
-        ["origin", unrelated],
-        ["mirror", base],
-        ["mirror", ""],
-        ["mirror", someonesFork],
-      ],
+      layout: "the base before an empty URL",
+      remotes: [unrelatedOrigin, `mirror ${base}`, "mirror "],
     },
     // A repository of the base's name is not the base.
-    {
-      layout: "only unrelated remotes",
-      remotes: [
-        ["origin", unrelated],
-        ["upstream", someonesFork],
-      ],
-    },
+    { layout: "only unrelated remotes", remotes: [unrelatedOrigin, `upstream ${someonesFork}`] },
     // A relative path reads like the base's key but names a directory.
     {
       layout: "a local path remote",
-      remotes: [
-        ["origin", someonesFork],
-        ["mirror", "github.com/pingdotgg/codething-mvp.git"],
-      ],
+      remotes: [`origin ${someonesFork}`, "mirror github.com/pingdotgg/codething-mvp.git"],
     },
   ] as const)("refuses a checkout with $layout before any write", (row) =>
     Effect.gen(function* () {
       const prepared = yield* prepareInCheckout(row.remotes, "mode" in row ? row.mode : undefined);
-      expect(prepared.result).toMatchObject({
+      const refused = {
         _tag: "Failure",
         failure: {
           _tag: "GitManagerError",
           detail:
             "This project is not a checkout of pingdotgg/Codething-MVP. Open the pull request from a project that is, or, if the repository was renamed, point this project's remote at its new name.",
         },
-      });
+      };
+      expect(prepared.results).toMatchObject([refused, refused]);
       expect(prepared.ghCalls.some((call) => call.startsWith("pr checkout"))).toBe(false);
-      expect(prepared.remotes).toEqual([...new Set(row.remotes.map(([name]) => name))].toSorted());
+      const names = row.remotes.map((remote) => remote.split(" ")[0]);
+      expect(prepared.remotes).toEqual([...new Set(names)].toSorted());
       expect(prepared.remoteConfigAfter).toEqual(prepared.remoteConfigBefore);
       expect(prepared.branches).toEqual(["main"]);
       expect(prepared.worktrees).toHaveLength(1);
@@ -5621,195 +5551,60 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
   );
 
   const forkBranch = "t3code/pr-64/feature/elsewhere";
+  const myFork = "https://github.com/me/codething-mvp.git";
+  const headFork = "https://github.com/contributor/codething-mvp.git";
+  // Opening a pull request again reuses its worktree and fetches its pull request ref first.
   it.effect.each([
+    { layout: "the base as origin", remotes: [`origin ${base}`], after: ["contributor", "origin"] },
     {
       layout: "the base as origin, for a same-repository PR",
-      remotes: [["origin", base]],
+      remotes: [`origin ${base}`],
       after: ["origin"],
-      branch: "feature/elsewhere",
-    },
-    {
-      layout: "the base as origin",
-      remotes: [["origin", base]],
-      after: ["contributor", "origin"],
-      branch: forkBranch,
+      pullRequest: "same-repository",
     },
     // The head's fork is already origin, so no remote is added for it.
-    {
-      layout: "the head's fork as origin",
-      remotes: [["origin", "https://github.com/contributor/codething-mvp.git"]],
-      after: ["origin"],
-      branch: forkBranch,
-    },
+    { layout: "the head's fork as origin", remotes: [`origin ${headFork}`], after: ["origin"] },
     {
       layout: "a fork clone with the base as upstream",
-      remotes: [
-        ["origin", "https://github.com/me/codething-mvp.git"],
-        ["upstream", base],
-      ],
+      remotes: [`origin ${myFork}`, `upstream ${base}`],
       after: ["contributor", "origin", "upstream"],
-      branch: forkBranch,
     },
     // Any remote can name the base, so the fork's identity remote does not decide.
     {
       layout: "a fork clone with the base under another name",
-      remotes: [
-        ["origin", "https://github.com/me/codething-mvp.git"],
-        ["acme", base],
-      ],
+      remotes: [`origin ${myFork}`, `acme ${base}`],
       after: ["acme", "contributor", "origin"],
-      branch: forkBranch,
-    },
-  ] as const)("prepares a worktree in a checkout with $layout", ({ remotes, after, branch }) =>
-    Effect.gen(function* () {
-      const prepared = yield* prepareInCheckout(remotes, "worktree", branch === forkBranch);
-      expect(prepared.result).toMatchObject({ _tag: "Success", success: { branch } });
-      const worktreePath = Result.getOrThrow(prepared.result).worktreePath as string;
-      const inWorktree = (args: ReadonlyArray<string>) =>
-        runGit(worktreePath, [...args]).pipe(Effect.map(({ stdout }) => stdout.trim()));
-      expect(yield* inWorktree(["branch", "--show-current"])).toBe(branch);
-      expect(yield* inWorktree(["rev-parse", "HEAD"])).toBe(prepared.head);
-      expect(prepared.remotes).toEqual(after);
-      expect(prepared.worktrees).toHaveLength(2);
-      expect(prepared.setupCalls).toHaveLength(1);
-    }),
-  );
-
-  /**
-   * Prepares pull request #64 of pingdotgg/Codething-MVP `times` times, in worktree mode, in a
-   * checkout whose `origin` is at `origin` and holds a pull request #64 of its own at another
-   * commit, as a fork or an unrelated repository can. With `withBase`, the remote `acme` is the
-   * base. The head repository is reported and holds the head, is reported but lacks it, or is
-   * not reported, as for a same-repository pull request. Hosted URLs are rewritten to local bare
-   * repositories, so nothing reaches the network.
-   */
-  const prepareBesideAnotherPullRequest = (input: {
-    readonly origin: string;
-    readonly withBase: boolean;
-    readonly headRepository: "holds-head" | "lacks-head" | "unreported";
-    readonly times: number;
-  }) =>
-    Effect.gen(function* () {
-      const repoDir = yield* makeTempDir("t3code-git-manager-");
-      yield* initRepo(repoDir);
-      const commitOnBranch = (branch: string, file: string) =>
-        Effect.gen(function* () {
-          yield* runGit(repoDir, ["checkout", "-b", branch, "main"]);
-          NodeFS.writeFileSync(NodePath.join(repoDir, file), `${branch}\n`);
-          yield* runGit(repoDir, ["add", file]);
-          yield* runGit(repoDir, ["commit", "-m", branch]);
-          const commit = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
-          yield* runGit(repoDir, ["checkout", "main"]);
-          yield* runGit(repoDir, ["branch", "-D", branch]);
-          return commit;
-        });
-      const head = yield* commitOnBranch("feature/elsewhere", "elsewhere.txt");
-      const otherHead = yield* commitOnBranch("other-pull", "other.txt");
-      const bareWith = (refs: ReadonlyArray<string>) =>
-        Effect.gen(function* () {
-          const bareDir = yield* createBareRemote();
-          yield* runGit(repoDir, ["push", bareDir, "main", ...refs]);
-          return bareDir;
-        });
-      const headBranch = `${head}:refs/heads/feature/elsewhere`;
-      const originIsHeadFork = input.origin.includes("/contributor/");
-      const originDir = yield* bareWith([
-        `${otherHead}:refs/pull/64/head`,
-        ...(originIsHeadFork ? [headBranch] : []),
-      ]);
-      yield* runGit(repoDir, ["remote", "add", "origin", originDir]);
-      yield* configureVisibleRemoteUrlWithLocalRewrite(repoDir, "origin", input.origin, originDir);
-      if (input.withBase) {
-        const baseDir = yield* bareWith([headBranch, `${head}:refs/pull/64/head`]);
-        yield* runGit(repoDir, ["remote", "add", "acme", baseDir]);
-        yield* configureVisibleRemoteUrlWithLocalRewrite(repoDir, "acme", base, baseDir);
-      }
-      const forkDir = originIsHeadFork
-        ? originDir
-        : yield* bareWith(input.headRepository === "holds-head" ? [headBranch] : []);
-      const setupCalls: ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput[] = [];
-      const reported = input.headRepository !== "unreported";
-      const { manager } = yield* makeManager({
-        ghScenario: {
-          pullRequest: {
-            number: 64,
-            title: "Fork PR",
-            url: "https://github.com/pingdotgg/Codething-MVP/pull/64",
-            baseRefName: "main",
-            headRefName: "feature/elsewhere",
-            state: "open",
-            isCrossRepository: reported,
-            ...(reported
-              ? {
-                  headRepositoryNameWithOwner: "contributor/codething-mvp",
-                  headRepositoryOwnerLogin: "contributor",
-                }
-              : {}),
-          },
-          repositoryCloneUrls: { "contributor/codething-mvp": { url: forkDir, sshUrl: forkDir } },
-        },
-        setupScriptRunner: {
-          runForThread: (setupInput) =>
-            Effect.sync(() => {
-              setupCalls.push(setupInput);
-              return { status: "no-script" as const };
-            }),
-        },
-      });
-      const results: GitPreparePullRequestThreadResult[] = [];
-      for (let time = 0; time < input.times; time += 1) {
-        results.push(
-          yield* preparePullRequestThread(manager, {
-            cwd: repoDir,
-            reference: "https://github.com/pingdotgg/Codething-MVP/pull/64",
-            mode: "worktree",
-            threadId: asThreadId("thread-pr-elsewhere"),
-          }),
-        );
-      }
-      const worktreePath = results.at(-1)?.worktreePath as string;
-      return {
-        head,
-        results,
-        setupCalls,
-        worktreeHead: (yield* runGit(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(),
-      };
-    });
-
-  const myFork = "https://github.com/me/codething-mvp.git";
-  it.effect.each([
-    {
-      layout: "a fork clone, for a PR that reports no head repository",
-      input: { origin: myFork, withBase: true, headRepository: "unreported", times: 1 },
     },
     {
-      layout: "a fork clone, when the head repository lacks the head",
-      input: { origin: myFork, withBase: true, headRepository: "lacks-head", times: 1 },
+      layout: "a fork clone, for a same-repository PR",
+      remotes: [`origin ${myFork}`, `acme ${base}`],
+      after: ["acme", "origin"],
+      pullRequest: "same-repository",
     },
-    // Re-opening fetches the pull request ref first, even with the head repository known.
     {
-      layout: "a fork clone, opened twice",
-      input: { origin: myFork, withBase: true, headRepository: "holds-head", times: 2 },
+      layout: "a fork clone, when the head's fork lacks the head",
+      remotes: [`origin ${myFork}`, `acme ${base}`],
+      after: ["acme", "contributor", "origin"],
+      pullRequest: "fork without the head",
     },
-    // No remote names the base, so no pull request ref is fetched and the head branch decides.
-    {
-      layout: "the head's fork as origin, opened twice",
-      input: {
-        origin: "https://github.com/contributor/codething-mvp.git",
-        withBase: false,
-        headRepository: "holds-head",
-        times: 2,
-      },
-    },
-  ] as const)("takes the base's pull request #64, not origin's, in $layout", ({ input }) =>
-    Effect.gen(function* () {
-      const prepared = yield* prepareBesideAnotherPullRequest(input);
-      expect(prepared.worktreeHead).toBe(prepared.head);
-      expect(prepared.results.map((result) => result.isOnPullRequestHead)).toEqual(
-        prepared.results.map(() => true),
-      );
-      expect(prepared.setupCalls).toHaveLength(1);
-    }),
+  ] as const)(
+    "prepares a worktree twice in a checkout with $layout",
+    ({ remotes, after, ...row }) =>
+      Effect.gen(function* () {
+        const pullRequest = "pullRequest" in row ? row.pullRequest : "fork";
+        const branch = pullRequest === "same-repository" ? "feature/elsewhere" : forkBranch;
+        const prepared = yield* prepareInCheckout(remotes, "worktree", pullRequest);
+        const onHead = { _tag: "Success", success: { branch, isOnPullRequestHead: true } };
+        expect(prepared.results).toMatchObject([onHead, onHead]);
+        const worktreePath = Result.getOrThrow(prepared.results[0]).worktreePath as string;
+        const inWorktree = (args: ReadonlyArray<string>) =>
+          runGit(worktreePath, [...args]).pipe(Effect.map(({ stdout }) => stdout.trim()));
+        expect(yield* inWorktree(["branch", "--show-current"])).toBe(branch);
+        expect(yield* inWorktree(["rev-parse", "HEAD"])).toBe(prepared.head);
+        expect(prepared.remotes).toEqual(after);
+        expect(prepared.worktrees).toHaveLength(2);
+        expect(prepared.setupCalls).toHaveLength(1);
+      }),
   );
 
   it.effect("prepares pull request threads in local mode by checking out the PR branch", () =>
