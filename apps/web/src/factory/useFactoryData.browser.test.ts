@@ -1,5 +1,5 @@
-import { createElement, act } from "react";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createElement, act, useEffect, type ReactElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -15,8 +15,7 @@ import {
   useFactorySupported,
   type FactoryResource,
 } from "./useFactoryData";
-
-(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+import { resetDocumentVisible, setDocumentVisible } from "./testing";
 
 // Which environments exist is the catalog's business; a test sets who is primary and connected.
 const environments = vi.hoisted(() => ({
@@ -81,33 +80,47 @@ const deferred = <T>() => {
   return { promise, resolve, reject };
 };
 
-let renderers: Array<ReactTestRenderer> = [];
+let mounted: Array<{ readonly root: Root; readonly container: HTMLElement }> = [];
 const unmountAll = () => {
-  act(() => renderers.forEach((r) => r.unmount()));
-  renderers = [];
+  act(() =>
+    mounted.forEach(({ root, container }) => {
+      root.unmount();
+      container.remove();
+    }),
+  );
+  mounted = [];
+};
+
+/** Renders `element` into a fresh container of the document. */
+const mountElement = async (element: ReactElement) => {
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  mounted.push({ root, container });
+  await act(async () => root.render(element));
+  return root;
 };
 
 /** Renders a component that reads `useHook` and keeps what it returned last. */
 const mount = async <T>(useHook: () => T) => {
   const latest = { current: undefined as T };
   const Probe = () => {
-    latest.current = useHook();
+    const value = useHook();
+    useEffect(() => {
+      latest.current = value;
+    });
     return null;
   };
-  await act(async () => {
-    renderers.push(create(createElement(Probe)));
-  });
+  await mountElement(createElement(Probe));
   return latest;
 };
 
 const settle = (ms = 0) => act(async () => void (await vi.advanceTimersByTimeAsync(ms)));
 
-// The live-refresh policy reads the window the hooks poll through.
-const document = Object.assign(new EventTarget(), { visibilityState: "visible" });
-const window = new EventTarget();
+// The live-refresh policy reads the document's visibility, which a test sets.
 const show = (visible: boolean) =>
   act(async () => {
-    document.visibilityState = visible ? "visible" : "hidden";
+    setDocumentVisible(visible);
     document.dispatchEvent(new Event("visibilitychange"));
   });
 
@@ -119,9 +132,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   day += 86_400_000;
   vi.setSystemTime(day);
-  document.visibilityState = "visible";
-  vi.stubGlobal("document", document);
-  vi.stubGlobal("window", window);
+  setDocumentVisible(true);
   environments.primary = ENV_1;
   environments.connected = [];
 });
@@ -130,7 +141,7 @@ afterEach(() => {
   unmountAll();
   __setFactoryApiForTests();
   __resetFactoryStoresForTests();
-  vi.unstubAllGlobals();
+  resetDocumentVisible();
   vi.useRealTimers();
 });
 
@@ -200,10 +211,7 @@ describe("useFactoryStatus", () => {
     await settle(120_000);
     expect(fetchStatus).toHaveBeenCalledTimes(1);
     expect(vi.getTimerCount()).toBe(0);
-    // react-test-renderer itself warns that it is deprecated; any other error is a real one.
-    expect(
-      errors.mock.calls.filter(([message]) => !String(message).includes("deprecated")),
-    ).toEqual([]);
+    expect(errors.mock.calls).toEqual([]);
     errors.mockRestore();
   });
 
@@ -638,11 +646,7 @@ describe("the factory environment across a change of candidates", () => {
       useFactoryRuns(id);
       return null;
     };
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(createElement(Probe));
-    });
-    renderers.push(renderer);
+    const root = await mountElement(createElement(Probe));
     const calls = (fn: typeof fetchStatus, env: EnvironmentId) =>
       fn.mock.calls.filter(([e]) => e === env).length;
     const ranOnce = { status: calls(fetchStatus, ENV_2), runs: fetchRuns.mock.calls.length };
@@ -650,7 +654,7 @@ describe("the factory environment across a change of candidates", () => {
 
     seen.length = 0;
     environments.connected = [ENV_1, ENV_2, ENV_3];
-    await act(async () => renderer.update(createElement(Probe)));
+    await act(async () => root.render(createElement(Probe)));
     expect(seen.length).toBeGreaterThan(0);
     expect(seen.every((id) => id === ENV_2)).toBe(true);
     expect(calls(fetchStatus, ENV_2)).toBe(1);
@@ -660,7 +664,7 @@ describe("the factory environment across a change of candidates", () => {
 
     seen.length = 0;
     environments.connected = [ENV_1, ENV_2];
-    await act(async () => renderer.update(createElement(Probe)));
+    await act(async () => root.render(createElement(Probe)));
     expect(seen.length).toBeGreaterThan(0);
     expect(seen.every((id) => id === ENV_2)).toBe(true);
     expect(calls(fetchStatus, ENV_2)).toBe(1);

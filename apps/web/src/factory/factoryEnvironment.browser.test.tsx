@@ -9,7 +9,7 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentSession } from "~/state/session";
 
 import { __setFactoryConnectionForTests } from "./api";
-import { render } from "./testing";
+import { render, resetDocumentVisible, setDocumentVisible } from "./testing";
 import { __resetFactoryStoresForTests } from "./useFactoryData";
 
 // The real api, hooks and pages, with only the wire, the environment catalog and the router
@@ -144,15 +144,12 @@ const requests = () =>
   });
 const requestsTo = (path: string) => requests().filter(([, requested]) => requested === path);
 
-// The live-refresh policy reads the document; the window is the one `render` provides.
-const document = Object.assign(new EventTarget(), { visibilityState: "visible" });
-
 const settle = async () => {
   for (let i = 0; i < 6; i++) await act(async () => void (await vi.advanceTimersByTimeAsync(0)));
 };
 
 const linkTo = (page: Awaited<ReturnType<typeof render>>, to: string) =>
-  page.all("a").find((a) => a.props["data-to"] === to);
+  page.all("a").find((a) => a.getAttribute("data-to") === to);
 
 let mounted: Array<Awaited<ReturnType<typeof render>>> = [];
 const show = async (element: Parameters<typeof render>[0]) => {
@@ -166,7 +163,7 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(Date.parse("2026-10-17T12:00:00.000Z"));
   vi.stubGlobal("fetch", fetchMock);
-  vi.stubGlobal("document", document);
+  setDocumentVisible(true);
   catalog.primary = ENV_1;
   catalog.connected = [ENV_1, ENV_2];
   setConnectionOf(ENV_1, {
@@ -189,6 +186,7 @@ afterEach(async () => {
   servers.clear();
   fetchMock.mockClear();
   vi.unstubAllGlobals();
+  resetDocumentVisible();
   vi.useRealTimers();
 });
 
@@ -202,7 +200,9 @@ describe("the Factory pages follow the environment that runs the factory", () =>
     }
     expect(page.text()).not.toContain("The factory is idle");
     expect(
-      page.all("a").some((a) => a.props["data-params"] === JSON.stringify({ runId: RUN_ID })),
+      page
+        .all("a")
+        .some((a) => a.getAttribute("data-params") === JSON.stringify({ runId: RUN_ID })),
     ).toBe(true);
   });
 
@@ -214,7 +214,9 @@ describe("the Factory pages follow the environment that runs the factory", () =>
       expect(request).toEqual([REMOTE_BASE, `/api/factory/runs/${RUN_ID}`, "Bearer tok-2", "omit"]);
     }
     const page = mounted[0]!;
-    expect(JSON.parse(linkTo(page, "/$environmentId/$threadId")!.props["data-params"])).toEqual({
+    expect(
+      JSON.parse(linkTo(page, "/$environmentId/$threadId")!.getAttribute("data-params")!),
+    ).toEqual({
       environmentId: "env-2",
       threadId: "thread-9",
     });
@@ -234,7 +236,7 @@ describe("the Factory pages follow the environment that runs the factory", () =>
     expect(detail.length).toBeGreaterThan(0);
     expect(detail.every(([origin]) => origin === PRIMARY_BASE)).toBe(true);
     expect(
-      JSON.parse(linkTo(mounted[1]!, "/$environmentId/$threadId")!.props["data-params"]),
+      JSON.parse(linkTo(mounted[1]!, "/$environmentId/$threadId")!.getAttribute("data-params")!),
     ).toEqual({ environmentId: "env-1", threadId: "thread-9" });
   });
 

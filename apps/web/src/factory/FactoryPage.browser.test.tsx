@@ -1,5 +1,4 @@
 import { createElement, act, type ReactNode } from "react";
-import type { ReactTestInstance } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
@@ -103,16 +102,14 @@ describe("FactoryPage", () => {
     expect(page.text()).toContain("Factory");
     expect(page.text()).toContain("No runs in the last week");
     expect(page.text()).not.toContain("Needs attention");
-    await act(async () => page.button("Show all runs")!.props.onClick());
+    await page.click(page.button("Show all runs")!);
     expect(page.text()).toContain("No runs yet");
   });
 
   it("shows a loading state while either read is loading", async () => {
     state.status = resource({ status: "loading" });
     const page = await render(createElement(FactoryPage));
-    expect(
-      page.renderer.root.findAll((n) => n.props["aria-label"] === "Loading factory"),
-    ).not.toHaveLength(0);
+    expect(page.all('[aria-label="Loading factory"]')).not.toHaveLength(0);
     expect(page.text()).not.toContain("No runs");
   });
 
@@ -127,7 +124,7 @@ describe("FactoryPage", () => {
     });
     const page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("Missing permission orchestration:read");
-    await act(async () => page.button("Retry")!.props.onClick());
+    await page.click(page.button("Retry")!);
     expect(refreshStatus).toHaveBeenCalledTimes(1);
     expect(refreshRuns).toHaveBeenCalledTimes(1);
   });
@@ -146,7 +143,7 @@ describe("FactoryPage", () => {
     expect(page.text()).toContain("original-solutions/t3code-factory");
     expect(page.text()).toContain("fetch failed");
     expect(page.text()).not.toContain("Could not load the factory");
-    await act(async () => page.button("Retry")!.props.onClick());
+    await page.click(page.button("Retry")!);
     expect(refreshStatus).toHaveBeenCalledTimes(1);
     expect(refreshRuns).toHaveBeenCalledTimes(1);
   });
@@ -160,14 +157,15 @@ describe("FactoryPage", () => {
     state.runs = resource({ data: { runs: [runRow()] } });
     state.allRuns = resource({ data: { runs: [runRow(), old] } });
     const page = await render(createElement(FactoryPage));
-    const runLinks = () => page.all("a").filter((a) => a.props["data-to"] === "/factory/$runId");
+    const runLinks = () =>
+      page.all("a").filter((a) => a.getAttribute("data-to") === "/factory/$runId");
     expect(runLinks()).toHaveLength(1);
-    await act(async () => page.button("Show all runs")!.props.onClick());
+    await page.click(page.button("Show all runs")!);
     expect(runLinks()).toHaveLength(2);
     expect(page.text()).toContain("o__r__1__1");
     expect(page.text()).toContain("Every run, read once.");
     expect(page.button("Show all runs")).toBeUndefined();
-    await act(async () => page.button("Show recent runs")!.props.onClick());
+    await page.click(page.button("Show recent runs")!);
     expect(runLinks()).toHaveLength(1);
   });
 
@@ -193,13 +191,15 @@ describe("FactoryPage", () => {
     expect(text).toContain("building");
     expect(text).toContain("launch-sending");
     expect(text).toContain("2h");
-    const hrefs = page.all("a").map((a) => a.props.href);
+    const hrefs = page.all("a").map((a) => a.getAttribute("href"));
     expect(hrefs).toContain("https://github.com/original-solutions/t3code-factory/issues/20");
     expect(hrefs).toContain(PR_URL);
     const link = page
       .all("a")
       .find(
-        (a) => a.props["data-to"] === "/factory/$runId" && a.props["data-params"].includes(RUN_ID),
+        (a) =>
+          a.getAttribute("data-to") === "/factory/$runId" &&
+          a.getAttribute("data-params")!.includes(RUN_ID),
       );
     expect(link).toBeDefined();
   });
@@ -215,7 +215,7 @@ describe("FactoryPage", () => {
       },
     });
     const page = await render(createElement(FactoryPage));
-    const hrefs = page.all("a").map((a) => a.props.href);
+    const hrefs = page.all("a").map((a) => a.getAttribute("href"));
     expect(hrefs).toContain(PR_URL);
     expect(hrefs).not.toContain("javascript:alert(1)");
     expect(hrefs).not.toContain("https://evil.example/pull/9");
@@ -296,7 +296,7 @@ describe("FactoryPage", () => {
     __setFactoryApiForTests(api({ pauseClaims }));
     const page = await render(createElement(FactoryPage));
     expect(page.button("Resume claims")).toBeUndefined();
-    await act(async () => page.button("Pause claims")!.props.onClick());
+    await page.click(page.button("Pause claims")!);
     expect(pauseClaims).toHaveBeenCalledTimes(1);
     expect(pauseClaims).toHaveBeenCalledWith("env-2");
     expect(page.text()).toContain("claims paused");
@@ -318,7 +318,7 @@ describe("FactoryPage", () => {
     const page = await render(createElement(FactoryPage));
     expect(page.text()).toContain("paused since 1h");
     expect(page.button("Pause claims")).toBeUndefined();
-    await act(async () => page.button("Resume claims")!.props.onClick());
+    await page.click(page.button("Resume claims")!);
     expect(resumeClaims).toHaveBeenCalledTimes(1);
     expect(resumeClaims).toHaveBeenCalledWith("env-2");
     expect(page.text()).toContain("claims resumed");
@@ -340,13 +340,13 @@ describe("FactoryPage", () => {
     );
     __setFactoryApiForTests(api({ pauseClaims }));
     const page = await render(createElement(FactoryPage));
-    expect(page.button("Pause claims")!.props.disabled).toBeFalsy();
-    await act(async () => void page.button("Pause claims")!.props.onClick());
-    expect(page.button("Pause claims")!.props.disabled).toBe(true);
+    expect(page.button("Pause claims")!.disabled).toBeFalsy();
+    await page.click(page.button("Pause claims")!);
+    expect(page.button("Pause claims")!.disabled).toBe(true);
     await act(async () =>
       resolve({ paused: true, already: false, since: "2026-10-17T12:00:00.000Z", message: "ok" }),
     );
-    expect(page.button("Pause claims")!.props.disabled).toBeFalsy();
+    expect(page.button("Pause claims")!.disabled).toBeFalsy();
   });
 
   it("disables Resume claims while the call is pending", async () => {
@@ -361,11 +361,11 @@ describe("FactoryPage", () => {
     );
     __setFactoryApiForTests(api({ resumeClaims }));
     const page = await render(createElement(FactoryPage));
-    expect(page.button("Resume claims")!.props.disabled).toBeFalsy();
-    await act(async () => void page.button("Resume claims")!.props.onClick());
-    expect(page.button("Resume claims")!.props.disabled).toBe(true);
+    expect(page.button("Resume claims")!.disabled).toBeFalsy();
+    await page.click(page.button("Resume claims")!);
+    expect(page.button("Resume claims")!.disabled).toBe(true);
     await act(async () => resolve({ paused: false, already: false, message: "ok" }));
-    expect(page.button("Resume claims")!.props.disabled).toBeFalsy();
+    expect(page.button("Resume claims")!.disabled).toBeFalsy();
   });
 
   it("shows the message of a control call that fails", async () => {
@@ -377,7 +377,7 @@ describe("FactoryPage", () => {
       }),
     );
     const page = await render(createElement(FactoryPage));
-    await act(async () => page.button("Pause claims")!.props.onClick());
+    await page.click(page.button("Pause claims")!);
     expect(page.text()).toContain("Missing permission orchestration:operate");
   });
 });
@@ -409,7 +409,7 @@ describe.each([375, 1280])("FactoryPage at %i px", (width) => {
     populate();
     const page = await renderAt(width, createElement(FactoryPage));
     expect(page.all("table")).toHaveLength(narrow ? 0 : 1);
-    const cards = page.all("ul").filter((ul) => ul.props["data-layout"] === "cards");
+    const cards = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "cards");
     expect(cards).toHaveLength(narrow ? 1 : 0);
     await page.unmount();
   });
@@ -438,7 +438,7 @@ describe.each([375, 1280])("FactoryPage at %i px", (width) => {
       }),
     );
     const page = await renderAt(width, createElement(FactoryPage));
-    await act(async () => page.button("Pause claims")!.props.onClick());
+    await page.click(page.button("Pause claims")!);
     const text = page.text();
     expect(text.indexOf("claims paused")).toBeGreaterThan(text.indexOf("run ended stuck"));
     expect(text.indexOf("claims paused")).toBeLessThan(text.indexOf("launch-sending"));
@@ -453,17 +453,17 @@ describe("FactoryPage attention items at 375 px", () => {
     const page = await renderAt(375, createElement(FactoryPage));
     const section = page
       .all("section")
-      .find((node) => node.props["aria-label"] === "Needs attention")!;
-    const item = section.findAllByType("li" as never)[0]!;
-    const message = item.findAll(
-      (node) => typeof node.type === "string" && node.children.includes(ATTENTION.message),
-    )[0]!;
-    expect(message.type).toBe("p");
-    expect(String(message.props.className)).toContain("w-full");
-    expect(String(message.props.className)).not.toContain("flex-1");
-    const textOf = (node: ReactTestInstance | string): string =>
-      typeof node === "string" ? node : node.children.map(textOf).join(" ");
-    const full = textOf(item);
+      .find((node) => node.getAttribute("aria-label") === "Needs attention")!;
+    const item = section.querySelectorAll("li")[0]!;
+    const message = Array.from(item.querySelectorAll("*")).find((node) =>
+      Array.from(node.childNodes).some(
+        (child) => child.nodeType === Node.TEXT_NODE && child.textContent === ATTENTION.message,
+      ),
+    )!;
+    expect(message.tagName).toBe("P");
+    expect(message.className).toContain("w-full");
+    expect(message.className).not.toContain("flex-1");
+    const full = item.textContent ?? "";
     const order = ["stuck", ATTENTION.repo, "1h", ATTENTION.message].map((part) =>
       full.indexOf(part),
     );
@@ -480,18 +480,17 @@ describe("FactoryPage run cards at 375 px", () => {
     const link = page
       .all("a")
       .find(
-        (a) => a.props["data-to"] === "/factory/$runId" && a.props["data-params"].includes(RUN_ID),
+        (a) =>
+          a.getAttribute("data-to") === "/factory/$runId" &&
+          a.getAttribute("data-params")!.includes(RUN_ID),
       );
     expect(link).toBeDefined();
-    const text = link!
-      .findAll(() => true)
-      .flatMap((n) => n.children.filter((c) => typeof c === "string"))
-      .join(" ");
+    const text = link!.textContent ?? "";
     for (const part of ["original-solutions/t3code-factory", "building", "launch-sending", "2h"]) {
       expect(text).toContain(part);
     }
     // A card is one link: nothing inside it is another link.
-    expect(link!.findAllByType("a" as never)).toHaveLength(1);
+    expect(link!.querySelectorAll("a")).toHaveLength(0);
     await page.unmount();
   });
 
@@ -500,21 +499,23 @@ describe("FactoryPage run cards at 375 px", () => {
     const page = await renderAt(375, createElement(FactoryPage));
     const hrefs = page
       .all("a")
-      .filter((a) => typeof a.props.href === "string")
-      .map((a) => a.props.href);
+      .map((a) => a.getAttribute("href"))
+      .filter((href) => href !== null);
     expect(hrefs).toEqual([
       "https://github.com/original-solutions/t3code-factory/issues/20",
       PR_URL,
     ]);
-    const card = page.all("a").find((a) => a.props["data-to"] === "/factory/$runId")!;
-    expect(card.findAllByType("a" as never)).toHaveLength(1);
+    const card = page.all("a").find((a) => a.getAttribute("data-to") === "/factory/$runId")!;
+    expect(card.querySelectorAll("a")).toHaveLength(0);
     await page.unmount();
   });
 
   it("leaves a non-GitHub pull request URL as text on the card", async () => {
     state.runs = resource({ data: { runs: [runRow({ pr_url: "https://example.com/pr/1" })] } });
     const page = await renderAt(375, createElement(FactoryPage));
-    expect(page.all("a").map((a) => a.props.href)).not.toContain("https://example.com/pr/1");
+    expect(page.all("a").map((a) => a.getAttribute("href"))).not.toContain(
+      "https://example.com/pr/1",
+    );
     expect(page.text()).toContain("https://example.com/pr/1");
     await page.unmount();
   });
@@ -548,7 +549,7 @@ describe.each([
     state.runs = resource({ data: { runs: [runRow()] } });
     const page = await renderAt(width, createElement(FactoryPage));
     expect(page.all("table")).toHaveLength(narrow ? 0 : 1);
-    const cards = page.all("ul").filter((ul) => ul.props["data-layout"] === "cards");
+    const cards = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "cards");
     expect(cards).toHaveLength(narrow ? 1 : 0);
     await page.unmount();
   });
@@ -574,15 +575,15 @@ describe("FactoryPage dismissing attention items", () => {
     first_seen: "2026-10-17T11:40:00.000Z",
   };
   const section = (page: Awaited<ReturnType<typeof render>>) =>
-    page.all("section").find((node) => node.props["aria-label"] === "Needs attention");
+    page.all("section").find((node) => node.getAttribute("aria-label") === "Needs attention");
   const itemOf = (page: Awaited<ReturnType<typeof render>>, message: string) =>
-    section(page)
-      ?.findAllByType("li" as never)
-      .find((li) => li.findAll((node) => node.children.includes(message)).length > 0);
-  const dismissIn = (item: ReactTestInstance) =>
-    item
-      .findAllByType("button" as never)
-      .find((button) => button.findAll((node) => node.children.includes("Dismiss")).length > 0)!;
+    Array.from(section(page)?.querySelectorAll("li") ?? []).find((li) =>
+      li.textContent?.includes(message),
+    );
+  const dismissIn = (item: HTMLElement) =>
+    Array.from(item.querySelectorAll("button")).find((button) =>
+      button.textContent?.includes("Dismiss"),
+    )!;
 
   it("Dismiss removes that item at once and sends its id", async () => {
     state.status = resource({ data: statusData({ attention: [ATTENTION, CONFIG] }) });
@@ -592,7 +593,7 @@ describe("FactoryPage dismissing attention items", () => {
     );
     __setFactoryApiForTests(api({ dismissAttention }));
     const page = await render(createElement(FactoryPage));
-    await act(async () => void dismissIn(itemOf(page, ATTENTION.message)!).props.onClick());
+    await page.click(dismissIn(itemOf(page, ATTENTION.message)!));
     expect(dismissAttention).toHaveBeenCalledWith("env-2", [ATTENTION.id]);
     expect(page.text()).not.toContain(ATTENTION.message);
     expect(page.text()).toContain(CONFIG.message);
@@ -607,8 +608,8 @@ describe("FactoryPage dismissing attention items", () => {
     }));
     __setFactoryApiForTests(api({ dismissAttention }));
     const page = await render(createElement(FactoryPage));
-    await act(async () => dismissIn(itemOf(page, CONFIG.message)!).props.onClick());
-    await act(async () => page.button("Dismiss all")!.props.onClick());
+    await page.click(dismissIn(itemOf(page, CONFIG.message)!));
+    await page.click(page.button("Dismiss all")!);
     expect(dismissAttention).toHaveBeenLastCalledWith("env-2", [ATTENTION.id, PASS.id]);
     expect(section(page)).toBeUndefined();
     expect(page.text()).not.toContain("Needs attention");
@@ -620,10 +621,10 @@ describe("FactoryPage dismissing attention items", () => {
     const dismissAttention = vi.fn(async () => ({ dismissed: [ATTENTION.id] }));
     __setFactoryApiForTests(api({ pauseClaims, dismissAttention }));
     const page = await render(createElement(FactoryPage));
-    await act(async () => void page.button("Pause claims")!.props.onClick());
-    await act(async () => dismissIn(itemOf(page, ATTENTION.message)!).props.onClick());
+    await page.click(page.button("Pause claims")!);
+    await page.click(dismissIn(itemOf(page, ATTENTION.message)!));
     expect(dismissAttention).toHaveBeenCalled();
-    expect(page.button("Pause claims")!.props.disabled).toBe(true);
+    expect(page.button("Pause claims")!.disabled).toBe(true);
   });
 
   it("has no Dismiss all when nothing needs attention", async () => {
@@ -641,7 +642,7 @@ describe("FactoryPage dismissing attention items", () => {
       }),
     );
     const page = await render(createElement(FactoryPage));
-    await act(async () => dismissIn(itemOf(page, ATTENTION.message)!).props.onClick());
+    await page.click(dismissIn(itemOf(page, ATTENTION.message)!));
     expect(page.text()).toContain(ATTENTION.message);
     expect(page.text()).toContain("Missing permission orchestration:operate");
   });
@@ -650,28 +651,28 @@ describe("FactoryPage dismissing attention items", () => {
     state.status = resource({ data: statusData({ attention: [CONFIG] }) });
     __setFactoryApiForTests(api({ dismissAttention: async () => ({ dismissed: [CONFIG.id] }) }));
     const page = await render(createElement(FactoryPage));
-    await act(async () => dismissIn(itemOf(page, CONFIG.message)!).props.onClick());
+    await page.click(dismissIn(itemOf(page, CONFIG.message)!));
     expect(page.text()).not.toContain(CONFIG.message);
     state.status = resource({
       data: statusData({ attention: [{ ...CONFIG, first_seen: "2026-10-17T11:59:00.000Z" }] }),
     });
-    await act(async () => page.renderer.update(createElement(FactoryPage)));
+    await page.rerender(createElement(FactoryPage));
     expect(page.text()).toContain(CONFIG.message);
   });
 
   it("links a run item to its run, a config item to the factory settings, and others nowhere", async () => {
     state.status = resource({ data: statusData({ attention: [ATTENTION, CONFIG, PASS] }) });
     const page = await render(createElement(FactoryPage));
-    const linksIn = (message: string) => itemOf(page, message)!.findAllByType("a" as never);
+    const linksIn = (message: string) => Array.from(itemOf(page, message)!.querySelectorAll("a"));
     const [run] = linksIn(ATTENTION.message);
-    expect(run!.props["data-to"]).toBe("/factory/$runId");
-    expect(JSON.parse(run!.props["data-params"])).toEqual({ runId: RUN_ID });
+    expect(run!.getAttribute("data-to")).toBe("/factory/$runId");
+    expect(JSON.parse(run!.getAttribute("data-params")!)).toEqual({ runId: RUN_ID });
     const [settings] = linksIn(CONFIG.message);
-    expect(settings!.props["data-to"]).toBe("/settings/factory");
+    expect(settings!.getAttribute("data-to")).toBe("/settings/factory");
     expect(linksIn(PASS.message)).toHaveLength(0);
     // Dismiss is its own control, never inside the link.
     for (const link of [run!, settings!]) {
-      expect(link.findAllByType("button" as never)).toHaveLength(0);
+      expect(link.querySelectorAll("button")).toHaveLength(0);
     }
   });
 });

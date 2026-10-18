@@ -93,9 +93,7 @@ describe("FactoryRunPage", () => {
   it("shows a loading state", async () => {
     state.run = resource({ status: "loading" });
     const page = await mount();
-    expect(
-      page.renderer.root.findAll((n) => n.props["aria-label"] === "Loading run"),
-    ).not.toHaveLength(0);
+    expect(page.all('[aria-label="Loading run"]')).not.toHaveLength(0);
     expect(page.text()).not.toContain("Ledger");
   });
 
@@ -117,7 +115,7 @@ describe("FactoryRunPage", () => {
     });
     const page = await mount();
     expect(page.text()).toContain("ledger exploded");
-    await act(async () => page.button("Retry")!.props.onClick());
+    await page.click(page.button("Retry")!);
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
@@ -127,7 +125,7 @@ describe("FactoryRunPage", () => {
     expect(page.text()).toContain("no thread yet");
     expect(page.text()).toContain("No gate has run");
     expect(page.text()).toContain("No ledger entries");
-    expect(page.button("Stop")!.props.disabled).toBe(true);
+    expect(page.button("Stop")!.disabled).toBe(true);
   });
 
   it("shows the run, its state and step, its thread link, gate output and ledger", async () => {
@@ -136,12 +134,14 @@ describe("FactoryRunPage", () => {
     expect(text).toContain(RUN_ID);
     expect(text).toContain("building");
     expect(text).toContain("gate-checking");
-    const thread = page.all("a").find((a) => a.props["data-to"] === "/$environmentId/$threadId");
-    expect(JSON.parse(thread!.props["data-params"])).toEqual({
+    const thread = page
+      .all("a")
+      .find((a) => a.getAttribute("data-to") === "/$environmentId/$threadId");
+    expect(JSON.parse(thread!.getAttribute("data-params")!)).toEqual({
       environmentId: "env-1",
       threadId: "thread-9",
     });
-    const back = page.all("a").find((a) => a.props["data-to"] === "/factory");
+    const back = page.all("a").find((a) => a.getAttribute("data-to") === "/factory");
     expect(back).toBeDefined();
     expect(text).toContain("pnpm lint");
     expect(text).toContain("pnpm test");
@@ -153,8 +153,10 @@ describe("FactoryRunPage", () => {
   it("links the thread on the factory environment", async () => {
     state.environmentId = "env-2";
     const page = await mount();
-    const thread = page.all("a").find((a) => a.props["data-to"] === "/$environmentId/$threadId");
-    expect(JSON.parse(thread!.props["data-params"])).toEqual({
+    const thread = page
+      .all("a")
+      .find((a) => a.getAttribute("data-to") === "/$environmentId/$threadId");
+    expect(JSON.parse(thread!.getAttribute("data-params")!)).toEqual({
       environmentId: "env-2",
       threadId: "thread-9",
     });
@@ -163,14 +165,16 @@ describe("FactoryRunPage", () => {
   it("falls back to the primary environment id", async () => {
     state.environmentId = null;
     const page = await mount();
-    const thread = page.all("a").find((a) => a.props["data-to"] === "/$environmentId/$threadId");
-    expect(JSON.parse(thread!.props["data-params"]).environmentId).toBe("primary");
+    const thread = page
+      .all("a")
+      .find((a) => a.getAttribute("data-to") === "/$environmentId/$threadId");
+    expect(JSON.parse(thread!.getAttribute("data-params")!).environmentId).toBe("primary");
   });
 
   it("renders the relaunch message as plain text", async () => {
     const page = await mount();
     const pre = page.all("pre")[0]!;
-    expect(pre.children).toEqual(["<b>tests failed</b> fix them"]);
+    expect(pre.textContent).toBe("<b>tests failed</b> fix them");
     expect(page.all("b")).toHaveLength(0);
   });
 
@@ -192,8 +196,8 @@ describe("FactoryRunPage", () => {
     }));
     __setFactoryApiForTests(api({ stopRun }));
     const page = await mount();
-    expect(page.button("Stop")!.props.disabled).toBeFalsy();
-    await act(async () => page.button("Stop")!.props.onClick());
+    expect(page.button("Stop")!.disabled).toBeFalsy();
+    await page.click(page.button("Stop")!);
     expect(stopRun).toHaveBeenCalledWith("env-1", RUN_ID);
     expect(page.text()).toContain("stop requested");
     expect(refresh).toHaveBeenCalled();
@@ -206,12 +210,12 @@ describe("FactoryRunPage", () => {
     );
     __setFactoryApiForTests(api({ stopRun }));
     const page = await mount();
-    await act(async () => void page.button("Stop")!.props.onClick());
-    expect(page.button("Stop")!.props.disabled).toBe(true);
+    await page.click(page.button("Stop")!);
+    expect(page.button("Stop")!.disabled).toBe(true);
     await act(async () =>
       resolve({ stopped: "o__r__1__1", already: false, message: "stop requested" }),
     );
-    expect(page.button("Stop")!.props.disabled).toBeFalsy();
+    expect(page.button("Stop")!.disabled).toBeFalsy();
   });
 
   it("shows the message of a run that is not building", async () => {
@@ -223,7 +227,7 @@ describe("FactoryRunPage", () => {
       }),
     );
     const page = await mount();
-    await act(async () => page.button("Stop")!.props.onClick());
+    await page.click(page.button("Stop")!);
     expect(page.text()).toContain("run is not building");
   });
 
@@ -231,9 +235,9 @@ describe("FactoryRunPage", () => {
     state.run = resource({
       data: detail([...BUILDING, entry("state_changed", { from: "building", to: "pr-open" })]),
     });
-    expect((await mount()).button("Stop")!.props.disabled).toBe(true);
+    expect((await mount()).button("Stop")!.disabled).toBe(true);
     state.run = resource({ data: detail([...BUILDING, entry("finished", { outcome: "stuck" })]) });
-    expect((await mount()).button("Stop")!.props.disabled).toBe(true);
+    expect((await mount()).button("Stop")!.disabled).toBe(true);
   });
 });
 
@@ -244,7 +248,7 @@ describe.each([375, 1280])("FactoryRunPage at %i px", (width) => {
   it(narrow ? "lists the gate commands and ledger, not tables" : "keeps the tables", async () => {
     const page = await mountAt();
     expect(page.all("table")).toHaveLength(narrow ? 0 : 2);
-    const lists = page.all("ul").filter((ul) => ul.props["data-layout"] === "list");
+    const lists = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "list");
     expect(lists).toHaveLength(narrow ? 2 : 0);
     const text = page.text();
     for (const part of ["pnpm lint", "pnpm test", "412", "26311", "session_launched", "thread-9"]) {
@@ -260,7 +264,7 @@ describe("FactoryRunPage lists at 375 px", () => {
     const items = page.all("li");
     // 2 gate commands, then one item per ledger entry.
     expect(items).toHaveLength(2 + BUILDING.length);
-    expect(items[0]!.findAll(() => true).length).toBeGreaterThan(1);
+    expect(items[0]!.querySelectorAll("*").length).toBeGreaterThan(0);
     await page.unmount();
   });
 });
@@ -272,7 +276,7 @@ describe.each([
   it(narrow ? "lists just below 640" : "keeps the tables from 640", async () => {
     const page = await renderAt(width, createElement(FactoryRunPage, { runId: RUN_ID }));
     expect(page.all("table")).toHaveLength(narrow ? 0 : 2);
-    const lists = page.all("ul").filter((ul) => ul.props["data-layout"] === "list");
+    const lists = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "list");
     expect(lists).toHaveLength(narrow ? 2 : 0);
     await page.unmount();
   });
