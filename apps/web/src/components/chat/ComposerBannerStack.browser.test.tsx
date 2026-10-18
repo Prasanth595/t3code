@@ -58,3 +58,36 @@ it("only offers notice details when the description cannot fit", async () => {
   await nextFrame();
   expect(hasDetails()).toBe(true);
 });
+
+it("offers the full title when a single-item banner clips it", async () => {
+  const command =
+    "/usr/bin/zsh -lc 'sleep 600 > /tmp/t3-background-command-with-a-long-log-filename-for-truncation.log 2>&1'";
+  container.style.width = "4000px";
+  await act(async () =>
+    root.render(
+      <ComposerBannerStack
+        items={[
+          {
+            id: "background-work",
+            variant: "default",
+            priority: "activity",
+            icon: null,
+            title: `Running: ${command}`,
+          },
+        ]}
+      />,
+    ),
+  );
+  await nextFrame();
+  expect(hasDetails()).toBe(false);
+
+  container.style.width = "300px";
+  await nextFrame();
+  expect(hasDetails()).toBe(true);
+
+  await act(async () =>
+    container.querySelector<HTMLElement>('[aria-label="Show notice details"]')?.click(),
+  );
+  await nextFrame();
+  expect(document.querySelector('[aria-label="Notice details"]')?.textContent).toContain(command);
+});

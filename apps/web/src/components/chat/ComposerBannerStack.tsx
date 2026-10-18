@@ -247,45 +247,63 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
   );
 }
 
-function NoticeDescription({ children }: { children: ReactNode }) {
+function NoticeText({ title, description }: { title: ReactNode; description: ReactNode }) {
+  const titleRef = useRef<HTMLSpanElement>(null);
   const descriptionRef = useRef<HTMLSpanElement>(null);
   const detailsRef = useRef<HTMLButtonElement>(null);
-  const [showDetails, setShowDetails] = useState(false);
+  const [clipped, setClipped] = useState({ title: false, description: false });
+  const hasDescription = Boolean(description);
 
   useLayoutEffect(() => {
-    const description = descriptionRef.current;
-    if (!description) return;
+    const title = titleRef.current;
+    if (!title) return;
+    // The description mounts and unmounts with its content, so observe whichever is current.
+    const description = hasDescription ? descriptionRef.current : null;
     const measure = () => {
       // Ignore the space taken by the details button itself so it cannot
-      // sustain its own overflow after the description would otherwise fit.
+      // sustain its own overflow after the text would otherwise fit.
       const recoveredWidth = detailsRef.current ? detailsRef.current.offsetWidth + 4 : 0;
-      const hidden = getComputedStyle(description).position === "absolute";
-      setShowDetails(
-        hidden ||
-          [description, ...description.querySelectorAll("*")].some(
-            (element) => element.scrollWidth > element.clientWidth + recoveredWidth,
-          ),
+      const overflows = (element: Element) =>
+        [element, ...element.querySelectorAll("*")].some(
+          (child) => child.scrollWidth > child.clientWidth + recoveredWidth,
+        );
+      const next = {
+        title: overflows(title),
+        description:
+          description !== null &&
+          (getComputedStyle(description).position === "absolute" || overflows(description)),
+      };
+      setClipped((current) =>
+        current.title === next.title && current.description === next.description ? current : next,
       );
     };
     measure();
-    const stopObserving = observeResize(description, measure);
+    const targets = [title, description].filter((element) => element !== null);
+    const stopObserving = observeResize(targets, measure);
     const mutations = new MutationObserver(measure);
-    mutations.observe(description, { childList: true, subtree: true, characterData: true });
+    for (const element of targets) {
+      mutations.observe(element, { childList: true, subtree: true, characterData: true });
+    }
     return () => {
       stopObserving();
       mutations.disconnect();
     };
-  }, []);
+  }, [hasDescription]);
 
   return (
-    <span className="contents">
-      <span
-        ref={descriptionRef}
-        className="w-0 min-w-0 grow truncate text-muted-foreground @max-[400px]:sr-only"
-      >
-        {children}
+    <>
+      <span ref={titleRef} className="min-w-0 truncate font-medium leading-7 sm:leading-6">
+        {title}
       </span>
-      {showDetails ? (
+      {description ? (
+        <span
+          ref={descriptionRef}
+          className="w-0 min-w-0 grow truncate text-muted-foreground @max-[400px]:sr-only"
+        >
+          {description}
+        </span>
+      ) : null}
+      {clipped.title || clipped.description ? (
         <Popover>
           <PopoverTrigger
             openOnHover
@@ -308,12 +326,13 @@ function NoticeDescription({ children }: { children: ReactNode }) {
             className="max-w-[min(30rem,calc(100vw-2rem))] whitespace-normal wrap-anywhere [--inline-button-text-align:start] [--inline-button-white-space:normal] [&_[data-slot=inline-button]]:max-w-full"
           >
             <ComposerBanner.Scroll className="max-h-[min(var(--available-height),24rem,40dvh)]">
-              {children}
+              {clipped.title ? <div className="font-medium">{title}</div> : null}
+              {description}
             </ComposerBanner.Scroll>
           </PopoverPopup>
         </Popover>
       ) : null}
-    </span>
+    </>
   );
 }
 
@@ -351,8 +370,7 @@ function ComposerBannerStackAlert({
           {item.icon}
         </ComposerBanner.Icon>
         <ComposerBanner.Content className="whitespace-nowrap">
-          <span className="min-w-0 truncate font-medium leading-7 sm:leading-6">{item.title}</span>
-          {item.description ? <NoticeDescription>{item.description}</NoticeDescription> : null}
+          <NoticeText title={item.title} description={item.description} />
         </ComposerBanner.Content>
         {item.actions || item.onDismiss ? (
           <ComposerBanner.Actions>
