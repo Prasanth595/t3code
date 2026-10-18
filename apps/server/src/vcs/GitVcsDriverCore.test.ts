@@ -4174,7 +4174,6 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           yield* Deferred.await(started);
           if (failure === "timeout") {
             yield* TestClock.adjust("301 seconds");
-            yield* TestClock.adjust("301 seconds");
           }
           const result = yield* Fiber.join(fetching);
           assert.isTrue(Result.isFailure(result));
