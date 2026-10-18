@@ -524,6 +524,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
       throw new Error("Cannot find function dismissEnded");
     });
     const activity = {
+      getId: () => "activity-1",
       getPushToken: vi.fn(() => Promise.resolve("activity-token")),
       addPushTokenListener: vi.fn(),
       end: vi.fn(),
