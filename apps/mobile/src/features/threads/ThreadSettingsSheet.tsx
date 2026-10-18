@@ -671,7 +671,7 @@ function ThreadSettingsProviderListHeader(props: {
   );
 }
 
-function useThreadSettingsCatalogItems(
+function buildThreadSettingsCatalogItems(
   session: ThreadSettingsSessionValue,
 ): ReadonlyArray<ThreadSettingsCatalogItem> {
   return session.providerGroups.flatMap((group) => {
@@ -872,8 +872,8 @@ function ThreadSettingsMainContent(props: {
       if (error) Dialog.alert("Could not refresh models", error);
     });
   };
-  const catalogItems = useThreadSettingsCatalogItems(session);
   const [animationsReady, setAnimationsReady] = useState(false);
+  const catalogItems = buildThreadSettingsCatalogItems(session);
   const hasActiveCatalogFilter =
     session.providerFilter !== null || session.searchQuery.trim().length > 0;
   const listItems = [
