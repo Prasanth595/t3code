@@ -118,7 +118,10 @@ export interface ThreadStatus extends Thread {
   readonly run: RunStatus | null;
   /** The `ordinal` of that same run; `null` when the thread has no run. */
   readonly runOrdinal: number | null;
-  /** When that same run started, as epoch milliseconds; `null` when it never started, or the thread has no run. */
+  /**
+   * When that same run began, as epoch milliseconds: its start, else when it was requested if it
+   * was cancelled; `null` when it never began, or the thread has no run.
+   */
   readonly runStartedAt: number | null;
   /** When that same run ended, as epoch milliseconds; `null` while it runs, or when the thread has no run. */
   readonly runCompletedAt: number | null;
@@ -185,6 +188,7 @@ export interface ThreadSnapshot {
     readonly id: string;
     readonly ordinal: number;
     readonly status: RunStatus;
+    readonly requestedAt?: unknown;
     /** Absent for a run that never started. */
     readonly startedAt?: unknown;
     /** Absent for a run that has not ended. */
@@ -264,7 +268,12 @@ export const threadStatusOf = (snapshot: ThreadSnapshot): ThreadStatus => {
   return {
     run: latest?.status ?? null,
     runOrdinal: latest?.ordinal ?? null,
-    runStartedAt: latest === undefined ? null : msOf(latest.startedAt),
+    // Not `workStartedAt`: a wake run copies that from an earlier run, so it can predate a restart
+    // the run itself came after. Only a cancel can be a shutdown's doing before the run starts.
+    runStartedAt:
+      latest === undefined
+        ? null
+        : msOf(latest.startedAt ?? (latest.status === "cancelled" ? latest.requestedAt : null)),
     runCompletedAt: latest === undefined ? null : msOf(latest.completedAt),
     lastAssistantMessage,
     ...threadOf(snapshot.thread),
