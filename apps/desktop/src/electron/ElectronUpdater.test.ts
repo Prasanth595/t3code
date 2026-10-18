@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import type { VerifyUpdateCodeSignature } from "electron-updater";
 import { beforeEach, vi } from "vite-plus/test";
 
 const { autoUpdaterMock } = vi.hoisted(() => ({
@@ -17,6 +18,7 @@ const { autoUpdaterMock } = vi.hoisted(() => ({
     quitAndInstall: vi.fn(),
     removeListener: vi.fn(),
     setFeedURL: vi.fn(),
+    verifyUpdateCodeSignature: undefined as VerifyUpdateCodeSignature | undefined,
   },
 }));
 
@@ -43,6 +45,7 @@ describe("ElectronUpdater", () => {
     autoUpdaterMock.quitAndInstall.mockClear();
     autoUpdaterMock.removeListener.mockClear();
     autoUpdaterMock.setFeedURL.mockClear();
+    autoUpdaterMock.verifyUpdateCodeSignature = undefined;
   });
 
   it.effect("scopes updater event listeners", () =>
@@ -136,4 +139,59 @@ describe("ElectronUpdater", () => {
       assert.deepEqual(autoUpdaterMock.quitAndInstall.mock.calls, [[true, false]]);
     }).pipe(Effect.provide(ElectronUpdater.layer)),
   );
+
+  describe("Windows update signature check", () => {
+    const publisherNames = ["T3 Tools Inc"];
+    const installerPath = "C:\\updater\\pending\\temp-T3-Code-x64.exe";
+    // execFile rejects like this when electron-updater's 20 s PowerShell limit kills the check.
+    const timedOut = () =>
+      Object.assign(new Error("Command failed: powershell.exe"), { killed: true });
+
+    // NsisUpdater runs the verifier after the download and fails on any non-null result.
+    const downloadVerifyingSignature = (verify: VerifyUpdateCodeSignature) => {
+      autoUpdaterMock.verifyUpdateCodeSignature = verify;
+      autoUpdaterMock.downloadUpdate.mockImplementationOnce(async () => {
+        const rejection = await autoUpdaterMock.verifyUpdateCodeSignature?.(
+          publisherNames,
+          installerPath,
+        );
+        if (rejection != null) throw new Error(`not signed by the application owner: ${rejection}`);
+        return [];
+      });
+      return Effect.flatMap(ElectronUpdater.ElectronUpdater, (updater) => updater.downloadUpdate);
+    };
+
+    it.effect("retries a signature check that timed out once", () =>
+      Effect.gen(function* () {
+        const verify = vi
+          .fn<VerifyUpdateCodeSignature>()
+          .mockRejectedValueOnce(timedOut())
+          .mockResolvedValueOnce(null);
+
+        yield* downloadVerifyingSignature(verify);
+
+        assert.deepEqual(verify.mock.calls, [
+          [publisherNames, installerPath],
+          [publisherNames, installerPath],
+        ]);
+      }).pipe(Effect.provide(ElectronUpdater.layer)),
+    );
+
+    it.effect("does not retry a rejected signature, another failure or a second timeout", () =>
+      Effect.gen(function* () {
+        const cases: ReadonlyArray<readonly [() => Promise<string | null>, number]> = [
+          [() => Promise.resolve("publisherNames: T3 Tools Inc, raw info: {}"), 1],
+          [() => Promise.reject(new Error("Cannot execute Get-AuthenticodeSignature")), 1],
+          [() => Promise.reject(timedOut()), 2],
+        ];
+        for (const [outcome, expectedCalls] of cases) {
+          const verify = vi.fn<VerifyUpdateCodeSignature>(outcome);
+          const error = yield* downloadVerifyingSignature(verify).pipe(Effect.flip);
+
+          assert.instanceOf(error, ElectronUpdater.ElectronUpdaterDownloadUpdateError);
+          assert.equal(verify.mock.calls.length, expectedCalls);
+        }
+      }).pipe(Effect.provide(ElectronUpdater.layer)),
+    );
+  });
 });
