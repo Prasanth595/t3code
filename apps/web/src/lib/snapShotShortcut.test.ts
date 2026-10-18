@@ -48,35 +48,35 @@ describe("desktop-approved window capture shortcut labels", () => {
 describe("window capture shortcut labels", () => {
   it("labels the default physical Shift pair", () => {
     expect(formatSnapShotShortcutLabel({ kind: "both-shift-keys" }, "MacIntel")).toBe(
-      "Shift + Shift",
+      "Left Shift + Right Shift",
     );
   });
 
   it("labels other modifier pairs per platform", () => {
     expect(
       formatSnapShotShortcutLabel({ kind: "modifier-pair", modifier: "meta" }, "MacIntel"),
-    ).toBe("Command + Command");
+    ).toBe("Left Command + Right Command");
     expect(formatSnapShotShortcutLabel({ kind: "modifier-pair", modifier: "meta" }, "Linux")).toBe(
-      "Super + Super",
+      "Left Super + Right Super",
     );
     expect(
       formatSnapShotShortcutLabel({ kind: "modifier-pair", modifier: "alt" }, "MacIntel"),
-    ).toBe("Option + Option");
+    ).toBe("Left Option + Right Option");
   });
 
   it.each([
-    ["MacIntel", { kind: "modifier-pair", modifier: "meta" } as const, ["⌘", "⌘"]],
-    ["MacIntel", { kind: "both-shift-keys" } as const, ["⇧", "⇧"]],
-    ["MacIntel", { kind: "modifier-pair", modifier: "alt" } as const, ["⌥", "⌥"]],
-    ["MacIntel", { kind: "modifier-pair", modifier: "control" } as const, ["⌃", "⌃"]],
-    ["Win32", { kind: "modifier-pair", modifier: "meta" } as const, ["⊞", "⊞"]],
-    ["Win32", { kind: "both-shift-keys" } as const, ["⇧", "⇧"]],
-    ["Win32", { kind: "modifier-pair", modifier: "alt" } as const, ["Alt", "Alt"]],
-    ["Win32", { kind: "modifier-pair", modifier: "control" } as const, ["Ctrl", "Ctrl"]],
-    ["Linux", { kind: "modifier-pair", modifier: "meta" } as const, ["Super", "Super"]],
-    ["Linux", { kind: "both-shift-keys" } as const, ["⇧", "⇧"]],
-    ["Linux", { kind: "modifier-pair", modifier: "alt" } as const, ["Alt", "Alt"]],
-    ["Linux", { kind: "modifier-pair", modifier: "control" } as const, ["Ctrl", "Ctrl"]],
+    ["MacIntel", { kind: "modifier-pair", modifier: "meta" } as const, ["Left ⌘", "Right ⌘"]],
+    ["MacIntel", { kind: "both-shift-keys" } as const, ["Left ⇧", "Right ⇧"]],
+    ["MacIntel", { kind: "modifier-pair", modifier: "alt" } as const, ["Left ⌥", "Right ⌥"]],
+    ["MacIntel", { kind: "modifier-pair", modifier: "control" } as const, ["Left ⌃", "Right ⌃"]],
+    ["Win32", { kind: "modifier-pair", modifier: "meta" } as const, ["Left ⊞", "Right ⊞"]],
+    ["Win32", { kind: "both-shift-keys" } as const, ["Left ⇧", "Right ⇧"]],
+    ["Win32", { kind: "modifier-pair", modifier: "alt" } as const, ["Left Alt", "Right Alt"]],
+    ["Win32", { kind: "modifier-pair", modifier: "control" } as const, ["Left Ctrl", "Right Ctrl"]],
+    ["Linux", { kind: "modifier-pair", modifier: "meta" } as const, ["Left Super", "Right Super"]],
+    ["Linux", { kind: "both-shift-keys" } as const, ["Left ⇧", "Right ⇧"]],
+    ["Linux", { kind: "modifier-pair", modifier: "alt" } as const, ["Left Alt", "Right Alt"]],
+    ["Linux", { kind: "modifier-pair", modifier: "control" } as const, ["Left Ctrl", "Right Ctrl"]],
   ])("renders modifier-pair key caps on %s", (platform, shortcut, expected) => {
     expect(snapShotShortcutKeyLabels(shortcut, platform)).toEqual(expected);
   });

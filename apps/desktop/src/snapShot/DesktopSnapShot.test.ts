@@ -3791,7 +3791,7 @@ it.effect("advises about the system menu for a meta pair on Windows", () =>
       const service = yield* DesktopSnapShot.make;
       const result = yield* service.checkShortcut({ kind: "modifier-pair", modifier: "meta" });
       assert.isTrue(result.available);
-      assert.match(result.message ?? "", /Super \+ Super is observed/);
+      assert.match(result.message ?? "", /Left Super \+ Right Super is observed/);
       assert.match(result.message ?? "", /system's own menu/);
     }),
   ).pipe(Effect.provide(layerTest("win32"))),
@@ -3804,7 +3804,7 @@ it.effect("probes macOS modifier pairs with the flags poller", () => {
       const service = yield* DesktopSnapShot.make;
       const result = yield* service.checkShortcut({ kind: "both-shift-keys" });
       assert.isTrue(result.available);
-      assert.match(result.message ?? "", /Shift \+ Shift is observed/);
+      assert.match(result.message ?? "", /Left Shift \+ Right Shift is observed/);
       assert.notMatch(result.message ?? "", /Input Monitoring/);
       assert.lengthOf(spawnedPollers, 1);
       assert.deepEqual(spawnedPollers[0]?.args.slice(-2), ["2", "4"]);

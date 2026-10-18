@@ -748,19 +748,19 @@ describe("snapShotShortcutRegistrationFailureMessage", () => {
   it("distinguishes a modifier listener failure from a reserved key chord", () => {
     expect(
       snapShotShortcutRegistrationFailureMessage({ kind: "both-shift-keys" }, "darwin"),
-    ).toMatch(/Shift \+ Shift is not available/);
+    ).toMatch(/Left Shift \+ Right Shift is not available/);
     expect(
       snapShotShortcutRegistrationFailureMessage(
         { kind: "modifier-pair", modifier: "meta" },
         "darwin",
       ),
-    ).toMatch(/Command \+ Command is not available/);
+    ).toMatch(/Left Command \+ Right Command is not available/);
     expect(
       snapShotShortcutRegistrationFailureMessage(
         { kind: "modifier-pair", modifier: "meta" },
         "linux",
       ),
-    ).toMatch(/Super \+ Super is not available/);
+    ).toMatch(/Left Super \+ Right Super is not available/);
     expect(
       snapShotShortcutRegistrationFailureMessage(
         {
