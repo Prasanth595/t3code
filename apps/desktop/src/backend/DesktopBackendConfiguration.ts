@@ -278,6 +278,9 @@ interface WslPreflightFailure {
 }
 
 const WSL_TRANSIENT_PREFLIGHT_RETRY_LIMIT = 12;
+// Each pre-warm can wait a minute for the distro to boot, so a distro that never
+// answers falls back to Windows after about three minutes.
+const WSL_PRE_WARM_RETRY_LIMIT = 3;
 const WSL_RUNTIME_ARCHIVE_NAME = "wsl-runtime.tar.gz";
 const WSL_RUNTIME_ARCHIVE_HASH_NAME = `${WSL_RUNTIME_ARCHIVE_NAME}.sha256`;
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/i;
@@ -294,6 +297,7 @@ type FailedNodePtyResult = Extract<
 
 const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(function* (input: {
   readonly distro: string | null;
+  readonly preWarmTimedOut: boolean;
   readonly runtimeArchive: DesktopWslEnvironment.WslRuntimeArchive | null;
   readonly allowBuild: boolean;
 }): Effect.fn.Return<
@@ -308,6 +312,17 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   const wslEnv = yield* DesktopWslEnvironment.DesktopWslEnvironment;
   const wslServerTree = yield* DesktopWslServerTree.DesktopWslServerTree;
   const fileSystem = yield* FileSystem.FileSystem;
+
+  // Every command below would wait out its own deadline against a distro that
+  // is still booting, so this attempt stops here.
+  if (input.preWarmTimedOut) {
+    return {
+      _tag: "Failed",
+      reason: `WSL did not start ${input.distro ?? "the default distro"} in time. Check that it opens from a terminal.`,
+      fatal: false,
+      retryLimit: WSL_PRE_WARM_RETRY_LIMIT,
+    } as const;
+  }
 
   const wslAvailable = yield* wslEnv.isAvailable;
   if (!wslAvailable) {
@@ -567,6 +582,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   input: SharedBootstrapInput & {
     readonly port: number;
     readonly distro: string | null;
+    readonly preWarmTimedOut?: boolean;
   },
 ): Effect.fn.Return<
   DesktopBackendManager.DesktopBackendStartConfig,
@@ -628,6 +644,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
 
   const preflight = yield* runWslPreflight({
     distro: input.distro,
+    preWarmTimedOut: input.preWarmTimedOut ?? false,
     runtimeArchive:
       archiveHash === null
         ? null
@@ -797,11 +814,12 @@ export const make = Effect.gen(function* () {
     const backendExposure = yield* serverExposure.backendConfig;
     const persistedSettings = yield* settings.get;
     const shared = yield* sharedInputs;
-    yield* wslEnvironment.preWarm(persistedSettings.wslDistro);
+    const preWarmTimedOut = yield* wslEnvironment.preWarm(persistedSettings.wslDistro);
     return yield* resolveWslStartConfig({
       ...shared,
       port: backendExposure.port,
       distro: persistedSettings.wslDistro,
+      preWarmTimedOut,
     }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, wslEnvironment),

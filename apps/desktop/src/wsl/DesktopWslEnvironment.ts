@@ -17,7 +17,9 @@ import { parseWslDistroList, type WslDistro } from "./wslPathParsing.ts";
 
 const PROCESS_TERMINATE_GRACE = Duration.seconds(1);
 const LIST_TIMEOUT = Duration.seconds(8);
-const PRE_WARM_TIMEOUT = Duration.seconds(10);
+// Pre-warm is the call that boots a stopped distro, and a cold systemd start
+// can take longer than 10 seconds. The calls after it find the distro running.
+const PRE_WARM_TIMEOUT = Duration.seconds(60);
 const WSLPATH_TIMEOUT = Duration.seconds(10);
 const PROBE_TIMEOUT = Duration.seconds(10);
 const TOOLCHAIN_TIMEOUT = Duration.seconds(10);
@@ -93,7 +95,9 @@ export class DesktopWslEnvironment extends Context.Service<
     // successful empty installation.
     readonly listDistros: Effect.Effect<readonly WslDistro[]>;
     readonly probeDistros: Effect.Effect<readonly WslDistro[], DesktopWslDistroListError>;
-    readonly preWarm: (distro: string | null) => Effect.Effect<void>;
+    // Succeeds with true only when the distro did not answer before the
+    // deadline. Any other failure is left for the commands that follow.
+    readonly preWarm: (distro: string | null) => Effect.Effect<boolean>;
     readonly windowsToWslPath: (
       distro: string | null,
       windowsPath: string,
@@ -935,7 +939,7 @@ export const probeWslDistros: Effect.Effect<
 
 const preWarmImpl = (
   distro: string | null,
-): Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner> =>
+): Effect.Effect<boolean, never, ChildProcessSpawner.ChildProcessSpawner> =>
   Effect.scoped(
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -949,7 +953,11 @@ const preWarmImpl = (
       const handle = yield* spawner.spawn(command);
       yield* handle.exitCode;
     }),
-  ).pipe(Effect.timeoutOption(PRE_WARM_TIMEOUT), Effect.ignore);
+  ).pipe(
+    Effect.timeoutOption(PRE_WARM_TIMEOUT),
+    Effect.map(Option.isNone),
+    Effect.orElseSucceed(() => false),
+  );
 
 const windowsToWslPathImpl = (
   distro: string | null,
@@ -1100,7 +1108,7 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
       isAvailable: Effect.succeed(stub.isAvailable ?? false),
       listDistros: probeDistros.pipe(Effect.orElseSucceed(() => [])),
       probeDistros,
-      preWarm: () => Effect.void,
+      preWarm: () => Effect.succeed(false),
       windowsToWslPath: (distro, windowsPath) =>
         Effect.succeed(stub.windowsToWslPath?.(distro, windowsPath) ?? Option.none()),
       getUserHome: (distro) => Effect.succeed(stub.getUserHome?.(distro) ?? Option.none<string>()),

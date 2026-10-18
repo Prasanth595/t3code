@@ -261,6 +261,10 @@ interface BackendManagerState {
   readonly active: Option.Option<ActiveBackendRun>;
   readonly restartAttempt: number;
   readonly preflightFailureAttempt: number;
+  // Failures carry their own retry limits and share one counter, so a failure
+  // with a lower limit can arrive after the counter has already passed it.
+  // This records whether this run of failures has reached the fallback yet.
+  readonly preflightFallbackSurfaced: boolean;
   readonly restartFiber: Option.Option<Fiber.Fiber<void, never>>;
   readonly nextRunId: number;
 }
@@ -272,6 +276,7 @@ const initialState: BackendManagerState = {
   active: Option.none(),
   restartAttempt: 0,
   preflightFailureAttempt: 0,
+  preflightFallbackSurfaced: false,
   restartFiber: Option.none(),
   nextRunId: 1,
 };
@@ -285,6 +290,11 @@ const withActiveRun =
     ...state,
     active: Option.map(state.active, (run) => (run.id === runId ? f(run) : run)),
   });
+
+const resetPreflightFailures = (state: BackendManagerState): BackendManagerState =>
+  state.preflightFailureAttempt === 0 && !state.preflightFallbackSurfaced
+    ? state
+    : { ...state, preflightFailureAttempt: 0, preflightFallbackSurfaced: false };
 
 const calculateRestartDelay = (attempt: number): Duration.Duration =>
   Duration.min(Duration.times(INITIAL_RESTART_DELAY, 2 ** attempt), MAX_RESTART_DELAY);
@@ -704,26 +714,28 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           ready: false,
           config: Option.some(config.value),
           preflightFailureAttempt: resetFatalPreflightCounter ? 0 : latest.preflightFailureAttempt,
+          preflightFallbackSurfaced: resetFatalPreflightCounter
+            ? false
+            : latest.preflightFallbackSurfaced,
         }));
 
         const preflightFailure = config.value.preflightFailure;
         if (Option.isSome(preflightFailure)) {
           const { reason, fatal, retryLimit } = preflightFailure.value;
           if (!fatal && retryLimit === undefined) {
-            yield* Ref.update(state, (latest) =>
-              latest.preflightFailureAttempt === 0
-                ? latest
-                : { ...latest, preflightFailureAttempt: 0 },
-            );
+            yield* Ref.update(state, resetPreflightFailures);
             yield* scheduleRestart(reason);
             return;
           }
           const attemptLimit = retryLimit ?? MAX_PREFLIGHT_FAILURE_ATTEMPTS;
-          const attempt = yield* Ref.modify(state, (latest) => {
+          const { attempt, surfaced } = yield* Ref.modify(state, (latest) => {
             const next = latest.preflightFailureAttempt + 1;
-            return [next, { ...latest, preflightFailureAttempt: next }] as const;
+            return [
+              { attempt: next, surfaced: latest.preflightFallbackSurfaced },
+              { ...latest, preflightFailureAttempt: next },
+            ] as const;
           });
-          if (attempt > attemptLimit) {
+          if (attempt >= attemptLimit && surfaced) {
             yield* logInstanceError("backend preflight still failing after fallback; stopping", {
               reason,
               attempt,
@@ -735,7 +747,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             }));
             return;
           }
-          if (attempt === attemptLimit) {
+          if (attempt >= attemptLimit) {
+            yield* Ref.update(state, (latest) => ({ ...latest, preflightFallbackSurfaced: true }));
             yield* logInstanceError(
               "backend preflight failed repeatedly; surfacing and falling back",
               { reason, attempt },
@@ -757,9 +770,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           yield* scheduleRestart(reason);
           return;
         }
-        yield* Ref.update(state, (latest) =>
-          latest.preflightFailureAttempt === 0 ? latest : { ...latest, preflightFailureAttempt: 0 },
-        );
+        yield* Ref.update(state, resetPreflightFailures);
 
         if (!entryExists) {
           yield* scheduleRestart(`missing server entry at ${config.value.entryPath}`);
