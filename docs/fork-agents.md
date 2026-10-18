@@ -1,6 +1,6 @@
 # Fork tools for agents
 
-This guide maps owner tasks to the fork tools. It is for agents that operate the T3 machines of the owner, the machine map, and the fork deploys and updates. [fork.md](fork.md) explains how each feature works. [apps/machine-map/SPEC.md](../apps/machine-map/SPEC.md) holds the machine map requirements (MM-xxx).
+This guide maps owner tasks to the fork tools. It is for agents that operate the T3 machines of the owner, the machine map, and the fork deploys and updates. [fork/features.md](fork/features.md) explains each feature, and [fork/operations.md](fork/operations.md) holds the maintainer procedures. [apps/machine-map/SPEC.md](../apps/machine-map/SPEC.md) holds the machine map requirements (MM-xxx).
 
 ## Rules
 
@@ -50,7 +50,7 @@ The portal is `https://t3.yarden-zamir.com`. Each machine is one T3 server, for 
 | Revert a map change                     | `machines_undo` with the revision number from `history`. Commands cannot be undone.                                                                                                                   |
 | Cancel a queued command                 | `machines_queue_cancel` with the command id.                                                                                                                                                          |
 | Join a new machine                      | Ask the owner for a join code from Add machine. Then call `machines_join`, or run `t3 machine-map join <code>` on that machine.                                                                       |
-| Install the fork on a new machine       | Run the step 0 command of the join dialog there: `install.sh --join <code>` or `install.ps1 -Join <code>` from `scripts/fork-install`. See fork.md "Install the fork".                                |
+| Install the fork on a new machine       | Run the step 0 command of the join dialog there: `install.sh --join <code>` or `install.ps1 -Join <code>` from `scripts/fork-install`. See [Install the fork](fork/operations.md#install-the-fork).   |
 
 ## Updates and deploys
 
@@ -58,7 +58,7 @@ The portal is `https://t3.yarden-zamir.com`. Each machine is one T3 server, for 
 | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Ship a fork change           | Open a pull request on `Yarden-zamir/t3code` and merge it to main after the checks pass. Main deploys itself.                                                                                                                                                                                          |
 | Update the Mac               | Merge to main. Each code push publishes a desktop release; the app updates itself. Then `machines_command` with `{"_tag":"installUpdate","whenIdle":true}` for the Mac or ask the owner to press the update button. The app must run.                                                                  |
-| Deploy a local build         | Run `scripts/fork-deploy-local.sh <ssh-host>` from the checkout. Use it only when the owner asks, because it restarts the server at once. See fork.md "Deploy a local build".                                                                                                                          |
+| Deploy a local build         | Run `scripts/fork-deploy-local.sh <ssh-host>` from the checkout. Use it only when the owner asks, because it restarts the server at once. See [Deploy a local build](fork/operations.md#deploy-a-local-build).                                                                                         |
 | Update a headless server     | A server that runs as the background service updates itself when `forkAutoUpdate` is on. To update it now, `machines_command` with `{"_tag":"installUpdate","whenIdle":true}` for that machine.                                                                                                        |
 | Deploy the portal            | Merge a change in `apps/machine-map` or `packages/contracts/src/machineMap*.ts` to main. The workflow "Machine map deploy" tests and deploys it. A deploy from a branch rolls back main.                                                                                                               |
 | Release a desktop app        | Merge to main. Each code push runs the workflow "Fork Release". It builds the Mac, Windows and Linux apps, the Linux server archives and `SHA256SUMS`. Then "Fork Android" adds the Android APK when the app changed.                                                                                  |

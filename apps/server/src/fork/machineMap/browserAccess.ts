@@ -42,7 +42,7 @@ const loggedProofFailures = new Set<string>();
  * gets nothing and waits for approval.
  *
  * Known limit: an owner subject that is not an email is the desktop service token for remote
- * machines (docs/fork.md), so it keeps the owner login. Revisit when that token is retired.
+ * machines (docs/fork/operations.md), so it keeps the owner login. Revisit when that token is retired.
  */
 export const ownerBrowserAccess = (
   machineMap: Option.Option<MachineMapState.MachineMapState["Service"]>,

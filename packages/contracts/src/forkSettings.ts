@@ -240,7 +240,7 @@ export const ForkClientSettingsPatchFields = {
 export const ForkServerSettingsFields = {
   /**
    * Fork: where new worktrees go, such as `{repoDir}/{branchLeaf}`. Empty
-   * keeps the `worktreesDirectory` layout. See docs/fork.md.
+   * keeps the `worktreesDirectory` layout. See docs/fork/features.md.
    */
   worktreePathTemplate: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /**
@@ -262,7 +262,7 @@ export const ForkServerSettingsFields = {
   ),
   /**
    * Fork: a server that runs as the background service installs each newer
-   * fork release when no agent turn runs. See docs/fork.md "Server updates".
+   * fork release when no agent turn runs. See docs/fork/operations.md "Server updates".
    */
   forkAutoUpdate: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**
@@ -320,7 +320,7 @@ export const ForkServerSettingsFields = {
   sidebarGroups: SidebarGroups.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /**
    * Fork: the machine map reports and applies the rules of `keybindings.json` as the server
-   * setting `keybindings` (`KEYBINDINGS_SETTING_KEY`). See docs/fork.md "Machine map".
+   * setting `keybindings` (`KEYBINDINGS_SETTING_KEY`). See apps/machine-map/README.md "Keybinding sync".
    */
   keybindingSync: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /**

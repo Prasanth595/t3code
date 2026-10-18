@@ -1,94 +1,96 @@
 # Yarden-zamir fork of T3 Code
 
-This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code). The upstream README starts below the line. Each fork behavior is a setting that starts on when it only adds something, and off when it changes behavior, installs or restarts anything, changes access or needs setup. Settings > Fork shows every fork setting, in the groups of this list. Details and setup: [docs/fork.md](docs/fork.md).
+This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code). The upstream README starts below the line. Each fork behavior is a setting that starts on when it only adds something, and off when it changes behavior, installs or restarts anything, changes access or needs setup. Settings > Fork shows every fork setting, in the groups of this list. Each line links to its section in [docs/fork/features.md](docs/fork/features.md). Maintainer procedures: [docs/fork/operations.md](docs/fork/operations.md).
 
 ## Fork features
 
 **Remote access**
 
-- **Cloudflare Access login:** the server accepts the Cloudflare Access JWT as the owner login (`cloudflareAccessTeamDomain`, `cloudflareAccessAud`, `cloudflareAccessSubjects`).
-- **Request headers per environment:** a saved environment sends its own headers, for example a Cloudflare Access service token. Edit them in Settings > Connections on desktop. The mobile app sends them on API requests, the WebSocket, attachment uploads and downloads, the attachment viewer's text preview, and project, attachment and Markdown images (also SVG). Enter the token under "Cloudflare Access service token" in Add environment, or in the settings of the environment. Not covered on mobile yet: provider icons, the media gallery, audio and video, thread link previews, and web views, whose sub-requests and redirects cannot be limited to one origin.
-- **Tunnel pairing:** a desktop server that listens on loopback makes pairing links with its tunnel URL (`tunnelPairingEnabled`, `tunnelPairingUrl`).
-- **Trusted sibling environments:** trusted browser origins get credentialed CORS and session cookies. One browser page pairs and reaches the other hosts (`trustedBrowserOrigins`).
+- **[Cloudflare Access login](docs/fork/features.md#cloudflare-access-login):** the server accepts the Cloudflare Access JWT as the owner login.
+- **[Request headers per environment](docs/fork/features.md#request-headers-per-environment):** a saved environment sends its own headers, for example a Cloudflare Access service token.
+- **[Tunnel pairing](docs/fork/features.md#tunnel-pairing):** a desktop server on loopback makes pairing links with its tunnel URL.
+- **[Trusted sibling environments](docs/fork/features.md#trusted-sibling-environments):** one browser page pairs with and reaches the other hosts.
 
 **Machine map** (all lines need `machineMap`, which a join to a map turns on)
 
-- **Portal:** one portal at `t3.yarden-zamir.com` (Cloudflare Worker) maps every T3 machine and sets what each machine can do on the others. Requirements: `apps/machine-map/SPEC.md`.
-- **Portal views:** Map, Table, Health, Settings, Queue, Tasks, History, Inbox and Clients. Agent tools (`machines_*` and `machine_tool_call`) cover machine operations; client approvals, invites and emergency resume stay owner-only.
-- **Join and install:** "Add machine" shows one command per system that installs the fork and joins with a one-time code. The portal makes the tunnel of the machine.
-- **Join feedback:** the open join dialog shows when a machine uses the code, and if it connected.
-- **Emergency pause:** a big red button stops all agents and sets all access to none. While paused, each machine locks T3 Code for every client except its own desktop app.
-- **Scheduled tasks:** the Tasks view lists the scheduled tasks of every machine, with pause, resume and run now.
-- **Health alerts:** each machine sends CPU, memory, disk, swap and battery samples. The CPU alert starts when a machine is starved for CPU, not when it is only busy. The battery alert starts below 15% on battery, by default.
-- **Installable portal:** the portal installs as an app, with an offline page, an app badge and Web Push for alerts, proposals, waiting sign-ins and the pause.
-- **Settings and theme sync:** a setting with a shared value syncs to every machine. A change with "All environments" in T3 Settings sets the shared value. Custom themes (the `themes/` folder) and `defaultTheme` sync too.
-- **Settings > Machines:** join or leave the map with a code, and see the machines that this machine can reach.
-- **Desktop app on the map:** the desktop app adds each reachable machine as an environment and applies the shared client settings.
-- **Zoom and pan:** the map has no edges. Cards stay where they drop, and the map zooms, pans and fits all cards, also on phones and small windows. "Auto layout" places every card so the map reads well, as one change with Undo.
-- **Approved clients:** a new browser waits in the Clients view until the owner approves it with a fresh MFA. Each client gets a card and a level per machine.
-- **Client access:** each machine decides which browsers get in through Cloudflare Access. `off` keeps the owner login. `observe` gives a browser of an approved client the level of its arrow, at most `standard`. `enforce` lets in only browsers of approved clients; other browsers wait for approval (`clientAccess`).
-- **Owner-only access changes:** only the owner changes `clientAccess` and `machineMap`, in the portal with the passkey step or in the desktop app of the machine. Agents cannot change them.
-- **Sibling client sessions:** a browser client session lasts 1 day, also on sibling machines. A refused sibling pairs again by itself with the browser key.
-- **App invites and app tokens:** only the owner makes an invite, in the portal. "Invite an app" shows a QR code that a native app, such as the T3 Android app, uses once. The app gets its own Cloudflare Access token, and each machine gives it the level of its arrow. In the mobile app, scan it in Add environment, or paste its link in Address; the app then pairs with every machine it may reach.
-- **Machines panel:** a read-only map in the right panel of a thread. Open it with "Show machines" in the command palette.
+- **[Portal](docs/fork/features.md#machine-map):** one portal at `t3.yarden-zamir.com` maps every T3 machine and sets what each machine can do on the others.
+- **[Portal views](docs/fork/features.md#portal-views):** Map, Table, Health, Settings, Queue, Tasks, History, Inbox and Clients.
+- **[Join and install](docs/fork/features.md#join-and-install):** "Add machine" shows one command per system that installs the fork and joins.
+- **[Join feedback](docs/fork/features.md#join-and-install):** the open join dialog shows when a machine uses the code, and whether it connected.
+- **[Emergency pause](docs/fork/features.md#emergency-pause):** a big red button stops all agents and sets all access to none.
+- **[Scheduled tasks](docs/fork/features.md#scheduled-tasks):** the Tasks view lists the scheduled tasks of every machine.
+- **[Health alerts](docs/fork/features.md#health-alerts):** CPU, memory, disk, swap and battery alerts per machine.
+- **[Installable portal](docs/fork/features.md#installable-portal):** the portal installs as an app, with Web Push for alerts.
+- **[Settings and theme sync](docs/fork/features.md#settings-and-theme-sync):** a setting with a shared value syncs to every machine, also themes and keybindings.
+- **[Settings > Machines](docs/fork/features.md#settings--machines):** join or leave the map, and see the machines that this machine can reach.
+- **[Desktop app on the map](docs/fork/features.md#desktop-app-on-the-map):** the desktop app adds each reachable machine as an environment.
+- **[Zoom and pan](docs/fork/features.md#zoom-and-pan):** the map zooms, pans and fits all cards, with "Auto layout".
+- **[Approved clients](docs/fork/features.md#approved-clients):** a new browser waits until the owner approves it.
+- **[Client access](docs/fork/features.md#client-access):** each machine decides which browsers get in through Cloudflare Access.
+- **[Owner-only access changes](docs/fork/features.md#owner-only-access-changes):** only the owner changes `clientAccess` and `machineMap`.
+- **[Sibling client sessions](docs/fork/features.md#sibling-client-sessions):** a browser client session lasts 1 day, also on sibling machines.
+- **[App invites and app tokens](docs/fork/features.md#app-invites-and-app-tokens):** "Invite an app" shows a QR code that a native app uses once.
+- **[Machines panel](docs/fork/features.md#machines-panel):** a read-only map in the right panel of a thread.
 
 **Updates and releases**
 
-- **Fork releases:** nightly desktop builds for macOS (signed with a self-made certificate), Windows and Linux, plus Linux server archives and `SHA256SUMS`. A release builds on each push to main that changes more than docs or the portal. `t3 update`, "Update everything" and `scripts/install.sh` install from the fork releases.
-- **Android APK:** after a fork release that changed the app, the workflow "Fork Android" adds a signed Android APK of fork main to it. Other releases have no APK, so take the newest release that has one. It installs next to the store app and updates over the previous APK. [Add with Obtainium](https://apps.obtainium.imranr.dev/redirect?r=obtainium://app/%7B%22id%22%3A%22com.yardenzamir.t3code%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2FYarden-zamir%2Ft3code%22%2C%22author%22%3A%22Yarden-zamir%22%2C%22name%22%3A%22T3%20Code%20fork%22%2C%22additionalSettings%22%3A%22%7B%5C%22includePrereleases%5C%22%3Atrue%2C%5C%22fallbackToOlderReleases%5C%22%3Atrue%2C%5C%22apkFilterRegEx%5C%22%3A%5C%22android%5C%5C%5C%5C.apk%24%5C%22%7D%22%7D) to install it and get updates.
-- **Fork installers:** one command installs the fork from the fork releases on macOS, Windows or Linux and joins the machine map. The installer has no source build.
-- **Install when idle:** while agents run, the update offers "Install when idle" next to "Install now".
-- **Server auto-update:** a headless server that runs as the background service installs each newer fork release when no agent turn runs (`forkAutoUpdate`).
-- **Newer update before install:** before the desktop app installs a downloaded update, it checks for a newer release. If one exists, it asks "Download newer" or "Install this one". Install when idle and the machine map take the newer release (`checkNewerBeforeUpdateInstall`, off by default).
-- **Local deploy:** `scripts/fork-deploy-local.sh <ssh-host>` builds this checkout for a headless Linux server and switches its service to it.
-- **Local Mac build:** `scripts/fork-desktop-mac.sh --install` builds and signs the Mac app from this checkout and replaces the installed app. `--publish` uploads it as a fork prerelease instead.
-- **Changelog:** a timeline of fork releases and commits, also in the update popover for the offered update, the pending upstream commits, a "Start Fork Sync" button and an "Ask agent" menu (`forkChangelogEnabled`, on by default).
-- **Fork Sync:** a daily workflow merges upstream main into fork main. It never rewrites main.
-- **Fork CI:** runs on each push to main and on each pull request to main. Branch protection requires the one check "Fork CI result".
-- **Repair agent:** a failed Fork Sync or Fork Release run, or a failed Fork CI run on main, calls the webhook task "Fork repair" on the VPS. The repair agent works in one long-lived thread and compacts its context after each repair. A pull request never calls it.
+- **[Fork releases](docs/fork/features.md#fork-releases):** nightly desktop builds and Linux server archives from fork main.
+- **[Android APK](docs/fork/features.md#android-apk):** a signed APK of fork main that installs next to the store app.
+- **[Fork installers](docs/fork/features.md#fork-installers):** one command installs the fork and joins the machine map.
+- **[Install when idle](docs/fork/features.md#install-when-idle):** while agents run, the update offers "Install when idle".
+- **[Server auto-update](docs/fork/features.md#server-auto-update):** a headless server installs each newer fork release when idle.
+- **[Newer update before install](docs/fork/features.md#newer-update-before-install):** the desktop app checks for a newer release before it installs.
+- **[Changelog](docs/fork/features.md#changelog):** a timeline of fork releases, upstream commits and Fork Sync runs.
+- **[Local deploy](docs/fork/operations.md#deploy-a-local-build):** `scripts/fork-deploy-local.sh <ssh-host>` deploys this checkout to a headless Linux server.
+- **[Local Mac build](docs/fork/operations.md#local-mac-build):** `scripts/fork-desktop-mac.sh` builds and signs the Mac app from this checkout.
+- **[Fork Sync](docs/fork/operations.md#fork-sync):** a daily workflow merges upstream main into fork main.
+- **[Fork CI](docs/fork/operations.md#fork-ci):** runs on each push and pull request to main; branch protection requires "Fork CI result".
+- **[Repair agent](docs/fork/operations.md#repair-agent):** a failed Fork Sync, Fork Release or Fork CI run on main calls an agent on the VPS.
 
 **Agents**
 
-- **Recover interrupted agents:** after a restart, each cut-off thread gets a "Recover and continue" message (`recoverInterruptedTurns`). Recovery stops after three in a row, and a project that turns off "Continue threads after restarts" keeps it off.
-- **Background work details:** background work notifications name their tasks and output files, with a details popover (`backgroundWorkDetails`, on by default).
-- **Pull requests from origin:** a fork checkout lists, reads and watches the pull requests of its fork, not of upstream (`preferOriginRemote`).
-- **Pull request watch remark filter:** select which comments and reviews wake an agent that watches a pull request (`pullRequestWatchRemarkFilter`).
-- **Agent session import limits:** set the import window and the message limit for imported agent sessions (`agentSessionImportWindowDays`, `agentSessionImportMaxMessages`).
-- **Scheduled task model:** a scheduled task runs on any provider instance, or on the project default model.
+- **[Recover interrupted agents](docs/fork/features.md#recover-interrupted-agents):** after a restart, each cut-off thread gets a "Recover and continue" message.
+- **[Background work details](docs/fork/features.md#background-work-details):** background work notifications name their tasks and output files.
+- **[Pull requests from origin](docs/fork/features.md#pull-requests-from-origin):** a fork checkout uses the pull requests of its fork, not of upstream.
+- **[Pull request watch remark filter](docs/fork/features.md#pull-request-watch-remark-filter):** select which comments and reviews wake a watching agent.
+- **[Agent session import limits](docs/fork/features.md#agent-session-import-limits):** the import window and the message limit for imported sessions.
+- **[Scheduled task model](docs/fork/features.md#scheduled-task-model):** a scheduled task runs on any provider instance, or on the project default model.
 
 **Threads**
 
-- **Sidebar groups:** thread groups as tabs above the sidebar list, filled by drag or by rules. Each tab has an icon and can hide its name. The first tab can be renamed and can show all threads. The machine map syncs the groups to every machine (`sidebarGroupsEnabled`; `sidebarGroupSingleThreadOpens`; `sidebarGroups`).
-- **Snooze quick options:** edit the choices of the snooze menus (`snoozeQuickOptions`).
-- **Worktree path template:** a template decides where new worktrees go, for example next to `main/` in a `.bare` container (`worktreePathTemplate`).
-- **Thread link chips:** every thread link form in chat, including the attached-thread markers that agents copy, looks like an attached thread and opens the thread in T3 Code (`threadLinkChips`). A thread address opened from Slack or GitHub can open the desktop app (`threadLinksOpenDesktopApp`).
+- **[Sidebar groups](docs/fork/features.md#sidebar-groups):** thread groups as tabs above the sidebar list, filled by drag or by rules.
+- **[Snooze quick options](docs/fork/features.md#snooze-quick-options):** edit the choices of the snooze menus.
+- **[Worktree path template](docs/fork/features.md#worktree-path-template):** a template decides where new worktrees go.
+- **[Thread link chips](docs/fork/features.md#thread-link-chips):** every thread link in chat shows as an attached-thread chip.
+- **[Thread addresses open the desktop app](docs/fork/features.md#thread-addresses-open-the-desktop-app):** a thread address from Slack or GitHub opens the desktop app.
 
 **Filters**
 
-- **Repository owner filters:** filter the pull request page and the sidebar by repository owner. Type `org:` or `-org:` in the pull request search (`repositoryOwnerFilters`, on by default).
-- **Pull request filter chips:** the active pull request filters show as chips that flip between "is" and "is not" (`pullRequestFilterChips`, on by default).
+- **[Repository owner filters](docs/fork/features.md#repository-owner-filters):** filter the pull request page and the sidebar by repository owner.
+- **[Pull request filter chips](docs/fork/features.md#pull-request-filter-chips):** the active pull request filters show as chips.
 
 **Scripts and terminal**
 
-- **Global scripts:** scripts for every project, pinned script buttons, floating previews and app overlays (`globalScripts`, `pinnedGlobalScriptIds`, `pinnedProjectScriptIds`). A script can run in the background without opening the terminal drawer (`runInBackground`). A remote client opens an app overlay action in the preview instead.
-- **App toggle shortcuts:** global keys that show and hide the desktop app (`appToggleShortcuts`).
-- **Keyboard focus levels:** Escape moves focus from the composer to the timeline, then to the sidebar. Arrow keys move a cursor there to open threads, switch groups and cite parts of messages (`keyboardFocusLevels`, off by default; `focusLevelHighlight`, on by default). Keys for thread actions and approvals work with it off.
-- **Shortcuts in tooltips:** control tooltips name the keyboard shortcut of the control, such as the stash, the runtime mode or the approval buttons (`tooltipShortcuts`, on by default; `tooltipShortcutLimit` keys per tooltip, default 4).
-- **Terminal settings:** app shortcuts first in the terminal, and a confirmation before a terminal closes (`terminalAppShortcutsFirst`; `confirmTerminalClose`, on by default).
+- **[Global scripts](docs/fork/features.md#global-scripts):** scripts for every project, pinned buttons, floating previews and app overlays.
+- **[App toggle shortcuts](docs/fork/features.md#app-toggle-shortcuts):** global keys that show and hide the desktop app.
+- **[Keyboard focus levels](docs/fork/features.md#keyboard-focus-levels):** Escape moves focus between composer, timeline and sidebar; arrow keys move a cursor.
+- **[Shortcuts in tooltips](docs/fork/features.md#shortcuts-in-tooltips):** control tooltips show the keys of the control as chips.
+- **[Terminal settings](docs/fork/features.md#terminal-settings):** app shortcuts first in the terminal, and a confirmation before a terminal closes.
 
 **Web app and look**
 
-- **Installed web app:** each server web app installs as an app, with an offline page, worker notifications and an app badge (`installedAppEnabled`, on by default).
-- **Web Push:** a phone gets thread notifications while the app is closed, from each server that the page connects to (`webPushEnabled`, on by default).
-- **Thread card layouts:** build the thread card from its elements, for desktop and for mobile (`threadCardLayouts`).
-- **Local server groups:** the browser Local servers list also shows servers that no T3 terminal started, grouped by the thread's worktree, its project and all others. Servers outside every project are listed without an HTTP check (`previewLocalServerGroups`).
-- **Theme style:** published themes can set shape, fonts, a canvas pattern, user CSS and an icon pack that replaces app icons (`icons`).
-- **Lightning icon:** the fork app uses its own icon on every nightly icon file.
+- **[Installed web app](docs/fork/features.md#installed-web-app):** each server web app installs as an app, with an offline page and an app badge.
+- **[Web Push](docs/fork/features.md#web-push):** a phone gets thread notifications while the app is closed.
+- **[Thread card layouts](docs/fork/features.md#thread-card-layouts):** build the thread card from its elements, for desktop and for mobile.
+- **[Local server groups](docs/fork/features.md#local-server-groups):** the browser Local servers list also shows servers that no T3 terminal started.
+- **[Theme style](docs/fork/features.md#theme-style):** published themes set shape, fonts, a canvas pattern and user CSS.
+- **[Theme icon packs](docs/fork/features.md#theme-icon-packs):** a published theme replaces app icons with its own SVGs.
+- **[Lightning icon](docs/fork/features.md#lightning-icon):** the fork app uses its own icon.
 
 **Command line and MCP**
 
-- **`t3 tool`:** `t3 tool list`, `describe` and `call` run T3 MCP tools from the command line.
-- **Open workspace with a checkout:** the desktop open-workspace request accepts a checkout.
+- **[`t3 tool`](docs/fork/features.md#t3-tool):** `t3 tool list`, `describe` and `call` run T3 MCP tools from the command line.
+- **[Open workspace with a checkout](docs/fork/features.md#open-workspace-with-a-checkout):** the desktop open-workspace request accepts a checkout.
 
 ## Fork fixes
 

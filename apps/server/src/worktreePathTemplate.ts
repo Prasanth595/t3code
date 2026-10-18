@@ -10,7 +10,7 @@ import {
   worktreePathBranchVariables,
 } from "@t3tools/shared/worktreePathTemplate";
 
-/** Fork: the `worktreePathTemplate` setting. See docs/fork.md. */
+/** Fork: the `worktreePathTemplate` setting. See docs/fork/features.md. */
 
 const MAX_NAME_SUFFIX = 100;
 

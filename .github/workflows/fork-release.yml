@@ -6,7 +6,7 @@ name: Fork Release
 # updater (`t3 update`, "Update everything"), which reads the server archives
 # t3-<version>-linux-<arch>.tar.gz and SHA256SUMS. SHA256SUMS is uploaded
 # last, so a release without it is not ready for servers. It does not touch
-# main: .github/workflows/fork-sync.yml merges upstream. See docs/fork.md.
+# main: .github/workflows/fork-sync.yml merges upstream. See docs/fork/operations.md "Fork Release".
 
 on:
   # Every push to main, so that servers get each change from a release. A push

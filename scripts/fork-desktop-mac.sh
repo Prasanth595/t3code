@@ -4,7 +4,7 @@
 # Usage: scripts/fork-desktop-mac.sh [--publish | --install]
 # --install replaces the app in /Applications and restarts it. No GitHub round trip.
 # --publish uploads the build as a prerelease on the fork, so installed fork apps update to it.
-# See docs/fork.md.
+# See docs/fork/operations.md "Local Mac build".
 set -euo pipefail
 
 readonly FORK_REPOSITORY="Yarden-zamir/t3code"
@@ -23,7 +23,7 @@ repo_root="$(git rev-parse --show-toplevel)"
 cd "$repo_root"
 
 if ! security find-identity -v -p codesigning | grep -q "\"$SIGN_IDENTITY\""; then
-  echo "No trusted code signing identity \"$SIGN_IDENTITY\" in the keychain. See docs/fork.md." >&2
+  echo "No trusted code signing identity \"$SIGN_IDENTITY\" in the keychain. See docs/fork/operations.md." >&2
   exit 1
 fi
 

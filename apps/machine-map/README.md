@@ -77,6 +77,42 @@ Open `https://t3.yarden-zamir.com`, go to Clients, and select "Invite an app". S
 
 Registering the passkey stays manual. The first approval asks for it. To register it before, open `https://super-bird-2876.cloudflareaccess.com/AddMfaDevice`. "Confirm with passkey" opens a Cloudflare page that asks for the passkey, not a browser prompt.
 
+## Client access
+
+The server setting `clientAccess` (MM-916) decides which browsers get in through Cloudflare Access. Turn it on in this order:
+
+1. Update every machine to a build that knows `enforce`. An older machine skips the value, while the portal shows it as set.
+2. Set `observe` on every machine.
+3. In the Clients view, select "Sign out everywhere" (MM-903). Open sessions send no key, so they must sign in again.
+4. Sign in once on each device. Approve each waiting key in the Clients view, and check its arrows.
+5. Set `enforce` on one machine first. Open it from each device. Then set `enforce` on the other machines.
+
+If `enforce` locks a browser out, use one of these ways back in:
+
+- On a machine with a desktop app, the desktop app always gets in. In its Settings > Machines, set "Client access" to `observe` or `off`. The change reaches the portal also after a restart, and the portal sends a push message.
+- On a headless machine, set `clientAccess` in the portal Settings view. Without the portal, connect with SSH. Then set `"clientAccess": "off"` in its `settings.json`, or run `t3 pair` and open the pairing link.
+- Pairing links keep working on every machine.
+
+## Keybinding sync
+
+MM-414 holds the rule. These are the effects for the owner:
+
+- The shared value replaces the whole `keybindings.json` on each machine, so rules that only one machine had go. To keep a rule on one machine only, save it there for one environment.
+- A sync turned on from the portal, or in the same change as a `keybindings` value, makes the shared value win. A sync turned on in T3 Settings first reports the file of each machine. With a shared value present, those rules become the own value of that machine (MM-404). Clear that own value in the portal to follow the shared value.
+- A machine writes only a value that differs from the previous desired state. A start or a change of another setting does not write. A default rule that an update adds at start thus stays in the file, and the machine reports it as its own value. Use "Make shared" to share it.
+- A `keybindings.json` that is not a JSON array stays as it is, with a warning in the server log. Fix the file by hand.
+- With the sync off on the primary environment, a save with "All environments" shares nothing and shows a notice.
+- A machine skips rules with a command that it does not know, and shows the "Invalid keybindings configuration" notice. A keybinding saved on that machine drops them from its own file.
+- A machine on a build without keybinding sync logs `keybindings` as a setting that does not apply, and does not change its file.
+
+## Desktop app on the map
+
+MM-1401 and MM-1402 hold the rules. The desktop app acts only while its own server is joined, because only then does the server send it the token headers.
+
+- It pairs each machine environment through `/api/auth/cloudflare-access/pairing-credential`, with the machine token as request headers for that origin only. It pairs again once when the target ends the session after a level change.
+- It reports its current client settings. The server leaves out values that equal the desired ones, so the map does not see its own writes as local changes.
+- It reports the result of `reloadWindows` and `installUpdate` before it acts. `installUpdate` "when idle" uses the install-when-idle wait. It also reports the version of a waiting update.
+
 ## Code
 
 - `src/worker.ts`: routes, Cloudflare Access checks, request decoding.

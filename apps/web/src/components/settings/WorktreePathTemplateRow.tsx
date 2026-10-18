@@ -11,7 +11,7 @@ import {
   useUpdateScopedSettings,
 } from "./useScopedSettings";
 
-/** Fork: the `worktreePathTemplate` setting. See docs/fork.md. */
+/** Fork: the `worktreePathTemplate` setting. See docs/fork/features.md. */
 export function WorktreePathTemplateRow() {
   const { connectedEnvironments, targets } = useSettingsScope();
   const settings = useScopedSettings();
