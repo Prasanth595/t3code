@@ -6,10 +6,6 @@ import {
   getGitActionDisabledReason,
   requiresDefaultBranchConfirmation,
 } from "@t3tools/client-runtime/state/vcs";
-import {
-  resolveThreadPullRequestChains,
-  threadPullRequestKeyOf,
-} from "@t3tools/shared/threadPullRequests";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
   CommonActions,
@@ -21,10 +17,10 @@ import { SymbolView } from "../../../components/ui/AppSymbol";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Platform, Pressable, RefreshControl, ScrollView, View } from "react-native";
 
-import { Screen, ScreenStack, ScreenStackHeaderConfig } from "react-native-screens";
+import { ScreenStack } from "react-native-screens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { NativeSheetContent } from "../../../native/NativeSheetContent";
-import { useUniwindTheme } from "../../../lib/useUniwindTheme";
+import { NativeHeader, NativeScreen } from "../../../native/ThemedScreenStack";
 import {
   AndroidHeaderIconButton,
   AndroidSheetHeader,
@@ -45,6 +41,12 @@ import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-wo
 import { vcsEnvironment } from "../../../state/vcs";
 import { resolveGitOverviewReviewNavigationAction } from "./git-overview-navigation";
 import { MetaCard, SheetListRow, menuItemIconName, statusSummary } from "./gitSheetComponents";
+import {
+  LinkedPullRequestRow,
+  linkedPullRequestKey,
+  useLinkedPullRequestLines,
+} from "../LinkedPullRequestList";
+import { useLinkedPullRequestActions } from "../useLinkedPullRequestActions";
 
 const HEADER_SCROLL_EDGE_EFFECTS = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
 
@@ -59,7 +61,6 @@ type GitOverviewSheetProps = StaticScreenProps<{
 export function GitOverviewSheet(props: GitOverviewSheetProps) {
   const navigation = useNavigation();
   const { environmentId, threadId } = props.route.params;
-  // A hand-typed deep link can carry a blank ID, which the branded IDs reject.
   const isBlankLink = environmentId.trim().length === 0 || threadId.trim().length === 0;
   useEffect(() => {
     if (isBlankLink) navigation.goBack();
@@ -73,27 +74,25 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const presentation = props.presentation ?? "sheet";
-  const openPullRequest = useOpenPullRequest({ replace: presentation === "sheet" });
   const isInspector = presentation === "inspector";
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const threadId = ThreadId.make(props.route.params.threadId);
-  const { selectedThread, selectedEnvironmentRuntime } = useThreadSelection();
+  const { selectedThread, selectedThreadProject, selectedEnvironmentRuntime } =
+    useThreadSelection();
+  const openPullRequest = useOpenPullRequest({
+    replace: presentation === "sheet",
+    context: selectedThread ?? undefined,
+  });
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
-  const supportsLinkedPrSnapshots =
-    selectedEnvironmentRuntime?.serverConfig?.environment.capabilities.threadPullRequests === true;
-  const linkedPrChains = useMemo(
-    () =>
-      resolveThreadPullRequestChains(
-        supportsLinkedPrSnapshots ? (selectedThread?.pullRequests ?? []) : [],
-      ),
-    [selectedThread?.pullRequests, supportsLinkedPrSnapshots],
-  );
+  const linkedPrLines = useLinkedPullRequestLines(selectedThread, selectedEnvironmentRuntime);
+  const linkedPrActions = useLinkedPullRequestActions({
+    thread: selectedThread,
+    project: selectedThreadProject,
+    runtime: selectedEnvironmentRuntime,
+  });
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const { canWriteSourceControl, canChangeThreadBranch } = gitActions;
-  const theme = useUniwindTheme();
-  const foregroundColor = theme["--color-foreground"];
-  const sheetColor = theme["--color-sheet"];
 
   const gitStatus = useEnvironmentQuery(
     selectedThread !== null && selectedThreadCwd !== null
@@ -228,8 +227,6 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     ],
   );
 
-  // Status facts live on the relevant rows instead of crowding the header
-  // subtitle: files changed → Commit, ahead → Push, PR → View PR, behind → Pull.
   const rowStatusDetail = useCallback(
     (item: (typeof menuItems)[number]): string | undefined => {
       const status = gitStatus.data;
@@ -254,9 +251,8 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
 
   const behindCount = gitStatus.data?.behindCount ?? 0;
 
-  // Deterministic refresh state. Tying RefreshControl to the query's
-  // isPending flag left the spinner stuck (the status query reports pending
-  // during quiet background refreshes too).
+  // Tying RefreshControl to the query's isPending flag left the spinner stuck
+  // (the status query reports pending during quiet background refreshes too).
   const [isRefreshing, setIsRefreshing] = useState(false);
   const handleRefresh = useCallback(async () => {
     setIsRefreshing(true);
@@ -353,54 +349,36 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
             })
           }
         />
+        {linkedPrActions.canLink ? (
+          <>
+            {Platform.OS !== "android" ? <View className="ml-12 h-px bg-border" /> : null}
+            <SheetListRow
+              icon="link"
+              title="Link pull request"
+              subtitle="Attach a pull request by URL or number"
+              onPress={linkedPrActions.promptLink}
+            />
+          </>
+        ) : null}
       </View>
 
-      {linkedPrChains.length > 0 ? (
+      {linkedPrLines.length > 0 ? (
         <View className="gap-2">
           <Text className="px-1 text-xs font-t3-bold text-foreground-muted">
             Linked pull requests
           </Text>
-          {linkedPrChains.map((chain) => (
-            <View
-              key={threadPullRequestKeyOf(chain.layers[0]!)}
-              className="overflow-hidden bg-card android:rounded-[20px] ios:rounded-2xl ios:border ios:border-border ios:px-3 ios:py-1"
-            >
-              {chain.layers.length > 1 ? (
-                <View className="flex-row items-center gap-2 px-1 pt-2 pb-1">
-                  <SymbolView
-                    name="square.3.layers.3d"
-                    size={14}
-                    tintColorClassName="accent-foreground-muted"
-                  />
-                  <Text className="text-xs text-foreground-muted">
-                    {chain.kind === "native" ? "Stack" : "Branch stack"} · {chain.layers.length} PRs
-                    · bottom to top
-                  </Text>
-                </View>
-              ) : null}
-              {chain.layers.map((link, index) => (
-                <View key={threadPullRequestKeyOf(link)}>
-                  {index > 0 && Platform.OS !== "android" ? (
-                    <View className="ml-12 h-px bg-border" />
-                  ) : null}
-                  <SheetListRow
-                    icon="arrow.triangle.pull"
-                    title={`#${link.number} ${link.snapshot?.title ?? "Pull request"}`}
-                    subtitle={`${link.repository} · ${link.snapshot === null ? "Status pending" : link.snapshot.isDraft && link.snapshot.state === "open" ? "Draft" : link.snapshot.state}${link.watch === undefined ? "" : " · Watching"}`}
-                    onPress={() => {
-                      void openPullRequest(link.url).then((opened) => {
-                        if (!opened)
-                          Dialog.alert(
-                            "Unable to open PR",
-                            "The pull request could not be opened.",
-                          );
-                      });
-                    }}
-                  />
-                </View>
-              ))}
-            </View>
-          ))}
+          <View className="overflow-hidden bg-card android:rounded-[20px] ios:rounded-2xl ios:border ios:border-border">
+            {linkedPrLines.map((line, index) => (
+              <LinkedPullRequestRow
+                key={linkedPullRequestKey(line)}
+                line={line}
+                separator={index < linkedPrLines.length - 1}
+                surfaceClassName="text-card"
+                openPullRequest={openPullRequest}
+                actions={linkedPrActions}
+              />
+            ))}
+          </View>
         </View>
       ) : null}
 
@@ -412,28 +390,28 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     return (
       <View collapsable={false} className="flex-1 border-l border-border bg-sheet">
         <ScreenStack style={{ flex: 1 }}>
-          <Screen
+          <NativeScreen
             activityState={2}
             enabled
             isNativeStack
             screenId="thread-git-inspector-native"
             scrollEdgeEffects={HEADER_SCROLL_EDGE_EFFECTS}
-            style={{ backgroundColor: sheetColor, flex: 1 }}
+            className="flex-1 bg-sheet"
           >
             <NativeSheetContent>{content}</NativeSheetContent>
-            <ScreenStackHeaderConfig
+            <NativeHeader
               backgroundColor="rgba(0,0,0,0)"
-              color={foregroundColor}
+              tintColorClassName="accent-foreground"
               hideBackButton
               hideShadow={false}
               navigationItemStyle="editor"
               title={currentBranchLabel}
-              titleColor={foregroundColor}
+              titleColorClassName="accent-foreground"
               titleFontSize={17}
               titleFontWeight="700"
               translucent
             />
-          </Screen>
+          </NativeScreen>
         </ScreenStack>
       </View>
     );
@@ -442,34 +420,32 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
   if (Platform.OS === "ios") {
     // Compact form sheet: a plain screen presented as formSheet never renders a
     // stack header, so — like the Settings sheet — the header must come from a
-    // nested native stack INSIDE the sheet. This reuses the exact structure of the
-    // inspector branch below: branch as the title, status summary as the native
-    // subtitle, and content that owns pull-to-refresh.
+    // nested native stack INSIDE the sheet.
     return (
       <View collapsable={false} className="flex-1 bg-sheet">
         <ScreenStack style={{ flex: 1 }}>
-          <Screen
+          <NativeScreen
             activityState={2}
             enabled
             isNativeStack
             screenId="thread-git-sheet-native"
             scrollEdgeEffects={HEADER_SCROLL_EDGE_EFFECTS}
-            style={{ backgroundColor: sheetColor, flex: 1 }}
+            className="flex-1 bg-sheet"
           >
             <NativeSheetContent>{content}</NativeSheetContent>
-            <ScreenStackHeaderConfig
+            <NativeHeader
               backgroundColor="rgba(0,0,0,0)"
-              color={foregroundColor}
+              tintColorClassName="accent-foreground"
               hideBackButton
               hideShadow={false}
               navigationItemStyle="editor"
               title={currentBranchLabel}
-              titleColor={foregroundColor}
+              titleColorClassName="accent-foreground"
               titleFontSize={18}
               titleFontWeight="800"
               translucent
             />
-          </Screen>
+          </NativeScreen>
         </ScreenStack>
       </View>
     );

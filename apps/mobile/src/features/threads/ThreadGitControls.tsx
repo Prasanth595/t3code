@@ -20,6 +20,7 @@ import { useNavigation } from "@react-navigation/native";
 
 import { useCallback, useMemo } from "react";
 import { useEnvironmentScope } from "../../state/session";
+import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import {
   basename,
   getTerminalStatusLabel,
@@ -82,7 +83,6 @@ type QuickActionIcon =
   | "checkmark.circle"
   | "arrow.up.circle";
 
-/** The subset of git-control wiring the standalone git menu needs. */
 export type ThreadGitMenuProps = {
   readonly environmentId: EnvironmentId | string;
   readonly threadId: ThreadId | string;
@@ -91,7 +91,6 @@ export type ThreadGitMenuProps = {
   readonly gitOperationLabel: string | null;
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
-  /** Present only on a thread whose work can be merged into the one it came from. */
   readonly onMergeBack?: () => void;
   readonly onPull: () => Promise<void>;
   readonly onRunAction: (input: GitActionRequestInput) => Promise<GitRunStackedActionResult | null>;
@@ -387,7 +386,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
               ? [
                   {
                     description: "Bring this thread's latest turn into its source",
-                    icon: { name: "arrow.triangle.merge", type: "sfSymbol" as const },
+                    icon: { name: PullRequestGlyph.merged, type: "sfSymbol" as const },
                     label: "Merge back to source",
                     onPress: props.onMergeBack,
                     type: "action" as const,
