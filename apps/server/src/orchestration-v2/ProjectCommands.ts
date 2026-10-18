@@ -29,6 +29,10 @@ export interface ProjectMetaUpdateCommand {
   readonly projectId: ProjectId;
   readonly title?: string;
   readonly workspaceRoot?: string;
+  // Only ever cleared here: until settings are folded, resolving falls back to
+  // the row's copy once the override is gone, so a reset must reach it too.
+  readonly defaultModelSelection?: null;
+  readonly defaultThreadEnvMode?: null;
   readonly faviconPath?: string | null;
   readonly projectIcon?: ProjectIconOverride | null;
 }
@@ -183,6 +187,12 @@ export function planProjectCommand(input: {
           projectId: command.projectId,
           ...(command.title === undefined ? {} : { title: command.title }),
           ...(command.workspaceRoot === undefined ? {} : { workspaceRoot: command.workspaceRoot }),
+          ...(command.defaultModelSelection === undefined
+            ? {}
+            : { defaultModelSelection: command.defaultModelSelection }),
+          ...(command.defaultThreadEnvMode === undefined
+            ? {}
+            : { defaultThreadEnvMode: command.defaultThreadEnvMode }),
           ...(command.faviconPath === undefined ? {} : { faviconPath: command.faviconPath }),
           ...(command.projectIcon === undefined ? {} : { projectIcon: command.projectIcon }),
           updatedAt: occurredAt,

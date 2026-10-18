@@ -209,6 +209,39 @@ it.layer(layerTest)("ProjectService", (it) => {
     }),
   );
 
+  it.effect("clears a row's legacy model and thread mode before settings are folded", () =>
+    Effect.gen(function* () {
+      const service = yield* ProjectService.ProjectService;
+      const sql = yield* SqlClient.SqlClient;
+      const projectId = ProjectId.make("project:unfolded-reset");
+      yield* service.create({
+        commandId: CommandId.make("command:unfolded-reset:create"),
+        projectId,
+        title: "Unfolded reset",
+        workspaceRoot: "/work/unfolded-reset",
+      });
+      yield* sql`
+        UPDATE projection_projects
+        SET default_model_selection_json = ${JSON.stringify({ instanceId: "codex", model: "gpt-5.5" })},
+          default_thread_env_mode = 'worktree'
+        WHERE project_id = ${projectId}
+      `;
+      assert.equal(
+        Option.getOrThrow(yield* service.getById(projectId)).defaultThreadEnvMode,
+        "worktree",
+      );
+
+      const reset = yield* service.update({
+        commandId: CommandId.make("command:unfolded-reset:reset"),
+        projectId,
+        defaultModelSelection: null,
+        defaultThreadEnvMode: null,
+      });
+      assert.isNull(reset.defaultModelSelection);
+      assert.isNull(reset.defaultThreadEnvMode);
+    }),
+  );
+
   it.effect("rejects active workspace collisions", () =>
     Effect.gen(function* () {
       const service = yield* ProjectService.ProjectService;

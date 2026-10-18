@@ -496,6 +496,8 @@ export const make = Effect.gen(function* () {
           projectId: input.projectId,
           ...(input.title === undefined ? {} : { title: input.title }),
           ...(workspaceRoot === previousRoot ? {} : { workspaceRoot }),
+          ...(input.defaultModelSelection === null ? { defaultModelSelection: null } : {}),
+          ...(input.defaultThreadEnvMode === null ? { defaultThreadEnvMode: null } : {}),
           ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
           ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),
         },
