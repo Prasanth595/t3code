@@ -251,7 +251,7 @@ describe("describePluginSource", () => {
 });
 
 describe("resolvePluginManageAccess", () => {
-  it("requires access:write", () => {
+  it("requires credential and execution authority", () => {
     const access = (scopes: ReadonlyArray<string> | undefined) =>
       resolvePluginManageAccess({
         session: {
@@ -261,7 +261,9 @@ describe("resolvePluginManageAccess", () => {
         isPending: false,
         hasError: false,
       });
-    expect(access(["orchestration:read", "access:write"])).toBe("granted");
+    expect(access(["orchestration:read", "access:write"])).toBe("denied");
+    expect(access(["terminal:operate"])).toBe("denied");
+    expect(access(["access:write", "terminal:operate"])).toBe("granted");
     expect(access(["orchestration:read", "orchestration:operate"])).toBe("denied");
     expect(access(undefined)).toBe("denied");
   });
@@ -276,7 +278,7 @@ describe("resolvePluginManageAccess", () => {
   });
 
   it("grants nothing from an earlier read while the current one fails or is in flight", () => {
-    const session = { authenticated: true, scopes: ["access:write" as never] };
+    const session = { authenticated: true, scopes: ["access:write", "terminal:operate"] as never };
     expect(resolvePluginManageAccess({ session, isPending: false, hasError: true })).toBe(
       "unreadable",
     );
@@ -306,7 +308,9 @@ describe("resolvePluginManageAccess", () => {
     };
     try {
       expect(access()).toBe("pending");
-      reads.get("admin")!.resolve({ authenticated: true, scopes: ["access:write"] } as never);
+      reads
+        .get("admin")!
+        .resolve({ authenticated: true, scopes: ["access:write", "terminal:operate"] } as never);
       await settled(registry, sessionState, AsyncResult.isSuccess);
       expect(access()).toBe("granted");
 
@@ -317,6 +321,7 @@ describe("resolvePluginManageAccess", () => {
       // The failed result still carries the administrative read as its previous success.
       expect(Option.getOrNull(AsyncResult.value(registry.get(sessionState)))?.scopes).toEqual([
         "access:write",
+        "terminal:operate",
       ]);
       expect(access()).toBe("unreadable");
     } finally {
@@ -341,7 +346,7 @@ describe("pluginSettingsReadOnly", () => {
       hasError: false,
     });
 
-  it("lets only a session with access:write save plugin settings", () => {
+  it("lets only a session with management authority save plugin settings", () => {
     expect(pluginSettingsReadOnly(settled(AuthStandardClientScopes))).toBe(false);
     expect(pluginSettingsReadOnly(settled([AuthOrchestrationReadScope]))).toBe(true);
   });
@@ -363,7 +368,7 @@ describe("pluginSettingsReadOnly", () => {
 });
 
 describe("plugin management readiness", () => {
-  it("manages only with access:write and a live catalogue", () => {
+  it("manages only with both scopes and a live catalogue", () => {
     const live = availableState(available([installation()]));
     expect(canManagePlugins("granted", live)).toBe(true);
     for (const access of ["denied", "pending", "unreadable"] as const)

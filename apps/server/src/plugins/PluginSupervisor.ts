@@ -816,8 +816,8 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
 
   /**
    * Starts the plugin's process if needed and waits until it has activated.
-   * Claiming a start through publishing its outcome is uninterruptible, so an
-   * interrupted starter never strands the calls waiting on its start.
+   * Startup belongs to the supervisor, so a caller can stop waiting without
+   * cancelling activation or stranding other calls waiting for its outcome.
    */
   const ensureChild = Effect.fnUntraced(function* (entry: Entry) {
     const claim = yield* Effect.sync(() => {
@@ -846,39 +846,41 @@ export const make = Effect.fn("PluginSupervisor.make")(function* (
         reason: "its previous process is still stopping.",
       });
 
-    const started = yield* Effect.gen(function* () {
-      yield* setState(entry, { _tag: "starting" });
-      if (entry.removed) return yield* new PluginStoppedError({ pluginId: entry.pluginId });
-      const child = yield* spawnChild(entry);
-      entry.child = child;
-      if (entry.removed) revokeChild(entry, child);
-      const { manifest, entryPath } = entry.registration;
-      write(child, {
-        _tag: "Activate",
-        pluginId: manifest.id,
-        version: manifest.version,
-        apiVersion: manifest.apiVersion,
-        entryPath,
-        proposedApi: manifest.proposedApi,
-        capabilities: manifest.capabilities,
-        maxMessageBytes,
-      });
-      const activated = yield* Deferred.await(child.ready).pipe(
-        Effect.timeoutOption(activationTimeout),
-      );
-      if (Option.isNone(activated)) {
-        kill(child, `did not activate within ${Duration.toMillis(activationTimeout)}ms.`);
-        yield* Deferred.await(child.exited);
-        return yield* Deferred.await(child.ready).pipe(Effect.as(child));
-      }
-      // Ready can arrive after disable began; that generation never runs.
-      if (child.stopping) return yield* new PluginStoppedError({ pluginId: entry.pluginId });
-      yield* setState(entry, { _tag: "running" });
-      return child;
-    }).pipe(Effect.exit);
-    entry.starting = undefined;
-    yield* Deferred.done(claim.deferred, started);
-    return yield* started;
+    yield* Effect.gen(function* () {
+      const started = yield* Effect.gen(function* () {
+        yield* setState(entry, { _tag: "starting" });
+        if (entry.removed) return yield* new PluginStoppedError({ pluginId: entry.pluginId });
+        const child = yield* spawnChild(entry);
+        entry.child = child;
+        if (entry.removed) revokeChild(entry, child);
+        const { manifest, entryPath } = entry.registration;
+        write(child, {
+          _tag: "Activate",
+          pluginId: manifest.id,
+          version: manifest.version,
+          apiVersion: manifest.apiVersion,
+          entryPath,
+          proposedApi: manifest.proposedApi,
+          capabilities: manifest.capabilities,
+          maxMessageBytes,
+        });
+        const activated = yield* Deferred.await(child.ready).pipe(
+          Effect.timeoutOption(activationTimeout),
+        );
+        if (Option.isNone(activated)) {
+          kill(child, `did not activate within ${Duration.toMillis(activationTimeout)}ms.`);
+          yield* Deferred.await(child.exited);
+          return yield* Deferred.await(child.ready).pipe(Effect.as(child));
+        }
+        // Ready can arrive after disable began; that generation never runs.
+        if (child.stopping) return yield* new PluginStoppedError({ pluginId: entry.pluginId });
+        yield* setState(entry, { _tag: "running" });
+        return child;
+      }).pipe(Effect.exit);
+      entry.starting = undefined;
+      yield* Deferred.done(claim.deferred, started);
+    }).pipe(Effect.forkIn(fibers, { startImmediately: true, uninterruptible: true }));
+    return yield* Effect.interruptible(Deferred.await(claim.deferred));
   }, Effect.uninterruptible);
 
   const cancel = (entry: Entry, child: Child, requestId: number, handler: string) =>

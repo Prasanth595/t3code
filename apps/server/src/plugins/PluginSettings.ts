@@ -336,8 +336,6 @@ export const make = Effect.fn("PluginSettings.make")(function* (
       ),
     );
 
-  // ---- Host methods: what the plugin's own process may read and write ----
-
   const owner = (registration: PluginRegistration) =>
     registration.installationId !== undefined &&
     registration.manifest.capabilities.includes(PLUGIN_SETTINGS_CAPABILITY)

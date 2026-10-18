@@ -1,5 +1,6 @@
 import {
   AuthAccessWriteScope,
+  AuthTerminalOperateScope,
   type AuthEnvironmentScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -59,6 +60,34 @@ const makeClient = (scopes: ReadonlyArray<AuthEnvironmentScope>, handled: Array<
 const update = { installationId, changes: [{ key: "token", value: "fixture-secret" }] };
 
 describe("plugin settings RPC scopes", () => {
+  it.effect.each([
+    { scopes: [AuthAccessWriteScope], missing: AuthTerminalOperateScope },
+    { scopes: [AuthTerminalOperateScope], missing: AuthAccessWriteScope },
+  ] as const)(
+    "refuses management missing $missing before any handler runs",
+    ({ scopes, missing }) =>
+      Effect.gen(function* () {
+        const handled: Array<string> = [];
+        const client = yield* makeClient(scopes, handled);
+        expect(
+          yield* client[WS_METHODS.pluginsSettingsUpdate](update).pipe(Effect.flip),
+        ).toMatchObject({
+          _tag: "EnvironmentAuthorizationError",
+          requiredScope: missing,
+          requiredPermission: missing,
+        });
+        expect(handled).toEqual([]);
+      }).pipe(Effect.scoped),
+  );
+  it.effect("allows management with credential and execution authority", () =>
+    Effect.gen(function* () {
+      const handled: Array<string> = [];
+      const client = yield* makeClient([AuthAccessWriteScope, AuthTerminalOperateScope], handled);
+      expect(yield* client[WS_METHODS.pluginsSettingsUpdate](update)).toEqual(values);
+      expect(handled).toEqual([WS_METHODS.pluginsSettingsUpdate]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("lets a read-only pairing read values but not save them", () =>
     Effect.gen(function* () {
       const handled: Array<string> = [];

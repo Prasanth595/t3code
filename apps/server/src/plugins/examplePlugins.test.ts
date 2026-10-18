@@ -151,6 +151,31 @@ const withDatabase = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
 
 it.layer(NodeServices.layer)("example plugins", (it) => {
   describe("turn-notifier", () => {
+    it.effect("preserves each turn outcome when long thread names are truncated", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const { install, finishTurns, notifications } = yield* start();
+          const installationId = yield* install("turn-notifier");
+          const title = "x".repeat(100);
+          yield* finishTurns(installationId, [
+            { threadId: THREAD_A, title, outcome: "completed" },
+            { threadId: THREAD_A, title, outcome: "failed" },
+            { threadId: THREAD_A, title, outcome: "interrupted" },
+            { threadId: THREAD_A, title, outcome: "cancelled" },
+            { threadId: THREAD_A, title, operation: "capture-checkpoint" },
+          ]);
+          const frame = yield* Stream.runHead(notifications.subscribe).pipe(
+            Effect.map(Option.getOrThrow),
+          );
+          assert.deepStrictEqual(
+            frame.notifications.map(({ title }) => title.split(": ")[0]),
+            ["finished", "failed", "was interrupted", "was cancelled", "Finishing the turn failed"],
+          );
+          assert.isTrue(frame.notifications.every(({ title }) => title.length <= 80));
+        }),
+      ),
+    );
+
     it.effect("notifies once per finished turn, naming the thread and the outcome", () =>
       withDatabase(
         Effect.gen(function* () {
@@ -173,13 +198,13 @@ it.layer(NodeServices.layer)("example plugins", (it) => {
             [
               {
                 pluginId: "example.turn-notifier",
-                title: "Fix login finished",
+                title: "finished: Fix login",
                 tone: "success",
                 threadId: THREAD_A,
               },
               {
                 pluginId: "example.turn-notifier",
-                title: "Upgrade deps failed",
+                title: "failed: Upgrade deps",
                 tone: "error",
                 threadId: THREAD_B,
               },
@@ -209,7 +234,7 @@ it.layer(NodeServices.layer)("example plugins", (it) => {
             })),
             [
               {
-                title: "Fix login: finishing the turn failed",
+                title: "Finishing the turn failed: Fix login",
                 body: "Saving the checkpoint failed.",
                 tone: "warning",
                 threadId: THREAD_A,

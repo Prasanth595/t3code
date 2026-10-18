@@ -33,21 +33,24 @@ const supportsPluginViews = (
   capabilities: Pick<ExecutionEnvironmentCapabilities, "pluginViews"> | null | undefined,
 ) => capabilities?.pluginViews === true;
 
+const EMPTY: PluginViewsView = { _tag: "available", views: [], problems: [] };
+
 const UNSUPPORTED: PluginViewsView = { _tag: "unsupported" };
 
 /**
  * Follows the environment's sessions and checks each server's capability
  * before subscribing, so a server without views never receives a view call.
+ * Clears the previous session's views before waiting for the next server.
  * A host mounts only views in the latest `available` frame and tears down a
  * mount whose `(installationId, generation, viewId)` leaves it.
  */
-const pluginViewsStream = Stream.unwrap(
+export const pluginViewsStream = Stream.unwrap(
   EnvironmentSupervisor.EnvironmentSupervisor.pipe(
     Effect.map((supervisor) =>
       SubscriptionRef.changes(supervisor.session).pipe(
         Stream.switchMap(
           Option.match({
-            onNone: () => Stream.empty,
+            onNone: () => Stream.succeed(EMPTY),
             onSome: (session) =>
               Stream.unwrap(
                 session.initialConfig.pipe(
@@ -65,7 +68,7 @@ const pluginViewsStream = Stream.unwrap(
                   // A session that never delivered its config has nothing to show yet.
                   Effect.orElseSucceed(() => Stream.empty),
                 ),
-              ),
+              ).pipe(Stream.prepend([EMPTY])),
           }),
         ),
       ),

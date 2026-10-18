@@ -1,5 +1,6 @@
 import {
   AuthAccessWriteScope,
+  AuthTerminalOperateScope,
   type AuthEnvironmentScope,
   AuthOrchestrationReadScope,
   AuthRelayReadScope,
@@ -91,6 +92,35 @@ const callWrites = (client: Effect.Success<ReturnType<typeof makeClient>>) =>
   ]);
 
 describe("plugin RPC scopes", () => {
+  it.effect.each([
+    { scopes: [AuthAccessWriteScope], missing: AuthTerminalOperateScope },
+    { scopes: [AuthTerminalOperateScope], missing: AuthAccessWriteScope },
+  ] as const)(
+    "refuses management missing $missing before any handler runs",
+    ({ scopes, missing }) =>
+      Effect.gen(function* () {
+        const handled: Array<string> = [];
+        const client = yield* makeClient(scopes, handled);
+        for (const failure of yield* callWrites(client)) {
+          expect(failure).toMatchObject({
+            _tag: "EnvironmentAuthorizationError",
+            requiredScope: missing,
+            requiredPermission: missing,
+          });
+        }
+        expect(handled).toEqual([]);
+      }).pipe(Effect.scoped),
+  );
+  it.effect("allows management with credential and execution authority", () =>
+    Effect.gen(function* () {
+      const handled: Array<string> = [];
+      const client = yield* makeClient([AuthAccessWriteScope, AuthTerminalOperateScope], handled);
+      for (const failure of yield* callWrites(client))
+        expect(failure._tag).toBe("PluginCatalogError");
+      expect(handled).toEqual([...writes]);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("lets a read-only pairing read the catalogue but not change what runs", () =>
     Effect.gen(function* () {
       const handled: Array<string> = [];

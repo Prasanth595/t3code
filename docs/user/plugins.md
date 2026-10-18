@@ -68,9 +68,9 @@ A plugin that cannot run on this version of T3 Code is marked **Incompatible**. 
 receives events shows how delivery is going beside its state; when delivery keeps failing it stops
 until you resume it, and no events are skipped. Fix the problem, then choose **Resume**.
 
-Managing plugins, including installing and updating from npm, needs administrative access to the
-environment. A browser paired with a standard link can see the plugins but not change them; pair it
-with an administrative link to manage them.
+Managing plugins, including installing and updating from npm, needs both credential administration
+and permission to run code on the environment. Pair the browser or desktop app with a link granting
+both permissions. A connection without both can view plugins but cannot change them.
 
 The mobile app shows plugins read-only, under **Settings** > **Server settings** > **Plugins**: their
 state, event delivery, and details, including the npm package and integrity of a plugin installed
@@ -138,7 +138,7 @@ With the `settings` capability, list up to 32 fields in `settings`. Each has a `
 
 Fill them in under **Settings** > **Integrations** in the web or desktop app, for the environment
 selected at the top. A saved secret shows only that it is saved: enter a new value to replace it, or
-**Clear** it. A browser paired with a standard link sees the values but cannot change them. The
+**Clear** it. A connection without both management permissions sees the values but cannot change them. The
 mobile app shows the saved values read-only on the environment's settings screen (secrets only as
 saved or not set); edit them from an administrative web or desktop connection.
 

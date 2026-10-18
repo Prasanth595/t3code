@@ -12,7 +12,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { create, type ReactTestInstance, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import type { ChatComposerHandle } from "~/components/chat/ChatComposer";
@@ -233,7 +233,8 @@ const refOn = (environmentId: string, thread = "thread-a"): ScopedThreadRef => (
   environmentId: EnvironmentId.make(environmentId),
   threadId: ThreadId.make(thread),
 });
-let renderer: ReactTestRenderer | undefined;
+let root: Root;
+let container: HTMLDivElement;
 
 // The chat layout owns one composer ref; navigation swaps the composer behind it.
 const composerRef: ComposerHandleRef = { current: null };
@@ -296,27 +297,24 @@ async function renderFileFor(
     composerRef.current = {
       insertTextAtEnd: composerOf(threadRef),
     } as unknown as ChatComposerHandle;
-    if (renderer) renderer.update(element);
-    else renderer = create(element);
+    root.render(element);
   });
 }
 
-async function press(node: ReactTestInstance) {
-  await act(async () => node.props.onClick());
+async function press(node: HTMLButtonElement) {
+  await act(async () => node.click());
 }
 
 async function openSrcFolder() {
-  const browse = renderer!.root.findAll(
-    (node) => node.type === "button" && node.props["aria-label"] === "Browse src",
-  );
+  const browse = container.querySelectorAll<HTMLButtonElement>('button[aria-label="Browse src"]');
   expect(browse).toHaveLength(1);
   await press(browse[0]!);
 }
 
 const siblingValues = () =>
-  renderer!.root
-    .findAll((node) => node.type === "button" && node.props["data-value"] !== undefined)
-    .map((node) => node.props["data-value"] as string);
+  Array.from(container.querySelectorAll<HTMLButtonElement>("button[data-value]")).map(
+    (node) => node.dataset.value,
+  );
 
 const surfacesOf = (threadRef: ScopedThreadRef) =>
   useRightPanelStore.getState().byThreadKey[scopedThreadKey(threadRef)]?.surfaces;
@@ -349,10 +347,9 @@ async function openInBrowser() {
   late.assetUrl = late.deferred();
   late.session = late.deferred();
   await press(
-    renderer!.root.find(
-      (node) =>
-        node.type === "button" && node.props["aria-label"] === "Open file in preview browser",
-    ),
+    container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open file in preview browser"]',
+    )!,
   );
 }
 
@@ -392,18 +389,10 @@ beforeAll(() => import("./FilesSidePanel"), 30_000);
 beforeEach(() => {
   late.selectTreeRows = null;
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  const storage = new Map<string, string>();
-  vi.stubGlobal("document", { addEventListener: vi.fn(), removeEventListener: vi.fn() });
-  vi.stubGlobal("window", {
-    desktopBridge: { preview: {} },
-    addEventListener: vi.fn(),
-    removeEventListener: vi.fn(),
-    localStorage: {
-      getItem: (key: string) => storage.get(key) ?? null,
-      setItem: (key: string, value: string) => storage.set(key, value),
-      removeItem: (key: string) => storage.delete(key),
-    },
-  });
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+  localStorage.clear();
   siblingsByEnvironment.clear();
   composers.clear();
   late.previewRequests = 0;
@@ -418,9 +407,9 @@ beforeEach(() => {
     userActionRevisionByThreadKey: {},
   });
 });
-afterEach(() => {
-  act(() => renderer?.unmount());
-  renderer = undefined;
+afterEach(async () => {
+  await act(() => root.unmount());
+  container.remove();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -432,11 +421,7 @@ describe("files side panel", () => {
     await openSrcFolder();
     expect(siblingValues()).toEqual(["src/a.ts", "src/b.ts"]);
 
-    await press(
-      renderer!.root.find(
-        (node) => node.type === "button" && node.props["data-value"] === "src/b.ts",
-      ),
-    );
+    await press(container.querySelector<HTMLButtonElement>('button[data-value="src/b.ts"]')!);
     expect(surfacesOf(threadRef)).toMatchObject([{ kind: "file", relativePath: "src/b.ts" }]);
     expect(surfacesOf(refOn("environment-b"))).toBeUndefined();
   });
@@ -448,11 +433,7 @@ describe("files side panel", () => {
     await openSrcFolder();
     expect(siblingValues()).toEqual(["src/a.ts", "src/c.ts"]);
 
-    await press(
-      renderer!.root.find(
-        (node) => node.type === "button" && node.props["data-value"] === "src/c.ts",
-      ),
-    );
+    await press(container.querySelector<HTMLButtonElement>('button[data-value="src/c.ts"]')!);
     expect(surfacesOf(threadRef)).toMatchObject([{ kind: "file", relativePath: "src/c.ts" }]);
     expect(surfacesOf(refOn("environment-a"))).toBeUndefined();
   });
@@ -597,8 +578,7 @@ describe("files actions that settle late", () => {
     late.browserDefaults = new Promise((_, reject) => (rejectSettings = reject));
     await openInBrowser();
     await settleAsset();
-    act(() => renderer!.unmount());
-    renderer = undefined;
+    await act(() => root.unmount());
     await act(async () => rejectSettings(new Error("settings unreadable")));
     expect(late.previewRequests).toBe(0);
     expect(browserErrorToasts()).toEqual([]);

@@ -14,6 +14,7 @@ import {
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -210,6 +211,51 @@ it.layer(NodeServices.layer)("PluginContextEnrichment", (it) => {
   });
 
   describe("enrich", () => {
+    it.effect("bounds cold activation by the enrichment deadline without waiting for startup", () =>
+      withDatabase(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { supervisor, catalog, enricher, install } = yield* start(yield* Scope.Scope);
+          const directory = yield* pluginDirectory();
+          yield* fs.writeFileString(
+            path.join(directory, "main.mjs"),
+            `
+            export function activate(context) {
+              context.proposed.handle("t3.transform.enrich", () => null);
+              context.log.info("cold-activation-started");
+              return new Promise((resolve) => context.signal.addEventListener("abort", resolve));
+            }
+          `,
+          );
+          const installation = yield* install(directory);
+          const [source] = yield* enricher.sources;
+          const events = yield* supervisor.subscribe;
+          const finished = yield* Deferred.make<unknown>();
+          const enriching = yield* enricher.enrich(source!, runInput("cold")).pipe(
+            Effect.tap((outcome) => Deferred.succeed(finished, outcome)),
+            Effect.forkChild({ startImmediately: true }),
+          );
+          yield* Stream.fromSubscription(events).pipe(
+            Stream.filter(
+              (event) => event._tag === "Log" && event.message === "cold-activation-started",
+            ),
+            Stream.runHead,
+          );
+          yield* TestClock.adjust("2 seconds");
+          const finishedAtDeadline = yield* Deferred.isDone(finished);
+          // Release startup before asserting, so even the broken version cleans up its process.
+          yield* catalog.disable({ installationId: installation.installationId });
+          const outcome = yield* Fiber.join(enriching);
+          expect(finishedAtDeadline).toBe(true);
+          expect(outcome).toEqual({
+            _tag: "skipped",
+            reason: "Context fixture did not answer within 2 seconds.",
+          });
+        }),
+      ),
+    );
+
     it.effect("passes the run to the plugin and returns its context", () =>
       withDatabase(
         Effect.gen(function* () {

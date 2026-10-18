@@ -250,7 +250,7 @@ type PluginManageAccessChildren = (
 ) => ReactNode;
 
 /**
- * Resolves whether this session may manage the environment's plugins (access:write)
+ * Resolves whether this session may manage the environment's plugins (both plugin management scopes)
  * and renders `children` with it. Plugin settings forms, which save through an
  * administrative RPC, use it to go read-only.
  */

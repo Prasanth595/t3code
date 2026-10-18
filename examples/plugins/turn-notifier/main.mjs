@@ -20,12 +20,12 @@ function describe(event) {
   const thread = event.thread?.title || "A thread";
   if (event.type === "run.finalized") {
     const outcome = OUTCOMES[event.outcome] ?? { verb: "ended", tone: "neutral" };
-    return { title: `${thread} ${outcome.verb}`, tone: outcome.tone };
+    return { title: `${outcome.verb}: ${thread}`, tone: outcome.tone };
   }
   if (event.type === "run.finalization-failed") {
     const body = OPERATIONS[event.operation];
     return {
-      title: `${thread}: finishing the turn failed`,
+      title: `Finishing the turn failed: ${thread}`,
       tone: "warning",
       ...(body === undefined ? {} : { body }),
     };
