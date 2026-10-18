@@ -11,6 +11,7 @@
 import * as NodeFS from "node:fs";
 
 import { assert, it } from "@effect/vitest";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
@@ -1132,9 +1133,9 @@ describe("interrupted: a T3 restart", () => {
             id: "run-1",
             ordinal: 1,
             status: "cancelled",
-            requestedAt: new Date(requestedAt).toISOString(),
+            requestedAt: DateTime.makeUnsafe(requestedAt),
             startedAt: null,
-            completedAt: new Date(completedAt).toISOString(),
+            completedAt: DateTime.makeUnsafe(completedAt),
           },
         ],
         messages: [],
