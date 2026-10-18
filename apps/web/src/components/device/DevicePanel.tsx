@@ -231,7 +231,10 @@ export function DevicePanel(props: {
               {grouped.length === 0 ? (
                 <>
                   <Smartphone className="size-6 opacity-60" />
-                  <p className="max-w-sm">
+                  <p
+                    className="max-h-32 w-full max-w-sm overflow-y-auto whitespace-pre-line break-words"
+                    tabIndex={state.hostStatus === "failed" ? 0 : undefined}
+                  >
                     {state.hostStatus === "failed"
                       ? (state.hostStatusDetail ?? "The device hub failed to start.")
                       : "No simulators or emulators were found on this environment."}
