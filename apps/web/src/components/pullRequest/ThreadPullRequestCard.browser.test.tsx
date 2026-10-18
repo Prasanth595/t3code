@@ -445,6 +445,24 @@ it("builds upward from the oldest commit shown, then adds the rows above, once p
     .flatMap((animation) => (animation.effect as KeyframeEffect).getKeyframes());
   expect(held.some((frame) => frame.transform === "translateY(-64px)")).toBe(true);
   await settle(list);
+  await page.getByRole("button", { name: "Show 2 more commits" }).click();
+  const head = list.querySelector('[data-commit-sha="sha-0"]')!;
+  const target = list.querySelector('[data-graph-row="pull-request"]')!;
+  expect(head.getAnimations({ subtree: true })).toHaveLength(0);
+  expect(target.getAnimations({ subtree: true })).toHaveLength(0);
+  expect(target.textContent).toContain("Merge into main");
+  await settle(list);
+  await page.getByRole("button", { name: "Show less" }).click();
+  expect(head.getAnimations({ subtree: true })).toHaveLength(0);
+  expect(target.getAnimations({ subtree: true })).toHaveLength(0);
+  await renderHistory({
+    target: { ...ready!, tone: "warning", status: "checks 0/1" },
+    workingFiles: 2,
+    entranceKey: "build-once",
+  });
+  expect(head.querySelector("path")!.getAnimations()).toHaveLength(0);
+  expect(head.getAnimations()).toHaveLength(0);
+  expect(target.querySelector("path")!.getAnimations()).toHaveLength(0);
   await act(async () => root.unmount());
   root = createRoot(container);
   await renderHistory({ target: ready, workingFiles: 2, entranceKey: "build-once" });
