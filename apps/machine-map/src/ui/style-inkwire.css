@@ -131,11 +131,11 @@
     .pair
   ) {
   border-color: var(--shadow-ink);
-  border-radius: var(--wobble);
+  border-radius: var(--sk-radius);
 }
 :root[data-style="inkwire"] .node {
   border-color: var(--shadow-ink);
-  border-radius: var(--wobble-lg);
+  border-radius: var(--sk-radius-lg);
 }
 :root[data-style="inkwire"] .btn {
   position: relative;
@@ -172,15 +172,129 @@
   position: absolute;
   inset: -3px -1px -1px -3px;
   border: 1px solid currentColor;
-  border-radius: var(--wobble-pass);
+  border-radius: var(--sk-pass-radius);
   opacity: 0.4;
-  transform: rotate(-0.8deg);
+  transform: translate(var(--sk-dx), var(--sk-dy)) rotate(var(--sk-rot));
   pointer-events: none;
 }
 :root[data-style="inkwire"] :is(.node, .pair)::after {
-  border-radius: var(--wobble-lg-pass);
+  border-radius: var(--sk-pass-radius-lg);
   opacity: 0.3;
-  transform: rotate(-0.5deg);
+  transform: translate(var(--sk-dx), var(--sk-dy)) rotate(calc(var(--sk-rot) * 0.6));
+}
+
+/* Each sketch is drawn a little differently: its own tilt, shift and corner wobble. The variation
+   keys off the position of the control and of its parent, so it is fixed for a given layout and
+   never changes between renders. No cycle matches position 1, so an only child takes its
+   variation from its parent. */
+:root[data-style="inkwire"] {
+  --sk-rot: -0.8deg;
+  --sk-dx: 0px;
+  --sk-dy: 0px;
+  --sk-radius: var(--wobble);
+  --sk-radius-lg: var(--wobble-lg);
+  --sk-pass-radius: var(--wobble-pass);
+  --sk-pass-radius-lg: var(--wobble-lg-pass);
+}
+:root[data-style="inkwire"]
+  :nth-child(3n + 2)
+  > :is(.btn, .seg, .tabs, input, select, textarea, .item, .pair, .node) {
+  --sk-rot: 0.6deg;
+}
+:root[data-style="inkwire"]
+  :nth-child(3n)
+  > :is(.btn, .seg, .tabs, input, select, textarea, .item, .pair, .node) {
+  --sk-rot: -0.35deg;
+}
+:root[data-style="inkwire"]
+  :nth-child(2n)
+  > :is(.btn, .seg, .tabs, input, select, textarea, .item, .pair, .node) {
+  --sk-dx: 1.5px;
+  --sk-dy: -0.5px;
+}
+:root[data-style="inkwire"]
+  :nth-child(4n + 3)
+  > :is(.btn, .seg, .tabs, input, select, textarea, .item, .pair, .node) {
+  --sk-dx: -0.5px;
+  --sk-dy: 1px;
+}
+:root[data-style="inkwire"]
+  :nth-child(5n + 2)
+  > :is(.btn, .seg, .tabs, input, select, textarea, .item, .pair, .node) {
+  --sk-radius: 10px 6px 12px 7px / 7px 11px 6px 12px;
+  --sk-radius-lg: 12px 22px 14px 20px / 22px 14px 20px 12px;
+  --sk-pass-radius: 6px 12px 7px 11px / 12px 7px 11px 6px;
+  --sk-pass-radius-lg: 22px 12px 20px 14px / 14px 20px 12px 22px;
+}
+:root[data-style="inkwire"]
+  :nth-child(5n + 3)
+  > :is(.btn, .seg, .tabs, input, select, textarea, .item, .pair, .node) {
+  --sk-radius: 8px 11px 7px 12px / 12px 7px 10px 8px;
+  --sk-radius-lg: 22px 14px 18px 12px / 16px 22px 12px 20px;
+  --sk-pass-radius: 12px 8px 10px 6px / 9px 12px 6px 11px;
+  --sk-pass-radius-lg: 14px 18px 22px 12px / 20px 12px 16px 22px;
+}
+:root[data-style="inkwire"]
+  :nth-child(5n + 4)
+  > :is(.btn, .seg, .tabs, input, select, textarea, .item, .pair, .node) {
+  --sk-radius: 11px 7px 10px 6px / 6px 12px 8px 11px;
+  --sk-radius-lg: 14px 20px 22px 12px / 20px 12px 14px 22px;
+  --sk-pass-radius: 7px 11px 12px 6px / 11px 6px 8px 12px;
+  --sk-pass-radius-lg: 20px 14px 12px 22px / 12px 22px 20px 14px;
+}
+:root[data-style="inkwire"]
+  :nth-child(5n)
+  > :is(.btn, .seg, .tabs, input, select, textarea, .item, .pair, .node) {
+  --sk-radius: 9px 12px 8px 7px / 10px 7px 12px 9px;
+  --sk-radius-lg: 18px 12px 14px 22px / 12px 20px 22px 14px;
+  --sk-pass-radius: 10px 7px 6px 12px / 8px 11px 12px 7px;
+  --sk-pass-radius-lg: 12px 22px 18px 14px / 22px 14px 12px 20px;
+}
+:root[data-style="inkwire"]
+  :is(.btn, .seg, .tabs, input, select, textarea, .item, .pair, .node):nth-child(3n + 2) {
+  --sk-rot: 0.6deg;
+}
+:root[data-style="inkwire"]
+  :is(.btn, .seg, .tabs, input, select, textarea, .item, .pair, .node):nth-child(3n) {
+  --sk-rot: -0.35deg;
+}
+:root[data-style="inkwire"]
+  :is(.btn, .seg, .tabs, input, select, textarea, .item, .pair, .node):nth-child(2n) {
+  --sk-dx: 1.5px;
+  --sk-dy: -0.5px;
+}
+:root[data-style="inkwire"]
+  :is(.btn, .seg, .tabs, input, select, textarea, .item, .pair, .node):nth-child(4n + 3) {
+  --sk-dx: -0.5px;
+  --sk-dy: 1px;
+}
+:root[data-style="inkwire"]
+  :is(.btn, .seg, .tabs, input, select, textarea, .item, .pair, .node):nth-child(5n + 2) {
+  --sk-radius: 10px 6px 12px 7px / 7px 11px 6px 12px;
+  --sk-radius-lg: 12px 22px 14px 20px / 22px 14px 20px 12px;
+  --sk-pass-radius: 6px 12px 7px 11px / 12px 7px 11px 6px;
+  --sk-pass-radius-lg: 22px 12px 20px 14px / 14px 20px 12px 22px;
+}
+:root[data-style="inkwire"]
+  :is(.btn, .seg, .tabs, input, select, textarea, .item, .pair, .node):nth-child(5n + 3) {
+  --sk-radius: 8px 11px 7px 12px / 12px 7px 10px 8px;
+  --sk-radius-lg: 22px 14px 18px 12px / 16px 22px 12px 20px;
+  --sk-pass-radius: 12px 8px 10px 6px / 9px 12px 6px 11px;
+  --sk-pass-radius-lg: 14px 18px 22px 12px / 20px 12px 16px 22px;
+}
+:root[data-style="inkwire"]
+  :is(.btn, .seg, .tabs, input, select, textarea, .item, .pair, .node):nth-child(5n + 4) {
+  --sk-radius: 11px 7px 10px 6px / 6px 12px 8px 11px;
+  --sk-radius-lg: 14px 20px 22px 12px / 20px 12px 14px 22px;
+  --sk-pass-radius: 7px 11px 12px 6px / 11px 6px 8px 12px;
+  --sk-pass-radius-lg: 20px 14px 12px 22px / 12px 22px 20px 14px;
+}
+:root[data-style="inkwire"]
+  :is(.btn, .seg, .tabs, input, select, textarea, .item, .pair, .node):nth-child(5n) {
+  --sk-radius: 9px 12px 8px 7px / 10px 7px 12px 9px;
+  --sk-radius-lg: 18px 12px 14px 22px / 12px 20px 22px 14px;
+  --sk-pass-radius: 10px 7px 6px 12px / 8px 11px 12px 7px;
+  --sk-pass-radius-lg: 12px 22px 18px 14px / 22px 14px 12px 20px;
 }
 
 /* Primary: a cyan outline and label with a soft glow on dark; a solid fill on paper. */

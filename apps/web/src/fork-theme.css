@@ -216,7 +216,7 @@
     [data-slot="select-trigger"],
     [data-testid="sidebar-row-card"]
   ) {
-  border-radius: var(--inkwire-wobble);
+  border-radius: var(--inkwire-radius);
   transition-property: box-shadow, scale, border-color, background-color, color;
   transition-duration: 140ms;
 }
@@ -248,9 +248,9 @@
     position: absolute;
     inset: -3px -1px -1px -3px;
     border: 1px solid currentColor;
-    border-radius: var(--inkwire-wobble-pass);
+    border-radius: var(--inkwire-pass-radius);
     opacity: 0.45;
-    transform: rotate(-0.8deg);
+    transform: translate(var(--inkwire-dx), var(--inkwire-dy)) rotate(var(--inkwire-rot));
     pointer-events: none;
   }
 }
@@ -260,9 +260,9 @@
   position: absolute;
   inset: -3px -1px -1px -3px;
   border: 1px solid currentColor;
-  border-radius: var(--inkwire-wobble-pass);
+  border-radius: var(--inkwire-pass-radius);
   opacity: 0.35;
-  transform: rotate(-0.2deg);
+  transform: translate(var(--inkwire-dx), var(--inkwire-dy)) rotate(calc(var(--inkwire-rot) * 0.25));
   pointer-events: none;
 }
 :root[data-theme-id="inkwire"] [data-testid="sidebar-row-card"][aria-current="page"]::after {
@@ -270,10 +270,295 @@
   position: absolute;
   inset: 2px 1px 1px 2px;
   border: 1px solid currentColor;
-  border-radius: var(--inkwire-wobble-pass);
+  border-radius: var(--inkwire-pass-radius);
   opacity: 0.32;
-  transform: rotate(-0.5deg);
+  transform: translate(var(--inkwire-dx), var(--inkwire-dy)) rotate(calc(var(--inkwire-rot) * 0.6));
   pointer-events: none;
+}
+
+/* Each sketch is drawn a little differently: its own tilt, shift and corner wobble, fixed for a
+   given layout so nothing changes between renders. Controls vary by their position and their
+   parent's; no cycle matches position 1, so an only child takes its variation from the parent.
+   Thread rows and your messages sit in lists that reorder and virtualize, so they vary by the
+   last character of their id instead and keep their sketch while the list scrolls. Only sketched
+   things carry these variables, so the rest of the page keeps sharing styles. */
+:root[data-theme-id="inkwire"] {
+  --inkwire-rot: -0.8deg;
+  --inkwire-dx: 0px;
+  --inkwire-dy: 0px;
+  --inkwire-radius: var(--inkwire-wobble);
+  --inkwire-pass-radius: var(--inkwire-wobble-pass);
+  --inkwire-pass-radius-lg: var(--inkwire-wobble-lg-pass);
+}
+:root[data-theme-id="inkwire"]
+  :nth-child(3n + 2)
+  > :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="composer-shell"],
+    [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
+  ) {
+  --inkwire-rot: 0.6deg;
+}
+:root[data-theme-id="inkwire"]
+  :nth-child(3n)
+  > :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="composer-shell"],
+    [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
+  ) {
+  --inkwire-rot: -0.35deg;
+}
+:root[data-theme-id="inkwire"]
+  :nth-child(2n)
+  > :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="composer-shell"],
+    [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
+  ) {
+  --inkwire-dx: 1.5px;
+  --inkwire-dy: -0.5px;
+}
+:root[data-theme-id="inkwire"]
+  :nth-child(4n + 3)
+  > :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="composer-shell"],
+    [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
+  ) {
+  --inkwire-dx: -0.5px;
+  --inkwire-dy: 1px;
+}
+:root[data-theme-id="inkwire"]
+  :nth-child(5n + 2)
+  > :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="composer-shell"],
+    [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
+  ) {
+  --inkwire-radius: 10px 6px 12px 7px / 7px 11px 6px 12px;
+  --inkwire-pass-radius: 6px 12px 7px 11px / 12px 7px 11px 6px;
+  --inkwire-pass-radius-lg: 12px 22px 14px 20px / 22px 14px 20px 12px;
+}
+:root[data-theme-id="inkwire"]
+  :nth-child(5n + 3)
+  > :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="composer-shell"],
+    [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
+  ) {
+  --inkwire-radius: 8px 11px 7px 12px / 12px 7px 10px 8px;
+  --inkwire-pass-radius: 12px 8px 10px 6px / 9px 12px 6px 11px;
+  --inkwire-pass-radius-lg: 22px 14px 18px 12px / 16px 22px 12px 20px;
+}
+:root[data-theme-id="inkwire"]
+  :nth-child(5n + 4)
+  > :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="composer-shell"],
+    [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
+  ) {
+  --inkwire-radius: 11px 7px 10px 6px / 6px 12px 8px 11px;
+  --inkwire-pass-radius: 7px 11px 12px 6px / 11px 6px 8px 12px;
+  --inkwire-pass-radius-lg: 14px 20px 22px 12px / 20px 12px 14px 22px;
+}
+:root[data-theme-id="inkwire"]
+  :nth-child(5n)
+  > :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="composer-shell"],
+    [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
+  ) {
+  --inkwire-radius: 9px 12px 8px 7px / 10px 7px 12px 9px;
+  --inkwire-pass-radius: 10px 7px 6px 12px / 8px 11px 12px 7px;
+  --inkwire-pass-radius-lg: 18px 12px 14px 22px / 12px 20px 22px 14px;
+}
+:root[data-theme-id="inkwire"]
+  :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="composer-shell"],
+    [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
+  ):nth-child(3n + 2) {
+  --inkwire-rot: 0.6deg;
+}
+:root[data-theme-id="inkwire"]
+  :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="composer-shell"],
+    [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
+  ):nth-child(3n) {
+  --inkwire-rot: -0.35deg;
+}
+:root[data-theme-id="inkwire"]
+  :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="composer-shell"],
+    [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
+  ):nth-child(2n) {
+  --inkwire-dx: 1.5px;
+  --inkwire-dy: -0.5px;
+}
+:root[data-theme-id="inkwire"]
+  :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="composer-shell"],
+    [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
+  ):nth-child(4n + 3) {
+  --inkwire-dx: -0.5px;
+  --inkwire-dy: 1px;
+}
+:root[data-theme-id="inkwire"]
+  :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="composer-shell"],
+    [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
+  ):nth-child(5n + 2) {
+  --inkwire-radius: 10px 6px 12px 7px / 7px 11px 6px 12px;
+  --inkwire-pass-radius: 6px 12px 7px 11px / 12px 7px 11px 6px;
+  --inkwire-pass-radius-lg: 12px 22px 14px 20px / 22px 14px 20px 12px;
+}
+:root[data-theme-id="inkwire"]
+  :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="composer-shell"],
+    [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
+  ):nth-child(5n + 3) {
+  --inkwire-radius: 8px 11px 7px 12px / 12px 7px 10px 8px;
+  --inkwire-pass-radius: 12px 8px 10px 6px / 9px 12px 6px 11px;
+  --inkwire-pass-radius-lg: 22px 14px 18px 12px / 16px 22px 12px 20px;
+}
+:root[data-theme-id="inkwire"]
+  :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="composer-shell"],
+    [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
+  ):nth-child(5n + 4) {
+  --inkwire-radius: 11px 7px 10px 6px / 6px 12px 8px 11px;
+  --inkwire-pass-radius: 7px 11px 12px 6px / 11px 6px 8px 12px;
+  --inkwire-pass-radius-lg: 14px 20px 22px 12px / 20px 12px 14px 22px;
+}
+:root[data-theme-id="inkwire"]
+  :is(
+    [data-slot="button"],
+    [data-slot="select-trigger"],
+    [data-slot="input-control"],
+    [data-slot="textarea-control"],
+    [data-slot="composer-shell"],
+    [data-slot="composer-host"] :is(button:has([data-composer-control-chevron]), [role="combobox"])
+  ):nth-child(5n) {
+  --inkwire-radius: 9px 12px 8px 7px / 10px 7px 12px 9px;
+  --inkwire-pass-radius: 10px 7px 6px 12px / 8px 11px 12px 7px;
+  --inkwire-pass-radius-lg: 18px 12px 14px 22px / 12px 20px 22px 14px;
+}
+:root[data-theme-id="inkwire"]
+  :is(
+    [data-thread-item$="1"] > [data-testid="sidebar-row-card"],
+    [data-message-id$="1"] .bg-message,
+    [data-thread-item$="5"] > [data-testid="sidebar-row-card"],
+    [data-message-id$="5"] .bg-message,
+    [data-thread-item$="9"] > [data-testid="sidebar-row-card"],
+    [data-message-id$="9"] .bg-message,
+    [data-thread-item$="d"] > [data-testid="sidebar-row-card"],
+    [data-message-id$="d"] .bg-message
+  ) {
+  --inkwire-rot: 0.6deg;
+  --inkwire-radius: 10px 6px 12px 7px / 7px 11px 6px 12px;
+  --inkwire-pass-radius: 6px 12px 7px 11px / 12px 7px 11px 6px;
+  --inkwire-pass-radius-lg: 12px 22px 14px 20px / 22px 14px 20px 12px;
+}
+:root[data-theme-id="inkwire"]
+  :is(
+    [data-thread-item$="2"] > [data-testid="sidebar-row-card"],
+    [data-message-id$="2"] .bg-message,
+    [data-thread-item$="6"] > [data-testid="sidebar-row-card"],
+    [data-message-id$="6"] .bg-message,
+    [data-thread-item$="a"] > [data-testid="sidebar-row-card"],
+    [data-message-id$="a"] .bg-message,
+    [data-thread-item$="e"] > [data-testid="sidebar-row-card"],
+    [data-message-id$="e"] .bg-message
+  ) {
+  --inkwire-rot: -0.35deg;
+  --inkwire-dx: 1.5px;
+  --inkwire-radius: 8px 11px 7px 12px / 12px 7px 10px 8px;
+  --inkwire-pass-radius: 12px 8px 10px 6px / 9px 12px 6px 11px;
+  --inkwire-pass-radius-lg: 22px 14px 18px 12px / 16px 22px 12px 20px;
+}
+:root[data-theme-id="inkwire"]
+  :is(
+    [data-thread-item$="3"] > [data-testid="sidebar-row-card"],
+    [data-message-id$="3"] .bg-message,
+    [data-thread-item$="7"] > [data-testid="sidebar-row-card"],
+    [data-message-id$="7"] .bg-message,
+    [data-thread-item$="b"] > [data-testid="sidebar-row-card"],
+    [data-message-id$="b"] .bg-message,
+    [data-thread-item$="f"] > [data-testid="sidebar-row-card"],
+    [data-message-id$="f"] .bg-message
+  ) {
+  --inkwire-rot: 0.3deg;
+  --inkwire-dy: 1px;
+  --inkwire-radius: 11px 7px 10px 6px / 6px 12px 8px 11px;
+  --inkwire-pass-radius: 7px 11px 12px 6px / 11px 6px 8px 12px;
+  --inkwire-pass-radius-lg: 14px 20px 22px 12px / 20px 12px 14px 22px;
+}
+:root[data-theme-id="inkwire"]
+  :is(
+    [data-thread-item$="4"] > [data-testid="sidebar-row-card"],
+    [data-message-id$="4"] .bg-message,
+    [data-thread-item$="8"] > [data-testid="sidebar-row-card"],
+    [data-message-id$="8"] .bg-message,
+    [data-thread-item$="c"] > [data-testid="sidebar-row-card"],
+    [data-message-id$="c"] .bg-message,
+    [data-thread-item$="0"] > [data-testid="sidebar-row-card"],
+    [data-message-id$="0"] .bg-message
+  ) {
+  --inkwire-dx: -0.5px;
+  --inkwire-radius: 9px 12px 8px 7px / 10px 7px 12px 9px;
+  --inkwire-pass-radius: 10px 7px 6px 12px / 8px 11px 12px 7px;
+  --inkwire-pass-radius-lg: 18px 12px 14px 22px / 12px 20px 22px 14px;
 }
 
 /* Buttons carry the pencil pass instead of the theme's offset shadow. Same specificity as the
@@ -378,9 +663,9 @@
   z-index: 20;
   inset: -3px -1px -1px -3px;
   border: 1px solid var(--primary);
-  border-radius: var(--inkwire-wobble-lg-pass);
+  border-radius: var(--inkwire-pass-radius-lg);
   opacity: 0.45;
-  transform: rotate(-0.15deg);
+  transform: translate(var(--inkwire-dx), var(--inkwire-dy)) rotate(calc(var(--inkwire-rot) * 0.2));
   pointer-events: none;
 }
 :root[data-theme-id="inkwire"]
@@ -395,7 +680,7 @@
   [data-slot="composer-host"]
   :is(button:has([data-composer-control-chevron]), [role="combobox"]) {
   border-color: var(--inkwire-pass);
-  border-radius: var(--inkwire-wobble);
+  border-radius: var(--inkwire-radius);
 }
 
 /* Your own messages: a graphite outline with a pencil pass, so they read as drawn cards. */
@@ -408,9 +693,9 @@
   position: absolute;
   inset: -3px -1px -1px -3px;
   border: 1px solid currentColor;
-  border-radius: var(--inkwire-wobble-lg-pass);
+  border-radius: var(--inkwire-pass-radius-lg);
   opacity: 0.3;
-  transform: rotate(-0.4deg);
+  transform: translate(var(--inkwire-dx), var(--inkwire-dy)) rotate(calc(var(--inkwire-rot) * 0.5));
   pointer-events: none;
 }
 
