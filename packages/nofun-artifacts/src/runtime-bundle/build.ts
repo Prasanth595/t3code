@@ -3,7 +3,8 @@
 //   dist/nofun-ui-runtime/<sha>/{runtime.js, runtime.css, brands/<id>.css, manifest.json}
 // runtime.js is one IIFE with every registry block, component and lib (commerce included), each block's
 // demo, every Kobra primitive, @nofun/artifacts and the shared packages, exposed as window.NoFunUI
-// (client.jsx). runtime.css is Tailwind compiled once over all of those sources with no brand; each
+// and copied onto the existing window.nofun object with Object.assign (client.jsx).
+// runtime.css is Tailwind compiled once over all of those sources with no brand; each
 // brand is its own sheet so a page loads one. Modules that do not bundle are left out and listed in
 // the manifest with the reason.
 //   pnpm runtime:build [--out <dir>] [--allow-dirty]

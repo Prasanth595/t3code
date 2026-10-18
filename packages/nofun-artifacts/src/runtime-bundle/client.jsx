@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 
 import { ArtifactBoundary } from "../runtime/mount.tsx";
 import { SpecNode } from "../runtime/render-spec.tsx";
+import { extendNofunNamespace } from "./nofun-namespace.ts";
 
 const isComponent = (value) =>
   typeof value === "function" ||
@@ -89,5 +90,7 @@ export function install({ version, modules, components, brands }) {
     }
   }
 
-  window.NoFunUI = { version, base, components: resolved, modules, brands, require, mount, theme };
+  const api = { version, base, components: resolved, modules, brands, require, mount, theme };
+  window.NoFunUI = api;
+  extendNofunNamespace(window, api);
 }
