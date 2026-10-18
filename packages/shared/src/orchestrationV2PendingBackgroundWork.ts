@@ -295,6 +295,16 @@ export function derivePendingBackgroundWork(input: {
   return Array.from(byTaskId.values());
 }
 
+const pullRequestWatchTaskId = (link: Parameters<typeof threadPullRequestKeyOf>[0]) =>
+  `pull-request-watch:${threadPullRequestKeyOf(link)}`;
+
+/** Maps a PR-watch monitor's task id back to the linked PR it watches. */
+export function findPullRequestForWatchTask<
+  Link extends Parameters<typeof threadPullRequestKeyOf>[0],
+>(taskId: string, pullRequests: ReadonlyArray<Link> | undefined): Link | undefined {
+  return pullRequests?.find((link) => pullRequestWatchTaskId(link) === taskId);
+}
+
 function pullRequestWatchTasks(
   pullRequests: ReadonlyArray<PendingBackgroundWorkPullRequest> | undefined,
 ): Array<PendingBackgroundWorkTask> {
@@ -303,7 +313,7 @@ function pullRequestWatchTasks(
       ? []
       : [
           {
-            taskId: `pull-request-watch:${threadPullRequestKeyOf(link)}`,
+            taskId: pullRequestWatchTaskId(link),
             description: `Watching pull request #${link.number}`,
             kind: "monitor" as const,
           },
