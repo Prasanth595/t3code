@@ -23,6 +23,21 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("ignored command prefix settings", () => {
+  it("keeps existing installations unchanged and round-trips a custom list or reset", () => {
+    expect(decodeClientSettings({}).ignoredCommandPrefixes).toEqual([]);
+    for (const prefixes of [["rtk", "rtk proxy"], []]) {
+      const input = { ignoredCommandPrefixes: prefixes };
+      expect(encodeClientSettings(decodeClientSettings(input))).toMatchObject(input);
+      expect(decodeClientSettingsPatch(input)).toEqual(input);
+    }
+  });
+
+  it.each([[42], [""], ["   "], "rtk", null])("rejects invalid lists: %j", (prefixes) => {
+    expect(() => decodeClientSettings({ ignoredCommandPrefixes: prefixes })).toThrow();
+  });
+});
+
 describe("ServerSettings response streaming", () => {
   it("defaults to paragraph buffering", () => {
     expect(decodeServerSettings({}).responseStreamingMode).toBe("paragraph");

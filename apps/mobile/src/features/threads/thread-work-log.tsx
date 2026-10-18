@@ -1,3 +1,4 @@
+import { ignoredCommandPrefixesAtom } from "../../state/preferences";
 import { SubagentStatusDot } from "./SubagentStatusDot";
 import { ThreadSubagentGroup } from "./thread-subagent-group";
 import {
@@ -893,6 +894,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
   },
 ) {
   const { row, expanded } = props;
+  const ignoredCommandPrefixes = useAtomValue(ignoredCommandPrefixesAtom);
   const navigation = useNavigation();
   // Command rows stream their output, including the final output, from the server.
   const streamsOutput =
@@ -1030,12 +1032,12 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
       </Text>
     );
   const toolPresentation = resolveWorkEntryToolPresentation(row.workEntry);
-  const previewText = workEntryRowLabel(row.workEntry);
+  const previewText = workEntryRowLabel(row.workEntry, false, ignoredCommandPrefixes);
   const answerPreview = row.workEntry.questionAnswer
     ? getQuestionAnswerPreview(row.workEntry.questionAnswer)
     : null;
   const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
-  const displayText = workEntryRowLabel(row.workEntry, expanded);
+  const displayText = workEntryRowLabel(row.workEntry, expanded, ignoredCommandPrefixes);
   const isSystemNotice = row.projectedItem.item.type === "system_notice";
   const isUsageLimit =
     row.projectedItem.item.type === "error" &&

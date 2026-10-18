@@ -1,3 +1,5 @@
+import { useAtomValue } from "@effect/atom-react";
+import { ignoredCommandPrefixesAtom } from "../../state/preferences";
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { ThreadMarkdownVideo, ThreadMediaVisibleContext } from "./ThreadMarkdownVideo";
@@ -1674,6 +1676,7 @@ function ThreadFeedPlaceholder(props: {
 
 export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const workflowOpening = useWorkflowOpening(props.environmentId, props.threadId);
+  const ignoredCommandPrefixes = useAtomValue(ignoredCommandPrefixesAtom);
   const deviceType = useDeviceType();
   const duoColumns = useNativeWorkspaceColumnsSupported() && isDuoDevice(deviceType);
   const openPullRequest = useOpenPullRequest();
@@ -2162,12 +2165,14 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           ),
           props.activeWorkStartedAt,
           props.runlessWorkActive ?? false,
+          ignoredCommandPrefixes,
         ),
         props.feed,
         props.queuedMessages,
       ),
     [
       props.queuedMessages,
+      ignoredCommandPrefixes,
       expandedTurnIds,
       expandedWorkGroups,
       props.activeWorkStartedAt,

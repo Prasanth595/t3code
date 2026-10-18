@@ -840,8 +840,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
       ? new Set(paintedExpandedAttemptIds).add(activeFindAttemptId)
       : paintedExpandedAttemptIds;
 
+  const ignoredCommandPrefixes = useClientSettings((settings) => settings.ignoredCommandPrefixes);
   const rawRows = useIncrementalTimelineRows(`${listIdentityKey}\0${workspaceRoot ?? ""}`, {
     timelineEntries,
+    ignoredCommandPrefixes,
     latestRun,
     runningRunId,
     expandedRunIds: visibleExpandedRunIds,
@@ -3771,12 +3773,15 @@ function ThreadReadLabel({
 }
 
 function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "work-live" }> }) {
+  const ignoredCommandPrefixes = useClientSettings((settings) => settings.ignoredCommandPrefixes);
   const ctx = use(TimelineRowCtx);
   const threadTarget = useThreadReadTarget(row.entry, ctx.activeThreadEnvironmentId);
   const questionHeading = row.entry.questionAnswer
     ? getQuestionTextPreview(row.entry.questionAnswer)
     : "";
-  const label = questionHeading || liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active);
+  const label =
+    questionHeading ||
+    liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active, ignoredCommandPrefixes);
   const threadLabel = threadReadLabel(label, threadTarget);
 
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
@@ -5220,6 +5225,7 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: WorkEntryRowP
 });
 
 function WorkEntryLogRow(props: WorkEntryRowProps) {
+  const ignoredCommandPrefixes = useClientSettings((settings) => settings.ignoredCommandPrefixes);
   const { workEntry, workspaceRoot, displayLabel } = props;
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
@@ -5331,7 +5337,8 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       ? workEntry.toolLifecycleStatus === "inProgress"
         ? "Thinking"
         : "Thought"
-      : questionHeading || (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot));
+      : questionHeading ||
+        (displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot, ignoredCommandPrefixes));
   const answerPreview =
     workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)
       ? getQuestionAnswerPreview(workEntry.questionAnswer)

@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import {
   EnvironmentId,
+  IgnoredCommandPrefixes,
   PullRequestInvolvement,
   PullRequestListFilters,
   PullRequestListState,
@@ -49,8 +50,10 @@ export type PullRequestListPreferences = typeof PullRequestListPreferences.Type;
 
 const isThreadListFilters = Schema.is(ThreadListFilters);
 const isPullRequestListPreferences = Schema.is(PullRequestListPreferences);
+const decodeIgnoredCommandPrefixes = Schema.decodeUnknownOption(IgnoredCommandPrefixes);
 
 export interface Preferences {
+  readonly ignoredCommandPrefixes?: ReadonlyArray<string>;
   readonly pullRequestHideTestFiles?: boolean;
   readonly pullRequestMergeMethod?: PullRequestMergeMethod;
   readonly liveActivitiesEnabled?: boolean;
@@ -125,6 +128,7 @@ export class MobilePreferencesStore extends Context.Service<
 
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
+    ignoredCommandPrefixes?: ReadonlyArray<string>;
     pullRequestHideTestFiles?: boolean;
     pullRequestMergeMethod?: PullRequestMergeMethod;
     liveActivitiesEnabled?: boolean;
@@ -154,6 +158,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     threadListFilters?: ThreadListFilters;
     pullRequestListFilters?: PullRequestListPreferences;
   } = {};
+
+  const ignoredPrefixes = decodeIgnoredCommandPrefixes(parsed.ignoredCommandPrefixes);
+  if (Option.isSome(ignoredPrefixes)) preferences.ignoredCommandPrefixes = ignoredPrefixes.value;
 
   if (typeof parsed.pullRequestHideTestFiles === "boolean") {
     preferences.pullRequestHideTestFiles = parsed.pullRequestHideTestFiles;

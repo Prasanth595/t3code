@@ -1282,6 +1282,50 @@ describe("buildThreadFeed", () => {
     expect(presented.some((entry) => entry.type === "thinking")).toBe(false);
   });
 
+  it("refreshes cached command summaries when ignored prefixes change", () => {
+    const { exitCode: _exitCode, ...completedCommand } = command();
+    const runningCommand: OrchestrationV2TurnItem = {
+      ...completedCommand,
+      input: "rtk proxy git status",
+      runId: null,
+      status: "running",
+      completedAt: null,
+      output: "",
+    };
+    const feed = buildThreadFeed([projected(runningCommand, 0)]);
+    const present = (prefixes: ReadonlyArray<string>) =>
+      deriveThreadFeedPresentation(
+        feed,
+        null,
+        new Set(),
+        new Set(),
+        "2026-06-20T00:00:01.000Z",
+        true,
+        prefixes,
+      );
+    const prefixes = ["rtk", "rtk proxy"];
+    expect(present([]).find((row) => row.type === "work-toggle")).toMatchObject({
+      summary: "Running rtk",
+    });
+    expect(present(prefixes).find((row) => row.type === "work-toggle")).toMatchObject({
+      summary: "Running git",
+    });
+    expect(present(prefixes).find((row) => row.type === "work-toggle")).toBe(
+      present(prefixes).find((row) => row.type === "work-toggle"),
+    );
+    expect(present([]).find((row) => row.type === "work-toggle")).toMatchObject({
+      summary: "Running rtk",
+    });
+    expect(runningCommand.input).toBe("rtk proxy git status");
+
+    for (const group of feed) {
+      if (group.type !== "activity-group") continue;
+      const entry = group.activities[0]!.workEntry;
+      expect(workEntryRowLabel(entry, false, prefixes)).toBe("git status");
+      expect(workEntryRowLabel(entry, true, prefixes)).toBe("rtk proxy git status");
+    }
+  });
+
   it("keeps a runless tail folded while a normal thread waits for its sent run", () => {
     const startedAt = "2026-06-20T00:00:05.000Z";
     const feed = buildThreadFeed([

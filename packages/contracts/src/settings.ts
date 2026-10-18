@@ -291,7 +291,12 @@ export type ModelPreferences = {
   readonly providerModelPreferences: typeof ProviderModelPreferences.Type;
 };
 
+export const IgnoredCommandPrefixes = Schema.Array(TrimmedNonEmptyString);
+
 export const ClientSettingsSchema = Schema.Struct({
+  ignoredCommandPrefixes: IgnoredCommandPrefixes.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
   ),
@@ -1520,6 +1525,7 @@ export function requiredScopesForProjectMutation(
 }
 
 export const ClientSettingsPatch = Schema.Struct({
+  ignoredCommandPrefixes: Schema.optionalKey(IgnoredCommandPrefixes),
   notificationMode: Schema.optionalKey(NotificationMode),
   inAppNotificationsEnabled: Schema.optionalKey(Schema.Boolean),
   diffColorScheme: Schema.optionalKey(DiffColorScheme),

@@ -1,3 +1,4 @@
+import { IgnoredCommandPrefixesSettings } from "./IgnoredCommandPrefixesSettings";
 import { SettingsGroup } from "./SettingsGroup";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 import { useScopedSettingsWriteAllowed } from "./useScopedSettings";
@@ -531,6 +532,7 @@ export function useSettingsRestore(onRestored?: () => void) {
   const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
 
   const changedSettingLabels = [
+    ...(settings.ignoredCommandPrefixes.length > 0 ? ["Top-level commands to ignore"] : []),
     ...(theme !== "system" ? ["Theme"] : []),
     ...(!followSystem ? ["Follow system"] : []),
     ...(themeHalves !== null ? ["Theme mix"] : []),
@@ -714,6 +716,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     }
     updateSettings({
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
+      ignoredCommandPrefixes: DEFAULT_UNIFIED_SETTINGS.ignoredCommandPrefixes,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       chatWidth: DEFAULT_UNIFIED_SETTINGS.chatWidth,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
@@ -2600,6 +2603,8 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        <IgnoredCommandPrefixesSettings />
 
         <SettingsRow
           {...searchableSetting("skills-in-slash-menu")}

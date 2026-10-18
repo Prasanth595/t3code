@@ -339,6 +339,20 @@ describe("work entry labels", () => {
   });
 
   it.each([
+    ["inProgress", "Running git"],
+    ["completed", "Ran git"],
+    ["failed", "Failed git"],
+    ["declined", "Declined git"],
+    ["stopped", "Stopped git"],
+  ] as const)("applies ignored prefixes to %s command labels", (toolLifecycleStatus, label) => {
+    const commandEntry = { ...entry, command: "rtk proxy git status", toolLifecycleStatus };
+    expect(liveWorkEntryLabel(commandEntry, undefined, false, ["rtk", "rtk proxy"])).toBe(label);
+    expect(workEntryDisplayLabel(commandEntry, undefined, ["rtk", "rtk proxy"])).toBe("git status");
+    expect(commandEntry.command).toBe("rtk proxy git status");
+    expect(liveWorkEntryLabel(commandEntry, undefined, false)).toBe(label.replace("git", "rtk"));
+  });
+
+  it.each([
     ["inProgress", "Running vp", "Running vp"],
     ["completed", "Running vp", "Ran vp"],
     ["failed", "Failed vp", "Failed vp"],
