@@ -212,6 +212,7 @@ export const make = Effect.gen(function* () {
     );
   let rates: RateTable = new Map();
   let ratesFetchedAtMs: number | null = null;
+  let ratesLastFailedAtMs: number | null = null;
   let ratesStatus: UsagePricing["status"] = "unavailable";
   const ratesLock = yield* Semaphore.make(1);
 
@@ -256,17 +257,21 @@ export const make = Effect.gen(function* () {
       }
     }
 
+    if (ratesLastFailedAtMs !== null && now - ratesLastFailedAtMs < RATES_REFRESH_FLOOR_MS) return;
+
     let fetched = yield* fetchRates(LITELLM_RATES_URL);
     if (fetched === null) {
       fetched = yield* fetchRates(LITELLM_RATES_API_URL, "application/vnd.github.raw+json");
     }
     if (fetched === null) {
+      ratesLastFailedAtMs = yield* Clock.currentTimeMillis;
       if (rates.size > 0) ratesStatus = "cached";
       return;
     }
 
     rates = fetched.parsed;
     ratesFetchedAtMs = now;
+    ratesLastFailedAtMs = null;
     ratesStatus = "fresh";
 
     yield* encodeRatesCache({ fetchedAtMs: now, document: fetched.document }).pipe(
