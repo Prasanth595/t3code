@@ -1,4 +1,8 @@
-import type { RepositoryIdentity, SourceControlProviderError } from "@t3tools/contracts";
+import type {
+  RepositoryIdentity,
+  SourceControlHostOverrides,
+  SourceControlProviderError,
+} from "@t3tools/contracts";
 import {
   detectSourceControlProviderFromGitRemoteUrl,
   normalizeGitRemoteUrl,
@@ -11,6 +15,7 @@ import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 
 import * as ProcessRunner from "../processRunner.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { subscribeHostOverrideChanges } from "../sourceControl/hostOverrideChanges.ts";
 import { explicitBareRepositoryEnv } from "../vcs/VcsProcess.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -92,9 +97,13 @@ function buildRepositoryIdentity(input: {
   readonly remoteUrl: string;
   readonly originUrl: string | undefined;
   readonly rootPath: string;
+  readonly hostOverrides: SourceControlHostOverrides;
 }): RepositoryIdentity {
   const canonicalKey = normalizeGitRemoteUrl(input.remoteUrl);
-  const sourceControlProvider = detectSourceControlProviderFromGitRemoteUrl(input.remoteUrl);
+  const sourceControlProvider = detectSourceControlProviderFromGitRemoteUrl(
+    input.remoteUrl,
+    input.hostOverrides,
+  );
   const repositoryPath = repositoryPathOf(canonicalKey);
   const repositoryPathSegments = repositoryPath.split("/").filter((segment) => segment.length > 0);
   const [owner] = repositoryPathSegments;
@@ -144,7 +153,11 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   "RepositoryIdentityResolver.resolveFromCacheKey",
 )(function* (
   cacheKey: string,
-): Effect.fn.Return<RepositoryIdentity | null, never, ProcessRunner.ProcessRunner> {
+): Effect.fn.Return<
+  RepositoryIdentity | null,
+  never,
+  ProcessRunner.ProcessRunner | ServerSettings.ServerSettingsService
+> {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const remoteResult = yield* processRunner
     .run({
@@ -158,10 +171,17 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     return null;
   }
 
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const hostOverrides = (yield* settings.getSettings.pipe(Effect.orDie)).sourceControlHostOverrides;
   const remotes = parseRemoteFetchUrls(remoteResult.value.stdout);
   const remote = pickPrimaryRemote(remotes);
   return remote
-    ? buildRepositoryIdentity({ ...remote, originUrl: remotes.get("origin"), rootPath: cacheKey })
+    ? buildRepositoryIdentity({
+        ...remote,
+        originUrl: remotes.get("origin"),
+        rootPath: cacheKey,
+        hostOverrides,
+      })
     : null;
 });
 
@@ -169,6 +189,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   options: RepositoryIdentityResolverOptions = {},
 ) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const settings = yield* ServerSettings.ServerSettingsService;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
   const refine = options.refine ?? Effect.succeed;
   const timeToLive = (exit: Exit.Exit<unknown>) =>
@@ -191,6 +212,7 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
     (cacheKey) =>
       resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
+        Effect.provideService(ServerSettings.ServerSettingsService, settings),
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
         Effect.filterOrElse(
           (identity): identity is null => identity === null,

@@ -4,6 +4,10 @@ import { detectSourceControlProviderFromRemoteUrl } from "@t3tools/shared/source
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as FileSystem from "effect/FileSystem";
+import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
+import * as ForgejoSourceControlProvider from "@t3tools/source-control-forgejo/server/ForgejoSourceControlProvider";
+import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
 import * as Logger from "effect/Logger";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -486,85 +490,127 @@ it.effect(
     }),
 );
 
-it.effect("host mapping changes clear both identity caches and preserve unrelated enrichment", () =>
-  Effect.gen(function* () {
-    const settings = yield* makeSettingsChanges;
-    let reads = 0;
-    let faviconReads = 0;
-    const initial = {
-      ...DEFAULT_SERVER_SETTINGS,
-      sourceControlHostOverrides: {
-        "code.example.test": { kind: "forgejo" as const, baseUrl: "https://code.example.test/Old" },
-      },
-    };
-    yield* settings.publish(initial);
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const resolver = yield* RepositoryIdentityResolver.make({
-          refine: (identity) =>
-            settings.service.getSettings.pipe(
-              Effect.map((value) => ({
-                ...identity,
-                webUrl: `${detectSourceControlProviderFromRemoteUrl(identity.locator.remoteUrl, value.sourceControlHostOverrides)!.baseUrl}/team/repo`,
-              })),
-            ),
-        }).pipe(
-          Effect.provideService(ServerSettings.ServerSettingsService, settings.service),
-          Effect.provideService(ProcessRunner.ProcessRunner, {
-            run: (input) =>
-              Effect.sync(() => {
-                reads++;
-                return {
-                  stdout: input.args.includes("rev-parse")
-                    ? "/repo\n"
-                    : "origin\tgit@code.example.test:team/repo.git (fetch)\n",
-                  stderr: "",
-                  code: ChildProcessSpawner.ExitCode(0),
-                  timedOut: false,
-                  stdoutTruncated: false,
-                  stderrTruncated: false,
-                  stdoutInvalidUtf8: false,
-                  stderrInvalidUtf8: false,
-                };
-              }),
-          }),
-        );
-        const service = yield* ProjectEnrichment.make().pipe(
-          Effect.provideService(ServerSettings.ServerSettingsService, settings.service),
-          Effect.provideService(RepositoryIdentityResolver.RepositoryIdentityResolver, resolver),
-          Effect.provideService(ProjectFaviconResolver.ProjectFaviconResolver, {
-            resolvePath: () =>
-              Effect.sync(() => {
-                faviconReads++;
-                return "/repo/favicon.svg";
-              }),
-          }),
-        );
-        const changes = yield* service.subscribeChanges;
-        yield* service.request("/repo");
-        const first = (yield* PubSub.take(changes)).enrichment.repositoryIdentity;
-        yield* Effect.yieldNow;
-        assert.strictEqual(first?.webUrl, "https://code.example.test/Old/team/repo");
-        const warmReads = reads;
-        yield* settings.publish({ ...initial, worktreesDirectory: "/unrelated" });
-        assert.strictEqual((yield* service.peek("/repo")).repositoryIdentity, first);
-        assert.strictEqual(yield* resolver.resolve("/repo"), first);
-        assert.strictEqual(reads, warmReads);
-        yield* settings.publish({
-          ...initial,
-          sourceControlHostOverrides: {
-            "code.example.test": { kind: "forgejo", baseUrl: "https://code.example.test/New" },
+it.effect.each(["gitlab", "github", "bitbucket", "forgejo", "azure-devops", "gitcafe"] as const)(
+  "host mapping changes to %s clear both identity caches and preserve unrelated enrichment",
+  (kind) =>
+    Effect.gen(function* () {
+      const settings = yield* makeSettingsChanges;
+      let reads = 0;
+      let faviconReads = 0;
+      const initial = {
+        ...DEFAULT_SERVER_SETTINGS,
+        sourceControlHostOverrides: {
+          "code.example.test": {
+            kind: "forgejo" as const,
+            baseUrl: "https://code.example.test/Old",
           },
-        });
-        assert.isNull((yield* service.peek("/repo")).repositoryIdentity);
-        yield* service.request("/repo");
-        const next = (yield* PubSub.take(changes)).enrichment.repositoryIdentity;
-        assert.strictEqual(next?.webUrl, "https://code.example.test/New/team/repo");
-        assert.strictEqual(reads, warmReads + 1);
-        assert.strictEqual(faviconReads, 1);
-        assert.strictEqual(settings.subscribers(), 2);
-      }),
-    );
-    assert.strictEqual(settings.subscribers(), 0);
-  }),
+        },
+      };
+      yield* settings.publish(initial);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const forgejo = yield* ForgejoSourceControlProvider.make.pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                Layer.succeed(FileSystem.FileSystem, FileSystem.makeNoop({})),
+                TestSourceControlHost.layer(),
+                Layer.mock(ForgejoCli.ForgejoCli)({}),
+              ),
+            ),
+          );
+          const resolver = yield* RepositoryIdentityResolver.make({
+            refine: (identity) =>
+              forgejo.refineRepositoryIdentity!({
+                identity,
+                resolveContext: () =>
+                  settings.service.getSettings.pipe(
+                    Effect.map((value) => {
+                      const provider = detectSourceControlProviderFromRemoteUrl(
+                        identity.locator.remoteUrl,
+                        value.sourceControlHostOverrides,
+                      );
+                      return provider === null
+                        ? null
+                        : {
+                            provider,
+                            remoteName: identity.locator.remoteName,
+                            remoteUrl: identity.locator.remoteUrl,
+                          };
+                    }),
+                  ),
+              }),
+          }).pipe(
+            Effect.provideService(ServerSettings.ServerSettingsService, settings.service),
+            Effect.provideService(ProcessRunner.ProcessRunner, {
+              run: (input) =>
+                Effect.sync(() => {
+                  reads++;
+                  return {
+                    stdout: input.args.includes("rev-parse")
+                      ? "/repo\n"
+                      : "origin\tgit@code.example.test:team/repo.git (fetch)\n",
+                    stderr: "",
+                    code: ChildProcessSpawner.ExitCode(0),
+                    timedOut: false,
+                    stdoutTruncated: false,
+                    stderrTruncated: false,
+                    stdoutInvalidUtf8: false,
+                    stderrInvalidUtf8: false,
+                  };
+                }),
+            }),
+          );
+          const service = yield* ProjectEnrichment.make().pipe(
+            Effect.provideService(ServerSettings.ServerSettingsService, settings.service),
+            Effect.provideService(RepositoryIdentityResolver.RepositoryIdentityResolver, resolver),
+            Effect.provideService(ProjectFaviconResolver.ProjectFaviconResolver, {
+              resolvePath: () =>
+                Effect.sync(() => {
+                  faviconReads++;
+                  return "/repo/favicon.svg";
+                }),
+            }),
+          );
+          const changes = yield* service.subscribeChanges;
+          yield* service.request("/repo");
+          const first = (yield* PubSub.take(changes)).enrichment.repositoryIdentity;
+          yield* Effect.yieldNow;
+          assert.strictEqual(first?.provider, "forgejo");
+          assert.strictEqual(first?.webUrl, "https://code.example.test/Old/team/repo");
+          const warmReads = reads;
+          yield* settings.publish({ ...initial, worktreesDirectory: "/unrelated" });
+          assert.strictEqual((yield* service.peek("/repo")).repositoryIdentity, first);
+          assert.strictEqual(yield* resolver.resolve("/repo"), first);
+          assert.strictEqual(reads, warmReads);
+          yield* settings.publish({
+            ...initial,
+            sourceControlHostOverrides: {
+              "code.example.test": { kind, baseUrl: "https://code.example.test/New" },
+            },
+          });
+          assert.isNull((yield* service.peek("/repo")).repositoryIdentity);
+          yield* service.request("/repo");
+          const next = (yield* PubSub.take(changes)).enrichment.repositoryIdentity;
+          yield* Effect.yieldNow;
+          assert.strictEqual(next?.provider, kind);
+          assert.strictEqual(
+            next?.webUrl,
+            kind === "forgejo" ? "https://code.example.test/New/team/repo" : undefined,
+          );
+          assert.strictEqual(yield* resolver.resolve("/repo"), next);
+          assert.strictEqual(reads, warmReads + 1);
+          yield* settings.publish({ ...initial, sourceControlHostOverrides: {} });
+          assert.isNull((yield* service.peek("/repo")).repositoryIdentity);
+          yield* service.request("/repo");
+          const unmapped = (yield* PubSub.take(changes)).enrichment.repositoryIdentity;
+          assert.isDefined(unmapped);
+          assert.strictEqual(unmapped?.provider, "unknown");
+          assert.strictEqual(unmapped?.webUrl, undefined);
+          assert.strictEqual(reads, warmReads + 2);
+          assert.strictEqual(faviconReads, 1);
+          assert.strictEqual(settings.subscribers(), 2);
+        }),
+      );
+      assert.strictEqual(settings.subscribers(), 0);
+    }),
 );

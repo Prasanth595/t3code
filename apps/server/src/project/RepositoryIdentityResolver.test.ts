@@ -176,6 +176,48 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(Layer.merge(TestClock.layer(), layerResolver)));
   });
 
+  it.effect.each([
+    ["code.example.test", "gitlab"],
+    ["code.example.test", "github"],
+    ["code.example.test", "bitbucket"],
+    ["code.example.test", "forgejo"],
+    ["code.example.test", "azure-devops"],
+    ["code.example.test", "gitcafe"],
+    ["gitlab.example.test", "github"],
+    ["github.example.test", "forgejo"],
+    ["code.example.test", undefined],
+    ["gitlab.example.test", undefined],
+  ] as const)("detects the provider with host mapping %j", ([host, kind]) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-host-mapping-test-",
+      });
+      const remoteUrl = `git@${host}:team/repo.git`;
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["remote", "add", "origin", remoteUrl]);
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const identity = yield* resolver.resolve(cwd);
+      expect(identity?.provider).toBe(
+        kind ?? (host === "gitlab.example.test" ? "gitlab" : "unknown"),
+      );
+      expect(identity?.canonicalKey).toBe(`${host}/team/repo`);
+      expect(identity?.locator.remoteUrl).toBe(remoteUrl);
+      expect(identity?.displayName).toBe("team/repo");
+    }).pipe(
+      Effect.provide(
+        RepositoryIdentityResolver.layer.pipe(
+          Layer.provide(
+            ServerSettings.layerTest({
+              sourceControlHostOverrides: kind === undefined ? {} : { [host]: { kind } },
+            }),
+          ),
+        ),
+      ),
+    ),
+  );
+
   it.effect("normalizes equivalent GitHub remotes into a stable repository identity", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
