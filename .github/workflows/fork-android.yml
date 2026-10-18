@@ -18,6 +18,10 @@ on:
         description: Commit of main whose release gets the APK. Empty means the newest main. Ignored on a branch.
         type: string
         default: ""
+      release_tag:
+        description: Release that gets the APK, for example v0.0.46-nightly.20261011.180000. Replaces sha. Ignored on a branch.
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -47,12 +51,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_SHA: ${{ github.event.workflow_run.head_sha || inputs.sha }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" != "workflow_run" && "$GITHUB_REF" != "refs/heads/main" ]]; then
             build_sha="$GITHUB_SHA"
             tag="$(gh release list --repo "$GITHUB_REPOSITORY" --exclude-drafts --limit 1 --json tagName --jq '.[0].tagName // empty')"
             publish=false
+          elif [[ -n "$RELEASE_TAG" ]]; then
+            if ! gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json tagName >/dev/null; then
+              echo "::error title=No release::The fork has no release $RELEASE_TAG. See https://github.com/$GITHUB_REPOSITORY/releases for the tags."
+              exit 1
+            fi
+            tag="$RELEASE_TAG"
+            build_sha="$(gh api "repos/$GITHUB_REPOSITORY/commits/$RELEASE_TAG" --jq .sha)"
+            publish=true
           else
             build_sha="${RUN_SHA:-$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)}"
             if [[ ! "$build_sha" =~ ^[0-9a-f]{40}$ ]]; then

@@ -7,7 +7,8 @@
 # The script builds the `t3` executable and the web client here, and takes the native packages
 # and the resource monitor from the newest fork release. It unpacks the result into
 # <T3 home>/runtime/versions/<version> on the server, and runs `t3 update <version> --yes`
-# there. The restart stops running agent turns. See docs/fork/operations.md "Deploy a local build".
+# there. The restart stops running agent turns. If the server does not report the new version, the
+# script goes back to the previous version. See docs/fork/operations.md "Deploy a local build".
 set -euo pipefail
 
 readonly FORK_REPOSITORY="Yarden-zamir/t3code"
@@ -130,10 +131,11 @@ echo "Built $archive"
 [[ -n "$host" ]] || exit 0
 
 # `t3 update` checks that the new `t3` runs and reports the version, then points the service at it
-# and restarts it. It does not go back by itself: see docs/fork/operations.md for the way back.
+# and restarts it. It does not go back by itself, so the script waits for the server to report the
+# new version and goes back to the previous version when it does not.
 remote_archive="/tmp/$stem.tar.gz"
 scp -q "$archive" "$host:$remote_archive"
-ssh "$host" bash -s -- "$version" "$remote_archive" <<'REMOTE'
+if ! ssh "$host" bash -s -- "$version" "$remote_archive" <<'REMOTE'; then
 set -euo pipefail
 version="$1"
 archive="$2"
@@ -148,6 +150,45 @@ mv "$staging" "$versions/$version"
 # Through the launcher link of scripts/install.sh, `t3 update` also points `t3` at the new version.
 launcher="$HOME/.local/bin/t3"
 [[ -x "$launcher" ]] || launcher="$versions/$version/t3"
+
+# server-runtime.json is one line of JSON that the running server writes.
+runtime_state="${T3CODE_HOME:-$HOME/.t3}/userdata/server-runtime.json"
+state_field() {
+  local json
+  json="$(cat "$runtime_state" 2>/dev/null)" || return 1
+  [[ "$json" == *"\"$1\":\""* ]] || return 1
+  json="${json#*\"$1\":\"}"
+  printf '%s' "${json%%\"*}"
+}
+previous="$(state_field serverVersion || true)"
+
 "$launcher" update "$version" --yes
+
+for _ in $(seq 1 30); do
+  sleep 3
+  origin="$(state_field origin || true)"
+  if [[ -n "$origin" ]] &&
+    curl -fsS --max-time 3 "$origin/.well-known/t3/environment" 2>/dev/null |
+    grep -qF "\"serverVersion\":\"$version\""; then
+    echo "The server reports $version."
+    exit 0
+  fi
+done
+
+echo "The server did not report $version within 90 seconds. Check the service log: $launcher service status" >&2
+if [[ -z "$previous" || "$previous" == "$version" || ! -d "$versions/$previous" ]]; then
+  echo "No earlier version to go back to in $versions." >&2
+  exit 1
+fi
+echo "Going back to $previous." >&2
+if "$launcher" update "$previous" --yes --allow-downgrade; then
+  echo "The server is back on $previous." >&2
+else
+  echo "The rollback failed. Run this on the server: $launcher update $previous --yes --allow-downgrade" >&2
+fi
+exit 1
 REMOTE
+  echo "The deploy of $version to $host failed. See the messages above." >&2
+  exit 1
+fi
 echo "Deployed $version to $host"
