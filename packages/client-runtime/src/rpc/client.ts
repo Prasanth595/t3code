@@ -133,22 +133,39 @@ export type EnvironmentRpcStreamFailure<TTag extends EnvironmentStreamRpcTag> =
     ? E
     : never;
 
+/**
+ * Fork: how long a request waits for a session that is opening. After the app returns, the phase
+ * can still say "connected" while the old socket is gone and a new one opens. A request in that
+ * moment, such as a home screen shortcut, waits for it instead of failing with "not connected".
+ */
+const OPENING_SESSION_WAIT = Duration.seconds(10);
+
 const currentSession = Effect.fn("EnvironmentRpc.currentSession")(function* () {
   const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
-  return yield* SubscriptionRef.get(supervisor.session).pipe(
-    Effect.flatMap(
-      Option.match({
-        onNone: () =>
-          Effect.fail(
-            new EnvironmentRpcUnavailableError({
-              environmentId: supervisor.target.environmentId,
-              message: `${supervisor.target.label} is not connected.`,
-            }),
-          ),
-        onSome: Effect.succeed,
-      }),
+  const live = yield* SubscriptionRef.get(supervisor.session);
+  if (Option.isSome(live)) return live.value;
+  // The wait ends with the first session, or when the phase turns offline, available (not
+  // wanted) or blocked: then no session is about to open, so the request fails as it did before.
+  // A backoff keeps the wait: after the app returns, the old socket fails once and the next
+  // attempt opens a session within a second.
+  const opened = yield* Stream.merge(
+    SubscriptionRef.changes(supervisor.session).pipe(Stream.filter(Option.isSome)),
+    SubscriptionRef.changes(supervisor.state).pipe(
+      Stream.filter(
+        ({ phase }) => phase === "offline" || phase === "available" || phase === "blocked",
+      ),
+      Stream.as(Option.none<RpcSession>()),
     ),
+  ).pipe(
+    Stream.runHead,
+    Effect.timeoutOption(OPENING_SESSION_WAIT),
+    Effect.map((result) => Option.flatten(Option.flatten(result))),
   );
+  if (Option.isSome(opened)) return opened.value;
+  return yield* new EnvironmentRpcUnavailableError({
+    environmentId: supervisor.target.environmentId,
+    message: `${supervisor.target.label} is not connected.`,
+  });
 });
 
 export const getInitialServerConfig = Effect.fn("EnvironmentRpc.getInitialServerConfig")(
