@@ -1251,11 +1251,19 @@ function ScheduledTaskEditorForm({
           </Field>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Project" htmlFor="scheduled-task-project" hint={
-    moveDetachesThreadBinding(draft, baselineDraft,
-      tasksQuery.data?.tasks.find((entry) => entry.id === draft.editingId)
-    ) ? "detaches the thread binding" : undefined
-  }>
+            <Field
+              label="Project"
+              htmlFor="scheduled-task-project"
+              hint={
+                moveDetachesThreadBinding(
+                  draft,
+                  baselineDraft,
+                  tasksQuery.data?.tasks.find((entry) => entry.id === draft.editingId),
+                )
+                  ? "detaches the thread binding"
+                  : undefined
+              }
+            >
               <Select
                 value={selectedProjectId}
                 onValueChange={(projectId) =>

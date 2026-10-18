@@ -681,7 +681,7 @@ function TaskForm({
         // and save) — fail loudly instead of silently discarding the edit.
         setSaving(false);
         submissionPending.current = false;
-        Alert.alert(
+        Dialog.alert(
           "Task unavailable",
           "The task could not be loaded. Reopen it once the list has loaded and try again.",
         );
