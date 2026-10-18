@@ -3570,6 +3570,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           "fetch",
           "--quiet",
           "--no-tags",
+          "--",
           remoteName,
           `+refs/pull/${input.prNumber}/head:refs/heads/${input.branch}`,
         ],
@@ -3601,7 +3602,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       yield* executeGit(
         "GitVcsDriver.fetchPullRequestHeadCommit",
         input.cwd,
-        ["fetch", "--quiet", "--no-tags", remoteName, `refs/pull/${input.prNumber}/head`],
+        ["fetch", "--quiet", "--no-tags", "--", remoteName, `refs/pull/${input.prNumber}/head`],
         {
           fallbackErrorDetail: "git fetch pull request head failed",
         },

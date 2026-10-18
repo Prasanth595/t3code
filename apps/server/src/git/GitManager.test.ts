@@ -5444,7 +5444,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         } else if (url.startsWith("https://")) {
           const localDir = url.includes("/contributor/")
             ? forkDir
-            : yield* bareWith(url === base ? head : other);
+            : yield* bareWith(url === base ? head : other, url === base);
           yield* runGit(repoDir, ["remote", "add", "--", name, localDir]);
           yield* configureVisibleRemoteUrlWithLocalRewrite(repoDir, name, url, localDir);
         } else {
@@ -5576,9 +5576,9 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       after: ["acme", "contributor", "origin"],
     },
     {
-      layout: "a fork clone, for a same-repository PR",
-      remotes: [`origin ${myFork}`, `acme ${base}`],
-      after: ["acme", "origin"],
+      layout: "a fork clone with the base as --base, for a same-repository PR",
+      remotes: [`origin ${myFork}`, `--base ${base}`],
+      after: ["--base", "origin"],
       pullRequest: "same-repository",
     },
     {
