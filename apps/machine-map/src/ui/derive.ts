@@ -301,7 +301,8 @@ const FOLD_AFTER_MS = 24 * 60 * 60 * 1000;
 
 /**
  * The sessions of one machine grouped by subject and label. Pairing-link sessions share the
- * subject `one-time-token`, so the label tells their sign-ins apart. Live groups come first.
+ * subject `one-time-token`, so the label tells their sign-ins apart. A session without a label
+ * stays alone: unlabelled pairing links can be different devices. Live groups come first.
  */
 export function groupClientSessions(
   clients: ReadonlyArray<MachineClientSession>,
@@ -309,7 +310,8 @@ export function groupClientSessions(
 ): { readonly shown: ReadonlyArray<SessionGroup>; readonly folded: ReadonlyArray<SessionGroup> } {
   const byKey = new Map<string, Array<MachineClientSession>>();
   for (const client of clients) {
-    const key = `${client.subject}\n${client.label ?? ""}`;
+    const key =
+      client.label === null ? `session\n${client.sessionId}` : `${client.subject}\n${client.label}`;
     byKey.set(key, [...(byKey.get(key) ?? []), client]);
   }
   const seenMs = (client: MachineClientSession) =>

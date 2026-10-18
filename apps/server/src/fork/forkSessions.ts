@@ -1,20 +1,25 @@
 /**
- * Fork: one session per machine, map client or Cloudflare Access sign-in (MM-1305), and the
- * cleanup of the ones nobody uses. `SessionStore.ts` keeps one-line hooks into this file.
+ * Fork: one session per map machine or app client (MM-1305), and the end of fork sessions that
+ * nobody uses. `SessionStore.ts` keeps one hook into this file.
  */
-import type { AuthClientSession, AuthEnvironmentScope, AuthSessionId } from "@t3tools/contracts";
+import { AuthEnvironmentScopes, AuthSessionId, ServerAuthSessionMethod } from "@t3tools/contracts";
+import type { AuthEnvironmentScope } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as SqlSchema from "effect/sql/SqlSchema";
 
-import type {
-  IssuedSession,
-  SessionCredentialInternalError,
-  SessionStore,
+import {
+  type IssuedSession,
+  SessionCredentialIssueError,
+  type SessionStore,
 } from "../auth/SessionStore.ts";
-import { isMapSubject } from "./machineMap/machineAccess.ts";
+import { clientBrowserSessionTtl, isMachineSubject } from "./machineMap/machineAccess.ts";
 
 /** The label prefix of a session that an owner got through Cloudflare Access. */
 export const CLOUDFLARE_ACCESS_LABEL_PREFIX = "cloudflare-access ";
@@ -26,44 +31,44 @@ export const CLOUDFLARE_ACCESS_LABEL_PREFIX = "cloudflare-access ";
  * cannot pair again by itself, or when the session store records each use.
  */
 export const FORK_SESSION_IDLE_LIMIT = Duration.days(7);
+/**
+ * Also the wait before the first sweep: the connected sessions live in memory, so right after a
+ * restart every session looks disconnected until its client connects again.
+ */
 const CLEANUP_INTERVAL = Duration.hours(1);
 
 type Issue = SessionStore["Service"]["issue"];
-type ForkSession = Pick<
-  AuthClientSession,
-  | "sessionId"
-  | "subject"
-  | "method"
-  | "client"
-  | "scopes"
-  | "issuedAt"
-  | "expiresAt"
-  | "lastConnectedAt"
-  | "connected"
->;
 
-/** A session that the fork issues: a map machine (MM-1305), a map client or an Access sign-in. */
-const isForkSession = (session: {
-  readonly subject: string;
-  readonly client: { readonly label?: string | undefined };
-}): boolean =>
-  isMapSubject(session.subject) ||
-  session.client.label?.startsWith(CLOUDFLARE_ACCESS_LABEL_PREFIX) === true;
+/**
+ * The sessions that one identity gets again: map machines (`machine:<id>`) and app token clients
+ * (`client:<id>`, MM-912). Each holds one token on one device. Owner Access sign-ins and browser
+ * clients are left out: one label covers every browser of the owner or of a client, so one shared
+ * session would sign all of them out together.
+ */
+const isReusable = (subject: string, label: string) =>
+  isMachineSubject(subject) ||
+  (subject.startsWith("client:") && clientBrowserSessionTtl({ subject, label }) === undefined);
 
-const lastSeenMs = (session: ForkSession) =>
-  Math.max(session.issuedAt.epochMilliseconds, session.lastConnectedAt?.epochMilliseconds ?? 0);
+const IdentityRequest = Schema.Struct({
+  subject: Schema.String,
+  method: ServerAuthSessionMethod,
+  label: Schema.String,
+  now: Schema.DateTimeUtcFromString,
+});
 
-const isIdle = (session: ForkSession, nowMs: number) =>
-  !session.connected && nowMs - lastSeenMs(session) >= Duration.toMillis(FORK_SESSION_IDLE_LIMIT);
+const IdentityRow = Schema.Struct({
+  sessionId: AuthSessionId,
+  scopes: Schema.fromJsonString(AuthEnvironmentScopes),
+  issuedAt: Schema.DateTimeUtcFromString,
+  expiresAt: Schema.DateTimeUtcFromString,
+  lastConnectedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
+});
+type IdentityRow = typeof IdentityRow.Type;
 
-/** The fork sessions that the cleanup ends. Upstream sessions are never in the list. */
-const idleForkSessions = (
-  sessions: ReadonlyArray<ForkSession>,
-  nowMs: number,
-): ReadonlyArray<AuthSessionId> =>
-  sessions
-    .filter((session) => isForkSession(session) && isIdle(session, nowMs))
-    .map((session) => session.sessionId);
+const RevokedRow = Schema.Struct({ sessionId: AuthSessionId });
+
+const lastSeenMs = (row: IdentityRow) =>
+  Math.max(row.issuedAt.epochMilliseconds, row.lastConnectedAt?.epochMilliseconds ?? 0);
 
 const sameScopes = (
   left: ReadonlyArray<AuthEnvironmentScope>,
@@ -75,106 +80,183 @@ const sameScopes = (
 };
 
 /**
- * MM-1305: the session to give again to an identity that asks for one, and the other sessions of
- * that identity to end. An identity is the subject, the method and the label. A session is given
- * again when it has the same scopes, more than half of its life left, and is not idle. A connected
- * session is never ended here: a level change ends it through MM-1306.
+ * MM-1305: the session of an identity to give again: the same scopes, more than half of its life
+ * left, and not idle. A connected one comes first, then the newest.
  */
-const planReuse = (
-  wanted: {
-    readonly subject: string;
-    readonly method: AuthClientSession["method"];
-    readonly label: string | undefined;
-    readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
-  },
-  sessions: ReadonlyArray<ForkSession>,
+const pickReusable = (
+  rows: ReadonlyArray<IdentityRow>,
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+  connected: ReadonlySet<AuthSessionId>,
   nowMs: number,
-): { readonly reuse: ForkSession | undefined; readonly revoke: ReadonlyArray<AuthSessionId> } => {
-  const same = sessions.filter(
-    (session) =>
-      session.subject === wanted.subject &&
-      session.method === wanted.method &&
-      session.client.label === wanted.label,
-  );
-  const reuse = same
-    .filter((session) => {
-      const lifeMs = session.expiresAt.epochMilliseconds - session.issuedAt.epochMilliseconds;
+): IdentityRow | undefined =>
+  rows
+    .filter((row) => {
+      const lifeMs = row.expiresAt.epochMilliseconds - row.issuedAt.epochMilliseconds;
       return (
-        sameScopes(session.scopes, wanted.scopes) &&
-        session.expiresAt.epochMilliseconds - nowMs > lifeMs / 2 &&
-        !isIdle(session, nowMs)
+        sameScopes(row.scopes, scopes) &&
+        row.expiresAt.epochMilliseconds - nowMs > lifeMs / 2 &&
+        (connected.has(row.sessionId) ||
+          nowMs - lastSeenMs(row) < Duration.toMillis(FORK_SESSION_IDLE_LIMIT))
       );
     })
     .toSorted(
       (left, right) =>
-        Number(right.connected) - Number(left.connected) ||
+        Number(connected.has(right.sessionId)) - Number(connected.has(left.sessionId)) ||
         right.issuedAt.epochMilliseconds - left.issuedAt.epochMilliseconds,
     )[0];
-  return {
-    reuse,
-    revoke: same
-      .filter((session) => session !== reuse && !session.connected)
-      .map((session) => session.sessionId),
-  };
-};
 
 /**
- * Wraps `SessionStore.issue` so that a fork identity keeps one session, and starts the hourly
- * cleanup of idle fork sessions in the scope of the store. One permit makes two requests at once
- * share one session instead of both making one.
+ * Wraps `SessionStore.issue` so that a map machine or app client keeps one session, and starts the
+ * hourly end of idle fork sessions in the scope of the store. One permit makes two requests at
+ * once share one session.
  */
 export const makeForkSessions = Effect.fn("makeForkSessions")(function* (store: {
   readonly issue: Issue;
-  /** The same token again for a stored session. */
-  readonly reissue: (
-    session: ForkSession,
-  ) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
-  readonly listActive: SessionStore["Service"]["listActive"];
-  readonly revoke: SessionStore["Service"]["revoke"];
+  /** The token of a stored session, signed again from its row. */
+  readonly sign: (session: {
+    readonly sessionId: AuthSessionId;
+    readonly subject: string;
+    readonly method: ServerAuthSessionMethod;
+    readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+    readonly issuedAt: DateTime.Utc;
+    readonly expiresAt: DateTime.Utc;
+  }) => Effect.Effect<string, SessionCredentialIssueError>;
+  readonly connectedSessionIds: Effect.Effect<ReadonlyArray<AuthSessionId>>;
+  readonly publishRemoved: (sessionIds: ReadonlyArray<AuthSessionId>) => Effect.Effect<void>;
 }) {
+  const sql = yield* SqlClient.SqlClient;
   const permit = yield* Semaphore.make(1);
+
+  const findIdentity = SqlSchema.findAll({
+    Request: IdentityRequest,
+    Result: IdentityRow,
+    execute: ({ subject, method, label, now }) => sql`
+      SELECT
+        session_id AS "sessionId",
+        scopes AS "scopes",
+        issued_at AS "issuedAt",
+        expires_at AS "expiresAt",
+        last_connected_at AS "lastConnectedAt"
+      FROM auth_sessions
+      WHERE subject = ${subject}
+        AND method = ${method}
+        AND client_label = ${label}
+        AND revoked_at IS NULL
+        AND expires_at > ${now}
+    `,
+  });
+
+  /** Ends every live session of the identity except `keep`. */
+  const revokeIdentity = SqlSchema.findAll({
+    Request: Schema.Struct({
+      ...IdentityRequest.fields,
+      keep: Schema.Array(AuthSessionId),
+    }),
+    Result: RevokedRow,
+    execute: ({ subject, method, label, now, keep }) => sql`
+      UPDATE auth_sessions
+      SET revoked_at = ${now}
+      WHERE subject = ${subject}
+        AND method = ${method}
+        AND client_label = ${label}
+        AND revoked_at IS NULL
+        AND expires_at > ${now}
+        AND NOT (${sql.in("session_id", keep)})
+      RETURNING session_id AS "sessionId"
+    `,
+  });
+
+  const revokeIdle = SqlSchema.findAll({
+    Request: Schema.Struct({
+      now: Schema.DateTimeUtcFromString,
+      seenBefore: Schema.DateTimeUtcFromString,
+      connected: Schema.Array(AuthSessionId),
+    }),
+    Result: RevokedRow,
+    execute: ({ now, seenBefore, connected }) => sql`
+      UPDATE auth_sessions
+      SET revoked_at = ${now}
+      WHERE revoked_at IS NULL
+        AND expires_at > ${now}
+        AND (
+          subject LIKE 'machine:%'
+          OR subject LIKE 'client:%'
+          OR client_label LIKE ${`${CLOUDFLARE_ACCESS_LABEL_PREFIX}%`}
+        )
+        AND issued_at < ${seenBefore}
+        AND (last_connected_at IS NULL OR last_connected_at < ${seenBefore})
+        AND NOT (${sql.in("session_id", connected)})
+      RETURNING session_id AS "sessionId"
+    `,
+  });
 
   const issue: Issue = (input) => {
     const label = input?.client?.label;
     // A proof key or a runtime ceiling is not in the stored row, so such a session is never given
-    // again. The fork never issues one.
+    // again. The fork never issues one. A cookie that replaces another keeps the upstream path.
     if (
       input?.subject === undefined ||
       input.method === undefined ||
       input.scopes === undefined ||
+      label === undefined ||
       input.proofKeyThumbprint !== undefined ||
       input.runtimeModeCeiling !== undefined ||
-      !isForkSession({ subject: input.subject, client: { label } })
+      input.replaceSessionId !== undefined ||
+      !isReusable(input.subject, label)
     ) {
       return store.issue(input);
     }
     const { subject, method, scopes } = input;
     return Effect.gen(function* () {
       const nowMs = yield* Clock.currentTimeMillis;
-      const plan = planReuse({ subject, method, label, scopes }, yield* store.listActive(), nowMs);
-      const previous =
-        input.replaceSessionId !== undefined && input.replaceSessionId !== plan.reuse?.sessionId
-          ? [input.replaceSessionId]
-          : [];
-      yield* Effect.forEach([...plan.revoke, ...previous], store.revoke, { discard: true });
-      return plan.reuse === undefined
-        ? yield* store.issue(input)
-        : yield* store.reissue(plan.reuse);
-    }).pipe(permit.withPermits(1), Effect.withSpan("ForkSessions.issue"));
+      const now = DateTime.makeUnsafe(nowMs);
+      const connected = new Set(yield* store.connectedSessionIds);
+      const identity = { subject, method, label, now };
+      const reuse = pickReusable(yield* findIdentity(identity), scopes, connected, nowMs);
+      const revoked = yield* revokeIdentity({
+        ...identity,
+        keep: [...connected, ...(reuse === undefined ? [] : [reuse.sessionId])],
+      });
+      yield* store.publishRemoved(revoked.map((row) => row.sessionId));
+      if (reuse === undefined) return yield* store.issue(input);
+      const token = yield* store.sign({ ...reuse, subject, method });
+      return {
+        sessionId: reuse.sessionId,
+        token,
+        method,
+        client: input.client ?? { deviceType: "unknown" },
+        expiresAt: reuse.expiresAt,
+        scopes: reuse.scopes,
+      } satisfies IssuedSession;
+    }).pipe(
+      Effect.catchTags({
+        SqlError: (cause) => Effect.fail(new SessionCredentialIssueError({ cause })),
+        SchemaError: (cause) => Effect.fail(new SessionCredentialIssueError({ cause })),
+      }),
+      permit.withPermits(1),
+      Effect.withSpan("ForkSessions.issue"),
+    );
   };
 
   const cleanup = Effect.gen(function* () {
     const nowMs = yield* Clock.currentTimeMillis;
-    const idle = idleForkSessions(yield* store.listActive(), nowMs);
-    yield* Effect.forEach(idle, store.revoke, { discard: true });
-    if (idle.length > 0) {
-      yield* Effect.logInfo("Ended idle fork sessions.", { count: idle.length });
+    const revoked = yield* revokeIdle({
+      now: DateTime.makeUnsafe(nowMs),
+      seenBefore: DateTime.makeUnsafe(nowMs - Duration.toMillis(FORK_SESSION_IDLE_LIMIT)),
+      connected: yield* store.connectedSessionIds,
+    });
+    yield* store.publishRemoved(revoked.map((row) => row.sessionId));
+    if (revoked.length > 0) {
+      yield* Effect.logInfo("Ended idle fork sessions.", { count: revoked.length });
     }
   }).pipe(
     permit.withPermits(1),
     Effect.catchCause((cause) => Effect.logWarning("Could not end idle fork sessions.", { cause })),
   );
-  yield* cleanup.pipe(Effect.repeat(Schedule.spaced(CLEANUP_INTERVAL)), Effect.forkScoped);
+  yield* Effect.sleep(CLEANUP_INTERVAL).pipe(
+    Effect.andThen(cleanup.pipe(Effect.repeat(Schedule.spaced(CLEANUP_INTERVAL)))),
+    Effect.forkScoped,
+  );
 
   return { issue };
 });

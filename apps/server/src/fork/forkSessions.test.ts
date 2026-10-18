@@ -39,7 +39,8 @@ it.layer(NodeServices.layer)("fork sessions", (it) => {
       const first = yield* sessions.issue({ ...machineSession, scopes: [AuthAccessReadScope] });
       const again = yield* sessions.issue({ ...machineSession, scopes: [AuthAccessReadScope] });
       expect(again.sessionId).toBe(first.sessionId);
-      expect((yield* sessions.verify(again.token)).sessionId).toBe(first.sessionId);
+      // The same token: a change of the upstream claims format breaks this before it ships.
+      expect(again.token).toBe(first.token);
 
       const rotated = yield* sessions.issue({
         ...machineSession,
@@ -48,6 +49,16 @@ it.layer(NodeServices.layer)("fork sessions", (it) => {
       expect(rotated.sessionId).not.toBe(first.sessionId);
       const active = yield* sessions.listActive();
       expect(active.map((session) => session.sessionId)).toEqual([rotated.sessionId]);
+    }).pipe(Effect.scoped, Effect.provide(layerSessionStore)),
+  );
+
+  it.effect("gives two requests at once one session", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const request = sessions.issue({ ...machineSession, scopes: [AuthAccessReadScope] });
+      const [left, right] = yield* Effect.all([request, request], { concurrency: "unbounded" });
+      expect(left.sessionId).toBe(right.sessionId);
+      expect(yield* sessions.listActive()).toHaveLength(1);
     }).pipe(Effect.scoped, Effect.provide(layerSessionStore)),
   );
 

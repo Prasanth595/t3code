@@ -109,7 +109,7 @@ MM-414 holds the rule. These are the effects for the owner:
 
 MM-1401 and MM-1402 hold the rules. The desktop app acts only while its own server is joined, because only then does the server send it the token headers.
 
-- It pairs each machine environment through `/api/auth/cloudflare-access/pairing-credential`, with the machine token as request headers for that origin only. It pairs again once when the target ends the session after a level change.
+- It pairs each machine environment through `/api/auth/cloudflare-access/pairing-credential`, with the machine token as request headers for that origin only. When the target refuses the connection, for example after a level change, it pairs again with the backoff of MM-306, one pairing at a time per machine.
 - It reports its current client settings. The server leaves out values that equal the desired ones, so the map does not see its own writes as local changes.
 - It reports the result of `reloadWindows` and `installUpdate` before it acts. `installUpdate` "when idle" uses the install-when-idle wait. It also reports the version of a waiting update.
 

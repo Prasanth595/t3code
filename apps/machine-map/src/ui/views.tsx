@@ -1393,7 +1393,7 @@ export function ClientsView() {
                 signOut={
                   presence?.status?.commands.includes("revokeClient") === true
                     ? (group) => {
-                        for (const session of group.sessions) {
+                        for (const session of group.sessions.slice(0, SIGN_OUT_LIMIT)) {
                           portal.command(machine.id, {
                             _tag: "revokeClient",
                             sessionId: session.sessionId,
@@ -1410,6 +1410,14 @@ export function ClientsView() {
     </div>
   );
 }
+
+/**
+ * The most "revoke client" commands that one "Sign out" sends, newest sessions first, so a big row
+ * never queues thousands of commands for an offline machine. Older fork sessions end after 7 days
+ * without use (MM-1305); others end with the next "Sign out". Revisit when a machine can revoke by
+ * subject and label in one command.
+ */
+const SIGN_OUT_LIMIT = 20;
 
 /**
  * MM-903: the T3 sessions of one machine, one row per machine, client or sign-in. Groups with no

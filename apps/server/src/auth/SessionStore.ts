@@ -650,24 +650,6 @@ export const make = Effect.gen(function* () {
     );
 
   const encodeClaims = Schema.encodeEffect(Schema.fromJsonString(SessionClaims));
-  const signSessionClaims = (claims: SessionClaims) =>
-    encodeClaims(claims).pipe(
-      Effect.map(base64UrlEncode),
-      Effect.map(
-        (encodedPayload) => `${encodedPayload}.${signPayload(encodedPayload, signingSecret)}`,
-      ),
-      Effect.mapError(
-        (cause) =>
-          new SessionCredentialIssueError({
-            sessionId: claims.sid,
-            cause: new SessionClaimsEncodingError({
-              sessionId: claims.sid,
-              operation: "encode_session_claims",
-              cause,
-            }),
-          }),
-      ),
-    );
   const issue: SessionStore["Service"]["issue"] = Effect.fn("SessionStore.issue")(
     function* (input) {
       const sessionId = AuthSessionId.make(
@@ -692,7 +674,21 @@ export const make = Effect.gen(function* () {
         exp: expiresAt.epochMilliseconds,
       };
 
-      const token = yield* signSessionClaims(claims);
+      const encodedPayload = yield* encodeClaims(claims).pipe(
+        Effect.map(base64UrlEncode),
+        Effect.mapError(
+          (cause) =>
+            new SessionCredentialIssueError({
+              sessionId,
+              cause: new SessionClaimsEncodingError({
+                sessionId,
+                operation: "encode_session_claims",
+                cause,
+              }),
+            }),
+        ),
+      );
+      const signature = signPayload(encodedPayload, signingSecret);
       const client = input?.client ?? createDefaultClientMetadata();
       const sessionRecord = {
         sessionId,
@@ -750,7 +746,7 @@ export const make = Effect.gen(function* () {
 
       return {
         sessionId,
-        token,
+        token: `${encodedPayload}.${signature}`,
         method: claims.method,
         client,
         expiresAt: expiresAt,
@@ -1076,12 +1072,12 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  // Fork (MM-1305): one session per machine, map client or Access sign-in. A fork session has no
-  // proof key and no runtime ceiling, so its stored row holds every claim of its token.
+  // Fork (MM-1305): one session per map machine or app client, and the end of idle fork sessions.
+  // A fork session has no proof key and no runtime ceiling, so its row holds every claim.
   const forkSessions = yield* ForkSessions.makeForkSessions({
     issue,
-    reissue: (session) =>
-      signSessionClaims({
+    sign: (session) =>
+      encodeClaims({
         v: 1,
         kind: "session",
         sid: session.sessionId,
@@ -1091,17 +1087,20 @@ export const make = Effect.gen(function* () {
         iat: session.issuedAt.epochMilliseconds,
         exp: session.expiresAt.epochMilliseconds,
       }).pipe(
-        Effect.map((token): IssuedSession => ({
-          sessionId: session.sessionId,
-          token,
-          method: session.method,
-          client: session.client,
-          expiresAt: session.expiresAt,
-          scopes: session.scopes,
-        })),
+        Effect.map(base64UrlEncode),
+        Effect.map((payload) => `${payload}.${signPayload(payload, signingSecret)}`),
+        Effect.mapError(
+          (cause) => new SessionCredentialIssueError({ sessionId: session.sessionId, cause }),
+        ),
       ),
-    listActive,
-    revoke,
+    connectedSessionIds: Ref.get(connectedSessionsRef).pipe(
+      Effect.map((connected) => [...connected.keys()]),
+    ),
+    publishRemoved: (sessionIds) =>
+      PubSub.publishAll(
+        changesPubSub,
+        sessionIds.map((sessionId) => ({ type: "clientRemoved" as const, sessionId })),
+      ).pipe(Effect.asVoid),
   });
 
   return SessionStore.of({
