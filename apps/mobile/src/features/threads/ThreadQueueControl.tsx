@@ -105,8 +105,8 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
       hadQueuedRuns.current = true;
       return;
     }
-    if (hadQueuedRuns.current) navigation.goBack();
-  }, [navigation, queuedRuns.length]);
+    if (hadQueuedRuns.current && workflow?.isHeld !== true) navigation.goBack();
+  }, [navigation, queuedRuns.length, workflow?.isHeld]);
 
   const move = async (runId: RunId, beforeRunId: RunId | null) => {
     if (busyRef.current || !workflow?.canReorder) return;
@@ -213,7 +213,7 @@ export function ThreadQueueSheet({ route }: StaticScreenProps<QueueTarget>) {
           />
         </View>
       ) : null}
-      {queuedRuns.length === 0 ? (
+      {queuedRuns.length === 0 && workflow?.isHeld !== true ? (
         <Text className="pt-6 text-center text-sm text-foreground-muted">
           No messages waiting in this queue.
         </Text>
