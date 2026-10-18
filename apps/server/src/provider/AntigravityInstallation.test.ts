@@ -140,7 +140,7 @@ interface HarnessOptions {
   readonly registry?: unknown;
   /** Served by URL instead of the pinned archive. */
   readonly archives?: Readonly<Record<string, Uint8Array>>;
-  readonly manifest?: ModelManifest.ModelManifestData;
+  readonly manifest?: Effect.Effect<ModelManifest.ModelManifestData>;
 }
 
 const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
@@ -198,7 +198,7 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
     Effect.provideService(HostProcess.Architecture, arch),
     Effect.provideService(HostProcess.Environment, { PATH: options.path ?? "" }),
     Effect.provideService(ModelManifest.ModelManifest, {
-      current: Effect.succeed(options.manifest ?? ModelManifest.BUNDLED_MODEL_MANIFEST),
+      current: options.manifest ?? Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
       refresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
       forceRefresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
       refreshInBackground: Effect.void,
@@ -292,6 +292,16 @@ const registryListing = (archive = upstreamUrl) => ({
     },
   ],
 });
+const withdrawnManifest: ModelManifest.ModelManifestData = {
+  ...ModelManifest.BUNDLED_MODEL_MANIFEST,
+  compatibility: [
+    {
+      driver: "antigravity",
+      t3CodeRange: ">=0.0.42",
+      ranges: [{ range: ">=1.4.0", status: "broken" }],
+    },
+  ],
+};
 const pinnedAsset = Effect.fn("test.pinnedAntigravityAsset")(function* () {
   return { ...(yield* releaseAsset()), version: "1.3.0" };
 });
@@ -1192,16 +1202,7 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
     {
       name: "withdrawn by the model manifest",
       registry: registryListing(),
-      manifest: {
-        ...ModelManifest.BUNDLED_MODEL_MANIFEST,
-        compatibility: [
-          {
-            driver: "antigravity",
-            t3CodeRange: ">=0.0.42",
-            ranges: [{ range: ">=1.4.0", status: "broken" as const }],
-          },
-        ],
-      },
+      manifest: Effect.succeed(withdrawnManifest),
     },
   ])("does not offer a registry release $name", ({ registry, manifest }) =>
     Effect.gen(function* () {
@@ -1229,6 +1230,37 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       yield* TestClock.adjust("1 hour");
       yield* h.installation.checkForUpdate;
       expect(h.requests).toEqual([ACP_REGISTRY_URL, ACP_REGISTRY_URL]);
+    }),
+  );
+
+  it.effect("returns an install the manifest withdraws to the pinned release", () =>
+    Effect.gen(function* () {
+      let manifest = ModelManifest.BUNDLED_MODEL_MANIFEST;
+      const h = yield* makeHarness({
+        asset: yield* pinnedAsset(),
+        registry: registryListing(),
+        archives: { [upstreamUrl]: upstreamArchive },
+        manifest: Effect.sync(() => manifest),
+      });
+      yield* h.installation.checkForUpdate;
+      yield* h.installation.start;
+      yield* terminalState(h.installation);
+      yield* h.installation.start;
+      expect(yield* terminalState(h.installation)).toMatchObject({ installedVersion: "1.4.1" });
+
+      manifest = withdrawnManifest;
+      yield* h.installation.checkForUpdate;
+      expect(yield* h.installation.state).toMatchObject({
+        installedVersion: "1.4.1",
+        version: "1.3.0",
+      });
+      yield* h.installation.start;
+      expect(yield* terminalState(h.installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "1.3.0",
+        version: "1.3.0",
+      });
+      expect((yield* h.installation.resolve()).version).toBe("1.3.0");
     }),
   );
 });

@@ -165,8 +165,8 @@ mise through mise. Cursor updates with T3 Code. Homebrew installs compare agains
 the version Homebrew offers, which can trail the npm release by a few hours.
 
 The managed runtimes for Antigravity and for Codex connected through ChatGPT
-first install the release T3 Code tested. When the provider publishes a newer
-one, their setup in **Settings → Providers** offers an update.
+first install the release T3 Code tested. When T3 Code finds a newer compatible
+release, their setup in **Settings → Providers** offers an update.
 
 Add another provider instance for a separate account or configuration. Each
 instance can have its own environment variables, such as API keys or a custom

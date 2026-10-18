@@ -301,6 +301,18 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       )
     );
   });
+  const isSupported = (version: string) =>
+    compatibility(version).pipe(Effect.map((advisory) => advisory?.status === "supported"));
+  // Forgets what the manifest withdrew after it was seen. Managed resolution
+  // refuses a withdrawn install, so the pin replaces it rather than a re-check.
+  const keptInstall = Effect.fn("CodexInstallation.keptInstall")(function* (
+    installedVersion: string | null,
+  ) {
+    if (upstream && !(yield* isSupported(upstream.version))) upstream = null;
+    return installedVersion !== null && (yield* isSupported(installedVersion))
+      ? installedVersion
+      : null;
+  });
   // npm names the latest stable release; its GitHub release lists the package
   // checksums, so an upstream update stays SHA-256 verified.
   const lookupUpstream = Effect.gen(function* () {
@@ -310,7 +322,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
     const { version } = yield* latest.json.pipe(Effect.flatMap(decodeNpmLatest));
     // Managed resolution refuses anything else, so offering it would break sessions.
-    if ((yield* compatibility(version))?.status !== "supported") return null;
+    if (!(yield* isSupported(version))) return null;
     const releaseUrl = `${UPSTREAM_RELEASES_URL}/rust-v${version}`;
     const checksums = yield* http
       .execute(HttpClientRequest.get(`${releaseUrl}/codex-package_SHA256SUMS`))
@@ -334,15 +346,21 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     .withPermitsIfAvailable(1)(
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
-        if (upstreamCheckedAt !== null && now - upstreamCheckedAt < UPDATE_CHECK_INTERVAL_MS) {
-          return;
+        if (upstreamCheckedAt === null || now - upstreamCheckedAt >= UPDATE_CHECK_INTERVAL_MS) {
+          // A failed lookup counts too, and keeps whatever release was offered before.
+          upstreamCheckedAt = now;
+          upstream = yield* lookupUpstream.pipe(
+            Effect.timeout(UPDATE_CHECK_TIMEOUT),
+            Effect.orElseSucceed(() => upstream),
+          );
         }
-        // A failed lookup counts too, and keeps whatever release was offered before.
-        upstreamCheckedAt = now;
-        upstream = yield* lookupUpstream.pipe(Effect.timeout(UPDATE_CHECK_TIMEOUT));
         // A running install already published the release it is installing.
-        yield* SubscriptionRef.update(state, (current) =>
-          isRunning(current) ? current : { ...current, ...offer(managedVersion(current)) },
+        yield* SubscriptionRef.updateEffect(state, (current) =>
+          isRunning(current)
+            ? Effect.succeed(current)
+            : keptInstall(managedVersion(current)).pipe(
+                Effect.map((kept) => ({ ...current, ...offer(kept) })),
+              ),
         );
       }),
     )
@@ -689,11 +707,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         const current = yield* SubscriptionRef.get(state);
         if (isRunning(current)) return current;
         if (yield* reuseLocal()) return yield* SubscriptionRef.get(state);
-        const installedVersion = managedVersion(current);
-        // The manifest may have withdrawn the cached upstream release since its lookup.
-        if (upstream && (yield* compatibility(upstream.version))?.status !== "supported") {
-          upstream = null;
-        }
+        const installedVersion = yield* keptInstall(managedVersion(current));
         const release = selectManagedRelease(installedVersion, asset, upstream);
         if (!release && installedVersion === null) {
           return yield* installationError(
@@ -848,12 +862,13 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
     if (!(yield* fs.exists(activePath))) return;
     const active = yield* readRecord(activePath, ActiveRelease);
     const installed = yield* completedRelease(active.version);
+    const kept = yield* keptInstall(installed.version);
     yield* SubscriptionRef.update(
       state,
       (current) =>
         ({
           ...current,
-          ...offer(installed.version),
+          ...offer(kept),
           installedVersion: installed.version,
           executablePath: installed.executablePath,
           source: "managed",

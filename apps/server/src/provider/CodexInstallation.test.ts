@@ -630,3 +630,50 @@ it.effect("does not install a cached update the manifest has since withdrawn", (
     expect((yield* h.installation.resolve()).version).toBe("0.156.1");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+it.effect("returns a managed install the manifest withdraws to the pinned release", () =>
+  Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
+    const checksum = Hex.encode(
+      yield* crypto.digest("SHA-256", upstreamArchive).pipe(Effect.orDie),
+    );
+    let manifest = ModelManifest.BUNDLED_MODEL_MANIFEST;
+    const h = yield* makeHarness({
+      responses: upstreamResponses(checksum),
+      manifestCurrent: Effect.sync(() => manifest),
+    });
+    yield* h.installation.checkForUpdate;
+    yield* h.installation.start;
+    yield* terminalState(h.installation);
+    yield* h.installation.start;
+    expect(yield* terminalState(h.installation)).toMatchObject({
+      installedVersion: upstreamVersion,
+    });
+
+    manifest = {
+      ...manifest,
+      compatibility: [
+        {
+          driver: "codex",
+          t3CodeRange: ">=0.0.42",
+          ranges: [
+            { range: ">=0.160.0", status: "unsupported" },
+            { range: ">=0.156.0 <0.160.0", status: "supported" },
+          ],
+        },
+      ],
+    };
+    yield* h.installation.checkForUpdate;
+    expect(yield* h.installation.state).toMatchObject({
+      installedVersion: upstreamVersion,
+      version: "0.156.1",
+    });
+    yield* h.installation.start;
+    expect(yield* terminalState(h.installation)).toMatchObject({
+      phase: "succeeded",
+      installedVersion: "0.156.1",
+      version: "0.156.1",
+    });
+    expect((yield* h.installation.resolve()).version).toBe("0.156.1");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);

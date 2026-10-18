@@ -256,6 +256,17 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     return status === "broken" || status === "unsupported";
   });
 
+  // Forgets what the manifest withdrew after it was seen. A withdrawn install
+  // is not kept either, so the pin replaces it rather than a re-check.
+  const keptInstall = Effect.fn("AntigravityInstallation.keptInstall")(function* (
+    installedVersion: string | null,
+  ) {
+    if (upstream && (yield* isWithdrawn(upstream.version))) upstream = null;
+    return installedVersion !== null && !(yield* isWithdrawn(installedVersion))
+      ? installedVersion
+      : null;
+  });
+
   const lookupUpstream = Effect.gen(function* () {
     const target = resolveAcpRegistryPlatformTarget(platform, arch);
     if (!target) return null;
@@ -286,15 +297,21 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     .withPermitsIfAvailable(1)(
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
-        if (upstreamCheckedAt !== null && now - upstreamCheckedAt < UPDATE_CHECK_INTERVAL_MS) {
-          return;
+        if (upstreamCheckedAt === null || now - upstreamCheckedAt >= UPDATE_CHECK_INTERVAL_MS) {
+          // A failed lookup counts too, and keeps whatever release was offered before.
+          upstreamCheckedAt = now;
+          upstream = yield* lookupUpstream.pipe(
+            Effect.timeout(UPDATE_CHECK_TIMEOUT),
+            Effect.orElseSucceed(() => upstream),
+          );
         }
-        // A failed lookup counts too, and keeps whatever release was offered before.
-        upstreamCheckedAt = now;
-        upstream = yield* lookupUpstream.pipe(Effect.timeout(UPDATE_CHECK_TIMEOUT));
         // A running install already published the release it is installing.
-        yield* SubscriptionRef.update(state, (current) =>
-          isRunning(current) ? current : { ...current, ...offer(current.installedVersion) },
+        yield* SubscriptionRef.updateEffect(state, (current) =>
+          isRunning(current)
+            ? Effect.succeed(current)
+            : keptInstall(current.installedVersion).pipe(
+                Effect.map((kept) => ({ ...current, ...offer(kept) })),
+              ),
         );
       }),
     )
@@ -901,14 +918,13 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.gen(function* () {
         const current = yield* SubscriptionRef.get(state);
         if (isRunning(current)) return current;
-        // The manifest may have withdrawn the cached upstream release since its lookup.
-        if (upstream && (yield* isWithdrawn(upstream.version))) upstream = null;
+        const installedVersion = yield* keptInstall(current.installedVersion);
         const release = selectManagedRelease<AntigravityRelease>(
-          current.installedVersion,
+          installedVersion,
           releaseAsset,
           upstream,
         );
-        if (!release && current.installedVersion === null) {
+        if (!release && installedVersion === null) {
           return yield* installationError(
             "start",
             `Google does not publish an Antigravity runtime for ${platform}-${arch}. Use a supported remote environment or a custom executable.`,
@@ -920,7 +936,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
           operationId,
           phase: release ? "downloading" : "verifying",
           downloadedBytes: 0,
-          ...offer(current.installedVersion),
+          ...offer(installedVersion),
           installedVersion: current.installedVersion,
           canRemove: current.canRemove,
           message: release
@@ -1043,9 +1059,10 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     if (!(yield* fs.exists(activePath))) return;
     const active = yield* readRecord(activePath, ActiveRelease);
     const installed = yield* completedRelease(active.releaseId);
+    const kept = yield* keptInstall(installed.version);
     yield* SubscriptionRef.update(state, (current) => ({
       ...current,
-      ...offer(installed.version),
+      ...offer(kept),
       installedVersion: installed.version,
     }));
   }).pipe(
