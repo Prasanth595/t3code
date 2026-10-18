@@ -87,7 +87,14 @@ const QueueListTool = Tool.make("t3_queue_list", {
     limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }))),
   }),
   success: Schema.Struct({
-    items: Schema.Array(queueEntry),
+    items: Schema.Array(
+      Schema.Struct({
+        queuedRunId: RunId,
+        text: Schema.String,
+        truncated: Schema.Boolean,
+        queueHeld: Schema.Boolean,
+      }),
+    ),
     nextCursor: Schema.NullOr(NonNegativeInt),
   }),
 })

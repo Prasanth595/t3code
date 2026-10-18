@@ -237,7 +237,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       return {
         items: runs.slice(cursor, end).flatMap((run) => {
           const entry = queueEntry(projection, run.id, 1000);
-          return entry === undefined ? [] : [entry];
+          return entry === undefined ? [] : [{ ...entry, queueHeld: run.queueHeld === true }];
         }),
         nextCursor: end < runs.length ? end : null,
       };

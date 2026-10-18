@@ -1232,7 +1232,7 @@ describe("orchestrator MCP toolkit", () => {
             const queueFirstPage = yield* invoke("t3_queue_list", { limit: 1 });
             expect(queueFirstPage.isError).toBe(false);
             expect(queueFirstPage.structuredContent).toMatchObject({
-              items: [{ queuedRunId: queueRace.queuedRun.id }],
+              items: [{ queuedRunId: queueRace.queuedRun.id, queueHeld: false }],
               nextCursor: 1,
             });
             const queueDefinition = server.tools.find(({ tool }) => tool.name === "t3_queue_list");
@@ -1262,7 +1262,14 @@ describe("orchestrator MCP toolkit", () => {
             });
             const queueSecondPage = yield* invoke("t3_queue_list", { cursor: 1, limit: 1 });
             expect(queueSecondPage.structuredContent).toEqual({
-              items: [{ queuedRunId: queuedUserRun.id, text: "🙂".repeat(1000), truncated: true }],
+              items: [
+                {
+                  queuedRunId: queuedUserRun.id,
+                  text: "🙂".repeat(1000),
+                  truncated: true,
+                  queueHeld: false,
+                },
+              ],
               nextCursor: null,
             });
             const queueRead = yield* invoke("t3_queue_read", { queuedRunId: queuedUserRun.id });
