@@ -93,6 +93,7 @@ import React, {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import type {
@@ -100,7 +101,7 @@ import type {
   ExtraProps as ReactMarkdownExtraProps,
   Options as ReactMarkdownOptions,
 } from "react-markdown";
-import ReactMarkdown from "react-markdown";
+import Markdown from "react-markdown";
 import { toHtml } from "hast-util-to-html";
 import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import { defaultUrlTransform } from "react-markdown";
@@ -3324,6 +3325,34 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
 } satisfies Components;
 
+// Opening or returning to a chat remounts every message, and parsing is most of
+// that mount. Output is a pure function of the text and these options (the URL
+// transform is pure too), and components read their state from context, so
+// settled output is reusable. About 56 bytes of tree per character of text.
+const parsedMarkdownCache = new LRUCache<{
+  lineBreaks: boolean;
+  parseRawHtml: boolean;
+  element: ReactElement;
+}>(300, 4 * 1024 * 1024);
+
+// Always rendered, cached or not, so settling a streamed message keeps its subtree.
+function ParsedMarkdown({
+  cacheable,
+  lineBreaks,
+  parseRawHtml,
+  ...options
+}: ReactMarkdownOptions & { cacheable: boolean; lineBreaks: boolean; parseRawHtml: boolean }) {
+  const text = options.children ?? "";
+  if (!cacheable) return Markdown(options);
+  const cached = parsedMarkdownCache.get(text);
+  if (cached?.lineBreaks === lineBreaks && cached.parseRawHtml === parseRawHtml) {
+    return cached.element;
+  }
+  const element = Markdown(options);
+  parsedMarkdownCache.set(text, { lineBreaks, parseRawHtml, element }, text.length * 64);
+  return element;
+}
+
 function ChatMarkdown({
   text,
   className,
@@ -3362,7 +3391,10 @@ function ChatMarkdown({
     >
       <ChatMarkdownRendererContext value={componentState}>
         <ChatMarkdownTextContext value={text}>
-          <ReactMarkdown
+          <ParsedMarkdown
+            cacheable={props.isStreaming !== true && extraRemarkPlugins === EMPTY_REMARK_PLUGINS}
+            lineBreaks={lineBreaks}
+            parseRawHtml={parseRawHtml}
             remarkPlugins={remarkPlugins}
             rehypePlugins={
               parseRawHtml
@@ -3374,7 +3406,7 @@ function ChatMarkdown({
             urlTransform={markdownUrlTransform}
           >
             {text}
-          </ReactMarkdown>
+          </ParsedMarkdown>
         </ChatMarkdownTextContext>
       </ChatMarkdownRendererContext>
       {localMediaPreview ? (
