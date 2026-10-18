@@ -63,7 +63,7 @@ const hoursAgo = (hours: number) => new Date(Date.now() - hours * HOUR_MS).toISO
 const SAMPLE_THREADS: ReadonlyArray<SampleThread> = [
   {
     title: "Shrinking Thread Card Size Setting",
-    project: { name: "yarden-zamir/t3code", monogram: "T3", color: "blue" },
+    project: { name: "tomcohendev/t3code", monogram: "T3", color: "blue" },
     branch: "smaller-thread-cards-setting",
     worktree: true,
     status: { label: "Working", icon: "working", className: "text-info", elapsed: "2m" },

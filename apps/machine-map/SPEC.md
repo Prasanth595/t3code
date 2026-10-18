@@ -2,7 +2,7 @@
 
 Fork feature. One portal shows all T3 machines on a map. It controls what each machine can do on the other machines, and their settings. Changes apply at once on online machines and wait in a queue for offline machines. Every action in the portal is also a tool for agents.
 
-The portal is a Cloudflare Worker with one Durable Object, at `t3.yarden-zamir.com`. Each T3 server connects to it when the server setting `machineMap` is on. The setting is off by default.
+The portal is a Cloudflare Worker with one Durable Object, at `map.tomcohen.dev`. Each T3 server connects to it when the server setting `machineMap` is on. The setting is off by default.
 
 Requirements have stable numbers. Do not renumber them. Mark a removed requirement "Removed" and keep its number.
 

@@ -54,7 +54,7 @@ export type SidebarGroupThread = Pick<
  * rule in the shared setting matches the same repository everywhere.
  */
 interface SidebarGroupProjectFacts {
-  /** `repositoryGroupingKeyOf`, such as `github.com/yarden-zamir/t3code`. Null without a remote. */
+  /** `repositoryGroupingKeyOf`, such as `github.com/tomcohendev/t3code`. Null without a remote. */
   readonly repository: string | null;
   readonly repositoryLabel: string | null;
   readonly owner: string | null;

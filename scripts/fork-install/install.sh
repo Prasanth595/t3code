@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Install or update T3 Code from the Yarden-zamir/t3code fork. See docs/fork.md "Install the fork".
+# Install or update T3 Code from the TomCohenDev/t3code fork. See docs/fork.md "Install the fork".
 #
-#   curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/TomCohenDev/t3code/main/scripts/fork-install/install.sh | bash
 #   curl -fsSL .../install.sh | bash -s -- --join <code>
 #
 # Linux with a display: the script installs the newest nightly AppImage from the fork releases.
@@ -11,7 +11,7 @@
 # macOS: the script installs the newest nightly app from the fork releases.
 set -euo pipefail
 
-readonly REPO=Yarden-zamir/t3code
+readonly REPO=TomCohenDev/t3code
 readonly RELEASES_API="https://api.github.com/repos/$REPO/releases?per_page=20"
 # The unit of upstream `t3 service install`.
 readonly UPSTREAM_SERVICE=t3code.service

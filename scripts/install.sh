@@ -18,7 +18,7 @@
 set -eu
 
 # Fork: install from the fork releases.
-repo="Yarden-zamir/t3code"
+repo="TomCohenDev/t3code"
 base_url="${T3CODE_RELEASE_BASE_URL:-https://github.com/${repo}/releases/download}"
 t3_home="${T3CODE_HOME:-$HOME/.t3}"
 bin_dir="${T3CODE_INSTALL_BIN_DIR:-$HOME/.local/bin}"

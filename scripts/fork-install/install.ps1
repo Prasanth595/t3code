@@ -1,7 +1,7 @@
-# Install T3 Code from the Yarden-zamir/t3code fork on Windows. See docs/fork.md "Install the fork".
+# Install T3 Code from the TomCohenDev/t3code fork on Windows. See docs/fork.md "Install the fork".
 #
-#   irm https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.ps1 | iex
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.ps1))) -Join <code>
+#   irm https://raw.githubusercontent.com/TomCohenDev/t3code/main/scripts/fork-install/install.ps1 | iex
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/TomCohenDev/t3code/main/scripts/fork-install/install.ps1))) -Join <code>
 #
 # The script downloads the newest nightly installer from the fork releases and runs it.
 # The app updates itself afterwards.
@@ -11,7 +11,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$repo = "Yarden-zamir/t3code"
+$repo = "TomCohenDev/t3code"
 
 # The API lists releases newest first and includes pre-releases. GitHub "latest" skips them.
 $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases?per_page=20" `

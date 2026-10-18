@@ -7,8 +7,8 @@
 # See docs/fork.md.
 set -euo pipefail
 
-readonly FORK_REPOSITORY="Yarden-zamir/t3code"
-readonly SIGN_IDENTITY="Yarden Zamir T3 Fork"
+readonly FORK_REPOSITORY="TomCohenDev/t3code"
+readonly SIGN_IDENTITY="Tom Cohen T3 Fork"
 
 publish=false
 install=false

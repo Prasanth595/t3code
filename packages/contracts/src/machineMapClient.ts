@@ -98,7 +98,7 @@ export const MachineMapJoinInput = Schema.Struct({
   portalUrl: Schema.optionalKey(
     TrimmedNonEmptyString.annotate({
       description:
-        "Portal origin, for example https://t3.yarden-zamir.com. Omit to keep the portal of the machineMap setting.",
+        "Portal origin, for example https://map.tomcohen.dev. Omit to keep the portal of the machineMap setting.",
     }),
   ),
 });

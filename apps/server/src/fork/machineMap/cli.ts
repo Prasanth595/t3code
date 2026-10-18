@@ -49,7 +49,7 @@ const joinCommand = Command.make("join", {
   Command.withExamples([
     { command: "t3 machine-map join K7QM-2XPA", description: "Join the portal of the setting." },
     {
-      command: "t3 machine-map join K7QM-2XPA --portal https://t3.yarden-zamir.com",
+      command: "t3 machine-map join K7QM-2XPA --portal https://map.tomcohen.dev",
       description: "Join a given portal.",
     },
   ]),

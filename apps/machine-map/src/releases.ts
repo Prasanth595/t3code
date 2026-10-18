@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 
 import { FORK_RELEASES_PAGE, type ForkRelease } from "./api.ts";
 
-const RELEASES_API = "https://api.github.com/repos/Yarden-zamir/t3code/releases?per_page=10";
+const RELEASES_API = "https://api.github.com/repos/TomCohenDev/t3code/releases?per_page=10";
 const CACHE_SECONDS = 600;
 
 const GitHubRelease = Schema.Struct({

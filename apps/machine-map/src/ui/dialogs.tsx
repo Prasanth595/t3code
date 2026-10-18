@@ -511,7 +511,7 @@ function InstallStep({ code }: { code: string }) {
     <div className="install-step">
       <p className="small">
         <strong>Install and join in one step.</strong> Run the command of its system on the new
-        machine. It installs T3 Code (Yarden-zamir's fork,{" "}
+        machine. It installs T3 Code (TomCohenDev's fork,{" "}
         <a href={release?.pageUrl ?? FORK_RELEASES_PAGE} target="_blank" rel="noreferrer">
           {release?.version ?? "fork releases"}
         </a>

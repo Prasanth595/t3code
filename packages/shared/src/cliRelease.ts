@@ -1,5 +1,5 @@
 // Fork: servers update from the fork releases (.github/workflows/fork-release.yml).
-export const CLI_RELEASE_REPOSITORY = "Yarden-zamir/t3code";
+export const CLI_RELEASE_REPOSITORY = "TomCohenDev/t3code";
 export const CLI_RELEASE_CHECKSUMS_FILE = "SHA256SUMS";
 export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
 

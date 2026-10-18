@@ -1,5 +1,5 @@
 /** The install commands of the join dialog (MM-211). The scripts live in `scripts/fork-install`. */
-const SCRIPTS = "https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install";
+const SCRIPTS = "https://raw.githubusercontent.com/TomCohenDev/t3code/main/scripts/fork-install";
 
 export type InstallTarget = "linux" | "mac" | "windows";
 

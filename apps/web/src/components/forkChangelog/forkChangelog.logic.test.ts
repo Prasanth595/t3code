@@ -12,7 +12,7 @@ describe("linkCommitSubject", () => {
   it("links a pull request number to the repository of the commit", () => {
     expect(linkCommitSubject({ subject: "fix(web): row (#123)", fork: true })).toMatchObject([
       { text: "fix(web): row ", url: null },
-      { text: "#123", url: "https://github.com/Yarden-zamir/t3code/pull/123" },
+      { text: "#123", url: "https://github.com/TomCohenDev/t3code/pull/123" },
     ]);
     expect(linkCommitSubject({ subject: "#7 and #8", fork: false })).toMatchObject([
       { text: "#7", url: "https://github.com/pingdotgg/t3code/pull/7" },
@@ -44,7 +44,7 @@ describe("pickForkProject", () => {
       {
         name: "vps fork",
         environmentId: EnvironmentId.make("vps"),
-        repositoryIdentity: identity("github.com/yarden-zamir/t3code"),
+        repositoryIdentity: identity("github.com/tomcohendev/t3code"),
       },
       { name: "no git", environmentId: mac, repositoryIdentity: null },
       {
@@ -52,7 +52,7 @@ describe("pickForkProject", () => {
         environmentId: mac,
         repositoryIdentity: identity(
           "github.com/pingdotgg/t3code",
-          "github.com/yarden-zamir/t3code",
+          "github.com/tomcohendev/t3code",
         ),
       },
     ];

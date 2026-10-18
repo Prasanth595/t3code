@@ -1,6 +1,6 @@
-# Yarden-zamir fork of T3 Code
+# TomCohenDev fork of T3 Code
 
-This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code). The upstream README starts below the line. Each fork behavior is a setting that starts on when it only adds something, and off when it changes behavior, installs or restarts anything, changes access or needs setup. Settings > Fork shows every fork setting, in the groups of this list. Details and setup: [docs/fork.md](docs/fork.md).
+This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3code), built on [Yarden-zamir/t3code](https://github.com/Yarden-zamir/t3code), whose fork features are listed below. The upstream README starts below the line. Each fork behavior is a setting that starts on when it only adds something, and off when it changes behavior, installs or restarts anything, changes access or needs setup. Settings > Fork shows every fork setting, in the groups of this list. Details and setup: [docs/fork.md](docs/fork.md).
 
 ## Fork features
 
@@ -13,7 +13,7 @@ This is a personal fork of [pingdotgg/t3code](https://github.com/pingdotgg/t3cod
 
 **Machine map** (all lines need `machineMap`, which a join to a map turns on)
 
-- **Portal:** one portal at `t3.yarden-zamir.com` (Cloudflare Worker) maps every T3 machine and sets what each machine can do on the others. Requirements: `apps/machine-map/SPEC.md`.
+- **Portal:** one portal at `map.tomcohen.dev` (Cloudflare Worker) maps every T3 machine and sets what each machine can do on the others. Requirements: `apps/machine-map/SPEC.md`.
 - **Portal views:** Map, Table, Health, Settings, Queue, Tasks, History, Inbox and Clients. Agent tools (`machines_*` and `machine_tool_call`) cover machine operations; client approvals, invites and emergency resume stay owner-only.
 - **Join and install:** "Add machine" shows one command per system that installs the fork and joins with a one-time code. The portal makes the tunnel of the machine.
 - **Join feedback:** the open join dialog shows when a machine uses the code, and if it connected.

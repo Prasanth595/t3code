@@ -117,7 +117,7 @@ export const PullRequestWatchRemarkFilter = Schema.Struct({
 });
 export type PullRequestWatchRemarkFilter = typeof PullRequestWatchRemarkFilter.Type;
 
-export const DEFAULT_MACHINE_MAP_PORTAL_URL = "https://t3.yarden-zamir.com";
+export const DEFAULT_MACHINE_MAP_PORTAL_URL = "https://map.tomcohen.dev";
 
 /**
  * Fork: machine map (`apps/machine-map/SPEC.md`, MM-1301). Off means no portal connection and no

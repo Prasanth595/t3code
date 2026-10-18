@@ -32,7 +32,7 @@ case "${1:-}" in
     export APP_VARIANT=preview
     export T3CODE_MOBILE_UPDATES_ENABLED=0
     export MOBILE_VERSION_POLICY=appVersion
-    export T3CODE_ANDROID_PACKAGE="${T3CODE_ANDROID_PACKAGE:-com.yardenzamir.t3code}"
+    export T3CODE_ANDROID_PACKAGE="${T3CODE_ANDROID_PACKAGE:-dev.tomcohen.t3code}"
     export EXPO_NO_GIT_STATUS=1
     export CI=1
     vp exec expo prebuild --clean --platform android --no-install

@@ -2,7 +2,7 @@
 
 Fork feature. The portal shows every T3 machine on one map and controls what each machine can do on the others. [SPEC.md](SPEC.md) holds the numbered requirements (MM-xxx). The shared types live in `packages/contracts/src/machineMap.ts`.
 
-The portal is one Cloudflare Worker with one Durable Object, at `t3.yarden-zamir.com`.
+The portal is one Cloudflare Worker with one Durable Object, at `map.tomcohen.dev`.
 
 ## Code
 
@@ -19,9 +19,9 @@ The portal is one Cloudflare Worker with one Durable Object, at `t3.yarden-zamir
 
 Create these Access apps before the first deploy:
 
-1. **Portal pages and API.** Self-hosted app for `t3.yarden-zamir.com`, session duration 30 days (MM-103). Allow only the owner email. Copy its audience tag into `PAGE_AUD` in `wrangler.jsonc`.
-2. **Machine connections.** Self-hosted app for `t3.yarden-zamir.com/connect`. Give it no identity login. The portal adds a "Service Auth" policy named `t3 machine map tokens` for the machine tokens. Copy its audience tag into `CONNECT_AUD` and its app id into `CONNECT_ACCESS_APP_ID`.
-3. **Enrollment.** Self-hosted app for `t3.yarden-zamir.com/enroll` with one Bypass policy for everyone. The join code is the credential (MM-204).
+1. **Portal pages and API.** Self-hosted app for `map.tomcohen.dev`, session duration 30 days (MM-103). Allow only the owner email. Copy its audience tag into `PAGE_AUD` in `wrangler.jsonc`.
+2. **Machine connections.** Self-hosted app for `map.tomcohen.dev/connect`. Give it no identity login. The portal adds a "Service Auth" policy named `t3 machine map tokens` for the machine tokens. Copy its audience tag into `CONNECT_AUD` and its app id into `CONNECT_ACCESS_APP_ID`.
+3. **Enrollment.** Self-hosted app for `map.tomcohen.dev/enroll` with one Bypass policy for everyone. The join code is the credential (MM-204).
 
 `MACHINE_ACCESS_APP_ID` is the Access app of the machine hostnames. The portal adds each new machine token to its `t3 machine map tokens` policy, and each app token of a native client to its `t3 client tokens` policy (MM-911). It edits no other policy. It also adds and removes the hostname of each machine tunnel (MM-213). That update sends back the whole app with its policies, and the portal checks that the app keeps each policy.
 
@@ -31,7 +31,7 @@ The Worker refuses every owner and machine request while a value in `wrangler.js
 
 ### Client approvals (MM-1207, MM-1208)
 
-The portal makes the Access app of `t3.yarden-zamir.com/api/grant` itself: "Set up approvals" on a waiting sign-in creates it with the owner emails, a 10-minute session and independent MFA. Do one step by hand first:
+The portal makes the Access app of `map.tomcohen.dev/api/grant` itself: "Set up approvals" on a waiting sign-in creates it with the owner emails, a 10-minute session and independent MFA. Do one step by hand first:
 
 1. In Zero Trust, go to **Access controls** > **Access settings** > **Allow multi-factor authentication (MFA)**.
 2. Allow "Biometrics" (a passkey such as Touch ID or Face ID), "Security key", or both.
@@ -39,7 +39,7 @@ The portal makes the Access app of `t3.yarden-zamir.com/api/grant` itself: "Set 
 
 Cloudflare asks you to register the passkey at the first approval.
 
-"Set up approvals" also creates the Access app `t3 portal client tokens` for `t3.yarden-zamir.com/client` (MM-914). It lets in any service token of the account, and the Worker answers only for a token that a client holds. The `/enroll` Bypass app above also covers the app invite path `/enroll/client` (MM-913).
+"Set up approvals" also creates the Access app `t3 portal client tokens` for `map.tomcohen.dev/client` (MM-914). It lets in any service token of the account, and the Worker answers only for a token that a client holds. The `/enroll` Bypass app above also covers the app invite path `/enroll/client` (MM-913).
 
 ## Secrets
 
@@ -74,7 +74,7 @@ Local development skips the Access JWT: `DEV_FAKE_ACCESS=1` on a loopback hostna
 The T3 server side follows `machineMap.ts`. These details are not in the types:
 
 - Join: `POST /enroll` with `{ "code": "K7QM-2XPA" }`. The answer is `EnrollResponse` in `src/api.ts`. Its `tunnel` is `MachineTunnelGrant` from the contracts, or null. It holds the tunnel token: never log it. Each code works once. Ten attempts per address in 15 minutes.
-- Connect: open a WebSocket to `wss://t3.yarden-zamir.com/connect` with the headers `CF-Access-Client-Id` and `CF-Access-Client-Secret`. Send `hello` first. A new connection closes the older one of the same machine (code 4000). A removed machine gets code 4004.
+- Connect: open a WebSocket to `wss://map.tomcohen.dev/connect` with the headers `CF-Access-Client-Id` and `CF-Access-Client-Secret`. Send `hello` first. A new connection closes the older one of the same machine (code 4000). A removed machine gets code 4004.
 - Liveness: send the text `ping`. The portal answers `pong` without waking the Durable Object (MM-1001).
 - Tool calls: `toolResult.result` has the shape `MapToolResult` in `src/api.ts`. A write answers `applied` with a revision, or `proposed` with a proposal id.
 - Emergency pause (MM-711): while the portal is paused, every `toolCall` gets `toolResult` with `ok: false` and an error that says so.

@@ -4,7 +4,7 @@
  */
 import type { MachinePresence, MachineStatus } from "@t3tools/contracts/machineMap";
 
-export const COMMIT_URL = "https://github.com/Yarden-zamir/t3code/commit/";
+export const COMMIT_URL = "https://github.com/TomCohenDev/t3code/commit/";
 
 export interface BuildInfo {
   readonly version: string;

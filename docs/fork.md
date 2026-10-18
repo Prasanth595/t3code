@@ -1,6 +1,6 @@
 # Fork releases
 
-This fork ([Yarden-zamir/t3code](https://github.com/Yarden-zamir/t3code)) publishes its own desktop builds and server archives.
+This fork ([TomCohenDev/t3code](https://github.com/TomCohenDev/t3code)) publishes its own desktop builds and server archives.
 The installed app and the headless servers update themselves from the fork releases through the upstream updaters.
 Agents that operate the machines, the machine map or the deploys start with [fork-agents.md](fork-agents.md).
 Each fork behavior is a setting. A setting that only adds something starts on. A setting that changes existing behavior or layout, installs or restarts anything, changes access or needs setup starts off. The machine map sets the values of the owner's machines.
@@ -58,7 +58,7 @@ The build number is one integer, because the build and the app read the update c
 
 ## macOS signing
 
-The fork signs with the self-made certificate "Yarden Zamir T3 Fork". The fork does not notarize.
+The fork signs with the self-made certificate "Tom Cohen T3 Fork". The fork does not notarize.
 Squirrel.Mac installs an update only if the update has the same signature as the running app.
 Thus, every build must use the same certificate.
 
@@ -79,7 +79,7 @@ security add-trusted-cert -r trustRoot -p codeSign -k ~/Library/Keychains/login.
 security find-identity -v -p codesigning
 ```
 
-The last command must list "Yarden Zamir T3 Fork".
+The last command must list "Tom Cohen T3 Fork".
 
 ## Build locally
 
@@ -154,7 +154,7 @@ The client setting `forkChangelogEnabled` turns on a changelog of the fork. It i
 - A fork commit is a commit that `pingdotgg/t3code` main does not contain. Merge commits do not show.
 - The Upstream tab lists the upstream main commits that fork main does not have yet, in the same rows. Its "Start Fork Sync" button starts `.github/workflows/fork-sync.yml` and shows the run and each job. The tab reads the run again every 5 seconds while the run is queued or running.
 - The "Ask agent" menu opens a thread in the fork project of the same machine, like "Ask a question" on a pull request. The composer gets a changelog chip and a prompt to read and send. The Releases tab offers "Ask a question", "Summarize the changelog" and, when a newer release exists, "What changed since my version". The Upstream tab offers "Ask a question" and, when upstream commits wait, "Summarize upstream changes" and "Check the impact on the fork".
-- The fork project is the first project whose repository is `Yarden-zamir/t3code`, either as the only remote or as `origin` beside an `upstream` remote. Without one, the menu shows an error.
+- The fork project is the first project whose repository is `TomCohenDev/t3code`, either as the only remote or as `origin` beside an `upstream` remote. Without one, the menu shows an error.
 - The server reads GitHub with the GitHub credential of its machine, the same one that pull requests use (settings, `GH_TOKEN` or `gh auth login`). Without a credential, the changelog shows the GitHub error.
 - Starting Fork Sync needs the `source-control:write` scope on the connection.
 
@@ -163,11 +163,11 @@ The client setting `forkChangelogEnabled` turns on a changelog of the fork. It i
 `scripts/fork-install/` installs the fork on a new machine and joins the machine map. The join dialog of the machine map shows these commands with the join code (MM-211).
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.sh | bash -s -- --join <code>
+curl -fsSL https://raw.githubusercontent.com/TomCohenDev/t3code/main/scripts/fork-install/install.sh | bash -s -- --join <code>
 ```
 
 ```powershell
-& ([scriptblock]::Create((irm https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.ps1))) -Join <code>
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/TomCohenDev/t3code/main/scripts/fork-install/install.ps1))) -Join <code>
 ```
 
 - On macOS, `install.sh` downloads the newest nightly `.dmg`, copies the app to `/Applications` and opens it. It keeps an installed app, because the app updates itself. `--force` replaces it.
@@ -190,7 +190,7 @@ These steps set up a Linux server without a display, for example an Oracle Cloud
 
 ```sh
 sudo apt-get update && sudo apt-get install -y curl tar ca-certificates libatomic1
-curl -fsSL https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install/install.sh | bash -s -- --join <code>
+curl -fsSL https://raw.githubusercontent.com/TomCohenDev/t3code/main/scripts/fork-install/install.sh | bash -s -- --join <code>
 ```
 
 The installer starts the server and joins the map. The portal made a tunnel `t3-<name>.yarden-zamir.com` for the machine (MM-213). The server saves it, restarts once, installs the pinned `cloudflared` into `~/.t3/tools/cloudflared/` and runs it as a child process (MM-1309). The join dialog in the portal then shows that the machine joined.
@@ -204,7 +204,7 @@ The installer starts the server and joins the map. The portal made a tunnel `t3-
 
 Use these steps only when the join dialog says "No tunnel", for example when the portal token lacks "Cloudflare Tunnel: Edit". A tunnel from the environment wins over the tunnel of a join (MM-1310).
 
-1. In Cloudflare Zero Trust, create a tunnel, for example `t3-oracle`. Give it the public hostname `t3-oracle.yarden-zamir.com` with the service `http://127.0.0.1:3773`. Keep the tunnel token.
+1. In Cloudflare Zero Trust, create a tunnel, for example `t3-oracle`. Give it the public hostname `t3-oracle.tomcohen.dev` with the service `http://127.0.0.1:3773`. Keep the tunnel token.
 2. Make sure that the Access app "T3 Code servers" covers the new hostname.
 3. Install `cloudflared` and run the tunnel as a system service:
 
@@ -220,7 +220,7 @@ sudo cloudflared service install <tunnel-token>
 mkdir -p ~/.config/systemd/user/t3code.service.d
 cat > ~/.config/systemd/user/t3code.service.d/tunnel.conf <<'EOF'
 [Service]
-Environment=T3CODE_TUNNEL_PAIRING_URL=https://t3-oracle.yarden-zamir.com
+Environment=T3CODE_TUNNEL_PAIRING_URL=https://t3-oracle.tomcohen.dev
 Environment=T3CODE_CLOUDFLARE_ACCESS_TEAM_DOMAIN=<team>.cloudflareaccess.com
 Environment=T3CODE_CLOUDFLARE_ACCESS_AUD=<audience tag of the Access app>
 Environment=T3CODE_CLOUDFLARE_ACCESS_SUBJECTS=<owner email>,<client id of the desktop service token>
@@ -331,7 +331,7 @@ The client setting `sidebarGroupsEnabled` shows thread groups as tabs under the 
 - A tab shows a dot by default. Pick another icon, or "No icon". Turn off "Show the name on the tab" to show the icon only; the tooltip keeps the name. A tab with neither shows the dot.
 - The first tab has an editor too: its name, its icon, and whether it shows the threads in no group or all threads.
 - Rules put threads in a group automatically. A thread matches a group when it matches every rule. Rules compare the repository, the repository owner, the status, the provider, who created the thread, its background work and its title.
-- A repository rule compares the repository of the project, such as `github.com/yarden-zamir/t3code`. The same repository matches on every machine, also where its project has another id or path. A project without a remote has no repository.
+- A repository rule compares the repository of the project, such as `github.com/tomcohendev/t3code`. The same repository matches on every machine, also where its project has another id or path. A project without a remote has no repository.
 - A thread lives in the group that you dragged it into. Otherwise it lives in the first group, from left to right, whose rules match. Otherwise it lives in "Threads". New threads follow the same order.
 - A group without rules holds only the threads that you drag into it.
 - A rule on "Group" makes a view. A view shows the threads of the groups that it names and holds no thread itself. Pick Group > "Any group" to make an "All" tab.
@@ -495,7 +495,7 @@ The server setting `machineMap` connects this server to the machine map portal. 
 - It runs outside the Fork Release concurrency group, so the slow Gradle build never delays the next release. A newer run cancels an older one.
 - It builds only when the app changed since the newest earlier release with an APK: `apps/mobile/`, `packages/`, `pnpm-lock.yaml`, `patches/`, `scripts/fork-android-apk.sh` or this workflow. Otherwise it skips and names that release in a notice. A skipped release cancels no build. To force a build for a release, run Fork Android by hand on main with the release commit.
 - It only uploads to an existing release, never creates one. A failure marks only Fork Android and does not call the repair agent. A run from a branch uploads the APK as a workflow artifact.
-- The APK is the nightly ("Preview") app with the package `com.yardenzamir.t3code`. It installs next to the store app and speaks the protocol of fork main. It holds arm64 code only.
+- The APK is the nightly ("Preview") app with the package `dev.tomcohen.t3code`. It installs next to the store app and speaks the protocol of fork main. It holds arm64 code only.
 - It takes no over-the-air updates, because those come from the upstream Expo project.
 - To install it, open the APK from the release on the phone and allow installs from that browser. Install a newer APK over it to update.
 - The newest release often has no APK. An update tool must fall back to an older release. In Obtainium, add the GitHub repository and turn on "Include prereleases" (fork releases are prereleases) and "Fallback to older releases" (on by default).

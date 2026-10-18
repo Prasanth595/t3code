@@ -10,7 +10,7 @@
 # there. The restart stops running agent turns. See docs/fork.md "Deploy a local build".
 set -euo pipefail
 
-readonly FORK_REPOSITORY="Yarden-zamir/t3code"
+readonly FORK_REPOSITORY="TomCohenDev/t3code"
 # Files that decide the native packages in the archive. A local change to one of them needs a
 # release, because the archive keeps the native packages of the release.
 readonly NATIVE_INPUTS=(apps/server/package.json pnpm-workspace.yaml pnpm-lock.yaml patches)

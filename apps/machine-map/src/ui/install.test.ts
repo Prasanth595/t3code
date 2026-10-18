@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { installCommand } from "./install.ts";
 
-const SCRIPTS = "https://raw.githubusercontent.com/Yarden-zamir/t3code/main/scripts/fork-install";
+const SCRIPTS = "https://raw.githubusercontent.com/TomCohenDev/t3code/main/scripts/fork-install";
 
 describe("installCommand", () => {
   it("pipes install.sh to bash with the join code on Linux and macOS", () => {

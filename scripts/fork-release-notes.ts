@@ -12,7 +12,7 @@
 
 import * as NodeChildProcess from "node:child_process";
 
-const FORK_REPOSITORY = "Yarden-zamir/t3code";
+const FORK_REPOSITORY = "TomCohenDev/t3code";
 const UPSTREAM_REPOSITORY = "pingdotgg/t3code";
 /** The subject of a Fork Sync merge. See .github/workflows/fork-sync.yml. */
 const UPSTREAM_SYNC_SUBJECT = `chore(sync): merge ${UPSTREAM_REPOSITORY} main`;

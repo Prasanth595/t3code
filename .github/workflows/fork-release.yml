@@ -308,7 +308,7 @@ jobs:
           app="$(ls -d "$RUNNER_TEMP"/verify/*.app)"
           codesign -dvv "$app" 2>&1 | tee "$RUNNER_TEMP/codesign.txt"
           codesign --verify --deep --strict --verbose=2 "$app"
-          grep -q "Yarden Zamir T3 Fork" "$RUNNER_TEMP/codesign.txt"
+          grep -q "Tom Cohen T3 Fork" "$RUNNER_TEMP/codesign.txt"
 
       # The headless server: upstream's self-contained CLI archive with the `t3`
       # single-executable, the web client and the native packages. It needs no

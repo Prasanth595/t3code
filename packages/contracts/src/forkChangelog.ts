@@ -13,7 +13,7 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /** The GitHub repositories (`owner/name`) that the fork changelog reads. */
 export const FORK_CHANGELOG_REPOSITORIES = {
-  fork: "Yarden-zamir/t3code",
+  fork: "TomCohenDev/t3code",
   upstream: "pingdotgg/t3code",
 } as const;
 
