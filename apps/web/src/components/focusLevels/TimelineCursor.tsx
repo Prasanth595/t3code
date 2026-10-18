@@ -46,6 +46,8 @@ interface Cursor {
   readonly index: number;
   /** The other end of an extended selection, at the current depth. */
   readonly anchor: number;
+  /** The depth that Right and Left chose. Up and Down walk the outline down to this depth. */
+  readonly workDepth: number;
 }
 
 function elementRange(element: Element): Range {
@@ -122,6 +124,13 @@ function childUnits(unit: Unit): Unit[] {
 function rowUnit(row: Element): Unit {
   const content = row.querySelector(ROW_CONTENT_SELECTOR) ?? row;
   return { element: content, range: elementRange(content) };
+}
+
+function rangeContains(outer: Range, inner: Range): boolean {
+  return (
+    outer.compareBoundaryPoints(Range.START_TO_START, inner) <= 0 &&
+    outer.compareBoundaryPoints(Range.END_TO_END, inner) >= 0
+  );
 }
 
 function spanRange(first: Range, last: Range): Range {
@@ -244,7 +253,7 @@ export function TimelineCursor(props: {
         return rect !== undefined && rect.top < bottom;
       });
       const rowId = visible.at(-1) ?? ids.at(-1);
-      return rowId ? { rowId, parents: [], index: 0, anchor: 0 } : null;
+      return rowId ? { rowId, parents: [], index: 0, anchor: 0, workDepth: 0 } : null;
     };
     const current = (): Cursor | null =>
       cursor && rowIds().includes(cursor.rowId) ? cursor : null;
@@ -254,35 +263,133 @@ export function TimelineCursor(props: {
       return node !== null && document.activeElement === node;
     };
 
+    // A mouse selection or click in the timeline since the cursor last moved. The next cursor key
+    // starts from it, so mouse and keyboard work on the same place.
+    let selectionMoved = false;
+    const onSelectionChange = () => {
+      selectionMoved = true;
+    };
+    const freshSelection = (): Range | null => {
+      const selection = window.getSelection();
+      const viewport = latest.current.viewport;
+      if (!selectionMoved || !selection || selection.rangeCount !== 1 || !viewport) return null;
+      const range = selection.getRangeAt(0);
+      return viewport.contains(range.commonAncestorContainer) ? range.cloneRange() : null;
+    };
+    /** The deepest unit that holds the whole range, at its depth. */
+    const cursorAt = (range: Range): Cursor | null => {
+      const node = range.startContainer;
+      const element = node instanceof Element ? node : node.parentElement;
+      const row = element?.closest<HTMLElement>("[data-timeline-row-id]");
+      const rowId = row?.dataset.timelineRowId;
+      if (!row || !rowId || !rowIds().includes(rowId)) return null;
+      const parents: number[] = [];
+      let units = [rowUnit(row)];
+      let index = 0;
+      for (;;) {
+        const unit = units[index];
+        const children = unit ? childUnits(unit) : [];
+        const child = children.findIndex((candidate) => rangeContains(candidate.range, range));
+        if (child < 0) break;
+        parents.push(index);
+        units = children;
+        index = child;
+      }
+      return { rowId, parents, index, anchor: index, workDepth: parents.length };
+    };
+    /** Takes over a fresh mouse selection as the cursor, and clears it so only the cursor shows. */
+    const adoptSelection = (): Cursor | null => {
+      const range = freshSelection();
+      selectionMoved = false;
+      const at = range ? cursorAt(range) : null;
+      if (at) window.getSelection()?.removeAllRanges();
+      return at;
+    };
+
+    const at0 = (rowId: string, workDepth: number): Cursor => ({
+      rowId,
+      parents: [],
+      index: 0,
+      anchor: 0,
+      workDepth,
+    });
+    /**
+     * The next unit in document order, never deeper than `workDepth`: 1.1, 1.2, 1.3, 2, 2.1. Past
+     * the last unit of a row it moves to the next row. Null at the end of the timeline.
+     */
+    const walkDown = (at: Cursor): Cursor | null => {
+      const unit = siblings(at)?.[at.index];
+      if (unit && at.parents.length < at.workDepth && childUnits(unit).length > 0) {
+        return { ...at, parents: [...at.parents, at.index], index: 0, anchor: 0 };
+      }
+      const parents = [...at.parents];
+      let index = at.index;
+      while (parents.length > 0) {
+        const count = siblings({ ...at, parents, index })?.length ?? 0;
+        if (index + 1 < count) return { ...at, parents, index: index + 1, anchor: index + 1 };
+        index = parents.pop() ?? 0;
+      }
+      const ids = rowIds();
+      const rowId = ids[ids.indexOf(at.rowId) + 1];
+      return rowId ? at0(rowId, at.workDepth) : null;
+    };
+    /** The previous unit in document order, never deeper than `workDepth`: 2.1, 2, 1.3. */
+    const walkUp = (at: Cursor): Cursor | null => {
+      if (at.parents.length === 0) {
+        const ids = rowIds();
+        const rowId = ids[ids.indexOf(at.rowId) - 1];
+        return rowId ? at0(rowId, at.workDepth) : null;
+      }
+      if (at.index === 0) {
+        const index = at.parents.at(-1) ?? 0;
+        return { ...at, parents: at.parents.slice(0, -1), index, anchor: index };
+      }
+      const parents = [...at.parents];
+      let index = at.index - 1;
+      while (parents.length < at.workDepth) {
+        const unit = siblings({ ...at, parents, index })?.[index];
+        const children = unit ? childUnits(unit) : [];
+        if (children.length === 0) break;
+        parents.push(index);
+        index = children.length - 1;
+      }
+      return { ...at, parents, index, anchor: index };
+    };
     const move =
       (direction: 1 | -1, extend: boolean): FocusLevelCommandHandler =>
       () => {
         if (!active()) return false;
-        const at = current();
+        const at = adoptSelection() ?? current();
         if (!at) {
           const start = startCursor();
           if (start) show(start);
           return true;
         }
-        if (at.parents.length === 0) {
-          const ids = rowIds();
-          const rowId = ids[ids.indexOf(at.rowId) + direction];
-          if (rowId) showRow({ rowId, parents: [], index: 0, anchor: 0 });
+        // Shift extends the selection over siblings only, so it never spans two parents.
+        if (extend && at.parents.length > 0) {
+          const count = siblings(at)?.length ?? 0;
+          const index = Math.max(0, Math.min(count - 1, at.index + direction));
+          show({ ...at, index });
           return true;
         }
-        const count = siblings(at)?.length ?? 0;
-        const index = Math.max(0, Math.min(count - 1, at.index + direction));
-        show({ ...at, index, anchor: extend ? at.anchor : index });
+        const next = direction === 1 ? walkDown(at) : walkUp(at);
+        if (!next) return true;
+        if (next.rowId === at.rowId) show(next);
+        else showRow(next);
         return true;
       };
     const cite =
       (withNote: boolean): FocusLevelCommandHandler =>
       () => {
         if (!active()) return false;
-        const at = current();
+        // A mouse selection is cited exactly as selected; the cursor then continues from it.
+        const selected = freshSelection();
+        const fromMouse = selected && !selected.collapsed ? selected : null;
+        const at = adoptSelection() ?? current();
+        if (at) show(at);
         const viewport = latest.current.viewport;
         const { threadRef, onCite } = latest.current;
-        const range = at ? selectedRange(at) : null;
+        const range = fromMouse ?? (at ? selectedRange(at) : null);
         if (!range || !viewport || !threadRef || !onCite) return true;
         const captured = captureAssistantTextRange(viewport, range);
         const messageId = captured?.source.dataset.assistantCitationSource;
@@ -318,6 +425,7 @@ export function TimelineCursor(props: {
     };
     document.addEventListener("focusout", onFocusOut);
     document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("selectionchange", onSelectionChange);
     const unregister = registerFocusLevelCommands({
       "timeline.previous": move(-1, false),
       "timeline.next": move(1, false),
@@ -325,18 +433,24 @@ export function TimelineCursor(props: {
       "timeline.extendDown": move(1, true),
       "timeline.deeper": (event) => {
         if (!active()) return false;
-        const at = current();
+        const at = adoptSelection() ?? current();
         if (!at) return move(1, false)(event);
         const units = siblings(at);
         const unit = units?.[at.index];
         if (unit && childUnits(unit).length > 0) {
-          show({ rowId: at.rowId, parents: [...at.parents, at.index], index: 0, anchor: 0 });
+          show({
+            rowId: at.rowId,
+            parents: [...at.parents, at.index],
+            index: 0,
+            anchor: 0,
+            workDepth: at.parents.length + 1,
+          });
         }
         return true;
       },
       "timeline.shallower": () => {
         if (!active()) return false;
-        const at = current();
+        const at = adoptSelection() ?? current();
         const parentIndex = at?.parents.at(-1);
         if (at && parentIndex !== undefined) {
           show({
@@ -344,6 +458,7 @@ export function TimelineCursor(props: {
             parents: at.parents.slice(0, -1),
             index: parentIndex,
             anchor: parentIndex,
+            workDepth: at.parents.length - 1,
           });
         }
         return true;
@@ -359,6 +474,7 @@ export function TimelineCursor(props: {
             parents: at.parents.slice(0, -1),
             index: parentIndex,
             anchor: parentIndex,
+            workDepth: at.parents.length - 1,
           });
           return true;
         }
@@ -378,6 +494,7 @@ export function TimelineCursor(props: {
       unregister();
       document.removeEventListener("focusout", onFocusOut);
       document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("selectionchange", onSelectionChange);
       paint(null);
     };
   }, [hasViewport, enabled]);

@@ -47,6 +47,7 @@ export const FORK_DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
     command: "thread.archive",
     when: "(sidebarFocus || timelineFocus) && !editableFocus",
   },
+  { key: "mod+.", command: "thread.stop", when: "!terminalFocus" },
   { key: "mod+alt+s", command: "thread.snooze", when: "!terminalFocus" },
   { key: "mod+alt+r", command: "thread.rename", when: "!terminalFocus" },
   { key: "mod+shift+u", command: "thread.markUnread", when: "!terminalFocus" },
