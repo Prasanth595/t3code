@@ -426,6 +426,35 @@ it("decodes the commit that replaces the uncommitted row in place", async () => 
   await settle(list);
   expect(list.getAnimations({ subtree: true })).toHaveLength(0);
 });
+it("builds upward from the oldest commit shown, then adds the rows above, once per session", async () => {
+  await renderHistory({ target: ready, workingFiles: 2, entranceKey: "build-once" });
+  const list = container.querySelector<HTMLElement>('[aria-label="Branch commit history"]')!;
+  const lineStart = (sha: string) =>
+    Math.min(
+      ...[...list.querySelectorAll(`[data-graph-row="${sha}"] path`)].flatMap((path) =>
+        path.getAnimations().map((animation) => Number(animation.effect!.getTiming().delay)),
+      ),
+    );
+  const starts = ["sha-7", "sha-3", "sha-0", "working-tree", "pull-request"].map(lineStart);
+  expect(starts[0]).toBe(0);
+  expect(starts).toEqual(starts.toSorted((a, b) => a - b));
+  expect(new Set(starts).size).toBe(starts.length);
+  const held = list
+    .querySelector('[data-commit-sha="sha-0"]')!
+    .getAnimations()
+    .flatMap((animation) => (animation.effect as KeyframeEffect).getKeyframes());
+  expect(held.some((frame) => frame.transform === "translateY(-64px)")).toBe(true);
+  await settle(list);
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  await renderHistory({ target: ready, workingFiles: 2, entranceKey: "build-once" });
+  const again = container.querySelector<HTMLElement>('[aria-label="Branch commit history"]')!;
+  expect(
+    again
+      .getAnimations({ subtree: true })
+      .filter((animation) => !(animation instanceof CSSTransition)),
+  ).toHaveLength(0);
+});
 it("draws an arriving commit into the graph and then stops animating", async () => {
   await renderHistory();
   const list = container.querySelector<HTMLElement>('[aria-label="Branch commit history"]')!;
@@ -437,7 +466,7 @@ it("draws an arriving commit into the graph and then stops animating", async () 
     .getAnimations({ subtree: true })
     .flatMap((animation) => (animation.effect as KeyframeEffect).getKeyframes());
   expect(keyframes.some((frame) => frame.opacity === "0")).toBe(true);
-  expect(keyframes.some((frame) => frame.strokeDashoffset === "1")).toBe(true);
+  expect(keyframes.some((frame) => frame.strokeDashoffset === "-1")).toBe(true);
   await settle(list);
   expect(list.getAnimations({ subtree: true })).toHaveLength(0);
   expect(row.textContent).toContain("New commit");
@@ -516,7 +545,7 @@ it("shows new history without motion when reduced motion is requested", async ()
         : matchMedia(query),
     );
   try {
-    await renderHistory({ target: ready, workingFiles: 1, animateEntrance: true });
+    await renderHistory({ target: ready, workingFiles: 1, entranceKey: "reduced" });
     state.history = withCommit("new-head", "Add session refresh tests");
     await renderHistory({ target: pullRequestGraphTarget({ ...detail, state: "merged" }, false) });
     const list = container.querySelector<HTMLElement>('[aria-label="Branch commit history"]')!;

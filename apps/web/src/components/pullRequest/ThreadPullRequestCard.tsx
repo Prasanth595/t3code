@@ -191,6 +191,7 @@ export function ThreadPullRequestCard({
               headBranch={detail.headBranch}
               baseBranch={detail.baseBranch}
               target={pullRequestGraphTarget(detail, actionPending)}
+              entranceKey={key}
             />
           </div>
         ) : (
