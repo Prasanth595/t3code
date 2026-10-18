@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Installs a t3fac archive under ~/.local/share/t3fac/versions, points `current` at it,
 # writes the LaunchAgent plist and restarts the job, then waits for it to come up and runs
-# rollback.sh when it does not. It also installs rotate-log.sh and its LaunchAgent, which
-# keep the log from growing without bound. Usage: install.sh <archive>
+# rollback.sh when it does not. It also installs rotate-log.sh and autodeploy.sh with their
+# LaunchAgents, which keep the log from growing without bound and follow origin/main.
+# Usage: install.sh <archive>
 set -euo pipefail
 
 source "$(dirname "$0")/lib/t3fac.sh"
@@ -50,7 +51,7 @@ if [[ -L $root/current ]]; then
 fi
 ln -sfn "versions/$version" "$root/current"
 
-restart_logrotate_job_or_warn
+restart_timer_jobs_or_warn
 restart_job
 
 if ! wait_healthy "$version"; then

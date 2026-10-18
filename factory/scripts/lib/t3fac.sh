@@ -1,5 +1,5 @@
-# Sourced by install.sh and rollback.sh: where versions live, the LaunchAgent jobs (the server
-# and the log rotator), how to restart them and how to tell the server came up.
+# Sourced by install.sh and rollback.sh: where versions live, the LaunchAgent jobs (the server,
+# the log rotator and the autodeploy timer), how to restart them and how to tell the server came up.
 
 root="$HOME/.local/share/t3fac"
 label=io.github.rawphp.t3fac
@@ -7,8 +7,8 @@ template="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../launchd" && pwd)/$label.pli
 plist="$HOME/Library/LaunchAgents/$label.plist"
 # The second job rotates $log on a timer, so a crash-looping server cannot outgrow the disk.
 logrotate_label=io.github.rawphp.t3fac.logrotate
-logrotate_template="$(dirname "$template")/$logrotate_label.plist"
-logrotate_plist="$HOME/Library/LaunchAgents/$logrotate_label.plist"
+# The third runs autodeploy.sh on a timer, which installs origin/main when it moves.
+autodeploy_label=io.github.rawphp.t3fac.autodeploy
 log="$HOME/Library/Logs/t3fac/t3fac.log"
 # The log and port the plist template writes to and serves on; change them together. T3FAC_PORT
 # exists only so tests can point the health check at a stub listener; the plist still says 3876.
@@ -60,34 +60,42 @@ restart_job() {
   reload_job "$label" "$plist"
 }
 
-# Copies rotate-log.sh to $root, which outlives any checkout or release archive the plist could
-# otherwise point at, writes the logrotate plist from its template and reloads that job the way
-# restart_job does the server's. Call it before restart_job so the server's restart stays the
-# last launchd action before wait_healthy. Rotation is best effort: callers run it as
-# `restart_logrotate_job || echo warning`, so a failure must never stop the server restart. set -e
-# is off for the whole body in that context, hence the && chain: any failing step makes the
-# function return non-zero. The script is replaced by rename, never overwritten in place, because
-# bash reads a script incrementally and a rotation running now would see a mix of old and new text.
-restart_logrotate_job() {
-  local tmp_script
+# Copies script $1 from this directory to $root, which outlives any checkout or release archive
+# the plist could otherwise point at, writes job $2's plist from its template and reloads that job
+# the way restart_job does the server's. Call it before restart_job so the server's restart stays
+# the last launchd action before wait_healthy. A timer job is best effort: callers run it through
+# restart_timer_jobs_or_warn, so a failure must never stop the server restart. set -e is off for
+# the whole body in that context, hence the && chain: any failing step makes the function return
+# non-zero. The script is replaced by rename, never overwritten in place, because bash reads a
+# script incrementally and a copy running now would see a mix of old and new text.
+# T3FAC_SKIP_RELOAD=<label> copies the script but leaves that job loaded as it is: autodeploy.sh
+# sets it for its own job, since booting it out would kill the deploy that called install.sh. The
+# new script takes effect on the job's next tick; a changed plist waits for the next install run
+# by hand.
+restart_timer_job() {
+  local script=$1 job=$2 tmp_script
+  local job_plist="$HOME/Library/LaunchAgents/$job.plist"
   mkdir -p "$root" "$HOME/Library/Logs/t3fac" || return 1
-  tmp_script=$(mktemp "$root/.rotate-log.XXXXXX") || return 1
+  tmp_script=$(mktemp "$root/.${script%.sh}.XXXXXX") || return 1
   if ! {
-    cp "$(dirname "${BASH_SOURCE[0]}")/../rotate-log.sh" "$tmp_script" &&
+    cp "$(dirname "${BASH_SOURCE[0]}")/../$script" "$tmp_script" &&
       chmod 755 "$tmp_script" &&
-      mv -f "$tmp_script" "$root/rotate-log.sh"
+      mv -f "$tmp_script" "$root/$script"
   }; then
     rm -f "$tmp_script"
     return 1
   fi
-  render_plist "$logrotate_template" "$logrotate_plist" &&
-    reload_job "$logrotate_label" "$logrotate_plist"
+  [[ ${T3FAC_SKIP_RELOAD:-} != "$job" ]] || return 0
+  render_plist "$(dirname "$template")/$job.plist" "$job_plist" &&
+    reload_job "$job" "$job_plist"
 }
 
-# The best-effort wrapper install.sh and rollback.sh call.
-restart_logrotate_job_or_warn() {
-  restart_logrotate_job ||
+# The best-effort wrapper install.sh and rollback.sh call: the log rotator, then autodeploy.
+restart_timer_jobs_or_warn() {
+  restart_timer_job rotate-log.sh "$logrotate_label" ||
     echo "warning: could not reload $logrotate_label; log rotation is not running" >&2
+  restart_timer_job autodeploy.sh "$autodeploy_label" ||
+    echo "warning: could not reload $autodeploy_label; autodeploy is not running" >&2
 }
 
 # Whether stdin holds the line the server writes once it is up. No -q: grep must read all of

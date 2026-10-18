@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Runs the copy of factory/scripts/autodeploy.sh that install.sh puts in ~/.local/share/t3fac. It reads its clone and token from ~/.config/t3fac/env and does nothing until the clone is set there. -->
+<dict>
+	<key>Label</key>
+	<string>io.github.rawphp.t3fac.autodeploy</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>@HOME@/.local/share/t3fac/autodeploy.sh</string>
+	</array>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:@HOME@/.local/bin:@HOME@/.local/share/vite-plus/bin</string>
+	</dict>
+	<key>StartInterval</key>
+	<integer>600</integer>
+	<key>StandardOutPath</key>
+	<string>@HOME@/Library/Logs/t3fac/autodeploy.log</string>
+	<key>StandardErrorPath</key>
+	<string>@HOME@/Library/Logs/t3fac/autodeploy.log</string>
+</dict>
+</plist>
