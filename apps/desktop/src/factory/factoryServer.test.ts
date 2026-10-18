@@ -13,6 +13,7 @@ import {
   factoryServerBootstrapsWhenPackaged,
   openOnFactoryServer,
   usesFactoryServer,
+  withoutBundledPrimary,
 } from "./factoryServer.ts";
 import { layerAppActivation, layerDesktopEnvironment, layerWindow } from "./testing.ts";
 
@@ -118,5 +119,29 @@ describe("factory server as the primary environment", () => {
     Effect.gen(function* () {
       assert.isNull(yield* factoryServerBootstrapsWhenPackaged);
     }),
+  );
+
+  const backends = [{ id: PRIMARY_LOCAL_ENVIRONMENT_ID }, { id: "wsl:default" }];
+
+  it.effect("a packaged build never restarts the bundled primary after a failed update", () =>
+    withLayers(
+      true,
+      [],
+      { count: 0 },
+      Effect.gen(function* () {
+        assert.deepEqual(yield* withoutBundledPrimary(backends), [{ id: "wsl:default" }]);
+      }),
+    ),
+  );
+
+  it.effect("a dev build restarts every backend", () =>
+    withLayers(
+      false,
+      [],
+      { count: 0 },
+      Effect.gen(function* () {
+        assert.deepEqual(yield* withoutBundledPrimary(backends), backends);
+      }),
+    ),
   );
 });
