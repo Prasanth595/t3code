@@ -123,3 +123,15 @@ Merges upstream's newest `v*-nightly.*` tag into `main` through a pull request. 
 | 0         | Up to date; waiting on an open sync PR; merged into `main`; or `prepare` recorded an outcome.                                        |
 | 1         | Anything that files an issue (conflicts, failing checks, cannot push, cannot land, route-tree review, stuck) or a bad tag or remote. |
 | 2         | Wrong arguments.                                                                                                                     |
+
+## Desktop release scripts
+
+Run by `.github/workflows/factory-desktop.yml` on every push to `main`. All but `desktop-version.sh` and `desktop-restamp-dmg.ts` need macOS and read the signing secrets of the `desktop-release` environment from the environment; none prints them.
+
+| Script                                     | Does                                                                                                                                                  | Non-zero when                                                                          |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `desktop-preflight.sh`                     | Checks the Developer ID certificate, the provisioning profile and the notarization API key. Also run by hand through `factory-desktop-preflight.yml`. | A secret is empty or fails its check; a `::error::` line names it.                     |
+| `desktop-version.sh <run> [YYYYMMDD]`      | Prints `<apps/desktop version>-nightly.<date>.<run>`; the date defaults to today in UTC.                                                              | The run or date is not a plain number; the package version is not `MAJOR.MINOR.PATCH`. |
+| `desktop-notarize-dmg.sh <dmg> <manifest>` | Signs, notarizes and staples the dmg, then runs `desktop-restamp-dmg.ts`.                                                                             | Any step fails.                                                                        |
+| `desktop-restamp-dmg.ts <dmg> <manifest>`  | Rebuilds `<dmg>.blockmap` and rewrites the dmg's `sha512` and `size` in the update manifest, after stapling changed the dmg. Run with `node`.         | The manifest does not list the dmg (nothing written).                                  |
+| `desktop-verify.sh <dmg> <zip>`            | `xcrun stapler validate` on the dmg; `codesign --verify --deep --strict` and `spctl -a -vv` on the `.app` in the zip and in the dmg.                  | Any check fails.                                                                       |
