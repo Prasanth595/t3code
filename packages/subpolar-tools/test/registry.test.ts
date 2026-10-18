@@ -3,6 +3,7 @@ import {
   canonicalToolId,
   canonicalizeToolId,
   createToolRegistry,
+  ownerScopedMcpCacheKey,
   type ToolAdapter,
   type ToolAuthorization,
 } from "../src/index.ts";
@@ -36,6 +37,30 @@ function echoDefinition() {
 }
 
 describe("@subpolar/tools registry", () => {
+  test("scopes MCP connection cache keys to a trusted owner", () => {
+    expect(ownerScopedMcpCacheKey("user-1", "https://mcp.example/server")).toBe(
+      ownerScopedMcpCacheKey("user-1", "https://mcp.example/server"),
+    );
+    expect(ownerScopedMcpCacheKey("user-1", "https://mcp.example/server")).not.toBe(
+      ownerScopedMcpCacheKey("user-2", "https://mcp.example/server"),
+    );
+    expect(thrownCode(() => ownerScopedMcpCacheKey("", "https://mcp.example/server"))).toBe("MCP_OWNER_REQUIRED");
+    expect(thrownCode(() => ownerScopedMcpCacheKey("user-1", " "))).toBe("MCP_SERVER_KEY_REQUIRED");
+  });
+
+  test("does not execute MCP calls until the host policy explicitly allows them", async () => {
+    let executions = 0;
+    const registry = createToolRegistry({
+      adapters: [{ kind: "mcp", execute: async () => { executions += 1; return "called"; } }],
+    });
+    registry.registerTool({ adapter: "mcp", namespace: "remote", name: "read" });
+
+    const result = await registry.execute({ callId: "mcp-denied", toolId: "mcp/remote/read", input: {} });
+
+    expect(result).toMatchObject({ ok: false, error: { code: "POLICY_DENIED" } });
+    expect(executions).toBe(0);
+  });
+
   test("registers adapters and tools under a canonical ID", async () => {
     const registry = createToolRegistry({
       adapters: [echoAdapter],

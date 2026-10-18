@@ -9,10 +9,12 @@ Persistence-neutral tool registration, authorization, and execution boundaries.
 - Validates tool inputs against JSON-schema-style definitions.
 - Resolves context and applies an injected policy before execution.
 - Exposes authorization capabilities that cannot be manufactured by callers.
+- Builds owner-scoped MCP connection cache keys from trusted host identity.
 - Supports injected persistence, redaction hooks, and execution events.
 - Provides the `subpolar-tools` CLI for calling a remote Subpolar gateway.
 
 The registry does not choose a database or network implementation. Those boundaries are injected by the host application.
+MCP cache keys must use the authenticated owner from host context; the registry's injected policy remains the authority for every tool call.
 
 ## Workspace setup
 

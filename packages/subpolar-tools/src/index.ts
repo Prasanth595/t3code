@@ -71,6 +71,21 @@ export class ToolExecutionError extends Error {
   }
 }
 
+/**
+ * Build a cache key for an MCP connection owned by one authenticated principal.
+ * `ownerId` must come from the host's trusted request context, never tool input
+ * or remote MCP metadata. Authorization still belongs to the host policy.
+ */
+export function ownerScopedMcpCacheKey(ownerId: string, serverKey: string): string {
+  if (typeof ownerId !== "string" || !ownerId.trim() || ownerId.trim() !== ownerId) {
+    throw new ToolRegistryError("MCP_OWNER_REQUIRED", "A trusted MCP connection owner is required");
+  }
+  if (typeof serverKey !== "string" || !serverKey.trim() || serverKey.trim() !== serverKey) {
+    throw new ToolRegistryError("MCP_SERVER_KEY_REQUIRED", "A non-empty MCP server key is required");
+  }
+  return `mcp:${JSON.stringify([ownerId, serverKey])}`;
+}
+
 export interface ToolError {
   code: string;
   message: string;
