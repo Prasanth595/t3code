@@ -64,7 +64,8 @@ Up from the first thread reaches the group tabs. Left and Right, or `1` to `9`, 
 `mod+f` focuses sidebar search.
 
 In the timeline, Up and Down move a cursor between messages. Right goes one level deeper:
-blocks such as paragraphs and list items, then sentences or code lines. Left goes back up.
+blocks such as paragraphs and list items, then sentences or code lines. A sentence also
+splits after a colon that a space follows. Left goes back up.
 Up and Down stay at the depth that Right and Left chose. At the end of a list they continue
 with the next item one level up, then go back down: 1.1, 1.2, 1.3, 2, 2.1.
 After you select text or click in the timeline with the mouse, the next arrow key starts

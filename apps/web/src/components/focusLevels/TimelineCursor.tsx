@@ -87,6 +87,24 @@ function trimmedSpans(text: string, pieces: Iterable<{ index: number; segment: s
   return spans.filter(([start, end]) => end <= text.length && start < end);
 }
 
+/**
+ * Splits each piece after every colon that a space follows, and keeps the colon with the part
+ * before it: "Fix: the key" becomes "Fix:" and "the key". A colon in a URL or a time has no space
+ * after it, so it does not split.
+ */
+function splitAtColons(pieces: Iterable<{ index: number; segment: string }>) {
+  const parts: Array<{ index: number; segment: string }> = [];
+  for (const { index, segment } of pieces) {
+    let start = 0;
+    for (let colon = segment.indexOf(": "); colon >= 0; colon = segment.indexOf(": ", start)) {
+      parts.push({ index: index + start, segment: segment.slice(start, colon + 1) });
+      start = colon + 1;
+    }
+    parts.push({ index: index + start, segment: segment.slice(start) });
+  }
+  return parts;
+}
+
 function textUnits(element: Element): Unit[] {
   const text = element.textContent ?? "";
   const pieces = element.matches("pre")
@@ -95,7 +113,7 @@ function textUnits(element: Element): Unit[] {
         lines.push({ index: previous ? previous.index + previous.segment.length + 1 : 0, segment });
         return lines;
       }, [])
-    : new Intl.Segmenter(undefined, { granularity: "sentence" }).segment(text);
+    : splitAtColons(new Intl.Segmenter(undefined, { granularity: "sentence" }).segment(text));
   const units: Unit[] = [];
   for (const [start, end] of trimmedSpans(text, pieces)) {
     const range = textRange(element, start, end);
