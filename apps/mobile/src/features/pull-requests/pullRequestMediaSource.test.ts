@@ -4,7 +4,7 @@ import { filePreviewGallery } from "../../lib/filePreviewGallery";
 import { mediaVideoPreviewUri, mediaVideoThumbnailKey } from "../../lib/videoPreviewSource";
 import { pullRequestImageSource, pullRequestMediaSource } from "./pullRequestMediaSource";
 
-const location = { environmentId: EnvironmentId.make("test"), cwd: "/repo" };
+const location = { environmentId: EnvironmentId.make("test"), cwd: "/repo", repository: null };
 const url = "https://github.com/user-attachments/assets/abc-123";
 
 describe("PR media previews", () => {

@@ -66,8 +66,10 @@ const githubToken = GitHubCredentials.GitHubCredentials.pipe(
  */
 const ATTACHMENT_URL_PATTERN =
   /^https:\/\/github\.com\/(?:user-attachments\/assets\/|([^/]+\/[^/]+)\/assets\/\d+\/)/u;
+/** Without a `jwt` GitHub did not sign it: the context repository was outside the upload's reach. */
 const SIGNED_ATTACHMENT_URL_PATTERN =
-  /src="(https:\/\/private-user-images\.githubusercontent\.com\/[^"]+)"/u;
+  /src="(https:\/\/private-user-images\.githubusercontent\.com\/[^"?]+\?(?:[^"]*?[&;])?jwt=[^"]+)"/u;
+const REPOSITORY_PATTERN = /^[\w.-]+\/[\w.-]+$/u;
 /** GitHub signs these for five minutes; reuse one for less so a video seek never gets a stale one. */
 const SIGNED_URL_CACHE_TTL_MS = 4 * 60_000;
 const SIGNED_URL_CACHE_MAX_ENTRIES = 64;
@@ -78,24 +80,34 @@ const cachedSignedUrl = (url: string, now: number) => {
   return cached !== undefined && now - cached.at < SIGNED_URL_CACHE_TTL_MS ? cached.url : null;
 };
 
+const checkoutRepository = Effect.fn("GitHubMediaFetch.checkoutRepository")(function* (
+  cwd: string,
+) {
+  const identity = yield* (yield* RepositoryIdentityResolver.RepositoryIdentityResolver).resolve(
+    cwd,
+  );
+  return /^github\.com\/([^/]+\/[^/]+)$/u.exec(identity?.canonicalKey ?? "")?.[1];
+});
+
 /**
  * The signed `private-user-images` URL GitHub's own pages carry for an upload, or null. The API
  * honours an SSO-authorized token where github.com does not, but only signs uploads in markdown
- * rendered with a repository as context. Any repository the token can read works, so the
- * checkout's own is enough even when the pull request lives on a fork's parent.
+ * rendered with a repository as context, and an enterprise's uploads only with one of its own
+ * repositories. The pull request's repository is the one that surely qualifies; the checkout's
+ * is the fallback when the client did not say which pull request the upload is from.
  */
 const signedAttachmentUrl = Effect.fn("GitHubMediaFetch.signedAttachmentUrl")(function* (
-  url: string,
-  cwd: string,
+  asset: { readonly url: string; readonly cwd: string; readonly repository?: string },
   now: number,
 ) {
+  const url = asset.url;
   const match = ATTACHMENT_URL_PATTERN.exec(url);
   if (match === null) return null;
-  const identity = match[1]
-    ? null
-    : yield* (yield* RepositoryIdentityResolver.RepositoryIdentityResolver).resolve(cwd);
   const repository =
-    match[1] ?? /^github\.com\/([^/]+\/[^/]+)$/u.exec(identity?.canonicalKey ?? "")?.[1];
+    match[1] ??
+    (asset.repository !== undefined && REPOSITORY_PATTERN.test(asset.repository)
+      ? asset.repository
+      : yield* checkoutRepository(asset.cwd));
   if (repository === undefined) return null;
   const api = yield* GitHubRest.GitHubRest;
   const html = yield* api
@@ -152,7 +164,12 @@ const fetchFollowingRedirects = Effect.fn("GitHubMediaFetch.fetchFollowingRedire
 });
 
 export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaResponse")(function* (
-  asset: { readonly url: string; readonly cwd: string; readonly expiresAt: number },
+  asset: {
+    readonly url: string;
+    readonly cwd: string;
+    readonly repository?: string;
+    readonly expiresAt: number;
+  },
   requestHeaders: Record<string, string | undefined>,
 ) {
   // Both media hosts are served by github.com's account, which is the host `gh` stores it under.
@@ -162,13 +179,17 @@ export const githubMediaResponse = Effect.fn("GitHubMediaFetch.githubMediaRespon
     const value = requestHeaders[name];
     if (value !== undefined) forwarded[name] = value;
   }
-  // A signed URL authorizes on its own, so it is fetched like any redirect target: no token.
+  // A signed URL authorizes on its own, so it is fetched without the token.
   const now = yield* Clock.currentTimeMillis;
   const cached = cachedSignedUrl(asset.url, now);
-  let response = yield* fetchFollowingRedirects(cached ?? asset.url, forwarded, token);
+  let response = yield* fetchFollowingRedirects(
+    cached ?? asset.url,
+    forwarded,
+    cached === null ? token : null,
+  );
   if (cached === null && response?.headers["content-type"]?.startsWith("text/html")) {
-    const signed = yield* signedAttachmentUrl(asset.url, asset.cwd, now);
-    if (signed !== null) response = yield* fetchFollowingRedirects(signed, forwarded, token);
+    const signed = yield* signedAttachmentUrl(asset, now);
+    if (signed !== null) response = yield* fetchFollowingRedirects(signed, forwarded, null);
   }
   const remainingSeconds = Math.floor((asset.expiresAt - (yield* Clock.currentTimeMillis)) / 1000);
   const headers: Record<string, string> = {

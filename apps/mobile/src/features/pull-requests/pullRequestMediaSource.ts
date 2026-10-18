@@ -5,6 +5,17 @@ import type { FilePreviewItem } from "../../components/FilePreviewModal.types";
 export interface PullRequestMediaLocation {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
+  /** The pull request's `owner/name` when it is on github.com. */
+  readonly repository: string | null;
+}
+
+export function pullRequestMediaResource(fetchUrl: string, location: PullRequestMediaLocation) {
+  return {
+    _tag: "github-media" as const,
+    cwd: location.cwd,
+    url: fetchUrl,
+    ...(location.repository === null ? {} : { repository: location.repository }),
+  };
 }
 
 /** Keep the original resource identity so previewers can resolve and renew its capability. */
@@ -13,7 +24,7 @@ export function pullRequestMediaSource(url: string, location: PullRequestMediaLo
   return location && fetchUrl
     ? {
         environmentId: location.environmentId,
-        resource: { _tag: "github-media" as const, cwd: location.cwd, url: fetchUrl },
+        resource: pullRequestMediaResource(fetchUrl, location),
       }
     : { uri: url };
 }

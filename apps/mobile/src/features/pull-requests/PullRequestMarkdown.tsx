@@ -11,6 +11,7 @@ import {
 import { videoMimeType } from "@t3tools/shared/video";
 import { createContext, useContext, useCallback, useMemo, useState } from "react";
 import { githubMarkdownLinks } from "@t3tools/shared/githubMarkdownLinks";
+import { parseGitHubRepositoryNameWithOwnerFromRemoteUrl } from "@t3tools/shared/git";
 
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
@@ -39,9 +40,12 @@ export function PullRequestMarkdownRepository(props: {
     projectId: target.input.projectId,
   });
   const cwd = project?.workspaceRoot;
+  const repository = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(
+    `https://${props.params.host ?? "github.com"}/${props.params.repository}`,
+  );
   const media = useMemo(
-    () => (cwd ? { environmentId: target.environmentId, cwd } : null),
-    [target.environmentId, cwd],
+    () => (cwd ? { environmentId: target.environmentId, cwd, repository } : null),
+    [target.environmentId, cwd, repository],
   );
   return (
     <RepositoryContext value={props.value}>

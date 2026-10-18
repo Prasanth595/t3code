@@ -1,6 +1,7 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import { markdownImageSourceFragment } from "@t3tools/client-runtime/markdown-images";
 import { githubMediaFetchUrl } from "@t3tools/shared/githubMedia";
+import { parseGitHubRepositoryNameWithOwnerFromRemoteUrl } from "@t3tools/shared/git";
 import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { createContext, useContext } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
@@ -21,15 +22,22 @@ export const PullRequestMarkdownContext = createContext<{
 function PullRequestGitHubVideo({
   environmentId,
   cwd,
+  repository,
   url,
   fetchUrl,
 }: {
   environmentId: EnvironmentId;
   cwd: string;
+  repository: string | null;
   url: string;
   fetchUrl: string;
 }) {
-  const resource: AssetResource = { _tag: "github-media", cwd, url: fetchUrl };
+  const resource: AssetResource = {
+    _tag: "github-media",
+    cwd,
+    url: fetchUrl,
+    ...(repository === null ? {} : { repository }),
+  };
   const assetUrl = useAssetUrlState(environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(environmentId, resource);
   const src =
@@ -62,6 +70,7 @@ export function PullRequestMarkdown({
   const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
   const repositoryUrl = context?.repositoryUrl;
+  const repository = parseGitHubRepositoryNameWithOwnerFromRemoteUrl(repositoryUrl ?? null);
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
   const extraRemarkPlugins: NonNullable<ReactMarkdownOptions["remarkPlugins"]> = repositoryUrl
     ? [[remarkPullRequestAutolinks, { repositoryUrl }]]
@@ -86,6 +95,7 @@ export function PullRequestMarkdown({
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
               githubMedia
+              githubMediaRepository={repository}
             />
           );
         }
@@ -96,6 +106,7 @@ export function PullRequestMarkdown({
               key={`${segment.id}:${segment.url}`}
               environmentId={environmentId}
               cwd={cwd}
+              repository={repository}
               url={segment.url}
               fetchUrl={githubMediaUrl}
             />

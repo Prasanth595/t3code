@@ -241,6 +241,8 @@ interface ChatMarkdownProps {
   /** Loads GitHub-hosted media through `cwd`'s GitHub credential, which a private repository's
       uploads need; without it those images and videos load unauthenticated and 404. */
   githubMedia?: boolean | undefined;
+  /** The `owner/name` the media's pull request lives in, which SSO organizations' uploads need. */
+  githubMediaRepository?: string | null | undefined;
   headingLevelOffset?: number | undefined;
 }
 
@@ -2303,6 +2305,7 @@ function useChatMarkdownState({
   renderContextReference,
   headingLevelOffset = 0,
   githubMedia = false,
+  githubMediaRepository = null,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const markdownRef = useRef<HTMLDivElement>(null);
@@ -2685,6 +2688,7 @@ function useChatMarkdownState({
     expandMedia,
     fileLinkChip,
     githubMedia,
+    githubMediaRepository,
     renderContextReference,
     headingLevelOffset,
     imageBaseDir,
@@ -3134,6 +3138,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       cwd,
       environmentId,
       githubMedia,
+      githubMediaRepository,
       imageBaseDir,
       threadRef,
       renderContextReference,
@@ -3176,7 +3181,12 @@ const CHAT_MARKDOWN_COMPONENTS = {
       return (
         <ChatMarkdownAssetImage
           environmentId={environmentId}
-          resource={{ _tag: "github-media", cwd, url: githubMediaUrl }}
+          resource={{
+            _tag: "github-media",
+            cwd,
+            url: githubMediaUrl,
+            ...(githubMediaRepository === null ? {} : { repository: githubMediaRepository }),
+          }}
           alt={altText}
           kind={kind}
           copyMarkdown={copyMarkdown}
