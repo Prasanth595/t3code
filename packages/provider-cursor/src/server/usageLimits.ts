@@ -82,7 +82,7 @@ const exchanges = new Map<
   >
 >();
 
-export function pruneCursorUsageTokens(instanceId: string, keepKey?: string): void {
+function pruneCursorUsageTokens(instanceId: string, keepKey?: string): void {
   for (const entries of [tokens, exchanges]) {
     for (const existing of entries.keys()) {
       if (existing.startsWith(`${instanceId.length}:${instanceId}:`) && existing !== keepKey)
