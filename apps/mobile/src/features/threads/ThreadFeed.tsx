@@ -20,6 +20,7 @@ import type { HandoffEndpoints } from "@t3tools/client-runtime/handoff";
 import { resolveUserMessagePresentation } from "@t3tools/client-runtime/user-message";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import {
+  AuthFilesystemReadScope,
   type OrchestrationMessageContext,
   ThreadId,
   type ChatAttachment,
@@ -49,7 +50,7 @@ import {
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { isMarkdownFileLinkLabel } from "@t3tools/shared/markdownLinks";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { executeAtomQuery, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
@@ -210,7 +211,8 @@ import {
   useRefreshAssetUrl,
 } from "../../state/assets";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
-import { usePreparedConnection } from "../../state/session";
+import { readEnvironmentScope, usePreparedConnection } from "../../state/session";
+import { projectEnvironment } from "../../state/projects";
 import { useLiveThreadLinkLabels } from "../../state/entities";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { composerDocumentAttachmentRecord } from "../../lib/composerContext";
@@ -1732,13 +1734,16 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const { copiedRowId, expandedWorkGroups, expandedWorkRows, expandedTurnIds } = interactionState;
   const [expandedFile, setExpandedFile] = useState<FilePreviewSource | null>(null);
   const [expandedVideo, setExpandedVideo] = useState<VideoPreviewSource | null>(null);
+  const markdownLinkRequest = useRef<AbortController | null>(null);
+  useFocusEffect(useCallback(() => () => markdownLinkRequest.current?.abort(), []));
   const fileShareSourceIdentifier = useId();
   const shareFileChip = useFileChipShare(
     props.environmentId,
     props.threadId,
     fileShareSourceIdentifier,
   );
-  useEffect(() => {
+  useLayoutEffect(() => {
+    markdownLinkRequest.current?.abort();
     setExpandedVideo(null);
     setExpandedFile(null);
   }, [props.environmentId, props.threadId, props.contentPresentation.kind]);
@@ -1780,8 +1785,15 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
   const iconSubtleColor = theme["--color-icon-subtle"];
   const screenColor = theme["--color-screen"];
   const userBubbleColor = theme["--color-user-bubble"];
+  const onPressPreview = useCallback((source: FilePreviewSource) => {
+    markdownLinkRequest.current?.abort();
+    setExpandedFile((current) => current ?? source);
+  }, []);
   const onMarkdownLinkPress = useCallback(
     (href: string, imageEmbed = false) => {
+      markdownLinkRequest.current?.abort();
+      const request = new AbortController();
+      markdownLinkRequest.current = request;
       const linkedThreadId = parseThreadLinkHref(href);
       if (linkedThreadId) {
         navigation.navigate("Thread", {
@@ -1798,10 +1810,40 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       });
       if (media) {
         void Haptics.selectionAsync();
-        if (media.kind === "video") {
-          setExpandedVideo((current) => current ?? media.source);
+        const openPreview = () => {
+          if (request.signal.aborted) return;
+          if (media.kind === "video") {
+            setExpandedVideo((current) => current ?? media.source);
+          } else {
+            setExpandedFile((current) => current ?? media.source);
+          }
+        };
+        const resource = "resource" in media.source ? media.source.resource : null;
+        if (
+          (resource?._tag === "media-file" || resource?._tag === "draft-workspace-file") &&
+          readEnvironmentScope(props.environmentId, AuthFilesystemReadScope)
+        ) {
+          void executeAtomQuery(
+            appAtomRegistry,
+            projectEnvironment.fileMetadata({
+              environmentId: props.environmentId,
+              input: { path: resource.path },
+            }),
+            { signal: request.signal, reportFailure: false, reportDefect: false },
+          ).then((result) => {
+            if (request.signal.aborted) return;
+            if (result._tag === "Success" && result.value?.kind === "directory") {
+              navigation.navigate("ThreadFile", {
+                environmentId: String(props.environmentId),
+                threadId: String(props.threadId),
+                path: fileRoutePathSegments(resource.path),
+              });
+            } else {
+              openPreview();
+            }
+          }, openPreview);
         } else {
-          setExpandedFile((current) => current ?? media.source);
+          openPreview();
         }
         return;
       }
@@ -1913,7 +1955,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             unavailable={false}
             alt={image.alt}
             actionsSource={media?.source.actionsSource}
-            onPressPreview={(source) => setExpandedFile((current) => current ?? source)}
+            onPressPreview={onPressPreview}
           />
         );
       }
@@ -1931,11 +1973,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           alt={image.alt}
           srcFragment={markdownImageSourceFragment(image.href)}
           actionsSource={media?.source.actionsSource}
-          onPressPreview={(source) => setExpandedFile((current) => current ?? source)}
+          onPressPreview={onPressPreview}
         />
       );
     },
-    [props.environmentId, props.threadId, props.workspaceRoot],
+    [props.environmentId, props.threadId, props.workspaceRoot, onPressPreview],
   );
   const renderViewedImage = useCallback<MarkdownImageRenderer>(
     (image) => {
@@ -1963,11 +2005,11 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               ? { ...actionsSource, resource: viewedImage.resource }
               : undefined
           }
-          onPressPreview={(source) => setExpandedFile((current) => current ?? source)}
+          onPressPreview={onPressPreview}
         />
       ) : null;
     },
-    [props.environmentId, props.threadId, props.workspaceRoot],
+    [props.environmentId, props.threadId, props.workspaceRoot, onPressPreview],
   );
   const markdownStyles = useMarkdownStyles();
   const renderReasoning = useCallback(
@@ -2359,11 +2401,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [suspendEndScrollMaintenanceForDisclosure],
   );
 
-  const onPressPreview = useCallback((source: FilePreviewSource) => {
-    setExpandedFile((current) => current ?? source);
-  }, []);
   const onPressVideo = useCallback(
     (attachment: ChatFileAttachment, sourceIdentifier: string) => {
+      markdownLinkRequest.current?.abort();
       setExpandedVideo(
         (current) =>
           current ??
