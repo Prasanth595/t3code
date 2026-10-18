@@ -130,7 +130,12 @@ function buildTreeEntries(
   );
   const treePaths = entries.map(treePath);
   const directoryPaths = entries.filter((entry) => entry.kind === "directory").map(treePath);
-  return { entries, entryKinds, treePaths, directoryPaths };
+  // Expand all leaves ignored folders such as `node_modules` collapsed, because every expanded
+  // folder is listed and they can hold tens of thousands. They still open by hand.
+  const expandableDirectoryPaths = entries
+    .filter((entry) => entry.kind === "directory" && !entry.ignored)
+    .map(treePath);
+  return { entries, entryKinds, treePaths, directoryPaths, expandableDirectoryPaths };
 }
 
 export default function FileBrowserPanel({
@@ -164,12 +169,8 @@ export default function FileBrowserPanel({
     { environmentId, cwd: hostFolder ? null : cwd, query: query.slice(0, 256) },
     200,
   );
-  const { entries, entryKinds, treePaths, directoryPaths } = buildTreeEntries(
-    directoryEntries,
-    pathSearch.entries,
-    pathSearch.isPending,
-    query,
-  );
+  const { entries, entryKinds, treePaths, directoryPaths, expandableDirectoryPaths } =
+    buildTreeEntries(directoryEntries, pathSearch.entries, pathSearch.isPending, query);
   const entryKindsRef = useRef(entryKinds);
   const previousTreePathsRef = useRef<readonly string[] | null>(null);
   const syncingSelectionRef = useRef(false);
@@ -318,12 +319,16 @@ export default function FileBrowserPanel({
   }, [loadingDirectories, model]);
   const search = useFileTreeSearch(model);
   const allDirectoriesExpanded = useFileTreeSelector(model, (currentModel) =>
-    areAllDirectoriesExpanded(currentModel, directoryPaths),
+    areAllDirectoriesExpanded(currentModel, expandableDirectoryPaths),
   );
   const toggleAllDirectories = () => {
     const expanded = !(expandAll || allDirectoriesExpanded);
     setExpandAll(expanded);
-    setAllDirectoriesExpanded(model, directoryPaths, expanded);
+    setAllDirectoriesExpanded(
+      model,
+      expanded ? expandableDirectoryPaths : directoryPaths,
+      expanded,
+    );
   };
   const closeSearch = () => {
     setQuery("");
@@ -413,8 +418,9 @@ export default function FileBrowserPanel({
   }, [ready, entryKinds, model, treePaths]);
 
   useEffect(() => {
-    if (expandAll && !query.trim()) setAllDirectoriesExpanded(model, directoryPaths, true);
-  }, [directoryPaths, expandAll, model, query]);
+    if (expandAll && !query.trim())
+      setAllDirectoriesExpanded(model, expandableDirectoryPaths, true);
+  }, [expandableDirectoryPaths, expandAll, model, query]);
 
   useEffect(() => {
     if (!selectedPath) {
