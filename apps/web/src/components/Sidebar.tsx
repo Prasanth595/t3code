@@ -2486,19 +2486,22 @@ export default function Sidebar() {
       );
     },
   });
-  const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
-    onCopy: ({ threadId }) => {
+  const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{
+    threadIds: readonly ThreadId[];
+  }>({
+    onCopy: ({ threadIds }) => {
       toastManager.add({
         type: "success",
-        title: "Thread ID copied",
-        description: threadId,
+        title:
+          threadIds.length === 1 ? "Thread ID copied" : `${threadIds.length} thread IDs copied`,
+        description: threadIds.join(", "),
       });
     },
-    onError: (error) => {
+    onError: (error, { threadIds }) => {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Failed to copy thread ID",
+          title: threadIds.length === 1 ? "Failed to copy thread ID" : "Failed to copy thread IDs",
           description: error instanceof Error ? error.message : "An error occurred.",
         }),
       );
@@ -4373,6 +4376,7 @@ export default function Sidebar() {
                 ]
               : []),
             { id: "mark-unread", label: `Mark unread (${count})` },
+            { id: "copy-thread-ids", label: `Copy thread IDs (${count})` },
             {
               id: "delete",
               label: `Delete (${count})`,
@@ -4398,6 +4402,12 @@ export default function Sidebar() {
                 })
               : selectedThreads;
       if (clicked.value === "settle" && actionTargets.length === 0) return;
+      if (clicked.value === "copy-thread-ids") {
+        // Newline-separated so the IDs paste cleanly into a prompt for an agent.
+        const threadIds = selectedThreads.map((thread) => thread.id);
+        copyThreadIdToClipboard(threadIds.join("\n"), { threadIds });
+        return;
+      }
       if (clicked.value !== "mark-unread" && !checkThreadOperations(actionTargets)) return;
       if (clicked.value?.startsWith("snooze:")) {
         const preset =
@@ -4804,7 +4814,7 @@ export default function Sidebar() {
             }
             return;
           case "copy-thread-id":
-            copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+            copyThreadIdToClipboard(thread.id, { threadIds: [thread.id] });
             return;
           case "archive": {
             if (confirmThreadArchive) {
