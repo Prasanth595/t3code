@@ -3488,12 +3488,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       Effect.orElseSucceed(() => Option.none<number>()),
     );
     // Older Git (2.30 here) skips the write when racy entries merely check out clean.
-    const refresh = runGit("GitVcsDriver.createWorktree.refreshIndex", worktreePath, [
-      "update-index",
-      "-q",
-      "--refresh",
-      "--force-write-index",
-    ]);
+    // A refresh re-reads every checked-out file, so it gets the checkout's own
+    // timeout, which also keeps it out of the shared git process permits.
+    const refresh = runGit(
+      "GitVcsDriver.createWorktree.refreshIndex",
+      worktreePath,
+      ["update-index", "-q", "--refresh", "--force-write-index"],
+      { timeoutMs: WORKTREE_ADD_TIMEOUT_MS },
+    );
     const checkoutSecond = yield* indexSecond;
     yield* refresh;
     const refreshedSecond = yield* indexSecond;
