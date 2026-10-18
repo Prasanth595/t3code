@@ -27,6 +27,8 @@ code; review an agent's source and license before adding it.
 
 Install the maintained [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code) on the environment
 selected in **Settings → Providers**, then run `kimi login` on that same environment to sign in.
+For a kimi.ai account, use `kimi login --region global` and open the fresh link printed by that
+command.
 
 In **Settings → Providers → Add provider**, choose **Kimi Code** (Beta). The preset runs the
 installed `kimi` executable with the `acp` argument. Confirm its executable path and arguments,
