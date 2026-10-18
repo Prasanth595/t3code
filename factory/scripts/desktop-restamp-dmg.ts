@@ -2,8 +2,9 @@
 // Brings a mac update manifest and the dmg's blockmap back in line with a dmg that
 // changed after electron-builder wrote them, as stapling a notarization ticket does.
 // Rebuilds <dmg>.blockmap with electron-builder's own blockmap code, then rewrites
-// the sha512 and size of the manifest entry whose url is the dmg's file name (and
-// the top-level sha512 when `path` names the dmg). The dmg itself is not touched.
+// the sha512 and size of the manifest entry whose url is the dmg's file name. The
+// top-level path and sha512 are the zip's on mac (electron-builder puts the zip
+// first), so they stay. The dmg itself is not touched.
 //
 //   node factory/scripts/desktop-restamp-dmg.ts <dmg> <manifest.yml>
 import * as NodeFS from "node:fs";
@@ -31,7 +32,6 @@ const restamp = (text: string, name: string, info: BlockMapInfo) => {
   const lines = text.split("\n");
   let found = false;
   let inEntry = false;
-  let topLevelIsDmg = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     if (/^\s*- url: /.test(line)) {
@@ -41,8 +41,6 @@ const restamp = (text: string, name: string, info: BlockMapInfo) => {
     }
     if (/^\S/.test(line)) {
       inEntry = false;
-      if (line.startsWith("path: ")) topLevelIsDmg = line.slice("path: ".length).trim() === name;
-      if (line.startsWith("sha512: ") && topLevelIsDmg) lines[i] = `sha512: ${info.sha512}`;
       continue;
     }
     if (!inEntry) continue;
