@@ -271,34 +271,32 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
         }),
     );
 
-    it.effect.skipIf(!symlinksSupported)(
-      "accepts SQLite files Codex creates between setups",
-      () =>
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const sharedHome = yield* makeTempDir("t3code-codex-shared-");
-          const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
-          const shadowHome = path.join(shadowRoot, "shadow");
-          const layout = yield* resolveCodexHomeLayout(
-            decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
-          );
-          const names = ["queue_1.sqlite", "queue_1.sqlite-wal", "queue_1.sqlite-shm"];
+    it.effect.skipIf(!symlinksSupported)("accepts SQLite files Codex creates between setups", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const sharedHome = yield* makeTempDir("t3code-codex-shared-");
+        const shadowRoot = yield* makeTempDir("t3code-codex-shadow-root-");
+        const shadowHome = path.join(shadowRoot, "shadow");
+        const layout = yield* resolveCodexHomeLayout(
+          decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
+        );
+        const names = ["queue_1.sqlite", "queue_1.sqlite-wal", "queue_1.sqlite-shm"];
 
-          yield* materializeCodexShadowHome(layout);
-          for (const name of names) {
-            yield* writeTextFile(path.join(sharedHome, name), `shared ${name}`);
-            yield* writeTextFile(path.join(shadowHome, name), `shadow ${name}`);
-          }
-          yield* materializeCodexShadowHome(layout);
+        yield* materializeCodexShadowHome(layout);
+        for (const name of names) {
+          yield* writeTextFile(path.join(sharedHome, name), `shared ${name}`);
+          yield* writeTextFile(path.join(shadowHome, name), `shadow ${name}`);
+        }
+        yield* materializeCodexShadowHome(layout);
 
-          for (const name of names) {
-            const shadowPath = path.join(shadowHome, name);
-            expect(yield* fileSystem.readFileString(shadowPath)).toBe(`shadow ${name}`);
-            const linkResult = yield* fileSystem.readLink(shadowPath).pipe(Effect.result);
-            expect(linkResult._tag).toBe("Failure");
-          }
-        }),
+        for (const name of names) {
+          const shadowPath = path.join(shadowHome, name);
+          expect(yield* fileSystem.readFileString(shadowPath)).toBe(`shadow ${name}`);
+          const linkResult = yield* fileSystem.readLink(shadowPath).pipe(Effect.result);
+          expect(linkResult._tag).toBe("Failure");
+        }
+      }),
     );
 
     it.effect.skipIf(!symlinksSupported)(
