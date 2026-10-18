@@ -2818,7 +2818,13 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             `--ref-format=${sourceRefFormat}`,
             `--object-format=${objectFormat}`,
           ]);
-          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          // Reinitializing an empty repository can reset its selected backend on newer Git.
+          yield* git(cwd, ["config", "user.email", "test@test.com"]);
+          yield* git(cwd, ["config", "user.name", "Test"]);
+          yield* writeTextFile(cwd, "README.md", "# test\n");
+          yield* git(cwd, ["add", "."]);
+          yield* git(cwd, ["commit", "-m", "initial commit"]);
+          const initialBranch = yield* git(cwd, ["branch", "--show-current"]);
           yield* git(remote, ["init", "--bare", `--object-format=${objectFormat}`]);
           yield* git(cwd, ["remote", "add", "origin", remote]);
           yield* git(cwd, ["push", "-u", "origin", initialBranch]);
