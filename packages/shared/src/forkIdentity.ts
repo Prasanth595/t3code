@@ -32,6 +32,9 @@ export const FORK_DESKTOP_DEV_SCHEME = "t3code-factory-dev";
 /** First port the desktop backend scan tries. Upstream desktop uses 3773, the LaunchAgent server 3876. */
 export const FORK_DESKTOP_BACKEND_PORT = 3880;
 
+/** The LaunchAgent server the packaged desktop app uses as its primary environment. */
+export const FORK_FACTORY_SERVER_URL = "http://127.0.0.1:3876";
+
 export const FORK_COMPILE_CACHE_DIR_NAME = "t3code-factory";
 
 export const FORK_BOOT_SERVICE_LAUNCHD_LABEL = `${FORK_DESKTOP_APP_ID}.service`;

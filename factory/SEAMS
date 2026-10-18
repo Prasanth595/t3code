@@ -23,6 +23,9 @@ apps/desktop/src/app/DesktopUserData.ts
 apps/desktop/src/compileCache.ts
 apps/desktop/src/electron/ElectronProtocol.test.ts
 apps/desktop/src/electron/ElectronProtocol.ts
+apps/desktop/src/ipc/DesktopIpcHandlers.ts
+apps/desktop/src/ipc/methods/window.ts
+apps/desktop/src/preload.ts
 apps/server/src/cloud/bootService.test.ts
 apps/server/src/cloud/bootService.ts
 apps/server/src/httpCors.test.ts
