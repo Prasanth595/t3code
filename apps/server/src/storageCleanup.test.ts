@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's FileSystem can't create an NTFS junction.
+import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Context from "effect/Context";
@@ -279,7 +281,12 @@ const cleanupFixture = (
         ...git,
         execute: (input) =>
           Effect.gen(function* () {
-            if (editBeforeRemoval && input.args.includes("remove"))
+            // Before Git's own clean check: inside `git worktree remove`, or on
+            // Windows the same status check the removal makes before deleting.
+            if (
+              editBeforeRemoval &&
+              (input.args.includes("remove") || input.args.includes("--porcelain"))
+            )
               yield* fs.writeFileString(`${worktree}/tracked.txt`, "late edit\n");
             return yield* git.execute(input);
           }),
@@ -1222,6 +1229,22 @@ describe("storage cleanup reports and local file policies", () => {
         expect(report.entries[0]).toMatchObject({ outcome: "removed", bytes, files: null });
         expect(report.bytesFreed).toBe(bytes);
         expect(yield* fs.readFileString(`${outside}/external`)).toBe("must not count");
+      }),
+    ),
+  );
+  it.live("removes a worktree without deleting what its junctions point to", () =>
+    runCleanupTest(
+      Effect.gen(function* () {
+        const { service, fs, worktree } = yield* cleanupFixture();
+        const outside = yield* fs.makeTempDirectoryScoped();
+        yield* fs.writeFileString(`${outside}/keep.txt`, "keep\n");
+        yield* fs.makeDirectory(`${worktree}/node_modules`);
+        // A junction on Windows, the way pnpm links packages; a symlink elsewhere.
+        NodeFS.symlinkSync(outside, `${worktree}/node_modules/dep`, "junction");
+        const report = yield* service.runNow;
+        expect(report.entries[0]).toMatchObject({ outcome: "removed" });
+        expect(yield* fs.exists(worktree)).toBe(false);
+        expect(yield* fs.readFileString(`${outside}/keep.txt`)).toBe("keep\n");
       }),
     ),
   );
