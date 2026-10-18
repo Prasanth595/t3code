@@ -175,6 +175,7 @@ describe("FactoryRunPage", () => {
     const page = await mount();
     const pre = page.all("pre")[0]!;
     expect(pre.textContent).toBe("<b>tests failed</b> fix them");
+    expect(pre.children).toHaveLength(0);
     expect(page.all("b")).toHaveLength(0);
   });
 

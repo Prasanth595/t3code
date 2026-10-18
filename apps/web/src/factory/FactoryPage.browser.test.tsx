@@ -576,14 +576,17 @@ describe("FactoryPage dismissing attention items", () => {
   };
   const section = (page: Awaited<ReturnType<typeof render>>) =>
     page.all("section").find((node) => node.getAttribute("aria-label") === "Needs attention");
-  const itemOf = (page: Awaited<ReturnType<typeof render>>, message: string) =>
-    Array.from(section(page)?.querySelectorAll("li") ?? []).find((li) =>
-      li.textContent?.includes(message),
+  // An element holds `text` when one of its own text nodes is exactly `text`.
+  const holdsText = (root: Element, text: string) =>
+    [root, ...root.querySelectorAll("*")].some((node) =>
+      Array.from(node.childNodes).some(
+        (child) => child.nodeType === Node.TEXT_NODE && child.textContent === text,
+      ),
     );
+  const itemOf = (page: Awaited<ReturnType<typeof render>>, message: string) =>
+    Array.from(section(page)?.querySelectorAll("li") ?? []).find((li) => holdsText(li, message));
   const dismissIn = (item: HTMLElement) =>
-    Array.from(item.querySelectorAll("button")).find((button) =>
-      button.textContent?.includes("Dismiss"),
-    )!;
+    Array.from(item.querySelectorAll("button")).find((button) => holdsText(button, "Dismiss"))!;
 
   it("Dismiss removes that item at once and sends its id", async () => {
     state.status = resource({ data: statusData({ attention: [ATTENTION, CONFIG] }) });
