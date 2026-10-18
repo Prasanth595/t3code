@@ -745,8 +745,13 @@ export function ProviderInstanceCard({
     value: ProviderInstanceConfig[Key] | undefined,
   ) =>
     onUpdate((current) => {
-      const { [key]: _omit, ...rest } = current;
-      return (value === undefined ? rest : { ...rest, [key]: value }) as ProviderInstanceConfig;
+      const next = { ...current };
+      if (value === undefined) {
+        delete next[key];
+      } else {
+        next[key] = value;
+      }
+      return next;
     });
 
   const updateDisplayName = (value: string) => {

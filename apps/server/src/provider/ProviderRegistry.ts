@@ -774,8 +774,24 @@ export const layer = Layer.effect(
           nextAppearance.set(instanceId, yield* instance.appearance ?? Effect.succeed({}));
         }
         const previousAppearance = yield* Ref.getAndSet(appearanceRef, nextAppearance);
-        if (!sameAppearance(previousAppearance, nextAppearance)) {
-          yield* PubSub.publish(changesPubSub, yield* Ref.get(providersRef));
+        // Remove retired instances before any reconciliation emission, so
+        // clients never receive them with their configured appearance stripped.
+        const [previousProviders, providers] = yield* Ref.modify(
+          providersRef,
+          (previousProviders) => {
+            const providers = orderProviderSnapshots(
+              previousProviders.filter((provider) =>
+                knownInstanceIds.has(snapshotInstanceKey(provider)),
+              ),
+            );
+            return [[previousProviders, providers] as const, providers];
+          },
+        );
+        if (
+          !sameAppearance(previousAppearance, nextAppearance) ||
+          haveProvidersChanged(previousProviders, providers)
+        ) {
+          yield* PubSub.publish(changesPubSub, providers);
         }
 
         const rebuiltInstanceIds = new Set(
@@ -835,20 +851,6 @@ export const layer = Layer.effect(
         }
         yield* Ref.set(liveSubsRef, nextSubs);
 
-        const [previousProviders, providers] = yield* Ref.modify(
-          providersRef,
-          (previousProviders) => {
-            const providers = orderProviderSnapshots(
-              previousProviders.filter((provider) =>
-                knownInstanceIds.has(snapshotInstanceKey(provider)),
-              ),
-            );
-            return [[previousProviders, providers] as const, providers];
-          },
-        );
-        if (haveProvidersChanged(previousProviders, providers)) {
-          yield* PubSub.publish(changesPubSub, providers);
-        }
         yield* Ref.update(maintenanceActionStatesRef, (previous) => {
           const next = new Map(previous);
           for (const instanceId of previous.keys()) {

@@ -2764,13 +2764,18 @@ it.layer(
           makeInstance(kimiProvider, Ref.get(kimiAppearance)),
           makeInstance(plainProvider),
         ];
+        const instancesRef = yield* Ref.make<ReadonlyArray<ProviderInstance>>(instances);
         const changes = yield* PubSub.unbounded<void>();
         const layerInstanceRegistry = Layer.succeed(
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           {
             getInstance: (instanceId) =>
-              Effect.succeed(instances.find((instance) => instance.instanceId === instanceId)),
-            listInstances: Effect.succeed(instances),
+              Ref.get(instancesRef).pipe(
+                Effect.map((current) =>
+                  current.find((instance) => instance.instanceId === instanceId),
+                ),
+              ),
+            listInstances: Ref.get(instancesRef),
             listUnavailable: Effect.succeed([]),
             streamChanges: Stream.fromPubSub(changes),
             subscribeChanges: PubSub.subscribe(changes),
@@ -2838,6 +2843,22 @@ it.layer(
             { icon: restyled?.icon, badgeLabel: restyled?.badgeLabel },
             { icon: "codex", badgeLabel: undefined },
           );
+
+          // The first removal emission must already exclude the deleted
+          // instance, even when a retained instance is restyled at once.
+          const pullChanges = yield* Stream.toPull(registry.streamChanges);
+          yield* Ref.set(instancesRef, [instances[0]!]);
+          yield* Ref.set(kimiAppearance, { icon: "initials", badgeLabel: "NEW" });
+          yield* PubSub.publish(changes, undefined);
+          const removalChanges = yield* pullChanges;
+          for (const list of removalChanges) {
+            assert.deepStrictEqual(
+              list.map((provider) => provider.instanceId),
+              ["claude_kimi"],
+            );
+            assert.strictEqual(list[0]?.icon, "initials");
+            assert.strictEqual(list[0]?.badgeLabel, "NEW");
+          }
         }).pipe(Effect.provide(runtimeServices));
       }),
     );
