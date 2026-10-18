@@ -4,25 +4,39 @@ This guide maps owner tasks to the fork tools. It is for agents that operate the
 
 ## Rules
 
+- Before a plan or status report, list recent merged fork PRs for that area. See [Change the fork](fork/operations.md#change-the-fork).
+- Prefer upstream code and generic solutions. Isolate fork code with one-line upstream hooks; see [Change the fork](fork/operations.md#change-the-fork).
+- Never open or suggest PRs or issues on `pingdotgg/t3code`. Fork fixes stay in `Yarden-zamir/t3code`.
 - Never kill a process that you found by a name, a path or a pattern. Kill only a PID that you started.
 - Never write to `~/.t3/userdata` on a machine. It is the live install. Read it or copy from it only.
 - Stage files by path only. Never use `git add -A` or `git add .`. Worktrees hold links to private files from `_shared/`.
 - Before every push, run `vp run fork:check` and fix each failed step. See [Check a change before you push](fork/operations.md#check-a-change-before-you-push).
-- Put every fork behaviour behind a setting. A setting that only adds something starts on. A setting that changes existing behavior or layout, installs or restarts anything, changes access or needs setup starts off.
+- Put every fork behaviour behind a setting. A setting that only adds something without noticeable cost starts on. A setting that changes existing behavior or layout, installs or restarts anything, changes access or needs setup starts off.
 - Set the values of the owner's machines through the machine map, not through the code default.
+- Enable requested features for the owner unless told otherwise. Report this; keep code defaults separate.
+- Change shared server `threadCardLayouts` with `machines_set_setting`; backup: `_shared/thread-card-layouts.json`. Never use dotfiles settings pull scripts.
+- Harmless screenshots, T3 browser previews, read-only checks and dev servers on copied data need no permission. See [Harmless verification](fork/operations.md#harmless-verification).
+- Ask before live-state changes outside the request, publishing outside the fork, or deleting work. Never write live userdata directly.
+- A broken Device panel, browser preview or MCP tool blocks work. Tell the owner first; see [Tool blockers](fork/operations.md#tool-blockers).
+- Start no session-import threads, PRs or research until the owner raises session import again.
 - Never deploy the portal or the VPS by hand. Merge to main. The automation deploys main.
 - Never put secrets in the repository, a commit, a pull request or a comment. Secrets stay in `~/Github/t3code/_shared/`.
+- Never add a model, harness or AI credit line to a commit, a pull request or a comment. This rule replaces the line in `AGENTS.md` that asks for one.
+
+Mobile testers: read [Android emulator on the Mac](fork/operations.md#android-emulator-on-the-mac) before testing on the owner's Mac.
 
 ## Find the tools
 
 - An agent in a T3 thread gets the fork MCP tools with the other T3 tools. Their descriptions hold the permissions, the side effects and the result shapes.
-- In a terminal, run `t3 tool list` for all tools and `t3 tool describe <name>` for one tool. Run `t3 tool call <name> --input '<json>'` to call one. In a checkout, use `node apps/server/src/bin.ts` instead of `t3`.
+- In a terminal, run `t3 tool list` for all tools and `t3 tool describe <name>` before its first call. Run `t3 tool call <name> --input '<json>'` to call one. In a checkout, `node apps/server/src/bin.ts` replaces `t3`, but does not select the worktree dev server.
+- Tool CLI commands, including `tool call` and `machine-map join`, target the live `~/.t3` server even from a worktree. Check `T3_ACP_*` and the CLI's "Pairing with ..." line before changes. Drive dev servers through their own UI or authenticated HTTP/WebSocket API; `pair` uses separate target discovery.
 - The fork MCP tools are `machines_read`, `machines_resources`, `machines_set_access`, `machines_set_setting`, `machines_command`, `machines_queue_cancel`, `machines_undo`, `machines_preset`, `machines_join` and `machine_tool_call`.
 
 ## Machine map
 
 The portal is `https://t3.yarden-zamir.com`. Each machine is one T3 server, for example Mac, VPS and Windows. Call `machines_read` first: it gives the machine ids, the map roles, the arrows and the supported commands of each machine.
 
+- Take machine ids, revision numbers and command ids from that result. Never guess them.
 - The map role of the machine that runs the agent decides what the agent can do: `read` reads, `propose` sends changes to the owner Inbox, `edit` applies changes. `machines_command` and `machines_queue_cancel` need `edit`.
 - A change that raises access of the agent's own machine always waits for the owner.
 - While the owner's emergency pause is on, the portal refuses every agent call. Each machine also locks T3 Code for every client except its own desktop app (MM-718). Only the owner can resume, in the portal.

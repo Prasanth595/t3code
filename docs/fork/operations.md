@@ -57,7 +57,21 @@ A failed Fork Sync, Fork Release or Fork CI run on main runs its `notify_agent` 
 
 ## Change the fork
 
-- Put every fork behavior behind a setting. A setting that only adds something starts on. A setting that changes existing behavior or layout, installs or restarts anything, changes access or needs setup starts off.
+Before a plan or status report, list recent merged fork PRs for the same topic:
+
+```sh
+gh pr list -R Yarden-zamir/t3code --state merged --search '<topic> sort:updated-desc'
+git log origin/main -- <files>
+```
+
+Name the fork PRs that the plan builds on. Check fork merges first, then upstream.
+
+- Prefer upstream scripts, CLI and docs. Explain why upstream alone does not meet the need.
+- Keep fork changes generic. Add no special code paths for one machine or cloud provider.
+- Put fork code in fork files: `forkSettings.ts`, `forkRpc.ts`, `fork/forkWs.ts`, `Fork*` components and `fork-*` scripts. Keep hooks in upstream files to one line.
+- The web thread card layout block in `Sidebar.tsx` is the known exception. Revisit it after upstream changes that block in two consecutive syncs. Also revisit it when upstream adds a card layout hook.
+- If an open upstream PR covers the feature, keep the fork version until upstream merges it. Add a code comment naming that PR and the replacement trigger. Do not open an upstream PR or issue.
+- Put every fork behavior behind a setting. A setting that only adds something without noticeable cost starts on. A setting that changes existing behavior or layout, installs or restarts anything, changes access or needs setup starts off.
 - Put the schema field of a fork setting in `packages/contracts/src/forkSettings.ts`, not in the upstream `settings.ts`.
 - Add a new fork setting to Settings > Fork: its entry in `FORK_SETTING_GROUPS` (`forkSettingsCatalog.ts`) and its row in `FORK_SETTING_ROWS` (`ForkSettings.tsx`). Add a fork preference to the reset list in `forkSettingsRestore.ts`.
 - `forkSettingsRegistration.test.ts` fails when a fork setting has no Fork page row or no Restore defaults rule. A setting without a row needs a reason in that test.
@@ -65,6 +79,31 @@ A failed Fork Sync, Fork Release or Fork CI run on main runs its `notify_agent` 
 - If a Fork Sync merge conflicts only in `README.md`, the sync keeps the fork section up to the first `---` line and takes the upstream README below it. A conflict in another file stops the sync.
 - If a sync conflicts on a tooltip line with a `ShortcutHint` (the key chips in upstream tooltips), take the upstream line, then add one `ShortcutHint` back. If the same file conflicts again, keep the upstream tooltip text in that file.
 - A merge without conflicts can still break a fork feature. Each fork feature that changes upstream behavior needs a test of that behavior, so that the fork tests catch the break.
+- Prefer automated setup over manual instructions when the permission cost is acceptable. Keep documentation for steps that code cannot do.
+- If setup lacks permission or an API refuses it, show the manual step, dashboard links and documentation links. Name the missing permission; never show the raw API error. Apply the portal's MM-1209 fallback rule to all fork automation.
+
+### Harmless verification
+
+Screenshots, T3 browser previews, read-only checks and worktree dev servers on copied data need no permission.
+This fork rule overrides the `AGENTS.md` permission default for browsers and its ban on subagent dev servers.
+Delegate slow verification to a low-cost subagent when suitable.
+Still ask before live-state changes outside the request, publishing outside the fork, or deleting work.
+Never write directly to live `~/.t3/userdata`.
+
+Seed copied data with the dev server stopped:
+
+```sh
+vp run migrate-dev-db
+```
+
+Then start the worktree dev server. Use its own UI or API, not the live-server tool CLI.
+
+### Tool blockers
+
+Check the intended tool first each session: Device panel, browser preview or MCP tool.
+If it fails, stop and tell the owner before any workaround.
+Start the reply with a red blocker line. State the cause and exact fix commands.
+Ask: "Fix it now, or work around it?" Wait for the answer; do not silently switch tools.
 
 ## Check a change before you push
 
@@ -79,6 +118,9 @@ vp run fork:check
 - It prints one line per step: pass, fail or skipped with the reason. It exits with an error when a step fails.
 - Without Playwright Chromium, it skips the browser tests and prints the install command.
 - Fork CI still runs the full test suites, the typecheck of dependent packages, the desktop build and the Rust crates.
+- Keep `fork:check` fast. Time each proposed step before adding it; never add a slow step.
+- A few seconds is acceptable; tens of seconds is not. Weigh value against time without asking the owner.
+- Report the decision and measured time. Leave slow checks to CI.
 
 ## Versions
 
@@ -136,9 +178,12 @@ A local build is the fast way to test a change on this Mac. It does not replace 
 
 A headless server that runs as the upstream background service (`t3 service install`) updates from the fork releases. The install is the upstream self-update. It unpacks the release into `<T3 home>/runtime/versions/<version>`, and the service launcher starts it on trial. If the new version does not start, the launcher goes back to the old version.
 
+- Keep a release on each code push to main; never slow the update path. See [Fork Release](#fork-release) for docs-only and portal-only exceptions.
+- Servers install updates only when idle. Use `whenIdle: true` for manual machine map updates too.
+- Ask the owner before migrating Oracle-VPS or VPS to another install path. Routine version-directory updates are not install-path migrations.
 - The user setting is [Server auto-update](features.md#server-auto-update). It checks the fork releases every 5 minutes.
 - A release is ready when it has `SHA256SUMS`. A version that rolled back or failed is not tried again. A newer release is tried.
-- The machine map command `installUpdate` works on such a server too (MM-505). `whenIdle: false` installs the newest fork release now. `whenIdle: true` installs it at the first check with no running agent turn or background shell, also when `forkAutoUpdate` is off.
+- The machine map command `installUpdate` works on such a server too (MM-505). Use `whenIdle: true`: it waits for no running agent turn or background shell, even with `forkAutoUpdate` off. `whenIdle: false` restarts immediately; do not use it for routine updates.
 - A restart stops the running turns. "Continue threads after restarts" (`continueThreadsAfterServerUpdate`) and [Recover interrupted agents](features.md#recover-interrupted-agents) continue them.
 - "Update everything" and `t3 update` also install fork releases. A self-update request for a version without a fork release installs the newest fork release instead. The Play Store app checks upstream releases, so its "Check for updates" installs the newest fork release.
 
@@ -244,6 +289,47 @@ Use these steps only when the join dialog says "No tunnel", for example when the
 - The fork key in `_shared/android-signing/` signs every APK. The repository secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_ALIAS` hold the same key. Only the signing step sees them. Android refuses an update with another key, so do not replace the key.
 - The Obtainium link in the portal "Invite an app" dialog is in `apps/machine-map/src/ui/obtainium.ts`.
 - Upstream's mobile workflows need Expo, Google Play or Blacksmith runners. They are disabled on the fork. After a sync that adds a `mobile-*` workflow, disable it with `gh workflow disable "<name>" -R Yarden-zamir/t3code`.
+
+## Android emulator on the Mac
+
+1. Use the T3 Device panel first: `device_list`, then `device_open`. Follow its returned AgentDevice command and target arguments.
+2. If it reports "Android unavailable", raise the [tool blocker](#tool-blockers) before any fallback. The app can lack `ANDROID_HOME`. Set it, then restart the T3 desktop app with the owner's approval:
+
+   ```sh
+   launchctl setenv ANDROID_HOME /opt/homebrew/share/android-commandlinetools
+   ```
+
+3. For Gradle and native-client builds, set both SDK variables. Put the worktree's `vp` folder on PATH:
+
+   ```sh
+   export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+   export ANDROID_SDK_ROOT="$ANDROID_HOME"
+   export PATH="$PWD/node_modules/.bin:$PATH"
+   ```
+
+4. Follow `test-t3-mobile` with copied backend data. The test AVD is `t3-android-app`, port `5590`, device `emulator-5590`.
+
+Use these raw-emulator steps only after the owner approves a workaround:
+
+- A failed snapshot can leave a black screen. Stop only the test emulator, then start without a snapshot:
+
+  ```sh
+  "$ANDROID_HOME/platform-tools/adb" -s emulator-5590 emu kill < /dev/null
+  setopt NO_BG_NICE
+  "$ANDROID_HOME/emulator/emulator" -avd t3-android-app -port 5590 -no-snapshot -no-window &
+  ```
+
+  `NO_BG_NICE` is a zsh option. It prevents macOS from throttling the background emulator until it freezes.
+
+- Turn off stylus handwriting before typing, or its tutorial can take the input:
+
+  ```sh
+  "$ANDROID_HOME/platform-tools/adb" -s emulator-5590 shell settings put secure stylus_handwriting_enabled 0 < /dev/null
+  ```
+
+- Close stdin on every `adb shell` command with `< /dev/null`; otherwise agent shells can hang.
+- `adb shell input text` drops long strings. Send text in parts of 12 characters.
+- Move the floating Expo dev menu button away before tapping a header check button that it covers.
 
 ## Secrets and variables
 
