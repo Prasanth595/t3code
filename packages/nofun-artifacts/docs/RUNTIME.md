@@ -11,7 +11,7 @@ on a Canvas board carries only its own code (a linked artifact is ~5 to 15 KiB i
 
 | File              | What                                                                                                                                                                 |
 | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `runtime.js`      | Classic script (IIFE). Defines `window.NoFunUI`.                                                                                                                     |
+| `runtime.js`      | Classic script (IIFE). Defines `window.NoFunUI` and extends an existing `window.nofun` via `Object.assign` (`nofun.NoFunUI`). It never replaces `window.nofun`, so `window.nofun.canvas` stays. |
 | `runtime.css`     | Tailwind v4 over every bundled source, Geist inlined, no brand.                                                                                                      |
 | `brands/<id>.css` | One brand's tokens, scoped to `[data-brand="<id>"]`, with its fonts inlined.                                                                                         |
 | `manifest.json`   | `sha`, `componentsCommit`, `builtAt`, `itemCount`, `moduleCount`, `componentCount`, `sizes`, `brands` (schemes), `excluded` (with reasons), `modules`, `components`. |
