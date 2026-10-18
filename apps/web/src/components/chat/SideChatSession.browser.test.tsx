@@ -1,3 +1,4 @@
+import type { OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import { act, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
@@ -7,6 +8,7 @@ const state = vi.hoisted(() => ({
   start: vi.fn(),
   interrupt: vi.fn(),
   status: "running",
+  visibleTurnItems: [] as OrchestrationV2ProjectedTurnItem[],
   ctrlKey: false,
   metaKey: false,
   selection: {
@@ -28,6 +30,7 @@ vi.mock("../../state/entities", () => ({
       },
       messages: [{ id: "answer", role: "assistant", text: "Side answer", streaming: false }],
       turnItems: [],
+      visibleTurnItems: state.visibleTurnItems,
     },
   }),
 }));
@@ -82,6 +85,27 @@ vi.mock("../SidebarStageBackdrop", () => ({
   useSidebarStageBackdropVariant: () => null,
 }));
 
+vi.mock("./SecretRequestCard", () => ({
+  SecretRequestCard: ({
+    environmentId,
+    visibility,
+    item,
+  }: {
+    environmentId: string;
+    visibility: string;
+    item: { id: string; threadId: string; label: string };
+  }) => (
+    <div
+      data-secret-request={item.id}
+      data-environment={environmentId}
+      data-visibility={visibility}
+      data-thread={item.threadId}
+    >
+      {item.label}
+    </div>
+  ),
+}));
+
 let root: Root;
 let container: HTMLDivElement;
 const props = () =>
@@ -108,6 +132,7 @@ const send = () => container.querySelector<HTMLButtonElement>('button[type="subm
 beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.status = "running";
+  state.visibleTurnItems = [];
   state.ctrlKey = false;
   state.metaKey = false;
   state.start.mockReset().mockResolvedValue({ _tag: "Success" });
@@ -186,3 +211,31 @@ it("shows the side answer without a separate send-to-main action", async () => {
   expect(container.querySelector('[aria-label="Send to Main Chat"]')).toBeNull();
   expect(state.start).not.toHaveBeenCalled();
 });
+
+it.each(["local", "inherited"] as const)(
+  "renders secret requests with their owning environment and %s visibility",
+  async (visibility) => {
+    const threadId = visibility === "local" ? "side" : "parent";
+    state.visibleTurnItems = [
+      {
+        position: 0,
+        visibility,
+        sourceThreadId: threadId,
+        sourceItemId: "secret-card",
+        item: {
+          id: "secret-card",
+          threadId,
+          type: "secret_request",
+          label: "Deploy token",
+          secretStatus: "pending",
+        },
+      },
+    ] as unknown as OrchestrationV2ProjectedTurnItem[];
+    await render();
+    const card = container.querySelector('[data-secret-request="secret-card"]');
+    expect(card?.textContent).toBe("Deploy token");
+    expect(card?.getAttribute("data-environment")).toBe("env");
+    expect(card?.getAttribute("data-visibility")).toBe(visibility);
+    expect(card?.getAttribute("data-thread")).toBe(threadId);
+  },
+);

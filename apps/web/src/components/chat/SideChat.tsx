@@ -12,6 +12,7 @@ import type { ProviderInstanceEntry } from "../../providerInstances";
 import { getAppModelOptionsForInstance } from "../../modelSelection";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 import { TraitsPicker } from "./TraitsPicker";
+import { SecretRequestCard } from "./SecretRequestCard";
 import { SideChatControls } from "./SideChatControls";
 import { ComposerSurface } from "./ComposerSurface";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
@@ -342,6 +343,16 @@ export function SideChatSession({
             </div>
           </div>
         ))}
+        {thread?.visibleTurnItems.map(({ item, visibility }) =>
+          item.type === "secret_request" ? (
+            <SecretRequestCard
+              key={item.id}
+              environmentId={environmentId}
+              item={item}
+              visibility={visibility}
+            />
+          ) : null,
+        )}
         {running && <p className="text-xs text-muted-foreground">Working…</p>}
         {requests.approvals.map((approval) => (
           <div
