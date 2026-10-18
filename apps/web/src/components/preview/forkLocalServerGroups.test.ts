@@ -15,6 +15,7 @@ function listener(port: number, folder: ForkLocalListener["folder"]): ForkLocalL
     pid: port,
     folder,
     check: folder === null ? "unchecked" : "page",
+    threadId: null,
   };
 }
 

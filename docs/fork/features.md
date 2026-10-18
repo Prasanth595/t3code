@@ -465,6 +465,8 @@ The Local servers list of a new browser tab also shows servers that no T3 termin
 
 The list fills in progressively. Every server shows as soon as the server knows its folder. A server that gets a check shows "checking…" until its first check ends, then "no page found" or no note. Rows keep the order in which they first appeared.
 
+A row shows "from <thread>" when the server knows for certain which other thread started it. A click on the chip opens that thread. For a server of a T3 terminal, that is the thread of the terminal. For a server that an agent started, the server looks up the process tree for the session id of a Claude Code or Codex process that T3 runs.
+
 - **Setting:** server setting `previewLocalServerGroups` (off by default). Settings > Integrations > Browser > "All local servers in the browser".
 - **Works on:** web, desktop. The mobile app has no Local servers list.
 - **Limits:**
@@ -473,6 +475,7 @@ The list fills in progressively. Every server shows as soon as the server knows 
   - On Windows, every server outside the T3 terminals is in the last group. Revisit if Windows gets a cheap way to read the working folder of a process.
   - A port with two owner processes, such as one on IPv4 and one on IPv6, gets no check. A project at the home folder or above it counts as no project.
   - A new project or thread worktree counts after up to 30 seconds. A worktree that no thread uses counts after up to 5 minutes.
+  - A server whose shell exited has no "from" link on macOS, because macOS hides the environment of other processes. On Linux the server also reads `CLAUDE_CODE_SESSION_ID` and `CODEX_THREAD_ID` from the process environment. Windows has no "from" link for agent servers.
 
 ### Lightning icon
 

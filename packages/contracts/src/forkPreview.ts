@@ -3,9 +3,10 @@
  * setting `previewLocalServerGroups` is on. The upstream list (`DiscoveredLocalServerList`) keeps
  * the servers of T3 terminals. This list holds every other local listener.
  */
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ProjectId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { DiscoveredLocalServer } from "./preview.ts";
 
 /**
@@ -32,6 +33,11 @@ export const ForkLocalListener = Schema.Struct({
    * listener outside every project is always `unchecked`. `checking`: the first check runs.
    */
   check: Schema.Literals(["page", "noPage", "unchecked", "checking"]),
+  /**
+   * The T3 thread whose agent started the process, when the server knows it for certain. Missing
+   * from older servers, so it decodes to null.
+   */
+  threadId: Schema.NullOr(ThreadId).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
 });
 export type ForkLocalListener = typeof ForkLocalListener.Type;
 

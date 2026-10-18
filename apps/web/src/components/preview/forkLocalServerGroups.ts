@@ -11,6 +11,7 @@ import {
   type ForkLocalListener,
   type ProjectId,
   type ScopedThreadRef,
+  type ThreadId,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
@@ -31,6 +32,8 @@ export interface ForkLocalServerEntry {
   readonly server: PreviewableServer;
   /** Why the entry has no checked page, or null. */
   readonly note: string | null;
+  /** The other thread that started the server, when it is known for certain. */
+  readonly threadId: ThreadId | null;
 }
 
 export interface ForkLocalServerSection {
@@ -107,7 +110,7 @@ export function useForkLocalServerSections(input: {
   const terminal: ForkLocalServerSection = {
     group: "terminal",
     label: null,
-    entries: input.servers.map((server) => ({ server, note: null })),
+    entries: input.servers.map((server) => ({ server, note: null, threadId: null })),
   };
   if (!enabled) {
     return { groupsEnabled: false, sections: terminal.entries.length > 0 ? [terminal] : [] };
@@ -120,6 +123,9 @@ export function useForkLocalServerSections(input: {
     folder: worktreePath ?? project?.workspaceRoot ?? null,
     projectId: thread?.projectId ?? null,
   });
+  // A link to the thread that shows the list leads nowhere.
+  const otherThread = (threadId: ThreadId | null) =>
+    threadId === input.threadRef.threadId ? null : threadId;
   const toEntry = (listener: ForkLocalListener): ForkLocalServerEntry => ({
     server: {
       host: listener.host,
@@ -132,9 +138,16 @@ export function useForkLocalServerSections(input: {
       source: "scanner",
     },
     note: CHECK_NOTES[listener.check],
+    threadId: otherThread(listener.threadId),
   });
   const sections: ReadonlyArray<ForkLocalServerSection> = [
-    terminal,
+    {
+      ...terminal,
+      entries: terminal.entries.map((entry) => ({
+        ...entry,
+        threadId: otherThread(entry.server.terminal?.threadId ?? null),
+      })),
+    },
     {
       group: "worktree",
       label: worktreePath ? "This worktree" : "This project folder",

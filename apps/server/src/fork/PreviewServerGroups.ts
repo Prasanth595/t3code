@@ -21,6 +21,7 @@ import {
   type ForkLocalListener,
   type ForkLocalListenerList,
   type ProjectId,
+  ThreadId,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Cause from "effect/Cause";
@@ -45,6 +46,14 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import { isWithinRoot } from "../workspace/KnownWorkspaces.ts";
 
 const LSOF_TIMEOUT = Duration.seconds(5);
+const PROCESS_TABLE_MAX_BYTES = 8 * 1024 * 1024;
+// Deep enough for a server under a package runner under a shell under the agent CLI.
+const MAX_ANCESTORS = 16;
+// Provider CLIs pass their session or thread id in their arguments, and Claude Code and Codex
+// export it to commands (`CLAUDE_CODE_SESSION_ID`, `CODEX_THREAD_ID`). T3 stores it as the
+// `nativeThreadRef.nativeId` of a provider thread. Revisit when a provider changes that id form.
+const NATIVE_ID_PATTERN = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+const SESSION_ENV_NAMES = new Set(["CLAUDE_CODE_SESSION_ID", "CODEX_THREAD_ID"]);
 // Limit: a new project or thread worktree counts only after this time. Revisit when a server
 // that starts in a new worktree must show in its group sooner.
 const FOLDERS_TTL_MS = Duration.toMillis(Duration.seconds(30));
@@ -152,6 +161,7 @@ const withCheck = (row: ForkLocalListener, url: string | null | undefined): Fork
 export const placeListeners = Effect.fn("PreviewServerGroups.placeListeners")(function* (input: {
   readonly listeners: ReadonlyArray<DiscoveredLocalServer>;
   readonly cwdByPid: ReadonlyMap<number, string | null>;
+  readonly threadByPid: ReadonlyMap<number, ThreadId>;
   readonly folders: ReadonlyArray<ProjectFolder>;
   readonly sharedPorts: ReadonlySet<number>;
   readonly checks: ListenerChecks;
@@ -178,6 +188,7 @@ export const placeListeners = Effect.fn("PreviewServerGroups.placeListeners")(fu
       pid: listener.pid,
       folder: folder === undefined ? null : { projectId: folder.projectId, folder: folder.folder },
       check: "unchecked",
+      threadId: listener.pid === null ? null : (input.threadByPid.get(listener.pid) ?? null),
     };
     if (folder === undefined || input.sharedPorts.has(listener.port)) return row;
     checkable.push({ index, listener, row });
@@ -217,6 +228,58 @@ const parseLsofCwdOutput = (raw: string): ReadonlyMap<number, string> => {
   return cwdByPid;
 };
 
+/** `ps -o pid=,ppid=,command=` output: the parent and the command line of each process. */
+export const parseProcessTable = (
+  raw: string,
+): ReadonlyMap<number, { readonly ppid: number; readonly command: string }> => {
+  const processes = new Map<number, { ppid: number; command: string }>();
+  for (const line of raw.split("\n")) {
+    const fields = line.trim();
+    const pidEnd = fields.indexOf(" ");
+    if (pidEnd < 0) continue;
+    const rest = fields.slice(pidEnd).trimStart();
+    const ppidEnd = rest.indexOf(" ");
+    const pid = Number.parseInt(fields.slice(0, pidEnd), 10);
+    const ppid = Number.parseInt(ppidEnd < 0 ? rest : rest.slice(0, ppidEnd), 10);
+    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+    processes.set(pid, { ppid, command: ppidEnd < 0 ? "" : rest.slice(ppidEnd + 1) });
+  }
+  return processes;
+};
+
+/** The native ids that each process and then each of its ancestors names, nearest first. */
+export const nativeIdsUpTheTree = (
+  pid: number,
+  processes: ReadonlyMap<number, { readonly ppid: number; readonly command: string }>,
+): ReadonlyArray<ReadonlyArray<string>> => {
+  const levels: Array<ReadonlyArray<string>> = [];
+  let current = pid;
+  for (let depth = 0; depth < MAX_ANCESTORS && current > 1; depth += 1) {
+    const process = processes.get(current);
+    if (process === undefined) break;
+    levels.push((process.command.match(NATIVE_ID_PATTERN) ?? []).map((id) => id.toLowerCase()));
+    current = process.ppid;
+  }
+  return levels;
+};
+
+/**
+ * The thread of the nearest level that names a known native id. A level that names two threads
+ * stops the walk without a thread, because the match is not certain.
+ */
+export const findOwnerThread = (
+  levels: ReadonlyArray<ReadonlyArray<string>>,
+  threadByNativeId: ReadonlyMap<string, string>,
+): string | null => {
+  for (const level of levels) {
+    const threads = new Set(level.flatMap((id) => threadByNativeId.get(id) ?? []));
+    if (threads.size > 1) return null;
+    const [threadId] = threads;
+    if (threadId !== undefined) return threadId;
+  }
+  return null;
+};
+
 const sameListeners = (
   left: ReadonlyArray<ForkLocalListener>,
   right: ReadonlyArray<ForkLocalListener>,
@@ -237,9 +300,16 @@ export const make = Effect.gen(function* () {
   const subscribersRef = yield* Ref.make(0);
   const listenersRef = yield* SubscriptionRef.make<ReadonlyArray<ForkLocalListener>>([]);
   const passSemaphore = yield* Semaphore.make(1);
-  // A server rarely changes its folder after it listens, so each PID is read once.
-  const cwdCacheRef = yield* Ref.make<
-    ReadonlyMap<number, { readonly processName: string | null; readonly cwd: string | null }>
+  // A server rarely changes its folder or its parents after it listens, so each PID is read once.
+  const processCacheRef = yield* Ref.make<
+    ReadonlyMap<
+      number,
+      {
+        readonly processName: string | null;
+        readonly cwd: string | null;
+        readonly threadId: ThreadId | null;
+      }
+    >
   >(new Map());
   const foldersRef = yield* Ref.make<{
     readonly folders: ReadonlyArray<ProjectFolder>;
@@ -330,10 +400,72 @@ export const make = Effect.gen(function* () {
       );
   });
 
-  const cwdsFor = Effect.fn("PreviewServerGroups.cwdsFor")(function* (
+  /**
+   * The T3 thread that started each process: the nearest process up the tree whose command line
+   * (or, on Linux, whose session variable) names the native id of exactly one T3 provider thread.
+   * Null when the lookup itself failed, so the PIDs are read again on the next scan.
+   *
+   * Limit: a server whose shell exited has `launchd` or `init` as its parent, so on macOS it gets
+   * no thread. macOS hides the environment of other processes. Revisit if T3 records the process
+   * groups of the commands that agents run.
+   */
+  const readOwners = Effect.fn("PreviewServerGroups.readOwners")(function* (
+    pids: ReadonlyArray<number>,
+  ): Effect.fn.Return<ReadonlyMap<number, ThreadId> | null> {
+    if (pids.length === 0 || hostPlatform === "win32") return new Map<number, ThreadId>();
+    const table = yield* processRunner
+      .run({
+        command: "ps",
+        args: ["-A", "-ww", "-o", "pid=,ppid=,command="],
+        timeout: LSOF_TIMEOUT,
+        maxOutputBytes: PROCESS_TABLE_MAX_BYTES,
+      })
+      .pipe(
+        Effect.map((result) => (result.timedOut ? null : parseProcessTable(result.stdout))),
+        Effect.orElseSucceed(() => null),
+      );
+    if (table === null) return null;
+    const levelsByPid = new Map<number, Array<ReadonlyArray<string>>>();
+    for (const pid of pids) {
+      const levels = [...nativeIdsUpTheTree(pid, table)];
+      if (hostPlatform === "linux") {
+        const environment = yield* fileSystem
+          .readFileString(`/proc/${pid}/environ`)
+          .pipe(Effect.orElseSucceed(() => ""));
+        const fromEnvironment = environment.split("\0").flatMap((entry) => {
+          const separator = entry.indexOf("=");
+          return separator > 0 && SESSION_ENV_NAMES.has(entry.slice(0, separator))
+            ? [entry.slice(separator + 1).toLowerCase()]
+            : [];
+        });
+        levels.unshift(fromEnvironment);
+      }
+      levelsByPid.set(pid, levels);
+    }
+    const ids = [...new Set([...levelsByPid.values()].flat(2))];
+    if (ids.length === 0) return new Map<number, ThreadId>();
+    const rows = yield* sql<{ readonly threadId: string; readonly nativeId: string }>`
+      SELECT provider.thread_id AS "threadId",
+        lower(json_extract(provider.payload_json, '$.nativeThreadRef.nativeId')) AS "nativeId"
+      FROM orchestration_v2_projection_provider_threads AS provider
+      JOIN orchestration_v2_projection_threads AS thread
+        ON thread.thread_id = provider.thread_id AND thread.deleted_at IS NULL
+      WHERE lower(json_extract(provider.payload_json, '$.nativeThreadRef.nativeId')) IN ${sql.in(ids)}
+    `.pipe(Effect.orElseSucceed(() => null));
+    if (rows === null) return null;
+    const threadByNativeId = new Map(rows.map((row) => [row.nativeId, row.threadId] as const));
+    const owners = new Map<number, ThreadId>();
+    for (const [pid, levels] of levelsByPid) {
+      const threadId = findOwnerThread(levels, threadByNativeId);
+      if (threadId !== null) owners.set(pid, ThreadId.make(threadId));
+    }
+    return owners;
+  });
+
+  const processesFor = Effect.fn("PreviewServerGroups.processesFor")(function* (
     listeners: ReadonlyArray<DiscoveredLocalServer>,
   ) {
-    const cached = yield* Ref.get(cwdCacheRef);
+    const cached = yield* Ref.get(processCacheRef);
     const processes = new Map<number, string | null>();
     for (const listener of listeners) {
       if (listener.pid !== null) processes.set(listener.pid, listener.processName);
@@ -341,7 +473,9 @@ export const make = Effect.gen(function* () {
     const unknown = [...processes].flatMap(([pid, processName]) =>
       cached.get(pid)?.processName === processName ? [] : [pid],
     );
-    const read = yield* readCwds(unknown);
+    const [read, owners] = yield* Effect.all([readCwds(unknown), readOwners(unknown)], {
+      concurrency: 2,
+    });
     const resolved = yield* Effect.forEach([...(read ?? [])], ([pid, cwd]) =>
       fileSystem.realPath(cwd).pipe(
         Effect.map((real) => [pid, real] as const),
@@ -349,14 +483,30 @@ export const make = Effect.gen(function* () {
       ),
     );
     const realByPid = new Map(resolved);
-    const next = new Map<number, { processName: string | null; cwd: string | null }>();
+    const next = new Map<
+      number,
+      { processName: string | null; cwd: string | null; threadId: ThreadId | null }
+    >();
     for (const [pid, processName] of processes) {
       const entry = cached.get(pid);
       if (entry?.processName === processName) next.set(pid, entry);
-      else if (read !== null) next.set(pid, { processName, cwd: realByPid.get(pid) ?? null });
+      else if (read !== null && owners !== null) {
+        next.set(pid, {
+          processName,
+          cwd: realByPid.get(pid) ?? null,
+          threadId: owners.get(pid) ?? null,
+        });
+      }
     }
-    yield* Ref.set(cwdCacheRef, next);
-    return new Map([...next].map(([pid, entry]) => [pid, entry.cwd] as const));
+    yield* Ref.set(processCacheRef, next);
+    return {
+      cwdByPid: new Map([...next].map(([pid, entry]) => [pid, entry.cwd] as const)),
+      threadByPid: new Map(
+        [...next].flatMap(([pid, entry]) =>
+          entry.threadId === null ? [] : [[pid, entry.threadId] as const],
+        ),
+      ),
+    };
   });
 
   const gitWorktrees = Effect.fn("PreviewServerGroups.gitWorktrees")(function* (
@@ -439,7 +589,7 @@ export const make = Effect.gen(function* () {
     const listeners = yield* inFirstSeenOrder(
       scan.listeners.filter((listener) => listener.terminal === null),
     );
-    const cwdByPid = yield* cwdsFor(listeners);
+    const { cwdByPid, threadByPid } = yield* processesFor(listeners);
     const folders = yield* currentFolders();
     const nowMillis = yield* Clock.currentTimeMillis;
     const cache = yield* Ref.get(probeCacheRef);
@@ -466,6 +616,7 @@ export const make = Effect.gen(function* () {
     yield* placeListeners({
       listeners,
       cwdByPid,
+      threadByPid,
       folders,
       sharedPorts: scan.sharedPorts,
       checks,
