@@ -87,6 +87,7 @@ import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-sw
 import { useFabScroll } from "./FabScrollContext";
 import { useWorkspaceTabs } from "../workspace/WorkspaceTabsContext";
 import { ThreadListFilters } from "./ThreadListFilters";
+import { HomeSidebarGroupTabBar, useHomeSidebarGroups } from "./forkSidebarGroupTabs";
 
 interface HomeScreenProps {
   readonly projects: ReadonlyArray<EnvironmentProject>;
@@ -579,11 +580,20 @@ export function HomeScreen(props: HomeScreenProps) {
     nowMinute,
     snoozeWakeTick,
   ]);
+  const sidebarGroups = useHomeSidebarGroups({
+    threads: props.threads,
+    projects: props.projects,
+    environmentId: props.selectedEnvironmentId,
+    projectKeys: v2ScopedProjectKeys,
+    searching: hasSearchQuery,
+    now: `${nowMinute}:00.000Z`,
+  });
   const threadListV2Layout = useMemo(() => {
     threadListInboxReturns.observe(workingShelfEnabled ? props.threads : null);
+    const liveThreads = props.threads.filter((thread) => thread.archivedAt === null);
     return buildThreadListV2Items({
       pendingOrder,
-      threads: props.threads.filter((thread) => thread.archivedAt === null),
+      threads: sidebarGroups ? sidebarGroups.filterThreads(liveThreads) : liveThreads,
       environmentId: props.selectedEnvironmentId,
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
@@ -618,6 +628,7 @@ export function HomeScreen(props: HomeScreenProps) {
     props.threads,
     matchedThreadKeys,
     v2ScopedProjectGroup,
+    sidebarGroups,
   ]);
   const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
   useEffect(() => {
@@ -954,6 +965,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const v2ListHeader = (
     <>
       {listHeader}
+      {sidebarGroups ? <HomeSidebarGroupTabBar groups={sidebarGroups} /> : null}
       {Platform.OS === "ios" && workspace ? (
         <ThreadListFilters
           environments={props.environments}
@@ -986,6 +998,12 @@ export function HomeScreen(props: HomeScreenProps) {
         detail="Choose another environment or create a new task."
         variant={Platform.OS === "android" ? "plain" : undefined}
       />
+    ) : sidebarGroups ? (
+      <EmptyState
+        title={`No threads in ${sidebarGroups.tabs.find((tab) => tab.id === sidebarGroups.tabId)?.name ?? "this tab"}`}
+        detail="Choose another tab or create a new task."
+        variant={Platform.OS === "android" ? "plain" : undefined}
+      />
     ) : (
       <EmptyState
         title="No threads yet"
@@ -994,7 +1012,8 @@ export function HomeScreen(props: HomeScreenProps) {
       />
     );
 
-  if (Platform.OS === "android" && threadListV2Items.length === 0) {
+  // The tabs stay on screen above an empty tab.
+  if (Platform.OS === "android" && threadListV2Items.length === 0 && sidebarGroups === null) {
     return (
       <View className="flex-1 bg-header">
         <View

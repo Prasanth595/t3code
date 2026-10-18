@@ -102,6 +102,8 @@ export interface Preferences {
   readonly publishedDefaultThemeApplied?: string;
   /** Fork: the project of the last new thread, for `mobileNewThreadProject: "last"`. */
   readonly lastNewThreadProject?: LastNewThreadProject;
+  /** Fork: the open sidebar group tab of the home thread list. */
+  readonly sidebarGroupTabId?: string;
 }
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
@@ -174,6 +176,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     publishedThemes?: ReadonlyArray<EnvironmentTheme>;
     publishedDefaultThemeApplied?: string;
     lastNewThreadProject?: LastNewThreadProject;
+    sidebarGroupTabId?: string;
   } = {};
 
   if (typeof parsed.pullRequestHideTestFiles === "boolean") {
@@ -310,6 +313,9 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isLastNewThreadProject(parsed.lastNewThreadProject)) {
     preferences.lastNewThreadProject = parsed.lastNewThreadProject;
+  }
+  if (typeof parsed.sidebarGroupTabId === "string") {
+    preferences.sidebarGroupTabId = parsed.sidebarGroupTabId;
   }
   return preferences;
 }
