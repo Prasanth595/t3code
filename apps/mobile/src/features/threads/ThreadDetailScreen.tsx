@@ -1,3 +1,5 @@
+import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { AsyncResult } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
 import { useAtomValue } from "@effect/atom-react";
 import { useChildThreadInputs, useThreadReportedModelSelection } from "../../state/entities";
@@ -404,10 +406,6 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     const frame = requestAnimationFrame(() => composerEditorRef.current?.focus());
     return () => cancelAnimationFrame(frame);
   }, [editingRunId]);
-  const draftMessageRef = useRef(props.draftMessage);
-  useLayoutEffect(() => {
-    draftMessageRef.current = props.draftMessage;
-  });
   const composerOverlayRef = useRef<ViewInstance>(null);
   const listRef = useRef<LegendListRef>(null);
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
@@ -660,15 +658,18 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     [userInputCoverageApplies],
   );
   const { freeze, scrollMessageToEnd } = useKeyboardScrollToEnd({ listRef });
+  // Repin timers fire after the render that scheduled them, so they read follow
+  // state from the ref the writers below keep in step with it.
   const endFollowEnabledRef = useRef(true);
-  useLayoutEffect(() => {
-    endFollowEnabledRef.current = endFollowEnabled;
-  });
   const overlayRepinTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previousWorkingControlStateRef = useRef({
     threadKey: selectedThreadKey,
     visible: false,
   });
+  const handleEndFollowEnabledChange = (enabled: boolean) => {
+    endFollowEnabledRef.current = enabled;
+    setEndFollowEnabled(enabled);
+  };
   const scheduleOverlayRepin = (delayMs: number) => {
     if (overlayRepinTimerRef.current !== null) {
       clearTimeout(overlayRepinTimerRef.current);
@@ -836,6 +837,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
     setAnchorMessageId(null);
     setSubmittedMessageId(null);
     lastScrolledSubmittedMessageIdRef.current = null;
+    endFollowEnabledRef.current = true;
     setEndFollowEnabled(true);
     freeze.set(false);
   }, [freeze, selectedThreadKey]);
@@ -925,21 +927,21 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   };
 
   const handleEditPendingMessage = async (message: QueuedThreadMessage) => {
-    await editPendingThreadMessage(message)
-      .then((edited) => {
-        if (
-          edited &&
-          selectedThreadKeyRef.current === scopedThreadKey(message.environmentId, message.threadId)
-        ) {
-          composerEditorRef.current?.focus();
-        }
-      })
-      .catch((error: unknown) => {
-        Dialog.alert(
-          "Could not edit message",
-          error instanceof Error ? error.message : "Please try again.",
-        );
-      });
+    const edited = await settlePromise(() => editPendingThreadMessage(message));
+    if (AsyncResult.isFailure(edited)) {
+      const error = squashAtomCommandFailure(edited);
+      Dialog.alert(
+        "Could not edit message",
+        error instanceof Error ? error.message : "Please try again.",
+      );
+      return;
+    }
+    if (
+      edited.value &&
+      selectedThreadKeyRef.current === scopedThreadKey(message.environmentId, message.threadId)
+    ) {
+      composerEditorRef.current?.focus();
+    }
   };
 
   const collapseComposer = () => {
@@ -947,12 +949,8 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   };
 
   const handleUseArtifactTemplate = (template: CodexArtifactTemplate) => {
-    const currentDraft = draftMessageRef.current;
-    const nextDraft = appendCodexArtifactTemplateUsePrompt(currentDraft, template);
-    if (nextDraft !== currentDraft) {
-      draftMessageRef.current = nextDraft;
-      props.onChangeDraftMessage(nextDraft);
-    }
+    const nextDraft = appendCodexArtifactTemplateUsePrompt(props.draftMessage, template);
+    if (nextDraft !== props.draftMessage) props.onChangeDraftMessage(nextDraft);
     requestAnimationFrame(() => {
       composerEditorRef.current?.focus();
       composerEditorRef.current?.setSelection({ start: nextDraft.length, end: nextDraft.length });
@@ -1065,7 +1063,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
               layoutVariant={layoutVariant}
               usesAutomaticContentInsets={props.usesAutomaticContentInsets}
               onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
-              onEndFollowEnabledChange={setEndFollowEnabled}
+              onEndFollowEnabledChange={handleEndFollowEnabledChange}
               skills={selectedProviderSkills}
               onUseArtifactTemplate={handleUseArtifactTemplate}
             />
