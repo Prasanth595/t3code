@@ -3692,7 +3692,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND (EXISTS (
                     SELECT 1 FROM orchestration_v2_projection_runs AS requested
                     JOIN orchestration_v2_projection_subagents AS task
-                      ON task.subagent_id = json_extract(requested.payload_json, '$.delegatedTaskId')
+                      ON task.subagent_id = CASE WHEN json_valid(requested.payload_json)
+                        THEN json_extract(requested.payload_json, '$.delegatedTaskId') ELSE NULL END
                     WHERE requested.thread_id = child.thread_id
                       AND requested.status IN ('completed', 'interrupted', 'failed', 'cancelled', 'rolled_back')
                       AND task.child_thread_id = child.thread_id

@@ -99,6 +99,7 @@ function fixture(
         runId: RunId.make("run:queued-task:4"),
         role: "assistant",
         text: "Latest completed follow-up result",
+        createdAt: now,
         updatedAt: now,
       },
     ],
