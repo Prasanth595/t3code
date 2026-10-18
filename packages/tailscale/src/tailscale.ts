@@ -138,28 +138,11 @@ export interface TailscaleStatus {
   readonly magicDnsName: string | null;
   readonly tailnetIpv4Addresses: readonly string[];
   /**
-   * Whether the control plane grants this node the capability that
-   * `tailscale serve --https` requires. `null` means `tailscale status` did not
-   * report a capability map at all: an older CLI or an unexpected shape must
-   * not read as "disabled", because that would block a working tailnet.
+   * `tailscale serve --https` needs the `https` capability, which the control
+   * plane grants once the tailnet enables HTTPS certificates. `null` when the
+   * CLI reports no capability map (older CLI), so callers still attempt serve.
    */
   readonly httpsServeEnabled: boolean | null;
-}
-
-/**
- * Capability the control plane grants once a tailnet enables HTTPS
- * certificates. Without it `tailscale serve` prints an enablement URL and then
- * blocks until someone visits it, which reads to a caller as an unexplained
- * timeout rather than a setting it can name.
- */
-const HTTPS_SERVE_CAPABILITY = "https";
-
-function readHttpsServeEnabled(status: TailscaleStatusJson): boolean | null {
-  const capabilities = status.Self?.CapMap;
-  if (typeof capabilities !== "object" || capabilities === null || Array.isArray(capabilities)) {
-    return null;
-  }
-  return Object.hasOwn(capabilities, HTTPS_SERVE_CAPABILITY);
 }
 
 const collectStdout = <E>(stream: Stream.Stream<Uint8Array, E>): Effect.Effect<string, E> =>
@@ -227,10 +210,14 @@ export const parseTailscaleStatus = (
         }
       }
 
+      const capMap = parsed.Self?.CapMap;
       return {
         magicDnsName: normalizeMagicDnsName(parsed),
         tailnetIpv4Addresses,
-        httpsServeEnabled: readHttpsServeEnabled(parsed),
+        httpsServeEnabled:
+          typeof capMap === "object" && capMap !== null && !Array.isArray(capMap)
+            ? Object.hasOwn(capMap, "https")
+            : null,
       };
     }),
   );
