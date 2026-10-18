@@ -17,6 +17,7 @@ import type {} from "@t3tools/contracts";
 import {
   detectSourceControlProviderFromRemoteUrl,
   sourceControlHostOverrideForRemoteUrl,
+  sourceControlHostOverridesKey,
 } from "@t3tools/shared/sourceControl";
 
 import * as BuiltInDrivers from "./builtInDrivers.ts";
@@ -262,6 +263,7 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
     );
     const settingsChanges = yield* serverSettings.subscribeChanges;
     let hostOverrides = yield* readHostOverrides(serverSettings.getSettings);
+    let hostOverridesKey = sourceControlHostOverridesKey(hostOverrides);
 
     const refineContext = (
       cwd: string,
@@ -325,6 +327,9 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
     yield* Stream.runForEach(settingsChanges, (settings) =>
       Effect.gen(function* () {
         hostOverrides = settings.sourceControlHostOverrides;
+        const nextKey = sourceControlHostOverridesKey(hostOverrides);
+        if (nextKey === hostOverridesKey) return;
+        hostOverridesKey = nextKey;
         yield* Cache.invalidateAll(unknownRemoteCache);
         yield* Cache.invalidateAll(providerContextCache);
       }),
