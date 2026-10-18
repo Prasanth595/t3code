@@ -675,6 +675,98 @@ it.effect("memory recovery selection includes unfinished items from missing runs
   }).pipe(Effect.provide(ProjectionStore.layerMemory)),
 );
 
+it.effect("memory limit recovery drops a due candidate once a stop request reached its run", () =>
+  Effect.gen(function* () {
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = yield* addRolledBackRecoveryCandidate("memory-limit-interrupted");
+    const projection = yield* store.getThreadProjection(threadId);
+    const run = projection.runs[0]!;
+    const now = yield* DateTime.now;
+    const resetAt = "2099-01-01T00:00:00.000Z";
+    const turnItemBase = {
+      threadId,
+      runId: run.id,
+      nodeId: run.rootNodeId,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    };
+    yield* store.apply({
+      id: EventId.make("event:memory-limit-interrupted:error"),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        ...turnItemBase,
+        id: TurnItemId.make("memory-limit-interrupted:error"),
+        ordinal: 2,
+        status: "failed",
+        title: "Usage limit reached",
+        type: "error",
+        failure: {
+          class: "usage_limit",
+          message: "Plan limit reached.",
+          resetAt,
+          code: "usageLimitExceeded",
+          retryable: null,
+        },
+      },
+    });
+    yield* store.apply({
+      id: EventId.make("event:memory-limit-interrupted:run-failed"),
+      type: "run.updated",
+      threadId,
+      occurredAt: now,
+      payload: { ...run, status: "failed", completedAt: now },
+    });
+    yield* store.apply({
+      id: EventId.make("event:memory-limit-interrupted:armed"),
+      type: "thread.metadata-updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        ...projection.thread,
+        limitRecovery: {
+          runId: run.id,
+          resetAt,
+          autoResume: true,
+          requestId: CommandId.make("recovery:memory-limit-interrupted"),
+        },
+      },
+    });
+    const options = {
+      now: DateTime.makeUnsafe(resetAt),
+      autoResume: false,
+      snooze: false,
+    };
+    assert.isDefined(
+      (yield* store.getLimitRecoveryCandidates(options)).find((row) => row.id === threadId),
+    );
+    yield* store.apply({
+      id: EventId.make("event:memory-limit-interrupted:interrupt-request"),
+      type: "turn-item.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        ...turnItemBase,
+        id: TurnItemId.make("memory-limit-interrupted:interrupt-request"),
+        ordinal: 3,
+        status: "completed",
+        title: "Interrupt requested",
+        type: "run_interrupt_request",
+        message: "Interrupt requested",
+      },
+    });
+    assert.isUndefined(
+      (yield* store.getLimitRecoveryCandidates(options)).find((row) => row.id === threadId),
+    );
+  }).pipe(Effect.provide(ProjectionStore.layerMemory)),
+);
+
 const runlessNativeSubagentNeedsRecovery = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const threadId = yield* addRolledBackRecoveryCandidate("runless-native-recovery");

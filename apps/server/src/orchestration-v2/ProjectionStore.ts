@@ -6283,6 +6283,16 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   thread.usageLimitResetAt !== null &&
                   thread.pendingRuntimeRequest === null,
               )
+              // Stop reached this run: only a fresh user action may resume it.
+              .filter(
+                (thread) =>
+                  !state.projections
+                    .get(thread.id)
+                    ?.turnItems.some(
+                      (item) =>
+                        item.type === "run_interrupt_request" && item.runId === thread.latestRunId,
+                    ),
+              )
               .filter((thread) => {
                 const resetMs = Date.parse(thread.usageLimitResetAt!);
                 const nowMs = DateTime.toEpochMillis(options.now);
