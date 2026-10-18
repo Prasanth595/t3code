@@ -337,7 +337,14 @@ export const make = Effect.gen(function* () {
         state.populated !== false &&
         state.activeState !== "deactivating";
       if (status !== "running" && !oomKilledWithoutPolicy) return;
-      yield* run(scope.systemctl, ["--user", "stop", "--no-block", unit]);
+      const stopped = yield* run(scope.systemctl, ["--user", "stop", "--no-block", unit]);
+      if (stopped._tag === "None" || stopped.value.code !== 0) {
+        // The next server start stops whatever is still left in agent scopes.
+        yield* Effect.logWarning("Could not stop an exited agent's scope", {
+          unit,
+          stderr: stopped._tag === "Some" ? stopped.value.stderr.trim() : undefined,
+        });
+      }
     });
 
   const clear: AgentScopeShape["clear"] = (threadId) =>

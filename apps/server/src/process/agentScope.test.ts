@@ -8,6 +8,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import { ChildProcessSpawner } from "effect/process";
 
 import * as ServerConfig from "../config.ts";
@@ -77,7 +78,10 @@ const withFakeSystemd = <A, E>(
     readonly cgroupRoot: string;
   }) => Effect.Effect<A, E>,
   // A user manager older than systemd 253 rejects OOMPolicy on scopes.
-  { oomPolicy = true }: { readonly oomPolicy?: boolean } = {},
+  {
+    oomPolicy = true,
+    stopFails = false,
+  }: { readonly oomPolicy?: boolean; readonly stopFails?: boolean } = {},
 ) =>
   Effect.gen(function* () {
     const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-agent-scope-"));
@@ -105,6 +109,13 @@ const withFakeSystemd = <A, E>(
             return { ...output(""), code: ChildProcessSpawner.ExitCode(1) };
           }
           const [, verb, unit = ""] = args;
+          if (stopFails && verb === "stop") {
+            return {
+              ...output(""),
+              stderr: `Failed to stop ${args.at(-1)}: Unit not loaded.`,
+              code: ChildProcessSpawner.ExitCode(5),
+            };
+          }
           if (verb === "reset-failed") units.delete(unit);
           if (verb !== "show") return output("");
           const state = units.get(unit);
@@ -249,6 +260,24 @@ describe("AgentScope service", () => {
       }),
     ),
   );
+
+  it.effect("reports a scope stop that systemctl rejects", () => {
+    const warnings: Array<unknown> = [];
+    const logger = Logger.make(({ message }) => {
+      warnings.push(Array.isArray(message) ? message[0] : message);
+    });
+    return withFakeSystemd(
+      ({ scope, units, calls, cgroupRoot }) =>
+        Effect.gen(function* () {
+          const agent = yield* scope.wrap({ command: "agent", args: [], name: "t", threadId: "a" });
+          exitedAgent(units, cgroupRoot, unitOf(agent), { populated: true, oomKills: 0 });
+          yield* scope.stop(unitOf(agent));
+          expect(stopsOf(calls)).toHaveLength(1);
+          expect(warnings).toContain("Could not stop an exited agent's scope");
+        }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false }))),
+      { stopFails: true },
+    );
+  });
 
   it.effect("leaves a scope alone while its OOM count can't be read", () =>
     withFakeSystemd(({ scope, units, calls, cgroupRoot }) =>
