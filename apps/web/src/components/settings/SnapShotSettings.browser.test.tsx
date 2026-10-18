@@ -172,15 +172,16 @@ it.each(["direct", "gnome-extension", "kde"] as const)(
       );
     }
     await act(async () => userEvent.click(recorder()));
-    await act(async () => userEvent.keyboard("{Control>}{Alt>}y{/Alt}{/Control}"));
+    // Fork: Ctrl+Alt+Y is the default of "Approval: Decline", so the recorder reports a conflict.
+    await act(async () => userEvent.keyboard("{Control>}{Alt>}j{/Alt}{/Control}"));
     expect(bridge.checkSnapShotShortcut).toHaveBeenCalledOnce();
     expect(container.textContent).toContain("Ready to save.");
     expect(recorder().getAttribute("aria-label")).toBe(
-      "Record snapshot shortcut, currently Ctrl+Alt+Y",
+      "Record snapshot shortcut, currently Ctrl+Alt+J",
     );
     await click("Save");
     expect(settingsStore.update).toHaveBeenCalledWith({
-      snapShotShortcut: expect.objectContaining({ key: "y", modKey: true, altKey: true }),
+      snapShotShortcut: expect.objectContaining({ key: "j", modKey: true, altKey: true }),
     });
     expect(dialog()).toBeNull();
     expect(bridge.previewSnapShotConfig).not.toHaveBeenCalled();
