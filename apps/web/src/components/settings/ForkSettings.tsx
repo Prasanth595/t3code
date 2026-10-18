@@ -39,6 +39,7 @@ import {
   ThreadLinksOpenDesktopAppSettingsRow,
 } from "./ThreadLinkChipsSettings";
 import { TunnelPairingSettingsRow } from "./TunnelPairingSettingsRow";
+import { WebPushSettingsRow } from "./WebPushSettingsRow";
 import { WorktreePathTemplateRow } from "./WorktreePathTemplateRow";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { forkSettingGroups, type ForkSettingRowId } from "./forkSettingsCatalog";
@@ -59,6 +60,7 @@ import { useAvailableSettingsSearchItems } from "./useAvailableSettingsSearchIte
 const FORK_SETTING_ROWS: Readonly<Record<ForkSettingRowId, ComponentType>> = {
   "tunnel-pairing": TunnelPairingSettingsRow,
   "installed-app": InstalledAppSettingsRow,
+  "web-push": WebPushSettingsRow,
   "update-track": AboutVersionSection,
   "fork-auto-update": ForkAutoUpdateSettingsRow,
   "fork-changelog": ForkChangelogSettingsRow,

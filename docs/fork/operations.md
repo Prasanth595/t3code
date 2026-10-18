@@ -42,6 +42,7 @@ The builds use the `nightly` update channel, the app id `com.t3tools.t3code` and
 - A newer push to main or to a pull request cancels the Fork CI run of the older push.
 - The job "Fork CI result" fails when any Fork CI job fails or is cancelled. Branch protection requires this one check.
 - Fork CI compares a push with the commit of the last green push run, and a pull request with its base. When only `docs`, `*.md` or `apps/machine-map` changed, only the Lint job runs, on the changed files. A change in `apps/machine-map` also runs the Machine map job. A manual run always runs every job.
+- The Lint job also runs `scripts/fork-check-doc-links.ts`. It fails on a relative link or an anchor that does not resolve in `README.md`, `docs/fork*`, `docs/fork/` or `apps/machine-map/*.md`.
 
 ### Repair agent
 
@@ -58,9 +59,24 @@ A failed Fork Sync, Fork Release or Fork CI run on main runs its `notify_agent` 
 - Put every fork behavior behind a setting. A setting that only adds something starts on. A setting that changes existing behavior or layout, installs or restarts anything, changes access or needs setup starts off.
 - Put the schema field of a fork setting in `packages/contracts/src/forkSettings.ts`, not in the upstream `settings.ts`.
 - Add a new fork setting to Settings > Fork: its entry in `FORK_SETTING_GROUPS` (`forkSettingsCatalog.ts`) and its row in `FORK_SETTING_ROWS` (`ForkSettings.tsx`). Add a fork preference to the reset list in `forkSettingsRestore.ts`.
+- `forkSettingsRegistration.test.ts` fails when a fork setting has no Fork page row or no Restore defaults rule. A setting without a row needs a reason in that test.
 - The top of `README.md`, up to the first `---` line, lists the fork features and fixes. Keep one line per feature, with a link to its section in [features.md](features.md). A pull request that adds, removes or changes a fork feature updates its line and its section.
 - If a Fork Sync merge conflicts in `README.md`, keep the fork section on top and take the upstream text below the `---` line.
 - A merge without conflicts can still break a fork feature. Each fork feature that changes upstream behavior needs a test of that behavior, so that the fork tests catch the break.
+
+## Check a change before you push
+
+Run this command before every push:
+
+```sh
+vp run fork:check
+```
+
+- It runs the quick Fork CI checks on the files that changed since the merge base with `origin/main`. Uncommitted and untracked files count.
+- The steps are format and lint of the changed files, knip, typecheck of the changed packages, the tests of the changed files, and the doc link check. The tests are the changed test files, the tests next to changed source files, `forkSettingsRegistration.test.ts`, and the React Compiler coverage test of a changed web or mobile app.
+- It prints one line per step: pass, fail or skipped with the reason. It exits with an error when a step fails.
+- Without Playwright Chromium, it skips the browser tests and prints the install command.
+- Fork CI still runs the full test suites, the typecheck of dependent packages, the desktop build and the Rust crates.
 
 ## Versions
 

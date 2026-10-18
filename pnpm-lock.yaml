@@ -1913,15 +1913,24 @@ importers:
       effect:
         specifier: 4.0.5
         version: 4.0.5
+      github-slugger:
+        specifier: 2.0.0
+        version: 2.0.0
       plist:
         specifier: 'catalog:'
         version: 3.1.1
       pngjs:
         specifier: 7.0.0
         version: 7.0.0
+      remark-parse:
+        specifier: 'catalog:'
+        version: 11.0.0
       sharp:
         specifier: 0.35.4
         version: 0.35.4(@types/node@24.12.4)
+      unified:
+        specifier: 'catalog:'
+        version: 11.0.5
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.5

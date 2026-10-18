@@ -143,6 +143,9 @@ jobs:
           # vp check fails when no file is lintable, so markdown gets only the format check.
           if ((${#existing[@]} > 0)); then vp fmt --check "${existing[@]}"; fi
           if ((${#scripts[@]} > 0)); then vp check "${scripts[@]}"; fi
+      # On both paths, because a code change can rename a file that a doc links to.
+      - name: Check the links of the fork docs
+        run: node scripts/fork-check-doc-links.ts
 
   typecheck:
     name: Typecheck
