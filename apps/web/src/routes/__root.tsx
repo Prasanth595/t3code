@@ -316,6 +316,15 @@ function ContrastAppearanceSync() {
     document.documentElement.dataset.chatWidth = chatWidth;
   }, [chatWidth]);
 
+  const inkwireWhiteFrame = useClientSettings((settings) => settings.inkwireWhiteFrame);
+  useEffect(() => {
+    if (inkwireWhiteFrame) {
+      document.documentElement.dataset.inkwireWhiteFrame = "";
+    } else {
+      delete document.documentElement.dataset.inkwireWhiteFrame;
+    }
+  }, [inkwireWhiteFrame]);
+
   useEffect(() => {
     applyAppearanceContrast(document.documentElement, appearanceContrast);
   }, [appearanceContrast]);

@@ -98,6 +98,7 @@ const FORK_SETTING_GROUPS = [
     title: "Web app and look",
     entries: [
       { ids: ["installed-app"] },
+      { ids: ["inkwire-white-frame"] },
       { ids: ["thread-card-layout"] },
       { ids: ["thread-link-chips"] },
       { ids: ["thread-links-open-desktop-app"] },

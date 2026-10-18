@@ -21,6 +21,7 @@ import { PullRequestFilterChipsSettingsRow } from "./PullRequestFilterChipsSetti
 import { RepositoryOwnerFiltersSettingsRow } from "./RepositoryOwnerFiltersSettingsRow";
 import { SidebarGroupsSettingsRow } from "./SidebarGroupsSettingsRow";
 import { SnoozeQuickOptionsSettingsRow } from "./SnoozeQuickOptionsSettingsRow";
+import { InkwireWhiteFrameSettingsRow } from "./InkwireSettingsRows";
 import { ThreadCardLayoutSettingsSection } from "./ThreadCardLayoutSettings";
 import { ThreadLinkChipsSettingsSection } from "./ThreadLinkChipsSettings";
 import { WebPushSettingsRow } from "./WebPushSettingsRow";
@@ -39,6 +40,7 @@ export { prepareNewestUpdateInstall } from "../desktop/DesktopUpdateNewerCheck";
 export function AppearanceSections() {
   return (
     <>
+      <InkwireWhiteFrameSettingsRow />
       <ThreadCardLayoutSettingsSection />
       <ThreadLinkChipsSettingsSection />
     </>

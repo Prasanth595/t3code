@@ -17,6 +17,7 @@ import {
   TerminalCloseConfirmationSettingsRow,
 } from "./ForkSettingsRows";
 import { GlobalScriptsSettingsRows } from "./GlobalScriptsSettings";
+import { InkwireWhiteFrameSettingsRow } from "./InkwireSettingsRows";
 import { InstalledAppSettingsRow } from "./InstalledAppSettingsRow";
 import { KeybindingSyncSettingsRow } from "./KeybindingSyncSettingsRow";
 import { MachineMapSettingsRows } from "./MachinesSettings";
@@ -77,6 +78,7 @@ const FORK_SETTING_ROWS: Readonly<Record<ForkSettingRowId, ComponentType>> = {
   "keyboard-focus-levels": KeyboardFocusLevelsSettingsRow,
   "focus-level-highlight": FocusLevelHighlightSettingsRow,
   "terminal-close-confirmation": TerminalCloseConfirmationSettingsRow,
+  "inkwire-white-frame": InkwireWhiteFrameSettingsRow,
   "thread-card-layout": ThreadCardLayoutSettingsRows,
   "thread-link-chips": ThreadLinkChipsSettingsRow,
   "thread-links-open-desktop-app": ThreadLinksOpenDesktopAppSettingsRow,

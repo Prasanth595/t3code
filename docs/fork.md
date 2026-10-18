@@ -284,6 +284,10 @@ Keyboard focus moves between four levels: the composer, the timeline, the right 
 - The timeline cursor paints with the CSS Custom Highlight API and cites through the same code as a mouse selection.
 - The client setting `focusLevelHighlight` outlines the area that takes focus from a key. It is on by default.
 
+## Inkwire white frame
+
+The client setting `inkwireWhiteFrame` draws a white chalk outline around the window and sketched controls while an Inkwire theme is selected. It is off by default. The look is static CSS only (no animation, filter or fixed background), so it does not add scroll cost. Toggle it in Settings > Appearance.
+
 ## Repository owner filters
 
 The client setting `repositoryOwnerFilters` filters lists by the owner of each repository: a GitHub account or organization. It is on by default. Turn it off in Settings > General > Repository owner filters.
