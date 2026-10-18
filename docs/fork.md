@@ -497,7 +497,7 @@ The server setting `machineMap` connects this server to the machine map portal. 
 - It only uploads to an existing release, never creates one. A failure marks only Fork Android and does not call the repair agent. A run from a branch uploads the APK as a workflow artifact.
 - The APK is the nightly ("Preview") app with the package `dev.tomcohen.t3code`. It installs next to the store app and speaks the protocol of fork main. It holds arm64 code only.
 - It takes no over-the-air updates, because those come from the upstream Expo project.
-- To install it, open the APK from the release on the phone and allow installs from that browser. Install a newer APK over it to update.
+- To install it, open `https://<portal>/android` on the phone, or the link in the portal's "Invite an app" dialog. Both lead to the APK of the newest release that has one. Allow installs from that browser. Install a newer APK over it to update.
 - The newest release often has no APK. An update tool must fall back to an older release. In Obtainium, add the GitHub repository and turn on "Include prereleases" (fork releases are prereleases) and "Fallback to older releases" (on by default).
 - The version name is the fork release version. The version code is the commit time in minutes since 2026-01-01, so it only grows along main.
 - The fork key in `_shared/android-signing/` signs every APK. The repository secrets `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_ALIAS` hold the same key. Only the signing step sees them. Android refuses an update that has another key, so do not replace it.

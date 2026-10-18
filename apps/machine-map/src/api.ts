@@ -360,6 +360,8 @@ export interface ForkRelease {
   readonly macUrl: string | null;
   readonly macIntelUrl: string | null;
   readonly windowsUrl: string | null;
+  /** The fork APK of the newest release that has one. */
+  readonly androidUrl: string | null;
 }
 
 const Base64Url = Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(256));

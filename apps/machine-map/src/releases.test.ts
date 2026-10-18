@@ -36,6 +36,7 @@ describe("newestRelease", () => {
       macUrl: "https://x/v0.0.46-nightly.1.dmg",
       macIntelUrl: "https://x/v0.0.46-nightly.1-x64.dmg",
       windowsUrl: "https://x/v0.0.46-nightly.1.exe",
+      androidUrl: null,
     });
   });
 
@@ -48,6 +49,27 @@ describe("newestRelease", () => {
     expect(result.windowsUrl).toBeNull();
   });
 
+  it("takes the APK of the newest release that has one, complete or not", () => {
+    const withApk = (tag: string) => ({
+      ...release(tag),
+      assets: [
+        ...release(tag).assets,
+        {
+          name: `t3code-${tag.slice(1)}-android.apk`,
+          browser_download_url: `https://x/${tag}.apk`,
+        },
+      ],
+    });
+    const result = newestRelease([
+      release("v3"),
+      { ...withApk("v2"), draft: true },
+      withApk("v1"),
+      withApk("v0"),
+    ]);
+    expect(result.tag).toBe("v3");
+    expect(result.androidUrl).toBe("https://x/v1.apk");
+  });
+
   it("falls back to the releases page for an unexpected answer", () => {
     for (const body of [[], { message: "API rate limit exceeded" }, null, [{ tag_name: 1 }]]) {
       expect(newestRelease(body)).toEqual({
@@ -57,6 +79,7 @@ describe("newestRelease", () => {
         macUrl: null,
         macIntelUrl: null,
         windowsUrl: null,
+        androidUrl: null,
       });
     }
   });

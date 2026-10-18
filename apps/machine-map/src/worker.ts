@@ -318,6 +318,11 @@ export default {
       forwarded.headers.set(MACHINE_CLIENT_ID_HEADER, clientId);
       return mapObject(env).fetch(forwarded);
     }
+    if (url.pathname === "/android") {
+      // A short address to type on a phone. The APK is public on GitHub.
+      const { androidUrl, pageUrl } = await fetchNewestRelease();
+      return Response.redirect(androidUrl ?? pageUrl, 302);
+    }
     if (url.pathname.startsWith(`${APPROVALS_PATH}/`)) return grant(request, env, url);
     if (url.pathname.startsWith("/api/")) return api(request, env, url);
     return fail(404, "Not found.");

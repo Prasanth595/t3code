@@ -622,7 +622,19 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
   const [needsPasskey, setNeedsPasskey] = useState(false);
   const [invite, setInvite] = useState<InviteResponse | null>(null);
   const [status, setStatus] = useState<ApprovalsStatus | null>(null);
+  const [androidUrl, setAndroidUrl] = useState<string | null>(null);
   const { pending, error, run } = useAction();
+
+  useEffect(() => {
+    let current = true;
+    callApi<ForkRelease>("GET", "/api/fork-release").then(
+      (release) => current && setAndroidUrl(release.androidUrl),
+      () => undefined,
+    );
+    return () => {
+      current = false;
+    };
+  }, []);
 
   // MM-1208: an invite needs the approvals app, so a fresh portal offers to set it up here too.
   useEffect(() => {
@@ -675,6 +687,12 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
             Scan this with the T3 app on the phone. It works once and expires{" "}
             {timeUntil(invite.expiresAt, now)}. Close this dialog when the phone joined.
           </p>
+          {androidUrl && (
+            <p className="small muted">
+              No app yet? <a href={androidUrl}>Download the Android app (.apk)</a>, open it on the
+              phone and allow installs from the browser.
+            </p>
+          )}
           <p className="small mono break">{invite.url}</p>
           <div className="actions end">
             <button
