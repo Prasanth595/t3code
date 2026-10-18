@@ -20,6 +20,10 @@ export const DesktopBackendBootstrap = Schema.Struct({
   // `desktopBootstrapToken` for its whole run. See
   // `@t3tools/shared/desktopBootstrapToken`.
   desktopBootstrapSecret: Schema.optionalKey(Schema.String),
+  // Fresh for every launch. The backend echoes it in its environment
+  // descriptor so the desktop can tell its own backend from another server
+  // answering on the same port before it sends the bootstrap token.
+  desktopLaunchId: Schema.optionalKey(TrimmedNonEmptyString),
   // Set only when the desktop already merged the user's shell environment into
   // the environment it hands this backend. Absent means the backend hydrates
   // PATH itself, which WSL and older desktops rely on.

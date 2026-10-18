@@ -29,6 +29,7 @@ const config = {
     t3Home: "/tmp/t3",
     host: "127.0.0.1",
     desktopBootstrapToken: "desktop-bootstrap-token",
+    desktopLaunchId: "launch-1",
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
   },
@@ -36,26 +37,45 @@ const config = {
   captureOutput: true,
 };
 
+const DESCRIPTOR_URL = "http://127.0.0.1:3773/.well-known/t3/environment";
+
+// Answers the ownership check as the backend `config` launched, and passes
+// every other request (the token exchange) to `handler`.
+const asLaunchedBackend =
+  (
+    handler: (
+      request: HttpClientRequest.HttpClientRequest,
+    ) => Effect.Effect<HttpClientResponse.HttpClientResponse>,
+  ) =>
+  (request: HttpClientRequest.HttpClientRequest) =>
+    request.url === DESCRIPTOR_URL
+      ? Effect.succeed(
+          HttpClientResponse.fromWeb(request, Response.json({ desktopLaunchId: "launch-1" })),
+        )
+      : handler(request);
+
 describe("DesktopLocalEnvironmentAuth", () => {
   it.effect("exchanges the desktop bootstrap credential only once", () =>
     Effect.gen(function* () {
       const requestCount = yield* Ref.make(0);
       const layerHttpClient = Layer.succeed(
         HttpClient.HttpClient,
-        HttpClient.make((request) =>
-          Ref.update(requestCount, (count) => count + 1).pipe(
-            Effect.as(
-              HttpClientResponse.fromWeb(
-                request,
-                new Response(
-                  JSON.stringify({
-                    access_token: "desktop-bearer-token",
-                    issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-                    token_type: "Bearer",
-                    expires_in: 3600,
-                    scope: "orchestration:read",
-                  }),
-                  { status: 200, headers: { "content-type": "application/json" } },
+        HttpClient.make(
+          asLaunchedBackend((request) =>
+            Ref.update(requestCount, (count) => count + 1).pipe(
+              Effect.as(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    JSON.stringify({
+                      access_token: "desktop-bearer-token",
+                      issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+                      token_type: "Bearer",
+                      expires_in: 3600,
+                      scope: "orchestration:read",
+                    }),
+                    { status: 200, headers: { "content-type": "application/json" } },
+                  ),
                 ),
               ),
             ),
@@ -93,27 +113,31 @@ describe("DesktopLocalEnvironmentAuth", () => {
         const presented = yield* Ref.make<string | null>(null);
         const httpClientLayer = Layer.succeed(
           HttpClient.HttpClient,
-          HttpClient.make((request) => {
-            const body =
-              request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
-            return Ref.set(presented, new URLSearchParams(body).get("subject_token")).pipe(
-              Effect.as(
-                HttpClientResponse.fromWeb(
-                  request,
-                  new Response(
-                    JSON.stringify({
-                      access_token: "desktop-bearer-token",
-                      issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-                      token_type: "Bearer",
-                      expires_in: 3600,
-                      scope: "orchestration:read",
-                    }),
-                    { status: 200, headers: { "content-type": "application/json" } },
+          HttpClient.make(
+            asLaunchedBackend((request) => {
+              const body =
+                request.body._tag === "Uint8Array"
+                  ? new TextDecoder().decode(request.body.body)
+                  : "";
+              return Ref.set(presented, new URLSearchParams(body).get("subject_token")).pipe(
+                Effect.as(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    new Response(
+                      JSON.stringify({
+                        access_token: "desktop-bearer-token",
+                        issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+                        token_type: "Bearer",
+                        expires_in: 3600,
+                        scope: "orchestration:read",
+                      }),
+                      { status: 200, headers: { "content-type": "application/json" } },
+                    ),
                   ),
                 ),
-              ),
-            );
-          }),
+              );
+            }),
+          ),
         );
         const poolLayer = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
           list: Effect.succeed([
@@ -175,12 +199,14 @@ describe("DesktopLocalEnvironmentAuth", () => {
       const requestCount = yield* Ref.make(0);
       const layerHttpClient = Layer.succeed(
         HttpClient.HttpClient,
-        HttpClient.make((request) =>
-          Ref.updateAndGet(requestCount, (count) => count + 1).pipe(
-            Effect.map((count) =>
-              count <= failures
-                ? HttpClientResponse.fromWeb(request, failure())
-                : tokenResponse(request),
+        HttpClient.make(
+          asLaunchedBackend((request) =>
+            Ref.updateAndGet(requestCount, (count) => count + 1).pipe(
+              Effect.map((count) =>
+                count <= failures
+                  ? HttpClientResponse.fromWeb(request, failure())
+                  : tokenResponse(request),
+              ),
             ),
           ),
         ),
@@ -210,6 +236,49 @@ describe("DesktopLocalEnvironmentAuth", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("checks ownership again before retrying the exchange", () =>
+    Effect.gen(function* () {
+      const requests = yield* Ref.make<ReadonlyArray<string>>([]);
+      const descriptorReads = yield* Ref.make(0);
+      // The launched backend answers the first check, then fails the POST with
+      // a 503; by the retry another server holds the port.
+      const layerHttpClient = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Effect.gen(function* () {
+            yield* Ref.update(requests, (seen) => [...seen, `${request.method} ${request.url}`]);
+            if (request.url !== DESCRIPTOR_URL) {
+              return HttpClientResponse.fromWeb(request, new Response("", { status: 503 }));
+            }
+            const reads = yield* Ref.updateAndGet(descriptorReads, (count) => count + 1);
+            return HttpClientResponse.fromWeb(
+              request,
+              Response.json({ desktopLaunchId: reads === 1 ? "launch-1" : "another-server" }),
+            );
+          }),
+        ),
+      );
+      const auth = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
+        Effect.provide(
+          DesktopLocalEnvironmentAuth.layer.pipe(
+            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient)),
+          ),
+        ),
+      );
+
+      const fiber = yield* auth.getBearerToken.pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust(Duration.seconds(1));
+      const error = yield* Fiber.join(fiber);
+
+      assert.strictEqual(error._tag, "DesktopLocalEnvironmentAuthForeignServerError");
+      assert.deepEqual(yield* Ref.get(requests), [
+        `GET ${DESCRIPTOR_URL}`,
+        "POST http://127.0.0.1:3773/oauth/token",
+        `GET ${DESCRIPTOR_URL}`,
+      ]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("does not retry a rejected bootstrap credential", () =>
     Effect.gen(function* () {
       const { auth, requestCount } = yield* makeExchange(1, () =>
@@ -231,5 +300,44 @@ describe("DesktopLocalEnvironmentAuth", () => {
       assert.strictEqual(error._tag, "DesktopLocalEnvironmentAuthSessionBootstrapError");
       assert.strictEqual(yield* Ref.get(requestCount), 1);
     }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect.each([
+    { name: "a page that is not a T3 server", body: () => new Response("<html></html>") },
+    {
+      name: "a T3 server this app did not launch",
+      body: () => Response.json({ desktopLaunchId: "launch-from-another-app" }),
+    },
+    { name: "a T3 server launched without an id", body: () => Response.json({ label: "WSL" }) },
+  ])("never sends the bootstrap token to $name", ({ body }) =>
+    Effect.gen(function* () {
+      const requests = yield* Ref.make<ReadonlyArray<string>>([]);
+      const layerHttpClient = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) =>
+          Ref.update(requests, (seen) => [...seen, `${request.method} ${request.url}`]).pipe(
+            Effect.as(
+              request.url === DESCRIPTOR_URL
+                ? HttpClientResponse.fromWeb(request, body())
+                : tokenResponse(request),
+            ),
+          ),
+        ),
+      );
+
+      const error = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
+        Effect.flatMap((auth) => auth.getBearerToken),
+        Effect.flip,
+        Effect.provide(
+          DesktopLocalEnvironmentAuth.layer.pipe(
+            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient)),
+          ),
+        ),
+      );
+
+      assert.strictEqual(error._tag, "DesktopLocalEnvironmentAuthForeignServerError");
+      assert.include(error.message, "port 3773");
+      assert.deepEqual(yield* Ref.get(requests), [`GET ${DESCRIPTOR_URL}`]);
+    }),
   );
 });

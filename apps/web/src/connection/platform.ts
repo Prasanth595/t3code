@@ -391,7 +391,7 @@ const loadPrimaryConnectionRegistration = Effect.fn(
   });
 });
 
-const loadSecondaryConnectionRegistration = Effect.fn(
+export const loadSecondaryConnectionRegistration = Effect.fn(
   "web.connectionPlatform.loadSecondaryConnectionRegistration",
 )(function* (entry: DesktopEnvironmentBootstrap) {
   if (
@@ -409,6 +409,14 @@ const loadSecondaryConnectionRegistration = Effect.fn(
   const descriptor = yield* fetchRemoteEnvironmentDescriptor({ httpBaseUrl }).pipe(
     Effect.mapError(mapRemoteEnvironmentError),
   );
+  // Another server can take the port after the desktop picked it. The desktop
+  // moves its backend when that happens, so wait for the next topology read.
+  if (entry.desktopLaunchId !== undefined && descriptor.desktopLaunchId !== entry.desktopLaunchId) {
+    return yield* new ConnectionTransientError({
+      reason: "endpoint-unavailable",
+      detail: `Another server is answering at ${httpBaseUrl} in place of desktop-local backend ${entry.id}.`,
+    });
+  }
   const issuedAtEpochMs = yield* Clock.currentTimeMillis;
   const access = yield* bootstrapRemoteBearerSession({
     httpBaseUrl,

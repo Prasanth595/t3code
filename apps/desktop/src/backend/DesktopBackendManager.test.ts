@@ -1,7 +1,6 @@
 import {
   SERVER_EXIT_CODE_STATE_DIR_OWNED,
   DesktopBackendBootstrap,
-  type DesktopBackendBootstrap as DesktopBackendBootstrapValue,
   DesktopTelemetryControlMessage,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
@@ -52,6 +51,7 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
     t3Home: "/tmp/t3",
     host: "127.0.0.1",
     desktopBootstrapToken: "token",
+    desktopLaunchId: "launch-1",
     tailscaleServeEnabled: false,
     tailscaleServePort: 443,
     desktopTelemetryFd: 4,
@@ -64,7 +64,7 @@ const baseConfig: DesktopBackendManager.DesktopBackendStartConfig = {
   preflightFailure: Option.none(),
 };
 
-const configWithObservability: DesktopBackendBootstrapValue = {
+const configWithObservability: DesktopBackendManager.DesktopBackendStartConfig["bootstrap"] = {
   ...baseConfig.bootstrap,
   tailscaleServeEnabled: true,
   desktopTelemetryFd: 4,
@@ -93,11 +93,15 @@ function makeProcess(options?: {
   });
 }
 
+// A 2xx answer carries the descriptor of the backend `baseConfig` launched.
 function responseForRequest(
   request: HttpClientRequest.HttpClientRequest,
   status: number,
 ): HttpClientResponse.HttpClientResponse {
-  return HttpClientResponse.fromWeb(request, new Response(null, { status }));
+  return HttpClientResponse.fromWeb(
+    request,
+    new Response(status < 300 ? '{"desktopLaunchId":"launch-1"}' : null, { status }),
+  );
 }
 
 function layerHttpClient(
@@ -129,6 +133,7 @@ interface MakeInstanceInput {
   readonly onPreflightFailed?: (
     failure: DesktopBackendManager.PreflightFailure,
   ) => Effect.Effect<boolean>;
+  readonly onPortTaken?: (port: number) => Effect.Effect<boolean>;
   readonly config?: DesktopBackendManager.DesktopBackendStartConfig;
   readonly configResolve?: Effect.Effect<
     DesktopBackendManager.DesktopBackendStartConfig,
@@ -185,6 +190,7 @@ function makeTestInstance(input: MakeInstanceInput) {
     ...(input.onShutdown ? { onShutdown: () => input.onShutdown! } : {}),
     ...(input.onStateDirOwned ? { onStateDirOwned: () => input.onStateDirOwned! } : {}),
     ...(input.onPreflightFailed ? { onPreflightFailed: input.onPreflightFailed } : {}),
+    ...(input.onPortTaken ? { onPortTaken: input.onPortTaken } : {}),
   });
 
   return instance.pipe(Effect.provide(layerServices));
@@ -657,7 +663,8 @@ describe("DesktopBackendManager", () => {
       Effect.gen(function* () {
         const requestUrls: Array<string> = [];
         const prunedRuntimes: Array<[string | null, string]> = [];
-        const statuses = [503, 200];
+        // The last 200 is the ownership check that follows the first answer.
+        const statuses = [503, 200, 200];
         let readyCount = 0;
         const firstRequest = yield* Deferred.make<void>();
         const backendReady = yield* Deferred.make<void>();
@@ -724,6 +731,7 @@ describe("DesktopBackendManager", () => {
         assert.deepEqual(requestUrls, [
           "http://127.0.0.1:3773/.well-known/t3/environment",
           "http://127.0.0.1:3773/.well-known/t3/environment",
+          "http://127.0.0.1:3773/.well-known/t3/environment",
         ]);
       }).pipe(Effect.provide(TestClock.layer())),
     ),
@@ -788,12 +796,160 @@ describe("DesktopBackendManager", () => {
           yield* TestClock.adjust(Duration.millis(100));
           assert.equal(readinessTimeoutCount, 2);
           assert.equal(readyCount, 1);
-          assert.equal(requestUrls.length, 3);
+          assert.equal(requestUrls.length, 4);
 
           yield* Deferred.succeed(childExit, void 0);
           assert.equal((yield* Fiber.join(runFiber)).code.pipe(Option.getOrUndefined), 0);
         }).pipe(Effect.provide(TestClock.layer())),
       ),
+  );
+
+  it.effect.each([
+    { name: "a page that is not a T3 server", body: "<html><body>hello</body></html>" },
+    { name: "a T3 server this app did not launch", body: '{"desktopLaunchId":"wsl-service"}' },
+    { name: "a T3 server launched without an id", body: '{"label":"WSL"}' },
+  ])("stops its backend instead of reporting ready when $name answers", ({ body }) =>
+    Effect.gen(function* () {
+      const killed = yield* Deferred.make<void>();
+      let readyCount = 0;
+      const layerSpawner = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            makeProcess({
+              exitCode: Deferred.await(killed).pipe(Effect.as(ChildProcessSpawner.ExitCode(1))),
+              kill: () => Deferred.succeed(killed, void 0).pipe(Effect.asVoid),
+            }),
+          ),
+        ),
+      );
+      const layerHttp = layerHttpClient((request) =>
+        Effect.succeed(HttpClientResponse.fromWeb(request, new Response(body, { status: 200 }))),
+      );
+
+      const exit = yield* DesktopBackendManager.runBackendProcess({
+        ...baseConfig,
+        desktopTelemetryStream: Stream.empty,
+        onReady: () =>
+          Effect.sync(() => {
+            readyCount += 1;
+          }),
+      }).pipe(Effect.scoped, Effect.provide(Layer.merge(layerSpawner, layerHttp)));
+
+      assert.isTrue(exit.portTaken);
+      assert.equal(readyCount, 0);
+    }),
+  );
+
+  it.effect("restarts on the port the spec moves to after another server took its port", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const port = yield* Ref.make(3773);
+        const spawnedPorts: Array<number> = [];
+        const takenPorts: Array<number> = [];
+        const ready = yield* Deferred.make<void>();
+        const layerSpawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              spawnedPorts.push(yield* Ref.get(port));
+              const killed = yield* Deferred.make<void>();
+              return makeProcess({
+                exitCode: Deferred.await(killed).pipe(Effect.as(ChildProcessSpawner.ExitCode(1))),
+                kill: () => Deferred.succeed(killed, void 0).pipe(Effect.asVoid),
+              });
+            }),
+          ),
+        );
+        // A WSL service behind wslrelay answers on 127.0.0.1:3773 with its own
+        // descriptor; the port the spec moves to answers as the launched backend.
+        const layerHttp = layerHttpClient((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                desktopLaunchId:
+                  new URL(request.url).port === "3773" ? "wsl-service" : "launch-3774",
+              }),
+            ),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer: layerSpawner,
+          httpClientLayer: layerHttp,
+          configResolve: Ref.get(port).pipe(
+            Effect.map((current) => ({
+              ...baseConfig,
+              bootstrap: {
+                ...baseConfig.bootstrap,
+                port: current,
+                desktopLaunchId: `launch-${current}`,
+              },
+              httpBaseUrl: new URL(`http://127.0.0.1:${current}`),
+            })),
+          ),
+          onPortTaken: (taken) =>
+            Effect.sync(() => takenPorts.push(taken)).pipe(
+              Effect.andThen(Ref.set(port, taken + 1)),
+              Effect.as(true),
+            ),
+          onReady: Deferred.succeed(ready, void 0).pipe(Effect.asVoid),
+        });
+
+        yield* instance.start;
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(Duration.seconds(1));
+        yield* Deferred.await(ready);
+
+        assert.deepEqual(takenPorts, [3773]);
+        assert.deepEqual(spawnedPorts, [3773, 3774]);
+        const current = yield* instance.currentConfig;
+        assert.equal(Option.getOrThrow(current).httpBaseUrl.href, "http://127.0.0.1:3774/");
+        assert.isTrue((yield* instance.snapshot).ready);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
+  );
+
+  it.effect("stays stopped when the spec cannot move off a taken port", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let spawnCount = 0;
+        const gaveUp = yield* Deferred.make<void>();
+        const layerSpawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.gen(function* () {
+              spawnCount += 1;
+              const killed = yield* Deferred.make<void>();
+              return makeProcess({
+                exitCode: Deferred.await(killed).pipe(Effect.as(ChildProcessSpawner.ExitCode(1))),
+                kill: () => Deferred.succeed(killed, void 0).pipe(Effect.asVoid),
+              });
+            }),
+          ),
+        );
+
+        const instance = yield* makeTestInstance({
+          spawnerLayer: layerSpawner,
+          httpClientLayer: layerHttpClient((request) =>
+            Effect.succeed(
+              HttpClientResponse.fromWeb(request, Response.json({ desktopLaunchId: "other" })),
+            ),
+          ),
+          onPortTaken: () => Deferred.succeed(gaveUp, void 0).pipe(Effect.as(false)),
+        });
+
+        yield* instance.start;
+        yield* Deferred.await(gaveUp);
+        yield* TestClock.adjust(Duration.seconds(30));
+
+        const snapshot = yield* instance.snapshot;
+        assert.equal(spawnCount, 1);
+        assert.isFalse(snapshot.desiredRunning);
+        assert.isFalse(snapshot.restartScheduled);
+      }).pipe(Effect.provide(TestClock.layer())),
+    ),
   );
 
   it.effect("starts the configured backend and closes the scoped process on stop", () =>

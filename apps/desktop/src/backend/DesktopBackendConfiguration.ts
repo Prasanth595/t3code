@@ -243,6 +243,7 @@ const readBackendObservabilitySettings = Effect.gen(function* () {
 interface SharedBootstrapInput {
   readonly bootstrapToken: string;
   readonly bootstrapSecret: string;
+  readonly launchId: string;
   readonly observabilitySettings: BackendObservabilitySettings;
 }
 
@@ -519,6 +520,7 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       host: backendExposure.bindHost,
       desktopBootstrapToken: input.bootstrapToken,
       desktopBootstrapSecret: input.bootstrapSecret,
+      desktopLaunchId: input.launchId,
       // Failed Windows probes leave server hydration enabled for another attempt.
       shellEnvironmentPrepared: input.shellEnvironmentPrepared,
       tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
@@ -597,6 +599,7 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
     host: wslBindHost,
     desktopBootstrapToken: input.bootstrapToken,
     desktopBootstrapSecret: input.bootstrapSecret,
+    desktopLaunchId: input.launchId,
     // PortSchema rejects 0, so when tailscale serve is disabled we still need a
     // valid number in this slot.
     tailscaleServeEnabled: false,
@@ -789,6 +792,8 @@ export const make = Effect.gen(function* () {
     return {
       bootstrapToken,
       bootstrapSecret,
+      // Every resolve is one launch, so a restart gets a new id too.
+      launchId: Hex.encode(yield* crypto.randomBytes(16)),
       observabilitySettings,
     } satisfies SharedBootstrapInput;
   });

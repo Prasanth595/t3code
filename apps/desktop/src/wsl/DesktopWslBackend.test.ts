@@ -215,6 +215,70 @@ describe("DesktopWslBackend", () => {
     );
   });
 
+  it.effect("resolves its next launch on a new port after another server took its port", () => {
+    let registeredSpec: DesktopBackendPool.BackendInstanceSpec | undefined;
+    const resolvedPorts: Array<number> = [];
+    const primary = makeStubInstance({
+      id: DesktopBackendPool.PRIMARY_INSTANCE_ID,
+      label: "Windows",
+      snapshot: primarySnapshot,
+    });
+    const layerPool = Layer.succeed(DesktopBackendPool.DesktopBackendPool, {
+      get: () => Effect.succeed(Option.none<DesktopBackendPool.DesktopBackendInstance>()),
+      list: Effect.succeed([primary]),
+      primary: Effect.succeed(primary),
+      register: (spec) =>
+        Effect.sync(() => {
+          registeredSpec = spec;
+          return makeStubInstance({ id: spec.id, label: "WSL", snapshot: idleSnapshot });
+        }),
+      unregister: () => Effect.void,
+    } satisfies DesktopBackendPool.DesktopBackendPool["Service"]);
+    const layerRecordingConfiguration = Layer.succeed(
+      DesktopBackendConfiguration.DesktopBackendConfiguration,
+      {
+        resolvePrimary: Effect.die("unexpected resolvePrimary"),
+        resolvePrimaryLabel: Effect.succeed("Windows"),
+        resolveWsl: ({ port }) =>
+          Effect.sync(() => resolvedPorts.push(port)).pipe(
+            Effect.andThen(Effect.die("config not needed")),
+          ),
+        currentBootstrapToken: Effect.die("unexpected currentBootstrapToken"),
+      } satisfies DesktopBackendConfiguration.DesktopBackendConfiguration["Service"],
+    );
+
+    return Effect.gen(function* () {
+      const backend = yield* DesktopWslBackend.DesktopWslBackend;
+      yield* backend.reconcile;
+      const spec = registeredSpec;
+      if (spec?.onPortTaken === undefined) throw new Error("Expected port-taken callback");
+
+      yield* spec.configResolve.pipe(Effect.exit);
+      assert.isTrue(yield* spec.onPortTaken(3774));
+      yield* spec.configResolve.pipe(Effect.exit);
+
+      assert.deepEqual(resolvedPorts, [3774, 3775]);
+    }).pipe(
+      Effect.provide(
+        DesktopWslBackend.layer.pipe(
+          Layer.provideMerge(layerPool),
+          Layer.provideMerge(layerRecordingConfiguration),
+          Layer.provideMerge(layerServerExposure),
+          Layer.provideMerge(layerNet),
+          Layer.provideMerge(
+            DesktopAppSettings.layerTest({
+              ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+              wslBackendEnabled: true,
+              wslDistro: "Ubuntu",
+              wslOnly: false,
+            }),
+          ),
+          Layer.provideMerge(DesktopWslEnvironment.layerTest({ isAvailable: true })),
+        ),
+      ),
+    );
+  });
+
   it.effect("retries an unchanged WSL instance when it is idle after failed preflight", () => {
     let startCount = 0;
     const primary = makeStubInstance({

@@ -67,7 +67,7 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   // when false `env` is passed verbatim. WSL mode opts out so a leaking
   // T3CODE_HOME can't pin the WSL backend to /mnt/c/...\.t3.
   readonly extendEnv: boolean;
-  readonly bootstrap: DesktopBackendBootstrapValue;
+  readonly bootstrap: DesktopBackendBootstrapValue & { readonly desktopLaunchId: string };
   readonly bootstrapDelivery: DesktopBackendBootstrapDelivery;
   readonly httpBaseUrl: URL;
   readonly captureOutput: boolean;
@@ -85,6 +85,7 @@ export interface PreflightFailure {
 interface BackendProcessExit {
   readonly code: Option.Option<number>;
   readonly reason: string;
+  readonly portTaken: boolean;
 }
 
 const backendProcessContextSchema = {
@@ -243,6 +244,10 @@ export interface BackendInstanceSpec {
   readonly onShutdown?: () => Effect.Effect<void>;
   readonly onPreflightFailed?: (failure: PreflightFailure) => Effect.Effect<boolean>;
   readonly onStateDirOwned?: () => Effect.Effect<void>;
+  // Another server answered on the port this instance launched on, so the
+  // instance can never reach its own backend there. Return true after moving
+  // the instance to another port to restart it; false leaves it stopped.
+  readonly onPortTaken?: (port: number) => Effect.Effect<boolean>;
 }
 
 interface ActiveBackendRun {
@@ -311,6 +316,30 @@ const closeRun = (
     ),
   );
 };
+
+const BackendLaunchIdentity = Schema.fromJsonString(
+  Schema.Struct({ desktopLaunchId: Schema.String }),
+);
+const decodeBackendLaunchIdentity = Schema.decodeUnknownOption(BackendLaunchIdentity);
+
+export type BackendOwnership = "launched" | "foreign";
+
+// Not an authenticated handshake; see docs/internals/environment-auth.md.
+export const checkBackendOwnership = Effect.fn("desktop.backend.checkOwnership")(function* (input: {
+  readonly httpBaseUrl: URL;
+  readonly desktopLaunchId: string;
+}) {
+  const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
+  const body = yield* client.get(new URL(BACKEND_READINESS_PATH, input.httpBaseUrl)).pipe(
+    Effect.flatMap((response) => response.text),
+    Effect.timeout(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT),
+  );
+  return Option.match(decodeBackendLaunchIdentity(body), {
+    onNone: (): BackendOwnership => "foreign",
+    onSome: (identity): BackendOwnership =>
+      identity.desktopLaunchId === input.desktopLaunchId ? "launched" : "foreign",
+  });
+});
 
 export const waitForHttpReady = (
   options: BackendProcessContext & { readonly timeout: Duration.Duration },
@@ -548,24 +577,50 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   // the initial readiness budget while the backend is about to come up moments
   // later; a one-shot probe left the app stuck on "Connecting to WSL…" forever
   // even though the backend kept running and became healthy.
-  const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(() =>
-    waitForHttpReady({
+  //
+  // Any HTTP answer is not enough: the port scan ran before this backend
+  // bound, so another server can be answering there by now. Only a server that
+  // echoes this launch's id counts as ready.
+  const portTaken = yield* Ref.make(false);
+  const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(function* () {
+    const answered = yield* waitForHttpReady({
       executablePath: options.executablePath,
       entryPath: options.entryPath,
       cwd: options.cwd,
       httpBaseUrl: options.httpBaseUrl,
       timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
     }).pipe(
-      Effect.flatMap(() => options.onReady?.() ?? Effect.void),
       Effect.as(true),
       Effect.catchTags({
         BackendReadinessTimeoutError: (error) =>
           (options.onReadinessFailure?.(error) ?? Effect.void).pipe(Effect.as(false)),
       }),
-    ),
-  );
+    );
+    if (!answered) {
+      return false;
+    }
+    const ownership = yield* checkBackendOwnership({
+      httpBaseUrl: options.httpBaseUrl,
+      desktopLaunchId: options.bootstrap.desktopLaunchId,
+    }).pipe(Effect.option);
+    if (Option.isNone(ownership)) {
+      return false;
+    }
+    if (ownership.value === "foreign") {
+      yield* logBackendProcessWarning("another server is answering on the backend port", {
+        httpBaseUrl: options.httpBaseUrl.href,
+      });
+      yield* Ref.set(portTaken, true);
+      yield* handle
+        .kill({ killSignal: "SIGTERM", forceKillAfter: DEFAULT_BACKEND_TERMINATE_GRACE })
+        .pipe(Effect.ignore);
+      return true;
+    }
+    yield* options.onReady?.() ?? Effect.void;
+    return true;
+  });
 
-  yield* probeReadiness().pipe(Effect.repeat({ while: (ready) => !ready }), Effect.forkScoped);
+  yield* probeReadiness().pipe(Effect.repeat({ while: (done) => !done }), Effect.forkScoped);
 
   const exit = yield* handle.exitCode.pipe(
     Effect.mapError(
@@ -589,6 +644,13 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     Effect.timeout(options.outputDrainTimeout ?? DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT),
     Effect.ignore,
   );
+  if (yield* Ref.get(portTaken)) {
+    return {
+      code: Option.none(),
+      reason: `another server is answering on ${options.httpBaseUrl.href}`,
+      portTaken: true,
+    } satisfies BackendProcessExit;
+  }
   if (Exit.isFailure(exit)) {
     return yield* Effect.failCause(exit.cause);
   }
@@ -596,6 +658,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
   return {
     code: Option.some(exitCode),
     reason: `code=${exitCode}`,
+    portTaken: false,
   } satisfies BackendProcessExit;
 });
 
@@ -786,6 +849,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
         const finalizeRun = Effect.fn("desktop.backendInstance.finalizeRun")(function* (
           reason: string,
           exitCode?: number,
+          portTaken = false,
         ) {
           const stateDirOwned = exitCode === SERVER_EXIT_CODE_STATE_DIR_OWNED;
           yield* mutex.withPermits(1)(
@@ -862,6 +926,15 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
                   yield* (spec.onStateDirOwned?.() ?? Effect.void).pipe(Effect.ignore);
                   return;
                 }
+                if (portTaken && !stopRequested) {
+                  const moved = yield* (
+                    spec.onPortTaken?.(config.value.bootstrap.port) ?? Effect.succeed(false)
+                  );
+                  if (!moved) {
+                    yield* Ref.update(state, (latest) => ({ ...latest, desiredRunning: false }));
+                    return;
+                  }
+                }
                 yield* scheduleRestart(reason);
               }
             }),
@@ -937,7 +1010,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           Scope.provide(runScope),
           Effect.matchEffect({
             onFailure: (error) => finalizeRun(error.message),
-            onSuccess: (exit) => finalizeRun(exit.reason, Option.getOrUndefined(exit.code)),
+            onSuccess: (exit) =>
+              finalizeRun(exit.reason, Option.getOrUndefined(exit.code), exit.portTaken),
           }),
           Effect.ensuring(Scope.close(runScope, Exit.void).pipe(Effect.ignore)),
         );

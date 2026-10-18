@@ -6,17 +6,22 @@ import {
   type DesktopSshEnvironmentTarget,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { afterEach, vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import {
   ConnectionBlockedError,
   ConnectionTransientError,
 } from "@t3tools/client-runtime/connection";
 
+import { createDesktopSecondaryBootstrapsReader } from "./desktopLocal.ts";
 import {
   canRetainCachedPlatformRegistrationAfterRefreshFailure,
   canReuseCachedPlatformRegistration,
   isRejectedBootstrapCredentialError,
   isRejectedSecondaryBootstrap,
+  loadSecondaryConnectionRegistration,
   nextRejectedSecondaryBootstrap,
   primaryRegistrationToRetainAfterTopologyRead,
   prepareDesktopSshEnvironment,
@@ -387,4 +392,103 @@ describe("primary topology cache", () => {
       }),
     ).toBeUndefined();
   });
+});
+
+describe("desktop-local secondary bootstrap", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.effect("connects a backend that restarted on the same port with a new launch id", () =>
+    Effect.gen(function* () {
+      // Client metadata for the token request reads the desktop bridge.
+      vi.stubGlobal("window", { desktopBridge: {} });
+      let entry = {
+        id: "wsl:default",
+        label: "WSL",
+        runningDistro: "Ubuntu",
+        httpBaseUrl: "http://127.0.0.1:3774/",
+        wsBaseUrl: "ws://127.0.0.1:3774/",
+        bootstrapToken: "same-token-across-restarts",
+        desktopLaunchId: "launch-before-restart",
+      };
+      const reader = createDesktopSecondaryBootstrapsReader(() => ({
+        getLocalEnvironmentBootstraps: () => [{ ...entry }],
+      }));
+      reader.readSnapshot();
+      entry = { ...entry, desktopLaunchId: "launch-after-restart" };
+      const requests: string[] = [];
+      const layerHttpClient = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          requests.push(`${request.method} ${new URL(request.url).pathname}`);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                request.method === "GET"
+                  ? {
+                      environmentId: "environment-wsl",
+                      label: "WSL",
+                      platform: { os: "linux", arch: "x64" },
+                      serverVersion: "0.0.0-test",
+                      desktopLaunchId: "launch-after-restart",
+                      capabilities: { repositoryIdentity: true },
+                    }
+                  : {
+                      access_token: "bearer-token",
+                      issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+                      token_type: "Bearer",
+                      expires_in: 3_600,
+                      scope: AuthStandardClientScopes.join(" "),
+                    },
+              ),
+            ),
+          );
+        }),
+      );
+
+      const [bootstrap] = reader.readSnapshot();
+      yield* loadSecondaryConnectionRegistration(bootstrap!).pipe(Effect.provide(layerHttpClient));
+
+      expect(requests).toEqual(["GET /.well-known/t3/environment", "POST /oauth/token"]);
+    }),
+  );
+
+  it.effect("does not send the bootstrap token to a server from another launch", () =>
+    Effect.gen(function* () {
+      const requests: string[] = [];
+      const layerHttpClient = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          requests.push(`${request.method} ${new URL(request.url).pathname}`);
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                environmentId: "environment-wsl-service",
+                label: "WSL service",
+                platform: { os: "linux", arch: "x64" },
+                serverVersion: "0.0.44",
+                desktopLaunchId: "launch-from-another-app",
+                capabilities: { repositoryIdentity: true },
+              }),
+            ),
+          );
+        }),
+      );
+
+      const error = yield* loadSecondaryConnectionRegistration({
+        id: "wsl:default",
+        label: "WSL",
+        httpBaseUrl: "http://127.0.0.1:3774/",
+        wsBaseUrl: "ws://127.0.0.1:3774/",
+        bootstrapToken: "bootstrap-token",
+        desktopLaunchId: "launch-1",
+      }).pipe(Effect.flip, Effect.provide(layerHttpClient));
+
+      expect(error).toBeInstanceOf(ConnectionTransientError);
+      expect(requests).toEqual(["GET /.well-known/t3/environment"]);
+    }),
+  );
 });

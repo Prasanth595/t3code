@@ -85,6 +85,22 @@ transaction](../../apps/server/src/persistence/AuthSessions.ts); a failed
 replacement must leave the old credential usable. Pairing and browser sessions
 do not follow this replacement rule.
 
+The desktop checks that a server is the backend it launched before it calls
+that backend ready or sends it a bootstrap token. Its port scan runs before the
+backend binds, and on Windows a listener that appears later can take the
+backend's loopback port (WSL's localhost relay does this). Each launch puts a
+random `desktopLaunchId` in the bootstrap envelope, the backend echoes it in
+`/.well-known/t3/environment`, and the [backend
+manager](../../apps/desktop/src/backend/DesktopBackendManager.ts), the desktop's
+local auth, and the renderer's WSL bootstrap compare it first. Local auth checks
+again before every exchange attempt.
+
+This catches a different server on the port. It is not authenticated
+ownership. The id is public, so a local process that copies it from the real
+backend passes the check. The check and the token POST are also two separate
+requests, so a listener that takes the port between them still gets the token.
+A bearer the desktop already holds keeps being used without a new check.
+
 ### Reusable dev credential
 
 Web development environments can accept one `T3CODE_DEV_AUTH_TOKEN` across
