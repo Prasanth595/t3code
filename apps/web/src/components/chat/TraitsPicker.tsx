@@ -1,4 +1,5 @@
 import {
+  type FastModeIndicator,
   type ModelSelection,
   type ProviderDriverKind,
   type ProviderInstanceId,
@@ -40,6 +41,12 @@ import {
 } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
+import {
+  getTraitsSpeedDisplay,
+  TraitsSpeedIcon,
+  traitsSpeedIconLabel,
+  type TraitsSpeedIconKind,
+} from "./TraitsSpeed";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -572,42 +579,18 @@ export function buildTraitsTriggerDisplay(input: {
   descriptors: ReadonlyArray<ProviderOptionDescriptor>;
   primarySelectDescriptorId: string | null;
   ultrathinkPromptControlled: boolean;
+  fastModeIndicator: FastModeIndicator;
   modelSelection?: ModelSelection | null;
   reportedModelSelection?: ModelSelection | null | undefined;
-}): { label: string } {
-  let fastModeFallbackLabel: string | null = null;
-  let speedLabel: string | null = null;
+}): { label: string; speedIcon: TraitsSpeedIconKind | null } {
+  let speed: ReturnType<typeof getTraitsSpeedDisplay> = null;
   let reasoningLabelIndex = -1;
   const labels: Array<string> = [];
   for (const descriptor of input.descriptors) {
-    if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
-      speedLabel = descriptor.currentValue === true ? "Fast" : null;
-      fastModeFallbackLabel = speedLabel ?? "Normal";
+    const descriptorSpeed = getTraitsSpeedDisplay(input.provider, descriptor);
+    if (descriptorSpeed) {
+      speed = descriptorSpeed;
       continue;
-    }
-    if (
-      input.provider === "codex" &&
-      descriptor.id === "serviceTier" &&
-      descriptor.type === "select"
-    ) {
-      const currentValue = getProviderOptionCurrentValue(descriptor);
-      const fastTier = descriptor.options.find(({ label }) => label === "Fast");
-      const ultrafastTier = descriptor.options.find(({ label }) => label === "Ultrafast");
-      if (
-        ((fastTier || ultrafastTier) && currentValue === "default") ||
-        (fastTier && currentValue === fastTier.id) ||
-        (ultrafastTier && currentValue === ultrafastTier.id)
-      ) {
-        speedLabel =
-          ultrafastTier && currentValue === ultrafastTier.id
-            ? "Ultrafast"
-            : fastTier && currentValue === fastTier.id
-              ? "Fast"
-              : null;
-        fastModeFallbackLabel =
-          descriptor.options.find(({ id }) => id === currentValue)?.label ?? "Normal";
-        continue;
-      }
     }
     const label =
       input.ultrathinkPromptControlled && descriptor.id === input.primarySelectDescriptorId
@@ -631,17 +614,20 @@ export function buildTraitsTriggerDisplay(input: {
     }
   }
 
-  if (labels.length === 0 && fastModeFallbackLabel !== null) {
-    return { label: fastModeFallbackLabel };
+  if (labels.length === 0 && speed) {
+    return { label: speed.label, speedIcon: null };
   }
-  if (speedLabel) {
+  if (input.fastModeIndicator === "icon") {
+    return { label: labels.join(" · "), speedIcon: speed?.speedIcon ?? null };
+  }
+  if (speed?.speedIcon) {
     if (reasoningLabelIndex >= 0) {
-      labels[reasoningLabelIndex] = `${labels[reasoningLabelIndex]} ${speedLabel}`;
+      labels[reasoningLabelIndex] = `${labels[reasoningLabelIndex]} ${speed.label}`;
     } else {
-      labels.push(speedLabel);
+      labels.push(speed.label);
     }
   }
-  return { label: labels.join(" · ") };
+  return { label: labels.join(" · "), speedIcon: null };
 }
 
 export const TraitsPicker = memo(function TraitsPicker({
@@ -660,12 +646,14 @@ export const TraitsPicker = memo(function TraitsPicker({
   size = "sm",
   hidden = false,
   disabled = false,
+  fastModeIndicator = "text",
   ...persistence
 }: TraitsMenuContentProps &
   TraitsPersistence & {
     size?: ComposerControlSize;
     hidden?: boolean;
     disabled?: boolean;
+    fastModeIndicator?: FastModeIndicator;
   }) {
   const composerFloatingLayerProps = useComposerMenuProps();
   const [isMenuOpen, setIsMenuOpen] = useComposerMenuState(hidden || disabled);
@@ -693,14 +681,23 @@ export const TraitsPicker = memo(function TraitsPicker({
     return null;
   }
 
-  const { label: triggerLabel } = buildTraitsTriggerDisplay({
+  const { label: triggerLabel, speedIcon } = buildTraitsTriggerDisplay({
     provider,
     descriptors,
     primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
     ultrathinkPromptControlled,
+    fastModeIndicator,
     modelSelection: instanceId && model ? { instanceId, model, options: modelOptions ?? [] } : null,
     reportedModelSelection,
   });
+  const accessibleLabel = speedIcon
+    ? `${triggerLabel}, ${traitsSpeedIconLabel(speedIcon)}`
+    : triggerLabel;
+  const triggerIcon = speedIcon ? (
+    <TraitsSpeedIcon provider={provider} speedIcon={speedIcon} size={size} />
+  ) : (
+    <ComposerControlIcon icon={BrainIcon} size={size} />
+  );
   const isCodexStyle = provider === "codex";
 
   return (
@@ -717,7 +714,7 @@ export const TraitsPicker = memo(function TraitsPicker({
               render={
                 <ComposerControl
                   disabled={disabled}
-                  aria-label={triggerLabel}
+                  aria-label={accessibleLabel}
                   data-composer-shortcut={isComposerOwned ? "composer.effort" : undefined}
                   size={size}
                   className={cn(
@@ -738,7 +735,7 @@ export const TraitsPicker = memo(function TraitsPicker({
                 size === "xs" ? "gap-1" : "gap-1.5",
               )}
             >
-              <ComposerControlIcon icon={BrainIcon} size={size} />
+              {triggerIcon}
               <span data-composer-control-label className="min-w-0 truncate">
                 {triggerLabel}
               </span>
@@ -746,13 +743,13 @@ export const TraitsPicker = memo(function TraitsPicker({
             </span>
           ) : (
             <>
-              <ComposerControlIcon icon={BrainIcon} size={size} />
+              {triggerIcon}
               <span data-composer-control-label>{triggerLabel}</span>
               <ComposerControlChevron size={size} />
             </>
           )}
         </TooltipTrigger>
-        <TooltipPopup side="top">{triggerLabel}</TooltipPopup>
+        <TooltipPopup side="top">{accessibleLabel}</TooltipPopup>
       </Tooltip>
       <MenuPopup align="start" {...(isComposerOwned ? composerFloatingLayerProps : {})}>
         <TraitsMenuContent

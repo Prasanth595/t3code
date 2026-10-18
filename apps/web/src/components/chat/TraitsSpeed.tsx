@@ -5,10 +5,16 @@ import { UltrafastIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 import { ComposerControlIcon, type ComposerControlSize } from "./ComposerControl";
 
+export type TraitsSpeedIconKind = "fast" | "ultrafast";
+
+export function traitsSpeedIconLabel(speedIcon: TraitsSpeedIconKind): string {
+  return speedIcon === "ultrafast" ? "Ultrafast mode on" : "Fast mode on";
+}
+
 export function getTraitsSpeedDisplay(
   provider: ProviderDriverKind,
   descriptor: ProviderOptionDescriptor,
-): { label: string; speedIcon: "fast" | "ultrafast" | null } | null {
+): { label: string; speedIcon: TraitsSpeedIconKind | null } | null {
   if (descriptor.id === "fastMode" && descriptor.type === "boolean") {
     return {
       label: descriptor.currentValue === true ? "Fast" : "Normal",
@@ -45,7 +51,7 @@ export function TraitsSpeedIcon({
   size = "sm",
 }: {
   provider: ProviderDriverKind;
-  speedIcon: "fast" | "ultrafast";
+  speedIcon: TraitsSpeedIconKind;
   size?: ComposerControlSize;
 }) {
   return (
@@ -62,9 +68,7 @@ export function TraitsSpeedIcon({
               : "text-foreground",
         )}
       />
-      <span className="sr-only">
-        {speedIcon === "ultrafast" ? "Ultrafast mode on" : "Fast mode on"}
-      </span>
+      <span className="sr-only">{traitsSpeedIconLabel(speedIcon)}</span>
     </>
   );
 }

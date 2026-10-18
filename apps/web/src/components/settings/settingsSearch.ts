@@ -239,6 +239,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["wide full width column layout messages composer monitor"],
   },
   {
+    id: "fast-mode-indicator",
+    title: "Fast mode indicator",
+    to: "/settings/appearance",
+    searchTerms: ["speed lightning bolt icon text ultrafast composer reasoning"],
+  },
+  {
     id: "panel-animations",
     title: "Panel animations",
     to: "/settings/appearance",

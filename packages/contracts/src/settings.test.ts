@@ -383,6 +383,25 @@ describe("ClientSettings chat width", () => {
   });
 });
 
+describe("ClientSettings fast mode indicator", () => {
+  it("keeps Fast as text for existing settings without a saved indicator", () => {
+    expect(decodeClientSettings({}).fastModeIndicator).toBe("text");
+  });
+
+  it.each(["text", "icon"])("round-trips the %s indicator", (fastModeIndicator) => {
+    const settings = decodeClientSettings({ fastModeIndicator });
+    expect(encodeClientSettings(settings).fastModeIndicator).toBe(fastModeIndicator);
+    expect(decodeClientSettingsPatch({ fastModeIndicator }).fastModeIndicator).toBe(
+      fastModeIndicator,
+    );
+  });
+
+  it("rejects unsupported indicators", () => {
+    expect(() => decodeClientSettings({ fastModeIndicator: "emoji" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ fastModeIndicator: "emoji" })).toThrow();
+  });
+});
+
 describe("ClientSettings load balancing", () => {
   it("requires opt-in when settings are new or omit load balancing", () => {
     expect(decodeClientSettings({}).loadBalancingEnabled).toBe(false);

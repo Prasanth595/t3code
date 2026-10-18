@@ -405,6 +405,7 @@ export function SourceControlWritingSettingsSection() {
                     settings.planModeEnabled || selectsPlanAgent(activeSelection.options)
                   }
                   triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                  fastModeIndicator={settings.fastModeIndicator}
                   onModelOptionsChange={(options) =>
                     updateSettings({
                       sourceControlWriterModelSelection: createModelSelection(
@@ -511,6 +512,7 @@ export function SourceControlWritingSettingsSection() {
                         settings.planModeEnabled || selectsPlanAgent(reviewGuideSelection.options)
                       }
                       triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
+                      fastModeIndicator={settings.fastModeIndicator}
                       onModelOptionsChange={(options) =>
                         updateSettings({
                           reviewGuideModelSelection: createModelSelection(
