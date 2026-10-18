@@ -168,7 +168,7 @@ const LABELS: Partial<Record<KeybindingCommand, string>> = {
   "timeline.deeper": "Go deeper",
   "timeline.shallower": "Go back up",
   "timeline.cite": "Cite without note",
-  "timeline.citeWithNote": "Cite with note",
+  "timeline.citeWithNote": "Cite with note, or click the link or button",
   "timeline.jumpToLatest": "Jump to latest",
   "timeline.extendUp": "Extend selection up",
   "timeline.extendDown": "Extend selection down",
