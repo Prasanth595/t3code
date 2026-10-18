@@ -9,7 +9,10 @@
     "screenshots": "node scripts/screenshots.ts"
   },
   "devDependencies": {
+    "medium-zoom": "^1.1.0",
+    "mermaid": "^11.17.2",
     "playwright": "^1.64.1",
-    "vitepress": "^1.6.4"
+    "vitepress": "^1.6.4",
+    "vitepress-plugin-mermaid": "^2.0.17"
   }
 }

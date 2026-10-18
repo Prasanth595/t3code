@@ -28,3 +28,9 @@ html:not(.dark) .dark-only {
   border: 1px solid var(--vp-c-divider);
   border-radius: 8px;
 }
+
+/* The click-to-zoom overlay sits above the nav bar. */
+.medium-zoom-overlay,
+.medium-zoom-image--opened {
+  z-index: 100;
+}
