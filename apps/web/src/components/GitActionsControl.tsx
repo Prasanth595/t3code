@@ -1094,9 +1094,10 @@ export default function GitActionsControl({
   const SourceControlIcon = sourceControlPresentation.Icon;
   const isRepo = gitStatus?.isRepo ?? true;
   const hasPrimaryRemote = gitStatus?.hasPrimaryRemote ?? false;
-  const gitStatusForActions = useMemo(
-    () => resolveThreadGitStatus(gitStatus, activeServerThread?.pullRequests, repositoryKey),
-    [gitStatus, activeServerThread?.pullRequests, repositoryKey],
+  const gitStatusForActions = resolveThreadGitStatus(
+    gitStatus,
+    activeServerThread?.pullRequests,
+    repositoryKey,
   );
   const changesTotals = gitStatusForActions?.branchChanges ?? gitStatusForActions?.workingTree;
 
