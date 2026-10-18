@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Fork: Android adaptive icon background. The dotted tile of tick3d-macos.svg. -->
+  <defs>
+    <pattern id="dots" width="36" height="36" patternUnits="userSpaceOnUse">
+      <circle cx="18" cy="18" r="3.2" fill="#000" fill-opacity="0.16"/>
+    </pattern>
+  </defs>
+  <rect width="1024" height="1024" fill="#E4E7FF"/>
+  <rect width="1024" height="1024" fill="url(#dots)"/>
+</svg>

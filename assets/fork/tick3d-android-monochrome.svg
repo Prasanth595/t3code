@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Fork: Android monochrome and notification icon. The bolt of tick3d-macos.svg as one white shape. -->
+  <g transform="translate(512 512) scale(0.75) translate(-515 -480)">
+    <g transform="rotate(-6 500 500)">
+      <path d="M470 300 L610 300 L540 430 L630 430 L400 670 L460 500 L370 500 Z" fill="#fff" stroke="#fff" stroke-width="22" stroke-linejoin="round"/>
+    </g>
+  </g>
+</svg>

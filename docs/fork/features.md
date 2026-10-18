@@ -156,7 +156,6 @@ A signed Android APK of fork main, on fork releases that changed the app. It ins
   - No push notifications, because the build has no `google-services.json`. Revisit when the fork has a Firebase project.
   - `t3code://` links open the Play Store app, because the APK uses the `t3code-preview` scheme. Revisit when the APK build registers its own scheme for those links.
   - No over-the-air updates, because those come from the upstream Expo project. Update with Obtainium.
-  - The APK keeps the upstream nightly icon. Revisit when `scripts/fork-android-apk.sh` swaps the icon.
   - arm64 phones only.
 
 ### Fork installers
@@ -525,8 +524,8 @@ A row shows "from <thread>" when the server knows for certain which other thread
 
 The fork desktop app, its notifications and the bundled web page use the Tick3d lightning icon instead of the nightly icon. To change it, see [App icon](operations.md#app-icon).
 
-- **Works on:** desktop, web.
-- **Limits:** the Android APK keeps the upstream nightly icon. Revisit when `scripts/fork-android-apk.sh` swaps the icon.
+- **Works on:** desktop, web, Android APK. The APK uses the layers `assets/fork/tick3d-android-{foreground,background,monochrome}.svg`, as PNG files in `apps/mobile/assets/fork/`.
+- **Limits:** iOS builds keep the nightly icon.
 
 ## Command line and MCP
 

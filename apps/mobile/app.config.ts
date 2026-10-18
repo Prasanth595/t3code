@@ -2,6 +2,7 @@ import type { ExpoConfig } from "expo/config";
 
 import { BRAND_ASSET_PATHS } from "../../scripts/lib/brand-assets.ts";
 import { loadRepoEnv } from "../../scripts/lib/public-config.ts";
+import { withForkAndroidIcon } from "./src/lib/forkAndroidIcon.ts";
 import { FORK_THEME_FONT_PLUGIN_FILES } from "./src/lib/forkThemeFonts.ts";
 
 type AppVariant = "development" | "preview" | "production";
@@ -108,7 +109,10 @@ function resolveAppVariant(value: string | undefined): AppVariant {
   }
 }
 
-const variant = VARIANT_CONFIG[APP_VARIANT];
+// Fork: the fork APK (scripts/fork-android-apk.sh sets T3CODE_ANDROID_PACKAGE) gets the fork icon.
+const variant = repoEnv.T3CODE_ANDROID_PACKAGE
+  ? withForkAndroidIcon(VARIANT_CONFIG[APP_VARIANT])
+  : VARIANT_CONFIG[APP_VARIANT];
 // Fork builds (scripts/fork-android-apk.sh) install next to the store app and
 // update in place, so they set their own package and a growing version code.
 // They set the version name through upstream's T3CODE_MOBILE_VERSION.

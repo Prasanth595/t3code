@@ -89,7 +89,7 @@ The version is `<upstream base version>-nightly.<UTC date>.<build number>`, for 
 
 ## App icon
 
-The fork replaces the nightly icons with the Tick3d lightning icon from `assets/fork/tick3d-macos.svg`. The desktop app, its notifications and the bundled web page use these files. The Android APK keeps the upstream nightly icon. To change the icon, edit the SVG and run:
+The fork replaces the nightly icons with the Tick3d lightning icon from `assets/fork/tick3d-macos.svg`. The desktop app, its notifications and the bundled web page use these files. The Android APK uses the layers `assets/fork/tick3d-android-{foreground,background,monochrome}.svg`, as PNG files in `apps/mobile/assets/fork/`. `apps/mobile/src/lib/forkAndroidIcon.ts` applies them when `T3CODE_ANDROID_PACKAGE` is set, which only `scripts/fork-android-apk.sh` does. To change the icon, edit the SVG and run:
 
 ```sh
 S=assets/fork/tick3d-macos.svg N=assets/nightly T=$(mktemp -d)
