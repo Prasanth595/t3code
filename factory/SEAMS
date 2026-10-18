@@ -38,6 +38,7 @@ apps/web/src/components/sidebar/SidebarChrome.tsx
 apps/web/src/components/sidebar/mainAppLocation.test.ts
 apps/web/src/components/sidebar/mainAppLocation.ts
 apps/web/src/components/ui/input.tsx
+apps/web/src/environments/primary/auth.ts
 apps/web/src/routeTree.gen.ts
 packages/shared/package.json
 packages/shared/src/codexAuthHandoff.test.ts
