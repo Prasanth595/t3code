@@ -57,6 +57,7 @@ vi.mock("./androidNotifications", () => ({
 
 const secureStore = vi.hoisted(() => new Map<string, string>());
 const widgetMocks = vi.hoisted(() => ({
+  dismissEnded: vi.fn(),
   getInstances: vi.fn(() => []),
   start: vi.fn(() => ({})),
 }));
@@ -97,6 +98,7 @@ vi.mock("expo-widgets", () => ({
 }));
 
 vi.mock("./agentLiveActivity", () => ({
+  dismissEndedAgentLiveActivities: widgetMocks.dismissEnded,
   getAgentLiveActivities: widgetMocks.getInstances,
   startAgentLiveActivity: widgetMocks.start,
 }));
@@ -270,6 +272,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     widgetMocks.getInstances.mockReset();
     widgetMocks.getInstances.mockReturnValue([]);
     widgetMocks.start.mockClear();
+    widgetMocks.dismissEnded.mockReset();
     environmentConfigsMock.configs.clear();
   });
 
@@ -499,6 +502,43 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     },
   );
 
+  it.effect(
+    "dismisses ended Live Activities before foreground discovery with no work running",
+    () => {
+      setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+      return Effect.gen(function* () {
+        yield* refreshActiveLiveActivityRemoteRegistration();
+
+        expect(widgetMocks.dismissEnded).toHaveBeenCalledOnce();
+        expect(widgetMocks.dismissEnded.mock.invocationCallOrder[0]).toBeLessThan(
+          widgetMocks.getInstances.mock.invocationCallOrder[0]!,
+        );
+        expect(widgetMocks.start).not.toHaveBeenCalled();
+      }).pipe(Effect.provide(layerRelayTest));
+    },
+  );
+
+  it.effect("still registers the active card when ended-card cleanup throws", () => {
+    widgetMocks.dismissEnded.mockImplementation(() => {
+      throw new Error("Cannot find function dismissEnded");
+    });
+    const activity = {
+      getPushToken: vi.fn(() => Promise.resolve("activity-token")),
+      addPushTokenListener: vi.fn(),
+      end: vi.fn(),
+    };
+    widgetMocks.getInstances.mockReturnValue([activity] as never);
+    setAgentAwarenessRelayTokenProvider(() => Promise.resolve("clerk-token-user-a"));
+
+    return Effect.gen(function* () {
+      yield* refreshActiveLiveActivityRemoteRegistration();
+
+      expect(activity.getPushToken).toHaveBeenCalled();
+      expect(activity.end).not.toHaveBeenCalled();
+    }).pipe(Effect.provide(layerRelayTest));
+  });
+
   it("ends local Live Activities and stops foreground reconciliation on cloud sign-out", () => {
     const end = vi.fn(() => Promise.resolve());
     const activity = {
@@ -513,6 +553,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
     setAgentAwarenessRelayTokenProvider(null);
 
     expect(end).toHaveBeenCalledWith("immediate");
+    expect(widgetMocks.dismissEnded).toHaveBeenCalled();
     expect(appStateMock.listeners).toHaveLength(0);
   });
 
