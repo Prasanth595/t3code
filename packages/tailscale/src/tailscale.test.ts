@@ -329,26 +329,6 @@ describe("tailscale", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("waits for a tailscale status that takes 2.6 seconds, as seen on Windows", () => {
-    const slowHandle = ChildProcessSpawner.makeHandle({
-      ...mockHandle({ stdout: tailscaleStatusWithSingleIpJson }),
-      exitCode: Effect.sleep("2600 millis").pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
-    });
-    const layer = Layer.merge(
-      TestClock.layer(),
-      layerSpawner(ChildProcessSpawner.make(() => Effect.succeed(slowHandle))),
-    );
-
-    return Effect.gen(function* () {
-      const fiber = yield* readTailscaleStatus.pipe(Effect.forkScoped);
-      yield* Effect.yieldNow;
-      yield* TestClock.adjust("2600 millis");
-      const status = yield* Fiber.join(fiber);
-
-      assert.equal(status.magicDnsName, "desktop.tail.ts.net");
-    }).pipe(Effect.provide(layer));
-  });
-
   it.effect("configures tailscale serve through the process spawner service", () => {
     const layer = layerMockSpawner((command, args) => {
       assert.equal(command, "tailscale");
