@@ -46,6 +46,8 @@ interface Cursor {
   readonly index: number;
   /** The other end of an extended selection, at the current depth. */
   readonly anchor: number;
+  /** The depth that Right and Left chose. Up and Down walk the outline down to this depth. */
+  readonly workDepth: number;
 }
 
 function elementRange(element: Element): Range {
@@ -244,7 +246,7 @@ export function TimelineCursor(props: {
         return rect !== undefined && rect.top < bottom;
       });
       const rowId = visible.at(-1) ?? ids.at(-1);
-      return rowId ? { rowId, parents: [], index: 0, anchor: 0 } : null;
+      return rowId ? { rowId, parents: [], index: 0, anchor: 0, workDepth: 0 } : null;
     };
     const current = (): Cursor | null =>
       cursor && rowIds().includes(cursor.rowId) ? cursor : null;
@@ -254,6 +256,55 @@ export function TimelineCursor(props: {
       return node !== null && document.activeElement === node;
     };
 
+    const at0 = (rowId: string, workDepth: number): Cursor => ({
+      rowId,
+      parents: [],
+      index: 0,
+      anchor: 0,
+      workDepth,
+    });
+    /**
+     * The next unit in document order, never deeper than `workDepth`: 1.1, 1.2, 1.3, 2, 2.1. Past
+     * the last unit of a row it moves to the next row. Null at the end of the timeline.
+     */
+    const walkDown = (at: Cursor): Cursor | null => {
+      const unit = siblings(at)?.[at.index];
+      if (unit && at.parents.length < at.workDepth && childUnits(unit).length > 0) {
+        return { ...at, parents: [...at.parents, at.index], index: 0, anchor: 0 };
+      }
+      const parents = [...at.parents];
+      let index = at.index;
+      while (parents.length > 0) {
+        const count = siblings({ ...at, parents, index })?.length ?? 0;
+        if (index + 1 < count) return { ...at, parents, index: index + 1, anchor: index + 1 };
+        index = parents.pop() ?? 0;
+      }
+      const ids = rowIds();
+      const rowId = ids[ids.indexOf(at.rowId) + 1];
+      return rowId ? at0(rowId, at.workDepth) : null;
+    };
+    /** The previous unit in document order, never deeper than `workDepth`: 2.1, 2, 1.3. */
+    const walkUp = (at: Cursor): Cursor | null => {
+      if (at.parents.length === 0) {
+        const ids = rowIds();
+        const rowId = ids[ids.indexOf(at.rowId) - 1];
+        return rowId ? at0(rowId, at.workDepth) : null;
+      }
+      if (at.index === 0) {
+        const index = at.parents.at(-1) ?? 0;
+        return { ...at, parents: at.parents.slice(0, -1), index, anchor: index };
+      }
+      const parents = [...at.parents];
+      let index = at.index - 1;
+      while (parents.length < at.workDepth) {
+        const unit = siblings({ ...at, parents, index })?.[index];
+        const children = unit ? childUnits(unit) : [];
+        if (children.length === 0) break;
+        parents.push(index);
+        index = children.length - 1;
+      }
+      return { ...at, parents, index, anchor: index };
+    };
     const move =
       (direction: 1 | -1, extend: boolean): FocusLevelCommandHandler =>
       () => {
@@ -264,15 +315,17 @@ export function TimelineCursor(props: {
           if (start) show(start);
           return true;
         }
-        if (at.parents.length === 0) {
-          const ids = rowIds();
-          const rowId = ids[ids.indexOf(at.rowId) + direction];
-          if (rowId) showRow({ rowId, parents: [], index: 0, anchor: 0 });
+        // Shift extends the selection over siblings only, so it never spans two parents.
+        if (extend && at.parents.length > 0) {
+          const count = siblings(at)?.length ?? 0;
+          const index = Math.max(0, Math.min(count - 1, at.index + direction));
+          show({ ...at, index });
           return true;
         }
-        const count = siblings(at)?.length ?? 0;
-        const index = Math.max(0, Math.min(count - 1, at.index + direction));
-        show({ ...at, index, anchor: extend ? at.anchor : index });
+        const next = direction === 1 ? walkDown(at) : walkUp(at);
+        if (!next) return true;
+        if (next.rowId === at.rowId) show(next);
+        else showRow(next);
         return true;
       };
     const cite =
@@ -330,7 +383,13 @@ export function TimelineCursor(props: {
         const units = siblings(at);
         const unit = units?.[at.index];
         if (unit && childUnits(unit).length > 0) {
-          show({ rowId: at.rowId, parents: [...at.parents, at.index], index: 0, anchor: 0 });
+          show({
+            rowId: at.rowId,
+            parents: [...at.parents, at.index],
+            index: 0,
+            anchor: 0,
+            workDepth: at.parents.length + 1,
+          });
         }
         return true;
       },
@@ -344,6 +403,7 @@ export function TimelineCursor(props: {
             parents: at.parents.slice(0, -1),
             index: parentIndex,
             anchor: parentIndex,
+            workDepth: at.parents.length - 1,
           });
         }
         return true;
@@ -359,6 +419,7 @@ export function TimelineCursor(props: {
             parents: at.parents.slice(0, -1),
             index: parentIndex,
             anchor: parentIndex,
+            workDepth: at.parents.length - 1,
           });
           return true;
         }
