@@ -249,22 +249,24 @@ const measureStreamReply = Effect.fn("measure.streamReply")(function* (
   return { report, stillStreaming: streamingItem(after) !== undefined };
 }, Effect.scoped);
 
-/** Opens a screen from Home and records its mount and data settling. */
+/** Opens a screen from a freshly loaded Home and records its mount and data settling. */
 const measureRouteOpen = Effect.fn("measure.routeOpen")(function* (
   options: Options,
   route: string,
   run: number,
 ) {
+  // A link to an already-open screen only refocuses it, so each run starts from a reload.
+  yield* Effect.scoped(
+    Effect.flatMap(connectInspector(options.metro), (evaluate) =>
+      evaluate("__t3RenderCounterReload()"),
+    ),
+  );
+  yield* Effect.sleep("15 seconds");
   const evaluate = yield* connectInspector(options.metro);
-  const open = (path: string) =>
-    evaluate(
-      `__t3RenderCounterOpen(${encodeJson(`${options.scheme}://${path.replace(/^\//, "")}`)})`,
-    );
-  // Each run mounts the screen fresh rather than refocusing the previous one.
-  yield* open("");
-  yield* Effect.sleep("3 seconds");
   yield* evaluate("__t3RenderCounterStart()");
-  yield* open(route);
+  yield* evaluate(
+    `__t3RenderCounterOpen(${encodeJson(`${options.scheme}://${route.replace(/^\//, "")}`)})`,
+  );
   yield* Effect.sleep(`${options.windowSeconds} seconds`);
   const report = yield* decodeReport(yield* evaluate("JSON.stringify(__t3RenderCounterStop())"));
   if (report.commits === 0)
