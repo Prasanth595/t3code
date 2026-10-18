@@ -188,6 +188,11 @@ export function ghosttyKeyForCode(code: string): number {
   return codeToGhosttyKey.get(code) ?? 0;
 }
 
+export function ghosttyKeyForEvent(event: Pick<KeyboardEvent, "code" | "key">): number {
+  // Android browsers can omit the physical code for keys such as Backspace.
+  return ghosttyKeyForCode(event.code) || ghosttyKeyForCode(event.key);
+}
+
 export interface GhosttyKeyboardLayoutMap {
   get(code: string): string | undefined;
 }
@@ -231,6 +236,15 @@ export function loadGhosttyKeyboardLayoutMap(): Promise<GhosttyKeyboardLayoutMap
   const promise = keyboard?.getLayoutMap().catch(() => undefined) ?? Promise.resolve(undefined);
   keyboardLayoutMapPromise = promise;
   return promise;
+}
+
+// Browsers do not expose consumed modifiers; treat Shift as consumed for
+// unchorded character input.
+export function ghosttyConsumedMods(
+  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey" | "shiftKey">,
+): number {
+  if (!event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return 0;
+  return [...event.key].length === 1 ? 1 : 0;
 }
 
 export function ghosttyUnshiftedCodepoint(
