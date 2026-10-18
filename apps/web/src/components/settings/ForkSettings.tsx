@@ -21,6 +21,7 @@ import { InstalledAppSettingsRow } from "./InstalledAppSettingsRow";
 import { KeybindingSyncSettingsRow } from "./KeybindingSyncSettingsRow";
 import { MachineMapSettingsRows } from "./MachinesSettings";
 import { PreferOriginRemoteSettingsRow } from "./PreferOriginRemoteSettings";
+import { PreviewLocalServerGroupsSettingsRow } from "./PreviewLocalServerGroupsSettingsRow";
 import { PullRequestFilterChipsSettingsRow } from "./PullRequestFilterChipsSettingsRow";
 import { PullRequestWatchSettingsRows } from "./PullRequestWatchSettings";
 import { RecoverInterruptedTurnsSettings } from "./RecoverInterruptedTurnsSettings";
@@ -80,6 +81,7 @@ const FORK_SETTING_ROWS: Readonly<Record<ForkSettingRowId, ComponentType>> = {
   "thread-card-layout": ThreadCardLayoutSettingsRows,
   "thread-link-chips": ThreadLinkChipsSettingsRow,
   "thread-links-open-desktop-app": ThreadLinksOpenDesktopAppSettingsRow,
+  "preview-local-server-groups": PreviewLocalServerGroupsSettingsRow,
   "machine-map": MachineMapSettingsRows,
   "keybinding-sync": KeybindingSyncSettingsRow,
 };

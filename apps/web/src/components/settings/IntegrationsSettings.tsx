@@ -114,6 +114,7 @@ import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { BrowserImportWizard, type WizardTarget } from "./BrowserImportWizard";
 import type { ImportOutcome } from "./browserImportWizard.logic";
+import { PreviewLocalServerGroupsSettingsRow } from "./PreviewLocalServerGroupsSettingsRow";
 
 const FILL_VALUE = "fill";
 const RESPONSIVE_VALUE = "responsive";
@@ -1498,6 +1499,7 @@ export function IntegrationsSettingsPanel() {
           previewDefaults
         )}
         <PullRequestLinksOpenInAppSetting />
+        <PreviewLocalServerGroupsSettingsRow />
       </SettingsSection>
       <DeviceIntegrationSettings />
     </SettingsPageContainer>

@@ -223,6 +223,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.webPushPublicKey]: "webPush",
   [WS_METHODS.webPushSubscribe]: "webPush",
   [WS_METHODS.webPushTest]: "webPush",
+  [WS_METHODS.forkPreviewSubscribeLocalListeners]: "preview",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

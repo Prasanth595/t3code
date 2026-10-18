@@ -101,6 +101,7 @@ const FORK_SETTING_GROUPS = [
       { ids: ["thread-card-layout"] },
       { ids: ["thread-link-chips"] },
       { ids: ["thread-links-open-desktop-app"] },
+      { ids: ["preview-local-server-groups"] },
     ],
   },
 ] as const satisfies ReadonlyArray<{

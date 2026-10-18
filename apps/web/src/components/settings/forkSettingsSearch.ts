@@ -274,3 +274,13 @@ export const MACHINE_MAP_ITEMS = [
     environmentOnly: true,
   },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
+
+export const PREVIEW_ITEMS = [
+  {
+    id: "preview-local-server-groups",
+    title: "All local servers in the browser",
+    to: "/settings/integrations",
+    searchTerms: ["preview local servers ports listeners dev server worktree project localhost"],
+    environmentOnly: true,
+  },
+] as const satisfies ReadonlyArray<SettingsSearchItem>;

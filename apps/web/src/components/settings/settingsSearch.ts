@@ -770,6 +770,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/integrations",
     searchTerms: ["agent opens browser device simulator pop into view hide"],
   },
+  ...ForkSearch.PREVIEW_ITEMS,
   {
     id: "automatic-pull",
     title: "Automatically pull",

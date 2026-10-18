@@ -21,6 +21,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import { FetchHttpClient, HttpClient } from "effect/http";
 
+import * as ForkPreviewServerGroups from "../fork/PreviewServerGroups.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
 export class PortDiscovery extends Context.Service<
@@ -171,6 +172,7 @@ const projectWebProbeSnapshot = (
 const parseLsofOutput = (
   raw: string,
   terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner> = new Map(),
+  forkSharedPorts?: Set<number>,
 ): ReadonlyArray<DiscoveredLocalServer> => {
   const seen = new Map<string, DiscoveredLocalServer>();
   let pid: number | null = null;
@@ -198,6 +200,7 @@ const parseLsofOutput = (
       const terminal = pid === null ? null : (terminalByProcessId.get(pid) ?? null);
       const existing = seen.get(key);
       if (existing) {
+        if (existing.pid !== pid) forkSharedPorts?.add(portMatch);
         if (terminal === null) seen.set(key, { ...existing, terminal: null });
         continue;
       }
@@ -391,6 +394,8 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     ReadonlyMap<string, { readonly pid: number; readonly processName: string | null }>
   >(new Map());
   const socketOwnerMissesRef = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
+  // Fork: the groups of the preview list. Off, it changes nothing.
+  const forkServerGroups = yield* ForkPreviewServerGroups.scannerHook;
 
   const findSocketOwners = Effect.fn("PortDiscovery.findSocketOwners")(function* (
     inodes: ReadonlySet<string>,
@@ -429,6 +434,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
 
   const scanProcListeners = Effect.fn("PortDiscovery.scanProcListeners")(function* (
     terminalByProcessId: ReadonlyMap<number, TerminalProcessOwner>,
+    forkSharedPorts?: Set<number>,
   ) {
     if (hostPlatform !== "linux") return null;
     const tables = yield* Effect.forEach(["/proc/net/tcp", "/proc/net/tcp6"], (path) =>
@@ -462,6 +468,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       const owner = owners.get(inode) ?? null;
       const terminal = owner === null ? null : (terminalByProcessId.get(owner.pid) ?? null);
       const existing = seen.get(port);
+      if (existing && existing.pid !== (owner?.pid ?? null)) forkSharedPorts?.add(port);
       if (existing && (existing.pid !== null || owner === null)) {
         if (terminal === null) seen.set(port, { ...existing, terminal: null });
         continue;
@@ -547,6 +554,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   const probeWebServers = Effect.fn("PortDiscovery.probeWebServers")(function* (
     servers: ReadonlyArray<DiscoveredLocalServer>,
     configuredUrls: ReadonlyArray<string>,
+    forkSharedPorts: ReadonlySet<number> = new Set(),
   ) {
     const nowMillis = yield* Clock.currentTimeMillis;
     const cached = yield* Ref.get(webProbeCacheRef);
@@ -621,6 +629,12 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       else configured.set(group.configuredKey, server);
     }
     yield* Ref.set(webProbeCacheRef, nextCache);
+    yield* forkServerGroups.observe({
+      listeners: servers,
+      shown: discovered,
+      sharedPorts: forkSharedPorts,
+      probe: probeWebUrl,
+    });
     return { discovered, configured } satisfies WebProbeSnapshot;
   });
 
@@ -693,7 +707,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       }
     }
     if (hostPlatform === "win32") {
-      if (terminalByProcessId.size === 0 && configuredUrls.length === 0) {
+      if (
+        terminalByProcessId.size === 0 &&
+        configuredUrls.length === 0 &&
+        !(yield* forkServerGroups.active)
+      ) {
         return { discovered: [], configured: new Map() } satisfies WebProbeSnapshot;
       }
       const recoverWindowsProbeFailure = recoverProcessProbeFailure("windows-listeners");
@@ -727,9 +745,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
       );
     }
     const recoverLsofProbeFailure = recoverProcessProbeFailure("lsof");
+    // Fork: ports with more than one owner process (fork/PreviewServerGroups.ts).
+    const forkSharedPorts = new Set<number>();
     if (yield* Ref.get(lsofMissingRef)) {
-      const fromProc = yield* scanProcListeners(terminalByProcessId);
-      return yield* probeWebServers(fromProc ?? [], configuredUrls);
+      const fromProc = yield* scanProcListeners(terminalByProcessId, forkSharedPorts);
+      return yield* probeWebServers(fromProc ?? [], configuredUrls, forkSharedPorts);
     }
     const lsofResult = yield* processRunner
       .run({
@@ -740,7 +760,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         maxOutputBytes: 1024 * 1024,
       })
       .pipe(
-        Effect.map((result) => parseLsofOutput(result.stdout, terminalByProcessId)),
+        Effect.map((result) =>
+          parseLsofOutput(result.stdout, terminalByProcessId, forkSharedPorts),
+        ),
         Effect.catchTags({
           ProcessSpawnError: (error) =>
             (isCommandNotFound(error) ? Ref.set(lsofMissingRef, true) : Effect.void).pipe(
@@ -752,9 +774,11 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
           ProcessTimeoutError: recoverLsofProbeFailure,
         }),
       );
-    if (lsofResult !== null) return yield* probeWebServers(lsofResult, configuredUrls);
-    const fromProc = yield* scanProcListeners(terminalByProcessId);
-    return yield* probeWebServers(fromProc ?? [], configuredUrls);
+    if (lsofResult !== null) {
+      return yield* probeWebServers(lsofResult, configuredUrls, forkSharedPorts);
+    }
+    const fromProc = yield* scanProcListeners(terminalByProcessId, forkSharedPorts);
+    return yield* probeWebServers(fromProc ?? [], configuredUrls, forkSharedPorts);
   });
 
   const scanSnapshot = Effect.fn("PortDiscovery.scanSnapshot")(

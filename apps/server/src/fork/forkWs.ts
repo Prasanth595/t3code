@@ -11,15 +11,18 @@ import {
 import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import { HttpServerResponse } from "effect/http";
 
 import type * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import type * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
+import * as PortScanner from "../preview/PortScanner.ts";
 import * as ForkChangelog from "./ForkChangelog.ts";
 import { requireLocalDesktop } from "./machineMap/browserAccess.ts";
 import * as MachineMap from "./machineMap/MachineMap.ts";
 import { isLocalDesktopSubject, isMachineSubject } from "./machineMap/machineAccess.ts";
 import * as MachineMapState from "./machineMap/MachineMapState.ts";
+import * as PreviewServerGroups from "./PreviewServerGroups.ts";
 import * as WebPush from "./webPush/WebPush.ts";
 
 /** The fork RPC tags, which the upstream handler object in `ws.ts` omits. */
@@ -32,6 +35,8 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
       const forkChangelog = yield* ForkChangelog.ForkChangelog;
       const machineMap = yield* MachineMap.MachineMap;
       const webPush = yield* WebPush.WebPush;
+      const portDiscovery = yield* PortScanner.PortDiscovery;
+      const previewServerGroups = yield* PreviewServerGroups.PreviewServerGroups;
       // Only the local desktop app gets the machine map token (MM-306, MM-1401).
       const machineMapClient = { desktop: isLocalDesktopSubject(currentSession.subject) };
       return ForkWsRpcGroup.of({
@@ -64,6 +69,9 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
           webPush.publicKey.pipe(Effect.map((publicKey) => ({ publicKey }))),
         [FORK_WS_METHODS.webPushSubscribe]: (input) => webPush.subscribe(input).pipe(Effect.as({})),
         [FORK_WS_METHODS.webPushTest]: (input) => webPush.test(input.endpoint),
+        // The scanner polls only while retained, as for `subscribeDiscoveredLocalServers`.
+        [FORK_WS_METHODS.forkPreviewSubscribeLocalListeners]: (_input) =>
+          Stream.unwrap(portDiscovery.retain.pipe(Effect.as(previewServerGroups.listeners))),
       });
     }),
   );
