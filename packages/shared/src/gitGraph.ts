@@ -45,3 +45,27 @@ export function layoutGitGraph(commits: ReadonlyArray<GitHistoryCommit>) {
   });
   return { rows, width };
 }
+
+/**
+ * Commits only the head branch contributes: ancestors of `headSha` that `baseSha` reaches without
+ * passing through the head, so a base that already merged the head still leaves its commits.
+ */
+export function branchOnlyShas(
+  commits: ReadonlyArray<GitHistoryCommit>,
+  headSha: string | null,
+  baseSha: string | null,
+): ReadonlySet<string> {
+  const parents = new Map(commits.map((commit) => [commit.sha, commit.parents]));
+  const walk = (from: string | null, stop: string | null) => {
+    const seen = new Set<string>();
+    const queue = from === null ? [] : [from];
+    for (let sha = queue.pop(); sha !== undefined; sha = queue.pop()) {
+      if (sha === stop || seen.has(sha)) continue;
+      seen.add(sha);
+      queue.push(...(parents.get(sha) ?? []));
+    }
+    return seen;
+  };
+  const base = walk(baseSha, headSha);
+  return new Set([...walk(headSha, null)].filter((sha) => !base.has(sha)));
+}
