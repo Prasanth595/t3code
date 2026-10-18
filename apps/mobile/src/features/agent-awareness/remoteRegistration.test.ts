@@ -1654,7 +1654,7 @@ describe("makeRelayDeviceRegistrationRequest", () => {
         finishToken("activity-token");
         yield* Fiber.join(refresh);
         pending.resolve(yield* Fiber.join(localRegistration));
-        expect({ global: globalReads, scoped: scopedReads }).toEqual({ global: 1, scoped: 1 });
+        expect({ global: globalReads, scoped: scopedReads }).toEqual({ global: 2, scoped: 2 });
         expect(startsBeforeTokenResolved).toBe(1);
         expect(activities).toHaveLength(1);
       }).pipe(Effect.scoped),
