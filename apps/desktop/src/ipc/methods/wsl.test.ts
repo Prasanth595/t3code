@@ -120,6 +120,34 @@ describe("WSL IPC", () => {
     ),
   );
 
+  it.effect("does not enumerate distros until the WSL backend is enabled", () => {
+    const distros = [{ name: "Ubuntu", isDefault: true, version: 2 as const }];
+    const layer = Layer.mergeAll(
+      DesktopAppSettings.layerTest(DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS),
+      DesktopWslEnvironment.layerTest({ isAvailable: true, distros }),
+      layerWslBackend(),
+      layerLifecycle([]),
+      layerUnusedLifecycleRuntime,
+    );
+
+    return Effect.gen(function* () {
+      const wsl = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+      const state = yield* getWslState.handler(undefined).pipe(
+        Effect.provideService(DesktopWslEnvironment.DesktopWslEnvironment, {
+          ...wsl,
+          listDistros: Effect.die("must not enumerate distros"),
+        }),
+        Effect.flatMap(decodeWslState),
+      );
+      assert.equal(state.enabled, false);
+      assert.equal(state.available, true);
+      assert.deepEqual(state.distros, []);
+
+      const enabledState = yield* invokeSetWslBackendEnabled(true);
+      assert.deepEqual(enabledState.distros, distros);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("stages dual-backend preferences before enabling without relaunching", () => {
     const relaunchReasons: Array<string> = [];
     const layer = Layer.mergeAll(
