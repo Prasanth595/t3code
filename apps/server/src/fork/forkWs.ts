@@ -20,6 +20,7 @@ import { requireLocalDesktop } from "./machineMap/browserAccess.ts";
 import * as MachineMap from "./machineMap/MachineMap.ts";
 import { isLocalDesktopSubject, isMachineSubject } from "./machineMap/machineAccess.ts";
 import * as MachineMapState from "./machineMap/MachineMapState.ts";
+import * as VoiceTranscription from "./voiceInput/VoiceTranscription.ts";
 import * as WebPush from "./webPush/WebPush.ts";
 
 /** The fork RPC tags, which the upstream handler object in `ws.ts` omits. */
@@ -32,6 +33,7 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
       const forkChangelog = yield* ForkChangelog.ForkChangelog;
       const machineMap = yield* MachineMap.MachineMap;
       const webPush = yield* WebPush.WebPush;
+      const voiceTranscription = yield* VoiceTranscription.VoiceTranscription;
       // Only the local desktop app gets the machine map token (MM-306, MM-1401).
       const machineMapClient = { desktop: isLocalDesktopSubject(currentSession.subject) };
       return ForkWsRpcGroup.of({
@@ -64,6 +66,7 @@ export const layerForkWsRpc = (currentSession: EnvironmentAuth.AuthenticatedSess
           webPush.publicKey.pipe(Effect.map((publicKey) => ({ publicKey }))),
         [FORK_WS_METHODS.webPushSubscribe]: (input) => webPush.subscribe(input).pipe(Effect.as({})),
         [FORK_WS_METHODS.webPushTest]: (input) => webPush.test(input.endpoint),
+        [FORK_WS_METHODS.voiceInputTranscribe]: (input) => voiceTranscription.transcribe(input),
       });
     }),
   );

@@ -36,6 +36,7 @@ import {
   ThreadLinksOpenDesktopAppSettingsRow,
 } from "./ThreadLinkChipsSettings";
 import { TunnelPairingSettingsRow } from "./TunnelPairingSettingsRow";
+import { VoiceInputSettingsRow } from "./VoiceInputSettings";
 import { WorktreePathTemplateRow } from "./WorktreePathTemplateRow";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
 import { forkSettingGroups, type ForkSettingRowId } from "./forkSettingsCatalog";
@@ -62,6 +63,7 @@ const FORK_SETTING_ROWS: Readonly<Record<ForkSettingRowId, ComponentType>> = {
   "check-newer-before-update-install": CheckNewerBeforeUpdateInstallSettingsRow,
   "recover-interrupted-turns": RecoverInterruptedTurnsSettings,
   "background-work-details": BackgroundWorkDetailsSettingsRow,
+  "voice-input-openai-key": VoiceInputSettingsRow,
   "prefer-origin-remote": PreferOriginRemoteSettingsRow,
   "pull-request-watch-roles": PullRequestWatchSettingsRows,
   "agent-session-import-window": AgentSessionImportSettingsRows,

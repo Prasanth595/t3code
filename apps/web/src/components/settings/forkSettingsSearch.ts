@@ -77,6 +77,18 @@ export const NOTIFICATION_ITEMS = [
   },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
+export const VOICE_INPUT_ITEMS = [
+  {
+    id: "voice-input-openai-key",
+    title: "Voice input",
+    to: "/settings/general",
+    searchTerms: [
+      "voice dictation speech to text microphone mic record transcribe openai api key whisper",
+    ],
+    environmentOnly: true,
+  },
+] as const satisfies ReadonlyArray<SettingsSearchItem>;
+
 export const RECOVER_INTERRUPTED_TURNS_ITEMS = [
   {
     id: "recover-interrupted-turns",

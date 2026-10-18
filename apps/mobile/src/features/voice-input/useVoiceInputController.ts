@@ -4,8 +4,10 @@ import {
   voiceInputBlocksSubmission,
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 import type { ComposerEditorSelection } from "../../components/ComposerEditor";
+import { useEnvironmentServerConfig } from "../../state/entities";
 import { useGlobalVoiceInput } from "./VoiceInputProvider";
 import { createVoiceInputTarget } from "./voiceInputSession";
 
@@ -14,6 +16,8 @@ const IDLE_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: n
 export function useVoiceInputController(input: {
   readonly ownerKey: string | null;
   readonly label: string;
+  /** Transcribes when this device cannot, if its settings hold an OpenAI key. */
+  readonly environmentId: EnvironmentId | null;
   readonly readDraftMessage: () => string | null;
   readonly subscribeToDraftChanges: (onChange: () => void) => () => void;
   readonly selection: ComposerEditorSelection;
@@ -59,12 +63,18 @@ export function useVoiceInputController(input: {
         captured.subscribeToDraftChanges,
       ),
       label: captured.label,
+      environmentId: captured.environmentId,
     });
   }, [session]);
+  const environmentTranscribes =
+    (useEnvironmentServerConfig(input.environmentId)?.settings.voiceTranscriptionOpenAiApiKey ??
+      "") !== "";
   const state = global.ownerKey === input.ownerKey ? global.state : IDLE_STATE;
   const isBusy = voiceInputBlocksSubmission(state);
   return {
-    isAvailable: global.isAvailable && (!global.isBusy || global.ownerKey === input.ownerKey),
+    isAvailable:
+      (global.isAvailable || environmentTranscribes) &&
+      (!global.isBusy || global.ownerKey === input.ownerKey),
     state,
     audioLevels: global.audioLevels,
     elapsedSeconds: global.elapsedSeconds,

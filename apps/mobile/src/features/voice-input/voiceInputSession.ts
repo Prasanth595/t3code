@@ -4,10 +4,13 @@ import {
   type VoiceDraftSnapshot,
   type VoiceInputControllerDependencies,
 } from "@t3tools/client-runtime/voice-input";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 export type VoiceInputTarget = {
   readonly ownerKey: string;
   readonly label?: string;
+  /** The environment that transcribes when this device cannot. */
+  readonly environmentId?: EnvironmentId | null;
   readonly readDraft: () => VoiceDraftSnapshot | null;
   readonly commitDraft: VoiceInputControllerDependencies["commitDraft"];
   readonly subscribe: () => () => void;
@@ -68,6 +71,10 @@ export class VoiceInputSession {
 
   get label(): string | null {
     return this.target?.label ?? null;
+  }
+
+  get environmentId(): EnvironmentId | null {
+    return this.target?.environmentId ?? null;
   }
 
   cancel(ownerKey: string | null): void {

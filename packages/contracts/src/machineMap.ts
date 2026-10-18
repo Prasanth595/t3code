@@ -179,6 +179,7 @@ const MACHINE_LOCAL_SETTINGS: Readonly<Record<SettingScope, ReadonlySet<string>>
     "providerInstances",
     "sourceControlHosts",
     "usageLimitSources",
+    "voiceTranscriptionOpenAiApiKey",
     // Paths on the file system of this machine.
     "worktreesDirectory",
     "previousWorktreesDirectories",

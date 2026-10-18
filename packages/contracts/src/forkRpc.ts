@@ -7,6 +7,7 @@ import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import {
   AuthEnvironmentMaintainScope,
+  AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
   AuthSourceControlWriteScope,
@@ -36,6 +37,11 @@ import {
   WebPushSubscribeInput,
   WebPushTestResult,
 } from "./webPush.ts";
+import {
+  VoiceTranscribeInput,
+  VoiceTranscribeResult,
+  VoiceTranscriptionRequestError,
+} from "./voiceInput.ts";
 
 export const FORK_WS_METHODS = {
   // Fork changelog (fork feature)
@@ -57,6 +63,9 @@ export const FORK_WS_METHODS = {
   webPushPublicKey: "webPush.publicKey",
   webPushSubscribe: "webPush.subscribe",
   webPushTest: "webPush.test",
+
+  // Fork: environment-backed voice input (voiceInput.ts)
+  voiceInputTranscribe: "voiceInput.transcribe",
 } as const;
 
 const forkChangelogError = Schema.Union([ForkChangelogError, EnvironmentAuthorizationError]);
@@ -144,6 +153,13 @@ const WsWebPushTestRpc = Rpc.make(FORK_WS_METHODS.webPushTest, {
   error: webPushError,
 });
 
+/** Fork: transcribes a pending file attachment, then deletes it. */
+const WsVoiceInputTranscribeRpc = Rpc.make(FORK_WS_METHODS.voiceInputTranscribe, {
+  payload: VoiceTranscribeInput,
+  success: VoiceTranscribeResult,
+  error: Schema.Union([VoiceTranscriptionRequestError, EnvironmentAuthorizationError]),
+});
+
 export const ForkWsRpcGroup = RpcGroup.make(
   WsForkChangelogListReleasesRpc,
   WsForkChangelogReleaseChangesRpc,
@@ -159,6 +175,7 @@ export const ForkWsRpcGroup = RpcGroup.make(
   WsWebPushPublicKeyRpc,
   WsWebPushSubscribeRpc,
   WsWebPushTestRpc,
+  WsVoiceInputTranscribeRpc,
 );
 
 /** The fork part of `CLIENT_GUARDED_RPC_SCOPES`. */
@@ -172,6 +189,8 @@ export const FORK_CLIENT_GUARDED_RPC_SCOPES = {
   [FORK_WS_METHODS.machineMapShareSettings]: AuthSettingsWriteScope,
   // Fork: the local desktop app reports desktop command results and its waiting update.
   [FORK_WS_METHODS.machineMapReportDesktop]: AuthEnvironmentMaintainScope,
+  // Fork: spends the environment's OpenAI key, the grant that uploading attachments needs.
+  [FORK_WS_METHODS.voiceInputTranscribe]: AuthOrchestrationOperateScope,
 } as const;
 
 /** The fork RPCs that the server's `RPC_REQUIRED_SCOPES` adds to `CLIENT_GUARDED_RPC_SCOPES`. */

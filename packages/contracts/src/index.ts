@@ -72,5 +72,6 @@ export * from "./sidebarGroups.ts";
 export * from "./machineMap.ts";
 export * from "./machineMapClient.ts";
 export * from "./webPush.ts";
+export * from "./voiceInput.ts";
 export * from "./machineMapResources.ts";
 export * from "./slotLayout.ts";

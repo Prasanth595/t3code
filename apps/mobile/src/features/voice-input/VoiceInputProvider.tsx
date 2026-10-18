@@ -31,6 +31,7 @@ import {
 } from "../../lib/microphonePriority";
 import { getLocalVoiceTranscriber } from "../../native/voiceTranscription";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { createMobileVoiceTranscriber, environmentTranscribesVoice } from "../../state/voiceInput";
 import { getNativeShowcaseScene } from "../showcase/nativeShowcaseScene";
 import {
   VOICE_RECORDING_LIMIT_SECONDS,
@@ -153,7 +154,14 @@ function useVoiceInputRuntime() {
     recorderRef.current = recorder;
     sessionRef.current = new VoiceInputSession({
       recorder,
-      getTranscriber: getLocalVoiceTranscriber,
+      getTranscriber: () => {
+        const local = getLocalVoiceTranscriber();
+        if (local) return local;
+        const environmentId = sessionRef.current?.environmentId ?? null;
+        return environmentId !== null && environmentTranscribesVoice(environmentId)
+          ? createMobileVoiceTranscriber(environmentId)
+          : null;
+      },
       requestPermission: async () => {
         const permission = await requestRecordingPermissionsAsync();
         return { granted: permission.granted, canAskAgain: permission.canAskAgain };
@@ -249,7 +257,10 @@ function useVoiceInputRuntime() {
   const cancel = useCallback(() => controller.cancel(), [controller]);
 
   return {
-    isAvailable: getLocalVoiceTranscriber() !== null || getNativeShowcaseScene() !== null,
+    isAvailable:
+      getLocalVoiceTranscriber() !== null ||
+      getNativeShowcaseScene() !== null ||
+      (session.environmentId !== null && environmentTranscribesVoice(session.environmentId)),
     state,
     audioLevels,
     elapsedSeconds,
