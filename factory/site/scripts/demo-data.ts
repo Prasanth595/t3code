@@ -211,7 +211,7 @@ const writeRun = (factoryDir: string, run: DemoRun, nowMs: number): number => {
       "worktree-removed",
     );
   const passGate = (attempt: number) => {
-    step(15_000, `gate-passed ${head} 1`, "gate", "gate-passed", { attempt });
+    step(15_000, `gate-passed ${head} ${GATE.length}`, "gate", "gate-passed", { attempt });
     removeWorktree("gate");
     step(3_000, "gate-results-posted", "gate", "gate-results-posted");
     state(4_000, { from: "building", to: "pr-open" }, "gate", "gate-passed");
@@ -289,6 +289,8 @@ const writeRun = (factoryDir: string, run: DemoRun, nowMs: number): number => {
           at += 18 * MINUTE;
         }
       }
+      // As the factory ends a stuck run: the session's worktree goes first.
+      removeWorktree("gate");
       write(
         5_000,
         {
@@ -299,8 +301,7 @@ const writeRun = (factoryDir: string, run: DemoRun, nowMs: number): number => {
         "gate-failed",
       );
       state(4_000, { from: "building", to: "stuck" }, "gate", "gate-failed");
-      removeWorktree("gate");
-      ledger.finish("stuck", null, prUrl, { step: "gate", reason: "gate-failed" });
+      ledger.finish("stuck", null, null, { step: "gate", reason: "gate-failed" });
       break;
     case "merged":
       write(

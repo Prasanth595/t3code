@@ -97,35 +97,57 @@ const serverEnv = (ghConfigDir: string): NodeJS.ProcessEnv => {
 };
 
 interface DevServer {
-  readonly child: NodeChildProcess.ChildProcess;
   readonly webOrigin: string;
   readonly pairingUrl: string;
 }
 
-/** Starts `vp run dev` on `home` and waits for its web port and pairing URL. */
-const startDevServer = (home: string, ghConfigDir: string, log: string): Promise<DevServer> =>
+/**
+ * Starts `vp run dev` on `home`, in its own process group so the stop reaches Vite and the server
+ * under it by this pid. Its output goes to `log`.
+ */
+const spawnDevServer = (
+  home: string,
+  ghConfigDir: string,
+  log: string,
+): NodeChildProcess.ChildProcess => {
+  const child = NodeChildProcess.spawn("vp", ["run", "dev", "--home-dir", home], {
+    cwd: REPO_ROOT,
+    env: serverEnv(ghConfigDir),
+    detached: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const output = NodeFS.openSync(log, "a");
+  const write = (chunk: Buffer) => NodeFS.writeSync(output, chunk);
+  child.stdout!.on("data", write);
+  child.stderr!.on("data", write);
+  child.once("close", () => NodeFS.closeSync(output));
+  return child;
+};
+
+/** Waits for the dev server's web port and pairing URL. */
+const devServerReady = (child: NodeChildProcess.ChildProcess, log: string): Promise<DevServer> =>
   new Promise((resolve, reject) => {
-    const child = NodeChildProcess.spawn("vp", ["run", "dev", "--home-dir", home], {
-      cwd: REPO_ROOT,
-      env: serverEnv(ghConfigDir),
-      // Its own process group, so the stop reaches Vite and the server under it by this pid.
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    const output = NodeFS.openSync(log, "a");
     let webPort: string | null = null;
     let pairing: string | null = null;
     let buffer = "";
+    const done = () => {
+      clearTimeout(timer);
+      child.stdout!.off("data", onData);
+      child.stderr!.off("data", onData);
+      child.off("error", fail);
+      child.off("exit", exited);
+    };
+    const fail = (error: Error) => {
+      done();
+      reject(error);
+    };
+    const exited = (code: number | null, signal: NodeJS.Signals | null) =>
+      fail(new Error(`the dev server exited (${signal ?? code}) before it was ready; see ${log}`));
     const timer = setTimeout(
       () => fail(new Error(`the dev server did not start in time; see ${log}`)),
       STARTUP_TIMEOUT_MS,
     );
-    const fail = (error: Error) => {
-      clearTimeout(timer);
-      reject(Object.assign(error, { child }));
-    };
     const onData = (chunk: Buffer) => {
-      NodeFS.writeSync(output, chunk);
       // Pretty logs colour their fields; the URL and port are read from the plain text.
       buffer += NodeUtil.stripVTControlCharacters(chunk.toString("utf8"));
       let newline: number;
@@ -136,43 +158,57 @@ const startDevServer = (home: string, ghConfigDir: string, log: string): Promise
         pairing ??= /pairingUrl[:=]\s*"?(https?:\/\/[^\s"]+)/.exec(line)?.[1] ?? null;
       }
       if (webPort !== null && pairing !== null) {
-        clearTimeout(timer);
+        done();
         const webOrigin = `http://localhost:${webPort}`;
         const url = new URL(pairing);
-        resolve({
-          child,
-          webOrigin,
-          pairingUrl: `${webOrigin}${url.pathname}${url.search}${url.hash}`,
-        });
+        resolve({ webOrigin, pairingUrl: `${webOrigin}${url.pathname}${url.search}${url.hash}` });
       }
     };
     child.stdout!.on("data", onData);
     child.stderr!.on("data", onData);
     child.once("error", fail);
-    child.once("exit", (code, signal) =>
-      fail(new Error(`the dev server exited (${signal ?? code}) before it was ready; see ${log}`)),
-    );
+    child.once("exit", exited);
   });
 
-/** Stops the process group the script spawned, by its pid, and waits for it to go. */
+/** Whether any process is left in the group `pid` leads. */
+const groupAlive = (pid: number): boolean => {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/** Polls until the group is gone or `ms` pass; answers whether it is gone. */
+const groupGone = async (pid: number, ms: number): Promise<boolean> => {
+  const deadline = Date.now() + ms;
+  while (groupAlive(pid)) {
+    if (Date.now() >= deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return true;
+};
+
+/**
+ * Stops the process group the script spawned, by its pid, and waits until every process in it is
+ * gone, not just `vp`, so nothing is still writing to the home when it is deleted.
+ */
 const stopDevServer = async (child: NodeChildProcess.ChildProcess): Promise<void> => {
-  if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return;
-  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  const pid = child.pid;
+  if (pid === undefined) return;
   const signalGroup = (signal: NodeJS.Signals) => {
     try {
-      process.kill(-child.pid!, signal);
+      process.kill(-pid, signal);
     } catch {
       // The group is already gone.
     }
   };
   signalGroup("SIGTERM");
-  const stopped = await Promise.race([
-    exited.then(() => true),
-    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), STOP_TIMEOUT_MS)),
-  ]);
-  if (!stopped) {
-    signalGroup("SIGKILL");
-    await exited;
+  if (await groupGone(pid, STOP_TIMEOUT_MS)) return;
+  signalGroup("SIGKILL");
+  if (!(await groupGone(pid, STOP_TIMEOUT_MS))) {
+    throw new Error(`the dev server's process group ${pid} would not stop`);
   }
 };
 
@@ -238,28 +274,30 @@ const main = async (): Promise<void> => {
   const log = NodePath.join(home, "dev-server.log");
   let child: NodeChildProcess.ChildProcess | null = null;
   let browser: Browser | null = null;
-  const cleanUp = async () => {
-    await browser?.close().catch(() => undefined);
-    if (child !== null) await stopDevServer(child);
-    NodeFS.rmSync(home, { recursive: true, force: true });
-  };
+  let cleaning: Promise<void> | null = null;
+  const cleanUp = () =>
+    (cleaning ??= (async () => {
+      await browser?.close().catch(() => undefined);
+      if (child !== null) await stopDevServer(child);
+      NodeFS.rmSync(home, { recursive: true, force: true });
+    })());
+  // Repeat signals while the stop runs are ignored, so a second Ctrl-C cannot skip it.
   const interrupted = () => {
     void cleanUp().finally(() => process.exit(130));
   };
-  process.once("SIGINT", interrupted);
-  process.once("SIGTERM", interrupted);
+  process.on("SIGINT", interrupted);
+  process.on("SIGTERM", interrupted);
   try {
     seedDemoHome(home, Date.now());
-    const server = await startDevServer(home, ghConfigDir, log).catch((error) => {
-      child = (error as { child?: NodeChildProcess.ChildProcess }).child ?? null;
-      throw error;
-    });
-    child = server.child;
+    child = spawnDevServer(home, ghConfigDir, log);
+    const server = await devServerReady(child, log);
     browser = await chromium.launch();
     await capture(browser, server);
   } catch (error) {
     if (NodeFS.existsSync(log)) {
-      console.error(`--- dev server output ---\n${NodeFS.readFileSync(log, "utf8").slice(-4000)}`);
+      // The startup pairing URL's token is dead once the server stops, but keep it off screen.
+      const tail = NodeFS.readFileSync(log, "utf8").slice(-4000);
+      console.error(`--- dev server output ---\n${tail.replace(/token=[^\s&"]+/g, "token=…")}`);
     }
     throw error;
   } finally {
