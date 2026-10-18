@@ -48,6 +48,7 @@ import { useAtomRefresh } from "@effect/atom-react";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
 import { type PullRequestDetail, type PullRequestListEntry } from "@t3tools/contracts";
 import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
+import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestStatus } from "./pullRequestStatus";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -427,6 +428,18 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                       icon: "arrow.up.right" as const,
                       onPress: () => void Linking.openURL(pr.url),
                     },
+                    {
+                      accessibilityLabel: "Copy link",
+                      icon: "link" as const,
+                      overflowOnly: true,
+                      onPress: () => copyPullRequestLink(pr),
+                    },
+                    {
+                      accessibilityLabel: "Share…",
+                      icon: "square.and.arrow.up" as const,
+                      overflowOnly: true,
+                      onPress: () => sharePullRequestLink(pr),
+                    },
                   ]
                 : []),
               ...(showsDeleteBranch
@@ -476,6 +489,19 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 onPress={() => void Linking.openURL(pr.url)}
               >
                 <Toolbar.Label>{openOnProviderLabel(pr.provider)}</Toolbar.Label>
+              </Toolbar.MenuAction>
+            ) : null}
+            {pr ? (
+              <Toolbar.MenuAction icon="link" onPress={() => copyPullRequestLink(pr)}>
+                <Toolbar.Label>Copy link</Toolbar.Label>
+              </Toolbar.MenuAction>
+            ) : null}
+            {pr ? (
+              <Toolbar.MenuAction
+                icon="square.and.arrow.up"
+                onPress={() => sharePullRequestLink(pr)}
+              >
+                <Toolbar.Label>Share…</Toolbar.Label>
               </Toolbar.MenuAction>
             ) : null}
             {showsDeleteBranch ? (
