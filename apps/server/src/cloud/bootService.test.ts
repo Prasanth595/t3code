@@ -63,6 +63,23 @@ it("reads the served T3 home back out of a rendered unit or plist", () => {
   expect(BootService.bootServiceBaseDirOf("[Service]\nExecStart=/x\n")).toBeUndefined();
 });
 
+it("pins the listen port and host in the unit and plist only when given", () => {
+  const plan = { ...linuxPlan, port: 3774, host: "100.64.0.1" };
+
+  expect(BootService.renderBootServiceUnit(plan)).toContain("Environment=T3CODE_PORT=3774");
+  expect(BootService.bootServiceListenOf(BootService.renderBootServiceUnit(plan))).toEqual({
+    port: 3774,
+    host: "100.64.0.1",
+  });
+  expect(
+    BootService.bootServiceListenOf(
+      BootService.renderBootServicePlist(plan, { homeDir: "/Users/theo", environmentPath: "" }),
+    ),
+  ).toEqual({ port: 3774, host: "100.64.0.1" });
+  expect(BootService.renderBootServiceUnit(linuxPlan)).not.toContain("T3CODE_PORT");
+  expect(BootService.bootServiceListenOf(BootService.renderBootServiceUnit(linuxPlan))).toEqual({});
+});
+
 it("survives the kernel OOM-killing a greedy agent child", () => {
   const unit = BootService.renderBootServiceUnit(linuxPlan);
 
@@ -481,6 +498,34 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 
       expect((yield* service.status).current).toBe(true);
     }),
+  );
+
+  it.effect.each(["linux", "darwin"] as const)(
+    "keeps the pinned port and host through repairs and updates on %s",
+    (platform) =>
+      Effect.gen(function* () {
+        const { service, makeService } = yield* makeHarness(platform);
+        yield* service.install({ port: 3774, host: "127.0.0.1" });
+        expect(yield* service.status).toMatchObject({
+          current: true,
+          port: 3774,
+          host: "127.0.0.1",
+        });
+
+        yield* service.install();
+        expect(yield* service.status).toMatchObject({ port: 3774, host: "127.0.0.1" });
+
+        const newer = yield* makeService(undefined, "1.2.4");
+        yield* newer.install({ start: false });
+        expect(yield* newer.status).toMatchObject({ port: 3774, host: "127.0.0.1" });
+
+        yield* newer.install({ port: 3775 });
+        expect(yield* newer.status).toMatchObject({
+          current: true,
+          port: 3775,
+          host: "127.0.0.1",
+        });
+      }),
   );
 
   it.effect("install with start=false rewrites the files and marks a restart pending", () =>

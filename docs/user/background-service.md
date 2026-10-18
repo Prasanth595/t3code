@@ -40,6 +40,20 @@ downloaded versions after showing you the list and asking once. Your projects,
 threads, and settings under `~/.t3/userdata` are kept. Pass `--yes` from a
 script.
 
+### Use a fixed port
+
+Unless you choose one, the service takes the first free port from 3773 each
+time it starts. When two users on one machine each run a service, or you want
+a stable address, pin the port, and optionally the interface:
+
+```sh
+t3 service install --port 3774 --host 127.0.0.1
+```
+
+`t3 service status` shows the pinned port and host. Repairs and `t3 update`
+keep them. Run `t3 service install --port <port>` again to change the port, or
+uninstall and reinstall the service to go back to automatic choice.
+
 ## Platform support
 
 Linux needs systemd user services. Setup enables lingering so T3 Code starts at

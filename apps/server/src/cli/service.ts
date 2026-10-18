@@ -2,6 +2,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Terminal from "effect/Terminal";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 import { FetchHttpClient } from "effect/http";
@@ -11,7 +12,7 @@ import * as BootService from "../cloud/bootService.ts";
 import { compareExactServiceVersions } from "../cloud/serviceProtocol.ts";
 import type * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
-import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
+import { hostFlag, portFlag, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
 export const layer = (config: ServerConfig.ServerConfig["Service"]) =>
   BootService.layer({
@@ -31,13 +32,18 @@ export type ServiceReconcileResult =
       readonly plan: BootService.BootServicePlan;
     };
 
-export const reconcileService = Effect.fn("cli.service.reconcile")(function* (options?: {
-  readonly allowDowngrade?: boolean;
-  readonly start?: boolean;
-}) {
+export const reconcileService = Effect.fn("cli.service.reconcile")(function* (
+  options?: BootService.BootServiceListen & {
+    readonly allowDowngrade?: boolean;
+    readonly start?: boolean;
+  },
+) {
   const service = yield* BootService.BootService;
   const status = yield* service.status;
-  if (status.installed && status.current) {
+  const listenChanged =
+    (options?.port !== undefined && options.port !== status.port) ||
+    (options?.host !== undefined && options.host !== status.host);
+  if (status.installed && status.current && !listenChanged) {
     return { changed: false, status } satisfies ServiceReconcileResult;
   }
   if (
@@ -69,6 +75,10 @@ export function formatServiceStatus(
     return "T3 Code service\n  Status: not installed\n  Next: Run `t3 service install`.";
   }
   const installedVersion = status.installedVersion ?? cliVersion;
+  const listen = [
+    ...(status.host === undefined ? [] : [`  Host: ${status.host}`]),
+    ...(status.port === undefined ? [] : [`  Port: ${status.port}`]),
+  ];
   const problems = (status.problems ?? []).map(
     (problem) => `  [${problem}] ${BootService.formatBootServiceProblem(problem)}`,
   );
@@ -80,6 +90,7 @@ export function formatServiceStatus(
     return [
       "T3 Code service",
       `  Status: installed · t3@${installedVersion} (newer than this t3@${cliVersion} CLI)`,
+      ...listen,
       `  Unit: ${status.unitPath}`,
       `  Logs: ${status.logPath}`,
       ...problems,
@@ -89,6 +100,7 @@ export function formatServiceStatus(
   return [
     "T3 Code service",
     `  Status: ${status.current ? `installed · t3@${installedVersion}` : "needs an update or repair"}`,
+    ...listen,
     `  Unit: ${status.unitPath}`,
     `  Logs: ${status.logPath}`,
     ...problems,
@@ -113,13 +125,29 @@ const serviceReconcileFlags = {
   ),
 };
 
-const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pipe(
+const serviceInstallCommand = Command.make("install", {
+  ...serviceReconcileFlags,
+  port: portFlag.pipe(
+    Flag.withDescription(
+      "Port for the service's HTTP/WebSocket server. Kept on later repairs and updates.",
+    ),
+  ),
+  host: hostFlag.pipe(
+    Flag.withDescription(
+      "Host/interface for the service to bind (for example 127.0.0.1 or a Tailnet IP). Kept on later repairs and updates.",
+    ),
+  ),
+}).pipe(
   Command.withDescription("Install T3 Code as a background service for this user."),
   Command.withHandler((flags) =>
     runServiceCommand(
       flags,
       Effect.gen(function* () {
-        const result = yield* reconcileService({ allowDowngrade: flags.allowDowngrade });
+        const result = yield* reconcileService({
+          allowDowngrade: flags.allowDowngrade,
+          port: Option.getOrUndefined(flags.port),
+          host: Option.getOrUndefined(flags.host),
+        });
         if (!result.changed) {
           yield* Console.log(
             `T3 Code service is already installed with t3@${packageJson.version}.`,

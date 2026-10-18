@@ -42,6 +42,12 @@ it("reports the installed service version and host paths", () => {
   );
 });
 
+it("reports a pinned listen address", () => {
+  const output = formatServiceStatus({ ...status, port: 3774, host: "127.0.0.1" }, "0.0.29");
+
+  assert.include(output, "  Host: 127.0.0.1\n  Port: 3774");
+});
+
 it("gives a direct repair command for a stale service", () => {
   assert.include(
     formatServiceStatus({ ...status, current: false }, "0.0.29"),
@@ -199,6 +205,41 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
     }),
   );
 });
+
+it.effect.each([
+  { name: "a new port", flags: ["--port", "3774"], installed: {}, reinstalls: true },
+  { name: "a new host", flags: ["--host", "0.0.0.0"], installed: {}, reinstalls: true },
+  {
+    name: "the installed port",
+    flags: ["--port", "3774"],
+    installed: { port: 3774 },
+    reinstalls: false,
+  },
+])("install with $name on a current service", ({ flags, installed, reinstalls }) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
+    const { service, installOptions } = makeTestService({ ...status, ...installed });
+    vi.spyOn(BootService, "layer").mockReturnValue(Layer.succeed(BootService.BootService, service));
+
+    yield* Command.runWith(serviceCommand, { version: packageJson.version })([
+      "install",
+      "--base-dir",
+      baseDir,
+      ...flags,
+    ]).pipe(
+      Effect.provideService(HostProcess.Environment, {}),
+      Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+    );
+
+    expect(installOptions.length).toBe(reinstalls ? 1 : 0);
+    if (reinstalls) {
+      expect(installOptions[0]).toMatchObject(
+        flags[0] === "--port" ? { port: Number(flags[1]) } : { host: flags[1] },
+      );
+    }
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NetService.layer))),
+);
 
 it.effect.each([
   { name: "a new service", state: { ...status, installed: false, current: false } },

@@ -53,8 +53,8 @@ function quoteSystemdValue(value: string): string {
     : escaped;
 }
 
-export function bootServiceBaseDirOf(contents: string): string | undefined {
-  const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
+function bootServiceEnvOf(contents: string, name: string): string | undefined {
+  const systemd = new RegExp(`^Environment=${name}=(.*)$`, "m").exec(contents)?.[1];
   if (systemd !== undefined) {
     const raw = systemd.trim();
     const unquoted =
@@ -63,14 +63,33 @@ export function bootServiceBaseDirOf(contents: string): string | undefined {
         : raw;
     return unquoted.replaceAll("%%", "%");
   }
-  const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
+  const plist = new RegExp(`<key>${name}</key>\\s*<string>([^<]*)</string>`).exec(contents)?.[1];
   if (plist !== undefined) {
     return plist.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
   }
   return undefined;
 }
 
-export interface BootServicePlan {
+export function bootServiceBaseDirOf(contents: string): string | undefined {
+  return bootServiceEnvOf(contents, "T3CODE_HOME");
+}
+
+/** The server binds what the unit pins; a unit without a pin lets `t3 serve` choose. */
+export interface BootServiceListen {
+  readonly port?: number | undefined;
+  readonly host?: string | undefined;
+}
+
+export function bootServiceListenOf(contents: string): BootServiceListen {
+  const port = Number(bootServiceEnvOf(contents, "T3CODE_PORT"));
+  const host = bootServiceEnvOf(contents, "T3CODE_HOST");
+  return {
+    ...(Number.isInteger(port) && port > 0 ? { port } : {}),
+    ...(host === undefined ? {} : { host }),
+  };
+}
+
+export interface BootServicePlan extends BootServiceListen {
   readonly program: ReadonlyArray<string>;
   readonly baseDir: string;
   readonly logPath: string;
@@ -90,6 +109,8 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "Type=simple",
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
+    ...(plan.port === undefined ? [] : [`Environment=T3CODE_PORT=${plan.port}`]),
+    ...(plan.host === undefined ? [] : [`Environment=T3CODE_HOST=${quoteSystemdValue(plan.host)}`]),
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark an explicit stop before it signals the server.
@@ -155,6 +176,12 @@ export function renderBootServicePlist(
     `    <string>${escapeXmlText(options.environmentPath)}</string>`,
     `    <key>T3CODE_HOME</key>`,
     `    <string>${escapeXmlText(plan.baseDir)}</string>`,
+    ...(plan.port === undefined
+      ? []
+      : [`    <key>T3CODE_PORT</key>`, `    <string>${plan.port}</string>`]),
+    ...(plan.host === undefined
+      ? []
+      : [`    <key>T3CODE_HOST</key>`, `    <string>${escapeXmlText(plan.host)}</string>`]),
     `    <key>${BOOT_SERVICE_UNIT_ENV}</key>`,
     `    <string>${BOOT_SERVICE_PLIST_FILE}</string>`,
     `  </dict>`,
@@ -474,7 +501,7 @@ export type BootServiceError =
   | BootServiceUpdatePendingError
   | BootServiceDowngradeRefusedError;
 
-export interface BootServiceStatus {
+export interface BootServiceStatus extends BootServiceListen {
   readonly supported: boolean;
   readonly installed: boolean;
   readonly current: boolean;
@@ -488,10 +515,16 @@ export interface BootServiceStatus {
 export class BootService extends Context.Service<
   BootService,
   {
-    readonly install: (options?: {
-      readonly allowDowngrade?: boolean;
-      readonly start?: boolean;
-    }) => Effect.Effect<BootServicePlan, BootServiceError>;
+    /**
+     * A port or host left out keeps the one the installed unit pins, so a
+     * repair or `t3 update` does not drop it.
+     */
+    readonly install: (
+      options?: BootServiceListen & {
+        readonly allowDowngrade?: boolean;
+        readonly start?: boolean;
+      },
+    ) => Effect.Effect<BootServicePlan, BootServiceError>;
     /**
      * Only when the unit serves this base dir: the unit name is per user, so
      * another home's service is left alone. Resolves false when nothing was
@@ -589,12 +622,14 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         );
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-  const plan: BootServicePlan = {
+  const planFor = (listen: BootServiceListen): BootServicePlan => ({
     program: [runtimePaths.entryPath, "__service-launcher"],
     baseDir: input.baseDir,
+    ...(listen.port === undefined ? {} : { port: listen.port }),
+    ...(listen.host === undefined ? {} : { host: listen.host }),
     logPath,
     unitPath,
-  };
+  });
 
   const requireManager = Effect.suspend(() =>
     detectedManager === undefined
@@ -707,10 +742,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (remaining[0]) return yield* new BootServicePrerequisiteError({ problem: remaining[0] });
   });
 
-  const install = Effect.fn("cloud.boot_service.install")(function* (options?: {
-    readonly allowDowngrade?: boolean;
-    readonly start?: boolean;
-  }) {
+  const install = Effect.fn("cloud.boot_service.install")(function* (
+    options?: BootServiceListen & {
+      readonly allowDowngrade?: boolean;
+      readonly start?: boolean;
+    },
+  ) {
     const manager = yield* requireManager;
     yield* fs
       .makeDirectory(input.logsDir, { recursive: true })
@@ -775,6 +812,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const installed = yield* fs
       .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+    // An unreadable unit fails the write below, after the restart-pending marker.
+    const installedListen = Option.match(yield* fs.readFileString(unitPath).pipe(Effect.option), {
+      onNone: (): BootServiceListen => ({}),
+      onSome: bootServiceListenOf,
+    });
+    const plan = planFor({
+      port: options?.port ?? installedListen.port,
+      host: options?.host ?? installedListen.host,
+    });
     // With start=false the service keeps running while its files change. The
     // launcher reads the state file once at startup and the unit only matters
     // on the next start, so that is safe as long as the launcher is not in the
@@ -970,6 +1016,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       ? serviceStateActiveVersion(stateText.value)
       : undefined;
     const installedBaseDir = bootServiceBaseDirOf(unit);
+    const listen = bootServiceListenOf(unit);
     const normalizeUnit = (contents: string) =>
       detectedManager.kind === "launchd"
         ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
@@ -982,10 +1029,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       installed: true,
       ...(installedVersion === undefined ? {} : { installedVersion }),
       ...(installedBaseDir === undefined ? {} : { installedBaseDir }),
+      ...listen,
       problems,
       current:
         problems.length === 0 &&
-        normalizeUnit(unit) === normalizeUnit(detectedManager.render(plan)) &&
+        normalizeUnit(unit) === normalizeUnit(detectedManager.render(planFor(listen))) &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&
