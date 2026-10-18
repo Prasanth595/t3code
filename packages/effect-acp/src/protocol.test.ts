@@ -1193,6 +1193,35 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect("fails pending and later requests when input ends before the process exits", () =>
+    Effect.gen(function* () {
+      const { stdio, input, output } = yield* makeInMemoryStdio();
+      const terminated = yield* Deferred.make<AcpError.AcpError>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        terminationError: Effect.never,
+        serverRequestMethods: new Set(),
+        onTermination: (error) => Deferred.succeed(terminated, error).pipe(Effect.asVoid),
+      });
+
+      const pending = yield* transport
+        .request("x/test", {})
+        .pipe(Effect.asVoid, Effect.flip, Effect.forkScoped);
+      yield* Queue.take(output);
+      yield* Queue.end(input);
+
+      const error = yield* TestClock.withLive(
+        Deferred.await(terminated).pipe(Effect.timeout("2 seconds")),
+      );
+      assert.instanceOf(error, AcpError.AcpInputStreamEndedError);
+      assert.strictEqual(yield* Fiber.join(pending), error);
+      assert.strictEqual(
+        yield* transport.request("x/test", {}).pipe(Effect.asVoid, Effect.flip),
+        error,
+      );
+    }),
+  );
+
   it.effect("fails pending extension requests with the propagated exit code", () =>
     Effect.gen(function* () {
       const { stdio, input, output } = yield* makeInMemoryStdio();
