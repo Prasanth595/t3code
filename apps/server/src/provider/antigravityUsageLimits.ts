@@ -151,7 +151,13 @@ function modelWindows(models: typeof Models.Type) {
       );
       if (!window) continue;
       const previous = windows.get(window.id);
-      if (!previous || window.usedPercent > previous.usedPercent) windows.set(window.id, window);
+      if (
+        !previous ||
+        window.usedPercent > previous.usedPercent ||
+        (window.usedPercent === previous.usedPercent && !previous.resetsAt && window.resetsAt)
+      ) {
+        windows.set(window.id, window);
+      }
     }
   }
   return [...windows.values()];
@@ -270,11 +276,23 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     const summary = yield* fetchWindows("retrieveUserQuotaSummary", (response) =>
       decodeSummary(response).pipe(Effect.map(summaryWindows)),
     );
-    const windows = summary.length
-      ? summary
-      : yield* fetchWindows("fetchAvailableModels", (response) =>
-          decodeModels(response).pipe(Effect.map(modelWindows)),
-        );
+    // The summary can omit a family entirely: some accounts get only the shared
+    // Claude & GPT group there, and Gemini's own quota is reported per model.
+    const hasGemini = summary.some((window) => window.id.startsWith("gemini-"));
+    const hasThirdParty = summary.some((window) => window.id.startsWith("3p-"));
+    const fallback =
+      hasGemini && hasThirdParty
+        ? []
+        : yield* fetchWindows("fetchAvailableModels", (response) =>
+            decodeModels(response).pipe(
+              Effect.map((models) =>
+                modelWindows(models).filter((window) =>
+                  window.id.startsWith("gemini-") ? !hasGemini : !hasThirdParty,
+                ),
+              ),
+            ),
+          );
+    const windows = [...summary, ...fallback];
     if (windows.length === 0) {
       return makeUnavailableUsageLimits({
         checkedAt,

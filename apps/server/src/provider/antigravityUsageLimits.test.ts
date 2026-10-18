@@ -208,6 +208,42 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("adds Gemini model quota when the summary only reports the shared group", () =>
+    Effect.gen(function* () {
+      const { probe } = yield* fixture({
+        summary: { groups: [summary.groups[1]] },
+        models: {
+          models: {
+            chat_1: {
+              modelProvider: "MODEL_PROVIDER_GOOGLE",
+              quotaInfo: { remainingFraction: 0.7 },
+            },
+            "gemini-a": {
+              modelProvider: "MODEL_PROVIDER_GOOGLE",
+              quotaInfo: { remainingFraction: 0.7, resetTime: "2026-10-09T16:06:00Z" },
+            },
+            "claude-a": {
+              modelProvider: "MODEL_PROVIDER_ANTHROPIC",
+              quotaInfo: { remainingFraction: 0.1 },
+            },
+          },
+        },
+      });
+      const limits = yield* probe;
+      expect(limits.windows.map((window) => window.id).toSorted()).toEqual([
+        "3p-5h",
+        "3p-weekly",
+        "gemini-quota",
+      ]);
+      const gemini = limits.windows.find((window) => window.id === "gemini-quota");
+      expect(gemini).toMatchObject({
+        label: "Gemini · Reported quota",
+        resetsAt: "2026-10-09T16:06:00.000Z",
+      });
+      expect(gemini?.usedPercent).toBeCloseTo(30);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("skips disabled and missing fractions and clamps valid percentages", () =>
     Effect.gen(function* () {
       const { probe } = yield* fixture({
