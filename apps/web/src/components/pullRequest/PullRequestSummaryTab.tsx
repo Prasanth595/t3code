@@ -56,6 +56,7 @@ import {
   latestPullRequestReviewOutcomes,
   orderPullRequestComments,
   pullRequestFindingKey,
+  pullRequestGraphTarget,
   pullRequestReviewOutcome,
   visibleBody,
   type PullRequestFinding,
@@ -628,6 +629,7 @@ export function PullRequestSummaryTab({
             cwd={graphProject.workspaceRoot}
             headBranch={detail.headBranch}
             baseBranch={detail.baseBranch}
+            target={pullRequestGraphTarget(detail, false)}
           />
         </section>
       ) : null}
