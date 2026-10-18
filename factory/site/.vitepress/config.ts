@@ -3,7 +3,7 @@ import { withMermaid } from "vitepress-plugin-mermaid";
 
 import { writeLlmsFiles } from "./llms.ts";
 
-const SITE_URL = "https://factory.originalsolutions.com.au";
+const SITE_URL = "https://t3code-factory-docs.originalsolutions.com.au";
 const REPO_URL = "https://github.com/original-solutions/t3code-factory";
 const UPSTREAM_DOCS_URL = "https://github.com/pingdotgg/t3code/tree/main/docs/user";
 

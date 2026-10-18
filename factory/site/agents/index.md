@@ -40,4 +40,4 @@ Paths in these pages are the defaults of the LaunchAgent install:
 └── io.github.rawphp.t3fac.logrotate.plist
 ```
 
-The whole site as plain text: [llms.txt](https://factory.originalsolutions.com.au/llms.txt), [llms-full.txt](https://factory.originalsolutions.com.au/llms-full.txt).
+The whole site as plain text: [llms.txt](https://t3code-factory-docs.originalsolutions.com.au/llms.txt), [llms-full.txt](https://t3code-factory-docs.originalsolutions.com.au/llms-full.txt).

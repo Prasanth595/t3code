@@ -1,23 +1,8 @@
 import { act, type ReactElement } from "react";
+import { createRoot } from "react-dom/client";
 import { onTestFinished } from "vite-plus/test";
-import {
-  create,
-  type ReactTestInstance,
-  type ReactTestRenderer,
-  type ReactTestRendererJSON,
-  type ReactTestRendererNode,
-} from "react-test-renderer";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-const flatten = (
-  node: ReactTestRendererNode | ReadonlyArray<ReactTestRendererNode> | null,
-): string => {
-  if (node === null) return "";
-  if (typeof node === "string") return node;
-  if (Array.isArray(node)) return node.map(flatten).join("");
-  return flatten((node as ReactTestRendererJSON).children);
-};
 
 /** Whether one media query, `(min-width: Npx)` and `(max-width: Npx)` joined by `and`, holds. */
 const matchesWidth = (query: string, widthPx: number): boolean =>
@@ -31,73 +16,91 @@ const matchesWidth = (query: string, widthPx: number): boolean =>
 let restoreViewport: (() => void) | null = null;
 
 /**
- * Gives the code under test a `window` whose `matchMedia` answers for a viewport `widthPx` wide,
- * until `restore` (or the next `viewport`, which restores first). Nothing else of a window exists
- * but an event target, which the live-refresh policy listens on.
+ * Makes `window.matchMedia` answer for a viewport `widthPx` wide, until `restore` (or the next
+ * `viewport`, which restores first). The code under test asks `matchMedia` for its breakpoints, and
+ * the browser's own window is whatever size the runner gave it.
  */
 export function viewport(widthPx: number): () => void {
   restoreViewport?.();
-  const hadWindow = Object.prototype.hasOwnProperty.call(globalThis, "window");
-  const previous = (globalThis as { window?: unknown }).window;
-  Object.defineProperty(globalThis, "window", {
+  const own = Object.getOwnPropertyDescriptor(window, "matchMedia");
+  Object.defineProperty(window, "matchMedia", {
     configurable: true,
     writable: true,
-    value: Object.assign(new EventTarget(), {
-      matchMedia: (query: string) => ({
-        matches: matchesWidth(query, widthPx),
-        media: query,
-        addEventListener: () => {},
-        removeEventListener: () => {},
-      }),
+    value: (query: string) => ({
+      matches: matchesWidth(query, widthPx),
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
     }),
   });
   const restore = () => {
     if (restoreViewport !== restore) return;
     restoreViewport = null;
-    if (hadWindow) {
-      Object.defineProperty(globalThis, "window", {
-        configurable: true,
-        writable: true,
-        value: previous,
-      });
-    } else {
-      Reflect.deleteProperty(globalThis, "window");
-    }
+    if (own === undefined) Reflect.deleteProperty(window, "matchMedia");
+    else Object.defineProperty(window, "matchMedia", own);
   };
   restoreViewport = restore;
   return restore;
+}
+
+/**
+ * Sets what `document.visibilityState` says, for the live-refresh policy, which polls only while the
+ * window shows. Undo it with `resetDocumentVisible`.
+ */
+export function setDocumentVisible(visible: boolean): void {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => (visible ? "visible" : "hidden"),
+  });
+}
+
+export function resetDocumentVisible(): void {
+  Reflect.deleteProperty(document, "visibilityState");
 }
 
 /** Renders `element` at 1280 px wide. */
 export const render = (element: ReactElement) => renderAt(1280, element);
 
 /**
- * Renders `element` in a viewport `widthPx` wide and returns the renderer with helpers to read it.
- * The viewport stays until `unmount`, the next render, or the end of the test, since a later
- * update still asks it.
+ * Renders `element` into the document in a viewport `widthPx` wide and returns helpers to read the
+ * DOM it made. The viewport stays until `unmount`, the next render, or the end of the test, since a
+ * later update still asks it.
  */
 export async function renderAt(widthPx: number, element: ReactElement) {
   const restore = viewport(widthPx);
-  onTestFinished(restore);
-  let renderer!: ReactTestRenderer;
-  await act(async () => {
-    renderer = create(element);
-  });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  let mounted = true;
+  const unmount = async () => {
+    if (!mounted) return;
+    mounted = false;
+    await act(async () => root.unmount());
+    container.remove();
+    restore();
+  };
+  onTestFinished(unmount);
+  await act(async () => root.render(element));
+  const all: {
+    <K extends keyof HTMLElementTagNameMap>(selector: K): Array<HTMLElementTagNameMap[K]>;
+    (selector: string): Array<HTMLElement>;
+  } = (selector: string) => Array.from(container.querySelectorAll<HTMLElement>(selector));
   return {
-    renderer,
+    container,
     /** All rendered text, concatenated. */
-    text: () => flatten(renderer.toJSON()),
-    /** Host elements of `type` (`a`, `button`, ...). */
-    all: (type: string): ReadonlyArray<ReactTestInstance> =>
-      renderer.root.findAllByType(type as never),
+    text: () => container.textContent ?? "",
+    /** Elements matching `selector` (`a`, `button`, `[aria-label="x"]`, ...). */
+    all,
     /** The `button` whose text is `label`. */
-    button: (label: string): ReactTestInstance | undefined =>
-      renderer.root
-        .findAllByType("button" as never)
-        .find((b) => flatten(b.children as never) === label),
-    unmount: async () => {
-      await act(() => renderer.unmount());
-      restore();
-    },
+    button: (label: string): HTMLButtonElement | undefined =>
+      Array.from(container.querySelectorAll("button")).find((b) => b.textContent === label),
+    /** Clicks `element`, as the user would, and lets React settle. */
+    click: (element: HTMLElement) =>
+      act(async () => {
+        element.click();
+      }),
+    /** Renders `next` in place of the element, keeping the root and its state. */
+    rerender: (next: ReactElement) => act(async () => root.render(next)),
+    unmount,
   };
 }

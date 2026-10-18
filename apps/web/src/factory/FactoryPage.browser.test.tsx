@@ -1,0 +1,682 @@
+import { createElement, act, type ReactNode } from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { __setFactoryApiForTests, FactoryApiError, type FactoryApi } from "./api";
+import type { FactoryResource } from "./useFactoryData";
+import { render, renderAt } from "./testing";
+
+const NOW = Date.parse("2026-10-17T12:00:00.000Z");
+
+const state = vi.hoisted(() => ({
+  status: null as unknown,
+  runs: null as unknown,
+  allRuns: null as unknown,
+  environmentId: "env-2" as string | null,
+}));
+
+vi.mock("@tanstack/react-router", () => ({
+  Link: ({
+    to,
+    params,
+    children,
+  }: {
+    to: string;
+    params?: Record<string, string>;
+    children?: ReactNode;
+  }) =>
+    createElement("a", { "data-to": to, "data-params": JSON.stringify(params ?? {}) }, children),
+}));
+vi.mock("./useFactoryData", () => ({
+  useFactoryEnvironmentId: () => state.environmentId,
+  useFactoryStatus: () => state.status,
+  useFactoryRuns: (_environmentId: string | null, all?: boolean) =>
+    all ? state.allRuns : state.runs,
+}));
+
+import { FactoryPage } from "./FactoryPage";
+
+const resource = <T,>(overrides: Partial<FactoryResource<T>>): FactoryResource<T> => ({
+  status: "ready",
+  data: null,
+  error: null,
+  readAt: Date.now(),
+  refresh: vi.fn(),
+  ...overrides,
+});
+
+const statusData = (overrides: Record<string, unknown> = {}) => ({
+  state: "running",
+  reason: null,
+  paused_by_hand: null,
+  runs: [],
+  attention: [],
+  slots: { used: 1, max: 2 },
+  passes: {},
+  problems: [],
+  ...overrides,
+});
+
+const RUN_ID = "original-solutions__t3code-factory__20__1";
+const PR_URL = "https://github.com/original-solutions/t3code-factory/pull/30";
+const runRow = (overrides: Record<string, unknown> = {}) => ({
+  id: RUN_ID,
+  started_ts: "2026-10-17T10:00:00.000Z",
+  state: "building",
+  last_event: "step_changed",
+  step: "launch-sending",
+  status: "running",
+  pr_url: PR_URL,
+  finished: false,
+  total_ms: null,
+  unreadable: false,
+  ...overrides,
+});
+
+const api = (overrides: Partial<FactoryApi>): FactoryApi => ({
+  status: vi.fn(),
+  runs: vi.fn(),
+  run: vi.fn(),
+  stopRun: vi.fn(),
+  pauseClaims: vi.fn(),
+  resumeClaims: vi.fn(),
+  dismissAttention: vi.fn(),
+  ...overrides,
+});
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(NOW);
+  state.status = resource({ data: statusData() });
+  state.runs = resource({ data: { runs: [] } });
+  state.allRuns = state.runs;
+  state.environmentId = "env-2";
+});
+
+afterEach(() => {
+  __setFactoryApiForTests();
+  vi.useRealTimers();
+});
+
+describe("FactoryPage", () => {
+  it("says there are no runs yet when the factory has none", async () => {
+    const page = await render(createElement(FactoryPage));
+    expect(page.text()).toContain("Factory");
+    expect(page.text()).toContain("No runs in the last week");
+    expect(page.text()).not.toContain("Needs attention");
+    await page.click(page.button("Show all runs")!);
+    expect(page.text()).toContain("No runs yet");
+  });
+
+  it("shows a loading state while either read is loading", async () => {
+    state.status = resource({ status: "loading" });
+    const page = await render(createElement(FactoryPage));
+    expect(page.all('[aria-label="Loading factory"]')).not.toHaveLength(0);
+    expect(page.text()).not.toContain("No runs");
+  });
+
+  it("shows the error and retries both reads", async () => {
+    const refreshStatus = vi.fn();
+    const refreshRuns = vi.fn();
+    state.status = resource({ status: "ready", data: statusData(), refresh: refreshStatus });
+    state.runs = resource({
+      status: "error",
+      error: new FactoryApiError(403, null, "Missing permission orchestration:read"),
+      refresh: refreshRuns,
+    });
+    const page = await render(createElement(FactoryPage));
+    expect(page.text()).toContain("Missing permission orchestration:read");
+    await page.click(page.button("Retry")!);
+    expect(refreshStatus).toHaveBeenCalledTimes(1);
+    expect(refreshRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the page when a later poll fails, with the error as a notice and a Retry", async () => {
+    const refreshStatus = vi.fn();
+    const refreshRuns = vi.fn();
+    state.status = resource({ data: statusData(), refresh: refreshStatus });
+    state.runs = resource({
+      status: "error",
+      data: { runs: [runRow()] },
+      error: new Error("fetch failed"),
+      refresh: refreshRuns,
+    });
+    const page = await render(createElement(FactoryPage));
+    expect(page.text()).toContain("original-solutions/t3code-factory");
+    expect(page.text()).toContain("fetch failed");
+    expect(page.text()).not.toContain("Could not load the factory");
+    await page.click(page.button("Retry")!);
+    expect(refreshStatus).toHaveBeenCalledTimes(1);
+    expect(refreshRuns).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists the week the server sent, and every run once asked", async () => {
+    const old = runRow({
+      id: "o__r__1__1",
+      started_ts: "2026-09-01T10:00:00.000Z",
+      finished: true,
+    });
+    state.runs = resource({ data: { runs: [runRow()] } });
+    state.allRuns = resource({ data: { runs: [runRow(), old] } });
+    const page = await render(createElement(FactoryPage));
+    const runLinks = () =>
+      page.all("a").filter((a) => a.getAttribute("data-to") === "/factory/$runId");
+    expect(runLinks()).toHaveLength(1);
+    await page.click(page.button("Show all runs")!);
+    expect(runLinks()).toHaveLength(2);
+    expect(page.text()).toContain("o__r__1__1");
+    expect(page.text()).toContain("Every run, read once.");
+    expect(page.button("Show all runs")).toBeUndefined();
+    await page.click(page.button("Show recent runs")!);
+    expect(runLinks()).toHaveLength(1);
+  });
+
+  it("says when the week holds no runs and still offers every run", async () => {
+    const page = await render(createElement(FactoryPage));
+    expect(page.text()).toContain("No runs in the last week");
+    expect(page.button("Show all runs")).toBeDefined();
+  });
+
+  it("lists the runs with repo, issue, state, step, age and pull request link", async () => {
+    state.runs = resource({
+      data: {
+        runs: [
+          runRow({ id: "acme__old__3__1", started_ts: "2026-10-16T12:00:00.000Z", state: "stuck" }),
+          runRow(),
+        ],
+      },
+    });
+    const page = await render(createElement(FactoryPage));
+    const text = page.text();
+    expect(text).toContain("original-solutions/t3code-factory");
+    expect(text).toContain("#20");
+    expect(text).toContain("building");
+    expect(text).toContain("launch-sending");
+    expect(text).toContain("2h");
+    const hrefs = page.all("a").map((a) => a.getAttribute("href"));
+    expect(hrefs).toContain("https://github.com/original-solutions/t3code-factory/issues/20");
+    expect(hrefs).toContain(PR_URL);
+    const link = page
+      .all("a")
+      .find(
+        (a) =>
+          a.getAttribute("data-to") === "/factory/$runId" &&
+          a.getAttribute("data-params")!.includes(RUN_ID),
+      );
+    expect(link).toBeDefined();
+  });
+
+  it("links a pull request only when it is a github.com URL", async () => {
+    state.runs = resource({
+      data: {
+        runs: [
+          runRow({ id: "acme__a__1__1", pr_url: "javascript:alert(1)" }),
+          runRow({ id: "acme__b__2__1", pr_url: "https://evil.example/pull/9" }),
+          runRow(),
+        ],
+      },
+    });
+    const page = await render(createElement(FactoryPage));
+    const hrefs = page.all("a").map((a) => a.getAttribute("href"));
+    expect(hrefs).toContain(PR_URL);
+    expect(hrefs).not.toContain("javascript:alert(1)");
+    expect(hrefs).not.toContain("https://evil.example/pull/9");
+    expect(page.text()).toContain("javascript:alert(1)");
+  });
+
+  it("lists the newest run first, and falls back to the last event without a step", async () => {
+    state.runs = resource({
+      data: {
+        runs: [
+          runRow({
+            id: "acme__old__3__1",
+            started_ts: "2026-10-16T12:00:00.000Z",
+            step: null,
+            last_event: "claimed",
+          }),
+          runRow(),
+        ],
+      },
+    });
+    const text = (await render(createElement(FactoryPage))).text();
+    expect(text.indexOf("original-solutions/t3code-factory")).toBeLessThan(
+      text.indexOf("acme/old"),
+    );
+    expect(text).toContain("claimed");
+  });
+
+  it("marks an unreadable run", async () => {
+    state.runs = resource({
+      data: { runs: [runRow({ unreadable: true, state: null, step: null, last_event: null })] },
+    });
+    expect((await render(createElement(FactoryPage))).text()).toContain("unreadable");
+  });
+
+  it("shows the open attention items at the top", async () => {
+    state.status = resource({
+      data: statusData({
+        attention: [
+          {
+            id: "stuck:20",
+            kind: "stuck",
+            repo: "original-solutions/t3code-factory",
+            issue: 20,
+            run: RUN_ID,
+            message: "run ended stuck: the gate failed",
+            first_seen: "2026-10-17T11:00:00.000Z",
+          },
+        ],
+      }),
+    });
+    state.runs = resource({ data: { runs: [runRow()] } });
+    const text = (await render(createElement(FactoryPage))).text();
+    expect(text).toContain("stuck");
+    expect(text).toContain("original-solutions/t3code-factory#20");
+    expect(text).toContain("run ended stuck: the gate failed");
+    expect(text).toContain("1h");
+    expect(text.indexOf("run ended stuck")).toBeLessThan(text.indexOf("launch-sending"));
+  });
+
+  it("shows an idle factory with its reason", async () => {
+    state.status = resource({
+      data: statusData({ state: "idle", reason: "no factory config" }),
+    });
+    const text = (await render(createElement(FactoryPage))).text();
+    expect(text).toContain("idle");
+    expect(text).toContain("no factory config");
+  });
+
+  it("pauses claims, shows the answer and refreshes", async () => {
+    const refreshStatus = vi.fn();
+    state.status = resource({ data: statusData(), refresh: refreshStatus });
+    const pauseClaims = vi.fn(async () => ({
+      paused: true as const,
+      already: false,
+      since: "2026-10-17T12:00:00.000Z",
+      message: "claims paused",
+    }));
+    __setFactoryApiForTests(api({ pauseClaims }));
+    const page = await render(createElement(FactoryPage));
+    expect(page.button("Resume claims")).toBeUndefined();
+    await page.click(page.button("Pause claims")!);
+    expect(pauseClaims).toHaveBeenCalledTimes(1);
+    expect(pauseClaims).toHaveBeenCalledWith("env-2");
+    expect(page.text()).toContain("claims paused");
+    expect(refreshStatus).toHaveBeenCalled();
+  });
+
+  it("resumes claims when they are paused by hand, saying since when", async () => {
+    state.status = resource({
+      data: statusData({
+        paused_by_hand: { since: "2026-10-17T11:00:00.000Z", for_ms: 3_600_000 },
+      }),
+    });
+    const resumeClaims = vi.fn(async () => ({
+      paused: false as const,
+      already: false,
+      message: "claims resumed",
+    }));
+    __setFactoryApiForTests(api({ resumeClaims }));
+    const page = await render(createElement(FactoryPage));
+    expect(page.text()).toContain("paused since 1h");
+    expect(page.button("Pause claims")).toBeUndefined();
+    await page.click(page.button("Resume claims")!);
+    expect(resumeClaims).toHaveBeenCalledTimes(1);
+    expect(resumeClaims).toHaveBeenCalledWith("env-2");
+    expect(page.text()).toContain("claims resumed");
+  });
+
+  it("disables Pause claims while the call is pending", async () => {
+    state.status = resource({ data: statusData() });
+    let resolve!: (value: {
+      paused: true;
+      already: boolean;
+      since: string;
+      message: string;
+    }) => void;
+    const pauseClaims = vi.fn(
+      () =>
+        new Promise<{ paused: true; already: boolean; since: string; message: string }>(
+          (r) => (resolve = r),
+        ),
+    );
+    __setFactoryApiForTests(api({ pauseClaims }));
+    const page = await render(createElement(FactoryPage));
+    expect(page.button("Pause claims")!.disabled).toBeFalsy();
+    await page.click(page.button("Pause claims")!);
+    expect(page.button("Pause claims")!.disabled).toBe(true);
+    await act(async () =>
+      resolve({ paused: true, already: false, since: "2026-10-17T12:00:00.000Z", message: "ok" }),
+    );
+    expect(page.button("Pause claims")!.disabled).toBeFalsy();
+  });
+
+  it("disables Resume claims while the call is pending", async () => {
+    state.status = resource({
+      data: statusData({
+        paused_by_hand: { since: "2026-10-17T11:00:00.000Z", for_ms: 3_600_000 },
+      }),
+    });
+    let resolve!: (value: { paused: false; already: boolean; message: string }) => void;
+    const resumeClaims = vi.fn(
+      () => new Promise<{ paused: false; already: boolean; message: string }>((r) => (resolve = r)),
+    );
+    __setFactoryApiForTests(api({ resumeClaims }));
+    const page = await render(createElement(FactoryPage));
+    expect(page.button("Resume claims")!.disabled).toBeFalsy();
+    await page.click(page.button("Resume claims")!);
+    expect(page.button("Resume claims")!.disabled).toBe(true);
+    await act(async () => resolve({ paused: false, already: false, message: "ok" }));
+    expect(page.button("Resume claims")!.disabled).toBeFalsy();
+  });
+
+  it("shows the message of a control call that fails", async () => {
+    __setFactoryApiForTests(
+      api({
+        pauseClaims: async () => {
+          throw new FactoryApiError(403, null, "Missing permission orchestration:operate");
+        },
+      }),
+    );
+    const page = await render(createElement(FactoryPage));
+    await page.click(page.button("Pause claims")!);
+    expect(page.text()).toContain("Missing permission orchestration:operate");
+  });
+});
+
+const ATTENTION = {
+  id: "stuck:20",
+  kind: "stuck",
+  repo: "original-solutions/t3code-factory",
+  issue: 20,
+  run: RUN_ID,
+  message: "run ended stuck: the gate failed",
+  first_seen: "2026-10-17T11:00:00.000Z",
+};
+
+describe.each([375, 1280])("FactoryPage at %i px", (width) => {
+  const narrow = width < 640;
+  const populate = () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
+    state.runs = resource({
+      status: "error",
+      error: new Error("fetch failed"),
+      data: {
+        runs: [runRow(), runRow({ id: "acme__old__3__1", started_ts: "2026-10-16T12:00:00.000Z" })],
+      },
+    });
+  };
+
+  it(narrow ? "lists the runs as cards, not a table" : "lists the runs in a table", async () => {
+    populate();
+    const page = await renderAt(width, createElement(FactoryPage));
+    expect(page.all("table")).toHaveLength(narrow ? 0 : 1);
+    const cards = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "cards");
+    expect(cards).toHaveLength(narrow ? 1 : 0);
+    await page.unmount();
+  });
+
+  it("puts the attention items above the runs", async () => {
+    populate();
+    const page = await renderAt(width, createElement(FactoryPage));
+    const text = page.text();
+    expect(text.indexOf("run ended stuck")).toBeGreaterThan(-1);
+    expect(text.indexOf("run ended stuck")).toBeLessThan(text.indexOf("launch-sending"));
+    expect(text.indexOf("Could not refresh")).toBeGreaterThan(text.indexOf("run ended stuck"));
+    expect(text.indexOf("Could not refresh")).toBeLessThan(text.indexOf("launch-sending"));
+    await page.unmount();
+  });
+
+  it("shows a control's answer in the body, below the attention items", async () => {
+    populate();
+    __setFactoryApiForTests(
+      api({
+        pauseClaims: async () => ({
+          paused: true as const,
+          already: false,
+          since: "2026-10-17T12:00:00.000Z",
+          message: "claims paused",
+        }),
+      }),
+    );
+    const page = await renderAt(width, createElement(FactoryPage));
+    await page.click(page.button("Pause claims")!);
+    const text = page.text();
+    expect(text.indexOf("claims paused")).toBeGreaterThan(text.indexOf("run ended stuck"));
+    expect(text.indexOf("claims paused")).toBeLessThan(text.indexOf("launch-sending"));
+    await page.unmount();
+  });
+});
+
+describe("FactoryPage attention items at 375 px", () => {
+  it("puts the message on its own full-width line after the badge, repo and age", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
+    state.runs = resource({ data: { runs: [runRow()] } });
+    const page = await renderAt(375, createElement(FactoryPage));
+    const section = page
+      .all("section")
+      .find((node) => node.getAttribute("aria-label") === "Needs attention")!;
+    const item = section.querySelectorAll("li")[0]!;
+    const message = Array.from(item.querySelectorAll("*")).find((node) =>
+      Array.from(node.childNodes).some(
+        (child) => child.nodeType === Node.TEXT_NODE && child.textContent === ATTENTION.message,
+      ),
+    )!;
+    expect(message.tagName).toBe("P");
+    expect(message.className).toContain("w-full");
+    expect(message.className).not.toContain("flex-1");
+    const full = item.textContent ?? "";
+    const order = ["stuck", ATTENTION.repo, "1h", ATTENTION.message].map((part) =>
+      full.indexOf(part),
+    );
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    await page.unmount();
+  });
+});
+
+describe("FactoryPage run cards at 375 px", () => {
+  it("shows each run's repo, issue, state, step, age and pull request, and links to the run", async () => {
+    state.runs = resource({ data: { runs: [runRow()] } });
+    const page = await renderAt(375, createElement(FactoryPage));
+    const link = page
+      .all("a")
+      .find(
+        (a) =>
+          a.getAttribute("data-to") === "/factory/$runId" &&
+          a.getAttribute("data-params")!.includes(RUN_ID),
+      );
+    expect(link).toBeDefined();
+    const text = link!.textContent ?? "";
+    for (const part of ["original-solutions/t3code-factory", "building", "launch-sending", "2h"]) {
+      expect(text).toContain(part);
+    }
+    // A card is one link: nothing inside it is another link.
+    expect(link!.querySelectorAll("a")).toHaveLength(0);
+    await page.unmount();
+  });
+
+  it("links the issue and the pull request outside the card's own link", async () => {
+    state.runs = resource({ data: { runs: [runRow()] } });
+    const page = await renderAt(375, createElement(FactoryPage));
+    const hrefs = page
+      .all("a")
+      .map((a) => a.getAttribute("href"))
+      .filter((href) => href !== null);
+    expect(hrefs).toEqual([
+      "https://github.com/original-solutions/t3code-factory/issues/20",
+      PR_URL,
+    ]);
+    const card = page.all("a").find((a) => a.getAttribute("data-to") === "/factory/$runId")!;
+    expect(card.querySelectorAll("a")).toHaveLength(0);
+    await page.unmount();
+  });
+
+  it("leaves a non-GitHub pull request URL as text on the card", async () => {
+    state.runs = resource({ data: { runs: [runRow({ pr_url: "https://example.com/pr/1" })] } });
+    const page = await renderAt(375, createElement(FactoryPage));
+    expect(page.all("a").map((a) => a.getAttribute("href"))).not.toContain(
+      "https://example.com/pr/1",
+    );
+    expect(page.text()).toContain("https://example.com/pr/1");
+    await page.unmount();
+  });
+
+  it("keeps the newest first, the empty state and the Show all runs control", async () => {
+    state.runs = resource({
+      data: {
+        runs: [runRow({ id: "acme__old__3__1", started_ts: "2026-10-16T12:00:00.000Z" }), runRow()],
+      },
+    });
+    const page = await renderAt(375, createElement(FactoryPage));
+    const text = page.text();
+    expect(text.indexOf("original-solutions/t3code-factory")).toBeLessThan(
+      text.indexOf("acme/old"),
+    );
+    expect(page.button("Show all runs")).toBeDefined();
+    await page.unmount();
+    state.runs = resource({ data: { runs: [] } });
+    const empty = await renderAt(375, createElement(FactoryPage));
+    expect(empty.text()).toContain("No runs in the last week");
+    expect(empty.button("Show all runs")).toBeDefined();
+    await empty.unmount();
+  });
+});
+
+describe.each([
+  [639, true],
+  [640, false],
+])("FactoryPage at the 640 px breakpoint, %i px", (width, narrow) => {
+  it(narrow ? "lists cards just below 640" : "lists the table from 640", async () => {
+    state.runs = resource({ data: { runs: [runRow()] } });
+    const page = await renderAt(width, createElement(FactoryPage));
+    expect(page.all("table")).toHaveLength(narrow ? 0 : 1);
+    const cards = page.all("ul").filter((ul) => ul.getAttribute("data-layout") === "cards");
+    expect(cards).toHaveLength(narrow ? 1 : 0);
+    await page.unmount();
+  });
+});
+
+describe("FactoryPage dismissing attention items", () => {
+  const CONFIG = {
+    id: "config",
+    kind: "config",
+    repo: null,
+    issue: null,
+    run: null,
+    message: "the machine config does not load",
+    first_seen: "2026-10-17T11:30:00.000Z",
+  };
+  const PASS = {
+    id: "pass-errors",
+    kind: "pass-errors",
+    repo: null,
+    issue: null,
+    run: null,
+    message: "the pass has failed 3 times in a row",
+    first_seen: "2026-10-17T11:40:00.000Z",
+  };
+  const section = (page: Awaited<ReturnType<typeof render>>) =>
+    page.all("section").find((node) => node.getAttribute("aria-label") === "Needs attention");
+  // An element holds `text` when one of its own text nodes is exactly `text`.
+  const holdsText = (root: Element, text: string) =>
+    [root, ...root.querySelectorAll("*")].some((node) =>
+      Array.from(node.childNodes).some(
+        (child) => child.nodeType === Node.TEXT_NODE && child.textContent === text,
+      ),
+    );
+  const itemOf = (page: Awaited<ReturnType<typeof render>>, message: string) =>
+    Array.from(section(page)?.querySelectorAll("li") ?? []).find((li) => holdsText(li, message));
+  const dismissIn = (item: HTMLElement) =>
+    Array.from(item.querySelectorAll("button")).find((button) => holdsText(button, "Dismiss"))!;
+
+  it("Dismiss removes that item at once and sends its id", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION, CONFIG] }) });
+    let resolve!: (value: { dismissed: ReadonlyArray<string> }) => void;
+    const dismissAttention = vi.fn(
+      () => new Promise<{ dismissed: ReadonlyArray<string> }>((r) => (resolve = r)),
+    );
+    __setFactoryApiForTests(api({ dismissAttention }));
+    const page = await render(createElement(FactoryPage));
+    await page.click(dismissIn(itemOf(page, ATTENTION.message)!));
+    expect(dismissAttention).toHaveBeenCalledWith("env-2", [ATTENTION.id]);
+    expect(page.text()).not.toContain(ATTENTION.message);
+    expect(page.text()).toContain(CONFIG.message);
+    await act(async () => resolve({ dismissed: [ATTENTION.id] }));
+    expect(page.text()).not.toContain(ATTENTION.message);
+  });
+
+  it("Dismiss all sends exactly the ids shown, and the section goes", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION, CONFIG, PASS] }) });
+    const dismissAttention = vi.fn(async (_environmentId: string, ids: ReadonlyArray<string>) => ({
+      dismissed: ids,
+    }));
+    __setFactoryApiForTests(api({ dismissAttention }));
+    const page = await render(createElement(FactoryPage));
+    await page.click(dismissIn(itemOf(page, CONFIG.message)!));
+    await page.click(page.button("Dismiss all")!);
+    expect(dismissAttention).toHaveBeenLastCalledWith("env-2", [ATTENTION.id, PASS.id]);
+    expect(section(page)).toBeUndefined();
+    expect(page.text()).not.toContain("Needs attention");
+  });
+
+  it("keeps Pause claims disabled when a dismiss finishes while the pause is pending", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
+    const pauseClaims = vi.fn(() => new Promise<never>(() => {}));
+    const dismissAttention = vi.fn(async () => ({ dismissed: [ATTENTION.id] }));
+    __setFactoryApiForTests(api({ pauseClaims, dismissAttention }));
+    const page = await render(createElement(FactoryPage));
+    await page.click(page.button("Pause claims")!);
+    await page.click(dismissIn(itemOf(page, ATTENTION.message)!));
+    expect(dismissAttention).toHaveBeenCalled();
+    expect(page.button("Pause claims")!.disabled).toBe(true);
+  });
+
+  it("has no Dismiss all when nothing needs attention", async () => {
+    const page = await render(createElement(FactoryPage));
+    expect(page.button("Dismiss all")).toBeUndefined();
+  });
+
+  it("brings the item back and shows the error when the dismiss fails", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION] }) });
+    __setFactoryApiForTests(
+      api({
+        dismissAttention: async () => {
+          throw new FactoryApiError(403, null, "Missing permission orchestration:operate");
+        },
+      }),
+    );
+    const page = await render(createElement(FactoryPage));
+    await page.click(dismissIn(itemOf(page, ATTENTION.message)!));
+    expect(page.text()).toContain(ATTENTION.message);
+    expect(page.text()).toContain("Missing permission orchestration:operate");
+  });
+
+  it("shows an item again when the factory raises it anew after it was dismissed", async () => {
+    state.status = resource({ data: statusData({ attention: [CONFIG] }) });
+    __setFactoryApiForTests(api({ dismissAttention: async () => ({ dismissed: [CONFIG.id] }) }));
+    const page = await render(createElement(FactoryPage));
+    await page.click(dismissIn(itemOf(page, CONFIG.message)!));
+    expect(page.text()).not.toContain(CONFIG.message);
+    state.status = resource({
+      data: statusData({ attention: [{ ...CONFIG, first_seen: "2026-10-17T11:59:00.000Z" }] }),
+    });
+    await page.rerender(createElement(FactoryPage));
+    expect(page.text()).toContain(CONFIG.message);
+  });
+
+  it("links a run item to its run, a config item to the factory settings, and others nowhere", async () => {
+    state.status = resource({ data: statusData({ attention: [ATTENTION, CONFIG, PASS] }) });
+    const page = await render(createElement(FactoryPage));
+    const linksIn = (message: string) => Array.from(itemOf(page, message)!.querySelectorAll("a"));
+    const [run] = linksIn(ATTENTION.message);
+    expect(run!.getAttribute("data-to")).toBe("/factory/$runId");
+    expect(JSON.parse(run!.getAttribute("data-params")!)).toEqual({ runId: RUN_ID });
+    const [settings] = linksIn(CONFIG.message);
+    expect(settings!.getAttribute("data-to")).toBe("/settings/factory");
+    expect(linksIn(PASS.message)).toHaveLength(0);
+    // Dismiss is its own control, never inside the link.
+    for (const link of [run!, settings!]) {
+      expect(link.querySelectorAll("button")).toHaveLength(0);
+    }
+  });
+});

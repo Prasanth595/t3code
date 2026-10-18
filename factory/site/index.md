@@ -9,4 +9,4 @@ This site documents the factory, the part of the fork that upstream T3 Code does
 
 The source is on GitHub: [original-solutions/t3code-factory](https://github.com/original-solutions/t3code-factory). The site's own markdown is in `factory/site/`.
 
-The site is also available as plain text for agents: [llms.txt](https://factory.originalsolutions.com.au/llms.txt) lists every page, and [llms-full.txt](https://factory.originalsolutions.com.au/llms-full.txt) has all of them in one file.
+The site is also available as plain text for agents: [llms.txt](https://t3code-factory-docs.originalsolutions.com.au/llms.txt) lists every page, and [llms-full.txt](https://t3code-factory-docs.originalsolutions.com.au/llms-full.txt) has all of them in one file.
