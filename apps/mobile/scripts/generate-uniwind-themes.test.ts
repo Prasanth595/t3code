@@ -39,6 +39,14 @@ describe("generate mobile Uniwind themes", () => {
       "iris-dark",
       "inkwire-light",
       "inkwire-dark",
+      "inkwire-acid-light",
+      "inkwire-acid-dark",
+      "inkwire-volt-light",
+      "inkwire-volt-dark",
+      "inkwire-ember-light",
+      "inkwire-ember-dark",
+      "inkwire-orchid-light",
+      "inkwire-orchid-dark",
     ]);
 
     const stylesheet = renderUniwindThemesCSS();

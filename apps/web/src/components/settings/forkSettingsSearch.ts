@@ -29,6 +29,12 @@ export const WORKTREE_PATH_TEMPLATE_ITEMS = [
 
 export const APPEARANCE_ITEMS = [
   {
+    id: "inkwire-white-frame",
+    title: "Inkwire white frame",
+    to: "/settings/appearance",
+    searchTerms: ["inkwire white frame chalk outline border sketch pencil theme"],
+  },
+  {
     id: "thread-card-layout",
     title: "Custom card layout",
     to: "/settings/appearance",

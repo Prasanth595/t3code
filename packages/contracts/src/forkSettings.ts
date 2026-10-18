@@ -203,6 +203,12 @@ export const ForkClientSettingsFields = {
   keyboardFocusLevels: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Fork: a short outline fade on the screen area that takes focus: composer, timeline, sidebar or right panel. */
   focusLevelHighlight: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
+   * Fork: Inkwire white frame. Draws a static chalk outline around the window and sketched
+   * controls. Off by default; only applies while an Inkwire theme is selected. Pure CSS (no
+   * animation, filter or fixed background), so it does not add scroll cost.
+   */
+  inkwireWhiteFrame: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 };
 
 export const ForkClientSettingsPatchFields = {
@@ -222,6 +228,7 @@ export const ForkClientSettingsPatchFields = {
   snoozeQuickOptions: Schema.optionalKey(SnoozeQuickOptions),
   keyboardFocusLevels: Schema.optionalKey(Schema.Boolean),
   focusLevelHighlight: Schema.optionalKey(Schema.Boolean),
+  inkwireWhiteFrame: Schema.optionalKey(Schema.Boolean),
 };
 
 export const ForkServerSettingsFields = {

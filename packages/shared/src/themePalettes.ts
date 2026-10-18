@@ -7,6 +7,10 @@ export const BUILT_IN_THEME_IDS = [
   "ember",
   "iris",
   "inkwire",
+  "inkwire-acid",
+  "inkwire-volt",
+  "inkwire-ember",
+  "inkwire-orchid",
 ] as const;
 
 export const MOBILE_DEFAULT_THEME_ID = "t3-code";
@@ -947,151 +951,403 @@ export const IRIS_THEME: ThemeDefinition = {
 };
 
 /**
- * Fork: a dark neon theme with a hand-drawn line style. Its sketch rules live in
- * apps/web/src/fork-theme.css under `[data-theme-id="inkwire"]`; mobile uses the colors only.
+ * Fork: Inkwire neon pairs. The sketch CSS in apps/web/src/fork-theme.css matches every
+ * `data-theme-id` that starts with `inkwire`; each set below only swaps the action and live
+ * accents. Mobile uses the colors only.
  */
-export const INKWIRE_THEME: ThemeDefinition = {
-  id: "inkwire",
-  label: "Inkwire",
-  appearance: "dark",
-  colors: {
-    canvas: "oklch(0.154018 0.009201 264.28)",
-    chrome: "oklch(0.154018 0.009201 264.28)",
-    toolbar: "oklch(0.154018 0.009201 264.28)",
-    toolbarForeground: "oklch(0.933459 0.008714 264.521)",
-    toolbarBorder: "oklch(0.260852 0.023772 267.11)",
-    toolbarControl: "oklch(0.186905 0.015102 266.766)",
-    toolbarControlForeground: "oklch(0.933459 0.008714 264.521)",
-    toolbarControlHover: "oklch(0.217901 0.018766 266.115)",
-    surface: "oklch(0.186905 0.015102 266.766)",
-    surfaceRaised: "oklch(0.217901 0.018766 266.115)",
-    surfaceOverlay: "oklch(0.239419 0.02247 265.666)",
-    text: "oklch(0.933459 0.008714 264.521)",
-    textMuted: "oklch(0.709798 0.027295 261.123)",
-    border: "oklch(0.353043 0.03118 267.327)",
-    input: "oklch(0.502992 0.033818 266.08)",
-    focus: "oklch(0.844151 0.145654 209.285)",
-    accent: "oklch(0.844151 0.145654 209.285)",
-    accentForeground: "oklch(0.175328 0.030392 210.658)",
-    secondary: "oklch(0.217901 0.018766 266.115)",
-    secondaryForeground: "oklch(0.933459 0.008714 264.521)",
-    muted: "oklch(0.186905 0.015102 266.766)",
-    mutedForeground: "oklch(0.709798 0.027295 261.123)",
-    placeholder: "oklch(0.709798 0.027295 261.123)",
-    secondaryLabel: "oklch(0.709798 0.027295 261.123)",
-    iconMuted: "oklch(0.709798 0.027295 261.123)",
-    error: "oklch(0.678523 0.213073 14.719)",
-    errorForeground: "oklch(0.739839 0.162651 11.115)",
-    errorSurface: "oklch(0.213619 0.046054 3.027)",
-    warning: "oklch(0.866574 0.164655 88.684)",
-    warningForeground: "oklch(0.895883 0.139276 91.07)",
-    warningSurface: "oklch(0.255091 0.039773 90.901)",
-    update: "oklch(0.844151 0.145654 209.285)",
-    updateForeground: "oklch(0.883048 0.124089 204.78)",
-    updateSurface: "oklch(0.2633 0.040797 211.02)",
-    accentSurface: "oklch(0.217901 0.018766 266.115)",
-    accentSurfaceForeground: "oklch(0.933459 0.008714 264.521)",
-    messageSurface: "oklch(0.217901 0.018766 266.115)",
-    messageForeground: "oklch(0.933459 0.008714 264.521)",
-    messageAction: "oklch(0.844151 0.145654 209.285)",
-    messageActionForeground: "oklch(0.175328 0.030392 210.658)",
-    messageActionHover: "oklch(0.883048 0.124089 204.78)",
-    codeBackground: "oklch(0.138644 0.007726 255.503)",
-    codeForeground: "oklch(0.871984 0.017776 264.476)",
-    searchMatchBackground: "oklch(0.442451 0.155436 345.256)",
-    searchMatchForeground: "oklch(1 0 0)",
-    searchMatchActiveBackground: "oklch(0.682753 0.246447 350.779)",
-    searchMatchActiveForeground: "oklch(0.130636 0.041343 344.686)",
-    sidebar: "oklch(0.186905 0.015102 266.766)",
-    sidebarForeground: "oklch(0.933459 0.008714 264.521)",
-    sidebarMutedForeground: "oklch(0.709798 0.027295 261.123)",
-    sidebarControlSurface: "oklch(0.154018 0.009201 264.28)",
-    sidebarRowHover: "oklch(0.213561 0.018864 266.094)",
-    sidebarRowActive: "oklch(0.25476 0.031225 270.703)",
-    sidebarRowSelected: "oklch(0.217901 0.018766 266.115)",
-    sidebarBorder: "oklch(0.353043 0.03118 267.327)",
-    terminalBackground: "oklch(0.138644 0.007726 255.503)",
-    terminalForeground: "oklch(0.871984 0.017776 264.476)",
-    terminalCursor: "oklch(0.844151 0.145654 209.285)",
-    terminalSelection: "oklch(0.33033 0.039043 222.507)",
-    terminalScrollbar: "oklch(0.353043 0.03118 267.327)",
-    terminalScrollbarHover: "oklch(0.502992 0.033818 266.08)",
-  },
-  variants: {
-    light: {
-      canvas: "oklch(0.964306 0.006978 88.643)",
-      chrome: "oklch(0.964306 0.006978 88.643)",
-      toolbar: "oklch(0.964306 0.006978 88.643)",
-      toolbarForeground: "oklch(0.230759 0.014296 266.949)",
-      toolbarBorder: "oklch(0.873134 0.015541 90.248)",
-      toolbarControl: "oklch(0.985035 0.004106 91.446)",
-      toolbarControlForeground: "oklch(0.230759 0.014296 266.949)",
-      toolbarControlHover: "oklch(0.934143 0.011168 89.725)",
-      surface: "oklch(0.985035 0.004106 91.446)",
-      surfaceRaised: "oklch(0.985035 0.004106 91.446)",
-      surfaceOverlay: "oklch(1 0 0)",
-      text: "oklch(0.230759 0.014296 266.949)",
-      textMuted: "oklch(0.502608 0.025419 265.578)",
-      border: "oklch(0.839411 0.018606 89.376)",
-      input: "oklch(0.716523 0.021013 87.541)",
-      focus: "oklch(0.545772 0.103913 225.537)",
-      accent: "oklch(0.545772 0.103913 225.537)",
-      accentForeground: "oklch(1 0 0)",
-      secondary: "oklch(0.934143 0.011168 89.725)",
-      secondaryForeground: "oklch(0.230759 0.014296 266.949)",
-      muted: "oklch(0.943475 0.009883 87.472)",
-      mutedForeground: "oklch(0.502608 0.025419 265.578)",
-      placeholder: "oklch(0.502608 0.025419 265.578)",
-      secondaryLabel: "oklch(0.502608 0.025419 265.578)",
-      iconMuted: "oklch(0.502608 0.025419 265.578)",
-      error: "oklch(0.567679 0.211248 16.039)",
-      errorForeground: "oklch(0.486485 0.186853 15.711)",
-      errorSurface: "oklch(0.943186 0.023797 1.344)",
-      warning: "oklch(0.679378 0.142424 76.484)",
-      warningForeground: "oklch(0.51388 0.107914 76.062)",
-      warningSurface: "oklch(0.959692 0.033299 88.059)",
-      update: "oklch(0.545772 0.103913 225.537)",
-      updateForeground: "oklch(0.487761 0.092465 225.06)",
-      updateSurface: "oklch(0.945597 0.021184 215.258)",
-      accentSurface: "oklch(0.934143 0.011168 89.725)",
-      accentSurfaceForeground: "oklch(0.230759 0.014296 266.949)",
-      messageSurface: "oklch(0.934143 0.011168 89.725)",
-      messageForeground: "oklch(0.230759 0.014296 266.949)",
-      messageAction: "oklch(0.545772 0.103913 225.537)",
-      messageActionForeground: "oklch(1 0 0)",
-      messageActionHover: "oklch(0.487761 0.092465 225.06)",
-      codeBackground: "oklch(0.985035 0.004106 91.446)",
-      codeForeground: "oklch(0.230759 0.014296 266.949)",
-      searchMatchBackground: "oklch(0.829953 0.116486 346.966)",
-      searchMatchForeground: "oklch(0.230759 0.014296 266.949)",
-      searchMatchActiveBackground: "oklch(0.542694 0.216286 353.054)",
-      searchMatchActiveForeground: "oklch(1 0 0)",
-      sidebar: "oklch(0.943475 0.009883 87.472)",
-      sidebarForeground: "oklch(0.230759 0.014296 266.949)",
-      sidebarMutedForeground: "oklch(0.502608 0.025419 265.578)",
-      sidebarControlSurface: "oklch(0.913161 0.014105 88.689)",
-      sidebarRowHover: "oklch(0.919239 0.014083 88.688)",
-      sidebarRowActive: "oklch(0.985035 0.004106 91.446)",
-      sidebarRowSelected: "oklch(0.985035 0.004106 91.446)",
-      sidebarBorder: "oklch(0.873134 0.015541 90.248)",
-      terminalBackground: "oklch(0.985035 0.004106 91.446)",
-      terminalForeground: "oklch(0.230759 0.014296 266.949)",
-      terminalCursor: "oklch(0.545772 0.103913 225.537)",
-      terminalSelection: "oklch(0.911362 0.029567 218.199)",
-      terminalScrollbar: "oklch(0.863894 0.015581 90.25)",
-      terminalScrollbarHover: "oklch(0.783028 0.018917 89.386)",
+type InkwireNeonPair = {
+  accent: string;
+  accentForeground: string;
+  accentHover: string;
+  accentSoft: string;
+  live: string;
+  liveForeground: string;
+  liveActive: string;
+  liveActiveForeground: string;
+  /** Optional canvas/chrome tint; keep message bubbles near graphite unless intentional. */
+  surfaces?: Partial<
+    Pick<
+      ThemeColors,
+      | "canvas"
+      | "chrome"
+      | "toolbar"
+      | "surface"
+      | "surfaceRaised"
+      | "surfaceOverlay"
+      | "secondary"
+      | "muted"
+      | "accentSurface"
+      | "accentSurfaceForeground"
+      | "messageSurface"
+      | "messageForeground"
+      | "sidebar"
+      | "sidebarRowHover"
+      | "sidebarRowActive"
+      | "sidebarRowSelected"
+      | "sidebarControlSurface"
+      | "border"
+      | "sidebarBorder"
+      | "toolbarBorder"
+    >
+  >;
+};
+
+function inkwireColorsWithNeons(base: ThemeColors, neon: InkwireNeonPair): ThemeColors {
+  return {
+    ...base,
+    ...neon.surfaces,
+    focus: neon.accent,
+    accent: neon.accent,
+    accentForeground: neon.accentForeground,
+    update: neon.accent,
+    updateForeground: neon.accentHover,
+    updateSurface: neon.accentSoft,
+    messageAction: neon.accent,
+    messageActionForeground: neon.accentForeground,
+    messageActionHover: neon.accentHover,
+    terminalCursor: neon.accent,
+    terminalSelection: neon.accentSoft,
+    searchMatchBackground: neon.live,
+    searchMatchForeground: neon.liveForeground,
+    searchMatchActiveBackground: neon.liveActive,
+    searchMatchActiveForeground: neon.liveActiveForeground,
+  };
+}
+
+function inkwireTheme(
+  id: BuiltInThemeId,
+  label: string,
+  dark: InkwireNeonPair,
+  light: InkwireNeonPair,
+): ThemeDefinition {
+  return {
+    id,
+    label,
+    appearance: "dark",
+    colors: inkwireColorsWithNeons(INKWIRE_BASE_COLORS, dark),
+    variants: {
+      light: inkwireColorsWithNeons(INKWIRE_BASE_LIGHT_COLORS, light),
     },
-  },
-  style: {
-    radius: "0.625rem",
-    shadow: "1.5px 2px 0 -0.5px var(--inkwire-pass)",
-    fonts: {
-      sans: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
-      code: '"JetBrains Mono", "SF Mono", Menlo, Consolas, monospace',
-      terminal: '"JetBrains Mono", "SF Mono", Menlo, Consolas, monospace',
-    },
+    style: INKWIRE_STYLE,
+  };
+}
+
+const INKWIRE_STYLE: ThemeStyle = {
+  radius: "0.625rem",
+  shadow: "1.5px 2px 0 -0.5px var(--inkwire-pass)",
+  fonts: {
+    sans: 'Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif',
+    code: '"JetBrains Mono", "SF Mono", Menlo, Consolas, monospace',
+    terminal: '"JetBrains Mono", "SF Mono", Menlo, Consolas, monospace',
   },
 };
+
+const INKWIRE_BASE_COLORS: ThemeColors = {
+  canvas: "oklch(0.154018 0.009201 264.28)",
+  chrome: "oklch(0.154018 0.009201 264.28)",
+  toolbar: "oklch(0.154018 0.009201 264.28)",
+  toolbarForeground: "oklch(0.933459 0.008714 264.521)",
+  toolbarBorder: "oklch(0.260852 0.023772 267.11)",
+  toolbarControl: "oklch(0.186905 0.015102 266.766)",
+  toolbarControlForeground: "oklch(0.933459 0.008714 264.521)",
+  toolbarControlHover: "oklch(0.217901 0.018766 266.115)",
+  surface: "oklch(0.186905 0.015102 266.766)",
+  surfaceRaised: "oklch(0.217901 0.018766 266.115)",
+  surfaceOverlay: "oklch(0.239419 0.02247 265.666)",
+  text: "oklch(0.933459 0.008714 264.521)",
+  textMuted: "oklch(0.709798 0.027295 261.123)",
+  border: "oklch(0.353043 0.03118 267.327)",
+  input: "oklch(0.502992 0.033818 266.08)",
+  focus: "oklch(0.844151 0.145654 209.285)",
+  accent: "oklch(0.844151 0.145654 209.285)",
+  accentForeground: "oklch(0.175328 0.030392 210.658)",
+  secondary: "oklch(0.217901 0.018766 266.115)",
+  secondaryForeground: "oklch(0.933459 0.008714 264.521)",
+  muted: "oklch(0.186905 0.015102 266.766)",
+  mutedForeground: "oklch(0.709798 0.027295 261.123)",
+  placeholder: "oklch(0.709798 0.027295 261.123)",
+  secondaryLabel: "oklch(0.709798 0.027295 261.123)",
+  iconMuted: "oklch(0.709798 0.027295 261.123)",
+  error: "oklch(0.678523 0.213073 14.719)",
+  errorForeground: "oklch(0.739839 0.162651 11.115)",
+  errorSurface: "oklch(0.213619 0.046054 3.027)",
+  warning: "oklch(0.866574 0.164655 88.684)",
+  warningForeground: "oklch(0.895883 0.139276 91.07)",
+  warningSurface: "oklch(0.255091 0.039773 90.901)",
+  update: "oklch(0.844151 0.145654 209.285)",
+  updateForeground: "oklch(0.883048 0.124089 204.78)",
+  updateSurface: "oklch(0.2633 0.040797 211.02)",
+  accentSurface: "oklch(0.217901 0.018766 266.115)",
+  accentSurfaceForeground: "oklch(0.933459 0.008714 264.521)",
+  messageSurface: "oklch(0.217901 0.018766 266.115)",
+  messageForeground: "oklch(0.933459 0.008714 264.521)",
+  messageAction: "oklch(0.844151 0.145654 209.285)",
+  messageActionForeground: "oklch(0.175328 0.030392 210.658)",
+  messageActionHover: "oklch(0.883048 0.124089 204.78)",
+  codeBackground: "oklch(0.138644 0.007726 255.503)",
+  codeForeground: "oklch(0.871984 0.017776 264.476)",
+  searchMatchBackground: "oklch(0.442451 0.155436 345.256)",
+  searchMatchForeground: "oklch(1 0 0)",
+  searchMatchActiveBackground: "oklch(0.682753 0.246447 350.779)",
+  searchMatchActiveForeground: "oklch(0.130636 0.041343 344.686)",
+  sidebar: "oklch(0.186905 0.015102 266.766)",
+  sidebarForeground: "oklch(0.933459 0.008714 264.521)",
+  sidebarMutedForeground: "oklch(0.709798 0.027295 261.123)",
+  sidebarControlSurface: "oklch(0.154018 0.009201 264.28)",
+  sidebarRowHover: "oklch(0.213561 0.018864 266.094)",
+  sidebarRowActive: "oklch(0.25476 0.031225 270.703)",
+  sidebarRowSelected: "oklch(0.217901 0.018766 266.115)",
+  sidebarBorder: "oklch(0.353043 0.03118 267.327)",
+  terminalBackground: "oklch(0.138644 0.007726 255.503)",
+  terminalForeground: "oklch(0.871984 0.017776 264.476)",
+  terminalCursor: "oklch(0.844151 0.145654 209.285)",
+  terminalSelection: "oklch(0.33033 0.039043 222.507)",
+  terminalScrollbar: "oklch(0.353043 0.03118 267.327)",
+  terminalScrollbarHover: "oklch(0.502992 0.033818 266.08)",
+};
+
+const INKWIRE_BASE_LIGHT_COLORS: ThemeColors = {
+  canvas: "oklch(0.964306 0.006978 88.643)",
+  chrome: "oklch(0.964306 0.006978 88.643)",
+  toolbar: "oklch(0.964306 0.006978 88.643)",
+  toolbarForeground: "oklch(0.230759 0.014296 266.949)",
+  toolbarBorder: "oklch(0.873134 0.015541 90.248)",
+  toolbarControl: "oklch(0.985035 0.004106 91.446)",
+  toolbarControlForeground: "oklch(0.230759 0.014296 266.949)",
+  toolbarControlHover: "oklch(0.934143 0.011168 89.725)",
+  surface: "oklch(0.985035 0.004106 91.446)",
+  surfaceRaised: "oklch(0.985035 0.004106 91.446)",
+  surfaceOverlay: "oklch(1 0 0)",
+  text: "oklch(0.230759 0.014296 266.949)",
+  textMuted: "oklch(0.502608 0.025419 265.578)",
+  border: "oklch(0.839411 0.018606 89.376)",
+  input: "oklch(0.716523 0.021013 87.541)",
+  focus: "oklch(0.545772 0.103913 225.537)",
+  accent: "oklch(0.545772 0.103913 225.537)",
+  accentForeground: "oklch(1 0 0)",
+  secondary: "oklch(0.934143 0.011168 89.725)",
+  secondaryForeground: "oklch(0.230759 0.014296 266.949)",
+  muted: "oklch(0.943475 0.009883 87.472)",
+  mutedForeground: "oklch(0.502608 0.025419 265.578)",
+  placeholder: "oklch(0.502608 0.025419 265.578)",
+  secondaryLabel: "oklch(0.502608 0.025419 265.578)",
+  iconMuted: "oklch(0.502608 0.025419 265.578)",
+  error: "oklch(0.567679 0.211248 16.039)",
+  errorForeground: "oklch(0.486485 0.186853 15.711)",
+  errorSurface: "oklch(0.943186 0.023797 1.344)",
+  warning: "oklch(0.679378 0.142424 76.484)",
+  warningForeground: "oklch(0.51388 0.107914 76.062)",
+  warningSurface: "oklch(0.959692 0.033299 88.059)",
+  update: "oklch(0.545772 0.103913 225.537)",
+  updateForeground: "oklch(0.487761 0.092465 225.06)",
+  updateSurface: "oklch(0.945597 0.021184 215.258)",
+  accentSurface: "oklch(0.934143 0.011168 89.725)",
+  accentSurfaceForeground: "oklch(0.230759 0.014296 266.949)",
+  messageSurface: "oklch(0.934143 0.011168 89.725)",
+  messageForeground: "oklch(0.230759 0.014296 266.949)",
+  messageAction: "oklch(0.545772 0.103913 225.537)",
+  messageActionForeground: "oklch(1 0 0)",
+  messageActionHover: "oklch(0.487761 0.092465 225.06)",
+  codeBackground: "oklch(0.985035 0.004106 91.446)",
+  codeForeground: "oklch(0.230759 0.014296 266.949)",
+  searchMatchBackground: "oklch(0.829953 0.116486 346.966)",
+  searchMatchForeground: "oklch(0.230759 0.014296 266.949)",
+  searchMatchActiveBackground: "oklch(0.542694 0.216286 353.054)",
+  searchMatchActiveForeground: "oklch(1 0 0)",
+  sidebar: "oklch(0.943475 0.009883 87.472)",
+  sidebarForeground: "oklch(0.230759 0.014296 266.949)",
+  sidebarMutedForeground: "oklch(0.502608 0.025419 265.578)",
+  sidebarControlSurface: "oklch(0.913161 0.014105 88.689)",
+  sidebarRowHover: "oklch(0.919239 0.014083 88.688)",
+  sidebarRowActive: "oklch(0.985035 0.004106 91.446)",
+  sidebarRowSelected: "oklch(0.985035 0.004106 91.446)",
+  sidebarBorder: "oklch(0.873134 0.015541 90.248)",
+  terminalBackground: "oklch(0.985035 0.004106 91.446)",
+  terminalForeground: "oklch(0.230759 0.014296 266.949)",
+  terminalCursor: "oklch(0.545772 0.103913 225.537)",
+  terminalSelection: "oklch(0.911362 0.029567 218.199)",
+  terminalScrollbar: "oklch(0.863894 0.015581 90.25)",
+  terminalScrollbarHover: "oklch(0.783028 0.018917 89.386)",
+};
+
+/** Cyan action, magenta live — the original Inkwire pair. */
+export const INKWIRE_THEME = inkwireTheme(
+  "inkwire",
+  "Inkwire",
+  {
+    accent: "oklch(0.844151 0.145654 209.285)",
+    accentForeground: "oklch(0.175328 0.030392 210.658)",
+    accentHover: "oklch(0.883048 0.124089 204.78)",
+    accentSoft: "oklch(0.2633 0.040797 211.02)",
+    live: "oklch(0.442451 0.155436 345.256)",
+    liveForeground: "oklch(1 0 0)",
+    liveActive: "oklch(0.682753 0.246447 350.779)",
+    liveActiveForeground: "oklch(0.130636 0.041343 344.686)",
+  },
+  {
+    accent: "oklch(0.545772 0.103913 225.537)",
+    accentForeground: "oklch(1 0 0)",
+    accentHover: "oklch(0.487761 0.092465 225.06)",
+    accentSoft: "oklch(0.945597 0.021184 215.258)",
+    live: "oklch(0.829953 0.116486 346.966)",
+    liveForeground: "oklch(0.230759 0.014296 266.949)",
+    liveActive: "oklch(0.542694 0.216286 353.054)",
+    liveActiveForeground: "oklch(1 0 0)",
+  },
+);
+
+/** Acid yellow action, cyan live. */
+export const INKWIRE_ACID_THEME = inkwireTheme(
+  "inkwire-acid",
+  "Inkwire Acid",
+  {
+    accent: "oklch(0.951004 0.209949 116.332)",
+    accentForeground: "oklch(0.226181 0.052645 118.001)",
+    accentHover: "oklch(0.964855 0.170149 112.748)",
+    accentSoft: "oklch(0.299743 0.062479 119.735)",
+    live: "oklch(0.4 0.09 215)",
+    liveForeground: "oklch(1 0 0)",
+    liveActive: "oklch(0.847955 0.12179 215.348)",
+    liveActiveForeground: "oklch(0.175328 0.030392 210.658)",
+  },
+  {
+    accent: "oklch(0.547023 0.127877 118.452)",
+    accentForeground: "oklch(1 0 0)",
+    accentHover: "oklch(0.468492 0.109404 118.344)",
+    accentSoft: "oklch(0.953536 0.059053 114.711)",
+    live: "oklch(0.78 0.1 215)",
+    liveForeground: "oklch(0.230759 0.014296 266.949)",
+    liveActive: "oklch(0.53961 0.099994 224.936)",
+    liveActiveForeground: "oklch(1 0 0)",
+  },
+);
+
+/** Neon green action, magenta live. */
+export const INKWIRE_VOLT_THEME = inkwireTheme(
+  "inkwire-volt",
+  "Inkwire Volt",
+  {
+    accent: "oklch(0.886041 0.197608 156.563)",
+    accentForeground: "oklch(0.243511 0.058518 156.495)",
+    accentHover: "oklch(0.901169 0.162782 159.658)",
+    accentSoft: "oklch(0.269727 0.053099 157.741)",
+    live: "oklch(0.442451 0.155436 345.256)",
+    liveForeground: "oklch(1 0 0)",
+    liveActive: "oklch(0.682753 0.246447 350.779)",
+    liveActiveForeground: "oklch(0.130636 0.041343 344.686)",
+  },
+  {
+    accent: "oklch(0.466779 0.103894 159.037)",
+    accentForeground: "oklch(1 0 0)",
+    accentHover: "oklch(0.431469 0.100837 156.245)",
+    accentSoft: "oklch(0.942315 0.039765 166.35)",
+    live: "oklch(0.829953 0.116486 346.966)",
+    liveForeground: "oklch(0.230759 0.014296 266.949)",
+    liveActive: "oklch(0.542694 0.216286 353.054)",
+    liveActiveForeground: "oklch(1 0 0)",
+  },
+);
+
+/** Amber action, cyan live. */
+export const INKWIRE_EMBER_THEME = inkwireTheme(
+  "inkwire-ember",
+  "Inkwire Ember",
+  {
+    accent: "oklch(0.748658 0.173028 53.987)",
+    accentForeground: "oklch(0.209532 0.052584 53.895)",
+    accentHover: "oklch(0.817909 0.133317 64.34)",
+    accentSoft: "oklch(0.231132 0.045581 49.477)",
+    live: "oklch(0.4 0.09 215)",
+    liveForeground: "oklch(1 0 0)",
+    liveActive: "oklch(0.847955 0.12179 215.348)",
+    liveActiveForeground: "oklch(0.175328 0.030392 210.658)",
+  },
+  {
+    accent: "oklch(0.520191 0.141512 45.655)",
+    accentForeground: "oklch(1 0 0)",
+    accentHover: "oklch(0.477895 0.130516 45.271)",
+    accentSoft: "oklch(0.942633 0.03511 66.004)",
+    live: "oklch(0.78 0.1 215)",
+    liveForeground: "oklch(0.230759 0.014296 266.949)",
+    liveActive: "oklch(0.53961 0.099994 224.936)",
+    liveActiveForeground: "oklch(1 0 0)",
+  },
+);
+
+/**
+ * Neo-brutalist split: violet action, gray-purple user bubbles, red selected/running
+ * marks, cyan and coral search hits, on ink-neutral panels. Colors separate roles
+ * instead of shading one hue.
+ */
+export const INKWIRE_ORCHID_THEME = inkwireTheme(
+  "inkwire-orchid",
+  "Inkwire Orchid",
+  {
+    accent: "oklch(0.723288 0.180225 304.834)",
+    accentForeground: "oklch(0.183747 0.064253 307.143)",
+    accentHover: "oklch(0.797132 0.133029 307.576)",
+    accentSoft: "oklch(0.26 0.09 300)",
+    // Search highlights are cyan and coral so they stay visible on lime bubbles.
+    live: "oklch(0.85 0.12 210)",
+    liveForeground: "oklch(0.2 0.04 210)",
+    liveActive: "oklch(0.72 0.21 30)",
+    liveActiveForeground: "oklch(0.18 0.04 30)",
+    surfaces: {
+      // Ink-neutral panels so violet and lime are the only loud colors.
+      canvas: "oklch(0.125 0.008 290)",
+      chrome: "oklch(0.125 0.008 290)",
+      toolbar: "oklch(0.125 0.008 290)",
+      surface: "oklch(0.165 0.01 290)",
+      surfaceRaised: "oklch(0.205 0.012 290)",
+      surfaceOverlay: "oklch(0.235 0.014 290)",
+      secondary: "oklch(0.205 0.012 290)",
+      muted: "oklch(0.165 0.01 290)",
+      border: "oklch(0.42 0.025 290)",
+      toolbarBorder: "oklch(0.3 0.02 290)",
+      accentSurface: "oklch(0.3 0.13 300)",
+      accentSurfaceForeground: "oklch(0.96 0.02 300)",
+      // Graphite user bubbles with a purple tint — quiet next to the violet action.
+      messageSurface: "oklch(0.22 0.035 300)",
+      messageForeground: "oklch(0.93 0.01 300)",
+      sidebar: "oklch(0.095 0.006 290)",
+      sidebarControlSurface: "oklch(0.165 0.01 290)",
+      sidebarRowHover: "oklch(0.2 0.012 290)",
+      sidebarRowActive: "oklch(0.32 0.14 300)",
+      sidebarRowSelected: "oklch(0.36 0.16 300)",
+      sidebarBorder: "oklch(0.3 0.02 290)",
+    },
+  },
+  {
+    accent: "oklch(0.483376 0.183855 295.939)",
+    accentForeground: "oklch(1 0 0)",
+    accentHover: "oklch(0.427444 0.163276 296.079)",
+    accentSoft: "oklch(0.912496 0.039743 304.956)",
+    live: "oklch(0.87 0.1 210)",
+    liveForeground: "oklch(0.25 0.05 210)",
+    liveActive: "oklch(0.72 0.2 30)",
+    liveActiveForeground: "oklch(0.2 0.04 30)",
+    surfaces: {
+      // Cool lavender-white paper with white cards, a violet sidebar, and a purple-pink bubble.
+      canvas: "oklch(0.965 0.018 285)",
+      chrome: "oklch(0.965 0.018 285)",
+      toolbar: "oklch(0.965 0.018 285)",
+      surface: "oklch(0.99 0.008 285)",
+      surfaceRaised: "oklch(1 0 0)",
+      muted: "oklch(0.93 0.028 285)",
+      secondary: "oklch(0.93 0.028 285)",
+      border: "oklch(0.5 0.04 290)",
+      toolbarBorder: "oklch(0.75 0.04 290)",
+      accentSurface: "oklch(0.88 0.09 300)",
+      accentSurfaceForeground: "oklch(0.2 0.05 300)",
+      messageSurface: "oklch(0.9 0.025 300)",
+      messageForeground: "oklch(0.25 0.03 300)",
+      sidebar: "oklch(0.93 0.04 300)",
+      sidebarRowActive: "oklch(0.86 0.12 300)",
+      sidebarRowSelected: "oklch(0.82 0.14 300)",
+      sidebarBorder: "oklch(0.75 0.04 290)",
+    },
+  },
+);
 
 export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [
   T3_CHAT_THEME,
@@ -1100,6 +1356,10 @@ export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [
   EMBER_THEME,
   IRIS_THEME,
   INKWIRE_THEME,
+  INKWIRE_ACID_THEME,
+  INKWIRE_VOLT_THEME,
+  INKWIRE_EMBER_THEME,
+  INKWIRE_ORCHID_THEME,
 ];
 
 export function getThemeColorsForAppearance(

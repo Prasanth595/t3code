@@ -171,12 +171,14 @@
   background-color: color-mix(in srgb, var(--primary) 24%, transparent);
 }
 
-/* Fork: Inkwire, a built-in theme (packages/shared/src/themePalettes.ts). Neon marks meaning:
-   cyan is the primary action and focus, magenta is selected and running. The hand-drawn look
-   is static: uneven corner radii, a second pencil outline that follows the same corners, drawn a little off and rotated,
-   wavy pencil separators, and dashed outlines on disabled buttons. Nothing animates
-   continuously or filters, so it adds no repaint work, and no rule changes layout. */
-:root[data-theme-id="inkwire"] {
+/* Fork: Inkwire family (packages/shared/src/themePalettes.ts). Matches every theme id that
+   starts with `inkwire`. Neon marks: primary is the action/focus color from the palette;
+   --inkwire-live is selected and running (magenta by default; Acid and Ember use cyan).
+   The hand-drawn look is static: uneven corner radii, a second pencil outline that follows
+   the same corners, drawn a little off and rotated, wavy pencil separators, and dashed
+   outlines on disabled buttons. Nothing animates continuously or filters, so it adds no
+   repaint work, and no rule changes layout. */
+:root[data-theme-id^="inkwire"] {
   --inkwire-pass: color-mix(in srgb, var(--input) 70%, transparent);
   --inkwire-live: #c4127a;
   --inkwire-glow: color-mix(in srgb, var(--primary) 16%, transparent);
@@ -191,16 +193,31 @@
   --info: var(--inkwire-live);
   --info-foreground: var(--inkwire-live);
 }
-:root.dark[data-theme-id="inkwire"] {
+:root.dark[data-theme-id^="inkwire"] {
   --inkwire-live: #ff3cac;
   --inkwire-glow: color-mix(in srgb, var(--primary) 22%, transparent);
   --inkwire-glow-strong: color-mix(in srgb, var(--primary) 40%, transparent);
   --success: #3dffa2;
   --success-foreground: #3dffa2;
 }
+:root[data-theme-id="inkwire-acid"],
+:root[data-theme-id="inkwire-ember"] {
+  --inkwire-live: #0a7a9a;
+}
+:root.dark[data-theme-id="inkwire-acid"],
+:root.dark[data-theme-id="inkwire-ember"] {
+  --inkwire-live: #5ce1ff;
+}
+/* Orchid marks selected and running in red, against its violet action. */
+:root[data-theme-id="inkwire-orchid"] {
+  --inkwire-live: #c4123a;
+}
+:root.dark[data-theme-id="inkwire-orchid"] {
+  --inkwire-live: #ff4d6d;
+}
 
 /* Clickable controls: a sketched outline with a short, quiet state transition. */
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :is(
     [data-slot="button"]:is(
       [data-button-variant="default"],
@@ -218,11 +235,11 @@
   transition-property: box-shadow, scale, border-color, background-color, color;
   transition-duration: 140ms;
 }
-:root[data-theme-id="inkwire"] [data-slot="button"]::before {
+:root[data-theme-id^="inkwire"] [data-slot="button"]::before {
   border-radius: inherit;
 }
 @media (prefers-reduced-motion: reduce) {
-  :root[data-theme-id="inkwire"] :is([data-slot="button"], [data-testid="sidebar-row-card"]) {
+  :root[data-theme-id^="inkwire"] :is([data-slot="button"], [data-testid="sidebar-row-card"]) {
     transition: none;
   }
 }
@@ -231,7 +248,7 @@
    Buttons and select triggers use ::after for a bigger touch target on coarse pointers, so
    they get the pass only with a mouse. Wide controls rotate less, so the ends stay close. */
 @media (pointer: fine) {
-  :root[data-theme-id="inkwire"]
+  :root[data-theme-id^="inkwire"]
     :is(
       [data-slot="button"]:is(
         [data-button-variant="default"],
@@ -252,7 +269,7 @@
     pointer-events: none;
   }
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :is([data-slot="input-control"], [data-slot="textarea-control"])::after {
   content: "";
   position: absolute;
@@ -263,7 +280,7 @@
   transform: translate(var(--inkwire-dx), var(--inkwire-dy)) rotate(calc(var(--inkwire-rot) * 0.25));
   pointer-events: none;
 }
-:root[data-theme-id="inkwire"] [data-testid="sidebar-row-card"][aria-current="page"]::after {
+:root[data-theme-id^="inkwire"] [data-testid="sidebar-row-card"][aria-current="page"]::after {
   content: "";
   position: absolute;
   inset: 2px 1px 1px 2px;
@@ -280,14 +297,19 @@
    Thread rows and your messages sit in lists that reorder and virtualize, so they vary by the
    last character of their id instead and keep their sketch while the list scrolls. Only sketched
    things carry these variables, so the rest of the page keeps sharing styles. */
-:root[data-theme-id="inkwire"] {
+:root[data-theme-id^="inkwire"] {
   --inkwire-rot: -0.8deg;
   --inkwire-dx: 0px;
   --inkwire-dy: 0px;
   --inkwire-radius: var(--inkwire-wobble);
   --inkwire-radius-lg: var(--inkwire-wobble-lg);
+  /* Second stroke overhang + where the incomplete pass opens/closes around a bubble. */
+  --inkwire-pass-inset: -3px -1px -1px -3px;
+  --inkwire-gap-from: 48deg;
+  --inkwire-gap-size: 42deg;
+  --inkwire-gap-fade: 14deg;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :nth-child(3n + 2)
   > :is(
     [data-slot="button"],
@@ -299,7 +321,7 @@
   ) {
   --inkwire-rot: 0.6deg;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :nth-child(3n)
   > :is(
     [data-slot="button"],
@@ -311,7 +333,7 @@
   ) {
   --inkwire-rot: -0.35deg;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :nth-child(2n)
   > :is(
     [data-slot="button"],
@@ -324,7 +346,7 @@
   --inkwire-dx: 1.5px;
   --inkwire-dy: -0.5px;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :nth-child(4n + 3)
   > :is(
     [data-slot="button"],
@@ -337,7 +359,7 @@
   --inkwire-dx: -0.5px;
   --inkwire-dy: 1px;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :nth-child(5n + 2)
   > :is(
     [data-slot="button"],
@@ -350,7 +372,7 @@
   --inkwire-radius: 10px 6px 12px 7px / 7px 11px 6px 12px;
   --inkwire-radius-lg: 12px 22px 14px 20px / 22px 14px 20px 12px;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :nth-child(5n + 3)
   > :is(
     [data-slot="button"],
@@ -363,7 +385,7 @@
   --inkwire-radius: 8px 11px 7px 12px / 12px 7px 10px 8px;
   --inkwire-radius-lg: 22px 14px 18px 12px / 16px 22px 12px 20px;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :nth-child(5n + 4)
   > :is(
     [data-slot="button"],
@@ -376,7 +398,7 @@
   --inkwire-radius: 11px 7px 10px 6px / 6px 12px 8px 11px;
   --inkwire-radius-lg: 14px 20px 22px 12px / 20px 12px 14px 22px;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :nth-child(5n)
   > :is(
     [data-slot="button"],
@@ -389,7 +411,7 @@
   --inkwire-radius: 9px 12px 8px 7px / 10px 7px 12px 9px;
   --inkwire-radius-lg: 18px 12px 14px 22px / 12px 20px 22px 14px;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :is(
     [data-slot="button"],
     [data-slot="select-trigger"],
@@ -400,7 +422,7 @@
   ):nth-child(3n + 2) {
   --inkwire-rot: 0.6deg;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :is(
     [data-slot="button"],
     [data-slot="select-trigger"],
@@ -411,7 +433,7 @@
   ):nth-child(3n) {
   --inkwire-rot: -0.35deg;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :is(
     [data-slot="button"],
     [data-slot="select-trigger"],
@@ -423,7 +445,7 @@
   --inkwire-dx: 1.5px;
   --inkwire-dy: -0.5px;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :is(
     [data-slot="button"],
     [data-slot="select-trigger"],
@@ -435,7 +457,7 @@
   --inkwire-dx: -0.5px;
   --inkwire-dy: 1px;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :is(
     [data-slot="button"],
     [data-slot="select-trigger"],
@@ -447,7 +469,7 @@
   --inkwire-radius: 10px 6px 12px 7px / 7px 11px 6px 12px;
   --inkwire-radius-lg: 12px 22px 14px 20px / 22px 14px 20px 12px;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :is(
     [data-slot="button"],
     [data-slot="select-trigger"],
@@ -459,7 +481,7 @@
   --inkwire-radius: 8px 11px 7px 12px / 12px 7px 10px 8px;
   --inkwire-radius-lg: 22px 14px 18px 12px / 16px 22px 12px 20px;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :is(
     [data-slot="button"],
     [data-slot="select-trigger"],
@@ -471,7 +493,7 @@
   --inkwire-radius: 11px 7px 10px 6px / 6px 12px 8px 11px;
   --inkwire-radius-lg: 14px 20px 22px 12px / 20px 12px 14px 22px;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :is(
     [data-slot="button"],
     [data-slot="select-trigger"],
@@ -483,7 +505,7 @@
   --inkwire-radius: 9px 12px 8px 7px / 10px 7px 12px 9px;
   --inkwire-radius-lg: 18px 12px 14px 22px / 12px 20px 22px 14px;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :is(
     [data-thread-item$="1"] > [data-testid="sidebar-row-card"],
     [data-message-id$="1"] .bg-message,
@@ -498,7 +520,7 @@
   --inkwire-radius: 10px 6px 12px 7px / 7px 11px 6px 12px;
   --inkwire-radius-lg: 12px 22px 14px 20px / 22px 14px 20px 12px;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :is(
     [data-thread-item$="2"] > [data-testid="sidebar-row-card"],
     [data-message-id$="2"] .bg-message,
@@ -514,7 +536,7 @@
   --inkwire-radius: 8px 11px 7px 12px / 12px 7px 10px 8px;
   --inkwire-radius-lg: 22px 14px 18px 12px / 16px 22px 12px 20px;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :is(
     [data-thread-item$="3"] > [data-testid="sidebar-row-card"],
     [data-message-id$="3"] .bg-message,
@@ -530,7 +552,7 @@
   --inkwire-radius: 11px 7px 10px 6px / 6px 12px 8px 11px;
   --inkwire-radius-lg: 14px 20px 22px 12px / 20px 12px 14px 22px;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :is(
     [data-thread-item$="4"] > [data-testid="sidebar-row-card"],
     [data-message-id$="4"] .bg-message,
@@ -548,7 +570,7 @@
 
 /* Buttons carry the pencil pass instead of the theme's offset shadow. Same specificity as the
    theme shadow rule above, and later. */
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   [data-slot="button"]:is(
     [data-button-variant="default"],
     [data-button-variant="outline"],
@@ -559,10 +581,10 @@
 }
 
 /* Secondary buttons carry a graphite outline, so they read as clickable without glowing. */
-:root[data-theme-id="inkwire"] [data-slot="button"][data-button-variant="secondary"] {
+:root[data-theme-id^="inkwire"] [data-slot="button"][data-button-variant="secondary"] {
   border-color: var(--inkwire-pass);
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   [data-slot="button"]:is([data-button-variant="outline"], [data-button-variant="secondary"]):is(
     :hover,
     [data-pressed]
@@ -570,7 +592,7 @@
   border-color: color-mix(in srgb, var(--input) 55%, var(--foreground));
 }
 /* A disabled control is drawn with a dashed line: present, but not usable yet. */
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   [data-slot="button"]:is(
     [data-button-variant="default"],
     [data-button-variant="outline"],
@@ -584,24 +606,24 @@
 
 /* Primary on dark: a cyan outline and label over a faint cyan wash, instead of a solid neon
    slab. The light variant keeps the stock solid fill, which reads better on paper. */
-:root.dark[data-theme-id="inkwire"] [data-slot="button"][data-button-variant="default"] {
+:root.dark[data-theme-id^="inkwire"] [data-slot="button"][data-button-variant="default"] {
   border-color: var(--primary);
   background-color: color-mix(in srgb, var(--primary) 12%, var(--background));
   color: var(--primary);
   font-weight: 600;
 }
-:root.dark[data-theme-id="inkwire"]
+:root.dark[data-theme-id^="inkwire"]
   [data-slot="button"][data-button-variant="default"]:is(:hover, [data-pressed]):not(:disabled) {
   background-color: color-mix(in srgb, var(--primary) 20%, var(--background));
 }
-:root.dark[data-theme-id="inkwire"] [data-slot="button"][data-button-variant="default"]:disabled {
+:root.dark[data-theme-id^="inkwire"] [data-slot="button"][data-button-variant="default"]:disabled {
   border-color: var(--input);
   background-color: transparent;
   color: var(--muted-foreground);
 }
 
 /* The primary action glows, a little more on hover and keyboard focus. */
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   [data-slot="button"][data-button-variant="default"]:not(
     :disabled,
     :active,
@@ -610,7 +632,7 @@
   ) {
   box-shadow: 0 0 8px var(--inkwire-glow);
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   [data-slot="button"][data-button-variant="default"]:is(:hover, :focus-visible):not(
     :disabled,
     :active,
@@ -620,7 +642,7 @@
   box-shadow: 0 0 14px var(--inkwire-glow-strong);
 }
 
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   :is(
     [data-slot="input-control"],
     [data-slot="textarea-control"],
@@ -631,18 +653,25 @@
 }
 
 /* The composer is the main control: a sketched cyan outline with a pencil pass, brighter and
-   glowing while you type. */
-:root[data-theme-id="inkwire"] [data-slot="composer-shell"] {
+   glowing while you type. When a queue/banner attaches above the input, the stock shell
+   already splits the primary border onto the main surface — keep the pencil pass there too,
+   so the queued strip never shares the input's frame. */
+:root[data-theme-id^="inkwire"] [data-slot="composer-shell"] {
   --chat-composer-outline: color-mix(in srgb, var(--primary) 45%, transparent);
 }
-:root[data-theme-id="inkwire"] [data-slot="composer-shell"]:focus-within {
+:root[data-theme-id^="inkwire"] [data-slot="composer-shell"]:focus-within {
   --chat-composer-outline: var(--primary);
 }
-:root[data-theme-id="inkwire"] :is([data-slot="composer-host"], [data-chat-composer-main-surface]),
-:root[data-theme-id="inkwire"] [data-slot="composer-shell"]::before {
+:root[data-theme-id^="inkwire"] :is([data-slot="composer-host"], [data-chat-composer-main-surface]),
+:root[data-theme-id^="inkwire"] [data-slot="composer-shell"]::before {
   border-radius: var(--inkwire-radius-lg);
 }
-:root[data-theme-id="inkwire"] [data-slot="composer-shell"]:not([data-with-context])::after {
+:root[data-theme-id^="inkwire"] [data-slot="composer-shell"]:not([data-with-context])::after,
+:root[data-theme-id^="inkwire"]
+  [data-slot="composer-shell"]:not([data-with-context]):has(
+    [data-composer-banner-surface="attached"]
+  )
+  [data-chat-composer-main-surface]::before {
   content: "";
   position: absolute;
   z-index: 20;
@@ -653,52 +682,201 @@
   transform: translate(var(--inkwire-dx), var(--inkwire-dy)) rotate(calc(var(--inkwire-rot) * 0.2));
   pointer-events: none;
 }
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
+  [data-slot="composer-shell"]:not([data-with-context]):has(
+    [data-composer-banner-surface="attached"]
+  )::after {
+  content: none;
+}
+:root[data-theme-id^="inkwire"]
   [data-slot="composer-shell"]:focus-within
-  [data-slot="composer-host"] {
+  [data-slot="composer-host"]:not(:has([data-composer-banner-surface="attached"])) {
+  box-shadow: 0 0 18px var(--inkwire-glow);
+}
+:root[data-theme-id^="inkwire"]
+  [data-slot="composer-shell"]:focus-within
+  [data-slot="composer-host"]:has([data-composer-banner-surface="attached"])
+  [data-chat-composer-main-surface] {
   box-shadow: 0 0 18px var(--inkwire-glow);
 }
 
 /* The composer pickers (model, effort, access) are drawn as small sketched pills. They already
    carry a transparent 1px border, so this changes no size. */
-:root[data-theme-id="inkwire"]
+:root[data-theme-id^="inkwire"]
   [data-slot="composer-host"]
   :is(button:has([data-composer-control-chevron]), [role="combobox"]) {
   border-color: var(--inkwire-pass);
   border-radius: var(--inkwire-radius);
 }
 
-/* Your own messages: a graphite outline with a pencil pass, so they read as drawn cards. */
-:root[data-theme-id="inkwire"] [data-message-role="user"] .bg-message {
+/* Your own messages: a graphite outline with a pencil pass, so they read as drawn cards.
+   The second stroke is incomplete and opens at a per-message angle, so wires do not all
+   start and end in the same corners. */
+:root[data-theme-id^="inkwire"] [data-message-role="user"] .bg-message {
   border-radius: var(--inkwire-radius-lg);
   box-shadow: inset 0 0 0 1px var(--inkwire-pass);
 }
-:root[data-theme-id="inkwire"] [data-message-role="user"] .bg-message::after {
+:root[data-theme-id^="inkwire"] [data-message-role="user"] .bg-message::after {
   content: "";
   position: absolute;
-  inset: -3px -1px -1px -3px;
+  inset: var(--inkwire-pass-inset);
   border: 1px solid currentColor;
   border-radius: var(--inkwire-radius-lg);
   opacity: 0.3;
   transform: translate(var(--inkwire-dx), var(--inkwire-dy)) rotate(calc(var(--inkwire-rot) * 0.5));
   pointer-events: none;
+  -webkit-mask-image: conic-gradient(
+    from var(--inkwire-gap-from),
+    transparent 0deg,
+    #000 var(--inkwire-gap-fade),
+    #000 calc(360deg - var(--inkwire-gap-size)),
+    transparent calc(360deg - var(--inkwire-gap-size) + var(--inkwire-gap-fade)),
+    transparent 360deg
+  );
+  mask-image: conic-gradient(
+    from var(--inkwire-gap-from),
+    transparent 0deg,
+    #000 var(--inkwire-gap-fade),
+    #000 calc(360deg - var(--inkwire-gap-size)),
+    transparent calc(360deg - var(--inkwire-gap-size) + var(--inkwire-gap-fade)),
+    transparent 360deg
+  );
+}
+/* Sixteen stable gap/inset sketches from the last hex of the message id. */
+:root[data-theme-id^="inkwire"] [data-message-id$="0"] .bg-message {
+  --inkwire-gap-from: 12deg;
+  --inkwire-gap-size: 38deg;
+  --inkwire-pass-inset: -1px -3px -2px -1px;
+  --inkwire-dx: -1px;
+  --inkwire-dy: 0.5px;
+}
+:root[data-theme-id^="inkwire"] [data-message-id$="1"] .bg-message {
+  --inkwire-gap-from: 78deg;
+  --inkwire-gap-size: 52deg;
+  --inkwire-pass-inset: -3px -1px -1px -2px;
+  --inkwire-dx: 1px;
+  --inkwire-dy: -0.5px;
+}
+:root[data-theme-id^="inkwire"] [data-message-id$="2"] .bg-message {
+  --inkwire-gap-from: 155deg;
+  --inkwire-gap-size: 28deg;
+  --inkwire-pass-inset: -2px -2px -3px -1px;
+  --inkwire-dx: 0.5px;
+  --inkwire-dy: 1.5px;
+}
+:root[data-theme-id^="inkwire"] [data-message-id$="3"] .bg-message {
+  --inkwire-gap-from: 210deg;
+  --inkwire-gap-size: 64deg;
+  --inkwire-pass-inset: -1px -1px -3px -3px;
+  --inkwire-dx: -1.5px;
+  --inkwire-dy: -1px;
+}
+:root[data-theme-id^="inkwire"] [data-message-id$="4"] .bg-message {
+  --inkwire-gap-from: 268deg;
+  --inkwire-gap-size: 34deg;
+  --inkwire-pass-inset: -3px -2px -1px -1px;
+  --inkwire-dx: 1.5px;
+  --inkwire-dy: 0px;
+}
+:root[data-theme-id^="inkwire"] [data-message-id$="5"] .bg-message {
+  --inkwire-gap-from: 318deg;
+  --inkwire-gap-size: 48deg;
+  --inkwire-pass-inset: -2px -1px -2px -3px;
+  --inkwire-dx: -0.5px;
+  --inkwire-dy: 1px;
+}
+:root[data-theme-id^="inkwire"] [data-message-id$="6"] .bg-message {
+  --inkwire-gap-from: 42deg;
+  --inkwire-gap-size: 58deg;
+  --inkwire-pass-inset: -1px -3px -1px -2px;
+  --inkwire-dx: 0px;
+  --inkwire-dy: -1.5px;
+}
+:root[data-theme-id^="inkwire"] [data-message-id$="7"] .bg-message {
+  --inkwire-gap-from: 96deg;
+  --inkwire-gap-size: 30deg;
+  --inkwire-pass-inset: -3px -1px -2px -1px;
+  --inkwire-dx: 1px;
+  --inkwire-dy: 1px;
+}
+:root[data-theme-id^="inkwire"] [data-message-id$="8"] .bg-message {
+  --inkwire-gap-from: 132deg;
+  --inkwire-gap-size: 70deg;
+  --inkwire-pass-inset: -2px -3px -1px -1px;
+  --inkwire-dx: -1px;
+  --inkwire-dy: -0.5px;
+}
+:root[data-theme-id^="inkwire"] [data-message-id$="9"] .bg-message {
+  --inkwire-gap-from: 188deg;
+  --inkwire-gap-size: 44deg;
+  --inkwire-pass-inset: -1px -2px -3px -2px;
+  --inkwire-dx: 0.5px;
+  --inkwire-dy: -1px;
+}
+:root[data-theme-id^="inkwire"] [data-message-id$="a"] .bg-message,
+:root[data-theme-id^="inkwire"] [data-message-id$="A"] .bg-message {
+  --inkwire-gap-from: 236deg;
+  --inkwire-gap-size: 36deg;
+  --inkwire-pass-inset: -3px -1px -1px -3px;
+  --inkwire-dx: -0.5px;
+  --inkwire-dy: 1.5px;
+}
+:root[data-theme-id^="inkwire"] [data-message-id$="b"] .bg-message,
+:root[data-theme-id^="inkwire"] [data-message-id$="B"] .bg-message {
+  --inkwire-gap-from: 284deg;
+  --inkwire-gap-size: 56deg;
+  --inkwire-pass-inset: -1px -1px -2px -3px;
+  --inkwire-dx: 1.5px;
+  --inkwire-dy: 0.5px;
+}
+:root[data-theme-id^="inkwire"] [data-message-id$="c"] .bg-message,
+:root[data-theme-id^="inkwire"] [data-message-id$="C"] .bg-message {
+  --inkwire-gap-from: 6deg;
+  --inkwire-gap-size: 50deg;
+  --inkwire-pass-inset: -2px -3px -2px -1px;
+  --inkwire-dx: 0px;
+  --inkwire-dy: 1px;
+}
+:root[data-theme-id^="inkwire"] [data-message-id$="d"] .bg-message,
+:root[data-theme-id^="inkwire"] [data-message-id$="D"] .bg-message {
+  --inkwire-gap-from: 62deg;
+  --inkwire-gap-size: 26deg;
+  --inkwire-pass-inset: -3px -2px -1px -2px;
+  --inkwire-dx: -1.5px;
+  --inkwire-dy: 0px;
+}
+:root[data-theme-id^="inkwire"] [data-message-id$="e"] .bg-message,
+:root[data-theme-id^="inkwire"] [data-message-id$="E"] .bg-message {
+  --inkwire-gap-from: 118deg;
+  --inkwire-gap-size: 60deg;
+  --inkwire-pass-inset: -1px -2px -3px -1px;
+  --inkwire-dx: 1px;
+  --inkwire-dy: -1.5px;
+}
+:root[data-theme-id^="inkwire"] [data-message-id$="f"] .bg-message,
+:root[data-theme-id^="inkwire"] [data-message-id$="F"] .bg-message {
+  --inkwire-gap-from: 340deg;
+  --inkwire-gap-size: 40deg;
+  --inkwire-pass-inset: -2px -1px -3px -3px;
+  --inkwire-dx: -1px;
+  --inkwire-dy: -1px;
 }
 
 /* The open thread gets a graphite outline and a magenta marker. */
-:root[data-theme-id="inkwire"] [data-testid="sidebar-row-card"][aria-current="page"] {
+:root[data-theme-id^="inkwire"] [data-testid="sidebar-row-card"][aria-current="page"] {
   box-shadow:
     inset 3px 0 0 var(--inkwire-live),
     inset 0 0 0 1px var(--inkwire-pass);
 }
 /* Small status lights: the unread dot glows, thread status is a sketched monospace tag. */
-:root.dark[data-theme-id="inkwire"] [data-testid="sidebar-row-card"] [aria-label="Unread"] {
+:root.dark[data-theme-id^="inkwire"] [data-testid="sidebar-row-card"] [aria-label="Unread"] {
   box-shadow: 0 0 6px var(--primary);
 }
-:root[data-theme-id="inkwire"] [data-sidebar-status] {
+:root[data-theme-id^="inkwire"] [data-sidebar-status] {
   font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   font-size: 0.6875rem;
 }
-:root[data-theme-id="inkwire"] [data-sidebar-status] > span:has(> [role="status"]) {
+:root[data-theme-id^="inkwire"] [data-sidebar-status] > span:has(> [role="status"]) {
   padding: 0 5px;
   border: 1px solid color-mix(in srgb, currentColor 55%, transparent);
   border-radius: var(--inkwire-wobble);
@@ -706,46 +884,86 @@
 
 /* Wavy pencil lines. The element keeps its size; the line is drawn in a 6px strip centered on
    it, so layout is unchanged. */
-:root[data-theme-id="inkwire"] [data-slot="separator"] {
+:root[data-theme-id^="inkwire"] [data-slot="separator"] {
   position: relative;
   background: transparent;
 }
-:root[data-theme-id="inkwire"] [data-slot="separator"]::after,
-:root[data-theme-id="inkwire"] [data-slot="sidebar-container"]::after,
-:root[data-theme-id="inkwire"] [data-slot="dialog-footer"]::before {
+:root[data-theme-id^="inkwire"] [data-slot="separator"]::after,
+:root[data-theme-id^="inkwire"] [data-slot="sidebar-container"]::after,
+:root[data-theme-id^="inkwire"] [data-slot="dialog-footer"]::before {
   content: "";
   position: absolute;
   background-color: var(--border);
   pointer-events: none;
 }
-:root[data-theme-id="inkwire"] [data-slot="separator"][data-orientation="horizontal"]::after,
-:root[data-theme-id="inkwire"] [data-slot="dialog-footer"]::before {
+:root[data-theme-id^="inkwire"] [data-slot="separator"][data-orientation="horizontal"]::after,
+:root[data-theme-id^="inkwire"] [data-slot="dialog-footer"]::before {
   inset: -2.5px 0 auto;
   height: 6px;
   mask: var(--inkwire-wave-x) repeat-x center / 120px 6px;
 }
-:root[data-theme-id="inkwire"] [data-slot="separator"][data-orientation="vertical"]::after {
+:root[data-theme-id^="inkwire"] [data-slot="separator"][data-orientation="vertical"]::after {
   inset: 0 auto 0 -2.5px;
   width: 6px;
   mask: var(--inkwire-wave-y) repeat-y center / 6px 120px;
 }
-:root[data-theme-id="inkwire"] [data-slot="sidebar-container"] {
+:root[data-theme-id^="inkwire"] [data-slot="sidebar-container"] {
   border-color: transparent;
 }
-:root[data-theme-id="inkwire"] [data-slot="sidebar-container"]::after {
+:root[data-theme-id^="inkwire"] [data-slot="sidebar-container"]::after {
   top: 0;
   bottom: 0;
   width: 6px;
   background-color: var(--sidebar-border);
   mask: var(--inkwire-wave-y) repeat-y center / 6px 120px;
 }
-:root[data-theme-id="inkwire"] [data-side="left"] [data-slot="sidebar-container"]::after {
+:root[data-theme-id^="inkwire"] [data-side="left"] [data-slot="sidebar-container"]::after {
   right: -3.5px;
 }
-:root[data-theme-id="inkwire"] [data-side="right"] [data-slot="sidebar-container"]::after {
+:root[data-theme-id^="inkwire"] [data-side="right"] [data-slot="sidebar-container"]::after {
   left: -3.5px;
 }
-:root[data-theme-id="inkwire"] [data-slot="dialog-footer"] {
+:root[data-theme-id^="inkwire"] [data-slot="dialog-footer"] {
   position: relative;
   border-top-color: transparent;
+}
+
+/* White frame toggle (`inkwireWhiteFrame` → data-inkwire-white-frame). Static chalk outline
+   only: no animation, filter, or fixed background, so scrolling stays cheap. */
+:root[data-theme-id^="inkwire"][data-inkwire-white-frame] {
+  --inkwire-pass: color-mix(in srgb, #ffffff 52%, transparent);
+  --inkwire-frame: #ececec;
+  box-shadow: inset 0 0 0 2px var(--inkwire-frame);
+}
+:root.dark[data-theme-id^="inkwire"][data-inkwire-white-frame] {
+  --inkwire-pass: color-mix(in srgb, #ffffff 42%, transparent);
+  --inkwire-frame: #f5f5f5;
+}
+@media (pointer: fine) {
+  :root[data-theme-id^="inkwire"][data-inkwire-white-frame]
+    :is(
+      [data-slot="button"]:is(
+        [data-button-variant="default"],
+        [data-button-variant="outline"],
+        [data-button-variant="secondary"],
+        [data-button-variant="destructive"],
+        [data-button-variant="destructive-outline"]
+      ),
+      [data-slot="select-trigger"]
+    ):not(:disabled, [data-disabled], [data-slot="group"] > *)::after {
+    border-color: var(--inkwire-frame);
+    opacity: 0.55;
+  }
+}
+:root[data-theme-id^="inkwire"][data-inkwire-white-frame]
+  :is([data-slot="input-control"], [data-slot="textarea-control"])::after,
+:root[data-theme-id^="inkwire"][data-inkwire-white-frame]
+  [data-testid="sidebar-row-card"][aria-current="page"]::after {
+  border-color: var(--inkwire-frame);
+  opacity: 0.5;
+}
+:root[data-theme-id^="inkwire"][data-inkwire-white-frame] [data-slot="separator"]::after,
+:root[data-theme-id^="inkwire"][data-inkwire-white-frame] [data-slot="sidebar-container"]::after,
+:root[data-theme-id^="inkwire"][data-inkwire-white-frame] [data-slot="dialog-footer"]::before {
+  background-color: var(--inkwire-frame);
 }
