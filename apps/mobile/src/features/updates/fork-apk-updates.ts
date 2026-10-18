@@ -4,8 +4,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Platform } from "react-native";
 
-import type { AppUpdateClient } from "./app-updates";
-
 /**
  * The fork APK takes no OTA updates (scripts/fork-android-apk.sh), so it updates itself from the
  * GitHub releases of the fork instead. Fork Android adds an APK only to releases where the app
@@ -49,7 +47,7 @@ export function createForkApkUpdateClient(input: {
   readonly repo: string | null;
   readonly installedVersion: string | undefined;
   readonly native: ForkUpdaterModule | null;
-}): AppUpdateClient {
+}) {
   let available: ForkApk | null = null;
   let downloadedUri: string | null = null;
 
