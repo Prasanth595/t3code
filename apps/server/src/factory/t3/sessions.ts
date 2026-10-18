@@ -118,7 +118,10 @@ export interface ThreadStatus extends Thread {
   readonly run: RunStatus | null;
   /** The `ordinal` of that same run; `null` when the thread has no run. */
   readonly runOrdinal: number | null;
-  /** When that same run started, as epoch milliseconds; `null` when it never started, or the thread has no run. */
+  /**
+   * When that same run began, as epoch milliseconds: its work start, else its start, else when it
+   * was requested, as `orchestrationV2RunWorkStartedAt` reads it; `null` when the thread has no run.
+   */
   readonly runStartedAt: number | null;
   /** When that same run ended, as epoch milliseconds; `null` while it runs, or when the thread has no run. */
   readonly runCompletedAt: number | null;
@@ -185,8 +188,11 @@ export interface ThreadSnapshot {
     readonly id: string;
     readonly ordinal: number;
     readonly status: RunStatus;
+    readonly requestedAt?: unknown;
     /** Absent for a run that never started. */
     readonly startedAt?: unknown;
+    /** When the run's work began, after any workspace preparation; absent until then. */
+    readonly workStartedAt?: unknown;
     /** Absent for a run that has not ended. */
     readonly completedAt?: unknown;
   }>;
@@ -264,7 +270,11 @@ export const threadStatusOf = (snapshot: ThreadSnapshot): ThreadStatus => {
   return {
     run: latest?.status ?? null,
     runOrdinal: latest?.ordinal ?? null,
-    runStartedAt: latest === undefined ? null : msOf(latest.startedAt),
+    // The fallback of `orchestrationV2RunWorkStartedAt`, over the loosely typed fields read here.
+    runStartedAt:
+      latest === undefined
+        ? null
+        : msOf(latest.workStartedAt ?? latest.startedAt ?? latest.requestedAt),
     runCompletedAt: latest === undefined ? null : msOf(latest.completedAt),
     lastAssistantMessage,
     ...threadOf(snapshot.thread),
