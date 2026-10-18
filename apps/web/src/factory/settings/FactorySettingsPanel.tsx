@@ -1,6 +1,7 @@
-import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { AuthSettingsWriteScope, type EnvironmentId } from "@t3tools/contracts";
+import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import { useSettingsScope } from "../../components/settings/SettingsScopeContext";
 import {
@@ -105,19 +106,37 @@ export function FactorySettingsPanel() {
   const { environment } = useSettingsScope();
   const environmentId = environment?.environmentId ?? null;
   const prepared = Option.getOrNull(usePreparedConnection(environmentId));
+
+  if (environmentId === null || prepared === null) {
+    return (
+      <SettingsPageContainer>
+        <p className="px-3 text-sm text-muted-foreground sm:px-4">
+          Select an environment to edit its factory settings.
+        </p>
+      </SettingsPageContainer>
+    );
+  }
+
+  // Another environment starts over at loading, and an answer for the last one lands nowhere.
+  return (
+    <MachineConfigForm key={environmentId} environmentId={environmentId} prepared={prepared} />
+  );
+}
+
+function MachineConfigForm({
+  environmentId,
+  prepared,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly prepared: PreparedConnection;
+}) {
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
 
   const [load, setLoad] = useState<Load>({ status: "loading" });
-  const [attempt, setAttempt] = useState(0);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [errors, setErrors] = useState<ReadonlyArray<ConfigError>>([]);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [saveFailure, setSaveFailure] = useState<string | null>(null);
-
-  // The connection object is replaced when a credential renews; a reload then would drop edits.
-  const preparedRef = useRef(prepared);
-  preparedRef.current = prepared;
-  const hasConnection = prepared !== null;
 
   const show = (report: MachineConfigReport) => {
     setLoad({ status: "ready", report });
@@ -125,13 +144,8 @@ export function FactorySettingsPanel() {
     setErrors(report.errors);
   };
 
-  useEffect(() => {
-    const connection = preparedRef.current;
-    if (connection === null) return;
-    let current = true;
-    setLoad({ status: "loading" });
-    void fetchFactoryConfig(connection).then((result) => {
-      if (!current) return;
+  const fetchConfig = () => {
+    void fetchFactoryConfig(prepared).then((result) => {
       if (result.kind === "ok") {
         show(result.report);
       } else {
@@ -146,10 +160,16 @@ export function FactorySettingsPanel() {
         });
       }
     });
-    return () => {
-      current = false;
-    };
-  }, [environmentId, hasConnection, attempt]);
+  };
+  // The connection object is replaced when a credential renews; a reload then would drop edits.
+  const fetchOnMount = useEffectEvent(fetchConfig);
+  useEffect(() => {
+    fetchOnMount();
+  }, []);
+  const retry = () => {
+    setLoad({ status: "loading" });
+    fetchConfig();
+  };
 
   const edit = (change: (form: FormState) => FormState) => {
     setForm(change);
@@ -159,11 +179,10 @@ export function FactorySettingsPanel() {
     edit((current) => ({ ...current, [key]: event.target.value }));
 
   const save = async () => {
-    const connection = preparedRef.current;
-    if (connection === null || !canWrite) return;
+    if (!canWrite) return;
     setSaveStatus("saving");
     setSaveFailure(null);
-    const result = await saveFactoryConfig(connection, valuesOf(form));
+    const result = await saveFactoryConfig(prepared, valuesOf(form));
     if (result.kind === "ok") {
       show(result.report);
       setSaveStatus("saved");
@@ -181,16 +200,6 @@ export function FactorySettingsPanel() {
     }
   };
 
-  if (environmentId === null || !hasConnection) {
-    return (
-      <SettingsPageContainer>
-        <p className="px-3 text-sm text-muted-foreground sm:px-4">
-          Select an environment to edit its factory settings.
-        </p>
-      </SettingsPageContainer>
-    );
-  }
-
   if (load.status === "loading") {
     return (
       <SettingsPageContainer>
@@ -206,7 +215,7 @@ export function FactorySettingsPanel() {
           <p role="alert" className="text-destructive-foreground">
             {load.message}
           </p>
-          <Button size="sm" variant="outline" onClick={() => setAttempt((n) => n + 1)}>
+          <Button size="sm" variant="outline" onClick={retry}>
             Retry
           </Button>
         </div>

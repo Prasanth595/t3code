@@ -1,5 +1,4 @@
 import { Link } from "@tanstack/react-router";
-import { useMemo } from "react";
 
 import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { Badge } from "~/components/ui/badge";
@@ -132,7 +131,7 @@ export function RunsTable({
   onShowRecent: () => void;
 }) {
   const cards = useMediaQuery("max-sm");
-  const sorted = useMemo(() => [...runs].sort(newestFirst), [runs]);
+  const sorted = [...runs].sort(newestFirst);
   const showAll = partial ? (
     <Button onClick={onShowAll} size="sm" variant="ghost">
       Show all runs

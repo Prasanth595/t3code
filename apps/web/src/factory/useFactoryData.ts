@@ -1,5 +1,5 @@
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { useConnectedEnvironmentIds, usePrimaryEnvironmentId } from "~/state/environments";
@@ -26,6 +26,8 @@ export interface FactoryResource<T> {
   readonly status: "loading" | "error" | "ready";
   readonly data: T | null;
   readonly error: Error | null;
+  /** When the latest answer landed (0 before any): the pages' age labels move on with a poll. */
+  readonly readAt: number;
   readonly refresh: () => void;
 }
 
@@ -33,7 +35,7 @@ type Loaded<T> = Omit<FactoryResource<T>, "refresh">;
 
 type Resource = "status" | "runs" | "runs:all" | `run:${string}`;
 
-const LOADING: Loaded<never> = { status: "loading", data: null, error: null };
+const LOADING: Loaded<never> = { status: "loading", data: null, error: null, readAt: 0 };
 
 interface Store {
   readonly environmentId: EnvironmentId;
@@ -81,12 +83,13 @@ const read = (key: string, store: Store): void => {
     store.listeners.forEach((listener) => listener());
   };
   load(store).then(
-    (data) => settle({ status: "ready", data, error: null }),
+    (data) => settle({ status: "ready", data, error: null, readAt: Date.now() }),
     (cause: unknown) =>
       settle({
         status: "error",
         data: store.state.data,
         error: cause instanceof Error ? cause : new Error(String(cause)),
+        readAt: Date.now(),
       }),
   );
 };
@@ -162,19 +165,16 @@ function useFactoryResource<T>(
 ): FactoryResource<T> {
   const key = environmentId === null ? null : keyOf(environmentId, resource);
   const state = useSyncExternalStore(
-    useCallback(
-      (listener: () => void) =>
-        environmentId === null ? noUnsubscribe : subscribe(environmentId, resource, listener),
-      [environmentId, resource],
-    ),
-    useCallback(() => (key === null ? LOADING : snapshot(key)) as Loaded<T>, [key]),
+    (listener: () => void) =>
+      environmentId === null ? noUnsubscribe : subscribe(environmentId, resource, listener),
+    () => (key === null ? LOADING : snapshot(key)) as Loaded<T>,
   );
-  const tickNow = useCallback(() => {
+  const tickNow = () => {
     if (key !== null) tick(key);
-  }, [key]);
-  const refreshNow = useCallback(() => {
+  };
+  const refreshNow = () => {
     if (key !== null) refresh(key);
-  }, [key]);
+  };
   useLiveRefresh(tickNow, {
     key: `factory:${environmentId}:${resource}`,
     intervalMs: POLL_MS,
@@ -225,32 +225,21 @@ export function pickFactoryEnvironment(
 export function useFactoryEnvironmentId(): EnvironmentId | null {
   const primary = usePrimaryEnvironmentId();
   const connected = useConnectedEnvironmentIds();
-  const candidates = useMemo(
-    () => (primary === null ? connected : [primary, ...connected.filter((id) => id !== primary)]),
-    [primary, connected],
-  );
+  const candidates =
+    primary === null ? connected : [primary, ...connected.filter((id) => id !== primary)];
   const state = useSyncExternalStore(
-    useCallback(
-      (listener: () => void) => {
-        const unsubscribes = candidates.map((id) => subscribe(id, "status", listener));
-        return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
-      },
-      [candidates],
-    ),
-    useCallback(
-      () =>
-        pickFactoryEnvironment(
-          candidates,
-          primary,
-          (id) => snapshot(keyOf(id, "status")) as Loaded<FactoryStatus>,
-        ),
-      [candidates, primary],
-    ),
+    (listener: () => void) => {
+      const unsubscribes = candidates.map((id) => subscribe(id, "status", listener));
+      return () => unsubscribes.forEach((unsubscribe) => unsubscribe());
+    },
+    () =>
+      pickFactoryEnvironment(
+        candidates,
+        primary,
+        (id) => snapshot(keyOf(id, "status")) as Loaded<FactoryStatus>,
+      ),
   );
-  const tickAll = useCallback(
-    () => candidates.forEach((id) => tick(keyOf(id, "status"))),
-    [candidates],
-  );
+  const tickAll = () => candidates.forEach((id) => tick(keyOf(id, "status")));
   useLiveRefresh(tickAll, {
     key: "factory:environment",
     intervalMs: POLL_MS,
