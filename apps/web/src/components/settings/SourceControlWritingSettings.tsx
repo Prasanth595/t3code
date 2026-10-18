@@ -1,7 +1,6 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import type {
-  ModelSelection,
   ProviderInstanceId,
   ServerSettings,
   SourceControlWritingStyleMode,
@@ -47,18 +46,6 @@ import {
 } from "./settingsLayout";
 import { BranchNamingSettings } from "./BranchNamingSettings";
 import { searchableSetting } from "./settingsSearch";
-
-// A re-pick keeps the stored selection and the traits set beside it. Under Mixed the stored value
-// is one scope's, so a pick still sets every scope to the picked model.
-const pickDedicatedModel = (
-  stored: ModelSelection | null,
-  mixed: boolean,
-  instanceId: ProviderInstanceId,
-  model: string,
-): ModelSelection | null =>
-  mixed
-    ? createModelSelection(instanceId, model)
-    : (resolveModelPick(stored, instanceId, model) ?? stored);
 
 const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; description: string }> =
   {
@@ -397,12 +384,12 @@ export function SourceControlWritingSettingsSection() {
                       return;
                     }
                     updateSettings({
-                      sourceControlWriterModelSelection: pickDedicatedModel(
-                        settings.sourceControlWriterModelSelection,
-                        mixedWriterModel,
-                        instanceId,
-                        model,
-                      ),
+                      sourceControlWriterModelSelection:
+                        resolveModelPick(
+                          settings.sourceControlWriterModelSelection,
+                          instanceId,
+                          model,
+                        ) ?? settings.sourceControlWriterModelSelection,
                     });
                   }}
                 />
@@ -508,12 +495,12 @@ export function SourceControlWritingSettingsSection() {
                           return;
                         }
                         updateSettings({
-                          reviewGuideModelSelection: pickDedicatedModel(
-                            settings.reviewGuideModelSelection,
-                            mixedReviewGuideModel,
-                            instanceId,
-                            model,
-                          ),
+                          reviewGuideModelSelection:
+                            resolveModelPick(
+                              settings.reviewGuideModelSelection,
+                              instanceId,
+                              model,
+                            ) ?? settings.reviewGuideModelSelection,
                         });
                       }}
                     />
