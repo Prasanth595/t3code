@@ -6,7 +6,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 import { runMigrations } from "./Migrations.ts";
-import { seedPlannerStatistics } from "./plannerStatistics.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import * as ServerConfig from "../config.ts";
 
@@ -38,7 +37,12 @@ const layerSetup = Layer.effectDiscard(
     // largest size until the last connection closes.
     yield* sql.unsafe(`PRAGMA journal_size_limit = ${WAL_SIZE_LIMIT_BYTES};`);
     yield* runMigrations();
-    yield* seedPlannerStatistics;
+    // No planner statistics. Collecting them reads every page of the large
+    // tables, and stats taken while a table was small make the planner scan it
+    // once it grows. Without them SQLite assumes large tables and uses indexes;
+    // the few queries that still pick a worse index name theirs with INDEXED BY.
+    // Dropping the table also clears stats that older builds collected.
+    yield* sql`DROP TABLE IF EXISTS sqlite_stat1;`;
   }),
 );
 
