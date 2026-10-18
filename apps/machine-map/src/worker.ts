@@ -16,6 +16,7 @@ import {
   InviteRequest,
   EnrollRequest,
   JoinCodeRequest,
+  type PasskeyResponse,
   PushEndpointRequest,
   PushSubscribeRequest,
   RevisionRequest,
@@ -234,6 +235,11 @@ async function api(request: Request, env: Env, url: URL): Promise<Response> {
       return toResponse(await stub.resume(owner));
     case "GET /fork-release":
       return json(await fetchNewestRelease());
+    // The team domain is the `auth_domain` of the Zero Trust organization.
+    case "GET /passkey":
+      return json({
+        enrollUrl: `https://${env.TEAM_DOMAIN}/AddMfaDevice`,
+      } satisfies PasskeyResponse);
     case "GET /clients/approvals":
       return toResponse(await stub.approvalsStatus(owner, url.host));
     case "POST /clients/approvals":

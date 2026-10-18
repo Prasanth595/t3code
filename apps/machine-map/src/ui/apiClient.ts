@@ -6,11 +6,15 @@ const isApiError = (value: unknown): value is ApiError =>
   "error" in value &&
   typeof value.error === "string";
 
+/** MM-1207: the passkey check is a Cloudflare page, not a browser prompt. */
+export const PASSKEY_STEP_TEXT =
+  "Select Confirm with passkey. Cloudflare opens a page that asks for your passkey, then brings you back here.";
+
 /** MM-1207: the approval path asks for a fresh passkey check first. */
 export class StepUpNeeded extends Error {
   override readonly name = "StepUpNeeded";
   constructor() {
-    super("Confirm with your passkey first.");
+    super(PASSKEY_STEP_TEXT);
   }
 }
 

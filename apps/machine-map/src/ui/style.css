@@ -463,6 +463,8 @@ p.hint {
 .error-text {
   color: var(--error-fg);
   font-weight: 600;
+  /* A Cloudflare error can hold a long path without spaces. */
+  overflow-wrap: anywhere;
 }
 p.error-text {
   margin-top: 8px;
@@ -742,6 +744,8 @@ p.error-text {
 }
 .toast .text {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .layout {
@@ -903,7 +907,27 @@ details.more[open] summary {
   border-radius: var(--radius);
 }
 .callout .v {
+  min-width: 0;
   color: var(--ink);
+  overflow-wrap: anywhere;
+}
+/* MM-1208: the Cloudflare steps of "Set up approvals". */
+.cloudflare-step {
+  display: grid;
+  gap: 10px;
+}
+.cloudflare-step .v {
+  display: grid;
+  gap: 8px;
+}
+.cloudflare-step p.hint,
+.passkey-step p.hint {
+  margin-top: 0;
+}
+.passkey-step {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
 }
 .machine-setting .row {
   border-top: 0;
