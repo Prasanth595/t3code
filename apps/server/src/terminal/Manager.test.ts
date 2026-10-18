@@ -1176,6 +1176,10 @@ it.layer(
       assert.isTrue(finished.type === "activity" && !finished.hasRunningSubprocess);
       yield* TestClock.adjust("4 seconds");
       assert.equal(snapshots, 9);
+
+      // A quiet shell is still snapshotted on every 30th tick.
+      yield* TestClock.adjust("30 seconds");
+      assert.equal(snapshots, 10);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

@@ -94,6 +94,9 @@ const MAX_HISTORY_CHUNK_LENGTH = 16 * 1024;
 const DEFAULT_PERSIST_DEBOUNCE_MS = 250;
 const DEFAULT_SUBPROCESS_POLL_INTERVAL_MS = 1_000;
 const MAX_SUBPROCESS_POLL_INTERVAL_MS = 60_000;
+// Quiet sessions are still snapshotted on every 30th poll tick, so a child started
+// with no terminal input or output is found within that bound.
+const QUIET_SUBPROCESS_SNAPSHOT_EVERY_TICKS = 30;
 const DEFAULT_PROCESS_KILL_GRACE_MS = 1_000;
 const DEFAULT_MAX_RETAINED_INACTIVE_SESSIONS = 128;
 const DEFAULT_OPEN_COLS = 120;
@@ -2391,9 +2394,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   // Running sessions the last snapshots found without a child process, with the
   // activity mark they had. A shell at its prompt starts a child only after input
   // or output, so while every running session is quiet the poll skips the
-  // process-table snapshot. Requiring two idle snapshots covers a child forked
-  // just after the snapshot that followed the input.
+  // process-table snapshot on all but every 30th tick. Requiring two idle
+  // snapshots covers a child forked just after the snapshot that followed the input.
   let quietSessions = new Map<string, QuietTerminalSession>();
+  let skippedQuietTicks = 0;
   const isQuiet = (session: TerminalSessionState & { pid: number }) => {
     const quiet = quietSessions.get(toSessionKey(session.threadId, session.terminalId));
     return (
@@ -2412,9 +2416,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         session.status === "running" && Number.isInteger(session.pid),
     );
 
-    if (runningSessions.every(isQuiet)) {
+    if (runningSessions.length === 0) {
       return true;
     }
+    if (
+      runningSessions.every(isQuiet) &&
+      skippedQuietTicks < QUIET_SUBPROCESS_SNAPSHOT_EVERY_TICKS - 1
+    ) {
+      skippedQuietTicks += 1;
+      return true;
+    }
+    skippedQuietTicks = 0;
 
     const inspectorOption = yield* acquireSubprocessInspector.pipe(
       Effect.asSome,
