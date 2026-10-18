@@ -164,7 +164,11 @@ const routingCredential = Context.Reference<{
   readonly viewer: string;
 } | null>("t3/PullRequestService/routingCredential", { defaultValue: () => null });
 const credentialNamespace = Symbol("pullRequestCredentialNamespace");
-type CredentialRef = PullRequestRef & { readonly [credentialNamespace]?: string };
+const mountedRepository = Symbol("pullRequestMountedRepository");
+type CredentialRef = PullRequestRef & {
+  readonly [credentialNamespace]?: string;
+  readonly [mountedRepository]?: string;
+};
 
 export class PullRequestService extends Context.Service<
   PullRequestService,
@@ -355,6 +359,13 @@ function parseListCursor(raw: string): ListCursor | null {
 
 function listCursorKey(host: string, repository: string): string {
   return `${host} ${repository.toLowerCase()}`;
+}
+
+function repositoryWithoutMount(repository: string, baseUrl: string | undefined): string {
+  const mount = baseUrl === undefined ? "" : new URL(baseUrl).pathname.replace(/^\/+|\/+$/g, "");
+  return mount && repository.startsWith(`${mount}/`)
+    ? repository.slice(mount.length + 1)
+    : repository;
 }
 
 /**
@@ -765,12 +776,10 @@ export const make = Effect.gen(function* () {
           if (kind === undefined) continue;
           let repository = sourceControlRepositorySelector({ ...identity, provider: kind });
           if (repository === null) continue;
+          const remoteRepository = repository;
           const baseUrl = override?.baseUrl === undefined ? undefined : refinedProvider?.baseUrl;
           if (baseUrl && /^https?:/i.test(identity.locator.remoteUrl)) {
-            const mount = new URL(baseUrl).pathname.replace(/^\/+|\/+$/g, "");
-            if (mount && repository.startsWith(`${mount}/`)) {
-              repository = repository.slice(mount.length + 1);
-            }
+            repository = repositoryWithoutMount(repository, baseUrl);
           }
           const host =
             refinedProvider && (overridden || refinedProvider.kind === "forgejo")
@@ -808,7 +817,7 @@ export const make = Effect.gen(function* () {
             ...(baseUrl === undefined ? {} : { baseUrl }),
             repository,
             host,
-            remote: repositoryKey ?? normalizeGitRemoteUrl(`https://${host}/${repository}`),
+            remote: repositoryKey ?? normalizeGitRemoteUrl(`https://${host}/${remoteRepository}`),
             repositoryKey:
               repositoryKey === null ? null : canonicalRepositoryKey(repositoryKey.toLowerCase()),
           });
@@ -825,9 +834,14 @@ export const make = Effect.gen(function* () {
     listWorkspaceProjects({ projectId: ref.projectId }).pipe(
       Effect.flatMap(({ supported }): Effect.Effect<SupportedProject, PullRequestError> => {
         const own = supported[0];
-        const repository = ref.repository.trim();
+        const repository = ((ref as CredentialRef)[mountedRepository] ?? ref.repository).trim();
         const host = ref.host?.trim().toLowerCase();
-        if (own !== undefined && own.repository.toLowerCase() === repository.toLowerCase()) {
+        if (
+          own !== undefined &&
+          (own.repository.toLowerCase() === repository.toLowerCase() ||
+            own.repository.toLowerCase() ===
+              repositoryWithoutMount(repository, own.baseUrl).toLowerCase())
+        ) {
           if (host === undefined || host === own.host) return Effect.succeed(own);
         }
         if (host === undefined) {
@@ -857,7 +871,9 @@ export const make = Effect.gen(function* () {
               onHost.find(
                 (candidate) =>
                   candidate.repositoryKey === null &&
-                  candidate.repository.toLowerCase() === repository.toLowerCase(),
+                  (candidate.repository.toLowerCase() === repository.toLowerCase() ||
+                    candidate.repository.toLowerCase() ===
+                      repositoryWithoutMount(repository, candidate.baseUrl).toLowerCase()),
               ) ??
               onHost.find((candidate) => candidate.repositoryKey === null);
             if (route === undefined) {
@@ -891,6 +907,7 @@ export const make = Effect.gen(function* () {
                   )?.baseUrl === undefined
                     ? undefined
                     : provider?.baseUrl;
+                const normalizedRepository = repositoryWithoutMount(repository, baseUrl);
                 const api = provider === null ? null : registry.get(provider.kind);
                 if (api !== null && provider?.kind !== "azure-devops") {
                   const selected = yield* projects.getShell(ref.projectId).pipe(
@@ -905,7 +922,7 @@ export const make = Effect.gen(function* () {
                   );
                   if (Option.isSome(selected)) {
                     return {
-                      cursorKey: listCursorKey(host, repository),
+                      cursorKey: listCursorKey(host, normalizedRepository),
                       project: selected.value,
                       api: withRateLimitBackoff(
                         api,
@@ -914,7 +931,7 @@ export const make = Effect.gen(function* () {
                         baseUrl === undefined ? undefined : { baseUrl },
                       ),
                       ...(baseUrl === undefined ? {} : { baseUrl }),
-                      repository,
+                      repository: normalizedRepository,
                       host,
                       remote: normalizeGitRemoteUrl(`https://${host}/${repository}`),
                       repositoryKey: null,
@@ -924,13 +941,15 @@ export const make = Effect.gen(function* () {
                 return yield* new PullRequestUnavailableError({ reason: "provider-unsupported" });
               });
             }
+            const normalizedRepository = repositoryWithoutMount(repository, route.baseUrl);
             return Effect.succeed(
               route.repositoryKey !== null ||
-                route.repository.toLowerCase() === repository.toLowerCase()
+                route.repository.toLowerCase() === normalizedRepository.toLowerCase()
                 ? route
                 : {
                     ...route,
-                    repository,
+                    cursorKey: listCursorKey(host, normalizedRepository),
+                    repository: normalizedRepository,
                     remote: normalizeGitRemoteUrl(`https://${host}/${repository}`),
                   },
             );
@@ -945,6 +964,12 @@ export const make = Effect.gen(function* () {
     const project = yield* requireProject(input);
     return {
       ...input,
+      // Cache loaders resolve the project again; retain the mounted path for its remote identity.
+      ...((input as CredentialRef)[mountedRepository] !== undefined ||
+      (project.repository !== input.repository &&
+        repositoryWithoutMount(input.repository, project.baseUrl) !== input.repository)
+        ? { [mountedRepository]: (input as CredentialRef)[mountedRepository] ?? input.repository }
+        : {}),
       projectId: project.project.id,
       host: project.host,
       repository: project.repository,
@@ -2666,16 +2691,26 @@ export const make = Effect.gen(function* () {
       ref.number,
       ref.expectedAccountId ?? null,
       ref[credentialNamespace] ?? null,
+      ref[mountedRepository] ?? null,
     ]);
   const refOfCacheKey = (key: string): PullRequestRef => {
-    const [, projectId, host, repository, number, expectedAccountId, fingerprint] = JSON.parse(
-      key,
-    ) as [number, string, string | null, string, number, string | null, string | null];
+    const [, projectId, host, repository, number, expectedAccountId, fingerprint, mounted] =
+      JSON.parse(key) as [
+        number,
+        string,
+        string | null,
+        string,
+        number,
+        string | null,
+        string | null,
+        string | null,
+      ];
     return {
       projectId,
       ...(host === null ? {} : { host }),
       ...(expectedAccountId === null ? {} : { expectedAccountId }),
       ...(fingerprint === null ? {} : { [credentialNamespace]: fingerprint }),
+      ...(mounted === null ? {} : { [mountedRepository]: mounted }),
       repository,
       number,
     } as PullRequestRef;

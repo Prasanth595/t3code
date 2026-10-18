@@ -25,6 +25,7 @@ import type {
   PullRequestReviewerCapabilities,
 } from "@t3tools/contracts";
 import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts/settings";
+import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import type { ServerSettings } from "@t3tools/contracts";
 import * as ServerSettingsService from "../serverSettings.ts";
 import { makeSettingsChanges } from "../testUtils/settingsChanges.ts";
@@ -655,6 +656,113 @@ it.effect.each(["forgejo", "azure-devops"] as const)(
         assert.strictEqual(error._tag, "PullRequestUnavailableError");
         assert.strictEqual(reads, 0);
       }
+    }),
+);
+
+it.effect.each([
+  { mount: "/forge", repository: "forge/owner/repo", expected: "owner/repo" },
+  { mount: "/forge", repository: "forge/forge/repo", expected: "forge/repo" },
+  { mount: "/forge", repository: "forgeX/owner/repo", expected: "forgeX/owner/repo" },
+  { mount: "/Forge", repository: "Forge/owner/repo", expected: "owner/repo" },
+  { mount: "/forge/nested/", repository: "forge/nested/owner/repo", expected: "owner/repo" },
+  { mount: "/", repository: "owner/repo", expected: "owner/repo" },
+  { mount: undefined, repository: "owner/repo", expected: "owner/repo" },
+])(
+  "routes linked $repository with mount '$mount' through normalized provider and cursor identities",
+  ({ mount, repository, expected }) =>
+    Effect.gen(function* () {
+      const host = "code.example.test";
+      const baseUrl = mount === undefined ? undefined : `https://${host}${mount}`;
+      const projects = [project({ id: "inbox", title: "Inbox", workspaceRoot: "/inbox" })];
+      const seen: string[] = [];
+      const viewed = environmentViewedProvider(new Map([["same.ts", "blob"]]), []);
+      const service = yield* makeService({
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          sourceControlHostOverrides: {
+            [host]: { kind: "forgejo", ...(baseUrl === undefined ? {} : { baseUrl }) },
+          },
+        },
+        projects,
+        providers: [
+          fakeProvider(SourceControlProviderKind.make("forgejo"), {
+            capabilities: { ...viewed.capabilities, search: false },
+            getFileRevisions: viewed.getFileRevisions!,
+            getChangeRequestSummary: (input) =>
+              Effect.gen(function* () {
+                seen.push(input.repository);
+                assert.strictEqual(yield* PullRequestBaseUrl, baseUrl?.replace(/\/+$/, ""));
+                return changeRequest(input.number, "2026-07-02T00:00:00Z");
+              }),
+            listChangeRequests: (input) => {
+              seen.push(input.repository);
+              return Effect.succeed({
+                items: [changeRequest(42, "2026-07-02T00:00:00Z")],
+                truncated: true,
+                continues: true,
+              });
+            },
+          }),
+        ],
+      });
+      const link = parseChangeRequestUrl(`https://${host}/${repository}/pulls/42`)!;
+      const ref = { ...link, projectId: "inbox" as ProjectId, repository };
+      const summary = yield* service.summary(ref, { recoverTransientFailure: false });
+      assert.strictEqual(summary.repository, expected);
+      assert.deepStrictEqual(seen, [expected]);
+      // A link's viewed-file identity must survive the later arrival of its checkout.
+      yield* service.setFilesViewed({ ...ref, files: [{ path: "same.ts", viewed: true }] });
+      assert.deepStrictEqual((yield* service.filesViewed(ref)).files, [
+        { path: "same.ts", state: "viewed" },
+      ]);
+      projects.push(
+        project({
+          id: "other",
+          title: "Another repository on the host",
+          workspaceRoot: "/other",
+          host,
+          provider: "forgejo",
+          repository: "another/repo",
+        }),
+      );
+      const crossRepository = { ...ref, number: 43 };
+      assert.strictEqual(
+        (yield* service.summary(crossRepository, { recoverTransientFailure: false })).repository,
+        expected,
+      );
+      assert.deepStrictEqual(seen, [expected, expected]);
+      yield* service.setFilesViewed({
+        ...crossRepository,
+        files: [{ path: "same.ts", viewed: true }],
+      });
+      projects.push(
+        project({
+          id: "checkout",
+          title: "Mounted repository",
+          workspaceRoot: "/checkout",
+          host,
+          provider: "forgejo",
+          repository,
+        }),
+      );
+      for (const number of [42, 43]) {
+        assert.deepStrictEqual(
+          (yield* service.filesViewed({ ...ref, projectId: "checkout" as ProjectId, number }))
+            .files,
+          [{ path: "same.ts", state: "viewed" }],
+        );
+      }
+      const listed = yield* service.list({
+        projectId: "checkout" as ProjectId,
+        state: "open",
+        involvement: "all",
+        limit: 1,
+      });
+      assert.deepStrictEqual(listed.errors, []);
+      assert.strictEqual(listed.entries[0]?.repository, expected);
+      assert.deepStrictEqual(Object.keys(listed.nextCursors), [
+        `${host} ${expected.toLowerCase()}`,
+      ]);
     }),
 );
 
