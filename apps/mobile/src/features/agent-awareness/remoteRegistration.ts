@@ -72,7 +72,9 @@ export class AgentAwarenessOperationError extends Schema.TaggedError<AgentAwaren
 }
 
 const environmentConnections = new Map<EnvironmentId, SavedRemoteConnection>();
-const activityPushTokenListeners = new WeakSet<LiveActivity<AgentActivityProps>>();
+// Keyed by ActivityKit id: getAgentLiveActivities() wraps the same native
+// activity in a new object on every call.
+const activityPushTokenListeners = new Set<string>();
 // But the registration is not a pure no-op: the relay replays the current
 // aggregate to this device on every accepted registration, and that replay is
 // the foreground reconciliation that repairs drifted or orphaned activities.
@@ -893,6 +895,7 @@ export function __resetAgentAwarenessRemoteRegistrationForTest(): void {
   androidDeviceReplayedAt = null;
   registrationStatusListeners.clear();
   registeredActivityPushTokens.clear();
+  activityPushTokenListeners.clear();
 }
 
 export function unregisterAgentAwarenessDeviceForCurrentUser(
@@ -928,6 +931,7 @@ export function registerLiveActivityPushToken(input: {
       return false;
     }
 
+    observeLiveActivityPushTokens(input.activity);
     const activityPushToken = yield* Effect.tryPromise({
       try: () => input.activity.getPushToken(),
       catch: (cause) =>
@@ -937,35 +941,8 @@ export function registerLiveActivityPushToken(input: {
         }),
     });
     if (!activityPushToken) {
-      if (activityPushTokenListeners.has(input.activity)) {
-        logRegistrationDebug(
-          "live activity push token not available yet; token listener already registered",
-          {
-            connectionCount: environmentConnections.size,
-          },
-        );
-        return false;
-      }
-
-      logRegistrationDebug(
-        "live activity push token not available yet; listening for token event",
-        {
-          connectionCount: environmentConnections.size,
-        },
-      );
-      activityPushTokenListeners.add(input.activity);
-      input.activity.addPushTokenListener((event) => {
-        if (event.pushToken) {
-          logRegistrationDebug("live activity push token event received", {
-            tokenSuffix: event.pushToken.slice(-8),
-          });
-          runRegistrationInBackground(
-            registerLiveActivityPushTokenValue({
-              activityPushToken: event.pushToken,
-            }),
-            "live activity token listener registration failed",
-          );
-        }
+      logRegistrationDebug("live activity push token not available yet; waiting for token event", {
+        connectionCount: environmentConnections.size,
       });
       return false;
     }
@@ -973,6 +950,25 @@ export function registerLiveActivityPushToken(input: {
     return yield* registerLiveActivityPushTokenValue({
       activityPushToken,
     });
+  });
+}
+
+// iOS can replace an activity's push token while it runs, not only deliver a
+// late first one. The relay keeps pushing to the old token until APNs rejects
+// it, so every activity needs a listener that registers each new token.
+function observeLiveActivityPushTokens(activity: LiveActivity<AgentActivityProps>): void {
+  const activityId = activity.getId();
+  if (activityPushTokenListeners.has(activityId)) return;
+  activityPushTokenListeners.add(activityId);
+  activity.addPushTokenListener((event) => {
+    if (!event.pushToken) return;
+    logRegistrationDebug("live activity push token event received", {
+      tokenSuffix: event.pushToken.slice(-8),
+    });
+    runRegistrationInBackground(
+      registerLiveActivityPushTokenValue({ activityPushToken: event.pushToken }),
+      "live activity token listener registration failed",
+    );
   });
 }
 
