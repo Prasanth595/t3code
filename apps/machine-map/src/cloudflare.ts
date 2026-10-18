@@ -509,6 +509,13 @@ export class CloudflareApi {
       if (approvalsAppProblem(current, host, owners) === null) return current;
       await this.#call("DELETE", `/access/apps/${app.id}`, ignoreResult);
     }
+    // Access refuses an app that names an authenticator the organization does not allow.
+    const allowed = await this.organizationMfaMethods();
+    const authenticators = APPROVALS_AUTHENTICATORS.filter((m) => allowed.includes(m));
+    if (authenticators.length === 0)
+      throw new Error(
+        "Turn on independent MFA with passkeys or security keys in Zero Trust, Access settings.",
+      );
     const domain = `${host}${APPROVALS_PATH}`;
     return this.#call("POST", "/access/apps", decodeApprovalsApp, {
       type: "self_hosted",
@@ -521,7 +528,7 @@ export class CloudflareApi {
       mfa_config: {
         mfa_disabled: false,
         session_duration: APPROVALS_DURATION,
-        allowed_authenticators: APPROVALS_AUTHENTICATORS,
+        allowed_authenticators: authenticators,
       },
       policies: [
         {
