@@ -319,6 +319,42 @@ describe("Docker environment backend", () => {
     });
   });
 
+  test("applies literal Dev Container containerEnv values and verifies them on inspection", async () => {
+    const { client, manager, request, identity, backend } = await fixture();
+    await mkdir(path.join(identity.worktreePath, ".devcontainer"), { recursive: true });
+    await Bun.write(path.join(identity.worktreePath, ".devcontainer", "devcontainer.json"), JSON.stringify({
+      image: "project:latest",
+      containerEnv: { NODE_ENV: "development", FEATURE_FLAG: "enabled" },
+    }));
+
+    const created = await manager.ensure(request);
+    expect(client.createCalls[0]?.environment).toMatchObject({
+      HOME: "/tmp/home",
+      TMPDIR: "/tmp",
+      SUBPOLAR_RUNTIME_DATA_DIR: "/var/lib/subpolar",
+      NODE_ENV: "development",
+      FEATURE_FLAG: "enabled",
+    });
+    expect(await backend.inspect(identity)).toMatchObject({ resourceId: created.resourceId });
+  });
+
+  test("rejects Dev Container environment interpolation and reserved runtime variables", async () => {
+    for (const containerEnv of [
+      { API_TOKEN: "${localEnv:API_TOKEN}" },
+      { SUBPOLAR_RUNTIME_DATA_DIR: "/workspace/.subpolar" },
+    ]) {
+      const { client, manager, request, identity } = await fixture();
+      await mkdir(path.join(identity.worktreePath, ".devcontainer"), { recursive: true });
+      await Bun.write(path.join(identity.worktreePath, ".devcontainer", "devcontainer.json"), JSON.stringify({
+        image: "project:latest",
+        containerEnv,
+      }));
+
+      await expect(manager.ensure(request)).rejects.toMatchObject({ cause: { code: "DEV_CONTAINER_CONFIGURATION_INVALID" } });
+      expect(client.createCalls).toEqual([]);
+    }
+  });
+
   test("builds a contained Dev Container Dockerfile in the manager mapped context", async () => {
     const { client, manager, request, identity, config, hostWorktree } = await fixture();
     const gatewayDevContainer = path.join(identity.worktreePath, ".devcontainer");

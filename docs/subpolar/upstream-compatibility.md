@@ -2,7 +2,7 @@
 
 ## T3 upstream merge
 
-The local `upstream/main` reference was refreshed on 2026-10-16 to `3b99fb2d2114f57c96bf92e4ed1c7ce5eaa67b1e` and merged by `27dca77d98bb17625d10df6f587e6fb548ab669f`. The upstream tip is an ancestor of the current `main`; the current branch is not behind that reference. This merge includes upstream's Expo patch and workspace/lockfile updates, as well as the previously merged Clerk SDK refresh and orchestration queue-follow-up changes. Local Docker deployment and Subpolar integration commits remain on the branch.
+The local `upstream/main` reference was refreshed on 2026-10-18 to `c60afa29f154a663c620f31138639d1295644f0a` and merged by `68c8e0f828084f474dcda6cbcb32aa17ff8c204b`. The upstream tip is the second parent of that merge commit. This merge includes the latest upstream server, client, contract, dependency, and workspace changes. Local Docker deployment and Subpolar integration commits remain on the branch.
 
 The older SQLite layer change was superseded by upstream's current `apps/server/src/persistence/Sqlite.ts`, which already configures WAL, `busy_timeout`, and `synchronous = NORMAL`. The container readiness endpoint was ported into the current server HTTP route composition.
 
@@ -16,7 +16,7 @@ This source-level compatibility check does not prove the clients work against an
 
 The following focused checks have passed in the current checkout:
 
-- Latest focused Bun verification passed: 89 tests and 331 assertions across 14 files, covering the environment manager and Docker backend, admin routes and CLI, process/terminal supervision, Pi runtime persistence, ACP warm/cold resume, and capability reporting.
+- Focused Bun verification passed: 89 tests and 331 assertions across 14 files in the prior integration pass; the ACP close/resume regression passed 3 tests and 7 assertions; the Docker backend suite passed 27 tests and 101 assertions after adding literal Dev Container `containerEnv` support.
 - The broader ACP package run reported 27 passing tests, but `agent.test.ts` could not load because Bun could not import the Vitest-only `assert` export from `@effect/vitest`.
 - Frozen offline pnpm lockfile validation succeeded across all 40 workspace projects.
 - The Subpolar ACP CLI bundles with Bun (254 modules) without the removed Effect API warning. This does not verify Docker image creation or a real worker run.

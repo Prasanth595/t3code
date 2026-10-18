@@ -2,7 +2,7 @@
 
 ## Source baseline
 
-- T3 Code upstream: `3b99fb2d2114f57c96bf92e4ed1c7ce5eaa67b1e` (`upstream/main`, fetched 2026-10-16); merged by `27dca77d98bb17625d10df6f587e6fb548ab669f`.
+- T3 Code upstream: `c60afa29f154a663c620f31138639d1295644f0a` (`upstream/main`, fetched 2026-10-18); merged by `68c8e0f828084f474dcda6cbcb32aa17ff8c204b`.
 - Subpolar: `2ddbce819d4a364de075f5d2541eeecb37ac00e8` (`automations`, 2026-10-11).
 - No root `LICENSE` file was present in the supplied Subpolar checkout; provenance is recorded here and in the migration matrix.
 - T3 is the primary repository and pnpm workspace. Subpolar remains an optional server-side runtime.
@@ -28,13 +28,13 @@ The environment package exposes an authenticated HTTP handler/server factory and
 
 In local mode the ACP bridge and Pi runtime execute in the T3 gateway process, while only its approved argv tool runs in the worker. Managed mode runs the ACP/Pi runtime inside the worker and can use the instance-scoped credential broker after credentials have been provisioned, but model egress remains disabled. T3 Git operations still run on the gateway. Preview discovery and forwarding from worker containers are not implemented. There is no cross-process registration transaction, Docker container enumeration/orphan cleanup, or distributed lock; the optional JSON registration store is suitable for a single manager process. No real Docker execution or integrated T3-client flow has been validated. The terminal adapter is available only when explicitly configured and must not be described as complete managed agent isolation.
 
-The Docker backend discovers Dev Container configurations at the worktree root and `.devcontainer/`, including named configs. A single config is selected automatically; when multiple configs exist the operator must choose with `SUBPOLAR_DEFAULT_DEVCONTAINER_CONFIG`. It supports literal images and Dockerfile builds with an optional in-worktree context, while retaining the manager's isolation policy. Other build options, Features, Compose, lifecycle hooks, custom mounts, environment overrides, and port forwarding remain unsupported; see [Dev Container support](dev-containers.md).
+The Docker backend discovers Dev Container configurations at the worktree root and `.devcontainer/`, including named configs. A single config is selected automatically; when multiple configs exist the operator must choose with `SUBPOLAR_DEFAULT_DEVCONTAINER_CONFIG`. It supports literal images, Dockerfile builds with an optional in-worktree context, and literal `containerEnv` values, while retaining the manager's isolation policy. Other build options, Features, Compose, lifecycle hooks, `remoteEnv`, custom mounts, and port forwarding remain unsupported; see [Dev Container support](dev-containers.md).
 
 The manager exposes authenticated non-TTY process sessions with stdin forwarding, sequenced stdout/stderr events, reconnectable output, and process-group termination. The managed ACP proxy uses this transport. The bundled worker image includes the Subpolar ACP bridge and Pi SDK; its build has not been verified because Docker is unavailable on this host.
 
 ## Current verified state
 
-The current tree contains the seven package directories listed in [the migration matrix](migration-matrix.md). Focused Bun tests have passed for the Pi adapter, runtime host, managed ACP proxy, worker execution, Docker engine, and constrained Dockerfile build path. The credential bridge and ACP auth-form tests are present, but could not be run because the Vite+ native runner and `@effect/vitest` workspace dependency are unavailable in this checkout. A broader ACP package run had 27 passing tests but could not load `agent.test.ts` because Bun could not import Vitest-only `assert` from `@effect/vitest`. Frozen pnpm lockfile validation succeeded across all 40 workspace projects. Typechecking was unavailable because the filtered install lacked platform-specific `tsc-rs` and TypeScript 7 packages. No Docker daemon was available, and no integrated T3-client, real Pi turn, or container execution has been verified. See [upstream compatibility](upstream-compatibility.md) for the validation boundary and remaining work.
+The current tree contains the seven package directories listed in [the migration matrix](migration-matrix.md). Focused Bun tests have passed for the Pi adapter, runtime host, ACP resume/close, managed ACP proxy, worker execution, Docker engine, constrained Dockerfile builds, and literal `containerEnv`. Frozen pnpm lockfile validation succeeded across all 40 workspace projects. Typechecking remains unavailable because the filtered install lacks the platform-specific `tsc-rs` binary. No Docker daemon was available, and no integrated T3-client, real Pi turn, or container execution has been verified. See [upstream compatibility](upstream-compatibility.md) for the validation boundary and remaining work.
 
 ## Source disposition
 

@@ -208,6 +208,7 @@ const ENVIRONMENT = Object.freeze({ ...LEGACY_ENVIRONMENT, SUBPOLAR_RUNTIME_DATA
 interface ResolvedDevContainerConfiguration {
   readonly image: string;
   readonly build?: DockerImageBuildRequest;
+  readonly containerEnvironment: Readonly<Record<string, string>>;
 }
 
 function parseJsonc(source: string): unknown {
@@ -288,7 +289,7 @@ async function resolveDevContainerConfiguration(
     }
   } catch { /* No .devcontainer directory. */ }
 
-  if (candidates.length === 0) return { image: config.image };
+  if (candidates.length === 0) return { image: config.image, containerEnvironment: {} };
   const selected = config.defaultDevContainerConfiguration
     ? candidates.find((candidate) => candidate === config.defaultDevContainerConfiguration)
     : candidates.length === 1 ? candidates[0] : undefined;
@@ -320,17 +321,30 @@ async function resolveDevContainerConfiguration(
     throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} must contain a JSON object`);
   }
   const value = parsed as Record<string, unknown>;
-  const unsupported = Object.keys(value).filter((key) => !["$schema", "name", "image", "build"].includes(key));
+  const unsupported = Object.keys(value).filter((key) => !["$schema", "name", "image", "build", "containerEnv"].includes(key));
   if (unsupported.length > 0) {
     throw new DockerEnvironmentError(
       "DEV_CONTAINER_CONFIGURATION_UNSUPPORTED",
       `${selected} uses unsupported Dev Container options: ${unsupported.join(", ")}`,
     );
   }
+  const containerEnvironment: Record<string, string> = {};
+  if (value.containerEnv !== undefined) {
+    if (typeof value.containerEnv !== "object" || value.containerEnv === null || Array.isArray(value.containerEnv)) {
+      throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} containerEnv must be an object of literal strings`);
+    }
+    for (const [key, entry] of Object.entries(value.containerEnv)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || key === "HOME" || key === "TMPDIR" || key === "SUBPOLAR_RUNTIME_DATA_DIR" ||
+          typeof entry !== "string" || entry.includes("\0") || entry.includes("${") || Buffer.byteLength(entry) > 8192) {
+        throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} containerEnv contains an invalid or unsupported entry: ${key}`);
+      }
+      containerEnvironment[key] = entry;
+    }
+  }
   if (value.image !== undefined && (typeof value.image !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._/:@-]{0,254}$/.test(value.image))) {
     throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} must specify a literal Docker image reference`);
   }
-  if (value.build === undefined) return { image: typeof value.image === "string" ? value.image : config.image };
+  if (value.build === undefined) return { image: typeof value.image === "string" ? value.image : config.image, containerEnvironment };
   if (value.image !== undefined || typeof value.build !== "object" || value.build === null || Array.isArray(value.build)) {
     throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} must specify either image or build, not both`);
   }
@@ -381,7 +395,7 @@ async function resolveDevContainerConfiguration(
     throw new DockerEnvironmentError("DEV_CONTAINER_CONFIGURATION_INVALID", `${selected} Dockerfile resolves outside the Docker host build context`);
   }
   const image = `subpolar-devcontainer:${hash(`${identity.id}\0${selected}\0${realGatewayDockerfile}\0${realGatewayContext}`).slice(0, 32)}`;
-  return { image, build: { contextPath: hostContext, dockerfilePath, image } };
+  return { image, build: { contextPath: hostContext, dockerfilePath, image }, containerEnvironment };
 }
 
 async function mapGatewayPathToDockerHost(
@@ -648,10 +662,10 @@ export function createDockerEnvironmentBackend(
       { type: "volume", source: dataVolumeName(identity.id), target: "/var/lib/subpolar", readOnly: false },
     ],
     tmpfs: TMPFS,
-    environment: ENVIRONMENT,
+    environment: { ...ENVIRONMENT, ...resolved.containerEnvironment },
   });
 
-  const recordFor = (identity: EnvironmentIdentity, inspection: DockerContainerInspection, mounts: readonly DockerMount[], image: string): ManagedEnvironment => {
+  const recordFor = (identity: EnvironmentIdentity, inspection: DockerContainerInspection, mounts: readonly DockerMount[], resolved: ResolvedDevContainerConfiguration): ManagedEnvironment => {
     const expectedLabels = labelsFor(identity);
     if (inspection.name !== containerName(identity.id) || LABELS.some((label) => inspection.labels[label] !== expectedLabels[label])) {
       throw new DockerEnvironmentError("DOCKER_IDENTITY_MISMATCH", "Docker container identity or owner labels do not match the requested environment");
@@ -659,7 +673,7 @@ export function createDockerEnvironmentBackend(
     const observed = inspection.config;
     const observedMounts = observed.mounts;
     const safeConfiguration =
-      observed.image === image && observed.user === "1000:1000" && observed.privileged === false &&
+      observed.image === resolved.image && observed.user === "1000:1000" && observed.privileged === false &&
       observed.readOnlyRootfs === true && observed.networkMode === "none" &&
       observed.capDrop.length === 1 && observed.capDrop[0] === "ALL" &&
       observed.securityOpt.length === 1 && observed.securityOpt[0] === "no-new-privileges:true" &&
@@ -669,7 +683,7 @@ export function createDockerEnvironmentBackend(
         return observedMount?.type === mount.type && observedMount.source === mount.source &&
           observedMount.target === mount.target && observedMount.readOnly === false;
       }) &&
-      sameRecord(observed.tmpfs, TMPFS) && sameRecord(observed.environment, ENVIRONMENT) && inspection.id.length > 0;
+      sameRecord(observed.tmpfs, TMPFS) && sameRecord(observed.environment, { ...ENVIRONMENT, ...resolved.containerEnvironment }) && inspection.id.length > 0;
     if (!safeConfiguration) {
       throw new DockerEnvironmentError("DOCKER_CONFIGURATION_MISMATCH", "Docker container configuration does not match the required isolation settings");
     }
@@ -726,7 +740,7 @@ export function createDockerEnvironmentBackend(
     const mounts: DockerMount[] = [...bindMounts, { type: "volume", source: dataVolumeName(identity.id), target: "/var/lib/subpolar", readOnly: false }];
     let current: ManagedEnvironment;
     try {
-      current = recordFor(identity, inspection, mounts, resolved.image);
+      current = recordFor(identity, inspection, mounts, resolved);
     } catch (cause) {
       const legacy = legacyRecordFor(identity, inspection, bindMounts, resolved.image);
       if (legacy) return { record: legacy, inspection, compatibility: "legacy" as const };
