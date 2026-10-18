@@ -1,4 +1,6 @@
 // @vitest-environment jsdom
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { makeThreadShellFixture } from "../../test-fixtures";
 import type { VcsStatusResult } from "@t3tools/contracts";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -59,6 +61,8 @@ vi.mock("../settings/appearance/AppearancePreferencesProvider", () => ({
   useAppearancePreferences: () => ({ themeVariables: {} }),
 }));
 
+vi.mock("./ThreadTitleMenu", () => ({ ThreadTitleMenu: () => null }));
+
 import { ThreadHeader } from "./ThreadHeader";
 
 const projectScripts: never[] = [];
@@ -86,11 +90,17 @@ function status(
   } as unknown as VcsStatusResult;
 }
 
-function Header(props: { readonly gitStatus: VcsStatusResult | null; readonly title?: string }) {
+function Header(props: {
+  readonly gitStatus: VcsStatusResult | null;
+  readonly title?: string;
+  readonly subtitle?: string;
+  readonly thread?: EnvironmentThreadShell;
+}) {
   return (
     <ThreadHeader
+      thread={props.thread ?? null}
       title={props.title ?? "Thread"}
-      subtitle=""
+      subtitle={props.subtitle ?? ""}
       headerColor="#000"
       usesNativeHeaderGlass
       gitControls={{
@@ -154,6 +164,33 @@ afterEach(() => {
 });
 
 describe("ThreadHeader", () => {
+  it("does not reapply native options for streaming-only shell updates", () => {
+    const thread = makeThreadShellFixture();
+    render(<Header gitStatus={status([])} thread={thread} />);
+    const applied = harness.setOptionsCalls;
+    for (let index = 0; index < 10; index += 1) {
+      render(
+        <Header
+          gitStatus={status([])}
+          thread={{
+            ...thread,
+            updatedAt: new Date(1_000 + index).toISOString(),
+            itemCount: index + 1,
+          }}
+        />,
+      );
+    }
+    expect(harness.setOptionsCalls).toBe(applied);
+  });
+
+  it("reapplies native title content when only the project subtitle changes", () => {
+    const thread = makeThreadShellFixture();
+    render(<Header gitStatus={status([])} thread={thread} subtitle="Old project" />);
+    const applied = harness.setOptionsCalls;
+    render(<Header gitStatus={status([])} thread={thread} subtitle="Renamed project" />);
+    expect(harness.setOptionsCalls).toBe(applied + 1);
+  });
+
   it("re-applies native header items when Git status changes", () => {
     render(<Header gitStatus={status([])} />);
     expect(renderedGitStatusDescription()).toBe("Clean");

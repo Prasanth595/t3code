@@ -1,3 +1,7 @@
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { threadTitleMenuVersion } from "./thread-title-menu";
+import { ThreadTitleMenu } from "./ThreadTitleMenu";
+import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useMemo } from "react";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
@@ -9,6 +13,7 @@ import { useWorkspaceListNavigation } from "../workspace/useAndroidWorkspaceNavi
 
 export function ThreadHeader(
   props: Parameters<typeof useThreadHeaderOptions>[0] & {
+    readonly thread: EnvironmentThreadShell | null;
     readonly hasThreadCwd: boolean;
     readonly hasWorkspaceRoot: boolean;
     readonly fileInspectorSupported: boolean;
@@ -74,14 +79,32 @@ export function ThreadHeader(
     props.gitControls.canOpenTerminal,
   ]);
 
+  const titleContent = props.thread ? (
+    <ThreadTitleMenu
+      key={scopedThreadKey(props.thread.environmentId, props.thread.id)}
+      thread={props.thread}
+      subtitle={props.subtitle}
+    />
+  ) : undefined;
+
   return (
     <>
       <AppBar
         title={props.title}
         subtitle={props.subtitle}
+        titleContent={titleContent}
         sidebar={native.sidebar}
-        options={native.options}
-        optionsVersion={native.optionsVersion}
+        options={{
+          ...native.options,
+          ...(titleContent
+            ? { headerTitle: () => titleContent, unstable_headerSubtitle: undefined }
+            : {}),
+        }}
+        optionsVersion={[
+          native.optionsVersion,
+          props.subtitle,
+          threadTitleMenuVersion(props.thread),
+        ]}
         trailing={
           props.fileInspectorSupported && props.hasThreadCwd ? (
             <ScreenHeaderButton
