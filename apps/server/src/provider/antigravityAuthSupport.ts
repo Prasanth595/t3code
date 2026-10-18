@@ -6,6 +6,7 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -403,6 +404,58 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   yield* linkAntigravityUserSkills({ profileDirectory: geminiHome, userHome, platform });
   return profile;
 });
+
+function antigravityCredentialPaths(path: Path.Path, profileDirectory: string) {
+  const tokenPath = path.join(profileDirectory, "antigravity-acp", "acp_token.json");
+  return { tokenPath, setAsidePath: `${tokenPath}.before-sign-in` };
+}
+
+/** Puts back credentials a sign-in set aside, unless that sign-in already saved new ones. */
+export const restoreAntigravityCredentials = Effect.fn("restoreAntigravityCredentials")(function* (
+  profileDirectory: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const { tokenPath, setAsidePath } = antigravityCredentialPaths(
+    yield* Path.Path,
+    profileDirectory,
+  );
+  if (!(yield* fs.exists(setAsidePath))) return;
+  if (yield* fs.exists(tokenPath)) {
+    yield* fs.remove(setAsidePath, { force: true });
+  } else {
+    yield* fs.rename(setAsidePath, tokenPath);
+  }
+});
+
+/**
+ * Moves the saved token aside for the scope so the agent runs Google's browser sign-in instead of
+ * reusing it. A sign-in that fails or is cancelled gets the previous token back.
+ */
+export const setAsideAntigravityCredentials = Effect.fn("setAsideAntigravityCredentials")(
+  function* (profileDirectory: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const { tokenPath, setAsidePath } = antigravityCredentialPaths(
+      yield* Path.Path,
+      profileDirectory,
+    );
+    yield* Effect.acquireRelease(
+      Effect.gen(function* () {
+        if (yield* fs.exists(tokenPath)) yield* fs.rename(tokenPath, setAsidePath);
+      }),
+      (_, exit) =>
+        (Exit.isSuccess(exit)
+          ? fs.remove(setAsidePath, { force: true })
+          : restoreAntigravityCredentials(profileDirectory)
+        ).pipe(
+          Effect.catch((error) =>
+            Effect.logWarning("Antigravity credentials set aside for sign-in were not settled.", {
+              error,
+            }),
+          ),
+        ),
+    );
+  },
+);
 
 export function buildAntigravityAcpSpawnInput(input: {
   readonly installation: {

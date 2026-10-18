@@ -58,6 +58,8 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
     readonly supportsLogout?: boolean;
     readonly beforeInitialize?: Effect.Effect<void>;
     readonly forwardCallback?: Effect.Effect<void, ProviderSetupError>;
+    readonly usesBrowser?: boolean;
+    readonly setsAsideCredentials?: boolean;
   } = {},
 ) {
   const authenticated = yield* Deferred.make<void, AcpErrors.AcpError>();
@@ -124,6 +126,20 @@ const makeHarness = Effect.fn("makeAuthTestHarness")(function* (
       Effect.sync(() => {
         forwarded += 1;
       }),
+    ...(options.usesBrowser === undefined ? {} : { usesBrowser: options.usesBrowser }),
+    ...(options.setsAsideCredentials
+      ? {
+          setAsideCredentials: Effect.acquireRelease(
+            Effect.sync(() => {
+              events.push("credentials-set-aside");
+            }),
+            (_, exit) =>
+              Effect.sync(() => {
+                events.push(Exit.isSuccess(exit) ? "credentials-dropped" : "credentials-restored");
+              }),
+          ),
+        }
+      : {}),
   });
   return {
     auth,
@@ -279,6 +295,44 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       yield* phase(harness.auth, "succeeded");
       assert.equal(harness.forwarded(), 0);
       assert.deepEqual(harness.catalog(), ["gemini-test"]);
+    }),
+  );
+
+  it.effect("sets saved Google credentials aside so the agent asks Google again", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ setsAsideCredentials: true });
+      yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      assert.deepEqual(harness.events.slice(0, 2), ["credentials-set-aside", "process-open"]);
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.succeed(harness.discovered, undefined);
+      yield* phase(harness.auth, "succeeded");
+      assert.deepEqual(harness.events.slice(-2), ["process-close", "credentials-dropped"]);
+    }),
+  );
+
+  it.effect("restores saved Google credentials after the process when sign-in is cancelled", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ setsAsideCredentials: true });
+      const state = yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      yield* harness.auth.controller.cancel(owner, state.flowId!);
+      assert.deepEqual(harness.events.slice(-2), ["process-close", "credentials-restored"]);
+    }),
+  );
+
+  it.effect("leaves configured credentials alone when sign-in does not use a browser", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        interactive: false,
+        usesBrowser: false,
+        setsAsideCredentials: true,
+      });
+      yield* harness.auth.controller.start(owner);
+      yield* Deferred.succeed(harness.authenticated, undefined);
+      yield* Deferred.succeed(harness.discovered, undefined);
+      yield* phase(harness.auth, "succeeded");
+      assert.notInclude(harness.events, "credentials-set-aside");
     }),
   );
 

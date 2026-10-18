@@ -36,6 +36,8 @@ import {
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
   resolveAntigravityInstanceDirectories,
+  restoreAntigravityCredentials,
+  setAsideAntigravityCredentials,
 } from "./antigravityAuthSupport.ts";
 
 const authorizationUrl =
@@ -753,6 +755,76 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
         expect(Result.isFailure(result)).toBe(true);
         expect(yield* fs.exists(profileDirectory)).toBe(false);
       }
+    }),
+  );
+});
+
+it.layer(NodeServices.layer)("Antigravity credentials during sign-in", (it) => {
+  const makeProfile = Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const profileDirectory = yield* fs.makeTempDirectoryScoped();
+    const acpDirectory = path.join(profileDirectory, "antigravity-acp");
+    yield* fs.makeDirectory(acpDirectory, { recursive: true });
+    const tokenPath = path.join(acpDirectory, "acp_token.json");
+    const readToken = fs
+      .exists(tokenPath)
+      .pipe(
+        Effect.flatMap((exists) => (exists ? fs.readFileString(tokenPath) : Effect.succeed(null))),
+      );
+    const remainingFiles = fs.readDirectory(acpDirectory).pipe(Effect.map((files) => files.sort()));
+    return { fs, profileDirectory, tokenPath, readToken, remainingFiles };
+  });
+
+  it.effect("hides the saved token while sign-in runs and keeps the new one", () =>
+    Effect.gen(function* () {
+      const profile = yield* makeProfile;
+      yield* profile.fs.writeFileString(profile.tokenPath, "previous-account");
+      yield* Effect.gen(function* () {
+        yield* setAsideAntigravityCredentials(profile.profileDirectory);
+        expect(yield* profile.readToken).toBeNull();
+        yield* profile.fs.writeFileString(profile.tokenPath, "chosen-account");
+      }).pipe(Effect.scoped);
+      expect(yield* profile.readToken).toBe("chosen-account");
+      expect(yield* profile.remainingFiles).toEqual(["acp_token.json"]);
+    }),
+  );
+
+  it.effect("restores the saved token when sign-in fails before Google saves a new one", () =>
+    Effect.gen(function* () {
+      const profile = yield* makeProfile;
+      yield* profile.fs.writeFileString(profile.tokenPath, "previous-account");
+      const result = yield* Effect.gen(function* () {
+        yield* setAsideAntigravityCredentials(profile.profileDirectory);
+        return yield* Effect.fail("cancelled");
+      }).pipe(Effect.scoped, Effect.result);
+      expect(Result.isFailure(result)).toBe(true);
+      expect(yield* profile.readToken).toBe("previous-account");
+      expect(yield* profile.remainingFiles).toEqual(["acp_token.json"]);
+    }),
+  );
+
+  it.effect("keeps the token Google saved even when a later step fails", () =>
+    Effect.gen(function* () {
+      const profile = yield* makeProfile;
+      yield* profile.fs.writeFileString(profile.tokenPath, "previous-account");
+      yield* Effect.gen(function* () {
+        yield* setAsideAntigravityCredentials(profile.profileDirectory);
+        yield* profile.fs.writeFileString(profile.tokenPath, "chosen-account");
+        return yield* Effect.fail("model discovery failed");
+      }).pipe(Effect.scoped, Effect.result);
+      expect(yield* profile.readToken).toBe("chosen-account");
+      expect(yield* profile.remainingFiles).toEqual(["acp_token.json"]);
+    }),
+  );
+
+  it.effect("restores a token left aside when the app stopped during sign-in", () =>
+    Effect.gen(function* () {
+      const profile = yield* makeProfile;
+      yield* profile.fs.writeFileString(`${profile.tokenPath}.before-sign-in`, "previous-account");
+      yield* restoreAntigravityCredentials(profile.profileDirectory);
+      expect(yield* profile.readToken).toBe("previous-account");
+      expect(yield* profile.remainingFiles).toEqual(["acp_token.json"]);
     }),
   );
 });

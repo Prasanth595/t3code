@@ -46,8 +46,8 @@ Choose **Sign-in method** in the Antigravity provider settings:
 The environment stores the Antigravity API key outside its settings file, and
 clients only see whether one is saved. The agent uses the method and credentials selected for this instance;
 ambient `GEMINI_API_KEY` and Google credential variables do not override them.
-Changing the method stops the instance's sessions. Sign out before replacing an
-account.
+Changing the method stops the instance's sessions. To switch Google accounts,
+choose **Change account**. If you cancel, T3 Code keeps the current account.
 
 ## Runtime installation
 

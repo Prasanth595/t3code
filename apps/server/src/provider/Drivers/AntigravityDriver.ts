@@ -36,6 +36,8 @@ import {
   isAntigravitySignInRequiredError,
   prepareAntigravityProfile,
   resolveAntigravityInstanceDirectories,
+  restoreAntigravityCredentials,
+  setAsideAntigravityCredentials,
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
 import {
@@ -147,6 +149,16 @@ export const AntigravityDriver: ProviderDriver<
           Effect.provideService(FileSystem.FileSystem, fileSystem),
         );
       }
+      // A sign-in cut short by a crash leaves the previous token set aside.
+      yield* restoreAntigravityCredentials(profileDirectory).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.catch((error) =>
+          Effect.logWarning("Could not restore Antigravity credentials set aside for sign-in.", {
+            error,
+          }),
+        ),
+      );
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER,
         instanceId,
@@ -336,6 +348,19 @@ export const AntigravityDriver: ProviderDriver<
         onAuthenticated: publishCatalog,
         onSignedOut: Effect.suspend(() => provider.onSignedOut),
         usesBrowser: antigravityAuthUsesBrowser(auth.authMethod),
+        setAsideCredentials: setAsideAntigravityCredentials(profileDirectory).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+          Effect.mapError(
+            (cause) =>
+              new ProviderSetupError({
+                instanceId,
+                operation: "start",
+                detail: "Could not clear the saved Google sign-in. Try again.",
+                cause,
+              }),
+          ),
+        ),
       });
 
       // The probe must not spawn. The agent is a PyInstaller one-file bundle

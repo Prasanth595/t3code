@@ -83,6 +83,11 @@ export interface AntigravityAuthOptions<
   readonly onSignedOut: Effect.Effect<void>;
   readonly forwardCallback?: (callback: URL) => Effect.Effect<void, ProviderSetupError>;
   readonly usesBrowser?: boolean;
+  /**
+   * Hides the saved Google credentials for the sign-in's scope. The agent signs in silently
+   * whenever they are valid, so without this "Change account" never reaches Google.
+   */
+  readonly setAsideCredentials?: Effect.Effect<void, ProviderSetupError, Scope.Scope>;
 }
 
 function visibleSnapshot(snapshot: AuthSnapshot, ownerSessionId: string): ProviderAuthState {
@@ -264,6 +269,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
   const runSignIn = (flow: AuthFlow, stopSessions: Effect.Effect<void, ProviderSetupError>) =>
     Effect.gen(function* () {
       yield* stopSessions.pipe(Effect.ensuring(stopOwnedProcesses));
+      if (usesBrowser && options.setAsideCredentials) yield* options.setAsideCredentials;
       const runtime = yield* options.makeRuntime({
         onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url),
       });
