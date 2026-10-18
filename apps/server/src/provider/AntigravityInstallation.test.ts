@@ -20,12 +20,15 @@ import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { ACP_REGISTRY_URL } from "@t3tools/provider-acp-registry/server/AcpRegistrySupport";
+
 import * as AntigravityInstallation from "./AntigravityInstallation.ts";
 import { ANTIGRAVITY_AUTH_BROWSER_MARKER } from "./antigravityAuthSupport.ts";
 import {
   resolveAntigravityReleaseAsset,
   type AntigravityReleaseAsset,
 } from "./antigravityRelease.ts";
+import * as ModelManifest from "./ModelManifest.ts";
 
 import antigravityInitialize from "../../../../packages/effect-acp/test/fixtures/antigravity-initialize.json" with { type: "json" };
 
@@ -133,6 +136,11 @@ interface HarnessOptions {
   readonly fileSystem?: FileSystem.FileSystem;
   readonly validate?: AntigravityInstallation.AntigravityInstallationOptions["validate"];
   readonly useDefaultValidation?: boolean;
+  /** Served for the ACP Registry index. */
+  readonly registry?: unknown;
+  /** Served by URL instead of the pinned archive. */
+  readonly archives?: Readonly<Record<string, Uint8Array>>;
+  readonly manifest?: ModelManifest.ModelManifestData;
 }
 
 const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
@@ -189,11 +197,27 @@ const makeHarness = Effect.fn("test.makeAntigravityInstallation")(function* (
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(HostProcess.Architecture, arch),
     Effect.provideService(HostProcess.Environment, { PATH: options.path ?? "" }),
+    Effect.provideService(ModelManifest.ModelManifest, {
+      current: Effect.succeed(options.manifest ?? ModelManifest.BUNDLED_MODEL_MANIFEST),
+      refresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      forceRefresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
+      refreshInBackground: Effect.void,
+    }),
     Effect.provideService(
       HttpClient.HttpClient,
       HttpClient.make((request) =>
         Effect.sync(() => {
           requests.push(request.url);
+          if (request.url === ACP_REGISTRY_URL) {
+            return HttpClientResponse.fromWeb(
+              request,
+              options.registry === undefined
+                ? new Response(null, { status: 503 })
+                : Response.json(options.registry),
+            );
+          }
+          const served = options.archives?.[request.url];
+          if (served) return HttpClientResponse.fromWeb(request, new Response(served));
           const response = HttpClientResponse.fromWeb(
             request,
             new Response(null, {
@@ -243,6 +267,33 @@ const expectPreviousRelease = Effect.fn("test.expectPreviousAntigravityRelease")
   expect(yield* fs.readFileString(resolved.executablePath)).toBe(serverContents);
   expect(yield* fs.readFileString(resolved.harnessPath)).toBe(harnessContents);
   expect((yield* installation.state).installedVersion).toBe(previousVersion);
+});
+
+// A zip comment changes the archive's hash without changing its members.
+const withZipComment = (archive: Buffer, comment: string) => {
+  const bytes = Buffer.concat([archive, Buffer.from(comment)]);
+  bytes.writeUInt16LE(Buffer.byteLength(comment), archive.byteLength - 2);
+  return bytes;
+};
+const upstreamArchive = withZipComment(completeArchive, "upstream");
+const upstreamUrl = "https://dl.google.com/agy-extensions/releases/test/agy-acp-server-1.4.1.zip";
+const registryListing = (archive = upstreamUrl) => ({
+  version: "1.0.0",
+  agents: [
+    { id: "other-agent", version: "9.9.9", distribution: { npx: { package: "other" } } },
+    {
+      id: "antigravity-acp",
+      version: "1.4.1",
+      distribution: {
+        binary: Object.fromEntries(
+          ["linux-x86_64", "windows-x86_64"].map((target) => [target, { archive, cmd: "./agy" }]),
+        ),
+      },
+    },
+  ],
+});
+const pinnedAsset = Effect.fn("test.pinnedAntigravityAsset")(function* () {
+  return { ...(yield* releaseAsset()), version: "1.3.0" };
 });
 
 it.layer(NodeServices.layer)("Antigravity installation", (it) => {
@@ -1075,4 +1126,93 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
 
     expect(resolveAntigravityReleaseAsset("freebsd", "x64")).toBeNull();
   });
+
+  it.effect("updates past the pinned release to the registry release and never downgrades", () =>
+    Effect.gen(function* () {
+      const asset = yield* pinnedAsset();
+      const h = yield* makeHarness({
+        asset,
+        registry: registryListing(),
+        archives: { [upstreamUrl]: upstreamArchive },
+      });
+      yield* h.installation.checkForUpdate;
+      // A fresh install still gets the pinned release.
+      expect(yield* h.installation.state).toMatchObject({ version: "1.3.0" });
+      yield* h.installation.start;
+      expect(yield* terminalState(h.installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "1.3.0",
+        version: "1.4.1",
+        totalBytes: null,
+      });
+
+      yield* h.installation.start;
+      expect(yield* terminalState(h.installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "1.4.1",
+        version: "1.4.1",
+      });
+      expect(h.validations.at(-1)?.version).toBe("1.4.1");
+      expect(h.requests).toEqual([ACP_REGISTRY_URL, asset.url, upstreamUrl]);
+      const selected = yield* h.installation.resolve();
+      expect(selected.version).toBe("1.4.1");
+      expect(yield* h.fs.readFileString(selected.executablePath)).toBe(serverContents);
+
+      // Without registry information the older pin is not offered as a reinstall.
+      const restarted = yield* makeHarness({ baseDir: h.baseDir, asset });
+      expect(yield* restarted.installation.state).toMatchObject({
+        installedVersion: "1.4.1",
+        version: "1.4.1",
+      });
+      yield* restarted.installation.start;
+      expect(yield* terminalState(restarted.installation)).toMatchObject({
+        phase: "succeeded",
+        installedVersion: "1.4.1",
+      });
+      expect(restarted.requests).toEqual([]);
+      expect(restarted.validations.map((entry) => entry.version)).toEqual(["1.4.1"]);
+    }),
+  );
+
+  it.effect.each([
+    {
+      name: "hosted outside Google's downloads",
+      registry: registryListing("https://example.com/agy.zip"),
+    },
+    {
+      name: "escaping Google's releases path",
+      registry: registryListing(
+        "https://dl.google.com/agy-extensions/releases/%2e%2e/%2e%2e/other.zip",
+      ),
+    },
+    {
+      name: "withdrawn by the model manifest",
+      registry: registryListing(),
+      manifest: {
+        ...ModelManifest.BUNDLED_MODEL_MANIFEST,
+        compatibility: [
+          {
+            driver: "antigravity",
+            t3CodeRange: ">=0.0.42",
+            ranges: [{ range: ">=1.4.0", status: "broken" as const }],
+          },
+        ],
+      },
+    },
+  ])("does not offer a registry release $name", ({ registry, manifest }) =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({
+        asset: yield* pinnedAsset(),
+        registry,
+        ...(manifest ? { manifest } : {}),
+      });
+      yield* h.installation.start;
+      yield* terminalState(h.installation);
+      yield* h.installation.checkForUpdate;
+      expect(yield* h.installation.state).toMatchObject({
+        installedVersion: "1.3.0",
+        version: "1.3.0",
+      });
+    }),
+  );
 });

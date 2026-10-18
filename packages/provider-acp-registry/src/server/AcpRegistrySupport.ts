@@ -46,7 +46,8 @@ import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStr
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
-const ACP_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
+export const ACP_REGISTRY_URL =
+  "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 
 const MAX_REGISTRY_BYTES = 1024 * 1024;
 const MAX_ARCHIVE_BYTES = 1024 * 1024 * 1024;

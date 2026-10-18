@@ -97,6 +97,7 @@ const layerProviderInstanceRegistry = ProviderInstanceRegistryHydration.layer.pi
       ModelManifest.layerTest,
       AntigravityInstallation.AntigravityInstallation.layer.pipe(
         Layer.provide(layerServerConfig.pipe(Layer.provide(layerPlatformTest))),
+        Layer.provide(ModelManifest.layerTest),
         Layer.provide(FetchHttpClient.layer),
         Layer.provide(layerPlatformTest),
       ),
