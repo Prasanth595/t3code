@@ -426,6 +426,16 @@ Control tooltips show the keys of the control as chips, such as "Stash ⌘S", fo
 - Your own keys come first. More keys than the limit show as "+N".
 - **Limits:** a group tab names no digit while focus levels are off. A sidebar row names the pin and settle keys only for the open thread.
 
+### Keyboard cheat sheet
+
+`mod+/` opens a list of every key that works, grouped by screen area. The area that had focus comes first, marked "Here".
+
+- **Setting:** none; the key is the keybinding command `keyboard.cheatSheet`. Rebind or remove it in Settings > Keybindings. The command palette also has "Show keyboard shortcuts".
+- **Works on:** web, desktop.
+- A key shows only when it works in its area, and your own keys come first. A search box filters by action or key. While `keyboardFocusLevels` is off, the focus level areas show dimmed, with a button that turns the setting on.
+- The terminal keeps `mod+/`, because Ctrl+/ is undo in shells.
+- **Limits:** the 1 to 9 jump commands show as one row each.
+
 ### Terminal settings
 
 App shortcuts take priority in a focused terminal, and the app asks before a terminal closes.
