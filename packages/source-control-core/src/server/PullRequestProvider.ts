@@ -1,3 +1,4 @@
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type {
@@ -38,6 +39,12 @@ import type {
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { SourceControlProviderKind as SourceControlProviderKindSchema } from "@t3tools/contracts";
+
+/** Request-scoped endpoint: a host alone cannot distinguish installations mounted at different paths. */
+export const PullRequestBaseUrl = Context.Reference<string | undefined>(
+  "@t3tools/source-control-core/server/PullRequestBaseUrl",
+  { defaultValue: () => undefined },
+);
 
 export class PullRequestProviderError extends Schema.TaggedError<PullRequestProviderError>()(
   "PullRequestProviderError",

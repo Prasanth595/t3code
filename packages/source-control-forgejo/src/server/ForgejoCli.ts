@@ -14,6 +14,7 @@ import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { collectUint8StreamText } from "@t3tools/provider-core/server/collectStreamText";
+import { PullRequestBaseUrl } from "@t3tools/source-control-core/server/PullRequestProvider";
 import type { SourceControlProviderContext } from "@t3tools/source-control-core/server/SourceControlProvider";
 
 const encodeApiBody = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
@@ -483,11 +484,15 @@ export const make = Effect.gen(function* () {
     input: ForgejoRepositoryInput,
     hostOnly = false,
   ) {
+    const baseUrl = yield* PullRequestBaseUrl;
     const referenceRemote = input.reference ? parseForgejoRemote(input.reference) : null;
-    let remoteUrl = [input.reference, input.repository, input.context?.remoteUrl].find(
-      (value) => value && parseForgejoRemote(value),
-    );
+    let remoteUrl =
+      baseUrl ??
+      [input.reference, input.repository, input.context?.remoteUrl].find(
+        (value) => value && parseForgejoRemote(value),
+      );
     let remote =
+      (baseUrl ? parseForgejoRemote(baseUrl) : null) ??
       referenceRemote ??
       (input.repository ? parseForgejoRemote(input.repository) : null) ??
       (input.context ? parseForgejoRemote(input.context.remoteUrl) : null);
@@ -554,19 +559,30 @@ export const make = Effect.gen(function* () {
     });
     const requestedHost = input.host ?? input.context?.requestedHost;
     const matchHostOnly = hostOnly || (!!input.host && !remote?.path);
-    const selectLogin = (logins: ReturnType<typeof parseForgejoLogins>) =>
-      remote
+    const matchesBaseUrl = (login: typeof ForgejoLoginSchema.Type) =>
+      baseUrl === undefined ||
+      URL.parse(login.url)?.href.replace(/\/+$/, "") === new URL(baseUrl).href.replace(/\/+$/, "");
+    const selectLogin = (available: ReturnType<typeof parseForgejoLogins>) => {
+      const logins = available.filter(matchesBaseUrl);
+      return remote
         ? matchForgejoLogin(logins, remote, remote.ssh ? requestedHost : undefined, matchHostOnly)
         : (logins.find((item) => item.default === "true") ??
-          (new Set(logins.map((item) => item.name)).size === 1 ? logins[0] : undefined));
+            (new Set(logins.map((item) => item.name)).size === 1 ? logins[0] : undefined));
+    };
     let login = selectLogin(fjLogins);
     let command: "fj" | "tea" = "fj";
     if (
       !login &&
       fjLogins.some(
         (item) =>
-          !remote ||
-          matchForgejoLogin([item], remote, remote.ssh ? requestedHost : undefined, matchHostOnly),
+          matchesBaseUrl(item) &&
+          (!remote ||
+            matchForgejoLogin(
+              [item],
+              remote,
+              remote.ssh ? requestedHost : undefined,
+              matchHostOnly,
+            )),
       )
     ) {
       const available = yield* execute({ command: "fj", cwd: input.cwd, args: ["version"] }).pipe(

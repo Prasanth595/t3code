@@ -94,6 +94,7 @@ import {
   type ProviderListCursor,
   type ProviderChangeRequestWatchFingerprint,
   type PullRequestProviderApi,
+  PullRequestBaseUrl,
   PullRequestProviderError,
 } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as PullRequestReadCache from "./PullRequestReadCache.ts";
@@ -306,6 +307,7 @@ export interface SupportedProject {
   readonly cursorKey: string;
   readonly project: OrchestrationProjectShell;
   readonly api: PullRequestProviderApi;
+  readonly baseUrl?: string;
   readonly repository: string;
   readonly host: string;
   /**
@@ -427,7 +429,7 @@ function withRateLimitBackoff(
   api: PullRequestProviderApi,
   host: string,
   limits: SourceControlRateLimit.SourceControlRateLimit["Service"],
-  options?: { readonly viewerAllowsPause: boolean },
+  options?: { readonly viewerAllowsPause?: boolean; readonly baseUrl?: string },
 ): PullRequestProviderApi {
   const key = { provider: api.kind, host };
   const protect = <A>(
@@ -450,6 +452,7 @@ function withRateLimitBackoff(
       Effect.flatMap((lease) =>
         effect.pipe(
           Effect.provideService(SourceControlRateLimit.Interactive, allowPaused),
+          Effect.provideService(PullRequestBaseUrl, options?.baseUrl),
           Effect.tap(() => limits.recordSuccess({ ...key, lease })),
           Effect.tapError((error) =>
             error.reason === "rate-limited"
@@ -739,9 +742,11 @@ export const make = Effect.gen(function* () {
           let kind = identity?.provider as SourceControlProviderKind | undefined;
           if (!identity) continue;
           let refinedProvider: SourceControlProviderInfo | null | undefined;
-          const overridden =
-            sourceControlHostOverrideForRemoteUrl(identity.locator.remoteUrl, overrides) !==
-            undefined;
+          const override = sourceControlHostOverrideForRemoteUrl(
+            identity.locator.remoteUrl,
+            overrides,
+          );
+          const overridden = override !== undefined;
           if (overridden) {
             refinedProvider = detectSourceControlProviderFromRemoteUrl(
               identity.locator.remoteUrl,
@@ -757,8 +762,15 @@ export const make = Effect.gen(function* () {
             kind = refinedProvider?.kind ?? kind;
           }
           if (kind === undefined) continue;
-          const repository = sourceControlRepositorySelector({ ...identity, provider: kind });
+          let repository = sourceControlRepositorySelector({ ...identity, provider: kind });
           if (repository === null) continue;
+          const baseUrl = override?.baseUrl === undefined ? undefined : refinedProvider?.baseUrl;
+          if (baseUrl && /^https?:/i.test(identity.locator.remoteUrl)) {
+            const mount = new URL(baseUrl).pathname.replace(/^\/+|\/+$/g, "");
+            if (mount && repository.startsWith(`${mount}/`)) {
+              repository = repository.slice(mount.length + 1);
+            }
+          }
           const host =
             refinedProvider && (overridden || refinedProvider.kind === "forgejo")
               ? new URL(refinedProvider.baseUrl).host.toLowerCase()
@@ -786,7 +798,13 @@ export const make = Effect.gen(function* () {
           supported.push({
             cursorKey: key,
             project,
-            api: withRateLimitBackoff(api, host, rateLimits),
+            api: withRateLimitBackoff(
+              api,
+              host,
+              rateLimits,
+              baseUrl === undefined ? undefined : { baseUrl },
+            ),
+            ...(baseUrl === undefined ? {} : { baseUrl }),
             repository,
             host,
             remote: repositoryKey ?? normalizeGitRemoteUrl(`https://${host}/${repository}`),
@@ -865,6 +883,13 @@ export const make = Effect.gen(function* () {
                         settings.sourceControlHostOverrides,
                       )
                     : null;
+                const baseUrl =
+                  sourceControlHostOverrideForRemoteUrl(
+                    remoteUrl,
+                    settings.sourceControlHostOverrides,
+                  )?.baseUrl === undefined
+                    ? undefined
+                    : provider?.baseUrl;
                 const api = provider === null ? null : registry.get(provider.kind);
                 if (api !== null && provider?.kind !== "azure-devops") {
                   const selected = yield* projects.getShell(ref.projectId).pipe(
@@ -881,7 +906,13 @@ export const make = Effect.gen(function* () {
                     return {
                       cursorKey: listCursorKey(host, repository),
                       project: selected.value,
-                      api: withRateLimitBackoff(api, host, rateLimits),
+                      api: withRateLimitBackoff(
+                        api,
+                        host,
+                        rateLimits,
+                        baseUrl === undefined ? undefined : { baseUrl },
+                      ),
+                      ...(baseUrl === undefined ? {} : { baseUrl }),
                       repository,
                       host,
                       remote: normalizeGitRemoteUrl(`https://${host}/${repository}`),
@@ -970,16 +1001,20 @@ export const make = Effect.gen(function* () {
   const viewersByHost = new Map<string, { readonly at: number; readonly result: ResolvedViewer }>();
   const viewerFlights = yield* Cache.makeWith(
     (key: string): Effect.Effect<ResolvedViewer> => {
-      const [host, kind, roots] = JSON.parse(key) as [
+      const [host, kind, roots, baseUrl] = JSON.parse(key) as [
         string,
         SourceControlProviderKind,
         ReadonlyArray<string>,
+        string | undefined,
       ];
       const registered = registry.get(kind);
       if (registered === null) {
         return Effect.die(new Error(`Missing pull request provider: ${kind}`));
       }
-      const api = withRateLimitBackoff(registered, host, rateLimits, { viewerAllowsPause: true });
+      const api = withRateLimitBackoff(registered, host, rateLimits, {
+        viewerAllowsPause: true,
+        ...(baseUrl ? { baseUrl } : {}),
+      });
       return Effect.firstSuccessOf(roots.map((cwd) => api.getViewer({ cwd, host }))).pipe(
         Effect.map((viewer) => ({
           host,
@@ -1028,7 +1063,12 @@ export const make = Effect.gen(function* () {
           // unreadable worktree would otherwise report the whole host as signed out.
           const roots =
             viewerRoots.get(host) ?? forHost.map(({ project }) => project.workspaceRoot);
-          const key = JSON.stringify([host, api.kind, [...new Set(roots)].sort()]);
+          const key = JSON.stringify([
+            host,
+            api.kind,
+            [...new Set(roots)].sort(),
+            forHost[0]!.baseUrl,
+          ]);
           if (options?.allowPaused === true) return Cache.get(viewerFlights, key);
           // The pause is checked here rather than inside the lookup, so that it holds back the
           // callers nobody is waiting on without splitting the flight they share with a press.

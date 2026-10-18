@@ -7,6 +7,7 @@ import { VcsProcessExitError } from "@t3tools/contracts";
 
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as TestSourceControlHost from "@t3tools/source-control-testing/TestSourceControlHost";
+import { PullRequestBaseUrl } from "@t3tools/source-control-core/server/PullRequestProvider";
 import * as GitLabCli from "./GitLabCli.ts";
 
 const mockedRun = vi.fn<SourceControlHost.SourceControlHost["Service"]["process"]["run"]>();
@@ -29,6 +30,43 @@ afterEach(() => {
 });
 
 layer("GitLabCli.layer", (it) => {
+  it.effect.each(["http://web.example.test:3000/GitLab", "https://web.example.test"])(
+    "uses the mapped GitLab endpoint %s for API and action calls",
+    (baseUrl) =>
+      Effect.gen(function* () {
+        mockedRun.mockImplementation(() => Effect.succeed(processOutput("{}")));
+        const cli = yield* GitLabCli.GitLabCli;
+        yield* cli.execute({ cwd: "/ssh-checkout", args: ["api", "user"] });
+        yield* cli.execute({
+          cwd: "/ssh-checkout",
+          args: ["mr", "close", "42", "--repo", "team/repo"],
+        });
+        const endpoint = new URL(baseUrl);
+        assert.deepStrictEqual(
+          mockedRun.mock.calls.map(([call]) => call.env),
+          [0, 1].map(() => ({
+            GITLAB_HOST: endpoint.host,
+            GITLAB_API_HOST: endpoint.host,
+            GLAB_API_PROTOCOL: endpoint.protocol.slice(0, -1),
+            GITLAB_SUBFOLDER: endpoint.pathname.replace(/^\/+|\/+$/g, ""),
+          })),
+        );
+        assert.deepStrictEqual(mockedRun.mock.calls[0]![0].args, [
+          "api",
+          "user",
+          "--hostname",
+          endpoint.host,
+        ]);
+        assert.deepStrictEqual(mockedRun.mock.calls[1]![0].args, [
+          "mr",
+          "close",
+          "42",
+          "--repo",
+          "team/repo",
+        ]);
+      }).pipe(Effect.provideService(PullRequestBaseUrl, baseUrl)),
+  );
+
   it.effect("parses merge request view output", () =>
     Effect.gen(function* () {
       mockedRun.mockReturnValueOnce(
