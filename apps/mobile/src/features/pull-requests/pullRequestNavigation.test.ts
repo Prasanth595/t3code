@@ -23,4 +23,14 @@ describe("native PR entry points", () => {
     ).toBeNull();
     expect(nativePullRequestDestination("https://github.com/org/repo/pull/12", null)).toBeNull();
   });
+  it("opens a GitHub Enterprise link natively only on a known GitHub host", () => {
+    const url = "https://git.corp.example/team/workspace/pull/7";
+    expect(nativePullRequestDestination(url, context, ["git.corp.example"])).toEqual({
+      ...context,
+      host: "git.corp.example",
+      repository: "team/workspace",
+      number: 7,
+    });
+    expect(nativePullRequestDestination(url, context)).toBeNull();
+  });
 });
