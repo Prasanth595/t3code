@@ -31,8 +31,6 @@ export const MOBILE_THEME_OPTIONS: ReadonlyArray<{
   ...BUILT_IN_THEMES.map((theme) => ({ id: theme.id as MobileThemeId, label: theme.label })),
 ];
 
-// Closed set: every key `createMobileThemeVariables` writes. Reads of a
-// misspelled variable then fail to compile instead of yielding undefined.
 export type MobileThemeVariable = keyof ReturnType<typeof createMobileThemeVariables>;
 export type MobileThemeVariables = Readonly<Record<MobileThemeVariable, string>>;
 
@@ -77,7 +75,6 @@ export function createMobileThemeSelectionPatch(
   return {
     lightThemeId: nextThemeIds.light,
     darkThemeId: nextThemeIds.dark,
-    // Keep older OTA bundles on the theme for the appearance currently in use.
     themeId: nextThemeIds[activeAppearance],
   };
 }
@@ -146,9 +143,9 @@ function rgbChannels(color: string): readonly [number, number, number] | null {
 }
 
 /**
- * An opaque form of a theme colour, composited over the surface behind it. Native chip drawing
- * parses only opaque hex — an `rgba()` string falls back to a default that is nothing like the
- * colour asked for — so a translucent role like `--color-border` has to be flattened first.
+ * Native chip drawing parses only opaque hex — an `rgba()` string falls back to a default that
+ * is nothing like the colour asked for — so a translucent role like `--color-border` has to be
+ * flattened first.
  */
 export function flattenThemeColor(color: string, surface: string): string {
   const alphaHex = /^#([\da-f]{6})([\da-f]{2})$/i.exec(color);
@@ -191,7 +188,6 @@ function contrastRatio(
   );
 }
 
-/** Keep the theme tint while adjusting lightness to contrast with every supplied surface. */
 export function themeColorWithContrast(
   accent: string,
   surface: string | ReadonlyArray<string>,
@@ -247,6 +243,7 @@ export function createMobileThemeVariables(
   colors: ThemeColors,
   appearance: MobileThemeAppearance,
   groupedCardColor = colors.surface,
+  prominentAction: readonly [string, string] = [colors.text, colors.canvas],
 ) {
   const c = nativeColors(colors);
   const groupedCard = themeColorToNativeColor(groupedCardColor);
@@ -299,6 +296,8 @@ export function createMobileThemeVariables(
     "--color-inline-skill-border": withAlpha(c.accent, 0.42),
     "--color-inline-skill-foreground": c.accentSurfaceForeground,
     "--color-primary": c.messageAction,
+    "--color-prominent-action": themeColorToNativeColor(prominentAction[0]),
+    "--color-prominent-action-foreground": themeColorToNativeColor(prominentAction[1]),
     "--color-primary-foreground": c.messageActionForeground,
     "--color-primary-text": themeColorWithContrast(c.messageAction, textSurfaces),
     "--color-primary-shadow": "#000000",
@@ -386,17 +385,16 @@ export function getMobileThemeVariables(
   overrides: Partial<MobileThemeVariables> | null = null,
 ): MobileThemeVariables {
   const colors = getMobileThemeColors(themeId, appearance);
-  // Mobile settings groups and fallback materials use tonal fills where desktop
-  // uses outlined cards. Raise flat desktop surfaces above the sheet so grouped
-  // content keeps a visible boundary. Regular cards retain their desktop surface.
   const groupedCard =
     themeId === DEFAULT_MOBILE_THEME_ID
       ? appearance === "light"
         ? colors.toolbarControlHover
         : colors.sidebarRowActive
-      : colors.surface === colors.chrome
-        ? colors.surfaceRaised
-        : colors.surface;
+      : themeId === "t3-chat"
+        ? appearance === "light"
+          ? colors.toolbarControl
+          : colors.surface
+        : colors.muted;
   const mobileColors =
     themeId === DEFAULT_MOBILE_THEME_ID
       ? {
@@ -410,9 +408,17 @@ export function getMobileThemeVariables(
           ),
         }
       : colors;
-  const baseVariables = createMobileThemeVariables(mobileColors, appearance, groupedCard);
+  const baseVariables = createMobileThemeVariables(
+    mobileColors,
+    appearance,
+    groupedCard,
+    themeId === "t3-chat" && appearance === "dark"
+      ? [colors.messageActionForeground, colors.messageAction]
+      : themeId !== DEFAULT_MOBILE_THEME_ID && themeId !== "t3-chat"
+        ? [colors.messageAction, colors.messageActionForeground]
+        : undefined,
+  );
 
-  // The complete base record guarantees that optional overrides cannot leave a token undefined.
   return overrides ? ({ ...baseVariables, ...overrides } as MobileThemeVariables) : baseVariables;
 }
 
