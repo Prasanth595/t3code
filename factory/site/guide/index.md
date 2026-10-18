@@ -4,7 +4,48 @@ The factory turns a GitHub issue into a draft pull request. A person writes the 
 
 It runs inside the T3 Code server, as part of the same process. Each agent session is an ordinary T3 [thread](https://github.com/pingdotgg/t3code/tree/main/docs/user/thread-sidebar.md) in its own git worktree, so you can open it in T3 and read what the agent did.
 
+```mermaid
+flowchart TB
+  subgraph server["T3 Code server process"]
+    factory["Factory"]
+    subgraph project["The repo's T3 project"]
+      session["Session thread"]
+    end
+  end
+  github["GitHub"]
+  worktree["Its own git worktree"]
+  factory -- "reads issues, sets labels,<br>comments, PRs" --> github
+  factory -- "launches a session" --> project
+  session -- "works in" --> worktree
+  session -- "pushes a branch,<br>opens a draft PR" --> github
+```
+
 ## How an issue moves
+
+```mermaid
+stateDiagram-v2
+  state "factory:proposed" as proposed
+  state "factory:ready" as ready
+  state "factory:triage" as triage
+  state "factory:building" as building
+  state "factory:needs-info" as needs_info
+  state "factory:pr-open" as pr_open
+  state "factory:stuck" as stuck
+  proposed --> ready: an instructor sets ready
+  ready --> proposed: refused, e.g. after a non-instructor edit
+  ready --> triage: claimed
+  triage --> building: session started
+  triage --> needs_info: questions
+  building --> needs_info: questions
+  building --> pr_open: gate passed
+  pr_open --> building: instructor feedback, or the re-gate failed
+  triage --> stuck: failed
+  building --> stuck: failed
+  pr_open --> stuck: failed
+  needs_info --> ready: an instructor sets ready again
+  stuck --> ready: an instructor sets ready again
+  pr_open --> [*]: pull request merged or closed
+```
 
 1. A person files the issue and an [instructor](/guide/filing-work#instructors) sets `factory:ready`.
 2. On its next pass the factory checks who set the label, assigns the issue to its own GitHub login and sets `factory:triage`.

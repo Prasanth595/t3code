@@ -24,4 +24,20 @@ Paths in these pages are the defaults of the LaunchAgent install:
 | Server port        | `3876`                                                           |
 | LaunchAgents       | `io.github.rawphp.t3fac`, `io.github.rawphp.t3fac.logrotate`     |
 
+```text
+~/.config/t3fac/
+└── factory/
+    ├── config.yml
+    ├── runs/
+    └── events.jsonl
+~/.local/share/t3fac/
+├── versions/<version>
+├── current -> versions/<version>
+└── previous -> versions/<version>
+~/Library/Logs/t3fac/t3fac.log
+~/Library/LaunchAgents/
+├── io.github.rawphp.t3fac.plist
+└── io.github.rawphp.t3fac.logrotate.plist
+```
+
 The whole site as plain text: [llms.txt](https://factory.originalsolutions.com.au/llms.txt), [llms-full.txt](https://factory.originalsolutions.com.au/llms-full.txt).
