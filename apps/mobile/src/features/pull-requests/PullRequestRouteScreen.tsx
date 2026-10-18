@@ -115,6 +115,7 @@ import {
   PullRequestReviewersRow,
 } from "./PullRequestStatusRows";
 import { PullRequestMergeControls } from "./PullRequestMergeControls";
+import { PullRequestBranchGraph } from "./PullRequestBranchGraph";
 import { PullRequestStackCard } from "./PullRequestStackCard";
 import { usePullRequestStack, type PullRequestStackState } from "./usePullRequestStack";
 import { usePullRequestEnvironmentFallback } from "./usePullRequestEnvironmentFallback";
@@ -248,6 +249,7 @@ function PullRequestOverview(props: {
   return (
     <View className="gap-5">
       <PullRequestStackCard params={props.params} state={props.stack} />
+      <PullRequestBranchGraph key={pr.url} pr={pr} params={props.params} />
       <PullRequestCardGroup>
         <PullRequestChecksRow pr={pr} params={props.params} />
         <PullRequestReviewersRow pr={pr} params={props.params} />

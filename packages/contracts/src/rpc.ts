@@ -118,6 +118,8 @@ import {
 } from "./worktreeSetup.ts";
 import {
   GitActionProgressEvent,
+  GitHistoryInput,
+  GitHistoryResult,
   VcsSwitchRefInput,
   VcsSwitchRefResult,
   GitCommandError,
@@ -448,6 +450,7 @@ export const WS_METHODS = {
 
   gitRunStackedAction: "git.runStackedAction",
   gitResolvePullRequest: "git.resolvePullRequest",
+  gitHistory: "git.history",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
 
   reviewGetDiffPreview: "review.getDiffPreview",
@@ -1400,6 +1403,12 @@ const WsGitResolvePullRequestRpc = Rpc.make(WS_METHODS.gitResolvePullRequest, {
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
 });
 
+const WsGitHistoryRpc = Rpc.make(WS_METHODS.gitHistory, {
+  payload: GitHistoryInput,
+  success: GitHistoryResult,
+  error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
+});
+
 const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePullRequestThread, {
   payload: GitPreparePullRequestThreadInput,
   success: GitPreparePullRequestThreadResult,
@@ -2073,6 +2082,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsRefreshStatusRpc,
   WsGitRunStackedActionRpc,
   WsGitResolvePullRequestRpc,
+  WsGitHistoryRpc,
   WsGitPreparePullRequestThreadRpc,
   WsVcsListRefsRpc,
   WsVcsCreateWorktreeRpc,

@@ -32,6 +32,7 @@ import { useThreadTerminalActions } from "./terminal/useThreadTerminalActions";
 import { usePendingThreadRequests } from "./chat/usePendingThreadRequests";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
+import { ThreadPullRequestCard } from "./pullRequest/ThreadPullRequestCard";
 import {
   latestExecutedRun,
   latestRootProviderFailure,
@@ -7949,7 +7950,22 @@ export default function ChatView(props: ChatViewProps) {
                 isPreparingWorktree={!paintOnlyDisplayedTimeline && isPreparingWorktree}
                 footer={
                   paintOnlyDisplayedTimeline ? null : pendingHandoff === null ? (
-                    threadStatusLine
+                    <>
+                      {pullRequestPanelTarget && activeThreadRef && activeProject ? (
+                        <div className="chat-content-lane py-3">
+                          <ThreadPullRequestCard
+                            key={`${activeThread.environmentId}:${activeThread.id}:${pullRequestPanelTarget.url}`}
+                            threadRef={activeThreadRef}
+                            link={{
+                              ...pullRequestPanelTarget,
+                              projectId: activeProject.id,
+                            }}
+                            cwd={gitCwd}
+                          />
+                        </div>
+                      ) : null}
+                      {threadStatusLine}
+                    </>
                   ) : (
                     <>
                       <div className="chat-content-lane">

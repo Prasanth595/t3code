@@ -260,6 +260,12 @@ Use **Link pull request** in the command palette or **Linked pull requests** pan
 pull request link in the conversation. Creating a pull request from Git actions links it automatically.
 Agents can link their pull requests with the `link_pull_request` tool.
 
+The current linked pull request also appears in the conversation with its branch history, checks,
+and merge status. You can resolve conflicts with an agent or merge after confirming. Branch history
+comes from the connected environment's local repository; check out a missing branch to see it, and
+fetch in that environment when you need newer remote commits. On mobile, open a pull request and
+expand **Local branch history**. Older servers need an update before they can provide the graph.
+
 Use **Link this PR** in a branch-detected badge's tooltip to keep it with the thread. From a review
 on the Pull Requests page, **Link to thread** lets you search for an active thread. The review header
 also lists the threads that link to it, including archived threads, so you can return to their context.

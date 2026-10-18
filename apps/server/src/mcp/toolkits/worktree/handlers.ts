@@ -11,6 +11,34 @@ import * as WorktreeMcpService from "../../WorktreeMcpService.ts";
 import { WorktreeToolkit } from "./tools.ts";
 
 const handlers = {
+  t3_git_history: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const context = yield* McpInvocationContext.McpInvocationContext;
+      if (!context.capabilities.has("worktree"))
+        return yield* new OrchestratorMcpFailure({
+          code: "capability_denied",
+          message: "This credential cannot inspect branch history.",
+        });
+      const {
+        projection: { thread },
+      } = yield* readThread(input.threadId);
+      const projects = yield* Project.ProjectService;
+      const project = yield* projects.getById(thread.projectId).pipe(Effect.mapError(unavailable));
+      if (Option.isNone(project))
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message: "The project was not found.",
+        });
+      const git = yield* GitWorkflow.GitWorkflowService;
+      return yield* git
+        .history({
+          cwd: thread.worktreePath ?? project.value.workspaceRoot,
+          headBranch: input.headBranch,
+          baseBranch: input.baseBranch,
+        })
+        .pipe(Effect.mapError(unavailable));
+    }),
+  ),
   t3_worktree_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const context = yield* McpInvocationContext.McpInvocationContext;
