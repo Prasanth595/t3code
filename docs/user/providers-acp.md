@@ -25,13 +25,16 @@ code; review an agent's source and license before adding it.
 
 ## Kimi Code (Beta)
 
-Install the maintained [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code) on the machine
-hosting your T3 Code server, then run `kimi login` there to sign in.
+Install the maintained [Kimi Code CLI](https://github.com/MoonshotAI/kimi-code) on the environment
+selected in **Settings → Providers**, then run `kimi login` on that same environment to sign in.
 
 In **Settings → Providers → Add provider**, choose **Kimi Code** (Beta). The preset runs the
 installed `kimi` executable with the `acp` argument. Confirm its executable path and arguments,
 then create the instance. If `kimi` is not on that environment's PATH, enter its full path under
 **Executable**. No registry download is required.
+
+Alternatively, choose **Local ACP command**, set **Executable** to `kimi` (or its full path),
+add `acp` as one argument, and name the instance **Kimi Code**.
 
 The instance uses the same ACP models, options, permissions, and sign-in controls as other ACP
 providers. Connect from web, desktop, or mobile to use it; the CLI always runs on the selected

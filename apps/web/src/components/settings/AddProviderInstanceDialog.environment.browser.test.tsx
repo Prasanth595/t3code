@@ -139,6 +139,16 @@ async function type(selector: string, value: string) {
   await act(async () => userEvent.fill(input(selector), value));
   await act(async () => input(selector).blur());
 }
+async function selectRegistrySource() {
+  const source = document.querySelector<HTMLElement>("#add-provider-acpRegistry-manual-source");
+  expect(source).not.toBeNull();
+  await act(async () => userEvent.click(source!));
+  const registryOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+    (option) => option.textContent?.trim() === "ACP Registry",
+  );
+  expect(registryOption).toBeDefined();
+  await act(async () => userEvent.click(registryOption!));
+}
 const signInStep = () => document.querySelector('[aria-label="Sign-in step"]');
 
 async function prepareCodexInstance() {
@@ -211,6 +221,8 @@ describe("AddProviderInstanceDialog environment routing", () => {
     const mutation = deferred<{ readonly _tag: "Success"; readonly value: unknown }>();
     settingsHooks.mutate.mockReturnValueOnce(mutation.promise);
     await render();
+    await selectKimiCode();
+    await click("Search registry");
     await click("Use Kilo Code");
 
     expect(document.body.textContent).toContain("v4.2.0 · binary");
@@ -349,14 +361,7 @@ describe("AddProviderInstanceDialog environment routing", () => {
   it("can reselect Kimi Code after changing the ACP source", async () => {
     await render();
     await selectKimiCode();
-    const source = document.querySelector<HTMLElement>("#add-provider-acpRegistry-manual-source");
-    expect(source).not.toBeNull();
-    await act(async () => userEvent.click(source!));
-    const registryOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
-      (option) => option.textContent?.trim() === "ACP Registry",
-    );
-    expect(registryOption).toBeDefined();
-    await act(async () => userEvent.click(registryOption!));
+    await selectRegistrySource();
 
     const kimiChoice = [...document.querySelectorAll<HTMLElement>('[role="radio"]')].find((radio) =>
       radio.textContent?.includes("Kimi Code"),
@@ -377,6 +382,48 @@ describe("AddProviderInstanceDialog environment routing", () => {
       },
     });
   });
+
+  it.each([
+    { label: "Kimi Code", expectedLabel: "" },
+    { label: "Work", expectedLabel: "Work" },
+  ])(
+    "switches Kimi to a registry agent with label '$expectedLabel' after starting with '$label'",
+    async ({ label, expectedLabel }) => {
+      await render();
+      await selectKimiCode();
+      await click("Next");
+      if (label !== "Kimi Code") await type("#add-provider-label", label);
+      await type("#add-provider-instance-id", "registry_work");
+      const accentButton = document.querySelector<HTMLElement>(
+        `button[aria-label="Add accent color for ${label}"]`,
+      );
+      expect(accentButton).not.toBeNull();
+      await act(async () => userEvent.click(accentButton!));
+      await type('input[aria-label="Custom hex accent color"]', "#123456");
+      await act(async () => userEvent.keyboard("{Escape}"));
+      await click("Back");
+      await selectRegistrySource();
+      await type("#add-provider-acpRegistry-manual-commandPath", "");
+      await type("#add-provider-acpRegistry-manual-agentId", "devin");
+      await click("Next");
+
+      expect(input("#add-provider-label").value).toBe(expectedLabel);
+      expect(input("#add-provider-instance-id").value).toBe("registry_work");
+      await click("Continue to sign-in");
+
+      expect(settingsHooks.mutate).toHaveBeenCalledExactlyOnceWith({
+        operation: "create",
+        instanceId: "registry_work",
+        instance: {
+          driver: "acpRegistry",
+          enabled: true,
+          ...(expectedLabel ? { displayName: expectedLabel } : {}),
+          accentColor: "#123456",
+          config: { commandArgs: ["acp"], agentId: "devin" },
+        },
+      });
+    },
+  );
 
   it.each(["registry", "local"])(
     "clears the Kimi Code preset when switching to manual %s configuration",

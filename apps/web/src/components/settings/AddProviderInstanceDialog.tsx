@@ -196,7 +196,14 @@ export function AddProviderInstanceDialog({
       ] as const)
     : ([driverOption.label, previewLabel, null] as const);
   const setConfigDraft = (config: Record<string, unknown> | undefined) => {
-    if (isAcpRegistry && config?.source !== "local") setLocalAcpPreset(null);
+    if (isAcpRegistry && config?.source !== "local") {
+      if (localAcpPreset === KIMI_CODE_PRESET && label === "Kimi Code") {
+        setIdentityByDriver((existing) =>
+          updateProviderIdentityDraft(existing, ACP_REGISTRY_DRIVER_KIND, { label: "" }),
+        );
+      }
+      setLocalAcpPreset(null);
+    }
     setConfigByDriver((existing) => {
       const next = { ...existing };
       if (config === undefined || Object.keys(config).length === 0) {
