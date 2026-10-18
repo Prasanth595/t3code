@@ -485,6 +485,69 @@ describe("install.sh and rollback.sh when the logrotate job cannot be reloaded",
   });
 });
 
+describe("install.sh and rollback.sh and the deploy lock", () => {
+  // A symlink to its holder's pid, shared with autodeploy.sh.
+  const lockPath = () => NodePath.join(root(), "deploy.lock");
+  const lockExists = () => {
+    try {
+      NodeFS.readlinkSync(lockPath());
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  beforeEach(() => {
+    setupInstalledSandbox();
+    archives[v3] = makeArchive(v3);
+  });
+
+  afterEach(() => {
+    NodeFS.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it.each([
+    ["install.sh", () => [archives[v3]!]],
+    ["rollback.sh", () => []],
+  ])("%s refuses to run while another deploy holds the lock", (script, args) => {
+    NodeFS.symlinkSync(String(process.pid), lockPath());
+    const result = run(script, ...args());
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`another deploy is running (pid ${process.pid})`);
+    expect(result.calls).toEqual([]);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v2}`);
+    expect(NodeFS.readlinkSync(lockPath())).toBe(String(process.pid));
+  });
+
+  it("install.sh runs under a lock its caller holds and leaves it in place", () => {
+    NodeFS.symlinkSync(String(process.pid), lockPath());
+    const result = runWith({ T3FAC_DEPLOY_LOCK: String(process.pid) }, "install.sh", archives[v3]!);
+    expect(result.status).toBe(0);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v3}`);
+    expect(NodeFS.readlinkSync(lockPath())).toBe(String(process.pid));
+  });
+
+  it("install.sh takes over a lock whose holder is gone and releases it", () => {
+    const gone = NodeChildProcess.spawnSync("bash", ["-c", "echo $$"], { encoding: "utf8" });
+    NodeFS.symlinkSync(gone.stdout.trim(), lockPath());
+    const result = run("install.sh", archives[v3]!);
+    expect(result.status).toBe(0);
+    expect(lockExists()).toBe(false);
+  });
+
+  it("install.sh rolls back under its own lock when the new version is unhealthy", () => {
+    const result = runWith(
+      { LAUNCHCTL_HEALTHY: `versions/${v1} versions/${v2}` },
+      "install.sh",
+      archives[v3]!,
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`rolled back to ${v2}`);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v2}`);
+    expect(lockExists()).toBe(false);
+  });
+});
+
 describe("install.sh reinstalling the current version", () => {
   beforeAll(() => {
     setupInstalledSandbox();
