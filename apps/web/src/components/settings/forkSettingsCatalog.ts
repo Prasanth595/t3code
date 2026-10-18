@@ -92,6 +92,7 @@ const FORK_SETTING_GROUPS = [
       { ids: ["keyboard-focus-levels"] },
       { ids: ["focus-level-highlight"] },
       { ids: ["tooltip-shortcuts"] },
+      { ids: ["tooltip-shortcut-limit"] },
       { ids: ["terminal-close-confirmation"] },
     ],
   },

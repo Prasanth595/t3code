@@ -283,7 +283,7 @@ Keyboard focus moves between four levels: the composer, the timeline, the right 
 - `focus.up` (Escape) waits until every listener had the key. It yields when an element or a window listener used it, such as a menu, the find bar, the sidebar selection or the Escape-to-go-back of the pull request page. ProseMirror marks every Escape in the composer as handled, so that mark alone does not count.
 - The timeline cursor paints with the CSS Custom Highlight API and cites through the same code as a mouse selection.
 - The client setting `focusLevelHighlight` outlines the area that takes focus from a key. It is on by default.
-- The client setting `tooltipShortcuts` adds the key of a control to its tooltip, such as "Stash (⌘S)". It is on by default. Turn it off in Settings > General > Shortcuts in tooltips. A group tab names no digit while focus levels are off, and a sidebar row names the pin and settle keys only for the open thread. The code is `apps/web/src/components/focusLevels/ShortcutHint.tsx`.
+- The client setting `tooltipShortcuts` adds the keys of a control to its tooltip as chips, such as "Stash ⌘S". It is on by default. Your own keys come first. `tooltipShortcutLimit` (1 to 9, default 4) caps the chips; more keys show as "+N". Turn it off in Settings > General > Shortcuts in tooltips. A group tab names no digit while focus levels are off, and a sidebar row names the pin and settle keys only for the open thread. The code is `apps/web/src/components/focusLevels/ShortcutHint.tsx`.
 
 ## Repository owner filters
 

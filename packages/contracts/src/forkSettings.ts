@@ -61,6 +61,13 @@ const SnoozeQuickOptions = Schema.NullOr(
   Schema.Array(SnoozeQuickOption).check(Schema.isMaxLength(MAX_SNOOZE_QUICK_OPTIONS)),
 );
 
+export const MIN_TOOLTIP_SHORTCUT_LIMIT = 1;
+export const MAX_TOOLTIP_SHORTCUT_LIMIT = 9;
+/** How many keys of one control its tooltip shows before "+N". */
+export const TooltipShortcutLimit = Schema.Int.check(
+  Schema.isBetween({ minimum: MIN_TOOLTIP_SHORTCUT_LIMIT, maximum: MAX_TOOLTIP_SHORTCUT_LIMIT }),
+);
+
 export const MIN_AGENT_SESSION_IMPORT_WINDOW_DAYS = 1;
 export const MAX_AGENT_SESSION_IMPORT_WINDOW_DAYS = 3650;
 /** How far back recent Claude Code and Codex sessions are offered for import. */
@@ -203,8 +210,10 @@ export const ForkClientSettingsFields = {
   keyboardFocusLevels: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Fork: a short outline fade on the screen area that takes focus: composer, timeline, sidebar or right panel. */
   focusLevelHighlight: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
-  /** Fork: control tooltips name the keyboard shortcut of the control, such as "Stash (⌘S)". */
+  /** Fork: control tooltips show the keys of the control as chips, such as "Stash ⌘S". */
   tooltipShortcuts: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Fork: the most keys one tooltip shows; more show as "+N". */
+  tooltipShortcutLimit: TooltipShortcutLimit.pipe(Schema.withDecodingDefault(Effect.succeed(4))),
 };
 
 export const ForkClientSettingsPatchFields = {
@@ -225,6 +234,7 @@ export const ForkClientSettingsPatchFields = {
   keyboardFocusLevels: Schema.optionalKey(Schema.Boolean),
   focusLevelHighlight: Schema.optionalKey(Schema.Boolean),
   tooltipShortcuts: Schema.optionalKey(Schema.Boolean),
+  tooltipShortcutLimit: Schema.optionalKey(TooltipShortcutLimit),
 };
 
 export const ForkServerSettingsFields = {
