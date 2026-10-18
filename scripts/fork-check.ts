@@ -137,7 +137,10 @@ function plural(count: number, word: string): string {
 }
 
 function testSteps(): ReadonlyArray<Step> {
-  const tests = new Set([...ALWAYS_TESTS, ...changed.flatMap(testsFor)]);
+  const tests = new Set([
+    ...ALWAYS_TESTS.filter((test) => NodeFS.existsSync(test)),
+    ...changed.flatMap(testsFor),
+  ]);
   for (const [prefix, test] of Object.entries(COMPILER_COVERAGE_TESTS)) {
     if (changed.some((file) => file.startsWith(prefix))) tests.add(test);
   }
