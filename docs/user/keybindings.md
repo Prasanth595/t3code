@@ -67,6 +67,8 @@ In the timeline, Up and Down move a cursor between messages. Right goes one leve
 blocks such as paragraphs and list items, then sentences or code lines. Left goes back up.
 Up and Down stay at the depth that Right and Left chose. At the end of a list they continue
 with the next item one level up, then go back down: 1.1, 1.2, 1.3, 2, 2.1.
+After you select text or click in the timeline with the mouse, the next arrow key starts
+from there, and Enter cites exactly the selected text.
 Shift with Up or Down extends the selection within one list. Enter cites the selection with a note, and
 `alt+enter` cites it without one. Only assistant text can be cited. `mod+down` jumps to the
 latest message. PageUp and PageDown still scroll.

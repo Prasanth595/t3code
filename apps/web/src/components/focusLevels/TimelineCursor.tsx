@@ -126,6 +126,13 @@ function rowUnit(row: Element): Unit {
   return { element: content, range: elementRange(content) };
 }
 
+function rangeContains(outer: Range, inner: Range): boolean {
+  return (
+    outer.compareBoundaryPoints(Range.START_TO_START, inner) <= 0 &&
+    outer.compareBoundaryPoints(Range.END_TO_END, inner) >= 0
+  );
+}
+
 function spanRange(first: Range, last: Range): Range {
   const range = document.createRange();
   range.setStart(first.startContainer, first.startOffset);
@@ -256,6 +263,49 @@ export function TimelineCursor(props: {
       return node !== null && document.activeElement === node;
     };
 
+    // A mouse selection or click in the timeline since the cursor last moved. The next cursor key
+    // starts from it, so mouse and keyboard work on the same place.
+    let selectionMoved = false;
+    const onSelectionChange = () => {
+      selectionMoved = true;
+    };
+    const freshSelection = (): Range | null => {
+      const selection = window.getSelection();
+      const viewport = latest.current.viewport;
+      if (!selectionMoved || !selection || selection.rangeCount !== 1 || !viewport) return null;
+      const range = selection.getRangeAt(0);
+      return viewport.contains(range.commonAncestorContainer) ? range.cloneRange() : null;
+    };
+    /** The deepest unit that holds the whole range, at its depth. */
+    const cursorAt = (range: Range): Cursor | null => {
+      const node = range.startContainer;
+      const element = node instanceof Element ? node : node.parentElement;
+      const row = element?.closest<HTMLElement>("[data-timeline-row-id]");
+      const rowId = row?.dataset.timelineRowId;
+      if (!row || !rowId || !rowIds().includes(rowId)) return null;
+      const parents: number[] = [];
+      let units = [rowUnit(row)];
+      let index = 0;
+      for (;;) {
+        const unit = units[index];
+        const children = unit ? childUnits(unit) : [];
+        const child = children.findIndex((candidate) => rangeContains(candidate.range, range));
+        if (child < 0) break;
+        parents.push(index);
+        units = children;
+        index = child;
+      }
+      return { rowId, parents, index, anchor: index, workDepth: parents.length };
+    };
+    /** Takes over a fresh mouse selection as the cursor, and clears it so only the cursor shows. */
+    const adoptSelection = (): Cursor | null => {
+      const range = freshSelection();
+      selectionMoved = false;
+      const at = range ? cursorAt(range) : null;
+      if (at) window.getSelection()?.removeAllRanges();
+      return at;
+    };
+
     const at0 = (rowId: string, workDepth: number): Cursor => ({
       rowId,
       parents: [],
@@ -309,7 +359,7 @@ export function TimelineCursor(props: {
       (direction: 1 | -1, extend: boolean): FocusLevelCommandHandler =>
       () => {
         if (!active()) return false;
-        const at = current();
+        const at = adoptSelection() ?? current();
         if (!at) {
           const start = startCursor();
           if (start) show(start);
@@ -332,10 +382,14 @@ export function TimelineCursor(props: {
       (withNote: boolean): FocusLevelCommandHandler =>
       () => {
         if (!active()) return false;
-        const at = current();
+        // A mouse selection is cited exactly as selected; the cursor then continues from it.
+        const selected = freshSelection();
+        const fromMouse = selected && !selected.collapsed ? selected : null;
+        const at = adoptSelection() ?? current();
+        if (at) show(at);
         const viewport = latest.current.viewport;
         const { threadRef, onCite } = latest.current;
-        const range = at ? selectedRange(at) : null;
+        const range = fromMouse ?? (at ? selectedRange(at) : null);
         if (!range || !viewport || !threadRef || !onCite) return true;
         const captured = captureAssistantTextRange(viewport, range);
         const messageId = captured?.source.dataset.assistantCitationSource;
@@ -371,6 +425,7 @@ export function TimelineCursor(props: {
     };
     document.addEventListener("focusout", onFocusOut);
     document.addEventListener("focusin", onFocusIn);
+    document.addEventListener("selectionchange", onSelectionChange);
     const unregister = registerFocusLevelCommands({
       "timeline.previous": move(-1, false),
       "timeline.next": move(1, false),
@@ -378,7 +433,7 @@ export function TimelineCursor(props: {
       "timeline.extendDown": move(1, true),
       "timeline.deeper": (event) => {
         if (!active()) return false;
-        const at = current();
+        const at = adoptSelection() ?? current();
         if (!at) return move(1, false)(event);
         const units = siblings(at);
         const unit = units?.[at.index];
@@ -395,7 +450,7 @@ export function TimelineCursor(props: {
       },
       "timeline.shallower": () => {
         if (!active()) return false;
-        const at = current();
+        const at = adoptSelection() ?? current();
         const parentIndex = at?.parents.at(-1);
         if (at && parentIndex !== undefined) {
           show({
@@ -439,6 +494,7 @@ export function TimelineCursor(props: {
       unregister();
       document.removeEventListener("focusout", onFocusOut);
       document.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("selectionchange", onSelectionChange);
       paint(null);
     };
   }, [hasViewport, enabled]);
