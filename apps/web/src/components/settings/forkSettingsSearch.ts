@@ -70,6 +70,13 @@ export const APPEARANCE_ITEMS = [
     searchTerms: ["mobile phone android app camera photo take picture composer attachment plus"],
     environmentOnly: true,
   },
+  {
+    id: "mobile-sidebar-groups",
+    title: "Sidebar groups on mobile",
+    to: "/settings/appearance",
+    searchTerms: ["mobile phone android app sidebar groups tabs thread list home"],
+    environmentOnly: true,
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export const GLOBAL_SCRIPTS_ITEMS = [

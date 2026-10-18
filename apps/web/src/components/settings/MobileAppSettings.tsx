@@ -27,6 +27,7 @@ export function MobileAppSettingsSection() {
       <MobilePublishedThemesSettingsRow />
       <MobileNewThreadProjectSettingsRow />
       <MobileComposerCameraSettingsRow />
+      <MobileSidebarGroupsSettingsRow />
     </SettingsSection>
   );
 }
@@ -136,6 +137,37 @@ export function MobileNewThreadProjectSettingsRow() {
             ))}
           </SelectPopup>
         </Select>
+      }
+    />
+  );
+}
+
+export function MobileSidebarGroupsSettingsRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  const mixed = useScopedSettingsMixed(["mobileSidebarGroups"]);
+  const fallback = DEFAULT_SERVER_SETTINGS.mobileSidebarGroups;
+  return (
+    <SettingsRow
+      {...searchableSetting("mobile-sidebar-groups")}
+      serverScoped
+      settingKeys={["mobileSidebarGroups"]}
+      description="The thread list of the mobile app shows the sidebar group tabs. Tap a tab to show its threads."
+      resetAction={
+        mixed || settings.mobileSidebarGroups !== fallback ? (
+          <SettingResetButton
+            label="sidebar groups on mobile"
+            onClick={() => updateSettings({ mobileSidebarGroups: fallback })}
+          />
+        ) : null
+      }
+      control={
+        <ScopedSwitch
+          settingKeys={["mobileSidebarGroups"]}
+          checked={settings.mobileSidebarGroups}
+          onCheckedChange={(checked) => updateSettings({ mobileSidebarGroups: Boolean(checked) })}
+          aria-label="Sidebar groups on mobile"
+        />
       }
     />
   );

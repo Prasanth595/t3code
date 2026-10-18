@@ -28,6 +28,7 @@ const FORK_RESTORED_SETTINGS = [
   ["mobilePublishedThemes", "Published themes on mobile"],
   ["mobileNewThreadProject", "New thread on mobile"],
   ["mobileComposerCamera", "Camera on mobile"],
+  ["mobileSidebarGroups", "Sidebar groups on mobile"],
   ["keybindingSync", "Keybinding sync"],
   ["pullRequestWatchRemarkFilter", "Pull request watch remarks"],
   ["agentSessionImportWindowDays", "Session import window"],

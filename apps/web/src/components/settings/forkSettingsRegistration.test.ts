@@ -61,6 +61,7 @@ const FORK_PAGE_ROWS: Record<
   mobilePublishedThemes: "mobile-published-themes",
   mobileNewThreadProject: "mobile-new-thread-project",
   mobileComposerCamera: "mobile-composer-camera",
+  mobileSidebarGroups: "mobile-sidebar-groups",
 };
 
 /** The settings that Restore defaults keeps, with the reason. */

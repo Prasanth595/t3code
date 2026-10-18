@@ -24,6 +24,7 @@ import { KeybindingSyncSettingsRow } from "./KeybindingSyncSettingsRow";
 import { MachineMapSettingsRows } from "./MachinesSettings";
 import {
   MobileComposerCameraSettingsRow,
+  MobileSidebarGroupsSettingsRow,
   MobileNewThreadProjectSettingsRow,
   MobilePublishedThemesSettingsRow,
 } from "./MobileAppSettings";
@@ -98,6 +99,7 @@ const FORK_SETTING_ROWS: Readonly<Record<ForkSettingRowId, ComponentType>> = {
   "mobile-published-themes": MobilePublishedThemesSettingsRow,
   "mobile-new-thread-project": MobileNewThreadProjectSettingsRow,
   "mobile-composer-camera": MobileComposerCameraSettingsRow,
+  "mobile-sidebar-groups": MobileSidebarGroupsSettingsRow,
 };
 
 /** Opens the row of `item` in its usual place, the way a search result does. */

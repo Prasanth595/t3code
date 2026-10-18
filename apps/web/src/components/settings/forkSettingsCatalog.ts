@@ -74,6 +74,7 @@ const FORK_SETTING_GROUPS = [
       { ids: ["snooze-quick-options"] },
       { ids: ["mobile-new-thread-project"] },
       { ids: ["mobile-composer-camera"] },
+      { ids: ["mobile-sidebar-groups"] },
       { ids: ["storage-worktree-path-template"] },
       {
         ids: ["storage-worktrees-location"],

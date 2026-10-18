@@ -119,6 +119,14 @@ export function SettingsForkRouteScreen() {
                   onValueChange={(value) => write({ mobileComposerCamera: value })}
                 />
                 <SettingsSwitchRow
+                  icon="square.grid.2x2"
+                  label="Sidebar group tabs"
+                  subtitle="The thread list shows the group tabs of the web sidebar. Tap a tab to show its threads."
+                  value={uniformMobileSetting(targets, "mobileSidebarGroups")}
+                  disabled={disabled}
+                  onValueChange={(value) => write({ mobileSidebarGroups: value })}
+                />
+                <SettingsSwitchRow
                   icon="link"
                   label="Thread link chips"
                   subtitle="Thread links in chat look like an attached thread and open the thread here."
