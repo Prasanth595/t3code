@@ -173,30 +173,21 @@
 
 /* Fork: Inkwire, a built-in theme (packages/shared/src/themePalettes.ts). Neon marks meaning:
    cyan is the primary action and focus, magenta is selected and running. The hand-drawn look
-   is static: uneven corner radii, a second offset graphite pass drawn by the theme shadow, and
-   pencil-pressure separators. Nothing animates continuously or filters, so it adds no repaint
-   work. Only clickable controls get the sketched outline, so an outline always means
-   "clickable"; messages, code and panels stay plain. */
+   is static: uneven corner radii, a second pencil outline drawn a little off and rotated,
+   wavy pencil separators, and dashed outlines on disabled buttons. Nothing animates
+   continuously or filters, so it adds no repaint work, and no rule changes layout. */
 :root[data-theme-id="inkwire"] {
   --inkwire-pass: color-mix(in srgb, var(--input) 70%, transparent);
   --inkwire-live: #c4127a;
   --inkwire-glow: color-mix(in srgb, var(--primary) 16%, transparent);
   --inkwire-glow-strong: color-mix(in srgb, var(--primary) 30%, transparent);
   --inkwire-wobble: 7px 12px 6px 11px / 11px 6px 12px 7px;
-  --inkwire-pencil-x: repeating-linear-gradient(
-    90deg,
-    var(--border) 0 19px,
-    color-mix(in srgb, var(--border) 55%, transparent) 19px 25px,
-    var(--border) 25px 44px,
-    transparent 44px 46px
-  );
-  --inkwire-pencil-y: repeating-linear-gradient(
-    180deg,
-    var(--border) 0 19px,
-    color-mix(in srgb, var(--border) 55%, transparent) 19px 25px,
-    var(--border) 25px 44px,
-    transparent 44px 46px
-  );
+  --inkwire-wobble-pass: 11px 6px 12px 7px / 7px 12px 6px 11px;
+  --inkwire-wobble-lg: 14px 22px 12px 20px / 20px 12px 22px 14px;
+  --inkwire-wobble-lg-pass: 20px 12px 22px 14px / 14px 22px 12px 20px;
+  /* One stroke of a pencil line, tiled. It is a mask, so the line takes the theme color. */
+  --inkwire-wave-x: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='6'%3E%3Cpath d='M0 3 C 15 1.6, 30 4.4, 45 3 S 75 1.8, 90 3.2 S 110 2.6, 120 3' fill='none' stroke='black' stroke-width='1.2' stroke-linecap='round'/%3E%3C/svg%3E");
+  --inkwire-wave-y: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='120'%3E%3Cpath d='M3 0 C 1.6 15, 4.4 30, 3 45 S 1.8 75, 3.2 90 S 2.6 110, 3 120' fill='none' stroke='black' stroke-width='1.2' stroke-linecap='round'/%3E%3C/svg%3E");
   --success: #0f8f5a;
   --success-foreground: #0b6e45;
   --info: var(--inkwire-live);
@@ -238,6 +229,65 @@
   }
 }
 
+/* The second pencil pass: the same outline again, a little off and rotated, at low opacity.
+   Buttons and select triggers use ::after for a bigger touch target on coarse pointers, so
+   they get the pass only with a mouse. Wide controls rotate less, so the ends stay close. */
+@media (pointer: fine) {
+  :root[data-theme-id="inkwire"]
+    :is(
+      [data-slot="button"]:is(
+        [data-button-variant="default"],
+        [data-button-variant="outline"],
+        [data-button-variant="secondary"],
+        [data-button-variant="destructive"],
+        [data-button-variant="destructive-outline"]
+      ),
+      [data-slot="select-trigger"]
+    ):not(:disabled, [data-disabled], [data-slot="group"] > *)::after {
+    content: "";
+    position: absolute;
+    inset: -3px -1px -1px -3px;
+    border: 1px solid currentColor;
+    border-radius: var(--inkwire-wobble-pass);
+    opacity: 0.45;
+    transform: rotate(-0.8deg);
+    pointer-events: none;
+  }
+}
+:root[data-theme-id="inkwire"]
+  :is([data-slot="input-control"], [data-slot="textarea-control"])::after {
+  content: "";
+  position: absolute;
+  inset: -3px -1px -1px -3px;
+  border: 1px solid currentColor;
+  border-radius: var(--inkwire-wobble-pass);
+  opacity: 0.35;
+  transform: rotate(-0.2deg);
+  pointer-events: none;
+}
+:root[data-theme-id="inkwire"] [data-testid="sidebar-row-card"][aria-current="page"]::after {
+  content: "";
+  position: absolute;
+  inset: 2px 1px 1px 2px;
+  border: 1px solid currentColor;
+  border-radius: var(--inkwire-wobble-pass);
+  opacity: 0.32;
+  transform: rotate(-0.5deg);
+  pointer-events: none;
+}
+
+/* Buttons carry the pencil pass instead of the theme's offset shadow. Same specificity as the
+   theme shadow rule above, and later. */
+:root[data-theme-id="inkwire"]
+  [data-slot="button"]:is(
+    [data-button-variant="default"],
+    [data-button-variant="outline"],
+    [data-button-variant="destructive"],
+    [data-button-variant="destructive-outline"]
+  ):not(:disabled, :active, [data-pressed], [data-slot="group"] > *) {
+  box-shadow: none;
+}
+
 /* Secondary buttons carry a graphite outline, so they read as clickable without glowing. */
 :root[data-theme-id="inkwire"] [data-slot="button"][data-button-variant="secondary"] {
   border-color: var(--inkwire-pass);
@@ -248,6 +298,18 @@
     [data-pressed]
   ):not(:disabled) {
   border-color: color-mix(in srgb, var(--input) 55%, var(--foreground));
+}
+/* A disabled control is drawn with a dashed line: present, but not usable yet. */
+:root[data-theme-id="inkwire"]
+  [data-slot="button"]:is(
+    [data-button-variant="default"],
+    [data-button-variant="outline"],
+    [data-button-variant="secondary"],
+    [data-button-variant="destructive"],
+    [data-button-variant="destructive-outline"]
+  ):disabled {
+  border-style: dashed;
+  border-color: var(--input);
 }
 
 /* Primary on dark: a cyan outline and label over a faint cyan wash, instead of a solid neon
@@ -268,8 +330,7 @@
   color: var(--muted-foreground);
 }
 
-/* The primary action glows, a little more on hover and keyboard focus. Same specificity as the
-   theme shadow rule above, and later. */
+/* The primary action glows, a little more on hover and keyboard focus. */
 :root[data-theme-id="inkwire"]
   [data-slot="button"][data-button-variant="default"]:not(
     :disabled,
@@ -277,9 +338,7 @@
     [data-pressed],
     [data-slot="group"] > *
   ) {
-  box-shadow:
-    var(--theme-shadow),
-    0 0 8px var(--inkwire-glow);
+  box-shadow: 0 0 8px var(--inkwire-glow);
 }
 :root[data-theme-id="inkwire"]
   [data-slot="button"][data-button-variant="default"]:is(:hover, :focus-visible):not(
@@ -288,9 +347,7 @@
     [data-pressed],
     [data-slot="group"] > *
   ) {
-  box-shadow:
-    var(--theme-shadow),
-    0 0 14px var(--inkwire-glow-strong);
+  box-shadow: 0 0 14px var(--inkwire-glow-strong);
 }
 
 :root[data-theme-id="inkwire"]
@@ -303,13 +360,67 @@
   box-shadow: 0 0 10px var(--inkwire-glow);
 }
 
+/* The composer is the main control: a sketched cyan outline with a pencil pass, brighter and
+   glowing while you type. */
+:root[data-theme-id="inkwire"] [data-slot="composer-shell"] {
+  --chat-composer-outline: color-mix(in srgb, var(--primary) 45%, transparent);
+}
+:root[data-theme-id="inkwire"] [data-slot="composer-shell"]:focus-within {
+  --chat-composer-outline: var(--primary);
+}
+:root[data-theme-id="inkwire"] :is([data-slot="composer-host"], [data-chat-composer-main-surface]),
+:root[data-theme-id="inkwire"] [data-slot="composer-shell"]::before {
+  border-radius: var(--inkwire-wobble-lg);
+}
+:root[data-theme-id="inkwire"] [data-slot="composer-shell"]:not([data-with-context])::after {
+  content: "";
+  position: absolute;
+  z-index: 20;
+  inset: -3px -1px -1px -3px;
+  border: 1px solid var(--primary);
+  border-radius: var(--inkwire-wobble-lg-pass);
+  opacity: 0.45;
+  transform: rotate(-0.15deg);
+  pointer-events: none;
+}
+:root[data-theme-id="inkwire"]
+  [data-slot="composer-shell"]:focus-within
+  [data-slot="composer-host"] {
+  box-shadow: 0 0 18px var(--inkwire-glow);
+}
+
+/* The composer pickers (model, effort, access) are drawn as small sketched pills. They already
+   carry a transparent 1px border, so this changes no size. */
+:root[data-theme-id="inkwire"]
+  [data-slot="composer-host"]
+  :is(button:has([data-composer-control-chevron]), [role="combobox"]) {
+  border-color: var(--inkwire-pass);
+  border-radius: var(--inkwire-wobble);
+}
+
+/* Your own messages: a graphite outline with a pencil pass, so they read as drawn cards. */
+:root[data-theme-id="inkwire"] [data-message-role="user"] .bg-message {
+  border-radius: var(--inkwire-wobble-lg);
+  box-shadow: inset 0 0 0 1px var(--inkwire-pass);
+}
+:root[data-theme-id="inkwire"] [data-message-role="user"] .bg-message::after {
+  content: "";
+  position: absolute;
+  inset: -3px -1px -1px -3px;
+  border: 1px solid currentColor;
+  border-radius: var(--inkwire-wobble-lg-pass);
+  opacity: 0.3;
+  transform: rotate(-0.4deg);
+  pointer-events: none;
+}
+
 /* The open thread gets a graphite outline and a magenta marker. */
 :root[data-theme-id="inkwire"] [data-testid="sidebar-row-card"][aria-current="page"] {
   box-shadow:
     inset 3px 0 0 var(--inkwire-live),
     inset 0 0 0 1px var(--inkwire-pass);
 }
-/* Small status lights: the unread dot glows, thread status reads as technical metadata. */
+/* Small status lights: the unread dot glows, thread status is a sketched monospace tag. */
 :root.dark[data-theme-id="inkwire"] [data-testid="sidebar-row-card"] [aria-label="Unread"] {
   box-shadow: 0 0 6px var(--primary);
 }
@@ -317,17 +428,54 @@
   font-family: "JetBrains Mono", "SF Mono", Menlo, Consolas, monospace;
   font-size: 0.6875rem;
 }
-
-/* Pencil lines with uneven pressure. They keep the 1px size, so layout is unchanged. */
-:root[data-theme-id="inkwire"] [data-slot="separator"][data-orientation="horizontal"] {
-  background: var(--inkwire-pencil-x);
+:root[data-theme-id="inkwire"] [data-sidebar-status] > span:has(> [role="status"]) {
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, currentColor 55%, transparent);
+  border-radius: var(--inkwire-wobble);
 }
-:root[data-theme-id="inkwire"] [data-slot="separator"][data-orientation="vertical"] {
-  background: var(--inkwire-pencil-y);
+
+/* Wavy pencil lines. The element keeps its size; the line is drawn in a 6px strip centered on
+   it, so layout is unchanged. */
+:root[data-theme-id="inkwire"] [data-slot="separator"] {
+  position: relative;
+  background: transparent;
+}
+:root[data-theme-id="inkwire"] [data-slot="separator"]::after,
+:root[data-theme-id="inkwire"] [data-slot="sidebar-container"]::after,
+:root[data-theme-id="inkwire"] [data-slot="dialog-footer"]::before {
+  content: "";
+  position: absolute;
+  background-color: var(--border);
+  pointer-events: none;
+}
+:root[data-theme-id="inkwire"] [data-slot="separator"][data-orientation="horizontal"]::after,
+:root[data-theme-id="inkwire"] [data-slot="dialog-footer"]::before {
+  inset: -2.5px 0 auto;
+  height: 6px;
+  mask: var(--inkwire-wave-x) repeat-x center / 120px 6px;
+}
+:root[data-theme-id="inkwire"] [data-slot="separator"][data-orientation="vertical"]::after {
+  inset: 0 auto 0 -2.5px;
+  width: 6px;
+  mask: var(--inkwire-wave-y) repeat-y center / 6px 120px;
 }
 :root[data-theme-id="inkwire"] [data-slot="sidebar-container"] {
-  border-image: var(--inkwire-pencil-y) 1;
+  border-color: transparent;
+}
+:root[data-theme-id="inkwire"] [data-slot="sidebar-container"]::after {
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  background-color: var(--sidebar-border);
+  mask: var(--inkwire-wave-y) repeat-y center / 6px 120px;
+}
+:root[data-theme-id="inkwire"] [data-side="left"] [data-slot="sidebar-container"]::after {
+  right: -3.5px;
+}
+:root[data-theme-id="inkwire"] [data-side="right"] [data-slot="sidebar-container"]::after {
+  left: -3.5px;
 }
 :root[data-theme-id="inkwire"] [data-slot="dialog-footer"] {
-  border-image: var(--inkwire-pencil-x) 1;
+  position: relative;
+  border-top-color: transparent;
 }
