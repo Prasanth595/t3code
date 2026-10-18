@@ -97,3 +97,41 @@ test("ACP rejects a cold resume when the Pi session is missing or bound to anoth
     await Scope.close(scope, Exit.void);
   }
 });
+
+test("ACP close releases transient state while preserving Pi session resume", async () => {
+  const cwd = "/workspace/project";
+  const nativeId = "t3-acp-close-session";
+  const piId = createHash("sha256").update(nativeId).digest("hex");
+  const { stdio, input, output } = await Effect.runPromise(makeInMemoryStdio());
+  const scope = await Effect.runPromise(Scope.make());
+  await Effect.runPromise(Layer.buildWithScope(layer(stdio, {
+    piConfig: { runtimeDataDir: "/var/lib/subpolar" },
+    loadPiSdk: async () => sdkWithSession(cwd, piId),
+  }), scope));
+
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 1, method: "initialize", params: {
+    protocolVersion: 2,
+    info: { name: "test", version: "1" },
+    capabilities: {},
+  } }));
+  const initialized = await readMessage(output, 1);
+  expect((initialized.result as { capabilities: { session: object } }).capabilities.session).toEqual({});
+
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 2, method: "session/resume", params: {
+    sessionId: nativeId,
+    cwd,
+    replayFrom: { type: "start" },
+  } }));
+  expect((await readMessage(output, 2)).error).toBeUndefined();
+
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 3, method: "session/close", params: { sessionId: nativeId } }));
+  expect((await readMessage(output, 3)).error).toBeUndefined();
+
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 4, method: "session/resume", params: {
+    sessionId: nativeId,
+    cwd,
+    replayFrom: { type: "start" },
+  } }));
+  expect((await readMessage(output, 4)).error).toBeUndefined();
+  await Scope.close(scope, Exit.void);
+});

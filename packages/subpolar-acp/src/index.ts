@@ -301,6 +301,24 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
       }),
     );
 
+    yield* agent.handleCloseSession((request) => Effect.tryPromise({
+      try: async () => {
+        if (!sessions.has(request.sessionId)) {
+          throw AcpError.AcpRequestError.resourceNotFound("Subpolar ACP session was not found");
+        }
+        await runtime.closeSession(request.sessionId);
+        sessions.delete(request.sessionId);
+        activeSessions.delete(request.sessionId);
+        const runId = activeRunIds.get(request.sessionId);
+        if (runId) streamedText.delete(runId);
+        activeRunIds.delete(request.sessionId);
+        return {};
+      },
+      catch: (error) => error instanceof AcpError.AcpRequestError
+        ? error
+        : AcpError.AcpRequestError.internalError(errorMessage(error)),
+    }));
+
     yield* agent.handlePrompt((request) =>
       Effect.gen(function* () {
         const session = sessions.get(request.sessionId);
