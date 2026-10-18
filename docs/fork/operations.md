@@ -15,6 +15,7 @@ The fork disables every upstream workflow, because they need upstream's runners 
 
 - It typechecks the merge, runs the fork tests and pushes the merge as a fast-forward. If main moved during the run, it merges the new main and pushes again.
 - The fork tests are the test files that the fork changed since `git merge-base upstream/main HEAD`. A diff against a newer upstream main also lists files that only upstream changed.
+- A conflict only in `README.md` resolves by itself. See [Change the fork](#change-the-fork).
 - If the merge conflicts, the typecheck fails or a fork test fails, the sync comments on the issue "Fork sync: upstream merge failed" and stops.
 - After each sync, the job "Check upstream workflows" fails when another workflow is active. It prints the `gh workflow disable` command for that workflow.
 - GitHub can start the daily run hours after its 03:17 UTC schedule. Before you merge upstream by hand, read [Repair agent](../fork-agents.md#repair-agent).
@@ -28,7 +29,7 @@ The fork disables every upstream workflow, because they need upstream's runners 
 - `scripts/fork-release-notes.ts` writes the release notes from the first-parent commits on main after the previous release tag. Each line names its source, upstream or fork. The fork pull requests come last, because the update popover shows the last lines first and drops headings.
 - The release builds macOS arm64 (signed), Windows x64 (unsigned), and Linux x64 and arm64 AppImages (unsigned) in parallel, on GitHub-hosted runners. Each platform publishes when its build is done.
 - Each Linux build also publishes the server archive `t3-<version>-linux-<arch>.tar.gz`. It holds the `t3` single executable, the web client and the native packages, so `t3 serve` runs without Node.
-- When both Linux archives are on the release, the job "Server checksums" uploads `SHA256SUMS` last. The server updaters (`t3 update`, `t3 service install`, "Update everything") verify the archives against it. "Update everything" skips a release without `SHA256SUMS`. If `t3 update` picks such a release, it fails: run it again when the release is done.
+- When both Linux archives are on the release, the job "Server checksums" uploads `SHA256SUMS` last. The server updaters (`t3 update`, `t3 service install`, "Update everything") verify the archives against it. "Update everything" and `t3 update` skip a release without `SHA256SUMS`.
 - The release carries `nightly-mac.yml`, `nightly.yml` (Windows), `nightly-linux.yml` (x64) and `nightly-linux-arm64.yml` for electron-updater. Until a platform adds its file, its apps find no update in the new release.
 - A manual run from a branch other than main publishes no release. It uploads the files of each platform as workflow artifacts.
 - `CLI_RELEASE_REPOSITORY` in `packages/shared/src/cliRelease.ts` points the server updaters at the fork releases.
@@ -61,7 +62,7 @@ A failed Fork Sync, Fork Release or Fork CI run on main runs its `notify_agent` 
 - Add a new fork setting to Settings > Fork: its entry in `FORK_SETTING_GROUPS` (`forkSettingsCatalog.ts`) and its row in `FORK_SETTING_ROWS` (`ForkSettings.tsx`). Add a fork preference to the reset list in `forkSettingsRestore.ts`.
 - `forkSettingsRegistration.test.ts` fails when a fork setting has no Fork page row or no Restore defaults rule. A setting without a row needs a reason in that test.
 - The top of `README.md`, up to the first `---` line, lists the fork features and fixes. Keep one line per feature, with a link to its section in [features.md](features.md). A pull request that adds, removes or changes a fork feature updates its line and its section.
-- If a Fork Sync merge conflicts in `README.md`, keep the fork section on top and take the upstream text below the `---` line.
+- If a Fork Sync merge conflicts only in `README.md`, the sync keeps the fork section up to the first `---` line and takes the upstream README below it. A conflict in another file stops the sync.
 - A merge without conflicts can still break a fork feature. Each fork feature that changes upstream behavior needs a test of that behavior, so that the fork tests catch the break.
 
 ## Check a change before you push
@@ -153,7 +154,7 @@ scripts/fork-deploy-local.sh <ssh-host>
 - If the checkout changes `apps/server/package.json`, `pnpm-workspace.yaml`, `pnpm-lock.yaml` or `patches` since that release, the script stops. Such a change needs a release.
 - The version follows the rule of the local Mac build in [Versions](#versions), so `forkAutoUpdate` replaces it with the next release.
 - On the server, the script unpacks the build into `<T3 home>/runtime/versions/<version>` and runs `t3 update <version> --yes`. The service restarts at once, and the restart stops running agent turns.
-- Unlike a release update, this switch does not go back by itself when the new version does not start. To go back, run `t3 update <version> --yes --allow-downgrade` on the server with the earlier version. It is still in `runtime/versions`.
+- After the switch, the script waits up to 90 seconds until `/.well-known/t3/environment` of the server reports the new version. If it does not, the script runs `t3 update <previous version> --yes --allow-downgrade` on the server and fails. If that rollback fails, it prints the command to run on the server. The earlier version is still in `runtime/versions`.
 - `<T3 home>` is `~/.t3` of the SSH user, or `T3CODE_HOME` of the SSH session.
 - To build only, run `scripts/fork-deploy-local.sh --archive linux-x64` or `--archive linux-arm64`. The archive is in `release/`.
 
@@ -235,7 +236,7 @@ Use these steps only when the join dialog says "No tunnel", for example when the
 
 - It runs outside the Fork Release concurrency group, so the slow Gradle build never delays the next release. A newer run cancels an older one.
 - It builds only when the app changed since the newest earlier release with an APK: `apps/mobile/`, `packages/`, `pnpm-lock.yaml`, `patches/`, `scripts/fork-android-apk.sh` or the workflow. Otherwise it skips and names that release in a notice. A skipped release cancels no build.
-- To force a build for a release, run Fork Android by hand on main with the release commit.
+- To force a build for a release, run Fork Android by hand on main with the input `release_tag`, for example `gh workflow run fork-android.yml -R Yarden-zamir/t3code --ref main -f release_tag=<tag>`.
 - It only uploads to an existing release, and never creates one. A failure marks only Fork Android and does not call the repair agent. A run from a branch uploads the APK as a workflow artifact.
 - The APK is the nightly ("Preview") app with the package `com.yardenzamir.t3code`. It holds arm64 code only.
 - The version name is the fork release version. The version code is the commit time in minutes since 2026-01-01, so it only grows along main.
