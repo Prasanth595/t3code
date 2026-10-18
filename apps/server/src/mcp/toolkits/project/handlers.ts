@@ -208,8 +208,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
       if (workspaceRoot === undefined) {
-        // Project creation records no model default (only an update does), so
-        // reject what this mode would otherwise drop silently.
+        // A named project is made from its title alone, so reject what this
+        // mode would otherwise drop silently.
         if (
           input.scripts !== undefined ||
           input.createWorkspaceRootIfMissing !== undefined ||

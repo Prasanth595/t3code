@@ -1,14 +1,21 @@
 import {
   CommandId,
+  MAX_SCRIPT_ID_LENGTH,
   type OrchestrationProjectShell,
   ProjectId,
   type Project,
   type ProjectCreatePayload,
+  type ProjectScript,
+  type ProjectSettingsOverrides,
   type ProjectUpdatePayload,
   type ProjectSnapshot,
+  SCRIPT_RUN_COMMAND_PATTERN,
+  type ServerSettings as ServerSettingsValue,
   type ThreadId,
 } from "@t3tools/contracts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
+import { resolveProjectScripts } from "@t3tools/shared/projectScripts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -93,6 +100,8 @@ export class ProjectOperationError extends Schema.TaggedError<ProjectOperationEr
       "list-threads",
       "delete-thread",
       "dispatch-project-command",
+      "read-settings",
+      "save-project-settings",
     ]),
     projectId: Schema.optional(ProjectId),
     workspaceRoot: Schema.optional(Schema.String),
@@ -102,6 +111,30 @@ export class ProjectOperationError extends Schema.TaggedError<ProjectOperationEr
   override get message(): string {
     return `Project operation '${this.operation}' failed${this.projectId === undefined ? "" : ` for ${this.projectId}`}.`;
   }
+}
+
+type ProjectSettingsInput = Pick<
+  ProjectUpdatePayload,
+  "defaultModelSelection" | "defaultThreadEnvMode" | "autoPull" | "scripts"
+>;
+
+const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
+
+/**
+ * A script's id becomes its `script.<id>.run` shortcut command. Ids saved
+ * before that rule stay editable and removable; only new ids must comply.
+ */
+function invalidScriptIdMessage(
+  current: ReadonlyArray<ProjectScript>,
+  next: ReadonlyArray<ProjectScript>,
+): string | undefined {
+  const existingIds = new Set(current.map((script) => script.id));
+  const invalid = next.find(
+    (script) => !existingIds.has(script.id) && !isScriptRunCommand(`script.${script.id}.run`),
+  );
+  return invalid === undefined
+    ? undefined
+    : `Script IDs must be 1-${MAX_SCRIPT_ID_LENGTH} lowercase letters, digits or hyphens, starting with a letter or digit (got ${invalid.id.length} characters).`;
 }
 
 export type ProjectServiceError =
@@ -153,31 +186,102 @@ export const make = Effect.gen(function* () {
   const projectLocks = yield* KeyedLock.make<ProjectId>();
   const workspaceLocks = yield* KeyedLock.make<string>();
 
+  const readSettings = serverSettings.getSettings.pipe(
+    Effect.mapError((cause) => new ProjectOperationError({ operation: "read-settings", cause })),
+  );
+
+  // Reports the model, thread mode, auto-pull and scripts a new thread in the
+  // project gets. Once legacy settings are folded these live only in the
+  // project's settings override; the row's own copies are no longer read.
   const toProject = (
     row: ProjectStore.ProjectRow,
     enrichment: ProjectEnrichmentService.ProjectEnrichment | null,
-  ): Project => ({
-    id: row.projectId,
-    title: row.title,
-    workspaceRoot: row.workspaceRoot,
-    repositoryIdentity: enrichment?.repositoryIdentity ?? null,
-    faviconPath: row.faviconPath ?? enrichment?.faviconPath ?? null,
-    defaultModelSelection: row.defaultModelSelection,
-    defaultThreadEnvMode: row.defaultThreadEnvMode,
-    autoPull: row.autoPull,
-    projectIcon: row.projectIcon,
-    scripts: row.scripts,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt,
-    deletedAt: row.deletedAt,
-  });
+    settings: ServerSettingsValue,
+  ): Project => {
+    const effective = resolveProjectSettings(settings, row.projectId, row).settings;
+    return {
+      id: row.projectId,
+      title: row.title,
+      workspaceRoot: row.workspaceRoot,
+      repositoryIdentity: enrichment?.repositoryIdentity ?? null,
+      faviconPath: row.faviconPath ?? enrichment?.faviconPath ?? null,
+      defaultModelSelection: effective.defaultModelSelection,
+      defaultThreadEnvMode: effective.defaultThreadEnvMode,
+      autoPull: effective.defaultAutoPull,
+      projectIcon: row.projectIcon,
+      scripts: resolveProjectScripts(settings, { id: row.projectId, scripts: row.scripts }),
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      deletedAt: row.deletedAt,
+    };
+  };
 
   const hydrate = Effect.fn("ProjectService.hydrate")(function* (row: ProjectStore.ProjectRow) {
     const enrichment =
       row.deletedAt === null
         ? yield* projectEnrichment.getAvailable(row.workspaceRoot)
         : yield* projectEnrichment.peek(row.workspaceRoot);
-    return toProject(row, enrichment);
+    return toProject(row, enrichment, yield* readSettings);
+  });
+
+  // `updateSettings` replaces a project's whole entry, so the keys this write
+  // does not touch are carried over. A null model or thread mode removes the
+  // override, so the environment default applies again.
+  const saveProjectSettings = Effect.fn("ProjectService.saveProjectSettings")(function* (
+    projectId: ProjectId,
+    input: ProjectSettingsInput,
+  ) {
+    if (
+      input.defaultModelSelection === undefined &&
+      input.defaultThreadEnvMode === undefined &&
+      input.autoPull === undefined &&
+      input.scripts === undefined
+    ) {
+      return;
+    }
+    // A retried command replays its accepted receipt even after the project
+    // was deleted; its settings must not come back with it.
+    if (Option.isNone(yield* readRow(projectId))) return;
+    const settings = yield* readSettings;
+    const entry: { -readonly [K in keyof ProjectSettingsOverrides]: ProjectSettingsOverrides[K] } =
+      { ...settings.projectSettingsOverrides[projectId] };
+    if (input.defaultModelSelection === null) delete entry.defaultModelSelection;
+    else if (input.defaultModelSelection !== undefined) {
+      entry.defaultModelSelection = input.defaultModelSelection;
+    }
+    if (input.defaultThreadEnvMode === null) delete entry.defaultThreadEnvMode;
+    else if (input.defaultThreadEnvMode !== undefined) {
+      entry.defaultThreadEnvMode = input.defaultThreadEnvMode;
+    }
+    if (input.autoPull !== undefined) entry.defaultAutoPull = input.autoPull;
+    if (input.scripts !== undefined) entry.defaultProjectScripts = input.scripts;
+    yield* serverSettings
+      .updateSettings({
+        projectSettingsOverrides: {
+          [projectId]: Object.keys(entry).length === 0 ? null : entry,
+        },
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProjectOperationError({ operation: "save-project-settings", projectId, cause }),
+        ),
+      );
+  });
+
+  const rejectInvalidScripts = Effect.fn("ProjectService.rejectInvalidScripts")(function* (
+    projectId: ProjectId,
+    current: ReadonlyArray<ProjectScript>,
+    next: ReadonlyArray<ProjectScript> | undefined,
+  ) {
+    const message = next === undefined ? undefined : invalidScriptIdMessage(current, next);
+    if (message !== undefined) {
+      return yield* new ProjectOperationError({
+        operation: "save-project-settings",
+        projectId,
+        cause: message,
+      });
+    }
   });
 
   const readRow = (projectId: ProjectId, options?: { readonly includeDeleted?: boolean }) =>
@@ -210,7 +314,12 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-  const commit = Effect.fn("ProjectService.commit")(function* (command: ProjectCommand) {
+  // `afterAccepted` runs under the project's lock once the command is accepted,
+  // so a delete cannot clean up between the two and leave state behind.
+  const commit = Effect.fn("ProjectService.commit")(function* (
+    command: ProjectCommand,
+    afterAccepted: Effect.Effect<void, ProjectOperationError> = Effect.void,
+  ) {
     const { projectId } = command;
     const dispatchError = (cause: unknown) =>
       new ProjectOperationError({ operation: "dispatch-project-command", projectId, cause });
@@ -253,14 +362,20 @@ export const make = Effect.gen(function* () {
         error: encodeProjectCommandRejection(planned.failure),
       });
     });
-    const receipt = yield* projectLocks
-      .withLock(
-        projectId,
-        workspaceRoot === undefined
-          ? planAndCommit
-          : workspaceLocks.withLock(workspaceRoot, planAndCommit),
-      )
-      .pipe(Effect.mapError(dispatchError));
+    const committed = planAndCommit.pipe(
+      Effect.mapError(dispatchError),
+      Effect.tap((receipt) =>
+        receipt.status === "accepted" &&
+        receipt.projectId === projectId &&
+        receipt.commandType === command.type
+          ? afterAccepted
+          : Effect.void,
+      ),
+    );
+    const receipt = yield* projectLocks.withLock(
+      projectId,
+      workspaceRoot === undefined ? committed : workspaceLocks.withLock(workspaceRoot, committed),
+    );
     if (receipt.projectId !== projectId || receipt.commandType !== command.type) {
       return yield* dispatchError(
         `Command ${command.commandId} was already used by ${receipt.commandType} for ${receipt.projectId}.`,
@@ -332,14 +447,22 @@ export const make = Effect.gen(function* () {
         workspaceRoot: input.workspaceRoot,
         createIfMissing: input.createWorkspaceRootIfMissing ?? false,
       });
-      yield* commit({
-        type: "project.create",
-        commandId: input.commandId,
-        projectId: input.projectId,
-        title: input.title,
-        workspaceRoot,
-        ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
-      });
+      yield* rejectInvalidScripts(input.projectId, [], input.scripts);
+      yield* commit(
+        {
+          type: "project.create",
+          commandId: input.commandId,
+          projectId: input.projectId,
+          title: input.title,
+          workspaceRoot,
+        },
+        saveProjectSettings(input.projectId, {
+          ...(input.defaultModelSelection === undefined
+            ? {}
+            : { defaultModelSelection: input.defaultModelSelection }),
+          ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
+        }),
+      );
       yield* projectEnrichment.invalidate([workspaceRoot]);
       return yield* readCommitted(input.projectId);
     },
@@ -359,23 +482,25 @@ export const make = Effect.gen(function* () {
               projectId: input.projectId,
               workspaceRoot: input.workspaceRoot,
             });
-      yield* commit({
-        type: "project.meta.update",
-        commandId: input.commandId,
-        projectId: input.projectId,
-        ...(input.title === undefined ? {} : { title: input.title }),
-        ...(workspaceRoot === previousRoot ? {} : { workspaceRoot }),
-        ...(input.defaultModelSelection === undefined
-          ? {}
-          : { defaultModelSelection: input.defaultModelSelection }),
-        ...(input.autoPull === undefined ? {} : { autoPull: input.autoPull }),
-        ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
-        ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),
-        ...(input.defaultThreadEnvMode === undefined
-          ? {}
-          : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
-        ...(input.scripts === undefined ? {} : { scripts: input.scripts }),
-      });
+      if (input.scripts !== undefined) {
+        const current = resolveProjectScripts(yield* readSettings, {
+          id: input.projectId,
+          scripts: existing.value.scripts,
+        });
+        yield* rejectInvalidScripts(input.projectId, current, input.scripts);
+      }
+      yield* commit(
+        {
+          type: "project.meta.update",
+          commandId: input.commandId,
+          projectId: input.projectId,
+          ...(input.title === undefined ? {} : { title: input.title }),
+          ...(workspaceRoot === previousRoot ? {} : { workspaceRoot }),
+          ...(input.projectIcon === undefined ? {} : { projectIcon: input.projectIcon }),
+          ...(input.faviconPath === undefined ? {} : { faviconPath: input.faviconPath }),
+        },
+        saveProjectSettings(input.projectId, input),
+      );
       if (workspaceRoot !== previousRoot) {
         yield* projectEnrichment.invalidate([previousRoot, workspaceRoot]);
       }
