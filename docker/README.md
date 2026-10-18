@@ -19,7 +19,11 @@ The remaining instructions describe the production Compose deployment.
 
 This Compose project runs Codewise only on the tailnet. It intentionally has
 no published production HTTP port: `tailscale` owns the network namespace and
-proxies tailnet HTTPS traffic to Codewise on `127.0.0.1:3773`.
+proxies tailnet HTTPS traffic to Codewise on `127.0.0.1:3773`. Tailscale joins
+both the private `docker-control` network and an outbound-enabled network so
+it can reach the Tailscale control plane and DERP relays. Codewise shares that
+network namespace; the manager and Docker proxy remain attached only to the
+private control network.
 
 ## First start
 
@@ -35,6 +39,20 @@ proxies tailnet HTTPS traffic to Codewise on `127.0.0.1:3773`.
 Use `docker compose -f compose.yaml -f compose.local.yaml up -d` only when a
 localhost recovery port is needed. Do not use that override on shared hosts.
 
+The default deployment does not require a host Docker socket. To opt into
+Codewise's read-only Docker API proxy, use the `docker` profile and its overlay:
+
+```sh
+docker compose --profile docker --env-file docker/.env \
+  -f docker/compose.yaml \
+  -f docker/compose.docker-proxy.yaml \
+  up -d --build
+```
+
+The overlay sets `DOCKER_HOST` and makes Codewise wait for the proxy. The proxy
+is reachable only on the private control network and rejects Docker API
+mutations. This profile is independent of Subpolar execution.
+
 ## Durable paths
 
 `/var/lib/codewise` is one durability unit and contains the SQLite database,
@@ -48,12 +66,11 @@ delete its workspace; delete files separately and deliberately.
 
 ## Optional Subpolar execution
 
-Managed execution is disabled unless the three `SUBPOLAR_MANAGER_*`/storage
-settings are configured. The Compose profile adds a separate `subpolar-manager`
-service with direct Docker socket access, while the existing read-only
-`docker-proxy` remains available to Codewise. Codewise reaches the authenticated
-manager API over the private `docker-control` network, and worker containers
-receive neither the socket nor Docker CLI.
+Managed execution is disabled unless the `SUBPOLAR_MANAGER_*` and storage
+settings are configured. The Compose profile adds a separate
+`subpolar-manager` service with direct Docker socket access. Codewise reaches
+the authenticated manager API over the private `docker-control` network, and
+worker containers receive neither the socket nor Docker CLI.
 
 From the repository root on a Linux Docker host, prepare the worker image and
 discover the actual backing directory for the existing named workspace volume:
@@ -82,7 +99,7 @@ metadata roots configured. If the host path cannot be made visible at the same
 absolute path inside the manager, leave managed execution disabled.
 
 Start the optional manager from the repository root with
-`docker compose --env-file docker/.env -f docker/compose.yaml --profile subpolar up -d --build`.
+`docker compose --profile subpolar --env-file docker/.env -f docker/compose.yaml up -d --build`.
 Configure the Subpolar provider through T3's existing local ACP command setting,
 using the installed `subpolar-acp` executable or Bun with
 `packages/subpolar-acp/src/cli.ts` as its argument. Set
@@ -133,9 +150,9 @@ the pre-upgrade backup when migrations are not backward compatible.
 
 ## Security model
 
-The Docker socket is mounted into `docker-proxy` for Codewise's existing
-read-only Docker access. When the optional Subpolar profile is enabled, a
-separate manager also receives the Docker socket and exposes only authenticated
+The Docker socket is mounted into `docker-proxy` only when the optional `docker`
+profile is enabled. When the optional Subpolar profile is enabled, a separate
+manager also receives the Docker socket and exposes only authenticated
 environment lifecycle and process operations to Codewise. The manager's socket
 access is still root-like; keep the service on the internal network, protect the
 bearer token, and do not expose its port publicly. Worker containers receive
@@ -153,7 +170,8 @@ separate SQLite-backed authorization domain.
 
 `GET /healthz` is a minimal readiness check and intentionally returns no
 credential or topology information. Check `docker compose ps`, the Codewise
-health check, Tailscale status, and Docker proxy health after an upgrade.
+health check, and Tailscale status after an upgrade. Check Docker proxy health
+when the optional `docker` profile is enabled.
 Monitor free space for both `codewise-state` and `codewise-workspaces`; leave
 enough space for a worktree, attachment upload, and SQLite WAL checkpoint.
 

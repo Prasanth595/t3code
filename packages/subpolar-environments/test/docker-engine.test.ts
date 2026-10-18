@@ -83,11 +83,11 @@ test("maps safe lifecycle operations to the Docker Engine API", async () => {
   await client.removeContainer("container-1", { force: false, removeVolumes: false });
 
   expect(requests.map(({ method, url }) => [method, url])).toEqual([
-    ["GET", "/v1.41/containers/subpolar-env_123/json"],
-    ["POST", "/v1.41/containers/create?name=subpolar-env_123"],
-    ["POST", "/v1.41/containers/container-1/start"],
-    ["POST", "/v1.41/containers/container-1/stop?t=10"],
-    ["DELETE", "/v1.41/containers/container-1?force=false&v=false"],
+    ["GET", "/v1.44/containers/subpolar-env_123/json"],
+    ["POST", "/v1.44/containers/create?name=subpolar-env_123"],
+    ["POST", "/v1.44/containers/container-1/start"],
+    ["POST", "/v1.44/containers/container-1/stop?t=10"],
+    ["DELETE", "/v1.44/containers/container-1?force=false&v=false"],
   ]);
   const payload = JSON.parse(requests[1]!.body) as { HostConfig: Record<string, unknown> };
   expect(payload.HostConfig).toMatchObject({
@@ -128,9 +128,9 @@ test("manages named runtime data volumes through the Docker Engine API", async (
   await client.removeVolume("subpolar-env_123-data");
 
   expect(requests.map(({ method, url }) => [method, url])).toEqual([
-    ["GET", "/v1.41/volumes/subpolar-env_123-data"],
-    ["POST", "/v1.41/volumes/create"],
-    ["DELETE", "/v1.41/volumes/subpolar-env_123-data"],
+    ["GET", "/v1.44/volumes/subpolar-env_123-data"],
+    ["POST", "/v1.44/volumes/create"],
+    ["DELETE", "/v1.44/volumes/subpolar-env_123-data"],
   ]);
   expect(JSON.parse(requests[1]!.body)).toEqual({
     Name: "subpolar-env_123-data", Driver: "local", Labels: { "io.subpolar.environment-id": "env_123" },
@@ -233,9 +233,9 @@ test("routes interactive sessions through the TTY runner and Docker resize API",
   const payload = JSON.parse(Buffer.from(supervised.command[3], "base64url").toString("utf8"));
   expect(payload).toEqual({ ...processRequest, environment: {} });
   expect(requests).toEqual([
-    "POST /v1.41/exec/exec-tty/resize?h=40&w=120",
-    "POST /v1.41/containers/container-tty/exec",
-    "POST /v1.41/exec/cleanup-exec/start",
+    "POST /v1.44/exec/exec-tty/resize?h=40&w=120",
+    "POST /v1.44/containers/container-tty/exec",
+    "POST /v1.44/exec/cleanup-exec/start",
   ]);
   expect(output).toEqual([Buffer.from("prompt")]);
 });
@@ -290,7 +290,7 @@ test("launches non-TTY process sessions with JSON-safe argv and bidirectional st
     { stream: "stderr", data: Buffer.from("diagnostic") },
   ]);
   expect(requests).toEqual([
-    "POST /v1.41/containers/container-stdio/exec",
-    "POST /v1.41/exec/stdio-cleanup/start",
+    "POST /v1.44/containers/container-stdio/exec",
+    "POST /v1.44/exec/stdio-cleanup/start",
   ]);
 });

@@ -1,24 +1,15 @@
-# Resolve only the ACP bridge and its workspace dependency graph. The package
-# currently imports @effect/platform-node from its CLI even though that package
-# is declared as a devDependency, so install the selected workspace's dev graph
-# until the package metadata is corrected.
+# Resolve only the ACP bridge's production dependency graph. Copy workspace
+# manifests too so pnpm sees the same peer dependency topology as the lockfile.
 FROM node:24-bookworm-slim AS subpolar-runtime
 
 WORKDIR /workspace
 RUN npm install --global pnpm@11.10.0
 
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY patches/@effect__vitest@4.0.5.patch ./patches/@effect__vitest@4.0.5.patch
-COPY packages/effect-acp/package.json ./packages/effect-acp/package.json
-COPY packages/subpolar-acp/package.json ./packages/subpolar-acp/package.json
-COPY packages/subpolar-contracts/package.json ./packages/subpolar-contracts/package.json
-COPY packages/subpolar-core/package.json ./packages/subpolar-core/package.json
-COPY packages/subpolar-core-pi/package.json ./packages/subpolar-core-pi/package.json
-COPY packages/subpolar-environments/package.json ./packages/subpolar-environments/package.json
-COPY packages/subpolar-runtime-host/package.json ./packages/subpolar-runtime-host/package.json
-COPY packages/subpolar-tools/package.json ./packages/subpolar-tools/package.json
+COPY patches/ ./patches/
+COPY --parents apps/*/package.json apps/mobile/modules/*/package.json infra/*/package.json packages/*/package.json oxlint-plugin-t3code/package.json scripts/package.json ./
 
-RUN pnpm install --filter '@subpolar/acp...' --frozen-lockfile --ignore-scripts
+RUN pnpm install --filter '@subpolar/acp...' --prod --frozen-lockfile --ignore-scripts
 
 COPY packages/effect-acp/src ./packages/effect-acp/src
 COPY packages/subpolar-acp/src ./packages/subpolar-acp/src
@@ -46,17 +37,14 @@ COPY --from=subpolar-runtime /workspace/packages/effect-acp/node_modules /opt/su
 COPY --from=subpolar-runtime /workspace/packages/subpolar-acp /opt/subpolar/packages/subpolar-acp
 COPY --from=subpolar-runtime /workspace/packages/subpolar-acp/node_modules /opt/subpolar/packages/subpolar-acp/node_modules
 COPY --from=subpolar-runtime /workspace/packages/subpolar-contracts /opt/subpolar/packages/subpolar-contracts
-COPY --from=subpolar-runtime /workspace/packages/subpolar-contracts/node_modules /opt/subpolar/packages/subpolar-contracts/node_modules
 COPY --from=subpolar-runtime /workspace/packages/subpolar-core /opt/subpolar/packages/subpolar-core
 COPY --from=subpolar-runtime /workspace/packages/subpolar-core/node_modules /opt/subpolar/packages/subpolar-core/node_modules
 COPY --from=subpolar-runtime /workspace/packages/subpolar-core-pi /opt/subpolar/packages/subpolar-core-pi
 COPY --from=subpolar-runtime /workspace/packages/subpolar-core-pi/node_modules /opt/subpolar/packages/subpolar-core-pi/node_modules
 COPY --from=subpolar-runtime /workspace/packages/subpolar-environments /opt/subpolar/packages/subpolar-environments
-COPY --from=subpolar-runtime /workspace/packages/subpolar-environments/node_modules /opt/subpolar/packages/subpolar-environments/node_modules
 COPY --from=subpolar-runtime /workspace/packages/subpolar-runtime-host /opt/subpolar/packages/subpolar-runtime-host
 COPY --from=subpolar-runtime /workspace/packages/subpolar-runtime-host/node_modules /opt/subpolar/packages/subpolar-runtime-host/node_modules
 COPY --from=subpolar-runtime /workspace/packages/subpolar-tools /opt/subpolar/packages/subpolar-tools
-COPY --from=subpolar-runtime /workspace/packages/subpolar-tools/node_modules /opt/subpolar/packages/subpolar-tools/node_modules
 
 COPY docker/subpolar-worker/worker.mjs /usr/local/lib/subpolar/worker.mjs
 COPY docker/subpolar-worker/terminal-supervisor.mjs /usr/local/lib/subpolar/terminal-supervisor.mjs

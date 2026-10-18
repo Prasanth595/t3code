@@ -190,6 +190,30 @@ function setLegacyContainerState(client: FakeDockerClient): string {
 }
 
 describe("Docker environment backend", () => {
+  test("verifies manager environment while allowing image defaults", async () => {
+    const { manager, request, backend, identity, client } = await fixture();
+    await manager.ensure(request);
+    const [name, current] = [...client.containers.entries()][0]!;
+    client.containers.set(name, {
+      ...current,
+      config: {
+        ...current.config,
+        environment: { ...current.config.environment, NODE_VERSION: "24.22.0", YARN_VERSION: "1.22.22" },
+      },
+    });
+
+    await expect(backend.inspect(identity)).resolves.toMatchObject({ resourceId: current.id });
+
+    client.containers.set(name, {
+      ...client.containers.get(name)!,
+      config: {
+        ...client.containers.get(name)!.config,
+        environment: { ...client.containers.get(name)!.config.environment, HOME: "/unexpected" },
+      },
+    });
+    await expect(backend.inspect(identity)).rejects.toMatchObject({ code: "DOCKER_CONFIGURATION_MISMATCH" });
+  });
+
   test("rejects provider egress until Docker-host firewall enforcement is available", async () => {
     const { client, config } = await fixture();
 

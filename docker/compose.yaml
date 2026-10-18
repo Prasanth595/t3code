@@ -16,7 +16,7 @@ services:
       - tailscale-state:/var/lib/tailscale
       - ./tailscale-serve.json:/config/serve.json:ro
     secrets: [tailscale-authkey]
-    networks: [docker-control]
+    networks: [docker-control, outbound]
     restart: unless-stopped
 
   codewise:
@@ -28,7 +28,6 @@ services:
         BUILD_DATE: ${BUILD_DATE:-unknown}
     network_mode: service:tailscale
     environment:
-      DOCKER_HOST: tcp://docker-proxy:2375
       SUBPOLAR_MANAGER_URL: ${SUBPOLAR_MANAGER_URL:-}
       SUBPOLAR_MANAGER_TOKEN: ${SUBPOLAR_MANAGER_TOKEN:-}
       SUBPOLAR_STORAGE_ROOT: ${SUBPOLAR_STORAGE_ROOT:-}
@@ -43,8 +42,6 @@ services:
       - gh-config:/home/codewise/.config/gh
       - ssh-config:/home/codewise/.ssh
     depends_on:
-      docker-proxy:
-        condition: service_healthy
       tailscale:
         condition: service_started
     healthcheck:
@@ -57,6 +54,7 @@ services:
     restart: unless-stopped
 
   docker-proxy:
+    profiles: [docker]
     image: tecnativa/docker-socket-proxy:0.3.0
     environment:
       PING: 1
@@ -112,6 +110,7 @@ services:
 networks:
   docker-control:
     internal: true
+  outbound: {}
 
 volumes:
   codewise-state:

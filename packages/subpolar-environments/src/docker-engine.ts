@@ -564,7 +564,7 @@ function decodeDockerJson(body: Uint8Array): unknown {
  */
 export function createDockerEngineClient(options: DockerEngineClientOptions): DockerClient {
   if (!options.transport && (!options.socketPath || !options.socketPath.startsWith("/"))) throw new Error("Docker socket path must be absolute");
-  const version = options.apiVersion ?? "v1.41";
+  const version = options.apiVersion ?? "v1.44";
   if (!/^v\d+\.\d+$/.test(version)) throw new Error("Docker Engine API version is invalid");
   const timeoutMs = options.timeoutMs ?? 15_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 120_000) throw new Error("Docker Engine timeout is invalid");

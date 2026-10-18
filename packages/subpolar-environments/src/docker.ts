@@ -470,6 +470,10 @@ function sameRecord(left: Readonly<Record<string, string>>, right: Readonly<Reco
   return leftKeys.length === rightKeys.length && leftKeys.every((key, index) => key === rightKeys[index] && left[key] === right[key]);
 }
 
+function containsRecord(actual: Readonly<Record<string, string>>, expected: Readonly<Record<string, string>>): boolean {
+  return Object.entries(expected).every(([key, value]) => actual[key] === value);
+}
+
 function within(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
@@ -746,7 +750,7 @@ export function createDockerEnvironmentBackend(
         return observedMount?.type === mount.type && observedMount.source === mount.source &&
           observedMount.target === mount.target && observedMount.readOnly === false;
       }) &&
-      sameRecord(observed.tmpfs, TMPFS) && sameRecord(observed.environment, { ...ENVIRONMENT, ...resolved.containerEnvironment }) && inspection.id.length > 0;
+      sameRecord(observed.tmpfs, TMPFS) && containsRecord(observed.environment, { ...ENVIRONMENT, ...resolved.containerEnvironment }) && inspection.id.length > 0;
     if (!safeConfiguration) {
       throw new DockerEnvironmentError("DOCKER_CONFIGURATION_MISMATCH", "Docker container configuration does not match the required isolation settings");
     }
