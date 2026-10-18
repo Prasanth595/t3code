@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { GitHistoryCommit } from "@t3tools/contracts";
-import { layoutGitGraph } from "./gitGraph.ts";
+import { branchOnlyShas, layoutGitGraph } from "./gitGraph.ts";
 
 const commit = (sha: string, parents: string[]): GitHistoryCommit => ({
   sha,
@@ -50,5 +50,22 @@ describe("layoutGitGraph", () => {
     expect(graph.rows[0]?.paths).toHaveLength(3);
     expect(graph.width).toBeGreaterThan(24);
     expect(JSON.stringify(graph)).not.toMatch(/NaN|Infinity/);
+  });
+});
+
+describe("branchOnlyShas", () => {
+  const history = [
+    commit("merge", ["main-2", "head"]),
+    commit("head", ["feature"]),
+    commit("main-2", ["root"]),
+    commit("feature", ["root"]),
+    commit("root", []),
+  ];
+  it("keeps the branch's commits before and after the base merges it", () => {
+    expect([...branchOnlyShas(history, "head", "main-2")].toSorted()).toEqual(["feature", "head"]);
+    expect([...branchOnlyShas(history, "head", "merge")].toSorted()).toEqual(["feature", "head"]);
+  });
+  it("is empty without a head", () => {
+    expect(branchOnlyShas(history, null, "merge").size).toBe(0);
   });
 });
