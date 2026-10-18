@@ -2791,6 +2791,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         runtime: {
           ...entry.runtime,
           modelSuffixes: { contextWindow: { "1m": "[1m]", large: "[1m]" } },
+          contextWindowTokens: { ...entry.runtime.contextWindowTokens, large: 1_000_000 },
         },
       }));
       const liveCatalog = yield* Ref.make(BUNDLED_CLAUDE_MODEL_CATALOG);
@@ -2914,6 +2915,101 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("gives a continuation's subagent the effort its process runs at", () =>
+    Effect.gen(function* () {
+      const AGENT_TOOL_USE_ID = "toolu-continuation-effort";
+      const liveCatalog = yield* Ref.make(withSonnetDefaults({ effort: "low" }));
+      const harness = yield* makeWakeHarnessWithOptions({ modelCatalog: Ref.get(liveCatalog) });
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("continuation-effort-1"),
+          text: "Run the build in the background.",
+          attachments: [],
+          modelSelection: sonnetSelection,
+        }),
+      );
+      yield* Queue.offer(harness.sdkMessages, wakeTaskStarted);
+      yield* Queue.offer(harness.sdkMessages, turnOneResult);
+      yield* Queue.take(harness.terminalReceipts);
+      yield* harness.offerAndWait(wakeNotification);
+      yield* harness.offerAndWait(wakeTurnInit);
+
+      yield* Ref.set(liveCatalog, withSonnetDefaults({ effort: "medium" }));
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("continuation-effort-2"),
+          text: "Background task completed.",
+          attachments: [],
+          modelSelection: sonnetSelection,
+          providerTurnOrdinal: 2,
+          messageCreatedBy: "agent",
+          messageCreationSource: "provider",
+        }),
+      );
+      for (const frame of [
+        claudeSdkFrame({
+          type: "assistant",
+          parent_tool_use_id: null,
+          message: {
+            model: sonnetSelection.model,
+            id: "msg_continuation_effort_launch",
+            type: "message",
+            role: "assistant",
+            content: [
+              {
+                type: "tool_use",
+                id: AGENT_TOOL_USE_ID,
+                name: "Agent",
+                input: {
+                  description: "Review",
+                  subagent_type: "general-purpose",
+                  prompt: "Review the build output.",
+                },
+              },
+            ],
+          },
+          uuid: "00000000-0000-4000-8000-000000000231",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "task_started",
+          task_id: "task-continuation-effort",
+          tool_use_id: AGENT_TOOL_USE_ID,
+          description: "Review",
+          task_type: "local_agent",
+          uuid: "00000000-0000-4000-8000-000000000232",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        wakeResult,
+      ]) {
+        yield* Queue.offer(harness.sdkMessages, frame);
+      }
+      yield* Queue.take(harness.terminalReceipts);
+
+      assert.equal(harness.getOpenedOptions()?.effort, "low");
+      const subagent = harness.events.findLast((event) => event.type === "subagent.updated");
+      assert.equal(
+        subagent?.type === "subagent.updated"
+          ? getModelSelectionStringOptionValue(subagent.subagent.modelSelection, "effort")
+          : undefined,
+        "low",
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
   it.effect("reports the window a live model change switched the process to", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;
@@ -2960,6 +3056,44 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           harness,
           "fixed-window-compact",
           makeResultFrame({ uuid: "fixed-window-result", result: "Done" }),
+        ),
+        400_000,
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  );
+
+  it.effect("reports a refreshed window on a new turn that reuses the process", () =>
+    Effect.gen(function* () {
+      const liveCatalog = yield* Ref.make(BUNDLED_CLAUDE_MODEL_CATALOG);
+      const harness = yield* makeWakeHarnessWithOptions({ modelCatalog: Ref.get(liveCatalog) });
+      yield* sonnetTurn(harness, "refreshed-window-a", 1, []);
+      const firstOptions = harness.getOpenedOptions();
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "refreshed-window-a-result", result: "First" }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+
+      yield* Ref.set(
+        liveCatalog,
+        mapSonnetEntry((entry) => ({
+          ...entry,
+          runtime: { ...entry.runtime, fixedContextWindowTokens: 400_000 },
+        })),
+      );
+      yield* sonnetTurn(harness, "refreshed-window-b", 2, []);
+      assert.strictEqual(harness.getOpenedOptions(), firstOptions);
+      assert.equal(harness.runtime.getModelContextWindow?.(sonnetSelection), 400_000);
+      assert.equal(
+        yield* compactUsageMaxTokens(
+          harness,
+          "refreshed-window-compact",
+          makeResultFrame({ uuid: "refreshed-window-b-result", result: "Second" }),
         ),
         400_000,
       );

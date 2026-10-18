@@ -2958,6 +2958,7 @@ interface ActiveClaudeTurnContext {
   readonly nativeThreadId: string;
   // The catalog this turn compiled against. Its steers and subagents reuse it.
   readonly modelCatalog: ClaudeModelCatalog;
+  // What the turn's process runs. A continuation keeps an older process's selection.
   readonly selection: CompiledClaudeModelSelection;
   readonly nativeTurnId: string;
   nativeMessageCursor: string | null;
@@ -8088,6 +8089,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             existing.queryPolicyKey === queryPolicyKey &&
             existing.selection.queryIdentity === compiledSelection.queryIdentity
           ) {
+            // Same identity, but a refreshed catalog can still change the window.
+            existing.selection = compiledSelection;
             // Claude can switch its own mode mid-session (EnterPlanMode), and
             // a denied ExitPlanMode leaves it there. Put the live process back
             // in the thread's mode before the next prompt.
@@ -8302,11 +8305,26 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (!goalsByNativeThread.has(nativeThreadId)) {
               goalsByNativeThread.set(nativeThreadId, turnInput.providerThread.goal ?? null);
             }
+            const userMessage =
+              promptUuid === null
+                ? null
+                : yield* makeClaudeUserMessageWithAttachments({
+                    text: applyClaudePromptEffortPrefix(
+                      turnInput.message.text,
+                      selection.promptEffort,
+                    ),
+                    attachments: turnInput.message.attachments,
+                    attachmentsDir,
+                    fileSystem,
+                    skillNames: yield* userInvocableSkillNames(turnInput.runtimePolicy.cwd),
+                    uuid: promptUuid,
+                  });
+            const querySession = yield* openQuery(turnInput, nativeThreadId, modelCatalog);
             const context: ActiveClaudeTurnContext = {
               input: turnInput,
               nativeThreadId,
               modelCatalog,
-              selection,
+              selection: querySession.selection,
               nativeTurnId,
               nativeMessageCursor: null,
               providerTurnId,
@@ -8344,21 +8362,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               gatedFramesBeforeEcho: 0,
               heldRootFrames: [],
             };
-            const userMessage =
-              promptUuid === null
-                ? null
-                : yield* makeClaudeUserMessageWithAttachments({
-                    text: applyClaudePromptEffortPrefix(
-                      turnInput.message.text,
-                      selection.promptEffort,
-                    ),
-                    attachments: turnInput.message.attachments,
-                    attachmentsDir,
-                    fileSystem,
-                    skillNames: yield* userInvocableSkillNames(turnInput.runtimePolicy.cwd),
-                    uuid: promptUuid,
-                  });
-            const querySession = yield* openQuery(turnInput, nativeThreadId, modelCatalog);
             const attachTurn = Effect.gen(function* () {
               querySession.lastTurn = context;
               yield* Ref.set(activeTurn, context);
