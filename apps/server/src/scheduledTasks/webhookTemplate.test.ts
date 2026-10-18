@@ -1,6 +1,6 @@
 import { assert, describe, it } from "@effect/vitest";
 import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
-import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
+import { collectComposerSkillTokens } from "@t3tools/shared/composerInlineTokens";
 
 import { renderWebhookPrompt, type WebhookRequest } from "./webhookTemplate.ts";
 
@@ -48,14 +48,14 @@ describe("renderWebhookPrompt", () => {
 
   it("keeps skill mentions in a request from naming a skill", () => {
     const text =
-      "costs $20 and $123. run $triage now or €triage now, x$triage and [$triage](skills/triage)";
+      'costs $20 and $123. run $triage now or €triage now, $"Triage Mode" too, x$triage and [$triage](skills/triage)';
     const rendered = renderWebhookPrompt(
       "$review {{body.text}}",
       { ...githubPullRequest, bodyText: JSON.stringify({ text }) },
       "id",
     );
-    // The adapters' pattern finds only the template's own mention.
-    const mentions = [...rendered.prompt.matchAll(SKILL_MENTION_PATTERN)].map((match) => match[2]);
+    // The adapters' parser finds only the template's own mention.
+    const mentions = collectComposerSkillTokens(rendered.prompt).map((token) => token.value);
     assert.deepEqual(mentions, ["review"]);
     // Codex and Pi read `$name` after any character, digits included.
     assert.notMatch(rendered.prompt.slice("$review".length), /\$[A-Za-z0-9_:-]/);

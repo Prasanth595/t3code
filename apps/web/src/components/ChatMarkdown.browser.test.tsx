@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import { serializeComposerSkillToken } from "@t3tools/shared/composerInlineTokens";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import { act, type ReactElement } from "react";
@@ -376,6 +377,39 @@ describe("ChatMarkdown streaming", () => {
 });
 
 describe("ChatMarkdown skill chips", () => {
+  function skillCopySources(container: HTMLElement) {
+    return [...container.querySelectorAll<HTMLElement>("span[data-markdown-copy]")].map(
+      (chip) => chip.dataset.markdownCopy,
+    );
+  }
+
+  it.each(['Review "UI"', "Review \\Tools", "Review **UI**"])(
+    "preserves %s through Markdown rendering and copying",
+    async (name) => {
+      const source = serializeComposerSkillToken(name);
+      const container = await renderText(`Use ${source} next`, {
+        skills: [
+          { name, displayName: "Expected skill" },
+          { name: "Review Tools", displayName: "Wrong skill" },
+        ],
+      });
+      expect(skillCopySources(container)).toEqual([source]);
+      expect(container.textContent).not.toContain("Wrong skill");
+    },
+  );
+
+  it("renders the full multiword skill and retains its copyable source", async () => {
+    const container = await renderText('Use $"Poteto Mode" next', {
+      skills: [
+        { name: "Poteto Mode", displayName: "Poteto workflow" },
+        { name: "Poteto", displayName: "Wrong skill" },
+      ],
+    });
+    expect(skillCopySources(container)).toEqual(['$"Poteto Mode"']);
+    expect(container.textContent).toContain("Poteto workflow");
+    expect(container.textContent).not.toContain("Wrong skill");
+  });
+
   it("updates digit-leading skill labels when discovered skills change", async () => {
     const text = "Use $2spec with a $20k budget.";
     const { container, rerender } = await render(<ChatMarkdown cwd="/tmp/project" text={text} />);
