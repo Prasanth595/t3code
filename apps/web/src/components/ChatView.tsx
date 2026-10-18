@@ -5846,7 +5846,7 @@ export default function ChatView(props: ChatViewProps) {
     readonly runId: RunId;
   }) => {
     if (!activeThread || activeEnvironmentUnavailable) return;
-    setForkSource(input);
+    setForkSource({ ...input });
   };
   const onForkWorkspaceSelected = async (
     workspaceStrategy: import("@t3tools/contracts").OrchestrationV2ThreadLaunchWorkspaceStrategy,
@@ -5883,7 +5883,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     const result = await pendingResult;
     if (result._tag === "Failure") {
-      setForkSource(null);
+      setForkSource((current) => (current === forkSource ? null : current));
       if (isAtomCommandInterrupted(result)) return;
       const error = squashAtomCommandFailure(result);
       const message = error instanceof Error ? error.message : "Failed to fork this response.";
@@ -5912,7 +5912,7 @@ export default function ChatView(props: ChatViewProps) {
       }
       return;
     }
-    setForkSource(null);
+    setForkSource((current) => (current === forkSource ? null : current));
     if (openedEarly) return;
     const targetThreadReady = await waitForThreadShell(targetThreadRef);
     if (!targetThreadReady) {

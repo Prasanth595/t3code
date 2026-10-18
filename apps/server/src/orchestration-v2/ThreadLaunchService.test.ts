@@ -739,6 +739,38 @@ it.effect("keeps the chosen fork base when the source checkpoint is unavailable"
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect.each(["ready", "missing"] as const)(
+  "honors origin for a fork only without a ready checkpoint (%s)",
+  (checkpointStatus) => {
+    const fetchRemote = vi.fn(() => Effect.void);
+    const harness = makeHarness({ fetchRemote });
+    return Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const forkSource = yield* seedForkSource(checkpointStatus);
+      const result = yield* launches.launch({
+        ...launchInput({
+          command: "fork:origin-base",
+          thread: "thread:fork-origin-base",
+          workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
+        }),
+        forkSource,
+      });
+      assert.equal(
+        harness.createWorktree.mock.calls[0]?.[0].refName,
+        checkpointStatus === "ready" ? "refs/t3/checkpoint/fork-source" : "remote-main-sha",
+      );
+      assert.deepEqual(
+        fetchRemote.mock.calls,
+        checkpointStatus === "ready"
+          ? []
+          : [[{ cwd: project.workspaceRoot, remoteName: "origin", refName: "main" }]],
+      );
+      assert.equal(result.projection.thread.worktreePath, "/repo-worktrees/feature");
+      assert.isEmpty(result.projection.runs);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
 it.effect("pins a latest-stable fork's history to the run used for its checkpoint", () => {
   let advanceSource = Effect.void;
   const harness = makeHarness({ beforeForkDispatch: () => advanceSource });

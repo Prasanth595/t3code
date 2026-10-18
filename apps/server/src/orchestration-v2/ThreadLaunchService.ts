@@ -930,7 +930,8 @@ const make = Effect.gen(function* () {
             workspaceStrategy: {
               ...input.workspaceStrategy,
               baseRef: checkpoint?.ref ?? input.workspaceStrategy.baseRef,
-              startFromOrigin: false,
+              startFromOrigin:
+                checkpoint === undefined ? input.workspaceStrategy.startFromOrigin : false,
             },
           };
         }
