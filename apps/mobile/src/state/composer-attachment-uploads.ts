@@ -73,7 +73,7 @@ export function useComposerAttachmentUploadWorker() {
         const release = isFileBackedComposerAttachment(attachment)
           ? retainComposerAttachmentFileForPreview(attachment)
           : undefined;
-        try {
+        return await (async () => {
           const result = await prepareTurnAttachments({
             environmentId,
             attachments: [attachment],
@@ -106,9 +106,9 @@ export function useComposerAttachmentUploadWorker() {
             },
           });
           return result.status === "ready";
-        } finally {
+        })().finally(() => {
           release?.();
-        }
+        });
       },
     });
     queueRef.current = queue;
