@@ -20,7 +20,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -675,9 +675,16 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       let downloadedBytes = 0;
       let lastProgressAt = yield* Clock.currentTimeMillis;
       yield* Effect.gen(function* () {
-        const response = yield* http
-          .execute(HttpClientRequest.get(release.url))
-          .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
+        const request = http.execute(HttpClientRequest.get(release.url));
+        // Only its URL vouches for an upstream release, so a redirect is
+        // refused rather than followed somewhere that check never saw.
+        const response = yield* (
+          pin
+            ? request
+            : request.pipe(
+                Effect.provideService(FetchHttpClient.RequestInit, { redirect: "error" }),
+              )
+        ).pipe(Effect.flatMap(HttpClientResponse.filterStatusOk));
         // dl.google.com gzips the zip when the client accepts it, so
         // `content-length` is the encoded size. The decoded stream is still
         // checked against the byte limit and, when pinned, the hash below.
