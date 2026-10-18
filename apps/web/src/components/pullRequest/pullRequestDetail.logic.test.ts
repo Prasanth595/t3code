@@ -2043,6 +2043,7 @@ describe("the pull request's row in its branch graph", () => {
     mergeability: "mergeable",
     baseBranch: "main",
     checks: [],
+    mergedAt: null,
   } as const;
   const check = (status: "pending" | "success" | "failure") => ({
     name: status,

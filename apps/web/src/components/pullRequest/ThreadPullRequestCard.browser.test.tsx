@@ -463,6 +463,26 @@ it("carries a merge down the branch's own commits, newest first", async () => {
   await expect.element(page.getByText("Merged into main", { exact: true })).toBeVisible();
   await settle(list);
 });
+it("leaves commits added after the merge out of it", async () => {
+  state.history = {
+    ...state.history!,
+    commits: state.history!.commits.map((commit, index) => ({
+      ...commit,
+      authoredAt: index === 0 ? "2026-10-18T12:00:00Z" : commit.authoredAt,
+      parents: index === 2 ? ["sha-3", "main-tip"] : commit.parents,
+    })),
+  };
+  await renderHistory({ target: ready });
+  const list = container.querySelector<HTMLElement>('[aria-label="Branch commit history"]')!;
+  await settle(list);
+  const merged = { ...detail, state: "merged", mergedAt: "2026-10-18T11:00:00Z" } as const;
+  await renderHistory({ target: pullRequestGraphTarget(merged, false) });
+  const flashed = ["sha-0", "sha-1"].map(
+    (sha) => list.querySelector(`[data-graph-row="${sha}"]`)!.getAnimations().length,
+  );
+  expect(flashed).toEqual([0, 1]);
+  await settle(list);
+});
 it("follows the checkout live and keeps the uncommitted row until its commit arrives", async () => {
   state.status = vcsStatus({ files: 2 });
   await render();

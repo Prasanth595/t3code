@@ -109,11 +109,20 @@ export function GitCommitGraph({
   ];
   const { rows, width } = layoutGitGraph([...lead, ...history.commits]);
   const visible = expanded ? rows : rows.slice(0, lead.length + COLLAPSED_COMMITS);
+  const laneWidth = Math.min(width, 96);
   const merged = target?.tone === "merged";
   const branch = branchOnlyShas(history.commits, headSha, history.baseSha);
+  // A merge recolors the branch's own commits from the newest down, skipping any added after it.
+  const mergedAt = merged && target.mergedAt !== null ? Date.parse(target.mergedAt) : null;
   const cascade = [
     TARGET,
-    ...visible.map((row) => row.commit.sha).filter((sha) => branch.has(sha)),
+    ...visible
+      .filter(
+        ({ commit }) =>
+          branch.has(commit.sha) &&
+          (mergedAt === null || Date.parse(commit.authoredAt) <= mergedAt),
+      )
+      .map(({ commit }) => commit.sha),
   ];
   // Each row's label before the latest history change, so arriving and relabelled rows decode.
   const historyKey = rows.map((row) => `${row.commit.sha}:${row.commit.subject}`).join("\n");
@@ -255,13 +264,13 @@ export function GitCommitGraph({
                 isTarget && target!.tone === "warning" && "bg-warning/6",
               )}
             >
+              {/* Lanes past the strip are clipped rather than squeezed, so nodes keep their shape. */}
               <svg
-                width={Math.min(width, 96)}
+                width={laneWidth}
                 height={32}
-                viewBox={`0 0 ${width} 32`}
-                preserveAspectRatio="none"
+                viewBox={`0 0 ${laneWidth} 32`}
                 aria-hidden
-                className="shrink-0 overflow-visible"
+                className="shrink-0"
               >
                 {paths.map((path) => (
                   <path
@@ -327,7 +336,7 @@ export function GitCommitGraph({
                 </g>
               </svg>
               {isTarget || isWorking ? (
-                <span className="relative min-w-0 flex-1 truncate text-muted-foreground">
+                <span className="relative min-w-0 flex-1 self-stretch truncate leading-8 text-muted-foreground">
                   <ScrambleText
                     key={commit.subject}
                     text={commit.subject}
@@ -338,7 +347,7 @@ export function GitCommitGraph({
                       aria-hidden
                       className={cn(
                         styles.progress,
-                        "absolute inset-x-0 bottom-1 h-px origin-left bg-success/70",
+                        "absolute inset-x-0 bottom-2 h-px origin-left bg-success/70",
                       )}
                       style={{ transform: `scaleX(${target!.progress})` }}
                     />

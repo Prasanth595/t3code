@@ -178,6 +178,38 @@ describe("git branch history", () => {
       }),
     ),
   );
+  it.effect("keeps the head's newest commits after its base merged an earlier one", () =>
+    provide(
+      Effect.gen(function* () {
+        const { cwd, run, history } = yield* fixture;
+        const git = yield* GitVcsDriver.GitVcsDriver;
+        const at = (date: string, args: ReadonlyArray<string>) =>
+          git.execute({
+            operation: "test.history",
+            cwd,
+            args: ["-c", "user.name=Graph Author", "-c", "user.email=graph@test", ...args],
+            env: { ...process.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date },
+          });
+        const commitAt = (subject: string, date: string) =>
+          at(date, ["commit", "--allow-empty", "-m", subject]);
+        yield* commitAt("root", "2026-01-01T00:00:00Z");
+        yield* run(["switch", "-c", "feature"]);
+        yield* commitAt("feature 1", "2026-01-03T00:00:00Z");
+        yield* commitAt("feature 2", "2026-01-06T00:00:00Z");
+        yield* run(["switch", "main"]);
+        for (let i = 0; i < 45; i++) {
+          yield* commitAt(`main ${i}`, `2026-01-02T00:${String(i).padStart(2, "0")}:00Z`);
+        }
+        yield* at("2026-01-07T00:00:00Z", ["merge", "--no-ff", "feature~1", "-m", "merge feature"]);
+        const result = yield* history();
+        expect(result.commits.slice(0, 3).map((commit) => commit.subject)).toEqual([
+          "merge feature",
+          "feature 2",
+          "feature 1",
+        ]);
+      }),
+    ),
+  );
   it.effect("rejects revision expressions and wildcard patterns", () =>
     provide(
       Effect.gen(function* () {

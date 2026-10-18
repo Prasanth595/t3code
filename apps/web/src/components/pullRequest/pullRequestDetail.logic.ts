@@ -396,11 +396,16 @@ export interface PullRequestGraphTarget {
   readonly busy: boolean;
   /** Share of checks that finished, while some are still running. */
   readonly progress: number | null;
+  /** When the pull request merged; later commits on its branch were not part of it. */
+  readonly mergedAt: string | null;
 }
 
 /** The pull request's own row at the top of its branch graph: where it lands and what blocks it. */
 export function pullRequestGraphTarget(
-  detail: Pick<PullRequestDetail, "state" | "isDraft" | "mergeability" | "baseBranch" | "checks">,
+  detail: Pick<
+    PullRequestDetail,
+    "state" | "isDraft" | "mergeability" | "baseBranch" | "checks" | "mergedAt"
+  >,
   merging: boolean,
 ): PullRequestGraphTarget {
   const target = (status: string, tone: PullRequestGraphTone, busy = false) => ({
@@ -409,6 +414,7 @@ export function pullRequestGraphTarget(
     tone,
     busy,
     progress: null,
+    mergedAt: detail.mergedAt,
   });
   if (detail.state === "merged") {
     return { ...target("merged", "merged"), label: `Merged into ${detail.baseBranch}` };

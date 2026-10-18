@@ -53,6 +53,20 @@ describe("layoutGitGraph", () => {
   });
 });
 
+describe("history past the loaded window", () => {
+  it("ends lanes whose parents were not loaded instead of holding them open", () => {
+    const oneSync = layoutGitGraph([commit("sync", ["a", "upstream"]), commit("a", [])]);
+    const manySyncs = layoutGitGraph([
+      commit("sync-3", ["sync-2", "upstream-3"]),
+      commit("sync-2", ["sync-1", "upstream-2"]),
+      commit("sync-1", ["a", "upstream-1"]),
+      commit("a", []),
+    ]);
+    expect(manySyncs.width).toBe(oneSync.width);
+    expect(new Set(manySyncs.rows.map((row) => row.x)).size).toBe(1);
+  });
+});
+
 describe("branchOnlyShas", () => {
   const history = [
     commit("merge", ["main-2", "head"]),
