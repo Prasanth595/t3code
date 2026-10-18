@@ -5,6 +5,7 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -1607,149 +1608,175 @@ describe("DesktopBackendConfiguration", () => {
 
 // The whole WSL-only startup against a distro that lists fine but never answers
 // a command: real configuration, real WSL environment, real retry loop.
-describe("WSL-only startup against a stalled distro", () => {
-  it.effect("falls back to Windows after three pre-warm timeouts, without converting paths", () =>
-    Effect.gen(function* () {
-      const baseDir = "/t3-stalled-distro";
-      // Every file exists, so this is a packaged install with a runtime archive,
-      // which runs the most commands per attempt. No real I/O keeps the test
-      // clock the only thing that moves time.
-      const layerFileSystem = FileSystem.layerNoop({
-        exists: () => Effect.succeed(true),
-        readFileString: (file) =>
-          file.endsWith(".sha256")
-            ? Effect.succeed(`${"a".repeat(64)}\n`)
-            : Effect.fail(
-                PlatformError.systemError({
-                  _tag: "NotFound",
-                  module: "FileSystem",
-                  method: "readFileString",
-                  pathOrDescriptor: file,
-                }),
-              ),
-      });
-
-      const spawned: string[] = [];
-      const spawner = ChildProcessSpawner.make((command) =>
-        Effect.sync(() => {
-          const args = "args" in command ? command.args.join(" ") : "";
-          spawned.push(args);
-          const listing = args.includes("--list");
-          return ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(1),
-            exitCode: listing ? Effect.succeed(ChildProcessSpawner.ExitCode(0)) : Effect.never,
-            isRunning: Effect.succeed(!listing),
-            kill: () => Effect.void,
-            unref: Effect.succeed(Effect.void),
-            stdin: Sink.drain,
-            stdout: listing
-              ? Stream.make(
-                  new TextEncoder().encode("  NAME    STATE    VERSION\n* Ubuntu  Running  2\n"),
-                )
-              : Stream.never,
-            stderr: Stream.empty,
-            all: Stream.empty,
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-          });
-        }),
-      );
-      const layerSpawner = Layer.merge(
-        Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        layerFileSystem,
-      );
-      const layerEnv = layerEnvironment(baseDir, {
-        appPath: baseDir,
-        platform: "win32",
-        resourcesPath: baseDir,
-      });
-      // The real environment, except that wsl.exe counts as installed off Windows too.
-      const layerWsl = Layer.effect(
-        DesktopWslEnvironment.DesktopWslEnvironment,
-        Effect.gen(function* () {
-          const wsl = yield* DesktopWslEnvironment.DesktopWslEnvironment;
-          return DesktopWslEnvironment.DesktopWslEnvironment.of({
-            ...wsl,
-            isAvailable: Effect.succeed(true),
-          });
-        }),
-      ).pipe(
-        Layer.provide(DesktopWslEnvironment.layer),
-        Layer.provide(Layer.merge(layerSpawner, layerEnv)),
-      );
-      const layerConfiguration = layerBackendConfiguration().pipe(
-        Layer.provideMerge(layerServerExposure),
-        Layer.provideMerge(
-          DesktopAppSettings.layerTest({
-            ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
-            wslBackendEnabled: true,
-            wslOnly: true,
-            wslDistro: "Ubuntu",
-          }),
-        ),
-        Layer.provideMerge(
-          DesktopWslServerTree.layerTest({
-            result: { ok: true, root: `${baseDir}/app.asar.unpacked` },
-          }),
-        ),
-        Layer.provideMerge(layerWsl),
-        Layer.provideMerge(layerEnv),
-        Layer.provide(layerFileSystem),
-      );
-      const layerManagerServices = Layer.mergeAll(
-        layerSpawner,
-        Layer.succeed(
-          HttpClient.HttpClient,
-          HttpClient.make(() => Effect.never),
-        ),
-        Layer.succeed(DesktopObservability.DesktopBackendOutputLogFactory, {
-          forInstance: () =>
-            Effect.succeed({
-              beginSession: () => Effect.void,
-              writeOutputChunk: () => Effect.void,
-              persistFailureSnapshot: () => Effect.void,
-              persistFailure: () => Effect.void,
-              discardSession: Effect.void,
+const stalledWslStartup = () => {
+  const baseDir = "/t3-stalled-distro";
+  // Every file exists, so this is a packaged install with a runtime archive,
+  // which runs the most commands per attempt. No real I/O keeps the test
+  // clock the only thing that moves time.
+  const layerFileSystem = FileSystem.layerNoop({
+    exists: () => Effect.succeed(true),
+    readFileString: (file) =>
+      file.endsWith(".sha256")
+        ? Effect.succeed(`${"a".repeat(64)}\n`)
+        : Effect.fail(
+            PlatformError.systemError({
+              _tag: "NotFound",
+              module: "FileSystem",
+              method: "readFileString",
+              pathOrDescriptor: file,
             }),
-        }),
-        Layer.succeed(DesktopTelemetryPublisher.DesktopTelemetryPublisher, {
-          latest: Effect.succeedNone,
-          changes: Stream.empty,
-          encoded: Stream.empty,
-          handleControlForSource: () => Effect.void,
-          removeControlSource: () => Effect.void,
-          publishUpdateReport: () => Effect.void,
-          updateRequests: Stream.empty,
-          updateCommits: Stream.empty,
-          updateCancellations: Stream.empty,
-        }),
-        DesktopBrowserHost.layer,
-      );
+          ),
+  });
 
+  const spawned: string[] = [];
+  const running = new Set<string>();
+  const spawner = ChildProcessSpawner.make((command) =>
+    Effect.gen(function* () {
+      const args = "args" in command ? command.args.join(" ") : "";
+      spawned.push(args);
+      const listing = args.includes("--list");
+      const id = `${spawned.length}: ${args}`;
+      if (!listing) {
+        running.add(id);
+        yield* Effect.addFinalizer(() => Effect.sync(() => running.delete(id)));
+      }
+      return ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode: listing ? Effect.succeed(ChildProcessSpawner.ExitCode(0)) : Effect.never,
+        isRunning: Effect.succeed(!listing),
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        stdin: Sink.drain,
+        stdout: listing
+          ? Stream.make(
+              new TextEncoder().encode("  NAME    STATE    VERSION\n* Ubuntu  Running  2\n"),
+            )
+          : Stream.never,
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    }),
+  );
+  const layerSpawner = Layer.merge(
+    Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    layerFileSystem,
+  );
+  const layerEnv = layerEnvironment(baseDir, {
+    appPath: baseDir,
+    platform: "win32",
+    resourcesPath: baseDir,
+  });
+  // The real environment, except that wsl.exe counts as installed off Windows too.
+  const layerWsl = Layer.effect(
+    DesktopWslEnvironment.DesktopWslEnvironment,
+    Effect.gen(function* () {
+      const wsl = yield* DesktopWslEnvironment.DesktopWslEnvironment;
+      return DesktopWslEnvironment.DesktopWslEnvironment.of({
+        ...wsl,
+        isAvailable: Effect.succeed(true),
+      });
+    }),
+  ).pipe(
+    Layer.provide(DesktopWslEnvironment.layer),
+    Layer.provide(Layer.merge(layerSpawner, layerEnv)),
+  );
+  const layerConfiguration = layerBackendConfiguration().pipe(
+    Layer.provideMerge(layerServerExposure),
+    Layer.provideMerge(
+      DesktopAppSettings.layerTest({
+        ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+        wslBackendEnabled: true,
+        wslOnly: true,
+        wslDistro: "Ubuntu",
+      }),
+    ),
+    Layer.provideMerge(
+      DesktopWslServerTree.layerTest({
+        result: { ok: true, root: `${baseDir}/app.asar.unpacked` },
+      }),
+    ),
+    Layer.provideMerge(layerWsl),
+    Layer.provideMerge(layerEnv),
+    Layer.provide(layerFileSystem),
+  );
+  const layerManagerServices = Layer.mergeAll(
+    layerSpawner,
+    Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make(() => Effect.never),
+    ),
+    Layer.succeed(DesktopObservability.DesktopBackendOutputLogFactory, {
+      forInstance: () =>
+        Effect.succeed({
+          beginSession: () => Effect.void,
+          writeOutputChunk: () => Effect.void,
+          persistFailureSnapshot: () => Effect.void,
+          persistFailure: () => Effect.void,
+          discardSession: Effect.void,
+        }),
+    }),
+    Layer.succeed(DesktopTelemetryPublisher.DesktopTelemetryPublisher, {
+      latest: Effect.succeedNone,
+      changes: Stream.empty,
+      encoded: Stream.empty,
+      handleControlForSource: () => Effect.void,
+      removeControlSource: () => Effect.void,
+      publishUpdateReport: () => Effect.void,
+      updateRequests: Stream.empty,
+      updateCommits: Stream.empty,
+      updateCancellations: Stream.empty,
+    }),
+    DesktopBrowserHost.layer,
+  );
+  const makeInstance = (
+    onPreflightFailed: (failure: DesktopBackendManager.PreflightFailure) => Effect.Effect<boolean>,
+  ) =>
+    Effect.gen(function* () {
+      const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
+      return yield* DesktopBackendManager.makeBackendInstance({
+        id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
+        label: Effect.succeed("WSL (Ubuntu)"),
+        configResolve: configuration.resolvePrimary,
+        onPreflightFailed,
+      });
+    });
+  return {
+    spawned,
+    running,
+    makeInstance,
+    layer: Layer.mergeAll(layerConfiguration, layerManagerServices),
+  };
+};
+
+const stepClockUntil = (done: Effect.Effect<boolean>) =>
+  Effect.gen(function* () {
+    for (let step = 0; step < 36_000; step++) {
+      // Lets work that needs no time finish before the clock moves.
+      yield* TestClock.adjust(Duration.zero);
+      if (yield* done) return;
+      yield* TestClock.adjust(Duration.millis(100));
+    }
+  });
+
+describe("WSL-only startup against a stalled distro", () => {
+  it.effect("falls back to Windows after three pre-warm timeouts, without converting paths", () => {
+    const startup = stalledWslStartup();
+    return Effect.gen(function* () {
       const fellBack = yield* Deferred.make<{
         readonly failure: DesktopBackendManager.PreflightFailure;
         readonly atMs: number;
       }>();
-      yield* Effect.gen(function* () {
-        const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
-        const startedAt = yield* Clock.currentTimeMillis;
-        const instance = yield* DesktopBackendManager.makeBackendInstance({
-          id: DesktopBackendManager.PRIMARY_INSTANCE_ID,
-          label: Effect.succeed("WSL (Ubuntu)"),
-          configResolve: configuration.resolvePrimary,
-          onPreflightFailed: (failure) =>
-            Clock.currentTimeMillis.pipe(
-              Effect.flatMap((now) =>
-                Deferred.succeed(fellBack, { failure, atMs: now - startedAt }),
-              ),
-              Effect.as(false),
-            ),
-        });
-        yield* instance.start.pipe(Effect.forkScoped);
-        for (let step = 0; step < 36_000 && !(yield* Deferred.isDone(fellBack)); step++) {
-          yield* TestClock.adjust(Duration.millis(100));
-        }
-      }).pipe(Effect.provide(Layer.mergeAll(layerConfiguration, layerManagerServices)));
+      const startedAt = yield* Clock.currentTimeMillis;
+      const instance = yield* startup.makeInstance((failure) =>
+        Clock.currentTimeMillis.pipe(
+          Effect.flatMap((now) => Deferred.succeed(fellBack, { failure, atMs: now - startedAt })),
+          Effect.as(false),
+        ),
+      );
+      yield* instance.start.pipe(Effect.forkScoped);
+      yield* stepClockUntil(Deferred.isDone(fellBack));
 
       const { failure, atMs } = yield* Deferred.await(fellBack).pipe(
         Effect.timeoutOption(Duration.zero),
@@ -1758,11 +1785,47 @@ describe("WSL-only startup against a stalled distro", () => {
       assert.isFalse(failure.fatal);
       assert.equal(failure.retryLimit, 3);
       assert.include(failure.reason, "did not start Ubuntu");
-      assert.equal(spawned.filter((args) => args.endsWith("-- true")).length, 3);
-      assert.isEmpty(spawned.filter((args) => args.includes("wslpath")));
-      // Three attempts of a 60 s pre-warm and the 5 s distro IP lookup, plus
-      // the 0.5 s and 1 s restart delays between them.
-      assert.equal(atMs, 196_500);
-    }).pipe(Effect.scoped, Effect.provide(Layer.merge(NodeServices.layer, TestClock.layer()))),
-  );
+      assert.equal(startup.spawned.filter((args) => args.endsWith("-- true")).length, 3);
+      assert.isEmpty(startup.spawned.filter((args) => args.includes("wslpath")));
+      assert.isEmpty(startup.spawned.filter((args) => args.includes("hostname")));
+      // Three 60 s pre-warms, plus the 0.5 s and 1 s restart delays between them.
+      assert.equal(atMs, 181_500);
+    }).pipe(
+      Effect.provide(startup.layer),
+      Effect.scoped,
+      Effect.provide(Layer.merge(NodeServices.layer, TestClock.layer())),
+    );
+  });
+
+  it.effect("stops right away when quit arrives during pre-warm", () => {
+    const startup = stalledWslStartup();
+    return Effect.gen(function* () {
+      const instance = yield* startup.makeInstance(() => Effect.succeed(false));
+      yield* instance.start.pipe(Effect.forkScoped);
+      yield* TestClock.adjust(Duration.seconds(1));
+      assert.deepEqual(
+        [...startup.running].map((id) => id.split(": ")[1]),
+        ["-d Ubuntu -- true"],
+      );
+
+      const stopFiber = yield* instance
+        .stop({ timeout: Duration.seconds(5) })
+        .pipe(Effect.forkScoped);
+      const requestedAt = yield* Clock.currentTimeMillis;
+      yield* stepClockUntil(Effect.sync(() => stopFiber.pollUnsafe() !== undefined));
+      const stoppedAfterMs = (yield* Clock.currentTimeMillis) - requestedAt;
+      yield* Fiber.join(stopFiber);
+
+      assert.equal(stoppedAfterMs, 0);
+      assert.isEmpty([...startup.running]);
+      const snapshot = yield* instance.snapshot;
+      assert.isFalse(snapshot.desiredRunning);
+      assert.isFalse(snapshot.restartScheduled);
+      assert.isTrue(Option.isNone(snapshot.activePid));
+    }).pipe(
+      Effect.provide(startup.layer),
+      Effect.scoped,
+      Effect.provide(Layer.merge(NodeServices.layer, TestClock.layer())),
+    );
+  });
 });

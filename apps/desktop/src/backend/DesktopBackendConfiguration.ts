@@ -662,7 +662,10 @@ const resolveWslStartConfig = Effect.fn("desktop.backendConfiguration.resolveWsl
   const runningDistro = preflight._tag === "Ready" ? preflight.runningDistro : null;
   const distroForConfig = runningDistro ?? input.distro;
 
-  const distroIp = yield* wslEnvironment.getDistroIp(distroForConfig);
+  // After a pre-warm timeout the lookup would only wait out its own deadline.
+  const distroIp = input.preWarmTimedOut
+    ? Option.none<string>()
+    : yield* wslEnvironment.getDistroIp(distroForConfig);
   const usesSharedNetworkStack = Option.match(distroIp, {
     onNone: () => false,
     onSome: (ip) => isLocalHostIpv4(ip),

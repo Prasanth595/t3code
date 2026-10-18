@@ -1,5 +1,6 @@
 import * as Brand from "effect/Brand";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -634,6 +635,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const httpClient = yield* HttpClient.HttpClient;
   const state = yield* Ref.make(initialState);
   const mutex = yield* Semaphore.make(1);
+  // start holds the mutex while it resolves its config, which can wait on a
+  // booting WSL distro for a minute. stop completes this first, so a start that
+  // is resolving or waiting for the mutex gives up instead of holding stop back.
+  const stopRequested = yield* Ref.make(yield* Deferred.make<void>());
 
   const { logWarning: logInstanceWarning, logError: logInstanceError } =
     DesktopObservability.makeComponentLogger(`desktop-backend-instance:${spec.id}`);
@@ -667,9 +672,13 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     });
   });
 
-  const start: Effect.Effect<void> = Effect.suspend(() =>
-    mutex.withPermits(1)(
+  const start: Effect.Effect<void> = Effect.gen(function* () {
+    const stopped = yield* Ref.get(stopRequested);
+    yield* mutex.withPermits(1)(
       Effect.gen(function* () {
+        if (yield* Deferred.isDone(stopped)) {
+          return;
+        }
         const current = yield* Ref.get(state);
         if (Option.isSome(current.active)) {
           if (!current.desiredRunning) {
@@ -687,14 +696,22 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             latest.ready ? { ...latest, ready: false } : latest,
           );
         }
-        const config = yield* spec.configResolve.pipe(
-          Effect.tapError((error) =>
-            logInstanceError("failed to generate desktop backend configuration", {
-              cause: error.message,
-            }),
+        const resolved = yield* Effect.raceFirst(
+          spec.configResolve.pipe(
+            Effect.tapError((error) =>
+              logInstanceError("failed to generate desktop backend configuration", {
+                cause: error.message,
+              }),
+            ),
+            Effect.option,
+            Effect.map(Option.some),
           ),
-          Effect.option,
+          Deferred.await(stopped).pipe(Effect.as(Option.none())),
         );
+        if (Option.isNone(resolved)) {
+          return;
+        }
+        const config = resolved.value;
         if (Option.isNone(config)) {
           if (current.desiredRunning) {
             yield* scheduleRestart("failed to generate desktop backend configuration");
@@ -959,8 +976,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           fiber: Option.some(fiber),
         }));
       }),
-    ),
-  ).pipe(Effect.withSpan("desktop.backendInstance.start", { attributes: { id: spec.id } }));
+    );
+  }).pipe(Effect.withSpan("desktop.backendInstance.start", { attributes: { id: spec.id } }));
 
   const scheduleRestart = Effect.fn("desktop.backendInstance.scheduleRestart")(function* (
     reason: string,
@@ -1025,6 +1042,10 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const stop = Effect.fn("desktop.backendInstance.stop")(function* (options?: {
     readonly timeout?: Duration.Duration;
   }) {
+    yield* Deferred.succeed(
+      yield* Ref.getAndSet(stopRequested, yield* Deferred.make<void>()),
+      undefined,
+    );
     const { active, restartFiber, notifyShutdown } = yield* mutex.withPermits(1)(
       Effect.gen(function* () {
         const result = yield* Ref.modify(state, (latest) => {
