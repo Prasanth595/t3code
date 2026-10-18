@@ -3121,6 +3121,53 @@ it.layer(
       ),
     );
 
+    it.effect("waits for a healthy claude CLI that is slow to answer --version", () =>
+      Effect.gen(function* () {
+        const statusFiber = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities(),
+        ).pipe(
+          Effect.provide(
+            Layer.succeed(
+              ChildProcessSpawner.ChildProcessSpawner,
+              ChildProcessSpawner.make((command) => {
+                const joined = (command as unknown as { args: ReadonlyArray<string> }).args.join(
+                  " ",
+                );
+                if (joined !== "--version") throw new Error(`Unexpected args: ${joined}`);
+                // The native CLI can take several seconds to start on a busy Windows host.
+                const answer = Effect.sleep("19 seconds");
+                return Effect.succeed(
+                  ChildProcessSpawner.makeHandle({
+                    pid: ChildProcessSpawner.ProcessId(1),
+                    exitCode: answer.pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+                    isRunning: Effect.succeed(true),
+                    kill: () => Effect.void,
+                    unref: Effect.succeed(Effect.void),
+                    stdin: Sink.drain,
+                    stdout: Stream.fromEffect(answer.pipe(Effect.as(encoder.encode("1.0.0
+")))),
+                    stderr: Stream.empty,
+                    all: Stream.empty,
+                    getInputFd: () => Sink.drain,
+                    getOutputFd: () => Stream.empty,
+                  }),
+                );
+              }),
+            ),
+          ),
+          Effect.forkChild,
+        );
+        for (let second = 0; second < 20; second++) {
+          yield* Effect.yieldNow;
+          yield* TestClock.adjust("1 second");
+        }
+        const status = yield* Fiber.join(statusFiber);
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.version, "1.0.0");
+      }),
+    );
+
     it.effect("returns ready and labels Bedrock-backed Claude as authenticated", () =>
       Effect.gen(function* () {
         // Bedrock authenticates via external AWS credentials, so the SDK init
