@@ -190,6 +190,24 @@ function claudeAuthStatus(
     : "unauthenticated";
 }
 
+/**
+ * The capability probe only reports Claude Code's Anthropic login. A Claude
+ * instance pointed at another endpoint through `ANTHROPIC_BASE_URL` (an
+ * OpenRouter or router setup) authenticates with an environment token instead,
+ * so an empty first-party account payload says nothing about whether the
+ * connection works. A custom endpoint therefore outranks the logged-out verdict.
+ */
+function usesCustomClaudeApiEndpoint(environment: NodeJS.ProcessEnv): boolean {
+  const baseUrl = environment.ANTHROPIC_BASE_URL?.trim();
+  if (!baseUrl) return false;
+  try {
+    return new URL(baseUrl).host !== "api.anthropic.com";
+  } catch {
+    // A value that is not a URL is still a configured custom endpoint.
+    return true;
+  }
+}
+
 // Amazon Bedrock initializes far slower than first-party auth: the SDK boots the Bedrock
 // backend and runs the `awsAuthRefresh` credential hook before returning account info.
 const CAPABILITIES_PROBE_TIMEOUT_MS = 25_000;
@@ -605,7 +623,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
-  if (claudeAuthStatus(capabilities) === "unauthenticated") {
+  const customApiEndpoint = usesCustomClaudeApiEndpoint(resolvedEnvironment);
+  if (!customApiEndpoint && claudeAuthStatus(capabilities) === "unauthenticated") {
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,
@@ -627,7 +646,9 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     claudeAuthMetadata({
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
-    }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+    }) ??
+    apiProviderAuthMetadata(capabilities.apiProvider) ??
+    (customApiEndpoint ? { type: "customEndpoint", label: "Custom API endpoint" } : undefined);
   const usageLimits = !capabilities.usage
     ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
     : scopedLimitNames

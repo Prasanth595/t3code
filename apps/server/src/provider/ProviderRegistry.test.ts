@@ -3156,6 +3156,67 @@ it.layer(
             apiKeySource: "none",
             apiProvider: "firstParty",
           }),
+          // An empty base URL keeps the check independent of the machine's own
+          // Claude environment, which may point at a custom endpoint.
+          { ...process.env, ANTHROPIC_BASE_URL: "" },
+        );
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.auth.status, "unauthenticated");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("keeps a custom API endpoint authenticated when the CLI reports no login", () =>
+      Effect.gen(function* () {
+        // Router connections authenticate with an environment token, so Claude
+        // Code's own login probe reports an empty account payload even though
+        // the configured endpoint works.
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({
+            tokenSource: "none",
+            apiKeySource: "none",
+            apiProvider: "firstParty",
+          }),
+          {
+            ...process.env,
+            ANTHROPIC_BASE_URL: "https://openrouter.ai/api",
+            ANTHROPIC_AUTH_TOKEN: "router-token",
+            ANTHROPIC_API_KEY: "",
+          },
+        );
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.auth.status, "authenticated");
+        assert.strictEqual(status.auth.type, "customEndpoint");
+        assert.strictEqual(status.auth.label, "Custom API endpoint");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
+    it.effect("still reports a logged-out CLI when the base URL is Anthropic's own", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({
+            tokenSource: "none",
+            apiKeySource: "none",
+            apiProvider: "firstParty",
+          }),
+          { ...process.env, ANTHROPIC_BASE_URL: "https://api.anthropic.com" },
         );
         assert.strictEqual(status.status, "error");
         assert.strictEqual(status.auth.status, "unauthenticated");
