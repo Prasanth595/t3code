@@ -8,12 +8,10 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
 
 import {
   GitCommandError,
-  type VcsError,
   VcsProcessExitError,
   type VcsSwitchRefInput,
   type VcsSwitchRefResult,
@@ -34,6 +32,7 @@ import {
   type VcsStatusResult,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
+import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
 import {
   makeGitVcsDriverCore,
   PATCH_RENDER_PREFIX_ARGS,
@@ -522,14 +521,6 @@ const gitCommand = (
       : {}),
   });
 
-// Spawning a git that is not installed. Repository detection reads this as "not a repository".
-const isMissingGitExecutable = (error: VcsError) =>
-  error._tag === "VcsProcessSpawnError" &&
-  error.cause instanceof PlatformError.PlatformError &&
-  error.cause.reason._tag === "NotFound" &&
-  error.cause.reason.module === "ChildProcess" &&
-  error.cause.reason.method === "spawn";
-
 export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -557,7 +548,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       },
     ).pipe(
       Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"),
-      Effect.catchIf(isMissingGitExecutable, () => Effect.succeed(false)),
+      // A git that is not installed reads as "not a repository", as a missing hosting CLI does in discovery.
+      Effect.catchIf(isMissingExecutable, () => Effect.succeed(false)),
     );
 
   const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
