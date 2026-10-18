@@ -154,6 +154,8 @@ export interface EnvironmentManager {
   terminateInteractive(request: EnvironmentRequest, sessionId: string): Promise<void>;
   closeInteractiveSessions?(): Promise<void>;
   startManagedSession(request: EnvironmentRequest, command: readonly string[], process?: EnvironmentManagedSessionRequest): Promise<EnvironmentManagedSessionStartResult>;
+  /** Open a byte-stream tunnel to a loopback listener inside this exact environment. */
+  startPortTunnel(request: EnvironmentRequest, port: number): Promise<EnvironmentManagedSessionStartResult>;
   writeManagedSession(request: EnvironmentRequest, sessionId: string, data: Uint8Array): Promise<void>;
   attachManagedSessionOutput(request: EnvironmentRequest, sessionId: string, afterSequence?: number): AsyncIterable<EnvironmentManagedSessionOutputEvent | { readonly type: "exit"; readonly result: EnvironmentProcessResult }>;
   terminateManagedSession(request: EnvironmentRequest, sessionId: string): Promise<void>;
@@ -335,6 +337,22 @@ export function createEnvironmentManager(
     return environment;
   };
 
+  const persistCreating = async (expected: EnvironmentIdentity): Promise<void> => {
+    if (!registrations) return;
+    const prior = (await registrations.loadAll()).find((entry) => entry.environment.id === expected.id);
+    const timestamp = now().toISOString();
+    // Persist intent before asking the backend to allocate a resource. If the
+    // manager exits after Docker creates the stable-name container, startup
+    // reconciliation can adopt it only after the backend verifies its full
+    // identity and isolation configuration.
+    await registrations.save({
+      ...expected,
+      backendId: backend.id,
+      resourceId: `pending:${expected.id}`,
+      status: "creating",
+    }, prior?.createdAt ?? timestamp, timestamp);
+  };
+
   const inspect = async (expected: EnvironmentIdentity) => {
     const found = await backendCall("inspect", () => backend.inspect(expected));
     return found === null ? null : validateRecord(expected, found);
@@ -387,6 +405,7 @@ export function createEnvironmentManager(
         current = null;
       }
       if (current === null) {
+        await persistCreating(expected);
         current = validateRecord(expected, await backendCall("create", () => backend.create(expected)));
         await persist(current);
       }
@@ -406,6 +425,7 @@ export function createEnvironmentManager(
       if (found.compatibility === "legacy") {
         await terminateSessionsForEnvironment(expected.id);
         await backendCall("remove legacy environment for migration", () => backend.remove(found.environment));
+        await persistCreating(expected);
         const created = validateRecord(expected, await backendCall("create migrated environment", () => backend.create(expected)));
         await persist(created);
         return persist(validateRecord(expected, await backendCall("start migrated environment", () => backend.start(created))));
@@ -437,6 +457,7 @@ export function createEnvironmentManager(
       }
       if (found.compatibility === "legacy") {
         await backendCall("remove legacy environment for restart", () => backend.remove(found.environment));
+        await persistCreating(expected);
         const created = validateRecord(expected, await backendCall("create migrated environment", () => backend.create(expected)));
         await persist(created);
         return persist(validateRecord(expected, await backendCall("start migrated environment", () => backend.start(created))));
@@ -489,6 +510,7 @@ export function createEnvironmentManager(
         await backendCall(found.compatibility === "current" ? "remove for rebuild" : "remove legacy or incomplete environment for rebuild", () => backend.remove(found.environment));
       }
       await registrations?.remove(expected.id);
+      await persistCreating(expected);
       const created = validateRecord(expected, await backendCall("recreate", () => backend.create(expected)));
       await persist(created);
       if (created.status === "ready") return created;
@@ -736,6 +758,29 @@ export function createEnvironmentManager(
     });
   };
 
+  const startPortTunnel: EnvironmentManager["startPortTunnel"] = async (request, port) => {
+    if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+      throw new EnvironmentManagerError("INVALID_REQUEST", "Port tunnel target must be a valid TCP port");
+    }
+    // Keep the command manager-owned: callers select only a port, and the
+    // worker can connect only to its own loopback namespace.
+    const connector = [
+      "const net=require('node:net');",
+      "const port=Number(process.argv[1]);",
+      "if(!Number.isInteger(port)||port<1||port>65535)process.exit(2);",
+      "const socket=net.connect({host:'127.0.0.1',port});",
+      "socket.once('connect',()=>process.stdin.pipe(socket));",
+      "socket.pipe(process.stdout);",
+      "socket.once('error',()=>process.exit(1));",
+      "socket.once('close',()=>process.exit(0));",
+      "process.stdin.once('end',()=>socket.end());",
+    ].join("");
+    return startManagedSession(request, ["node", "-e", connector, String(port)], {
+      cwd: ".",
+      clientSessionId: `preview-port-${randomUUID()}`,
+    });
+  };
+
   const writeManagedSession: EnvironmentManager["writeManagedSession"] = async (request, sessionId, data) => {
     if (!(data instanceof Uint8Array) || data.byteLength > 65_536) throw new EnvironmentManagerError("INVALID_REQUEST", "Managed session input must be at most 64 KiB");
     const { session } = await resolveManagedSession(request, sessionId);
@@ -814,7 +859,16 @@ export function createEnvironmentManager(
     const saved = await registrations.loadAll();
     return Promise.all(saved.map(async ({ environment }) => {
       try {
-        const currentIdentity = await identity(environment);
+        let currentIdentity: EnvironmentIdentity;
+        try {
+          currentIdentity = await identity(environment);
+        } catch (cause) {
+          throw new EnvironmentManagerError(
+            "OWNERSHIP_MISMATCH",
+            "Registered environment is stale because its storage root or worktree no longer resolves",
+            { cause },
+          );
+        }
         if (currentIdentity.id !== environment.id) {
           throw new EnvironmentManagerError("OWNERSHIP_MISMATCH", "Registered environment path no longer resolves to its original identity");
         }
@@ -837,5 +891,5 @@ export function createEnvironmentManager(
     }));
   };
 
-  return { identity, ensure, start, stop, restart, remove, execute, startInteractive, writeInteractive, resizeInteractive, attachInteractiveOutput, terminateInteractive, closeInteractiveSessions, startManagedSession, writeManagedSession, attachManagedSessionOutput, terminateManagedSession, closeManagedSessions, reconcile, list, inspect: inspectRegistered, rebuild };
+  return { identity, ensure, start, stop, restart, remove, execute, startInteractive, writeInteractive, resizeInteractive, attachInteractiveOutput, terminateInteractive, closeInteractiveSessions, startManagedSession, startPortTunnel, writeManagedSession, attachManagedSessionOutput, terminateManagedSession, closeManagedSessions, reconcile, list, inspect: inspectRegistered, rebuild };
 }

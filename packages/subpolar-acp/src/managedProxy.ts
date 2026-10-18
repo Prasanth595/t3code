@@ -19,6 +19,7 @@ import * as Sink from "effect/Sink";
 import * as Stdio from "effect/Stdio";
 import * as Stream from "effect/Stream";
 import * as Layer from "effect/Layer";
+import { callT3Mcp, type T3McpBridgeConnection } from "./t3McpBridge.ts";
 
 export interface ManagedAcpProxyOptions {
   readonly environment: NodeJS.ProcessEnv;
@@ -78,11 +79,37 @@ function environmentFor(cwd: string, environment: NodeJS.ProcessEnv): Environmen
   };
 }
 
+function t3McpConnection(servers: readonly AcpSchema.McpServer[] | undefined): T3McpBridgeConnection | undefined {
+  const candidates = (servers ?? []).filter((server) => server.name === "t3-code");
+  if (candidates.length === 0) return undefined;
+  if (candidates.length !== 1 || candidates[0]?.type !== "stdio") {
+    throw new Error("Managed Subpolar accepts only T3's single authenticated MCP bridge");
+  }
+  const environment = Object.fromEntries((candidates[0].env ?? []).map(({ name, value }) => [name, value]));
+  const endpoint = environment.T3_ACP_MCP_ENDPOINT;
+  const authorization = environment.T3_ACP_MCP_AUTHORIZATION;
+  if (typeof endpoint !== "string" || typeof authorization !== "string" ||
+      !authorization.startsWith("Bearer ") || authorization.slice("Bearer ".length).trim().length === 0) {
+    throw new Error("Managed Subpolar received an incomplete T3 MCP credential");
+  }
+  const url = new URL(endpoint);
+  if (!["127.0.0.1", "[::1]"].includes(url.hostname) || url.pathname !== "/mcp" || url.search || url.hash ||
+      url.username || url.password || url.protocol !== "http:") {
+    throw new Error("Managed Subpolar requires T3's loopback MCP endpoint");
+  }
+  return { endpoint, authorization };
+}
+
 export function makeManagedAcpManager(options: ManagedAcpProxyOptions): EnvironmentManager {
   if (options.manager) return options.manager;
   const { SUBPOLAR_MANAGER_URL: baseUrl, SUBPOLAR_MANAGER_TOKEN: token } = options.environment;
   if (!baseUrl || !token) throw new Error("Managed ACP requires SUBPOLAR_MANAGER_URL and SUBPOLAR_MANAGER_TOKEN");
-  return createEnvironmentManagerHttpClient({ baseUrl, token, ...(options.fetch ? { fetch: options.fetch } : {}) });
+  return createEnvironmentManagerHttpClient({
+    baseUrl,
+    token,
+    allowPrivateHttp: options.environment.SUBPOLAR_MANAGER_ALLOW_PRIVATE_HTTP === "true",
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+  });
 }
 
 const requestError = (error: unknown) => AcpError.AcpRequestError.internalError(
@@ -99,6 +126,7 @@ function makeManagedAcpProxy(stdio: Stdio.Stdio, options: ManagedAcpProxyOptions
     const command = parseCommand(environment);
     const manager = makeManagedAcpManager(options);
     const workers = new Map<string, WorkerSession>();
+    const activeT3McpRequests = new Map<string, AbortController>();
     let initializeRequest: AcpSchema.InitializeRequest | undefined;
 
     const getWorker = (sessionId: string) => {
@@ -143,9 +171,12 @@ function makeManagedAcpProxy(stdio: Stdio.Stdio, options: ManagedAcpProxyOptions
     ) => {
       if (!initializeRequest) throw new Error("ACP initialize must be called before session setup");
       const target = environmentFor(request.cwd, environment);
+      const t3Mcp = t3McpConnection(request.mcpServers);
+      const workerEnv = workerEnvironment(environment);
+      if (t3Mcp) workerEnv.SUBPOLAR_T3_MCP_BRIDGE = "1";
       const started = await manager.startManagedSession(target, command, {
         cwd: ".",
-        environment: workerEnvironment(environment),
+        environment: workerEnv,
         clientSessionId: `t3-acp-${createHash("sha256").update(nativeSessionId).digest("hex").slice(0, 32)}`,
       });
       let workerScope: Scope.CloseableScope | undefined;
@@ -224,11 +255,53 @@ function makeManagedAcpProxy(stdio: Stdio.Stdio, options: ManagedAcpProxyOptions
           agent.client.elicitationComplete(notification).pipe(Effect.mapError(requestError)),
         ));
         await Effect.runPromise(workerClient.handleUnknownExtRequest((method, payload) =>
+          method === "subpolar/t3_mcp"
+              ? Effect.tryPromise({
+                  try: async (signal) => {
+                    const bridgeRequest = payload as { sessionId?: unknown; requestId?: unknown; operation?: unknown; name?: unknown; arguments?: unknown };
+                    if (bridgeRequest.sessionId !== nativeSessionId || t3Mcp === undefined) {
+                      throw new Error("The T3 MCP session is unavailable");
+                    }
+                    if (typeof bridgeRequest.requestId !== "string" || !/^[0-9a-f-]{36}$/i.test(bridgeRequest.requestId)) {
+                      throw new Error("The T3 MCP request ID is invalid");
+                    }
+                    const requestKey = `${nativeSessionId}:${bridgeRequest.requestId}`;
+                    if (activeT3McpRequests.has(requestKey)) throw new Error("The T3 MCP request ID is already active");
+                    const requestController = new AbortController();
+                    activeT3McpRequests.set(requestKey, requestController);
+                    try {
+                      const requestSignal = AbortSignal.any([signal, requestController.signal]);
+                      if (bridgeRequest.operation === "list_tools") {
+                        return await callT3Mcp(t3Mcp, "tools/list", {}, options.fetch, requestSignal);
+                      }
+                      if (bridgeRequest.operation === "call_tool" && typeof bridgeRequest.name === "string" && bridgeRequest.name.length > 0 &&
+                          bridgeRequest.arguments !== null && typeof bridgeRequest.arguments === "object" && !Array.isArray(bridgeRequest.arguments)) {
+                        return await callT3Mcp(t3Mcp, "tools/call", { name: bridgeRequest.name, arguments: bridgeRequest.arguments as Record<string, unknown> }, options.fetch, requestSignal);
+                      }
+                      throw new Error("Invalid T3 MCP bridge request");
+                    } finally {
+                      activeT3McpRequests.delete(requestKey);
+                    }
+                  },
+                  catch: requestError,
+                })
+            :
           agent.client.extRequest(method, payload).pipe(Effect.mapError(requestError)),
         ));
-        await Effect.runPromise(workerClient.handleUnknownExtNotification((method, payload) =>
-          agent.client.extNotification(method, payload).pipe(Effect.mapError(requestError)),
-        ));
+        await Effect.runPromise(workerClient.handleUnknownExtNotification((method, payload) => {
+          if (method === "subpolar/cancel") {
+            const cancelRequest = payload as { sessionId?: unknown; requestId?: unknown };
+            if (cancelRequest.sessionId !== nativeSessionId || typeof cancelRequest.requestId !== "string" || !/^[0-9a-f-]{36}$/i.test(cancelRequest.requestId)) return Effect.void;
+            const requestKey = `${nativeSessionId}:${cancelRequest.requestId}`;
+            const activeRequest = activeT3McpRequests.get(requestKey);
+            if (activeRequest) {
+              activeRequest.abort(new Error("T3 MCP request was cancelled"));
+              return Effect.void;
+            }
+            return agent.client.extNotification(method, payload).pipe(Effect.mapError(requestError));
+          }
+          return agent.client.extNotification(method, payload).pipe(Effect.mapError(requestError));
+        }));
         const initialized = await Effect.runPromise(workerClient.agent.initialize(initializeRequest));
         if (initialized.protocolVersion !== initializeRequest.protocolVersion) {
           throw new Error("Managed ACP worker negotiated an incompatible protocol version");
@@ -237,12 +310,14 @@ function makeManagedAcpProxy(stdio: Stdio.Stdio, options: ManagedAcpProxyOptions
           ? await Effect.runPromise(workerClient.agent.loadSession({
               sessionId: nativeSessionId,
               cwd: request.cwd,
-              mcpServers: request.mcpServers ?? [],
+              // The host-only bearer stays on this proxy; the worker uses the
+              // authenticated ACP bridge below instead of receiving it.
+              mcpServers: [],
             }))
           : await Effect.runPromise(workerClient.agent.createSession({
               ...request,
               _meta: { ...(request._meta ?? {}), "subpolar.sessionId": nativeSessionId },
-              mcpServers: request.mcpServers ?? [],
+              mcpServers: [],
             }));
         const session: WorkerSession = {
           environment: target,
@@ -276,7 +351,7 @@ function makeManagedAcpProxy(stdio: Stdio.Stdio, options: ManagedAcpProxyOptions
       const loadRequest: AcpSchema.LoadSessionRequest = {
         sessionId: request.sessionId,
         cwd: request.cwd,
-        mcpServers: request.mcpServers ?? [],
+        mcpServers: [],
       };
       if (existing) {
         return existing.client.agent.loadSession(loadRequest).pipe(

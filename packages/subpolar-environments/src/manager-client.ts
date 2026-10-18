@@ -19,6 +19,8 @@ import {
 export interface EnvironmentManagerHttpClientOptions {
   readonly baseUrl: string;
   readonly token: string;
+  /** Allow plain HTTP to a private Docker network host such as `subpolar-manager`. */
+  readonly allowPrivateHttp?: boolean;
   readonly fetch?: typeof fetch;
 }
 
@@ -28,7 +30,38 @@ function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function validateBaseUrl(value: string): string {
+function isPrivateHttpHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (isLoopbackHostname(host)) return true;
+  // This is the only non-IP private name used by the shipped Compose stack.
+  // Do not accept arbitrary single-label or local-suffix names: resolver search
+  // domains and mDNS can send those to hosts outside the intended network.
+  if (host === "subpolar-manager") return true;
+  const octets = host.split(".").map(Number);
+  if (octets.length === 4 && octets.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)) {
+    return octets[0] === 10 ||
+      octets[0] === 127 ||
+      (octets[0] === 100 && octets[1]! >= 64 && octets[1]! <= 127) ||
+      (octets[0] === 172 && octets[1]! >= 16 && octets[1]! <= 31) ||
+      (octets[0] === 192 && octets[1] === 168) ||
+      (octets[0] === 169 && octets[1] === 254);
+  }
+  if (host.includes(":")) {
+    return host === "::1" || host.startsWith("fc") || host.startsWith("fd") || /^fe[89ab]/.test(host);
+  }
+  return false;
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host === "::1") return true;
+  const octets = host.split(".").map(Number);
+  return octets.length === 4 &&
+    octets.every((part) => Number.isInteger(part) && part >= 0 && part <= 255) &&
+    octets[0] === 127;
+}
+
+function validateBaseUrl(value: string, allowPrivateHttp: boolean): string {
   let parsed: URL;
   try {
     parsed = new URL(value);
@@ -37,6 +70,12 @@ function validateBaseUrl(value: string): string {
   }
   if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.username || parsed.password || parsed.search || parsed.hash) {
     throw new Error("Manager URL must use HTTP or HTTPS and cannot contain credentials, a query, or a fragment");
+  }
+  if (parsed.protocol === "http:" && !isLoopbackHostname(parsed.hostname) && !allowPrivateHttp) {
+    throw new Error("Plain HTTP manager URLs must use a loopback host unless private HTTP is explicitly enabled");
+  }
+  if (parsed.protocol === "http:" && allowPrivateHttp && !isPrivateHttpHostname(parsed.hostname)) {
+    throw new Error("Plain HTTP manager URLs with private HTTP enabled must use a private IP or the subpolar-manager service host");
   }
   return parsed.toString().replace(/\/$/, "");
 }
@@ -58,13 +97,14 @@ async function readError(response: Response): Promise<never> {
 
 /** Client for the authenticated environment-manager service boundary. */
 export function createEnvironmentManagerHttpClient(options: EnvironmentManagerHttpClientOptions): EnvironmentManager {
-  const baseUrl = validateBaseUrl(options.baseUrl);
+  const baseUrl = validateBaseUrl(options.baseUrl, options.allowPrivateHttp === true);
   if (options.token.length < 32 || options.token.includes("\0")) throw new Error("Manager API token must contain at least 32 characters");
   const fetcher = options.fetch ?? fetch;
 
   const post = async (route: string, body?: unknown, signal?: AbortSignal): Promise<Response> => {
     const response = await fetcher(`${baseUrl}/v1/environments/${route}`, {
       method: "POST",
+      redirect: "error",
       headers: {
         authorization: `Bearer ${options.token}`,
         ...(body === undefined ? {} : { "content-type": "application/json" }),
@@ -277,6 +317,14 @@ export function createEnvironmentManagerHttpClient(options: EnvironmentManagerHt
       const value: unknown = await response.json();
       if (!isRecord(value) || typeof value.sessionId !== "string" || !Number.isSafeInteger(value.outputSequence) || (value.outputSequence as number) < 0) {
         throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned an invalid managed session");
+      }
+      return { sessionId: value.sessionId, outputSequence: value.outputSequence as number };
+    },
+    async startPortTunnel(request, port): Promise<EnvironmentManagedSessionStartResult> {
+      const response = await post("tcp/start", { ...environmentBody(request), port });
+      const value: unknown = await response.json();
+      if (!isRecord(value) || typeof value.sessionId !== "string" || !Number.isSafeInteger(value.outputSequence) || (value.outputSequence as number) < 0) {
+        throw new EnvironmentManagerError("BACKEND_FAILURE", "Environment manager returned an invalid port tunnel session");
       }
       return { sessionId: value.sessionId, outputSequence: value.outputSequence as number };
     },

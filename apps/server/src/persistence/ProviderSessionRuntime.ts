@@ -13,6 +13,7 @@ import {
   AgentSessionImportSource,
   IsoDateTime,
   ProviderInstanceId,
+  ProviderSessionId,
   RuntimeMode,
   ThreadId,
 } from "@t3tools/contracts";
@@ -55,12 +56,26 @@ export interface ProviderSessionRuntimeUpsertOptions {
   readonly onConflict?: "update" | "ignore";
 }
 
+export const UpdateProviderSessionRuntimeStatusInput = Schema.Struct({
+  threadId: ThreadId,
+  providerInstanceId: ProviderInstanceId,
+  providerSessionId: ProviderSessionId,
+  status: Schema.Literals(["stopped", "error"]),
+  lastSeenAt: IsoDateTime,
+});
+export type UpdateProviderSessionRuntimeStatusInput =
+  typeof UpdateProviderSessionRuntimeStatusInput.Type;
+
 export class ProviderSessionRuntimeRepository extends Context.Service<
   ProviderSessionRuntimeRepository,
   {
     readonly upsert: (
       runtime: ProviderSessionRuntime,
       options?: ProviderSessionRuntimeUpsertOptions,
+    ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
+
+    readonly updateStatusIfSubpolarSession: (
+      input: UpdateProviderSessionRuntimeStatusInput,
     ) => Effect.Effect<void, ProviderSessionRuntimeRepositoryError>;
 
     readonly recordImportedTranscript: (
@@ -332,6 +347,23 @@ export const make = Effect.gen(function* () {
       `,
   });
 
+  const updateSubpolarRuntimeStatus = SqlSchema.void({
+    Request: UpdateProviderSessionRuntimeStatusInput,
+    execute: (input) =>
+      sql`
+        UPDATE provider_session_runtime
+        SET status = ${input.status}, last_seen_at = ${input.lastSeenAt}
+        WHERE thread_id = ${input.threadId}
+          AND provider_name = 'subpolar'
+          AND provider_instance_id = ${input.providerInstanceId}
+          AND adapter_key = 'subpolar/pi-acp'
+          AND json_extract(
+            CASE WHEN json_valid(runtime_payload_json) THEN runtime_payload_json ELSE '{}' END,
+            '$.subpolar.providerSessionId'
+          ) = ${input.providerSessionId}
+      `,
+  });
+
   const upsert: ProviderSessionRuntimeRepository["Service"]["upsert"] = (runtime, options) =>
     (options?.onConflict === "ignore" ? insertRuntimeRow(runtime) : upsertRuntimeRow(runtime)).pipe(
       Effect.mapError(
@@ -350,6 +382,18 @@ export const make = Effect.gen(function* () {
           toPersistenceSqlOrDecodeError(
             "ProviderSessionRuntimeRepository.recordImportedTranscript:query",
             "ProviderSessionRuntimeRepository.recordImportedTranscript:encodeRequest",
+            { threadId: input.threadId },
+          ),
+        ),
+      );
+
+  const updateStatusIfSubpolarSession: ProviderSessionRuntimeRepository["Service"]["updateStatusIfSubpolarSession"] =
+    (input) =>
+      updateSubpolarRuntimeStatus(input).pipe(
+        Effect.mapError(
+          toPersistenceSqlOrDecodeError(
+            "ProviderSessionRuntimeRepository.updateStatusIfSubpolarSession:query",
+            "ProviderSessionRuntimeRepository.updateStatusIfSubpolarSession:encodeRequest",
             { threadId: input.threadId },
           ),
         ),
@@ -430,6 +474,7 @@ export const make = Effect.gen(function* () {
 
   return {
     upsert,
+    updateStatusIfSubpolarSession,
     recordImportedTranscript,
     getByThreadId,
     list,

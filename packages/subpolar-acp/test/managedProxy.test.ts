@@ -11,8 +11,9 @@ import { makeInMemoryStdio } from "../../effect-acp/src/_internal/stdio.ts";
 import { layerManagedAcpProxy } from "../src/managedProxy.ts";
 
 const baseEnvironment = {
-  SUBPOLAR_MANAGER_URL: "http://manager:8787",
+  SUBPOLAR_MANAGER_URL: "http://subpolar-manager:8787",
   SUBPOLAR_MANAGER_TOKEN: "managed-proxy-test-token-with-more-than-thirty-two-characters",
+  SUBPOLAR_MANAGER_ALLOW_PRIVATE_HTTP: "true",
   SUBPOLAR_STORAGE_ROOT: "/workspaces",
   SUBPOLAR_ACP_WORKER_COMMAND: '["/usr/local/bin/subpolar-acp-worker"]',
 };
@@ -26,6 +27,7 @@ function fakeManager(options: { failStart?: boolean; requestPermission?: boolean
   let markPermissionResponse!: () => void;
   const permissionResponse = new Promise<void>((resolve) => { markPermissionResponse = resolve; });
   let nextSession = 0;
+  const writeWaiters: Array<{ predicate: (call: (typeof calls)[number]) => boolean; resolve: (call: (typeof calls)[number]) => void }> = [];
   const manager = {
     startManagedSession: async (request: EnvironmentRequest, command: readonly string[], process?: EnvironmentManagedSessionRequest) => {
       calls.push({ method: "start", request, command, process });
@@ -36,7 +38,12 @@ function fakeManager(options: { failStart?: boolean; requestPermission?: boolean
     },
     writeManagedSession: async (_request: EnvironmentRequest, sessionId: string, data: Uint8Array) => {
       const text = new TextDecoder().decode(data);
-      calls.push({ method: "write", sessionId, data: text });
+      const writeCall = { method: "write", sessionId, data: text };
+      calls.push(writeCall);
+      for (const waiter of writeWaiters.splice(0)) {
+        if (waiter.predicate(writeCall)) waiter.resolve(writeCall);
+        else writeWaiters.push(waiter);
+      }
       const output = outputs.get(sessionId);
       if (!output) throw new Error(`unknown fake session ${sessionId}`);
       for (const line of text.trim().split("\n")) {
@@ -99,7 +106,13 @@ function fakeManager(options: { failStart?: boolean; requestPermission?: boolean
       outputs.get(sessionId)?.end();
     },
   } as unknown as EnvironmentManager;
-  return { manager, calls, cancelled, permissionResponse };
+  const waitForWrite = (predicate: (call: (typeof calls)[number]) => boolean) => {
+    const found = calls.find(predicate);
+    if (found) return Promise.resolve(found);
+    return new Promise<(typeof calls)[number]>((resolve) => writeWaiters.push({ predicate, resolve }));
+  };
+  const emit = (sessionId: string, message: unknown) => outputs.get(sessionId)?.push(JSON.stringify(message));
+  return { manager, calls, cancelled, permissionResponse, waitForWrite, emit };
 }
 
 function yieldQueue() {
@@ -191,6 +204,105 @@ test("managed proxy starts a worker for the requested worktree and forwards ACP 
 
   await Effect.runPromise(Scope.close(scope, Exit.void));
   expect(fake.calls.some((call) => call.method === "terminate")).toBe(true);
+});
+
+test("managed proxy keeps the T3 MCP bearer on the host and relays tools through the scoped MCP session", async () => {
+  const { stdio, input, output } = await Effect.runPromise(makeInMemoryStdio());
+  const scope = await Effect.runPromise(Scope.make());
+  const fake = fakeManager();
+  const mcpRequests: Array<{ method: string; authorization: string | null; sessionId: string | null; body: Record<string, unknown> }> = [];
+  const fetcher: typeof fetch = async (_input, init) => {
+    const headers = new Headers(init?.headers);
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    mcpRequests.push({
+      method: String(body.method),
+      authorization: headers.get("authorization"),
+      sessionId: headers.get("mcp-session-id"),
+      body,
+    });
+    if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+    const result = body.method === "initialize"
+      ? { protocolVersion: "2025-06-18", capabilities: {} }
+      : body.method === "tools/list"
+        ? { tools: [{ name: "thread_read", inputSchema: { type: "object" } }] }
+        : { content: [{ type: "text", text: "authorized thread data" }] };
+    return Response.json({ jsonrpc: "2.0", id: body.id, result }, {
+      headers: { "mcp-session-id": "provider-session-1" },
+    });
+  };
+  await Effect.runPromise(Layer.buildWithScope(layerManagedAcpProxy(stdio, {
+    environment: baseEnvironment,
+    manager: fake.manager,
+    fetch: fetcher,
+  }), scope));
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 2, info: { name: "t3", version: "1" }, capabilities: {} } }));
+  await readMessage(output, (message) => message.id === 1);
+
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 2, method: "session/new", params: {
+    cwd: "/workspaces/project-a",
+    mcpServers: [{
+      type: "stdio",
+      name: "t3-code",
+      command: "/usr/bin/node",
+      env: [
+        { name: "T3_ACP_MCP_ENDPOINT", value: "http://127.0.0.1:4312/mcp" },
+        { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer provider-instance-token" },
+      ],
+    }],
+  } }));
+  const created = await readMessage(output, (message) => message.id === 2);
+  const nativeSessionId = (created.result as { sessionId: string }).sessionId;
+  const started = fake.calls.find((call) => call.method === "start");
+  expect(started?.process?.environment).toMatchObject({ SUBPOLAR_T3_MCP_BRIDGE: "1" });
+  expect(started?.process?.environment).not.toHaveProperty("T3_ACP_MCP_AUTHORIZATION");
+  expect(fake.calls.some((call) => call.method === "write" && call.data?.includes('"method":"session/new"') && call.data.includes('"mcpServers":[]'))).toBe(true);
+
+  fake.emit("managed-1", {
+    jsonrpc: "2.0", id: 901, method: "subpolar/t3_mcp",
+    params: { sessionId: nativeSessionId, requestId: "00000000-0000-4000-8000-000000000901", operation: "list_tools" },
+  });
+  const listed = await fake.waitForWrite((call) => call.data?.includes('"id":901') === true);
+  expect(listed.data).toContain('"name":"thread_read"');
+
+  fake.emit("managed-1", {
+    jsonrpc: "2.0", id: 902, method: "subpolar/t3_mcp",
+    params: { sessionId: nativeSessionId, requestId: "00000000-0000-4000-8000-000000000902", operation: "call_tool", name: "thread_read", arguments: { threadId: "thread-1" } },
+  });
+  const called = await fake.waitForWrite((call) => call.data?.includes('"id":902') === true);
+  expect(called.data).toContain("authorized thread data");
+  expect(mcpRequests.filter((request) => request.method === "tools/call").map((request) => request.body)).toEqual([
+    expect.objectContaining({ method: "tools/call", params: { name: "thread_read", arguments: { threadId: "thread-1" } } }),
+  ]);
+  expect(mcpRequests.every((request) => request.authorization === "Bearer provider-instance-token")).toBe(true);
+  expect(mcpRequests.filter((request) => request.sessionId !== null).every((request) => request.sessionId === "provider-session-1")).toBe(true);
+  await Scope.close(scope, Exit.void);
+});
+
+test("managed proxy rejects a T3 MCP credential that targets a non-loopback endpoint", async () => {
+  const { stdio, input, output } = await Effect.runPromise(makeInMemoryStdio());
+  const scope = await Effect.runPromise(Scope.make());
+  const fake = fakeManager();
+  await Effect.runPromise(Layer.buildWithScope(layerManagedAcpProxy(stdio, {
+    environment: baseEnvironment,
+    manager: fake.manager,
+  }), scope));
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: 2, info: { name: "t3", version: "1" }, capabilities: {} } }));
+  await readMessage(output, (message) => message.id === 1);
+  await Effect.runPromise(send(input, { jsonrpc: "2.0", id: 2, method: "session/new", params: {
+    cwd: "/workspaces/project-a",
+    mcpServers: [{
+      type: "stdio",
+      name: "t3-code",
+      command: "/usr/bin/node",
+      env: [
+        { name: "T3_ACP_MCP_ENDPOINT", value: "https://example.invalid/mcp" },
+        { name: "T3_ACP_MCP_AUTHORIZATION", value: "Bearer forged" },
+      ],
+    }],
+  } }));
+  expect((await readMessage(output, (message) => message.id === 2)).error).toBeDefined();
+  expect(fake.calls).toEqual([]);
+  await Scope.close(scope, Exit.void);
 });
 
 test("cold ACP resume starts a worker with the persisted native session key", async () => {

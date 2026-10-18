@@ -37,6 +37,37 @@ function makeDefinition(): ToolDefinition {
   };
 }
 
+function makeT3McpDefinitions(): readonly ToolDefinition[] {
+  return [
+    {
+      id: "internal/t3-mcp/list-tools",
+      adapter: "internal",
+      namespace: "t3",
+      name: "list_mcp_tools",
+      description: "List the T3 Code MCP tools authorized for this provider session. Use the exact returned name with call_mcp_tool.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      enabled: true,
+    },
+    {
+      id: "internal/t3-mcp/call-tool",
+      adapter: "internal",
+      namespace: "t3",
+      name: "call_mcp_tool",
+      description: "Call one exact T3 Code MCP tool authorized for this provider session, using its returned name and input arguments.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: { type: "string", minLength: 1, maxLength: 256 },
+          arguments: { type: "object", additionalProperties: true },
+        },
+        required: ["name", "arguments"],
+        additionalProperties: false,
+      },
+      enabled: true,
+    },
+  ];
+}
+
 function within(root: string, candidate: string): boolean {
   const relative = path.relative(root, candidate);
   return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
@@ -189,11 +220,14 @@ export function createWorkerExecutionOptions(
 ): Pick<SubpolarAcpOptions, "principalId" | "toolDefinitions" | "executeTool" | "sessionCwd"> {
   if (environment.SUBPOLAR_ACP_WORKER_MODE !== "1") return {};
   const definition = makeDefinition();
+  const t3McpDefinitions = environment.SUBPOLAR_T3_MCP_BRIDGE === "1"
+    ? makeT3McpDefinitions()
+    : [];
   const executeTool: ToolExecutor = (call, _definition, context, signal) => executeLocal(call, context, signal, dependencies);
   return {
     principalId: "subpolar-worker",
     sessionCwd: () => dependencies.workspaceRoot ?? process.cwd(),
-    toolDefinitions: [definition],
+    toolDefinitions: [definition, ...t3McpDefinitions],
     executeTool,
   };
 }

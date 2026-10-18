@@ -36,6 +36,14 @@ test("worker execution requires its explicit proxy flag and does not use manager
   });
   expect(enabled.toolDefinitions).toMatchObject([{ id: "internal/worker/execute", enabled: true }]);
   expect(enabled.toolDefinitions?.[0]?.id).not.toContain("managed");
+  expect(createWorkerExecutionOptions({
+    SUBPOLAR_ACP_WORKER_MODE: "1",
+    SUBPOLAR_T3_MCP_BRIDGE: "1",
+  }).toolDefinitions?.map(({ id }) => id)).toEqual([
+    "internal/worker/execute",
+    "internal/t3-mcp/list-tools",
+    "internal/t3-mcp/call-tool",
+  ]);
 });
 
 test("worker execute runs argv in the mounted workspace with bounded output", async () => {

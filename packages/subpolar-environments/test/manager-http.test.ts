@@ -18,7 +18,7 @@ const environment: ManagedEnvironment = {
 };
 
 function managerFixture() {
-  const calls: Array<{ method: string; request?: EnvironmentRequest; command?: readonly string[]; sessionId?: string; data?: Uint8Array; columns?: number; rows?: number }> = [];
+  const calls: Array<{ method: string; request?: EnvironmentRequest; command?: readonly string[]; sessionId?: string; data?: Uint8Array; columns?: number; rows?: number; port?: number }> = [];
   const manager = {
     identity: async () => ({ ...environment }),
     ensure: async (request: EnvironmentRequest) => { calls.push({ method: "ensure", request }); return environment; },
@@ -46,6 +46,10 @@ function managerFixture() {
     startManagedSession: async (request: EnvironmentRequest, command: readonly string[]) => {
       calls.push({ method: "startManagedSession", request, command });
       return { sessionId: "stdio-session-a", outputSequence: 0 };
+    },
+    startPortTunnel: async (request: EnvironmentRequest, port: number) => {
+      calls.push({ method: "startPortTunnel", request, port });
+      return { sessionId: "tcp-session-a", outputSequence: 0 };
     },
     writeManagedSession: async (request: EnvironmentRequest, sessionId: string, data: Uint8Array) => { calls.push({ method: "writeManagedSession", request, sessionId, data }); },
     attachManagedSessionOutput: async function* (request: EnvironmentRequest, sessionId: string) {
@@ -229,4 +233,20 @@ test("manager API streams authenticated non-TTY stdio sessions with separate out
   expect(terminate.status).toBe(200);
   expect(calls.map((call) => call.method)).toEqual(["startManagedSession", "writeManagedSession", "attachManagedSessionOutput", "terminateManagedSession"]);
   expect(calls[1]?.data).toEqual(Buffer.from('{"jsonrpc":"2.0"}'));
+});
+
+test("manager API starts a loopback port tunnel for one authenticated environment", async () => {
+  const { manager, calls } = managerFixture();
+  const handle = createEnvironmentManagerHttpHandler(manager, TOKEN);
+  const denied = await handle(makeRequest("/v1/environments/tcp/start", { environment: requestInput, port: 5173 }, null));
+  expect(denied.status).toBe(401);
+
+  const invalidPort = await handle(makeRequest("/v1/environments/tcp/start", { environment: requestInput, port: 65_536 }));
+  expect(invalidPort.status).toBe(400);
+  expect(calls).toEqual([]);
+
+  const started = await handle(makeRequest("/v1/environments/tcp/start", { environment: requestInput, port: 5173 }));
+  expect(started.status).toBe(200);
+  await expect(started.json()).resolves.toEqual({ sessionId: "tcp-session-a", outputSequence: 0 });
+  expect(calls).toEqual([{ method: "startPortTunnel", request: requestInput, port: 5173 }]);
 });

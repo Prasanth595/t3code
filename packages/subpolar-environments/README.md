@@ -7,6 +7,15 @@ The `subpolar` command manages environments through the authenticated Subpolar m
 - `SUBPOLAR_STORAGE_ROOT`
 - optionally `SUBPOLAR_OWNER_ID` (defaults to `t3-installation`)
 
+Manager URLs use HTTPS by default. Plain HTTP is accepted for loopback hosts;
+for a private Docker Compose network, set `SUBPOLAR_MANAGER_ALLOW_PRIVATE_HTTP=true`
+on the T3 process and use a private IP or the shipped Compose service name
+`http://subpolar-manager:8787`. Other DNS names are rejected, including
+single-label names and `.internal` or `.local` suffixes. Private IP support
+includes RFC1918, loopback, link-local, and CGNAT ranges. Keep this setting
+limited to trusted private networks because manager requests carry the bearer
+token.
+
 Commands:
 
 ```sh

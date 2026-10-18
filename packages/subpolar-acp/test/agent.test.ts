@@ -82,7 +82,6 @@ it.effect("runs a prompt through an injected Pi executor and keeps the ACP sessi
     yield* Scope.close(scope, Exit.void);
   }),
 );
-
 it.effect("forwards ACP cancellation to the transient Pi executor", () =>
   Effect.gen(function* () {
     const { stdio, input, output } = yield* makeInMemoryStdio();

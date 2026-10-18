@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stdio from "effect/Stdio";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import * as AcpAgent from "effect-acp/agent";
 import * as AcpError from "effect-acp/errors";
@@ -22,6 +22,7 @@ import {
   type PiSdkModule,
 } from "@subpolar/runtime-pi";
 import { createAcpCredentialStore } from "./credentialStore.ts";
+import { installAcpModelFetch } from "./modelEgress.ts";
 
 export interface SubpolarAcpOptions {
   readonly piConfig?: PiSdkConfig;
@@ -200,16 +201,65 @@ function makeAgent(stdio: Stdio.Stdio, options: SubpolarAcpOptions): Effect.Effe
       ...(workerMode ? {
         modelRuntimeFactory: async (sdk: PiSdkModule, sessionId: string) => {
             if (!sdk.ModelRuntime) throw new Error("Pi credential runtime is unavailable");
-            return sdk.ModelRuntime.create({
+            const runtime = await sdk.ModelRuntime.create({
               credentials: createAcpCredentialStore(agent.client, sessionId),
               modelsPath: null,
               refreshOnCreate: false,
               allowModelNetwork: false,
             });
+            installAcpModelFetch(runtime, agent.client, sessionId);
+            return runtime;
           },
       } : {}),
     };
-    const runtime = createRuntimeHost({ ...options, piConfig }, sessions, requestPermission, (sessionId, runId, event) => {
+    const runtimeOptions: SubpolarAcpOptions = workerMode && options.executeTool
+      ? {
+          ...options,
+          executeTool: async (call, definition, context, signal) => {
+            if (definition.id !== "internal/t3-mcp/list-tools" && definition.id !== "internal/t3-mcp/call-tool") {
+              return options.executeTool!(call, definition, context, signal);
+            }
+            if (!context.sessionId || signal?.aborted) {
+              return { ok: false, error: { code: "T3_MCP_SESSION_UNAVAILABLE", message: "The T3 MCP session is unavailable" } };
+            }
+            const input = call.input as { name?: unknown; arguments?: unknown };
+            if (definition.id === "internal/t3-mcp/call-tool" &&
+                (typeof input.name !== "string" || !input.arguments || typeof input.arguments !== "object" || Array.isArray(input.arguments))) {
+              return { ok: false, error: { code: "T3_MCP_REQUEST_INVALID", message: "A tool name and argument object are required" } };
+            }
+            try {
+              const requestId = randomUUID();
+              const request = Effect.runPromise(agent.client.extRequest("subpolar/t3_mcp", {
+                sessionId: context.sessionId,
+                requestId,
+                operation: definition.id === "internal/t3-mcp/list-tools" ? "list_tools" : "call_tool",
+                ...(definition.id === "internal/t3-mcp/call-tool" ? { name: input.name, arguments: input.arguments } : {}),
+              }), signal ? { signal } : undefined);
+              let cancelHostRequestPromise: Promise<void> | undefined;
+              const cancelHostRequest = () => {
+                cancelHostRequestPromise ??= Effect.runPromise(agent.client.extNotification("subpolar/cancel", {
+                  sessionId: context.sessionId,
+                  requestId,
+                })).catch(() => undefined);
+                return cancelHostRequestPromise;
+              };
+              signal?.addEventListener("abort", cancelHostRequest, { once: true });
+              if (signal?.aborted) cancelHostRequest();
+              let value: unknown;
+              try {
+                value = await request;
+              } finally {
+                signal?.removeEventListener("abort", cancelHostRequest);
+                if (signal?.aborted) await cancelHostRequest();
+              }
+              return { ok: true, value };
+            } catch {
+              return { ok: false, error: { code: "T3_MCP_REQUEST_FAILED", message: "The authorized T3 MCP request could not be completed" } };
+            }
+          },
+        }
+      : options;
+    const runtime = createRuntimeHost({ ...runtimeOptions, piConfig }, sessions, requestPermission, (sessionId, runId, event) => {
       activeRunIds.set(sessionId, runId);
       const candidate = event as { type?: unknown; data?: unknown };
       if (candidate?.type === "tool") {

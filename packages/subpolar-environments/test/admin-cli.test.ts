@@ -3,8 +3,9 @@ import { runAdminCli } from "../src/admin-cli.ts";
 
 const token = "admin-cli-test-token-with-more-than-thirty-two-characters";
 const baseEnvironment = {
-  SUBPOLAR_MANAGER_URL: "http://manager:8787",
+  SUBPOLAR_MANAGER_URL: "http://subpolar-manager:8787",
   SUBPOLAR_MANAGER_TOKEN: token,
+  SUBPOLAR_MANAGER_ALLOW_PRIVATE_HTTP: "true",
   SUBPOLAR_STORAGE_ROOT: "/workspaces",
   SUBPOLAR_OWNER_ID: "t3-installation-test",
 };

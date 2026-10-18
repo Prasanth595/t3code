@@ -1,8 +1,15 @@
-import { AuthSessionId, ThreadId, type AuthEnvironmentScope } from "@t3tools/contracts";
+import {
+  AuthSessionId,
+  ProviderInstanceId,
+  ProviderSessionId,
+  ThreadId,
+  type AuthEnvironmentScope,
+} from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import * as AuthPairingLinks from "./AuthPairingLinks.ts";
@@ -25,6 +32,54 @@ const layerProviderSessionRuntime = ProviderSessionRuntime.layer.pipe(
 );
 
 describe("persistence error correlation", () => {
+  it.effect("updates Subpolar runtime status only for the matching provider session", () =>
+    Effect.gen(function* () {
+      const runtimes = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = ThreadId.make("subpolar-status-thread");
+      const providerInstanceId = ProviderInstanceId.make("subpolar-instance");
+      const providerSessionId = ProviderSessionId.make("subpolar-session");
+      const lastSeenAt = "2026-06-20T00:00:00.000Z";
+
+      yield* runtimes.upsert({
+        threadId,
+        providerName: "subpolar",
+        providerInstanceId,
+        adapterKey: "subpolar/pi-acp",
+        runtimeMode: "approval-required",
+        status: "running",
+        lastSeenAt,
+        resumeCursor: null,
+        runtimePayload: {
+          subpolar: { acpSessionId: "acp-1", providerSessionId, piSessionId: "pi-1" },
+        },
+      });
+
+      yield* runtimes.updateStatusIfSubpolarSession({
+        threadId,
+        providerInstanceId,
+        providerSessionId: ProviderSessionId.make("replacement-session"),
+        status: "error",
+        lastSeenAt,
+      });
+      assert.equal(
+        Option.getOrUndefined(yield* runtimes.getByThreadId({ threadId }))?.status,
+        "running",
+      );
+
+      yield* runtimes.updateStatusIfSubpolarSession({
+        threadId,
+        providerInstanceId,
+        providerSessionId,
+        status: "stopped",
+        lastSeenAt,
+      });
+      assert.equal(
+        Option.getOrUndefined(yield* runtimes.getByThreadId({ threadId }))?.status,
+        "stopped",
+      );
+    }).pipe(Effect.provide(layerProviderSessionRuntime)),
+  );
+
   it.effect("correlates auth session SQL and row-decode failures without sensitive fields", () =>
     Effect.gen(function* () {
       const sessions = yield* AuthSessions.AuthSessionRepository;

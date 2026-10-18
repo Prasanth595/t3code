@@ -72,6 +72,15 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
         providerSettingsForm: { placeholder: "openai", clearWhenEmpty: "omit" },
       }),
     ),
+    enableSubpolarModelEgress: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Enable managed Pi model requests",
+        description:
+          "Allow managed Pi workers to call the configured Pi provider through the host-side HTTPS allowlist. Requires T3 managed Pi credentials and a Pi provider ID.",
+        providerSettingsForm: { control: "switch" },
+      }),
+    ),
     distribution: AcpRegistryDistributionPreference.pipe(
       Schema.withDecodingDefault(Effect.succeed("auto")),
       Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
@@ -89,6 +98,7 @@ export const AcpRegistrySettings = makeProviderSettingsSchema(
       "authMethodId",
       "enableSubpolarCredentialBroker",
       "subpolarCredentialProviderId",
+      "enableSubpolarModelEgress",
     ],
   },
 );

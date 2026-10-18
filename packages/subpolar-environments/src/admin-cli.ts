@@ -77,6 +77,7 @@ function environmentClient(environment: NodeJS.ProcessEnv, fetcher?: typeof fetc
   return createEnvironmentManagerHttpClient({
     baseUrl: requiredEnvironment(environment, "SUBPOLAR_MANAGER_URL"),
     token: requiredEnvironment(environment, "SUBPOLAR_MANAGER_TOKEN"),
+    allowPrivateHttp: environment.SUBPOLAR_MANAGER_ALLOW_PRIVATE_HTTP === "true",
     ...(fetcher === undefined ? {} : { fetch: fetcher }),
   });
 }

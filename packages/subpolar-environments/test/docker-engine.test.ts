@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { createDockerEngineClient } from "../src/docker-engine.ts";
 import type { DockerContainerCreateOptions, DockerContainerProcessRequest, DockerImageBuildRequest } from "../src/docker.ts";
 
@@ -103,6 +106,39 @@ test("maps safe lifecycle operations to the Docker Engine API", async () => {
   });
 });
 
+test("creates an internal Compose network and assigns service DNS aliases", async () => {
+  const requests: Array<{ method: string; url: string; body: string }> = [];
+  const client = engineFixture((request) => {
+    requests.push(request);
+    if (request.url === "/v1.44/networks/create") return { status: 201, body: { Id: "network-1" } };
+    if (request.url === "/v1.44/networks/network-1") return { status: 200, body: {
+      Id: "network-1", Name: "subpolar-net-test", Driver: "bridge", Internal: true,
+      Labels: { "io.subpolar.resource-purpose": "compose-network" },
+      Containers: { "container-db": { Aliases: ["db"] } },
+    } };
+    if (request.url === "/v1.44/containers/create?name=worker") return { status: 201, body: { Id: "worker-1" } };
+    return { status: 204 };
+  });
+  const network = await client.createNetwork!({
+    name: "subpolar-net-test",
+    driver: "bridge",
+    internal: true,
+    labels: { "io.subpolar.resource-purpose": "compose-network" },
+  });
+  expect(network).toMatchObject({ name: "subpolar-net-test", internal: true, containerAliases: { "container-db": ["db"] } });
+  await client.createContainer({
+    ...createOptions,
+    name: "worker",
+    networkMode: network.name,
+    networkAliases: ["app"],
+    healthcheck: { test: ["CMD", "pg_isready"], intervalMs: 1000, timeoutMs: 3000, retries: 60, startPeriodMs: 1000 },
+  });
+  const body = JSON.parse(requests.find((request) => request.url.includes("/containers/create"))!.body);
+  expect(body.HostConfig.NetworkMode).toBe("subpolar-net-test");
+  expect(body.Healthcheck).toEqual({ Test: ["CMD", "pg_isready"], Interval: 1_000_000_000, Timeout: 3_000_000_000, Retries: 60, StartPeriod: 1_000_000_000 });
+  expect(body.NetworkingConfig.EndpointsConfig["subpolar-net-test"].Aliases).toEqual(["app"]);
+});
+
 test("manages named runtime data volumes through the Docker Engine API", async () => {
   const requests: Array<{ method: string; url: string; body: string }> = [];
   const volume = {
@@ -182,6 +218,7 @@ test("routes Dev Container image builds through the injected manager runner", as
     imageBuildRunner: async (request) => { seen.push(request); },
   });
   const request: DockerImageBuildRequest = {
+    kind: "dockerfile",
     contextPath: "/host/worktree/.devcontainer",
     dockerfilePath: "/host/worktree/.devcontainer/Dockerfile",
     image: "subpolar-devcontainer:0123456789abcdef0123456789abcdef",
@@ -190,6 +227,39 @@ test("routes Dev Container image builds through the injected manager runner", as
   await client.buildImage!(request);
 
   expect(seen).toEqual([request]);
+});
+
+test("invokes the Dev Container CLI with a frozen feature lock", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "subpolar-devcontainer-cli-"));
+  const outputPath = path.join(directory, "args.json");
+  const binaryPath = path.join(directory, "devcontainer");
+  try {
+    const source = "#!/usr/bin/env node\nrequire('node:fs').writeFileSync(" + JSON.stringify(outputPath) + ", JSON.stringify(process.argv.slice(2)));\n";
+    await writeFile(binaryPath, source);
+    await chmod(binaryPath, 0o755);
+    const client = createDockerEngineClient({
+      socketPath: "/var/run/docker.sock",
+      transport: async () => ({ statusCode: 200, body: new Uint8Array() }),
+      devContainerCliBinary: binaryPath,
+    });
+
+    await client.buildImage!({
+      kind: "devcontainer",
+      workspaceFolder: "/host/worktree",
+      configurationPath: "/host/worktree/.devcontainer/devcontainer.json",
+      image: "subpolar-devcontainer:0123456789abcdef0123456789abcdef",
+    });
+
+    expect(JSON.parse(await readFile(outputPath, "utf8"))).toEqual([
+      "build",
+      "--workspace-folder", "/host/worktree",
+      "--config", "/host/worktree/.devcontainer/devcontainer.json",
+      "--image-name", "subpolar-devcontainer:0123456789abcdef0123456789abcdef",
+      "--frozen-lockfile",
+    ]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("routes interactive sessions through the TTY runner and Docker resize API", async () => {
@@ -294,3 +364,33 @@ test("launches non-TTY process sessions with JSON-safe argv and bidirectional st
     "POST /v1.44/exec/stdio-cleanup/start",
   ]);
 });
+
+test("closes Docker exec stdin after the worker reports command completion", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "subpolar-docker-worker-exit-"));
+  const dockerStub = path.join(root, "docker-stub.sh");
+  await writeFile(dockerStub, [
+    "#!/bin/sh",
+    "IFS= read -r request",
+    "printf '%s\\n' '{\"type\":\"started\",\"processId\":\"child-1\"}'",
+    "printf '%s\\n' '{\"type\":\"exit\",\"exitCode\":7}'",
+    "cat >/dev/null",
+    "",
+  ].join("\n"));
+  await chmod(dockerStub, 0o755);
+  try {
+    const client = createDockerEngineClient({
+      socketPath: "/var/run/docker.sock",
+      dockerBinary: dockerStub,
+      workerCommand: ["worker.mjs"],
+    });
+    const result = await client.executeContainer("container-1", {
+      command: ["sh", "-c", "exit 7"],
+      worktreeDirectory: "/workspaces/repo",
+      workingDirectory: "/workspaces/repo",
+      environment: {},
+    });
+    expect(result).toEqual({ processId: "child-1", exitCode: 7, cancelled: false });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+}, 5000);

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import path from "node:path";
 import { request as httpRequest, type IncomingMessage, type RequestOptions } from "node:http";
-import type { DockerClient, DockerContainerCreateOptions, DockerContainerInspection, DockerContainerProcessRequest, DockerContainerInteractiveRequest, DockerContainerManagedSessionRequest, DockerImageBuildRequest, DockerVolumeCreateOptions, DockerVolumeInspection } from "./docker.ts";
+import type { DockerClient, DockerContainerCreateOptions, DockerContainerInspection, DockerContainerProcessRequest, DockerContainerInteractiveRequest, DockerContainerManagedSessionRequest, DockerImageBuildRequest, DockerVolumeCreateOptions, DockerVolumeInspection, DockerNetworkInspection, DockerNetworkCreateOptions } from "./docker.ts";
 import type { EnvironmentInteractiveSession, EnvironmentManagedProcessSession, EnvironmentProcessOutput, EnvironmentProcessResult } from "./index.ts";
 
 export interface DockerEngineClientOptions {
@@ -12,6 +12,7 @@ export interface DockerEngineClientOptions {
   readonly timeoutMs?: number;
   readonly transport?: DockerEngineTransport;
   readonly dockerBinary?: string;
+  readonly devContainerCliBinary?: string;
   readonly workerCommand?: readonly string[];
   readonly terminalSupervisorCommand?: readonly string[];
   readonly processRunner?: DockerContainerProcessRunner;
@@ -39,7 +40,7 @@ export type DockerContainerManagedSessionRunner = (
 ) => Promise<EnvironmentManagedProcessSession>;
 
 async function runDockerImageBuild(dockerBinary: string, request: DockerImageBuildRequest): Promise<void> {
-  if (!path.isAbsolute(request.contextPath) || !path.isAbsolute(request.dockerfilePath) ||
+  if (request.kind !== "dockerfile" || !path.isAbsolute(request.contextPath) || !path.isAbsolute(request.dockerfilePath) ||
       !/^subpolar-devcontainer:[a-f0-9]{32}$/.test(request.image)) {
     throw new DockerEngineClientError(undefined, "Dev Container image build request is invalid");
   }
@@ -54,6 +55,63 @@ async function runDockerImageBuild(dockerBinary: string, request: DockerImageBui
     child.once("close", (code) => {
       if (spawnError) reject(new DockerEngineClientError(undefined, "Docker image build could not start", { cause: spawnError }));
       else if (code !== 0) reject(new DockerEngineClientError(undefined, `Docker image build failed with exit code ${code ?? "unknown"}`));
+      else resolve();
+    });
+  });
+}
+
+async function runDockerImagePull(dockerBinary: string, image: string): Promise<void> {
+  if (!/^postgres(?::[A-Za-z0-9._-]+)?(?:@sha256:[a-f0-9]{64})?$/.test(image)) {
+    throw new DockerEngineClientError(undefined, "Compose PostgreSQL image request is invalid");
+  }
+  const alreadyAvailable = await new Promise<boolean>((resolve, reject) => {
+    const child = spawn(dockerBinary, ["image", "inspect", image], { shell: false, windowsHide: true, stdio: "ignore" });
+    let spawnError: Error | undefined;
+    child.once("error", (error) => { spawnError = error; });
+    child.once("close", (code) => {
+      if (spawnError) reject(new DockerEngineClientError(undefined, "Docker image inspection could not start", { cause: spawnError }));
+      else resolve(code === 0);
+    });
+  });
+  if (alreadyAvailable) return;
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(dockerBinary, ["pull", image], { shell: false, windowsHide: true, stdio: ["ignore", "inherit", "inherit"] });
+    let spawnError: Error | undefined;
+    child.once("error", (error) => { spawnError = error; });
+    child.once("close", (code) => {
+      if (spawnError) reject(new DockerEngineClientError(undefined, "Docker image pull could not start", { cause: spawnError }));
+      else if (code !== 0) reject(new DockerEngineClientError(undefined, `Docker image pull failed with exit code ${code ?? "unknown"}`));
+      else resolve();
+    });
+  });
+}
+
+async function runDevContainerCliBuild(binary: string, request: DockerImageBuildRequest): Promise<void> {
+  if (request.kind !== "devcontainer" || !path.isAbsolute(request.workspaceFolder) || !path.isAbsolute(request.configurationPath) ||
+      !/^subpolar-devcontainer:[a-f0-9]{32}$/.test(request.image)) {
+    throw new DockerEngineClientError(undefined, "Dev Container Feature build request is invalid");
+  }
+  const relativeConfiguration = path.relative(request.workspaceFolder, request.configurationPath);
+  if (!relativeConfiguration || relativeConfiguration === ".." || relativeConfiguration.startsWith(`..${path.sep}`) || path.isAbsolute(relativeConfiguration)) {
+    throw new DockerEngineClientError(undefined, "Dev Container configuration must be inside the workspace");
+  }
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(binary, [
+      "build",
+      "--workspace-folder", request.workspaceFolder,
+      "--config", request.configurationPath,
+      "--image-name", request.image,
+      "--frozen-lockfile",
+    ], {
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    let spawnError: Error | undefined;
+    child.once("error", (error) => { spawnError = error; });
+    child.once("close", (code) => {
+      if (spawnError) reject(new DockerEngineClientError(undefined, "Dev Container CLI could not start", { cause: spawnError }));
+      else if (code !== 0) reject(new DockerEngineClientError(undefined, `Dev Container CLI build failed with exit code ${code ?? "unknown"}`));
       else resolve();
     });
   });
@@ -135,6 +193,8 @@ function normalizeInspection(value: unknown): DockerContainerInspection {
   const config = record(container.Config);
   const host = record(container.HostConfig);
   const state = record(container.State);
+  const networks = record(record(container.NetworkSettings).Networks);
+  const networkAliases = Object.fromEntries(Object.entries(networks).map(([name, network]) => [name, stringArray(record(network).Aliases)]));
   const mounts = Array.isArray(container.Mounts) ? container.Mounts.map((mountValue) => {
     const mount = record(mountValue);
     const type = text(mount.Type);
@@ -156,6 +216,7 @@ function normalizeInspection(value: unknown): DockerContainerInspection {
       privileged: boolean(host.Privileged),
       readOnlyRootfs: boolean(host.ReadonlyRootfs),
       networkMode: text(host.NetworkMode),
+      networkAliases,
       capDrop: stringArray(host.CapDrop),
       securityOpt: stringArray(host.SecurityOpt),
       memoryBytes: number(host.Memory),
@@ -177,6 +238,21 @@ function normalizeVolumeInspection(value: unknown): DockerVolumeInspection {
   };
 }
 
+function normalizeNetworkInspection(value: unknown): DockerNetworkInspection {
+  const network = record(value);
+  const containers = record(network.Containers);
+  const aliases = Object.fromEntries(Object.entries(containers).map(([id, entry]) => [id, stringArray(record(entry).Aliases)]));
+  return {
+    id: text(network.Id),
+    name: text(network.Name),
+    driver: text(network.Driver),
+    internal: boolean(network.Internal),
+    labels: stringRecord(network.Labels),
+    containerIds: Object.keys(containers),
+    containerAliases: aliases,
+  };
+}
+
 function createVolumePayload(options: DockerVolumeCreateOptions): Record<string, unknown> {
   return { Name: options.name, Driver: options.driver, Labels: options.labels };
 }
@@ -187,6 +263,13 @@ function createPayload(options: DockerContainerCreateOptions): Record<string, un
     User: options.user,
     Labels: options.labels,
     Env: Object.entries(options.environment).map(([key, value]) => `${key}=${value}`),
+    ...(options.healthcheck === undefined ? {} : { Healthcheck: {
+      Test: options.healthcheck.test,
+      Interval: options.healthcheck.intervalMs * 1_000_000,
+      Timeout: options.healthcheck.timeoutMs * 1_000_000,
+      Retries: options.healthcheck.retries,
+      StartPeriod: options.healthcheck.startPeriodMs * 1_000_000,
+    } }),
     HostConfig: {
       Privileged: options.privileged,
       ReadonlyRootfs: options.readOnlyRootfs,
@@ -199,6 +282,13 @@ function createPayload(options: DockerContainerCreateOptions): Record<string, un
       Mounts: options.mounts.map((mount) => ({ Type: mount.type, Source: mount.source, Target: mount.target, ReadOnly: mount.readOnly })),
       Tmpfs: options.tmpfs,
     },
+    ...(options.networkAliases === undefined ? {} : {
+      NetworkingConfig: {
+        EndpointsConfig: {
+          [options.networkMode]: { Aliases: options.networkAliases },
+        },
+      },
+    }),
   };
 }
 
@@ -272,6 +362,9 @@ async function runDockerWorker(
           exitCode: typeof event.exitCode === "number" ? event.exitCode : null,
           cancelled: event.cancelled === true || request.signal?.aborted === true,
         };
+        // The worker keeps its readline loop open between requests. EOF lets
+        // it exit, which closes Docker exec's stdout and releases this reader.
+        if (!docker.stdin.destroyed) docker.stdin.end();
       }
     }
     await childClosed;
@@ -569,13 +662,16 @@ export function createDockerEngineClient(options: DockerEngineClientOptions): Do
   const timeoutMs = options.timeoutMs ?? 15_000;
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 120_000) throw new Error("Docker Engine timeout is invalid");
   const dockerBinary = options.dockerBinary ?? "docker";
+  const devContainerCliBinary = options.devContainerCliBinary ?? "devcontainer";
   const workerCommand = options.workerCommand ?? ["node", "/usr/local/lib/subpolar/worker.mjs"];
   const terminalSupervisorCommand = options.terminalSupervisorCommand ?? ["node", "/usr/local/lib/subpolar/terminal-supervisor.mjs"];
-  if (!dockerBinary || dockerBinary.includes("\0") || workerCommand.length === 0 || workerCommand.some((part) => !part || part.includes("\0")) || terminalSupervisorCommand.length === 0 || terminalSupervisorCommand.some((part) => !part || part.includes("\0"))) {
+  if (!dockerBinary || dockerBinary.includes("\0") || !devContainerCliBinary || devContainerCliBinary.includes("\0") || workerCommand.length === 0 || workerCommand.some((part) => !part || part.includes("\0")) || terminalSupervisorCommand.length === 0 || terminalSupervisorCommand.some((part) => !part || part.includes("\0"))) {
     throw new Error("Docker worker command configuration is invalid");
   }
   const processRunner = options.processRunner ?? ((containerId, request) => runDockerWorker(dockerBinary, workerCommand, containerId, request));
-  const imageBuildRunner = options.imageBuildRunner ?? ((request) => runDockerImageBuild(dockerBinary, request));
+  const imageBuildRunner = options.imageBuildRunner ?? ((request) => request.kind === "devcontainer"
+    ? runDevContainerCliBuild(devContainerCliBinary, request)
+    : runDockerImageBuild(dockerBinary, request));
   const terminateSupervisor = async (containerId: string, controlToken: string) => {
     const created = await request("POST", `/containers/${encodeURIComponent(containerId)}/exec`, {
       Cmd: [...terminalSupervisorCommand, "--terminate", controlToken],
@@ -644,6 +740,7 @@ export function createDockerEngineClient(options: DockerEngineClientOptions): Do
   };
   const idPath = (id: string): string => `/containers/${encodeURIComponent(id)}`;
   const volumePath = (name: string): string => `/volumes/${encodeURIComponent(name)}`;
+  const networkPath = (name: string): string => `/networks/${encodeURIComponent(name)}`;
 
   return {
     async inspectContainer(name) {
@@ -693,6 +790,48 @@ export function createDockerEngineClient(options: DockerEngineClientOptions): Do
     },
     async removeVolume(name) {
       await request("DELETE", volumePath(name), undefined, [204]);
+    },
+    async inspectNetwork(name) {
+      try {
+        const response = await request("GET", networkPath(name));
+        return normalizeNetworkInspection(decodeJson(response.body));
+      } catch (error) {
+        if (error instanceof DockerEngineClientError && error.statusCode === 404) return null;
+        throw error;
+      }
+    },
+    async createNetwork(createOptions: DockerNetworkCreateOptions) {
+      const response = await request("POST", "/networks/create", {
+        Name: createOptions.name,
+        Driver: createOptions.driver,
+        Internal: createOptions.internal,
+        CheckDuplicate: true,
+        Labels: createOptions.labels,
+      }, [201]);
+      const created = record(decodeJson(response.body));
+      const id = text(created.Id);
+      if (!id) throw new DockerEngineClientError(undefined, "Docker Engine did not return a network ID");
+      const inspected = await request("GET", networkPath(id));
+      return normalizeNetworkInspection(decodeJson(inspected.body));
+    },
+    async removeNetwork(name) {
+      await request("DELETE", networkPath(name), undefined, [204]);
+    },
+    async waitContainerHealthy(id, maxWaitMs) {
+      const deadline = Date.now() + maxWaitMs;
+      while (Date.now() < deadline) {
+        const response = await request("GET", `${idPath(id)}/json`);
+        const state = record(record(decodeJson(response.body)).State);
+        if (state.Status !== "running") throw new DockerEngineClientError(undefined, "PostgreSQL sidecar stopped before becoming healthy");
+        const health = record(state.Health);
+        if (health.Status === "healthy") return;
+        if (health.Status === "unhealthy") throw new DockerEngineClientError(undefined, "PostgreSQL sidecar health check failed");
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+      throw new DockerEngineClientError(undefined, "PostgreSQL sidecar did not become healthy before the deadline");
+    },
+    async pullImage(image) {
+      await runDockerImagePull(dockerBinary, image);
     },
     async executeContainer(id, processRequest) {
       return processRunner(id, processRequest);

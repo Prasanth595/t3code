@@ -151,9 +151,10 @@ export function createEnvironmentManagerHttpHandler(manager: EnvironmentManager,
     const pathname = new URL(request.url).pathname;
     const interactiveRoute = pathname.match(/^\/v1\/environments\/pty\/(start|input|resize|output|terminate)$/)?.[1];
     const managedSessionRoute = pathname.match(/^\/v1\/environments\/stdio\/(start|input|output|terminate)$/)?.[1];
+    const tcpTunnelRoute = pathname === "/v1/environments/tcp/start";
     const adminRoute = pathname.match(/^\/v1\/environments\/admin\/(status|list|inspect|rebuild)$/)?.[1];
     const route = pathname.match(/^\/v1\/environments\/(identity|ensure|start|stop|restart|remove|execute|reconcile)$/)?.[1];
-    if (!route && !adminRoute && !interactiveRoute && !managedSessionRoute) return jsonResponse({ error: "NOT_FOUND" }, 404);
+    if (!route && !adminRoute && !interactiveRoute && !managedSessionRoute && !tcpTunnelRoute) return jsonResponse({ error: "NOT_FOUND" }, 404);
 
     try {
       if (adminRoute === "status") {
@@ -182,6 +183,12 @@ export function createEnvironmentManagerHttpHandler(manager: EnvironmentManager,
       const body = await readJson(request);
       if (!isRecord(body)) throw new EnvironmentManagerError("INVALID_REQUEST", "Request body must be a JSON object");
       const environment = environmentRequest(body.environment);
+      if (tcpTunnelRoute) {
+        if (typeof body.port !== "number" || !Number.isSafeInteger(body.port) || body.port < 1 || body.port > 65_535) {
+          throw new EnvironmentManagerError("INVALID_REQUEST", "Port tunnel target must be a valid TCP port");
+        }
+        return jsonResponse(await manager.startPortTunnel(environment, body.port));
+      }
       if (managedSessionRoute) {
         if (managedSessionRoute === "start") {
           if (!Array.isArray(body.command) || body.command.length === 0 || body.command.length > 256 ||

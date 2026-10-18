@@ -27,6 +27,7 @@ import * as EffectAcpErrors from "effect-acp/errors";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { registerSubpolarCredentialExtension } from "./subpolarCredentials.ts";
+import { registerSubpolarModelEgressExtension } from "./subpolarModelEgress.ts";
 import {
   normalizeAcpRegistryCommands,
   normalizeAcpRegistryLiveConfiguration,
@@ -185,9 +186,14 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     registryAgentId === "github-copilot-cli" ||
     (options.settings.source === "local" &&
       /^copilot(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? ""));
+  const isSubpolar = registryAgentId === "subpolar" ||
+    (options.settings.source === "local" &&
+      /^subpolar-acp(\.(?:exe|cmd|js|mjs|ts))?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "")) ||
+    options.settings.enableSubpolarCredentialBroker || options.settings.enableSubpolarModelEgress;
   const copilotRouting = isCopilot ? makeCopilotSubagentRouting() : undefined;
   const flavor: AcpAdapterV2Flavor = {
     driver: ACP_REGISTRY_PROVIDER,
+    ...(isSubpolar ? { runtimeHarness: "subpolar" } : {}),
     capabilities: AcpProviderCapabilitiesV2,
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
     ...(registryAgentId === "mistral-vibe"
@@ -243,20 +249,26 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ...(options.assertComplete === undefined ? {} : { assertComplete: options.assertComplete }),
   };
   const registerExistingExtensions = flavor.registerExtensions;
-  const configuredFlavor = options.settings.enableSubpolarCredentialBroker
+  const configuredFlavor = options.settings.enableSubpolarCredentialBroker || options.settings.enableSubpolarModelEgress
     ? {
         ...flavor,
         registerExtensions: (context: AcpAdapterV2ExtensionContext) =>
           Effect.gen(function* () {
             if (registerExistingExtensions) yield* registerExistingExtensions(context);
-            yield* registerSubpolarCredentialExtension({
-              host: options.host,
-              instanceId: options.instanceId,
-              providerIds: options.settings.subpolarCredentialProviderId
-                ? [options.settings.subpolarCredentialProviderId]
-                : [],
-              context,
-            });
+            const providerIds = options.settings.subpolarCredentialProviderId
+              ? [options.settings.subpolarCredentialProviderId]
+              : [];
+            if (options.settings.enableSubpolarCredentialBroker) {
+              yield* registerSubpolarCredentialExtension({
+                host: options.host,
+                instanceId: options.instanceId,
+                providerIds,
+                context,
+              });
+            }
+            if (options.settings.enableSubpolarModelEgress && options.settings.enableSubpolarCredentialBroker) {
+              yield* registerSubpolarModelEgressExtension({ providerIds, context });
+            }
           }),
       }
     : flavor;

@@ -41,6 +41,7 @@ class FakeBackend implements EnvironmentBackend {
   readonly records = new Map<string, ManagedEnvironment>();
   mismatch = false;
   failStart = false;
+  failCreateAfterAllocation = false;
 
   async inspect(identity: EnvironmentIdentity) {
     this.calls.push("inspect");
@@ -57,6 +58,7 @@ class FakeBackend implements EnvironmentBackend {
       status: "stopped",
     };
     this.records.set(record.id, record);
+    if (this.failCreateAfterAllocation) throw new Error("manager exited after resource allocation");
     return record;
   }
 
@@ -310,6 +312,37 @@ describe("environment lifecycle coordinator", () => {
     expect(terminated).toBe(1);
   });
 
+  test("opens manager-owned TCP tunnels only to a valid worker loopback port", async () => {
+    const { request } = await fixture();
+    const backend = new FakeBackend();
+    const commands: Array<{ command: readonly string[]; cwd?: string }> = [];
+    const sessionBackend = {
+      id: backend.id,
+      inspect: backend.inspect.bind(backend), create: backend.create.bind(backend),
+      start: backend.start.bind(backend), stop: backend.stop.bind(backend), remove: backend.remove.bind(backend),
+      startManagedSession: async (_environment: ManagedEnvironment, command: readonly string[], process?: { cwd?: string }): Promise<EnvironmentManagedProcessSession> => {
+        commands.push({ command, cwd: process?.cwd });
+        return {
+          async write() {},
+          output: { async *[Symbol.asyncIterator]() {} },
+          result: Promise.resolve({ exitCode: 0, cancelled: false }),
+          async terminate() {},
+        };
+      },
+    };
+    const manager = createEnvironmentManager(sessionBackend);
+
+    await expect(manager.startPortTunnel(request, 0)).rejects.toMatchObject({ code: "INVALID_REQUEST" });
+    const tunnel = await manager.startPortTunnel(request, 5173);
+
+    expect(tunnel.sessionId).toBeTruthy();
+    expect(commands).toHaveLength(1);
+    expect(commands[0]?.command.slice(0, 2)).toEqual(["node", "-e"]);
+    expect(commands[0]?.command[2]).toContain("host:'127.0.0.1'");
+    expect(commands[0]?.command.at(-1)).toBe("5173");
+    expect(commands[0]?.cwd).toBe(".");
+  });
+
   test("rejects lexical and symlink escapes from the configured storage root", async () => {
     const { request, root } = await fixture();
     const outside = path.join(root, "outside");
@@ -321,5 +354,55 @@ describe("environment lifecycle coordinator", () => {
     await expect(manager.identity({ ...request, worktreePath: outside })).rejects.toMatchObject({ code: "WORKTREE_OUTSIDE_ROOT" });
     await expect(manager.identity({ ...request, worktreePath: path.join(escapeLink, "missing") })).rejects.toBeInstanceOf(EnvironmentManagerError);
     await expect(manager.identity({ ...request, worktreePath: path.join(escapeLink, "..", "..", "outside") })).rejects.toMatchObject({ code: "WORKTREE_OUTSIDE_ROOT" });
+  });
+
+  test("reconciles a durable creation intent by adopting only the exact verified resource", async () => {
+    const { request } = await fixture();
+    const backend = new FakeBackend();
+    backend.failCreateAfterAllocation = true;
+    const registrations = {
+      records: new Map<string, { environment: ManagedEnvironment; createdAt: string; updatedAt: string }>(),
+      async loadAll() { return [...this.records.values()]; },
+      async save(environment: ManagedEnvironment, createdAt: string, updatedAt: string) {
+        this.records.set(environment.id, { environment, createdAt, updatedAt });
+      },
+      async remove(id: string) { this.records.delete(id); },
+    };
+    const firstManager = createEnvironmentManager(backend, registrations);
+
+    await expect(firstManager.ensure(request)).rejects.toMatchObject({ code: "BACKEND_FAILURE" });
+    const intent = [...registrations.records.values()][0]?.environment;
+    expect(intent).toMatchObject({ status: "creating", resourceId: `pending:${intent?.id}` });
+
+    backend.failCreateAfterAllocation = false;
+    const restartedManager = createEnvironmentManager(backend, registrations);
+    const [result] = await restartedManager.reconcile();
+
+    expect(result?.environment).toEqual(backend.records.get(intent!.id));
+    expect(result?.error).toBeUndefined();
+    expect(backend.calls.filter((call) => call === "create")).toHaveLength(1);
+    expect(backend.calls.filter((call) => call === "start")).toHaveLength(0);
+  });
+
+  test("reports registrations whose worktree disappeared as stale ownership", async () => {
+    const { request, workspace } = await fixture();
+    const backend = new FakeBackend();
+    const registrations = {
+      records: new Map<string, { environment: ManagedEnvironment; createdAt: string; updatedAt: string }>(),
+      async loadAll() { return [...this.records.values()]; },
+      async save(environment: ManagedEnvironment, createdAt: string, updatedAt: string) {
+        this.records.set(environment.id, { environment, createdAt, updatedAt });
+      },
+      async remove(id: string) { this.records.delete(id); },
+    };
+    const manager = createEnvironmentManager(backend, registrations);
+    const environment = await manager.ensure(request);
+    backend.calls.length = 0;
+    await rm(workspace, { recursive: true, force: true });
+
+    const [result] = await manager.reconcile();
+    expect(result?.environmentId).toBe(environment.id);
+    expect(result?.error).toMatchObject({ code: "OWNERSHIP_MISMATCH", message: expect.stringContaining("stale") });
+    expect(backend.calls).not.toContain("inspect");
   });
 });

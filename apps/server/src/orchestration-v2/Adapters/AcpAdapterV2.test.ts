@@ -26,6 +26,7 @@ import {
   RunAttemptId,
   RunId,
   ThreadId,
+  type OrchestrationV2RuntimeRequest,
   type OrchestrationV2ProviderThread,
   type ProviderOptionDescriptor,
 } from "@t3tools/contracts";
@@ -14254,3 +14255,100 @@ describe("acpPostSettleMonitorPromptShouldSuppress", () => {
     );
   });
 });
+
+it.live("drives a mock Pi tool approval through Subpolar ACP and T3's generic adapter", () =>
+  Effect.gen(function* () {
+    const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const path = yield* Path.Path;
+    const selfInvocation = yield* resolveSelfInvocation();
+    const agentPath = yield* path.fromFileUrl(
+      new URL("../../../scripts/subpolar-acp-mock-agent.ts", import.meta.url),
+    );
+    const makeRuntime: AcpAdapterV2Flavor["makeRuntime"] = (runtimeInput) =>
+      Effect.gen(function* () {
+        const context = yield* Layer.build(
+          AcpSessionRuntime.layer({
+            ...runtimeInput,
+            spawn: {
+              command: process.execPath,
+              args: [agentPath],
+              cwd: runtimeInput.cwd,
+              env: process.env,
+            },
+            authMethodId: "mock-pi",
+          }).pipe(
+            Layer.provide(
+              Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+            ),
+          ),
+        );
+        return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+          Effect.provide(context),
+        );
+      });
+    const instanceId = ProviderInstanceId.make("acp-subpolar-mock-pi-e2e");
+    const threadId = ThreadId.make("thread-acp-subpolar-mock-pi-e2e");
+    const adapter = yield* makeAcpAdapterV2({
+      instanceId,
+      selfInvocation,
+      flavor: {
+        driver: ACP_TEST_DRIVER,
+        capabilities: AcpProviderCapabilitiesV2,
+        makeRuntime,
+      },
+    });
+    const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+      runtimeMode: "approval-required",
+      interactionMode: "default",
+      cwd: process.cwd(),
+    });
+    const modelSelection = { instanceId, model: "default" } as const;
+    const runtime = yield* adapter.openSession({
+      threadId,
+      providerSessionId: ProviderSessionId.make("session-acp-subpolar-mock-pi-e2e"),
+      modelSelection,
+      runtimePolicy,
+    });
+    const providerThread = yield* runtime.ensureThread({
+      threadId,
+      modelSelection,
+      runtimePolicy,
+    });
+    yield* runtime.startTurn(makeTurnInput({
+      threadId,
+      providerThread,
+      instanceId,
+      runtimePolicy,
+      now: yield* DateTime.now,
+      messageText: "run the mock Pi flow",
+    }));
+
+    const runtimeRequests: Array<OrchestrationV2RuntimeRequest> = [];
+    const assistantMessages: string[] = [];
+    let terminalStatus: string | undefined;
+    yield* runtime.events.pipe(
+      Stream.takeUntil((event) => event.type === "turn.terminal"),
+      Stream.runForEach((event) => {
+        if (event.type === "runtime_request.updated" && event.runtimeRequest.status === "pending") {
+          runtimeRequests.push(event.runtimeRequest);
+          return runtime.respondToRuntimeRequest({
+            requestId: event.runtimeRequest.id,
+            decision: "accept",
+          });
+        }
+        if (event.type === "message.updated" && event.message.createdBy === "agent") {
+          assistantMessages.push(event.message.text);
+        }
+        if (event.type === "turn.terminal") terminalStatus = event.status;
+        return Effect.void;
+      }),
+    );
+
+    assert.equal(runtimeRequests.length, 1);
+    assert.equal(runtimeRequests[0]?.kind, "permission");
+    assert.equal(runtimeRequests[0]?.status, "pending");
+    assert.equal(terminalStatus, "completed");
+    assert.isTrue(assistantMessages.some((text) => text.includes("mock Pi answered")));
+    assert.isTrue(assistantMessages.some((text) => text.includes('"approved"')));
+  }).pipe(Effect.provide(layerTest), Effect.scoped),
+);

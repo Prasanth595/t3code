@@ -25,6 +25,7 @@ export function createManagedExecutionOptions(
   const manager = createEnvironmentManagerHttpClient({
     baseUrl: managerUrl!,
     token: managerToken!,
+    allowPrivateHttp: environment.SUBPOLAR_MANAGER_ALLOW_PRIVATE_HTTP === "true",
     ...(fetcher === undefined ? {} : { fetch: fetcher }),
   });
   const definition: ToolDefinition = {

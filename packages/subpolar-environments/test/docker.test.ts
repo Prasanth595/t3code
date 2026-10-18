@@ -9,18 +9,21 @@ import {
   createDockerEnvironmentBackend,
   DockerEnvironmentError,
   type DockerClient,
+  type DockerImageBuildRequest,
   type DockerContainerCreateOptions,
   type DockerContainerInspection,
   type DockerContainerProcessRequest,
   type DockerContainerManagedSessionRequest,
   type DockerVolumeCreateOptions,
   type DockerVolumeInspection,
+  type DockerNetworkInspection,
+  type DockerNetworkCreateOptions,
 } from "../src/docker.ts";
 import type { EnvironmentManagedProcessSession } from "../src/index.ts";
 
 const tempRoots: string[] = [];
 
-async function fixture() {
+async function fixture(options: { readonly allowedDevContainerFeatures?: readonly string[]; readonly allowDevContainerCompose?: boolean } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "subpolar-docker-backend-"));
   tempRoots.push(root);
   const gatewayStorageRoot = path.join(root, "gateway-workspaces");
@@ -42,6 +45,8 @@ async function fixture() {
     hostStorageRoot,
     containerStorageRoot: "/workspaces",
     image: "registry.example/subpolar-worker@sha256:0123456789abcdef",
+    ...(options.allowedDevContainerFeatures === undefined ? {} : { allowedDevContainerFeatures: options.allowedDevContainerFeatures }),
+    ...(options.allowDevContainerCompose === undefined ? {} : { allowDevContainerCompose: options.allowDevContainerCompose }),
   };
   const client = new FakeDockerClient();
   const backend = createDockerEnvironmentBackend(client, config);
@@ -57,6 +62,7 @@ afterEach(async () => {
 class FakeDockerClient implements DockerClient {
   readonly containers = new Map<string, DockerContainerInspection>();
   readonly volumes = new Map<string, DockerVolumeInspection>();
+  readonly networks = new Map<string, DockerNetworkInspection>();
   readonly createCalls: DockerContainerCreateOptions[] = [];
   readonly startCalls: string[] = [];
   readonly stopCalls: string[] = [];
@@ -68,7 +74,8 @@ class FakeDockerClient implements DockerClient {
   readonly postCreateRuns: string[] = [];
   private readonly completedPostCreateMarkers = new Set<string>();
   readonly managedSessionCalls: Array<{ id: string; request: DockerContainerManagedSessionRequest }> = [];
-  readonly imageBuildCalls: Array<{ contextPath: string; dockerfilePath: string; image: string }> = [];
+  readonly imageBuildCalls: DockerImageBuildRequest[] = [];
+  readonly pulledImages: string[] = [];
   wrongOwner = false;
 
   async inspectContainer(name: string) {
@@ -92,6 +99,7 @@ class FakeDockerClient implements DockerClient {
         privileged: options.privileged,
         readOnlyRootfs: options.readOnlyRootfs,
         networkMode: options.networkMode,
+        ...(options.networkAliases === undefined ? {} : { networkAliases: { [options.networkMode]: options.networkAliases } }),
         capDrop: options.capDrop,
         securityOpt: options.securityOpt,
         memoryBytes: options.memoryBytes,
@@ -103,10 +111,16 @@ class FakeDockerClient implements DockerClient {
       },
     };
     this.containers.set(options.name, inspection);
+    const network = this.networks.get(options.networkMode);
+    if (network) this.networks.set(network.name, {
+      ...network,
+      containerIds: [...network.containerIds, id],
+      containerAliases: { ...network.containerAliases, [id]: options.networkAliases ?? [] },
+    });
     return { id };
   }
 
-  async buildImage(request: { contextPath: string; dockerfilePath: string; image: string }) {
+  async buildImage(request: DockerImageBuildRequest) {
     this.imageBuildCalls.push(request);
   }
 
@@ -124,7 +138,15 @@ class FakeDockerClient implements DockerClient {
   async removeContainer(id: string, options: { readonly force: false; readonly removeVolumes: false }) {
     expect(options).toEqual({ force: false, removeVolumes: false });
     this.removeCalls.push(id);
-    for (const [name, container] of this.containers) if (container.id === id) this.containers.delete(name);
+    for (const [name, container] of this.containers) if (container.id === id) {
+      this.containers.delete(name);
+      const network = this.networks.get(container.config.networkMode);
+      if (network) {
+        const containerAliases = { ...network.containerAliases };
+        delete containerAliases[id];
+        this.networks.set(network.name, { ...network, containerIds: network.containerIds.filter((entry) => entry !== id), containerAliases });
+      }
+    }
   }
 
   async inspectVolume(name: string) {
@@ -142,6 +164,16 @@ class FakeDockerClient implements DockerClient {
     this.removeVolumeCalls.push(name);
     this.volumes.delete(name);
   }
+
+  async inspectNetwork(name: string) { return this.networks.get(name) ?? null; }
+  async createNetwork(options: DockerNetworkCreateOptions) {
+    const network = { id: `network-${options.name}`, name: options.name, driver: options.driver, internal: options.internal, labels: options.labels, containerIds: [], containerAliases: {} } satisfies DockerNetworkInspection;
+    this.networks.set(options.name, network);
+    return network;
+  }
+  async removeNetwork(name: string) { this.networks.delete(name); }
+  async waitContainerHealthy() {}
+  async pullImage(image: string) { this.pulledImages.push(image); }
 
   async executeContainer(id: string, request: DockerContainerProcessRequest) {
     this.processCalls.push({ id, request });
@@ -291,6 +323,20 @@ describe("Docker environment backend", () => {
     await session.terminate();
   });
 
+  test("starts ACP workers from the configured Dev Container workspaceFolder", async () => {
+    const { backend, identity, client } = await fixture();
+    await mkdir(path.join(identity.worktreePath, ".devcontainer"), { recursive: true });
+    await Bun.write(path.join(identity.worktreePath, ".devcontainer", "devcontainer.json"), JSON.stringify({
+      image: "project:latest",
+      workspaceFolder: "/workspaces/repo/worktree-a/apps/web",
+    }));
+    const ready = await backend.start(await backend.create(identity));
+    const session = await backend.startManagedSession(ready, ["node", "acp-server.js"], { cwd: "." });
+
+    expect(client.managedSessionCalls[0]?.request.workingDirectory).toBe("/workspaces/repo/worktree-a/apps/web");
+    await session.terminate();
+  });
+
   test("rejects process working directories that escape the worktree", async () => {
     const { backend, identity, client } = await fixture();
     const ready = await backend.start(await backend.create(identity));
@@ -382,6 +428,44 @@ describe("Docker environment backend", () => {
     expect(client.processCalls[2]?.request.command).toEqual(client.processCalls[0]?.request.command);
     expect(client.processCalls[3]?.request.command).toEqual(["node", "setup.js"]);
     expect(client.postCreateRuns).toEqual(["/bin/sh -c npm install"]);
+  });
+
+  test("supports a workspace bind mount only when it maps the current worktree", async () => {
+    const { client, manager, request, identity, config } = await fixture();
+    await mkdir(path.join(identity.worktreePath, ".devcontainer"), { recursive: true });
+    await Bun.write(path.join(identity.worktreePath, ".devcontainer", "devcontainer.json"), JSON.stringify({
+      image: "project:latest",
+      workspaceMount: "source=${localWorkspaceFolder},target=/workspaces/project,type=bind,consistency=cached",
+      workspaceFolder: "/workspaces/project/app",
+      postStartCommand: "pwd",
+    }));
+    client.processExitCodes.push(0);
+
+    await manager.ensure(request);
+
+    expect(client.createCalls[0]?.mounts[0]).toMatchObject({
+      type: "bind",
+      source: await realpath(path.join(config.hostStorageRoot, "repo", "worktree-a")),
+      target: "/workspaces/project",
+      readOnly: false,
+    });
+    expect(client.processCalls[0]?.request.workingDirectory).toBe("/workspaces/project/app");
+  });
+
+  test("supports workspaceFolder under the default isolated worktree mount", async () => {
+    const { client, manager, request, identity } = await fixture();
+    await mkdir(path.join(identity.worktreePath, ".devcontainer"), { recursive: true });
+    await Bun.write(path.join(identity.worktreePath, ".devcontainer", "devcontainer.json"), JSON.stringify({
+      image: "project:latest",
+      workspaceFolder: "/workspaces/repo/worktree-a/apps/web",
+      postStartCommand: "pwd",
+    }));
+    client.processExitCodes.push(0);
+
+    await manager.ensure(request);
+
+    expect(client.createCalls[0]?.mounts[0]?.target).toBe("/workspaces/repo/worktree-a");
+    expect(client.processCalls[0]?.request.workingDirectory).toBe("/workspaces/repo/worktree-a/apps/web");
   });
 
   test("stops and fails closed when postCreate fails, then retries on the same container", async () => {
@@ -500,6 +584,7 @@ describe("Docker environment backend", () => {
 
     expect(client.imageBuildCalls).toHaveLength(1);
     expect(client.imageBuildCalls[0]).toEqual({
+      kind: "dockerfile",
       contextPath: await realpath(hostDevContainer),
       dockerfilePath: await realpath(path.join(hostDevContainer, "Dockerfile")),
       image: client.createCalls[0]?.image,
@@ -507,6 +592,87 @@ describe("Docker environment backend", () => {
     expect(client.createCalls[0]?.image).toMatch(/^subpolar-devcontainer:[a-f0-9]{32}$/);
     expect(client.createCalls[0]?.privileged).toBe(false);
     expect(client.createCalls[0]?.networkMode).toBe("none");
+  });
+
+  test("builds image-based Features through the locked Dev Container CLI and then runs lifecycle hooks", async () => {
+    const feature = "ghcr.io/devcontainers/features/node:1";
+    const { client, manager, request, identity, hostWorktree } = await fixture({ allowedDevContainerFeatures: [feature] });
+    const gatewayDevContainer = path.join(identity.worktreePath, ".devcontainer");
+    const hostDevContainer = path.join(hostWorktree, ".devcontainer");
+    const configSource = JSON.stringify({
+      image: "node:22",
+      features: { [feature]: { version: "22" } },
+      postCreateCommand: "npm install",
+      postStartCommand: ["node", "setup.js"],
+    });
+    client.processExitCodes.push(0, 0);
+    const lockfile = JSON.stringify({ features: { [feature]: { version: "1.0.0", resolved: "ghcr.io/devcontainers/features/node@sha256:" + "a".repeat(64) } } });
+    await Promise.all([
+      mkdir(gatewayDevContainer, { recursive: true }),
+      mkdir(hostDevContainer, { recursive: true }),
+      Bun.write(path.join(identity.worktreePath, ".devcontainer-lock.json"), lockfile),
+      Bun.write(path.join(hostWorktree, ".devcontainer-lock.json"), lockfile),
+      Bun.write(path.join(gatewayDevContainer, "devcontainer.json"), configSource),
+      Bun.write(path.join(hostDevContainer, "devcontainer.json"), configSource),
+    ]);
+
+    await manager.ensure(request);
+
+    expect(client.imageBuildCalls).toHaveLength(1);
+    expect(client.imageBuildCalls[0]).toEqual({
+      kind: "devcontainer",
+      workspaceFolder: await realpath(hostWorktree),
+      configurationPath: await realpath(path.join(hostDevContainer, "devcontainer.json")),
+      image: client.createCalls[0]?.image,
+    });
+    expect(client.processCalls.map(({ request: processRequest }) => processRequest.command.slice(-3))).toContainEqual(["/bin/sh", "-c", "npm install"]);
+    expect(client.processCalls.map(({ request: processRequest }) => processRequest.command)).toContainEqual(["node", "setup.js"]);
+  });
+
+  test("builds Dockerfile-based Features with the pinned official CLI request", async () => {
+    const feature = "ghcr.io/devcontainers/features/git:1";
+    const { client, manager, request, identity, hostWorktree } = await fixture({ allowedDevContainerFeatures: [feature] });
+    const gatewayDevContainer = path.join(identity.worktreePath, ".devcontainer");
+    const hostDevContainer = path.join(hostWorktree, ".devcontainer");
+    const configSource = JSON.stringify({ build: { dockerfile: "Dockerfile", context: "." }, features: { [feature]: {} } });
+    const lockfile = JSON.stringify({ features: { [feature]: { version: "1.0.0", resolved: "ghcr.io/devcontainers/features/git@sha256:" + "b".repeat(64) } } });
+    await Promise.all([
+      mkdir(gatewayDevContainer, { recursive: true }),
+      mkdir(hostDevContainer, { recursive: true }),
+      Bun.write(path.join(identity.worktreePath, ".devcontainer-lock.json"), lockfile),
+      Bun.write(path.join(hostWorktree, ".devcontainer-lock.json"), lockfile),
+      Bun.write(path.join(gatewayDevContainer, "devcontainer.json"), configSource),
+      Bun.write(path.join(hostDevContainer, "devcontainer.json"), configSource),
+      Bun.write(path.join(gatewayDevContainer, "Dockerfile"), "FROM alpine:3.21\n"),
+      Bun.write(path.join(hostDevContainer, "Dockerfile"), "FROM alpine:3.21\n"),
+    ]);
+
+    await manager.ensure(request);
+
+    expect(client.imageBuildCalls[0]).toEqual({
+      kind: "devcontainer",
+      workspaceFolder: await realpath(hostWorktree),
+      configurationPath: await realpath(path.join(hostDevContainer, "devcontainer.json")),
+      image: client.createCalls[0]?.image,
+    });
+  });
+
+  test("rejects privileged requests even when the feature is authorized", async () => {
+    const feature = "ghcr.io/devcontainers/features/node:1";
+    const { client, identity, backend } = await fixture({ allowedDevContainerFeatures: [feature] });
+    await mkdir(path.join(identity.worktreePath, ".devcontainer"), { recursive: true });
+    await Bun.write(path.join(identity.worktreePath, ".devcontainer-lock.json"), JSON.stringify({ features: {} }));
+    await Bun.write(path.join(identity.worktreePath, ".devcontainer", "devcontainer.json"), JSON.stringify({
+      image: "node:22",
+      features: { [feature]: {} },
+      privileged: true,
+    }));
+
+    await expect(backend.inspectForLifecycle!(identity)).rejects.toMatchObject({
+      code: "DEV_CONTAINER_CONFIGURATION_UNSUPPORTED",
+    });
+    expect(client.imageBuildCalls).toEqual([]);
+    expect(client.createCalls).toEqual([]);
   });
 
   test("rejects Dockerfile contexts or files that escape their mapped worktree", async () => {
@@ -554,18 +720,144 @@ describe("Docker environment backend", () => {
     expect(client.createCalls).toEqual([]);
   });
 
-  test("fails closed on Dev Container options that need additional lifecycle support", async () => {
-    const { client, manager, request, identity } = await fixture();
-    await mkdir(path.join(identity.worktreePath, ".devcontainer"), { recursive: true });
-    await Bun.write(path.join(identity.worktreePath, ".devcontainer", "devcontainer.json"), JSON.stringify({
-      image: "project:latest",
-      features: { "ghcr.io/devcontainers/features/node:1": {} },
-    }));
+  test("rejects features, arbitrary mounts, and unsafe container options explicitly", async () => {
+    const unsupportedConfigurations = [
+      [{ features: { "ghcr.io/devcontainers/features/node:1": {} } }, /Features/],
+      [{ mounts: ["source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind"] }, /mounts/],
+      [{ privileged: true }, /privileged/],
+      [{ capAdd: ["SYS_ADMIN"] }, /capAdd/],
+      [{ runArgs: ["--privileged"] }, /runArgs/],
+      [{ forwardPorts: [3000] }, /forwardPorts/],
+    ] as const;
+    for (const [configuration, message] of unsupportedConfigurations) {
+      const { client, identity, backend } = await fixture();
+      await mkdir(path.join(identity.worktreePath, ".devcontainer"), { recursive: true });
+      await Bun.write(path.join(identity.worktreePath, ".devcontainer", "devcontainer.json"), JSON.stringify({
+        image: "project:latest",
+        ...configuration,
+      }));
 
-    await expect(manager.ensure(request)).rejects.toMatchObject({
-      cause: { code: "DEV_CONTAINER_CONFIGURATION_UNSUPPORTED" },
+      let failure: unknown;
+      try {
+        await backend.inspectForLifecycle!(identity);
+      } catch (cause) {
+        failure = cause;
+      }
+      expect(failure).toBeInstanceOf(DockerEnvironmentError);
+      expect((failure as DockerEnvironmentError).code).toBe("DEV_CONTAINER_CONFIGURATION_UNSUPPORTED");
+      expect(message.test((failure as Error).message)).toBe(true);
+      expect(client.createCalls).toEqual([]);
+      expect(client.imageBuildCalls).toEqual([]);
+    }
+  });
+
+  test("runs the selected Compose app with an owned PostgreSQL sidecar on an internal network", async () => {
+    const { client, manager, request, identity, hostWorktree } = await fixture({ allowDevContainerCompose: true });
+    const directory = path.join(identity.worktreePath, ".devcontainer");
+    await mkdir(directory, { recursive: true });
+    await Promise.all([
+      Bun.write(path.join(directory, "devcontainer.json"), JSON.stringify({
+        dockerComposeFile: "compose.yaml",
+        service: "app",
+        runServices: ["app", "db"],
+        workspaceMount: "source=${localWorkspaceFolder},target=/workspaces/project,type=bind",
+        workspaceFolder: "/workspaces/project",
+      })),
+      Bun.write(path.join(directory, "compose.yaml"), [
+        "services:",
+        "  app:",
+        "    image: subpolar/worker:1.0",
+        "    depends_on:",
+        "      - db",
+        "  db:",
+        "    image: postgres:16",
+        "    environment:",
+        "      POSTGRES_DB: app",
+        "      POSTGRES_USER: app",
+        "      POSTGRES_PASSWORD: local-test-password",
+        "    volumes:",
+        "      - subpolar-data:/var/lib/postgresql/data",
+        "volumes:",
+        "  subpolar-data: {}",
+      ].join("\n")),
+    ]);
+
+    const created = await manager.ensure(request);
+    expect(client.createCalls).toHaveLength(2);
+    const databaseOptions = client.createCalls.find((call) => call.name.endsWith("-db"))!;
+    const workerOptions = client.createCalls.find((call) => call.name === `subpolar-${identity.id}`)!;
+    expect(databaseOptions.image).toBe("postgres:16");
+    expect(databaseOptions.user).toBe("999:999");
+    expect(databaseOptions.networkMode).toMatch(/^subpolar-net-/);
+    expect(databaseOptions.readOnlyRootfs).toBe(true);
+    expect(databaseOptions.privileged).toBe(false);
+    expect(databaseOptions.mounts[0]).toMatchObject({ type: "volume", target: "/var/lib/postgresql/data", readOnly: false });
+    expect(workerOptions.networkMode).toBe(databaseOptions.networkMode);
+    expect(workerOptions.mounts[0]).toMatchObject({ source: await realpath(hostWorktree), target: "/workspaces/project" });
+    expect(client.pulledImages).toEqual(["postgres:16"]);
+    expect(client.networks.get(databaseOptions.networkMode)?.internal).toBe(true);
+
+    expect(client.startCalls).toEqual([client.containers.get(databaseOptions.name)?.id, client.containers.get(workerOptions.name)?.id]);
+    await manager.start(request);
+    await manager.stop(request);
+    expect(client.stopCalls).toEqual([client.containers.get(workerOptions.name)?.id, client.containers.get(databaseOptions.name)?.id]);
+    await manager.remove(request);
+    expect(client.networks.has(databaseOptions.networkMode)).toBe(false);
+    expect(client.volumes.has(databaseOptions.mounts[0]!.source)).toBe(false);
+  });
+
+  test("rejects Compose by default before creating Docker resources", async () => {
+    const { client, backend, identity } = await fixture();
+    const directory = path.join(identity.worktreePath, ".devcontainer");
+    await mkdir(directory, { recursive: true });
+    await Bun.write(path.join(directory, "devcontainer.json"), JSON.stringify({ dockerComposeFile: "compose.yaml", service: "app" }));
+    await Bun.write(path.join(directory, "compose.yaml"), "services:\n  app:\n    image: project:latest\n");
+
+    await expect(backend.inspectForLifecycle!(identity)).rejects.toMatchObject({
+      code: "DEV_CONTAINER_CONFIGURATION_UNSUPPORTED",
+      message: expect.stringContaining("SUBPOLAR_ENABLE_DEVCONTAINER_COMPOSE=true"),
     });
     expect(client.createCalls).toEqual([]);
+    expect(client.networks.size).toBe(0);
+    expect(client.volumes.size).toBe(0);
+  });
+
+  test("rejects extra Compose services, app side effects, and unmanaged database storage", async () => {
+    const invalidFiles = [
+      "services:\n  app:\n    image: project:latest\n  cache:\n    image: redis:7\n",
+      "services:\n  app:\n    image: project:latest\n    privileged: true\n",
+      "services:\n  app:\n    image: project:latest\n    ports: ['3000:3000']\n",
+      "services:\n  app:\n    image: project:latest\n  db:\n    image: postgres:16\n    environment:\n      POSTGRES_PASSWORD: secret\n    volumes:\n      - /tmp/db:/var/lib/postgresql/data\n",
+      "services:\n  app:\n    image: project:latest\n  db:\n    image: postgres:16\n    environment:\n      POSTGRES_PASSWORD: ${DB_PASSWORD}\n    volumes:\n      - subpolar-data:/var/lib/postgresql/data\nvolumes:\n  subpolar-data: {}\n",
+    ];
+    for (const composeSource of invalidFiles) {
+      const { client, backend, identity } = await fixture({ allowDevContainerCompose: true });
+      const directory = path.join(identity.worktreePath, ".devcontainer");
+      await mkdir(directory, { recursive: true });
+      await Bun.write(path.join(directory, "devcontainer.json"), JSON.stringify({ dockerComposeFile: "compose.yaml", service: "app" }));
+      await Bun.write(path.join(directory, "compose.yaml"), composeSource);
+
+      await expect(backend.inspectForLifecycle!(identity)).rejects.toBeInstanceOf(DockerEnvironmentError);
+      expect(client.createCalls).toEqual([]);
+      expect(client.networks.size).toBe(0);
+      expect(client.volumes.size).toBe(0);
+    }
+  });
+
+  test("rejects workspace mounts that escape the container worktree namespace", async () => {
+    for (const workspaceMount of [
+      "source=/etc,target=/workspaces/project,type=bind",
+      "source=${localWorkspaceFolder},target=/var/lib/subpolar,type=bind",
+      "source=${localWorkspaceFolder},target=/etc,type=bind",
+      "source=${localWorkspaceFolder},target=/workspaces/project,type=volume",
+    ]) {
+      const { client, manager, request, identity } = await fixture();
+      await mkdir(path.join(identity.worktreePath, ".devcontainer"), { recursive: true });
+      await Bun.write(path.join(identity.worktreePath, ".devcontainer", "devcontainer.json"), JSON.stringify({ image: "project:latest", workspaceMount }));
+
+      await expect(manager.ensure(request)).rejects.toBeTruthy();
+      expect(client.createCalls).toEqual([]);
+    }
   });
 
   test("uses the configured default selection for multiple Dev Container configurations", async () => {

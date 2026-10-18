@@ -111,6 +111,7 @@ export function makeSubpolarTerminalSpawner(
   const manager = createEnvironmentManagerHttpClient({
     baseUrl: environment.SUBPOLAR_MANAGER_URL!.trim(),
     token: environment.SUBPOLAR_MANAGER_TOKEN!.trim(),
+    allowPrivateHttp: environment.SUBPOLAR_MANAGER_ALLOW_PRIVATE_HTTP === "true",
   });
 
   return (input) =>

@@ -3,8 +3,9 @@ import { createManagedExecutionOptions } from "../src/managedExecution.ts";
 import type { ExecutionContext, ToolCall } from "@subpolar/shared";
 
 const environment = {
-  SUBPOLAR_MANAGER_URL: "http://manager:8080",
+  SUBPOLAR_MANAGER_URL: "http://subpolar-manager:8080",
   SUBPOLAR_MANAGER_TOKEN: "managed-execution-test-token-with-more-than-thirty-two-characters",
+  SUBPOLAR_MANAGER_ALLOW_PRIVATE_HTTP: "true",
   SUBPOLAR_STORAGE_ROOT: "/workspaces",
   SUBPOLAR_OWNER_ID: "t3-installation-test",
 };
@@ -46,7 +47,7 @@ test("managed execution routes only the approved argv tool through the manager c
     value: { processId: "p1", exitCode: 0, cancelled: false, stdout: "hello", stderr: "", outputTruncated: false },
   });
   expect(seen).toEqual({
-    url: "http://manager:8080/v1/environments/execute",
+    url: "http://subpolar-manager:8080/v1/environments/execute",
     authorization: `Bearer ${environment.SUBPOLAR_MANAGER_TOKEN}`,
     body: {
       environment: {

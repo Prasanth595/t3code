@@ -28,13 +28,13 @@ test("manager client authenticates lifecycle calls and reads responses", async (
     if (String(input).endsWith("/identity")) return Response.json(identity);
     return Response.json(environment);
   }) as typeof fetch;
-  const manager = createEnvironmentManagerHttpClient({ baseUrl: "http://manager:8080/", token: TOKEN, fetch: fetcher });
+  const manager = createEnvironmentManagerHttpClient({ baseUrl: "http://subpolar-manager:8080/", token: TOKEN, allowPrivateHttp: true, fetch: fetcher });
 
   await expect(manager.identity({ ownerId: identity.ownerId, workspaceId: identity.workspaceId, storageRoot: identity.storageRoot, worktreePath: identity.worktreePath })).resolves.toEqual(identity);
   await expect(manager.ensure({ ownerId: identity.ownerId, workspaceId: identity.workspaceId, storageRoot: identity.storageRoot, worktreePath: identity.worktreePath })).resolves.toEqual(environment);
   expect(calls.map((call) => [call.url, call.authorization])).toEqual([
-    ["http://manager:8080/v1/environments/identity", `Bearer ${TOKEN}`],
-    ["http://manager:8080/v1/environments/ensure", `Bearer ${TOKEN}`],
+    ["http://subpolar-manager:8080/v1/environments/identity", `Bearer ${TOKEN}`],
+    ["http://subpolar-manager:8080/v1/environments/ensure", `Bearer ${TOKEN}`],
   ]);
 });
 
@@ -48,7 +48,7 @@ test("manager client authenticates and validates environment administration call
     if (url.endsWith("/admin/inspect")) return Response.json({ environment });
     return Response.json(environment);
   }) as typeof fetch;
-  const manager = createEnvironmentManagerHttpClient({ baseUrl: "http://manager:8080", token: TOKEN, fetch: fetcher });
+  const manager = createEnvironmentManagerHttpClient({ baseUrl: "http://subpolar-manager:8080", token: TOKEN, allowPrivateHttp: true, fetch: fetcher });
   const request = { ownerId: identity.ownerId, workspaceId: identity.workspaceId, storageRoot: identity.storageRoot, worktreePath: identity.worktreePath };
 
   await expect(manager.status()).resolves.toEqual({ ok: true, registeredEnvironmentCount: 1 });
@@ -68,8 +68,9 @@ test("manager client decodes streamed process output and results", async () => {
     JSON.stringify({ type: "result", result: { processId: "process-a", exitCode: 3, cancelled: false } }),
   ].join("\n") + "\n";
   const manager = createEnvironmentManagerHttpClient({
-    baseUrl: "http://manager:8080",
+    baseUrl: "http://subpolar-manager:8080",
     token: TOKEN,
+    allowPrivateHttp: true,
     fetch: (async () => new Response(body, { headers: { "content-type": "application/x-ndjson" } })) as typeof fetch,
   });
   const output: string[] = [];
@@ -84,6 +85,69 @@ test("manager client rejects URLs with embedded credentials", () => {
   expect(() => createEnvironmentManagerHttpClient({ baseUrl: "http://user:password@manager", token: TOKEN })).toThrow(/cannot contain credentials/);
 });
 
+test("manager client rejects redirects on authenticated requests", async () => {
+  let redirectMode: RequestRedirect | undefined;
+  const manager = createEnvironmentManagerHttpClient({
+    baseUrl: "http://127.0.0.1:8787",
+    token: TOKEN,
+    fetch: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      redirectMode = init?.redirect;
+      return Response.json({ ok: true, registeredEnvironmentCount: 0 });
+    }) as typeof fetch,
+  });
+
+  await expect(manager.status()).resolves.toEqual({ ok: true, registeredEnvironmentCount: 0 });
+  expect(redirectMode).toBe("error");
+});
+
+test("manager client allows loopback HTTP by default and requires opt-in for private HTTP", () => {
+  expect(() => createEnvironmentManagerHttpClient({ baseUrl: "http://127.0.0.1:8787", token: TOKEN })).not.toThrow();
+  expect(() => createEnvironmentManagerHttpClient({ baseUrl: "http://localhost:8787", token: TOKEN })).not.toThrow();
+  expect(() => createEnvironmentManagerHttpClient({ baseUrl: "http://manager:8787", token: TOKEN })).toThrow(/loopback host/);
+  expect(() => createEnvironmentManagerHttpClient({ baseUrl: "http://192.168.1.20:8787", token: TOKEN })).toThrow(/loopback host/);
+
+  expect(() => createEnvironmentManagerHttpClient({
+    baseUrl: "http://localhost:8787",
+    token: TOKEN,
+    allowPrivateHttp: true,
+  })).not.toThrow();
+  expect(() => createEnvironmentManagerHttpClient({
+    baseUrl: "http://subpolar-manager:8787",
+    token: TOKEN,
+    allowPrivateHttp: true,
+  })).not.toThrow();
+  expect(() => createEnvironmentManagerHttpClient({
+    baseUrl: "http://192.168.1.20:8787",
+    token: TOKEN,
+    allowPrivateHttp: true,
+  })).not.toThrow();
+  for (const address of ["100.64.0.1", "100.127.255.254"]) {
+    expect(() => createEnvironmentManagerHttpClient({
+      baseUrl: `http://${address}:8787`,
+      token: TOKEN,
+      allowPrivateHttp: true,
+    })).not.toThrow();
+  }
+  expect(() => createEnvironmentManagerHttpClient({
+    baseUrl: "http://100.128.0.1:8787",
+    token: TOKEN,
+    allowPrivateHttp: true,
+  })).toThrow(/private IP or the subpolar-manager service host/);
+  for (const hostname of ["attacker", "manager.internal", "manager.local", "subpolar-manager.local"]) {
+    expect(() => createEnvironmentManagerHttpClient({
+      baseUrl: `http://${hostname}:8787`,
+      token: TOKEN,
+      allowPrivateHttp: true,
+    })).toThrow(/private IP or the subpolar-manager service host/);
+  }
+  expect(() => createEnvironmentManagerHttpClient({
+    baseUrl: "http://manager.example.com:8787",
+    token: TOKEN,
+    allowPrivateHttp: true,
+  })).toThrow(/private IP or the subpolar-manager service host/);
+  expect(() => createEnvironmentManagerHttpClient({ baseUrl: "https://manager.example.com", token: TOKEN })).not.toThrow();
+});
+
 test("manager client resumes and controls a persistent interactive session", async () => {
   const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
   const output = [
@@ -91,7 +155,7 @@ test("manager client resumes and controls a persistent interactive session", asy
     JSON.stringify({ type: "exit", result: { exitCode: 0, cancelled: false } }),
   ].join("\n") + "\n";
   const manager = createEnvironmentManagerHttpClient({
-    baseUrl: "http://manager:8080", token: TOKEN,
+    baseUrl: "http://subpolar-manager:8080", token: TOKEN, allowPrivateHttp: true,
     fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const body = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
@@ -129,7 +193,7 @@ test("manager client controls a non-TTY process session and preserves stdout/std
     JSON.stringify({ type: "exit", result: { exitCode: 0, cancelled: false } }),
   ].join("\n") + "\n";
   const manager = createEnvironmentManagerHttpClient({
-    baseUrl: "http://manager:8080", token: TOKEN,
+    baseUrl: "http://subpolar-manager:8080", token: TOKEN, allowPrivateHttp: true,
     fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       const requestBody = init?.body ? JSON.parse(String(init.body)) as Record<string, unknown> : {};
@@ -155,4 +219,34 @@ test("manager client controls a non-TTY process session and preserves stdout/std
   expect(calls.map(({ url }) => url.split("/").at(-1))).toEqual(["start", "input", "output", "terminate"]);
   expect(calls[0]?.body.process).toEqual({ clientSessionId: "thread-1-acp" });
   expect(calls[1]?.body.data).toBe(Buffer.from('{"jsonrpc":"2.0"}\n').toString("base64"));
+});
+
+test("manager client requests a port tunnel with only the selected port and environment identity", async () => {
+  const calls: Array<{ url: string; authorization: string | null; body: unknown }> = [];
+  const manager = createEnvironmentManagerHttpClient({
+    baseUrl: "http://subpolar-manager:8080",
+    token: TOKEN,
+    allowPrivateHttp: true,
+    fetch: (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        url: String(input),
+        authorization: new Headers(init?.headers).get("authorization"),
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      });
+      return Response.json({ sessionId: "tcp-session", outputSequence: 0 });
+    }) as typeof fetch,
+  });
+  const request = {
+    ownerId: identity.ownerId,
+    workspaceId: identity.workspaceId,
+    storageRoot: identity.storageRoot,
+    worktreePath: identity.worktreePath,
+  };
+
+  await expect(manager.startPortTunnel(request, 5173)).resolves.toEqual({ sessionId: "tcp-session", outputSequence: 0 });
+  expect(calls).toEqual([{
+    url: "http://subpolar-manager:8080/v1/environments/tcp/start",
+    authorization: `Bearer ${TOKEN}`,
+    body: { environment: request, port: 5173 },
+  }]);
 });

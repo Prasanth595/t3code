@@ -535,6 +535,8 @@ export type ProviderAdapterV2SubagentOutcome = {
 export interface ProviderAdapterV2SessionRuntime {
   readonly instanceId: ProviderInstanceId;
   readonly driver: ProviderDriverKind;
+  /** Provider runtime identity used by server-only persistence adapters. */
+  readonly runtimeHarness?: string;
   readonly providerSessionId: ProviderSessionId;
   readonly providerSession: OrchestrationV2ProviderSession;
   readonly events: Stream.Stream<ProviderAdapterV2Event, ProviderAdapterV2Error>;

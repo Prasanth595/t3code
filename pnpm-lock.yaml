@@ -1866,13 +1866,13 @@ importers:
     devDependencies:
       '@effect/vitest':
         specifier: 4.0.5
-        version: 4.0.5(patch_hash=2731c9c3761c595f25ddc625a7d61ca376b389d5b3049ecb837c8940f21cfa02)(@types/node@24.12.4)(@vitest/ui@5.0.1)(bufferutil@4.1.0)(effect@4.0.5)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 4.0.5(patch_hash=2731c9c3761c595f25ddc625a7d61ca376b389d5b3049ecb837c8940f21cfa02)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.1)(@vitest/ui@5.0.1)(bufferutil@4.1.0)(effect@4.0.5)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
       vite-plus:
         specifier: 1.0.0
-        version: 1.0.0(@types/node@24.12.4)(@vitest/ui@5.0.1(vitest@5.0.1))(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+        version: 1.0.0(@types/node@24.12.4)(@vitest/browser-playwright@5.0.1)(@vitest/ui@5.0.1(vitest@5.0.1))(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
 
   packages/subpolar-contracts: {}
 
@@ -1895,7 +1895,38 @@ importers:
         specifier: 24.12.4
         version: 24.12.4
 
+  packages/subpolar-cli:
+    dependencies:
+      '@subpolar/db-local':
+        specifier: workspace:*
+        version: link:../subpolar-persistance-local
+      '@subpolar/runtime':
+        specifier: workspace:*
+        version: link:../subpolar-core
+      '@subpolar/runtime-pi':
+        specifier: workspace:*
+        version: link:../subpolar-core-pi
+      '@subpolar/shared':
+        specifier: workspace:*
+        version: link:../subpolar-contracts
+
+  packages/subpolar-operations:
+    dependencies:
+      '@subpolar/shared':
+        specifier: workspace:*
+        version: link:../subpolar-contracts
+
+  packages/subpolar-persistance-local:
+    dependencies:
+      '@subpolar/shared':
+        specifier: workspace:*
+        version: link:../subpolar-contracts
+
   packages/subpolar-environments:
+    dependencies:
+      yaml:
+        specifier: ^2.9.0
+        version: 2.9.0
     devDependencies:
       '@types/node':
         specifier: 24.12.4
@@ -1918,6 +1949,16 @@ importers:
         version: 24.12.4
 
   packages/subpolar-tools:
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.4
+        version: 24.12.4
+
+  packages/subpolar-openapi:
+    dependencies:
+      '@subpolar/tools':
+        specifier: workspace:*
+        version: link:../subpolar-tools
     devDependencies:
       '@types/node':
         specifier: 24.12.4
