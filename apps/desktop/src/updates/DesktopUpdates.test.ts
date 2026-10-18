@@ -113,6 +113,36 @@ describe("DesktopUpdates", () => {
     }),
   );
 
+  it.effect(
+    "preserves the disabled reason when changing channels with updates disabled by env",
+    () => {
+      const harness = makeHarness({ env: { T3CODE_DISABLE_AUTO_UPDATE: "true" } });
+
+      return Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+
+          const initialState = yield* updates.getState;
+          assert.equal(initialState.enabled, false);
+          assert.equal(initialState.status, "disabled");
+          assert.equal(
+            initialState.message,
+            "Automatic updates are disabled by the T3CODE_DISABLE_AUTO_UPDATE setting.",
+          );
+
+          const changedState = yield* updates.setChannel("nightly");
+          assert.equal(changedState.channel, "nightly");
+          assert.equal(changedState.enabled, false);
+          assert.equal(changedState.status, "disabled");
+          assert.equal(changedState.message, initialState.message);
+          assert.equal(harness.sentStates.at(-1)?.message, initialState.message);
+          assert.equal(harness.checkCount(), 0);
+        }),
+      ).pipe(Effect.provide(harness.layer));
+    },
+  );
+
   it.effect("subscribe delivers the latest state plus subsequent changes", () => {
     const harness = makeHarness();
 
