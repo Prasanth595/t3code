@@ -1,12 +1,13 @@
 import { useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import type {
+  ModelSelection,
   ProviderInstanceId,
   ServerSettings,
   SourceControlWritingStyleMode,
 } from "@t3tools/contracts";
 import { DEFAULT_UNIFIED_SETTINGS } from "@t3tools/contracts/settings";
-import { createModelSelection } from "@t3tools/shared/model";
+import { createModelSelection, resolveModelPick } from "@t3tools/shared/model";
 import {
   resolveReviewGuideModelSelection,
   resolveSourceControlWriterModelSelection,
@@ -46,6 +47,18 @@ import {
 } from "./settingsLayout";
 import { BranchNamingSettings } from "./BranchNamingSettings";
 import { searchableSetting } from "./settingsSearch";
+
+// A re-pick keeps the stored selection and the traits set beside it. Under Mixed the stored value
+// is one scope's, so a pick still sets every scope to the picked model.
+const pickDedicatedModel = (
+  stored: ModelSelection | null,
+  mixed: boolean,
+  instanceId: ProviderInstanceId,
+  model: string,
+): ModelSelection | null =>
+  mixed
+    ? createModelSelection(instanceId, model)
+    : (resolveModelPick(stored, instanceId, model) ?? stored);
 
 const MODE_OPTIONS: Record<SourceControlWritingStyleMode, { label: string; description: string }> =
   {
@@ -384,7 +397,12 @@ export function SourceControlWritingSettingsSection() {
                       return;
                     }
                     updateSettings({
-                      sourceControlWriterModelSelection: createModelSelection(instanceId, model),
+                      sourceControlWriterModelSelection: pickDedicatedModel(
+                        settings.sourceControlWriterModelSelection,
+                        mixedWriterModel,
+                        instanceId,
+                        model,
+                      ),
                     });
                   }}
                 />
@@ -490,7 +508,12 @@ export function SourceControlWritingSettingsSection() {
                           return;
                         }
                         updateSettings({
-                          reviewGuideModelSelection: createModelSelection(instanceId, model),
+                          reviewGuideModelSelection: pickDedicatedModel(
+                            settings.reviewGuideModelSelection,
+                            mixedReviewGuideModel,
+                            instanceId,
+                            model,
+                          ),
                         });
                       }}
                     />
