@@ -385,11 +385,7 @@ export function SourceControlWritingSettingsSection() {
                     }
                     updateSettings({
                       sourceControlWriterModelSelection:
-                        resolveModelPick(
-                          settings.sourceControlWriterModelSelection,
-                          instanceId,
-                          model,
-                        ) ?? settings.sourceControlWriterModelSelection,
+                        resolveModelPick(activeSelection, instanceId, model) ?? activeSelection,
                     });
                   }}
                 />
@@ -496,11 +492,8 @@ export function SourceControlWritingSettingsSection() {
                         }
                         updateSettings({
                           reviewGuideModelSelection:
-                            resolveModelPick(
-                              settings.reviewGuideModelSelection,
-                              instanceId,
-                              model,
-                            ) ?? settings.reviewGuideModelSelection,
+                            resolveModelPick(reviewGuideSelection, instanceId, model) ??
+                            reviewGuideSelection,
                         });
                       }}
                     />
