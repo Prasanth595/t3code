@@ -78,6 +78,18 @@ const DEFAULT_DRIVER_KIND = ProviderDriverKind.make("codex");
 const ACP_REGISTRY_DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const DEFAULT_DRIVER_OPTION = providerClients.definitions[0]!;
 const EMPTY_CONFIG_DRAFT: Record<string, unknown> = {};
+const KIMI_CODE_PRESET = "kimiCode";
+const PROVIDER_CHOICES = [
+  ...providerClients.definitions
+    .filter((option) => option.driverKind !== ACP_REGISTRY_DRIVER_KIND)
+    .map((option) => ({ ...option, value: option.driverKind })),
+  {
+    value: KIMI_CODE_PRESET,
+    driverKind: ACP_REGISTRY_DRIVER_KIND,
+    label: "Kimi Code",
+    badgeLabel: "Beta",
+  },
+];
 /**
  * Validate an instance id against the same slug rules the server applies in
  * `ProviderInstanceId` (see `packages/contracts/src/providerInstance.ts`).
@@ -118,6 +130,7 @@ export function AddProviderInstanceDialog({
     {},
   );
   const [selectedAcp, setSelectedAcp] = useState<AcpRegistrySearchAgent | null>(null);
+  const [localAcpPreset, setLocalAcpPreset] = useState<typeof KIMI_CODE_PRESET | null>(null);
   const [localEnvironment, setLocalEnvironment] = useState<
     ReadonlyArray<ProviderInstanceEnvironmentVariable>
   >([]);
@@ -183,6 +196,7 @@ export function AddProviderInstanceDialog({
       ] as const)
     : ([driverOption.label, previewLabel, null] as const);
   const setConfigDraft = (config: Record<string, unknown> | undefined) => {
+    if (isAcpRegistry && config?.source !== "local") setLocalAcpPreset(null);
     setConfigByDriver((existing) => {
       const next = { ...existing };
       if (config === undefined || Object.keys(config).length === 0) {
@@ -232,6 +246,7 @@ export function AddProviderInstanceDialog({
 
   const handleAcpPrepared = (agent: AcpRegistrySearchAgent) => {
     setDriver(ACP_REGISTRY_DRIVER_KIND);
+    setLocalAcpPreset(null);
     const nextLabel = agent.name;
     const registryIconUrl = resolveOfficialAcpRegistryIconUrl(agent.icon);
     const nextInstanceId = deriveAvailableInstanceId(
@@ -261,6 +276,7 @@ export function AddProviderInstanceDialog({
 
   const handleManualAcpConfiguration = () => {
     setDriver(ACP_REGISTRY_DRIVER_KIND);
+    setLocalAcpPreset(null);
     setSelectedAcp(null);
     setIsManualAcpConfiguration(true);
     setConfigByDriver((existing) => {
@@ -277,17 +293,22 @@ export function AddProviderInstanceDialog({
     setHasAttemptedSubmit(false);
   };
 
-  const handleLocalAcpConfiguration = () => {
+  const handleLocalAcpConfiguration = (preset?: typeof KIMI_CODE_PRESET) => {
     setDriver(ACP_REGISTRY_DRIVER_KIND);
+    setLocalAcpPreset(preset ?? null);
     setSelectedAcp(null);
     setIsManualAcpConfiguration(true);
     setConfigByDriver((existing) => ({
       ...existing,
-      [ACP_REGISTRY_DRIVER_KIND]: { source: "local", commandArgs: [] },
+      [ACP_REGISTRY_DRIVER_KIND]: {
+        source: "local",
+        commandArgs: preset === KIMI_CODE_PRESET ? ["acp"] : [],
+        ...(preset === KIMI_CODE_PRESET ? { commandPath: "kimi" } : {}),
+      },
     }));
     setIdentityByDriver((existing) =>
       updateProviderIdentityDraft(existing, ACP_REGISTRY_DRIVER_KIND, {
-        label: "Local ACP",
+        label: preset === KIMI_CODE_PRESET ? "Kimi Code" : "Local ACP",
         instanceIdOverride: null,
       }),
     );
@@ -405,8 +426,13 @@ export function AddProviderInstanceDialog({
                 </div>
                 <RadioGroup
                   disabled={isPreparingRegistryAgent}
-                  value={driver}
+                  value={localAcpPreset ?? driver}
                   onValueChange={(value) => {
+                    if (value === KIMI_CODE_PRESET) {
+                      handleLocalAcpConfiguration(KIMI_CODE_PRESET);
+                      return;
+                    }
+                    setLocalAcpPreset(null);
                     setDriver(ProviderDriverKind.make(value));
                     setIsManualAcpConfiguration(false);
                     setHasAttemptedSubmit(false);
@@ -414,37 +440,33 @@ export function AddProviderInstanceDialog({
                   aria-labelledby="add-instance-driver-label"
                   className="grid grid-cols-1 sm:grid-cols-2"
                 >
-                  {providerClients.definitions
-                    .filter((option) => option.driverKind !== ACP_REGISTRY_DRIVER_KIND)
-                    .map((option) => {
-                      return (
-                        <RadioPrimitive.Root
-                          key={option.driverKind}
-                          value={option.driverKind}
-                          className="relative flex cursor-pointer items-center gap-3 rounded-lg bg-card px-3 py-3 text-left text-muted-foreground outline-none ring-1 ring-black/5 hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-checked:bg-primary/8 data-checked:text-foreground data-checked:ring-2 data-checked:ring-inset data-checked:ring-primary data-checked:hover:bg-primary/8 dark:bg-white/3 dark:ring-white/5 dark:hover:bg-white/5 dark:data-checked:bg-primary/15 dark:data-checked:ring-primary dark:data-checked:hover:bg-primary/15"
-                        >
-                          <ProviderInstanceIcon
-                            driverKind={option.driverKind}
-                            displayName={option.label}
-                            iconClassName="size-4"
-                          />
-                          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                            {option.label}
-                          </span>
-                          <RadioPrimitive.Indicator
-                            className="grid size-5 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"
-                            aria-hidden
-                          >
-                            <CheckIcon className="size-3.5 shrink-0" />
-                          </RadioPrimitive.Indicator>
-                          {option.badgeLabel ? (
-                            <Badge variant="warning" size="sm">
-                              {option.badgeLabel}
-                            </Badge>
-                          ) : null}
-                        </RadioPrimitive.Root>
-                      );
-                    })}
+                  {PROVIDER_CHOICES.map((option) => (
+                    <RadioPrimitive.Root
+                      key={option.value}
+                      value={option.value}
+                      className="relative flex cursor-pointer items-center gap-3 rounded-lg bg-card px-3 py-3 text-left text-muted-foreground outline-none ring-1 ring-black/5 hover:bg-muted focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring data-checked:bg-primary/8 data-checked:text-foreground data-checked:ring-2 data-checked:ring-inset data-checked:ring-primary data-checked:hover:bg-primary/8 dark:bg-white/3 dark:ring-white/5 dark:hover:bg-white/5 dark:data-checked:bg-primary/15 dark:data-checked:ring-primary dark:data-checked:hover:bg-primary/15"
+                    >
+                      <ProviderInstanceIcon
+                        driverKind={option.driverKind}
+                        displayName={option.label}
+                        iconClassName="size-4"
+                      />
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                        {option.label}
+                      </span>
+                      <RadioPrimitive.Indicator
+                        className="grid size-5 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground"
+                        aria-hidden
+                      >
+                        <CheckIcon className="size-3.5 shrink-0" />
+                      </RadioPrimitive.Indicator>
+                      {option.badgeLabel ? (
+                        <Badge variant="warning" size="sm">
+                          {option.badgeLabel}
+                        </Badge>
+                      ) : null}
+                    </RadioPrimitive.Root>
+                  ))}
                 </RadioGroup>
               </div>
 
@@ -470,6 +492,7 @@ export function AddProviderInstanceDialog({
                         </div>
                         <Button
                           onClick={() => {
+                            setLocalAcpPreset(null);
                             setIsManualAcpConfiguration(false);
                             setHasAttemptedSubmit(false);
                           }}
@@ -505,7 +528,7 @@ export function AddProviderInstanceDialog({
                         providerInstances={settings.providerInstances}
                         onPrepared={handleAcpPrepared}
                         onManualConfiguration={handleManualAcpConfiguration}
-                        onLocalConfiguration={handleLocalAcpConfiguration}
+                        onLocalConfiguration={() => handleLocalAcpConfiguration()}
                         onLoadingChange={setIsRegistryLoading}
                         onPreparingChange={setIsPreparingRegistryAgent}
                       />

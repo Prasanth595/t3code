@@ -122,6 +122,14 @@ function button(label: string) {
   return found!;
 }
 const click = (label: string) => act(async () => button(label).click());
+const selectKimiCode = () =>
+  act(async () => {
+    const choice = [...document.querySelectorAll<HTMLElement>('[role="radio"]')].find((radio) =>
+      radio.textContent?.includes("Kimi Code"),
+    );
+    expect(choice).toBeDefined();
+    choice!.click();
+  });
 const input = (selector: string) => {
   const found = document.querySelector<HTMLInputElement>(selector);
   expect(found, selector).not.toBeNull();
@@ -293,6 +301,122 @@ describe("AddProviderInstanceDialog environment routing", () => {
     expect(actions.onOpenChange).toHaveBeenCalledWith(false);
     expect(signInStep()).toBeNull();
   });
+
+  it("creates Kimi Code through local ACP on the selected environment", async () => {
+    await render();
+    await selectKimiCode();
+
+    expect(input("#add-provider-acpRegistry-manual-commandPath").value).toBe("kimi");
+    expect(input('input[aria-label="Argument 1"]').value).toBe("acp");
+    await click("Next");
+    await click("Add instance");
+
+    expect(settingsHooks.useMutation).toHaveBeenCalledWith(remoteEnvironmentId);
+    expect(settingsHooks.mutate).toHaveBeenCalledExactlyOnceWith({
+      operation: "create",
+      instanceId: "acpRegistry_kimi_code",
+      instance: {
+        driver: "acpRegistry",
+        enabled: true,
+        displayName: "Kimi Code",
+        config: { source: "local", commandPath: "kimi", commandArgs: ["acp"] },
+      },
+    });
+    expect(signInStep()).toBeNull();
+    expect(actions.onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("lets Kimi Code use an executable outside the selected environment's PATH", async () => {
+    await render();
+    await selectKimiCode();
+    await type("#add-provider-acpRegistry-manual-commandPath", "/opt/kimi/bin/kimi");
+    await click("Next");
+    await click("Add instance");
+
+    expect(settingsHooks.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        instance: expect.objectContaining({
+          config: {
+            source: "local",
+            commandPath: "/opt/kimi/bin/kimi",
+            commandArgs: ["acp"],
+          },
+        }),
+      }),
+    );
+  });
+
+  it("can reselect Kimi Code after changing the ACP source", async () => {
+    await render();
+    await selectKimiCode();
+    const source = document.querySelector<HTMLElement>("#add-provider-acpRegistry-manual-source");
+    expect(source).not.toBeNull();
+    await act(async () => userEvent.click(source!));
+    const registryOption = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (option) => option.textContent?.trim() === "ACP Registry",
+    );
+    expect(registryOption).toBeDefined();
+    await act(async () => userEvent.click(registryOption!));
+
+    const kimiChoice = [...document.querySelectorAll<HTMLElement>('[role="radio"]')].find((radio) =>
+      radio.textContent?.includes("Kimi Code"),
+    );
+    expect(kimiChoice?.getAttribute("aria-checked")).toBe("false");
+    await selectKimiCode();
+    await click("Next");
+    await click("Add instance");
+
+    expect(settingsHooks.mutate).toHaveBeenCalledExactlyOnceWith({
+      operation: "create",
+      instanceId: "acpRegistry_kimi_code",
+      instance: {
+        driver: "acpRegistry",
+        enabled: true,
+        displayName: "Kimi Code",
+        config: { source: "local", commandPath: "kimi", commandArgs: ["acp"] },
+      },
+    });
+  });
+
+  it.each(["registry", "local"])(
+    "clears the Kimi Code preset when switching to manual %s configuration",
+    async (source) => {
+      await render();
+      await selectKimiCode();
+      await click("Search registry");
+      if (source === "registry") {
+        await click("Enter registry agent");
+        await type("#add-provider-acpRegistry-manual-agentId", "devin");
+        await click("Next");
+        await click("Continue to sign-in");
+      } else {
+        await click("Use local command");
+        const kimiChoice = [...document.querySelectorAll<HTMLElement>('[role="radio"]')].find(
+          (radio) => radio.textContent?.includes("Kimi Code"),
+        );
+        expect(kimiChoice?.getAttribute("aria-checked")).toBe("false");
+        expect(input("#add-provider-acpRegistry-manual-commandPath").value).toBe("");
+        expect(document.querySelector('input[aria-label="Argument 1"]')).toBeNull();
+        await type("#add-provider-acpRegistry-manual-commandPath", "dsh");
+        await click("Next");
+        await click("Add instance");
+      }
+
+      expect(settingsHooks.mutate).toHaveBeenCalledExactlyOnceWith({
+        operation: "create",
+        instanceId: source === "registry" ? "acpRegistry_custom" : "acpRegistry_local_acp",
+        instance: {
+          driver: "acpRegistry",
+          enabled: true,
+          ...(source === "local" ? { displayName: "Local ACP" } : {}),
+          config:
+            source === "registry"
+              ? { agentId: "devin" }
+              : { source: "local", commandPath: "dsh", commandArgs: [] },
+        },
+      });
+    },
+  );
 
   it("keeps the dialog open when the atomic upsert fails", async () => {
     settingsHooks.mutate.mockResolvedValueOnce({ _tag: "Failure", cause: new Error("Conflict") });
