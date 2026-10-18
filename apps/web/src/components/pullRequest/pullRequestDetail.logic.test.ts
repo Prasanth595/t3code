@@ -19,6 +19,7 @@ import { formatInlineContextReference } from "~/lib/composerContextReferences";
 import { buildMessageContext, reviewCommentContextReference } from "~/lib/composerContextRecords";
 
 import {
+  pullRequestGraphTarget,
   buildAddSelectionToAgentHandoff,
   buildAskAboutGuideStopHandoff,
   classifyPullRequestChecks,
@@ -2033,4 +2034,46 @@ describe("single-PR merge compatibility during stack discovery", () => {
       ).toBe(allowed);
     },
   );
+});
+
+describe("the pull request's row in its branch graph", () => {
+  const open = {
+    state: "open",
+    isDraft: false,
+    mergeability: "mergeable",
+    baseBranch: "main",
+    checks: [],
+    mergedAt: null,
+  } as const;
+  const check = (status: "pending" | "success" | "failure") => ({
+    name: status,
+    status,
+    description: null,
+    url: null,
+  });
+  it("follows the pull request from checking to merged", () => {
+    const status = (detail: Parameters<typeof pullRequestGraphTarget>[0], merging = false) => {
+      const target = pullRequestGraphTarget(detail, merging);
+      return `${target.label} · ${target.status} · ${target.tone}`;
+    };
+    expect(status({ ...open, mergeability: "unknown" })).toBe("Merge into main · checking · muted");
+    expect(status({ ...open, mergeability: "conflicting" })).toBe(
+      "Merge into main · conflicts · warning",
+    );
+    expect(status({ ...open, checks: [check("success"), check("failure")] })).toBe(
+      "Merge into main · checks failing · danger",
+    );
+    expect(status(open)).toBe("Merge into main · ready · success");
+    expect(status(open, true)).toBe("Merge into main · merging · pending");
+    expect(status({ ...open, state: "merged" }, true)).toBe("Merged into main · merged · merged");
+    expect(status({ ...open, state: "closed" })).toBe("Closed without merging · closed · muted");
+  });
+  it("reports how many checks finished while others run", () => {
+    const target = pullRequestGraphTarget(
+      { ...open, checks: [check("success"), check("pending"), check("pending"), check("success")] },
+      false,
+    );
+    expect(target.status).toBe("checks 2/4");
+    expect(target.progress).toBe(0.5);
+  });
 });

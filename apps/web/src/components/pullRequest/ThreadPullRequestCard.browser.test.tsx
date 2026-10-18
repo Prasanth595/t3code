@@ -15,6 +15,7 @@ import "~/index.css";
 const state = vi.hoisted(() => ({
   detail: null as PullRequestDetail | null,
   history: null as GitHistoryResult | null,
+  status: null as object | null,
   canWrite: true,
   supported: true,
   historySupported: true,
@@ -58,6 +59,10 @@ vi.mock(import("~/state/git"), async (original) => ({
   ...(await original()),
   gitEnvironment: { history: () => "history" } as never,
 }));
+vi.mock(import("~/state/vcs"), async (original) => ({
+  ...(await original()),
+  vcsEnvironment: { status: () => "status" } as never,
+}));
 vi.mock(import("~/state/query"), async (original) => ({
   ...(await original()),
   useEnvironmentQuery: ((query: string | null) => ({
@@ -68,7 +73,9 @@ vi.mock(import("~/state/query"), async (original) => ({
           ? state.history
           : query === "stack"
             ? state.stack
-            : null,
+            : query === "status"
+              ? state.status
+              : null,
     error: query === "detail" ? state.error : query === "history" ? state.historyError : null,
     isPending: query === "detail" && state.pending,
     refresh: state.refresh,
@@ -94,6 +101,7 @@ vi.mock("../RelativeTime", () => ({ RelativeTime: () => "now" }));
 
 import { ThreadPullRequestCard } from "./ThreadPullRequestCard";
 import { GitCommitGraph } from "./PullRequestBranchGraph";
+import { pullRequestGraphTarget } from "./pullRequestDetail.logic";
 import { useUiStateStore } from "~/uiStateStore";
 
 const environmentId = EnvironmentId.make("environment");
@@ -150,16 +158,43 @@ const render = () =>
       <ThreadPullRequestCard threadRef={threadRef} link={{ ...detail }} cwd="/workspace" />,
     ),
   );
-const renderHistory = () =>
+const renderHistory = (props: Partial<Parameters<typeof GitCommitGraph>[0]> = {}) =>
   act(async () =>
     root.render(
       <GitCommitGraph
         history={state.history!}
         headBranch={detail.headBranch}
         baseBranch={detail.baseBranch}
+        {...props}
       />,
     ),
   );
+const settle = (element: Element) =>
+  Promise.all(element.getAnimations({ subtree: true }).map((animation) => animation.finished));
+const withCommit = (sha: string, subject: string) => ({
+  ...state.history!,
+  headSha: sha,
+  commits: [
+    { ...state.history!.commits[0]!, sha, parents: [state.history!.headSha!], subject },
+    ...state.history!.commits,
+  ],
+});
+const vcsStatus = (overrides: { aheadCount?: number; files?: number } = {}) => ({
+  refName: detail.headBranch,
+  aheadCount: overrides.aheadCount ?? 0,
+  behindCount: 0,
+  hasWorkingTreeChanges: (overrides.files ?? 0) > 0,
+  workingTree: {
+    files: Array.from({ length: overrides.files ?? 0 }, (_, index) => ({
+      path: `file-${index}.ts`,
+      insertions: 1,
+      deletions: 0,
+    })),
+    insertions: 0,
+    deletions: 0,
+  },
+});
+const ready = pullRequestGraphTarget(detail, false);
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   state.detail = detail;
@@ -183,6 +218,7 @@ beforeEach(() => {
   state.error = null;
   state.historyError = null;
   state.stack = null;
+  state.status = null;
   state.perform.mockReset();
   state.handoff.mockReset();
   state.open.mockReset();
@@ -371,4 +407,128 @@ it("shows terminal PR states and never offers merge again", async () => {
   await expect.element(page.getByText("Pull request merged", { exact: true })).toBeVisible();
   expect(page.getByRole("button", { name: "Merge", exact: true }).elements()).toHaveLength(0);
   expect(page.getByRole("button", { name: "Open stack", exact: true }).elements()).toHaveLength(0);
+});
+it("decodes the commit that replaces the uncommitted row in place", async () => {
+  await renderHistory({ target: ready, workingFiles: 3 });
+  const list = container.querySelector<HTMLElement>('[aria-label="Branch commit history"]')!;
+  await settle(list);
+  await expect.element(page.getByText("Uncommitted changes", { exact: true })).toBeVisible();
+  expect(container.textContent).toContain("3 files");
+  const previousHead = container.querySelector<HTMLElement>('[data-commit-sha="sha-0"]')!;
+  state.history = withCommit("new-head", "Add session refresh tests");
+  await renderHistory({ target: ready, workingFiles: null });
+  const row = list.children[1] as HTMLElement;
+  expect(row.dataset.commitSha).toBe("new-head");
+  expect(row.textContent).not.toContain("Add session refresh tests");
+  expect(previousHead.getAnimations()).toHaveLength(0);
+  await expect.element(page.getByText("Add session refresh tests", { exact: true })).toBeVisible();
+  expect(container.textContent).not.toContain("Uncommitted changes");
+  await settle(list);
+  expect(list.getAnimations({ subtree: true })).toHaveLength(0);
+});
+it("draws an arriving commit into the graph and then stops animating", async () => {
+  await renderHistory();
+  const list = container.querySelector<HTMLElement>('[aria-label="Branch commit history"]')!;
+  await settle(list);
+  state.history = withCommit("new-head", "New commit");
+  await renderHistory();
+  const row = container.querySelector<HTMLElement>('[data-commit-sha="new-head"]')!;
+  const keyframes = row
+    .getAnimations({ subtree: true })
+    .flatMap((animation) => (animation.effect as KeyframeEffect).getKeyframes());
+  expect(keyframes.some((frame) => frame.opacity === "0")).toBe(true);
+  expect(keyframes.some((frame) => frame.strokeDashoffset === "1")).toBe(true);
+  await settle(list);
+  expect(list.getAnimations({ subtree: true })).toHaveLength(0);
+  expect(row.textContent).toContain("New commit");
+});
+it("carries a merge down the branch's own commits, newest first", async () => {
+  state.history = {
+    ...state.history!,
+    commits: state.history!.commits.map((commit, index) =>
+      index === 2 ? { ...commit, parents: ["sha-3", "main-tip"] } : commit,
+    ),
+  };
+  await renderHistory({ target: ready });
+  const list = container.querySelector<HTMLElement>('[aria-label="Branch commit history"]')!;
+  await settle(list);
+  await renderHistory({ target: pullRequestGraphTarget({ ...detail, state: "merged" }, false) });
+  const delays = ["pull-request", "sha-0", "sha-1"].map((sha) =>
+    list
+      .querySelector(`[data-graph-row="${sha}"]`)!
+      .getAnimations()
+      .map((animation) => Number(animation.effect!.getTiming().delay)),
+  );
+  expect(delays).toEqual([[0], [70], [140]]);
+  await expect.element(page.getByText("Merged into main", { exact: true })).toBeVisible();
+  await settle(list);
+});
+it("leaves commits added after the merge out of it", async () => {
+  state.history = {
+    ...state.history!,
+    commits: state.history!.commits.map((commit, index) => ({
+      ...commit,
+      authoredAt: index === 0 ? "2026-10-18T12:00:00Z" : commit.authoredAt,
+      parents: index === 2 ? ["sha-3", "main-tip"] : commit.parents,
+    })),
+  };
+  await renderHistory({ target: ready });
+  const list = container.querySelector<HTMLElement>('[aria-label="Branch commit history"]')!;
+  await settle(list);
+  const merged = { ...detail, state: "merged", mergedAt: "2026-10-18T11:00:00Z" } as const;
+  await renderHistory({ target: pullRequestGraphTarget(merged, false) });
+  const flashed = ["sha-0", "sha-1"].map(
+    (sha) => list.querySelector(`[data-graph-row="${sha}"]`)!.getAnimations().length,
+  );
+  expect(flashed).toEqual([0, 1]);
+  await settle(list);
+});
+it("follows the checkout live and keeps the uncommitted row until its commit arrives", async () => {
+  state.status = vcsStatus({ files: 2 });
+  await render();
+  await expect.element(page.getByText("Uncommitted changes", { exact: true })).toBeVisible();
+  expect(state.refresh).not.toHaveBeenCalled();
+  // The mocked queries are not reactive, so a new detail stands in for the status update.
+  state.status = vcsStatus({ aheadCount: 1 });
+  state.detail = { ...detail };
+  await render();
+  expect(state.refresh).toHaveBeenCalledOnce();
+  expect(container.textContent).toContain("Uncommitted changes");
+  state.history = withCommit("new-head", "Add session refresh tests");
+  state.detail = { ...detail };
+  await render();
+  await expect.element(page.getByText("Add session refresh tests", { exact: true })).toBeVisible();
+  expect(container.textContent).not.toContain("Uncommitted changes");
+});
+it("shows the pull request's own row with what blocks it", async () => {
+  state.detail = { ...detail, mergeability: "conflicting" };
+  await render();
+  await expect.element(page.getByText("Merge into main", { exact: true })).toBeVisible();
+  await expect.element(page.getByText("conflicts", { exact: true })).toBeVisible();
+});
+it("shows new history without motion when reduced motion is requested", async () => {
+  const matchMedia = window.matchMedia.bind(window);
+  const reducedMotion = vi
+    .spyOn(window, "matchMedia")
+    .mockImplementation((query) =>
+      query === "(prefers-reduced-motion: reduce)"
+        ? ({ ...matchMedia(query), matches: true } as MediaQueryList)
+        : matchMedia(query),
+    );
+  try {
+    await renderHistory({ target: ready, workingFiles: 1, animateEntrance: true });
+    state.history = withCommit("new-head", "Add session refresh tests");
+    await renderHistory({ target: pullRequestGraphTarget({ ...detail, state: "merged" }, false) });
+    const list = container.querySelector<HTMLElement>('[aria-label="Branch commit history"]')!;
+    // CSS transitions follow the real media query, which this spy cannot change.
+    expect(
+      list
+        .getAnimations({ subtree: true })
+        .filter((animation) => !(animation instanceof CSSTransition)),
+    ).toHaveLength(0);
+    expect(list.children[1]?.textContent).toContain("Add session refresh tests");
+    expect(list.children[0]?.textContent).toContain("Merged into main");
+  } finally {
+    reducedMotion.mockRestore();
+  }
 });

@@ -65,7 +65,9 @@ export const readGitHistory = Effect.fn("GitWorkflowService.history.read")(funct
   ].slice(0, TIP_LIMIT);
   const result = yield* execute([
     "log",
-    "--topo-order",
+    // Newest first with children before parents. Topological order can walk a long base
+    // history first and push the head's newest commits out of the window.
+    "--date-order",
     `--max-count=${COMMIT_LIMIT + 1}`,
     "--no-show-signature",
     "--format=%H%x00%P%x00%s%x00%an%x00%aI",

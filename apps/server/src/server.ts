@@ -5,6 +5,7 @@ import * as Random from "effect/Random";
 import * as Semaphore from "effect/Semaphore";
 import * as DatabaseStorage from "./persistence/DatabaseStorage.ts";
 import * as StorageCleanup from "./storageCleanup.ts";
+import * as CheckoutCommandReactor from "./orchestration-v2/CheckoutCommandReactor.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as DelegatedTaskQuestionReactor from "./orchestration-v2/DelegatedTaskQuestionReactor.ts";
@@ -581,6 +582,12 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
       yield* service.start();
     }),
   ).pipe(Layer.provide(DelegatedTaskQuestionReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
+  Layer.effectDiscard(
+    Effect.gen(function* () {
+      const service = yield* CheckoutCommandReactor.CheckoutCommandReactor;
+      yield* service.start();
+    }),
+  ).pipe(Layer.provide(CheckoutCommandReactor.layer), Layer.provide(ProjectionStoreV2.layer)),
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,

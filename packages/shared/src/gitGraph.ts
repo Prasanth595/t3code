@@ -7,6 +7,7 @@ const laneX = (lane: number) => 10 + lane * LANE_WIDTH;
 /** Lay out a topologically ordered DAG, retaining lane positions until their histories join. */
 export function layoutGitGraph(commits: ReadonlyArray<GitHistoryCommit>) {
   const lanes: Array<{ sha: string; color: number } | null> = [];
+  const loaded = new Set(commits.map((commit) => commit.sha));
   let color = 0;
   let width = 24;
   const rows = commits.map((commit) => {
@@ -27,6 +28,18 @@ export function layoutGitGraph(commits: ReadonlyArray<GitHistoryCommit>) {
     if (incoming) paths.push({ d: `M ${laneX(lane)} 0 V 16`, color: node.color });
     lanes[lane] = null;
     for (const [index, parent] of [...new Set(commit.parents)].entries()) {
+      // History past the loaded window fades out within the row instead of holding a lane open,
+      // so a base full of sync merges does not widen the graph row after row.
+      if (!loaded.has(parent)) {
+        const from = laneX(lane);
+        const to = laneX(lane + index);
+        paths.push({
+          d: from === to ? `M ${from} 16 V 26` : `M ${from} 16 C ${from} 23 ${to} 21 ${to} 26`,
+          color: index === 0 ? node.color : color++ % 5,
+        });
+        width = Math.max(width, to + 12);
+        continue;
+      }
       let parentLane = lanes.findIndex((entry) => entry?.sha === parent);
       if (parentLane < 0) {
         parentLane = index === 0 && lanes[lane] === null ? lane : lanes.indexOf(null);

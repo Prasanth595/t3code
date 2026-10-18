@@ -380,6 +380,67 @@ export function resolveThreadPanelPullRequestAction(
     : null;
 }
 
+export type PullRequestGraphTone =
+  | "pending"
+  | "warning"
+  | "success"
+  | "danger"
+  | "merged"
+  | "muted";
+
+export interface PullRequestGraphTarget {
+  readonly label: string;
+  readonly status: string;
+  readonly tone: PullRequestGraphTone;
+  /** Work is in flight with no measurable progress, so the node spins. */
+  readonly busy: boolean;
+  /** Share of checks that finished, while some are still running. */
+  readonly progress: number | null;
+  /** When the pull request merged; later commits on its branch were not part of it. */
+  readonly mergedAt: string | null;
+}
+
+/** The pull request's own row at the top of its branch graph: where it lands and what blocks it. */
+export function pullRequestGraphTarget(
+  detail: Pick<
+    PullRequestDetail,
+    "state" | "isDraft" | "mergeability" | "baseBranch" | "checks" | "mergedAt"
+  >,
+  merging: boolean,
+): PullRequestGraphTarget {
+  const target = (status: string, tone: PullRequestGraphTone, busy = false) => ({
+    label: `Merge into ${detail.baseBranch}`,
+    status,
+    tone,
+    busy,
+    progress: null,
+    mergedAt: detail.mergedAt,
+  });
+  if (detail.state === "merged") {
+    return { ...target("merged", "merged"), label: `Merged into ${detail.baseBranch}` };
+  }
+  if (detail.state === "closed") {
+    return { ...target("closed", "muted"), label: "Closed without merging" };
+  }
+  if (merging) return target("merging", "pending", true);
+  if (detail.isDraft) return target("draft", "muted");
+  if (detail.mergeability === "conflicting") return target("conflicts", "warning");
+  const checks = classifyPullRequestChecks(detail.checks);
+  if (checks === "failing") return target("checks failing", "danger");
+  if (checks === "pending") {
+    const done = detail.checks.filter(
+      (check) => check.status !== "pending" && check.status !== "action-required",
+    ).length;
+    return {
+      ...target(`checks ${done}/${detail.checks.length}`, "pending"),
+      progress: done / detail.checks.length,
+    };
+  }
+  return detail.mergeability === "mergeable"
+    ? target("ready", "success")
+    : target("checking", "muted", true);
+}
+
 export function orderPullRequestComments<T extends { readonly createdAt: string }>(
   comments: ReadonlyArray<T>,
   order: "newest" | "oldest",

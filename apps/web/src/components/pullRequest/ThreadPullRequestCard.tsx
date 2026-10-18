@@ -20,6 +20,7 @@ import {
 import {
   allowedPullRequestMergeMethods,
   buildResolveConflictsPrompt,
+  pullRequestGraphTarget,
   resolvePullRequestMergeMethod,
   resolveThreadPanelPullRequestAction,
 } from "./pullRequestDetail.logic";
@@ -189,6 +190,7 @@ export function ThreadPullRequestCard({
               cwd={cwd ?? detail.workspaceRoot}
               headBranch={detail.headBranch}
               baseBranch={detail.baseBranch}
+              target={pullRequestGraphTarget(detail, actionPending)}
             />
           </div>
         ) : (
