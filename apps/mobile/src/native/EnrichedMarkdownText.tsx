@@ -19,6 +19,7 @@ import { useAppearancePreferences } from "../features/settings/appearance/Appear
 import { Menu } from "../components/ui/Menu";
 import { useEnrichedLinkVariants } from "./useEnrichedLinkVariants";
 import { copyTextWithHaptic } from "../lib/copyTextWithHaptic";
+import { useFontFamily } from "../lib/useFontFamily";
 import {
   ENRICHED_INLINE_FILE_LINK_REGEX,
   enrichedSkillLinkRegex,
@@ -28,8 +29,8 @@ import {
 function enrichedStyle(
   style: SelectableMarkdownTextProps["textStyle"],
   dark: boolean,
+  monospace: string,
 ): MarkdownStyle {
-  const monospace = Platform.OS === "ios" ? "Menlo" : "monospace";
   // Keep the radius modest: iOS clips square table-cell borders without stroking the corner arcs.
   const block = {
     marginTop: 4,
@@ -145,6 +146,7 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     [props.markdown],
   );
   const { themeAppearance } = useAppearancePreferences();
+  const monospace = useFontFamily("mono");
   const [documentAssets, setDocumentAssets] = useState<DocumentAssetsEvent["assets"]>([]);
   const onDocumentAssets = useCallback(({ assets }: DocumentAssetsEvent) => {
     setDocumentAssets((previous) =>
@@ -243,8 +245,11 @@ export function MobileEnrichedMarkdownText(props: SelectableMarkdownTextProps) {
     };
   }, [props.contextClipboardFragment, props.markdown]);
   const markdownStyle = useMemo(
-    () => ({ ...enrichedStyle(props.textStyle, themeAppearance === "dark"), linkVariants }),
-    [props.textStyle, themeAppearance, linkVariants],
+    () => ({
+      ...enrichedStyle(props.textStyle, themeAppearance === "dark", monospace),
+      linkVariants,
+    }),
+    [props.textStyle, themeAppearance, monospace, linkVariants],
   );
   const renderMedia = useCallback(
     (asset: MarkdownMediaAsset) =>

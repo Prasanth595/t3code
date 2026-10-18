@@ -72,6 +72,8 @@ const FORK_SETTING_GROUPS = [
     entries: [
       { ids: ["sidebar-groups", "sidebar-group-single-thread"] },
       { ids: ["snooze-quick-options"] },
+      { ids: ["mobile-new-thread-project"] },
+      { ids: ["mobile-composer-camera"] },
       { ids: ["storage-worktree-path-template"] },
       {
         ids: ["storage-worktrees-location"],
@@ -105,6 +107,7 @@ const FORK_SETTING_GROUPS = [
       { ids: ["thread-link-chips"] },
       { ids: ["thread-links-open-desktop-app"] },
       { ids: ["preview-local-server-groups"] },
+      { ids: ["mobile-published-themes"] },
     ],
   },
 ] as const satisfies ReadonlyArray<{

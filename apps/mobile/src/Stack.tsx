@@ -92,6 +92,7 @@ import {
 import { NewTaskFlowProvider } from "./features/threads/new-task-flow-provider";
 import { NewTaskRouteScreen } from "./features/threads/NewTaskRouteScreen";
 import { SettingsAppearanceRouteScreen } from "./features/settings/SettingsAppearanceRouteScreen";
+import { SettingsForkRouteScreen } from "./features/settings/SettingsForkRouteScreen";
 import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsClientStorageRouteScreen";
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
 import { SettingsProviderAccountsRouteScreen } from "./features/settings/SettingsProviderAccountsRouteScreen";
@@ -290,6 +291,13 @@ const SettingsContentStack = createV5SheetStackNavigator({
       linking: "appearance",
       options: {
         title: "Appearance",
+      },
+    }),
+    SettingsFork: createNativeStackScreen({
+      screen: SettingsForkRouteScreen,
+      linking: "fork",
+      options: {
+        title: "Fork",
       },
     }),
     SettingsProjectGrouping: createNativeStackScreen({

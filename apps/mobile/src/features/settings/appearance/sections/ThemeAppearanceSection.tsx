@@ -18,6 +18,7 @@ import {
 import { getMobileUniwindThemeName } from "../../../../lib/mobileThemeRuntime";
 import { cn } from "../../../../lib/cn";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
+import { ForkPublishedThemeCards } from "../ForkPublishedThemeCards";
 
 const APPEARANCE_MODES: ReadonlyArray<{
   readonly id: MobileThemeMode;
@@ -27,6 +28,8 @@ const APPEARANCE_MODES: ReadonlyArray<{
   { id: "light", label: "Light" },
   { id: "dark", label: "Dark" },
 ];
+
+const BOTH_APPEARANCES: ReadonlyArray<MobileThemeAppearance> = ["light", "dark"];
 
 const previewPercentage = (value: number) => `${value * 100}%`;
 
@@ -114,6 +117,8 @@ const PreviewOrb = memo(function PreviewOrb(props: {
 });
 
 function ThemeCard(props: {
+  /** Fork: a published theme can have colors for one appearance only. */
+  readonly appearances?: ReadonlyArray<MobileThemeAppearance>;
   readonly disabled: boolean;
   readonly darkSelected: boolean;
   readonly label: string;
@@ -124,6 +129,7 @@ function ThemeCard(props: {
 }) {
   const choice = (appearance: MobileThemeAppearance, selected: boolean) => (
     <Pressable
+      key={appearance}
       accessibilityHint={`Sets the ${appearance} appearance only`}
       accessibilityLabel={`${props.label} ${appearance} theme`}
       accessibilityRole="button"
@@ -165,8 +171,9 @@ function ThemeCard(props: {
         onPress={props.onSelectBoth}
       />
       <View className="flex-row items-center justify-center gap-2 py-1" pointerEvents="box-none">
-        {choice("light", props.lightSelected)}
-        {choice("dark", props.darkSelected)}
+        {(props.appearances ?? BOTH_APPEARANCES).map((appearance) =>
+          choice(appearance, appearance === "light" ? props.lightSelected : props.darkSelected),
+        )}
       </View>
       <Text
         className="min-w-0 flex-1 px-1 text-lg font-t3-medium"
@@ -333,6 +340,11 @@ export function ThemeAppearanceSection() {
           ))}
         </View>
       </View>
+
+      <ForkPublishedThemeCards
+        renderLabel={(text) => <SectionLabel>{text}</SectionLabel>}
+        renderCard={(card) => <ThemeCard {...card} />}
+      />
     </View>
   );
 }

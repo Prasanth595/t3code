@@ -49,6 +49,27 @@ export const APPEARANCE_ITEMS = [
     searchTerms: ["thread link address url browser tab slack github desktop app deep link open"],
     environmentOnly: true,
   },
+  {
+    id: "mobile-published-themes",
+    title: "Published themes on mobile",
+    to: "/settings/appearance",
+    searchTerms: ["mobile phone android app theme published fonts shape radius canvas pattern"],
+    environmentOnly: true,
+  },
+  {
+    id: "mobile-new-thread-project",
+    title: "New thread on mobile",
+    to: "/settings/appearance",
+    searchTerms: ["mobile phone android app new thread project picker last scratch no project"],
+    environmentOnly: true,
+  },
+  {
+    id: "mobile-composer-camera",
+    title: "Camera on mobile",
+    to: "/settings/appearance",
+    searchTerms: ["mobile phone android app camera photo take picture composer attachment plus"],
+    environmentOnly: true,
+  },
 ] as const satisfies ReadonlyArray<SettingsSearchItem>;
 
 export const GLOBAL_SCRIPTS_ITEMS = [

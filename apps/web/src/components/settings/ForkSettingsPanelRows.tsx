@@ -19,6 +19,7 @@ import {
   TerminalCloseConfirmationSettingsRow,
 } from "./ForkSettingsRows";
 import { InstalledAppSettingsRow } from "./InstalledAppSettingsRow";
+import { MobileAppSettingsSection } from "./MobileAppSettings";
 import { PullRequestFilterChipsSettingsRow } from "./PullRequestFilterChipsSettingsRow";
 import { RepositoryOwnerFiltersSettingsRow } from "./RepositoryOwnerFiltersSettingsRow";
 import { SidebarGroupsSettingsRow } from "./SidebarGroupsSettingsRow";
@@ -43,6 +44,7 @@ export function AppearanceSections() {
     <>
       <ThreadCardLayoutSettingsSection />
       <ThreadLinkChipsSettingsSection />
+      <MobileAppSettingsSection />
     </>
   );
 }

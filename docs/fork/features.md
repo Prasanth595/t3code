@@ -156,7 +156,6 @@ A signed Android APK of fork main, on fork releases that changed the app. It ins
   - No push notifications, because the build has no `google-services.json`. Revisit when the fork has a Firebase project.
   - `t3code://` links open the Play Store app, because the APK uses the `t3code-preview` scheme. Revisit when the APK build registers its own scheme for those links.
   - No over-the-air updates, because those come from the upstream Expo project. Update with Obtainium.
-  - The APK keeps the upstream nightly icon. Revisit when `scripts/fork-android-apk.sh` swaps the icon.
   - arm64 phones only.
 
 ### Fork installers
@@ -336,6 +335,23 @@ A thread address opened from outside T3 Code, for example from Slack or GitHub, 
   - When the desktop app is not running, the link that starts it is lost (upstream pingdotgg/t3code#18613). Revisit when pingdotgg/t3code#18422 merges upstream.
   - With `threadLinkChips` off, a thread address clicked in T3 web chat opens a new tab that counts as a link from outside, so it goes to the desktop app too. Revisit if users keep `threadLinkChips` off while this setting is on.
 
+### New thread on mobile
+
+What New thread opens in the mobile app.
+
+- **Setting:** server setting `mobileNewThreadProject`: `picker` (default, the project list), `last` (a draft in the project of the last new thread on the phone) or `none` (a draft without a project). Settings > Appearance > Mobile app, or Fork in the mobile Settings.
+- **Works on:** mobile.
+- Back from the draft shows the project list. A share, a prompt link and "Choose a project" in the draft keep the project list.
+- **Limits:** `none` needs a server that offers threads without a project. Without one, and with `last` and no earlier new thread, the project list shows.
+
+### Camera in the mobile composer
+
+The plus button of the mobile composer, the new thread draft and question answers offers "Take Photo" next to "Photo Library" and "Choose Files".
+
+- **Setting:** server setting `mobileComposerCamera` (off by default, because on a server without file attachments the plus button opens a menu instead of the photo library). Settings > Appearance > Mobile app, or Fork in the mobile Settings.
+- **Works on:** mobile.
+- **Limits:** photos only, because the app asks for no microphone access. Revisit if video from the camera is needed.
+
 ### Thread card layouts
 
 Build the thread card from its elements, for desktop and web and for mobile.
@@ -446,8 +462,35 @@ A phone gets thread notifications while the installed app is closed, from each s
 Published themes can set shape, fonts, a canvas pattern and user CSS, in the theme JSON fields `radius`, `borderWidth`, `shadow`, `fonts`, `canvasPattern`, `canvasPatternColor` and `css`.
 
 - **Setting:** none. Select a published theme in Settings > Appearance. See [Appearance](../user/appearance.md) for published themes.
-- **Works on:** web, desktop.
-- **Limits:** the mobile app uses only the built-in palettes. Revisit when the mobile themes work lands.
+- **Works on:** web, desktop, and mobile with [Themes on mobile](#themes-on-mobile).
+- **Limits:** see [Themes on mobile](#themes-on-mobile) for the fields that mobile skips.
+
+### Themes on mobile
+
+The mobile app uses the themes that its servers publish.
+
+- **Setting:** server setting `mobilePublishedThemes` (off by default). Settings > Appearance > Mobile app, or Fork in the mobile Settings. The machine map syncs it.
+- **Works on:** mobile.
+- Appearance in the mobile app shows the published themes under "From your servers". A theme with colors for one appearance offers that appearance only.
+- The app takes the server setting `defaultTheme` once for each theme id, for the appearances that the theme has colors for. The color scheme mode stays as set on the phone.
+- The app stores the last published themes, so the theme shows before a server connects.
+- Shape: `radius` sets every radius token except round elements, `borderWidth` sets every border, and `shadow` goes on grouped lists, the composer and the Android buttons. `apps/mobile/fork-theme.css` holds the tokens, and class rules make the fixed pixel radii of upstream (`rounded-[20px]`) follow them.
+- A `shadow` that the app cannot read is dropped.
+- Fonts: the app bundles Bricolage Grotesque and JetBrains Mono. A theme font with one of these names replaces the stock font.
+- Canvas: `dots` and `grid` show behind the thread feed.
+- **Limits:**
+  - A theme that lists only `canvas` and `accent` gets only those two colors, because the palette generator lives in `apps/web/src/themePalette.ts`. Revisit when such a theme is in use on a phone, or when upstream moves the generator to `packages/shared`.
+  - A pixel radius class that upstream adds later keeps its size under a theme until `fork-theme.css` gets a rule for it.
+  - Other fonts keep the stock font. The composer takes the `sans` font, and the terminal and diff views keep the platform monospace font.
+  - `noise`, user CSS and icon packs have no mobile form. The text of the Android buttons keeps the system font.
+  - Setting the same `defaultTheme` again does not apply it again on the phone, because `defaultThemeSetAt` is local to each machine.
+
+### Fork settings on mobile
+
+Fork in the mobile Settings holds the fork settings that apply to the mobile app: published themes, the camera in the composer, thread link chips and what New thread opens. A change writes the setting to each selected environment.
+
+- **Works on:** mobile.
+- **Limits:** a change on the phone is the own value of each server, not the shared value of the machine map. Set the shared value in the portal or from a machine with the map role `edit`.
 
 ### Theme icon packs
 
@@ -481,8 +524,8 @@ A row shows "from <thread>" when the server knows for certain which other thread
 
 The fork desktop app, its notifications and the bundled web page use the Tick3d lightning icon instead of the nightly icon. To change it, see [App icon](operations.md#app-icon).
 
-- **Works on:** desktop, web.
-- **Limits:** the Android APK keeps the upstream nightly icon. Revisit when `scripts/fork-android-apk.sh` swaps the icon.
+- **Works on:** desktop, web, Android APK. The APK uses the layers `assets/fork/tick3d-android-{foreground,background,monochrome}.svg`, as PNG files in `apps/mobile/assets/fork/`.
+- **Limits:** iOS builds keep the nightly icon.
 
 ## Command line and MCP
 

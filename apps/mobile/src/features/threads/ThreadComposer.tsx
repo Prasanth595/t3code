@@ -1,5 +1,7 @@
 import * as Dialog from "../../components/ui/Dialog";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
+import { cn } from "../../lib/cn";
+import { useThemeRadius, useThemeRaised } from "../../lib/forkThemeStyle";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { useAtomValue } from "@effect/atom-react";
@@ -277,8 +279,11 @@ export function ComposerSurface(props: {
   readonly animateLayout?: boolean;
 }) {
   const colors = useUniwindTheme();
-  const targetBorderRadius =
-    typeof props.style.borderRadius === "number" ? props.style.borderRadius : 0;
+  // Fork: a published theme sets the radius, the outline and the shadow (lib/forkThemeStyle.ts).
+  const targetBorderRadius = useThemeRadius(
+    typeof props.style.borderRadius === "number" ? props.style.borderRadius : 0,
+  );
+  const raised = useThemeRaised();
   const animatedBorderRadius = useSharedValue(targetBorderRadius);
   const shouldAnimate = props.animateLayout !== false && Platform.OS !== "android";
   useLayoutEffect(() => {
@@ -298,21 +303,25 @@ export function ComposerSurface(props: {
   // clip leaves the glass and content at their final height on the first frame.
   return (
     <Animated.View
-      className={
-        Platform.OS === "android" ? undefined : "shadow-[0_6px_28px] shadow-adaptive-black-a15-a35"
-      }
+      className={cn(
+        Platform.OS === "android" || raised.style
+          ? undefined
+          : "shadow-[0_6px_28px] shadow-adaptive-black-a15-a35",
+        raised.className,
+      )}
       layout={layoutTransition}
       style={[
         animatedShapeStyle,
         {
           overflow: "hidden",
         },
+        raised.style,
       ]}
     >
       <AnimatedGlassSurface
         chrome="none"
         fallbackColor={colors["--color-composer-surface"]}
-        fallbackClassName="border border-composer-border"
+        fallbackClassName={raised.className ? undefined : "border border-composer-border"}
         glassEffectStyle="regular"
         pointerEvents="none"
         tintColor="transparent"

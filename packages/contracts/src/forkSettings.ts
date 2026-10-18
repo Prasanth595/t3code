@@ -237,6 +237,14 @@ export const ForkClientSettingsPatchFields = {
   tooltipShortcutLimit: Schema.optionalKey(TooltipShortcutLimit),
 };
 
+/**
+ * Fork: what "New thread" opens in the mobile app. `picker` shows the project picker, `last`
+ * opens a draft in the project of the last new thread on the phone, and `none` opens a draft
+ * without a project. A thread link, a share or a prompt link keeps its own project.
+ */
+export const MobileNewThreadProject = Schema.Literals(["picker", "last", "none"]);
+export type MobileNewThreadProject = typeof MobileNewThreadProject.Type;
+
 export const ForkServerSettingsFields = {
   /**
    * Fork: where new worktrees go, such as `{repoDir}/{branchLeaf}`. Empty
@@ -329,6 +337,21 @@ export const ForkServerSettingsFields = {
    * server reads the process folders and sends the HTTP checks, for every client.
    */
   previewLocalServerGroups: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * Fork: the mobile app offers the themes that this server publishes, with their fonts, shape
+   * and canvas pattern, and takes `defaultTheme`. A server setting, so the machine map syncs it
+   * and the mobile app reads it.
+   */
+  mobilePublishedThemes: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Fork: what "New thread" opens in the mobile app. See `MobileNewThreadProject`. */
+  mobileNewThreadProject: MobileNewThreadProject.pipe(
+    Schema.withDecodingDefault(Effect.succeed("picker")),
+  ),
+  /**
+   * Fork: the plus button of the mobile composer offers "Take Photo". Off by default, because it
+   * turns the plus button into a menu on a server without file attachments.
+   */
+  mobileComposerCamera: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 };
 
 export const ForkServerSettingsPatchFields = {
@@ -350,6 +373,9 @@ export const ForkServerSettingsPatchFields = {
   threadLinksOpenDesktopApp: Schema.optionalKey(Schema.Boolean),
   keybindingSync: Schema.optionalKey(Schema.Boolean),
   previewLocalServerGroups: Schema.optionalKey(Schema.Boolean),
+  mobilePublishedThemes: Schema.optionalKey(Schema.Boolean),
+  mobileNewThreadProject: Schema.optionalKey(MobileNewThreadProject),
+  mobileComposerCamera: Schema.optionalKey(Schema.Boolean),
   /** Replaces the saved groups whole: a merge would keep deleted groups and assignments. */
   sidebarGroups: Schema.optionalKey(SidebarGroups),
   /** Per surface: a patched layout replaces the saved one, and `null` restores the built-in card. */
