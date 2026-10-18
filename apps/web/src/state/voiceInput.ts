@@ -13,7 +13,7 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { attachmentEnvironment } from "./attachments";
 import { readPreparedConnection } from "./session";
 
-export const voiceInputEnvironment = createVoiceInputEnvironmentAtoms(connectionAtomRuntime);
+const voiceInputEnvironment = createVoiceInputEnvironmentAtoms(connectionAtomRuntime);
 
 export function createWebVoiceTranscriber(environmentId: EnvironmentId): VoiceTranscriber {
   return createEnvironmentVoiceTranscriber({

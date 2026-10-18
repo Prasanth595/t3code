@@ -6,7 +6,7 @@ import {
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
 import { CheckIcon, MicIcon, XIcon } from "lucide-react";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useEffect, useState } from "react";
 
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { isWebVoiceRecordingSupported, WebVoiceRecorder } from "~/lib/webVoiceRecorder";
@@ -43,23 +43,15 @@ export function useComposerVoiceInput(input: {
   const [state, setState] = useState<VoiceInputState>(IDLE_STATE);
   const readDraft = useStableCallback(input.readDraft);
   const commitDraft = useStableCallback(input.commitDraft);
-  const ownerKeyRef = useRef(input.ownerKey);
-  ownerKeyRef.current = input.ownerKey;
-  const environmentIdRef = useRef(input.environmentId);
-  environmentIdRef.current = input.environmentId;
+  const getOwnerKey = useStableCallback(() => input.ownerKey);
+  const getEnvironmentId = useStableCallback(() => input.environmentId);
 
-  const runtimeRef = useRef<{
-    readonly recorder: WebVoiceRecorder;
-    readonly controller: VoiceInputController;
-  } | null>(null);
-  if (!runtimeRef.current) {
-    const recorder = new WebVoiceRecorder((status) =>
-      runtimeRef.current?.controller.handleRecorderStatus(status),
-    );
+  const [{ recorder, controller }] = useState(() => {
+    const recorder = new WebVoiceRecorder((status) => controller.handleRecorderStatus(status));
     let capturedOwnerKey: string | null = null;
-    const controller = new VoiceInputController({
+    const controller: VoiceInputController = new VoiceInputController({
       recorder,
-      getTranscriber: () => createWebVoiceTranscriber(environmentIdRef.current),
+      getTranscriber: () => createWebVoiceTranscriber(getEnvironmentId()),
       requestPermission: () => recorder.requestPermission(),
       configureRecording: async () => {},
       releaseRecording: async () => recorder.release(),
@@ -67,11 +59,11 @@ export function useComposerVoiceInput(input: {
       readDraft: () => {
         const draft = readDraft();
         if (!draft) return null;
-        capturedOwnerKey ??= ownerKeyRef.current;
-        return { ownerKey: ownerKeyRef.current, revision: 0, ...draft };
+        if (capturedOwnerKey === null) capturedOwnerKey = getOwnerKey();
+        return { ownerKey: getOwnerKey(), revision: 0, ...draft };
       },
       commitDraft: (text, selection) => {
-        if (capturedOwnerKey === ownerKeyRef.current) commitDraft(text, selection);
+        if (capturedOwnerKey === getOwnerKey()) commitDraft(text, selection);
       },
       onStateChange: (next) => {
         if (!voiceInputBlocksSubmission(next)) {
@@ -81,11 +73,12 @@ export function useComposerVoiceInput(input: {
         setState(next);
       },
     });
-    runtimeRef.current = { recorder, controller };
-  }
-  const { recorder, controller } = runtimeRef.current;
+    return { recorder, controller };
+  });
 
   useEffect(() => () => controller.dispose(), [controller]);
+  // The owner key is the trigger: a new owner invalidates the draft the recording was started for.
+  // oxlint-disable-next-line react/exhaustive-effect-dependencies
   useEffect(() => controller.ownerChanged(), [controller, input.ownerKey]);
 
   useEffect(() => {
@@ -111,15 +104,13 @@ function formatElapsed(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-/** Samples only while recording; nothing repaints once the recording stops. */
-function useRecordingMeter(recorder: WebVoiceRecorder, recording: boolean) {
+/** Mounted only while recording, so every recording starts from an empty meter. */
+function useRecordingMeter(recorder: WebVoiceRecorder) {
   const [meter, setMeter] = useState(() => ({
     levels: Array<number>(WAVEFORM_BARS).fill(0),
     elapsedSeconds: 0,
   }));
   useEffect(() => {
-    if (!recording) return;
-    setMeter({ levels: Array<number>(WAVEFORM_BARS).fill(0), elapsedSeconds: 0 });
     const intervalId = setInterval(() => {
       setMeter((current) => ({
         levels: [...current.levels.slice(1), recorder.level()],
@@ -127,7 +118,7 @@ function useRecordingMeter(recorder: WebVoiceRecorder, recording: boolean) {
       }));
     }, SAMPLE_INTERVAL_MS);
     return () => clearInterval(intervalId);
-  }, [recorder, recording]);
+  }, [recorder]);
   return meter;
 }
 
@@ -141,50 +132,62 @@ export const ComposerVoiceInputControl = memo(function ComposerVoiceInputControl
   readonly disabled: boolean;
 }) {
   const { phase } = voice.state;
-  const meter = useRecordingMeter(voice.recorder, phase === "recording");
 
-  if (phase === "recording") {
-    return (
-      <div
-        data-chat-composer-voice-recording="true"
-        className="flex h-8 items-center gap-1 rounded-full border border-border bg-muted/40 ps-1 pe-1"
+  if (phase === "recording") return <RecordingControl voice={voice} />;
+  return <IdleControl voice={voice} disabled={disabled} />;
+});
+
+function RecordingControl({ voice }: { readonly voice: ComposerVoiceInput }) {
+  const meter = useRecordingMeter(voice.recorder);
+  return (
+    <div
+      data-chat-composer-voice-recording="true"
+      className="flex h-8 items-center gap-1 rounded-full border border-border bg-muted/40 ps-1 pe-1"
+    >
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        onPointerDown={preventPointerFocus}
+        onClick={voice.cancel}
+        aria-label="Cancel voice input"
       >
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          onPointerDown={preventPointerFocus}
-          onClick={voice.cancel}
-          aria-label="Cancel voice input"
-        >
-          <XIcon />
-        </Button>
-        <div className="flex h-5 items-center gap-px" aria-hidden="true">
-          {meter.levels.map((level, index) => (
-            <span
-              key={index}
-              className="w-0.5 rounded-full bg-foreground/70"
-              style={{ height: `${Math.max(2, Math.round(level * 20))}px` }}
-            />
-          ))}
-        </div>
-        <span className="min-w-8 text-center text-xs tabular-nums text-muted-foreground">
-          {formatElapsed(meter.elapsedSeconds)}
-        </span>
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          onPointerDown={preventPointerFocus}
-          onClick={voice.stop}
-          aria-label="Finish voice input"
-        >
-          <CheckIcon />
-        </Button>
+        <XIcon />
+      </Button>
+      <div className="flex h-5 items-center gap-px" aria-hidden="true">
+        {meter.levels.map((level, index) => (
+          <span
+            key={index}
+            className="w-0.5 rounded-full bg-foreground/70"
+            style={{ height: `${Math.max(2, Math.round(level * 20))}px` }}
+          />
+        ))}
       </div>
-    );
-  }
+      <span className="min-w-8 text-center text-xs tabular-nums text-muted-foreground">
+        {formatElapsed(meter.elapsedSeconds)}
+      </span>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        onPointerDown={preventPointerFocus}
+        onClick={voice.stop}
+        aria-label="Finish voice input"
+      >
+        <CheckIcon />
+      </Button>
+    </div>
+  );
+}
 
+function IdleControl({
+  voice,
+  disabled,
+}: {
+  readonly voice: ComposerVoiceInput;
+  readonly disabled: boolean;
+}) {
+  const { phase } = voice.state;
   const busy = phase === "preparing" || phase === "transcribing";
   return (
     <Tooltip>
@@ -212,4 +215,4 @@ export const ComposerVoiceInputControl = memo(function ComposerVoiceInputControl
       <TooltipPopup>{phase === "transcribing" ? "Transcribing…" : "Voice input"}</TooltipPopup>
     </Tooltip>
   );
-});
+}

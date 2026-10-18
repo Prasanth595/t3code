@@ -1171,7 +1171,7 @@ const INKWIRE_BASE_LIGHT_COLORS: ThemeColors = {
 };
 
 /** Cyan action, magenta live — the original Inkwire pair. */
-export const INKWIRE_THEME = inkwireTheme(
+const INKWIRE_THEME = inkwireTheme(
   "inkwire",
   "Inkwire",
   {
@@ -1197,7 +1197,7 @@ export const INKWIRE_THEME = inkwireTheme(
 );
 
 /** Acid yellow action, cyan live. */
-export const INKWIRE_ACID_THEME = inkwireTheme(
+const INKWIRE_ACID_THEME = inkwireTheme(
   "inkwire-acid",
   "Inkwire Acid",
   {
@@ -1223,7 +1223,7 @@ export const INKWIRE_ACID_THEME = inkwireTheme(
 );
 
 /** Neon green action, magenta live. */
-export const INKWIRE_VOLT_THEME = inkwireTheme(
+const INKWIRE_VOLT_THEME = inkwireTheme(
   "inkwire-volt",
   "Inkwire Volt",
   {
@@ -1249,7 +1249,7 @@ export const INKWIRE_VOLT_THEME = inkwireTheme(
 );
 
 /** Amber action, cyan live. */
-export const INKWIRE_EMBER_THEME = inkwireTheme(
+const INKWIRE_EMBER_THEME = inkwireTheme(
   "inkwire-ember",
   "Inkwire Ember",
   {
@@ -1279,7 +1279,7 @@ export const INKWIRE_EMBER_THEME = inkwireTheme(
  * marks, cyan and coral search hits, on ink-neutral panels. Colors separate roles
  * instead of shading one hue.
  */
-export const INKWIRE_ORCHID_THEME = inkwireTheme(
+const INKWIRE_ORCHID_THEME = inkwireTheme(
   "inkwire-orchid",
   "Inkwire Orchid",
   {
