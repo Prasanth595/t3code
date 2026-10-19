@@ -242,18 +242,9 @@ const diagnose = (
   files: ReadonlyArray<string>,
   environment: NodeJS.ProcessEnv,
   platform: NodeJS.Platform = "darwin",
-  commands: ReadonlyArray<string> = ["ffmpeg"],
 ) =>
   LocalDeviceHost.__testing.platformReason("android").pipe(
-    // Commands resolve against the PATH the hub is given, so entries carry their directory.
-    Effect.provideService(CommandAvailability, (command, options) =>
-      Effect.succeed(
-        commands.includes(command) ||
-          (options?.env?.PATH ?? "")
-            .split(platform === "win32" ? ";" : ":")
-            .some((directory) => commands.includes(`${directory}/${command}`)),
-      ),
-    ),
+    Effect.provideService(CommandAvailability, () => Effect.succeed(true)),
     Effect.provideService(HostProcess.Environment, environment),
     Effect.provideService(HostProcess.Platform, platform),
     Effect.provideService(
@@ -402,28 +393,6 @@ describe("Android SDK availability", () => {
     }),
   );
 
-  it.effect("reports missing ffmpeg, resolved the way the device hub resolves it", () =>
-    Effect.gen(function* () {
-      const sdk = [
-        "/sdk/platform-tools/adb",
-        "/sdk/emulator/emulator",
-        "/sdk/cmdline-tools/latest/bin/avdmanager",
-      ];
-      expect(yield* diagnose(sdk, { ANDROID_HOME: "/sdk" }, "linux", [])).toContain(
-        "ffmpeg was not found. Android emulator video needs it",
-      );
-      const override = { ANDROID_HOME: "/sdk", SERVE_EMU_FFMPEG: " /opt/ffmpeg/bin/ffmpeg " };
-      expect(yield* diagnose(sdk, override, "linux", ["/opt/ffmpeg/bin/ffmpeg"])).toBeNull();
-      expect(yield* diagnose(sdk, override, "linux", ["ffmpeg"])).toContain(
-        "ffmpeg was not found at /opt/ffmpeg/bin/ffmpeg, set by SERVE_EMU_FFMPEG",
-      );
-      // The hub's PATH includes the SDK tool directories, so the check does too.
-      expect(
-        yield* diagnose(sdk, { ANDROID_HOME: "/sdk" }, "linux", ["/sdk/emulator/ffmpeg"]),
-      ).toBeNull();
-    }),
-  );
-
   it.effect("reports an absent SDK without running or installing tools", () =>
     Effect.gen(function* () {
       expect(yield* diagnose([], { HOME: "/test/home" })).toContain("Android SDK was not found");
@@ -535,10 +504,13 @@ http.createServer((req,res)=>res.end('ok')).listen(Number(args[args.indexOf('--p
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("requires an ffmpeg the device hub can encode with before reporting Android ready", () =>
+it.effect("keeps local Android and iOS available without ffmpeg", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-ffmpeg-" });
+    yield* fs.makeDirectory(`${baseDir}/bin`);
+    yield* fs.writeFileString(`${baseDir}/bin/xcrun`, "#!/bin/sh\nexit 0\n");
+    yield* fs.chmod(`${baseDir}/bin/xcrun`, 0o755);
     for (const [directory, tool] of [
       ["platform-tools", "adb"],
       ["emulator", "emulator"],
@@ -547,18 +519,14 @@ it.effect("requires an ffmpeg the device hub can encode with before reporting An
       yield* fs.makeDirectory(`${baseDir}/sdk/${directory}`, { recursive: true });
       yield* fs.writeFileString(`${baseDir}/sdk/${directory}/${tool}`, "");
     }
-    let probe = { stdout: " V....D libopenh264", code: 0 };
-    const probed: Array<string> = [];
-    // Readiness reads the host environment on every call, not only at construction.
     const onTestHost = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       effect.pipe(
         Effect.provideService(HostProcess.Environment, {
           HOME: baseDir,
-          PATH: "/usr/bin",
+          PATH: `${baseDir}/bin`,
           ANDROID_HOME: `${baseDir}/sdk`,
         }),
-        Effect.provideService(HostProcess.Platform, "linux"),
-        Effect.provideService(CommandAvailability, () => Effect.succeed(true)),
+        Effect.provideService(HostProcess.Platform, "darwin"),
       );
     const host = yield* LocalDeviceHost.make().pipe(
       Effect.provide(Layer.mergeAll(ServerConfig.layerTest(baseDir, baseDir), NetService.layer)),
@@ -568,30 +536,21 @@ it.effect("requires an ffmpeg the device hub can encode with before reporting An
         HttpClient.make(() => Effect.die(new Error("Readiness must not make network requests"))),
       ),
       Effect.provideService(ProcessRunner.ProcessRunner, {
-        run: (input) => {
-          probed.push([input.command, ...input.args].join(" "));
-          return Effect.succeed({
-            ...probe,
-            stderr: "",
-            code: ChildProcessSpawner.ExitCode(probe.code),
-            timedOut: false,
-            stdoutTruncated: false,
-            stderrTruncated: false,
-            stdoutInvalidUtf8: false,
-            stderrInvalidUtf8: false,
-          });
-        },
+        run: () => Effect.die("Platform availability must not probe emulator video"),
       }),
     );
-    const android = onTestHost(host.platformAvailability("android"));
-    expect((yield* android).reason).toContain("lacks the libx264 encoder");
-    probe = { stdout: "", code: 1 };
-    expect((yield* android).reason).toContain("could not be run");
-    probe = { stdout: " V....D libx264", code: 0 };
-    expect(yield* android).toEqual({ platform: "android", available: true });
-    // A usable ffmpeg is probed once, not on every readiness check.
-    yield* android;
-    expect(probed).toEqual(Array.from({ length: 3 }, () => "ffmpeg -hide_banner -encoders"));
+    expect((yield* onTestHost(host.summary)).platforms).toEqual([
+      { platform: "ios", available: true },
+      { platform: "android", available: true },
+    ]);
+    expect(yield* onTestHost(host.platformAvailability("android"))).toEqual({
+      platform: "android",
+      available: true,
+    });
+    expect(yield* onTestHost(host.platformAvailability("ios"))).toEqual({
+      platform: "ios",
+      available: true,
+    });
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
