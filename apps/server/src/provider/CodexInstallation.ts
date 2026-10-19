@@ -329,15 +329,28 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
       );
     return output;
   }, Effect.scoped);
-  // Codex spawns `codex-code-mode-host` from beside its real binary and fails every tool call
-  // without it, so a bare release binary is unusable. Script launchers (npm, shims) are trusted.
+  // Native Codex needs its adjacent host; launchers resolve their own payloads.
   const hasCodeModeHost = Effect.fn("CodexInstallation.hasCodeModeHost")(
     function* (realExecutablePath: string) {
+      if (/^volta-shim(?:\.exe)?$/iu.test(path.basename(realExecutablePath))) return true;
       if (platform === "win32") {
         if (path.extname(realExecutablePath).toLowerCase() !== ".exe") return true;
+        for (const extension of [".bunx", ".shim"]) {
+          const marker = yield* fs
+            .stat(realExecutablePath.slice(0, -4) + extension)
+            .pipe(Effect.option);
+          if (
+            Option.isSome(marker) &&
+            marker.value.type === "File" &&
+            Number(marker.value.size) > 0
+          )
+            return true;
+        }
       } else {
-        const file = yield* fs.open(realExecutablePath, { flag: "r" });
-        const header = yield* file.readAlloc(2);
+        const header = yield* fs.open(realExecutablePath, { flag: "r" }).pipe(
+          Effect.flatMap((file) => file.readAlloc(2)),
+          Effect.orElseSucceed(() => Option.none()),
+        );
         if (Option.isSome(header) && header.value[0] === 0x23 && header.value[1] === 0x21)
           return true;
       }
