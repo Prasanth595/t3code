@@ -6,7 +6,6 @@ import {
   readPathFromLaunchctl,
   resolveWindowsEnvironment,
   setWindowsPath,
-  type ShellEnvironmentReader,
 } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -19,18 +18,18 @@ function logPathHydrationWarning(message: string, error?: unknown): void {
   );
 }
 
-export function hydratePosixEnvironment(
-  env: NodeJS.ProcessEnv,
-  platform: NodeJS.Platform,
-  readShellEnvironment: ShellEnvironmentReader = readEnvironmentFromLoginShell,
-): void {
+function hydratePosixPath(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): void {
   let shellEnvironment: Partial<Record<string, string>> = {};
   for (const shell of listLoginShellCandidates(platform, env.SHELL)) {
     try {
       // mise's record of the PATH entries it added. It must travel with the
       // shell's PATH, or `mise x` can rebuild PATH behind a same-named wrapper
       // (`exec mise x claude -- claude`) that then re-runs itself forever.
-      shellEnvironment = readShellEnvironment(shell, ["PATH", "__MISE_DIFF", "SSH_AUTH_SOCK"]);
+      shellEnvironment = readEnvironmentFromLoginShell(shell, [
+        "PATH",
+        "__MISE_DIFF",
+        "SSH_AUTH_SOCK",
+      ]);
     } catch (error) {
       logPathHydrationWarning(`Failed to read PATH from login shell ${shell}.`, error);
     }
@@ -103,7 +102,7 @@ export const fixPath = Effect.fn("fixPath")(function* (options?: {
     ),
   );
   if (options?.shellEnvironmentPrepared === true) return;
-  yield* Effect.sync(() => hydratePosixEnvironment(env, platform)).pipe(
+  yield* Effect.sync(() => hydratePosixPath(env, platform)).pipe(
     Effect.catchDefect((defect) =>
       Effect.sync(() => {
         logPathHydrationWarning("Failed to hydrate PATH from the user environment.", defect);
