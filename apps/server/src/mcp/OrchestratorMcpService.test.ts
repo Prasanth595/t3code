@@ -1677,187 +1677,189 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
-  it.effect("re-probes an unavailable target once before refusing it", () =>
-    Effect.gen(function* () {
-      const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
-      const claudeDriver = ProviderDriverKind.make("claudeAgent");
-      const task = {
-        id: taskId,
-        threadId: parentThreadId,
-        runId: parentRunId,
-        parentNodeId,
-        origin: "app_owned",
-        createdBy: "agent",
-        driver: claudeDriver,
-        providerInstanceId: claudeInstanceId,
-        providerThreadId: null,
-        childThreadId,
-        nativeTaskRef: null,
-        prompt: "Review the diff.",
-        title: null,
-        model: "claude-opus-5-5",
-        status: "running",
-        result: null,
-        startedAt: null,
-        completedAt: null,
-      };
-      const healthy = providerSnapshot({
-        instanceId: claudeInstanceId,
-        driver: claudeDriver,
-        model: "claude-opus-5-5",
-      });
-      const missingCli: ServerProvider = {
-        ...healthy,
-        installed: false,
-        status: "error",
-        message: "Claude Agent CLI (`claude`) was not found on PATH.",
-      };
-      const codex = providerSnapshot({
-        instanceId: codexInstanceId,
-        driver: ProviderDriverKind.make("codex"),
-        model: "gpt-5.4",
-      });
-      let cliInstalled = false;
-      const probes = yield* Ref.make(0);
-      const dispatched = yield* Ref.make(0);
-      const layerDependencies = Layer.mergeAll(
-        NodeServices.layer,
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          hasReceipt: () => Effect.succeed(false),
-          assertProviderInstanceEnabled: () => Effect.void,
-          getThreadRecords: (threadId) =>
-            Effect.succeed(
-              threadId === parentThreadId ? parentProjection([task]) : childProjection,
-            ),
-          dispatch: () =>
-            Ref.update(dispatched, (count) => count + 1).pipe(
-              Effect.as({
-                sequence: 1,
-                storedEvents: [
-                  {
-                    sequence: 1,
-                    commandId: null,
-                    event: { type: "subagent.updated", payload: task },
-                  },
-                ],
-              } as never),
-            ),
-        }),
-        ServerSettings.layerTest(),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({
-          getProviders: Effect.succeed([codex, missingCli]),
-          refreshInstance: () =>
-            Ref.update(probes, (count) => count + 1).pipe(
-              Effect.as([codex, cliInstalled ? healthy : missingCli]),
-            ),
-        }),
-        adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
-        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(SecretRequests.SecretRequests)({}),
-      );
+  it.effect.each(["explicit", "inherited", "driver"] as const)(
+    "re-probes an unavailable %s target once before refusing it",
+    (targetKind) =>
+      Effect.gen(function* () {
+        const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
+        const claudeDriver = ProviderDriverKind.make("claudeAgent");
+        const task = {
+          id: taskId,
+          threadId: parentThreadId,
+          runId: parentRunId,
+          parentNodeId,
+          origin: "app_owned",
+          createdBy: "agent",
+          driver: claudeDriver,
+          providerInstanceId: claudeInstanceId,
+          providerThreadId: null,
+          childThreadId,
+          nativeTaskRef: null,
+          prompt: "Review the diff.",
+          title: null,
+          model: "claude-opus-5-5",
+          status: "running",
+          result: null,
+          startedAt: null,
+          completedAt: null,
+        };
+        const healthy = providerSnapshot({
+          instanceId: claudeInstanceId,
+          driver: claudeDriver,
+          model: "claude-opus-5-5",
+        });
+        const unavailable: ServerProvider = {
+          ...healthy,
+          installed: targetKind === "driver",
+          status: "error",
+          message: "Claude Agent CLI is unavailable.",
+        };
+        const codex = providerSnapshot({
+          instanceId: codexInstanceId,
+          driver: ProviderDriverKind.make("codex"),
+          model: "gpt-5.4",
+        });
+        let recovered = false;
+        let providers = [codex, unavailable];
+        const probes = yield* Ref.make(0);
+        const dispatched = yield* Ref.make(0);
+        const layerDependencies = Layer.mergeAll(
+          NodeServices.layer,
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            hasReceipt: () => Effect.succeed(false),
+            assertProviderInstanceEnabled: () => Effect.void,
+            isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+            getThreadRecords: (threadId) =>
+              Effect.succeed(
+                threadId === parentThreadId
+                  ? parentProjection(
+                      [task],
+                      targetKind === "inherited"
+                        ? { instanceId: claudeInstanceId, model: healthy.models[0]!.slug }
+                        : undefined,
+                    )
+                  : childProjection,
+              ),
+            dispatch: () =>
+              Ref.update(dispatched, (count) => count + 1).pipe(
+                Effect.as({
+                  sequence: 1,
+                  storedEvents: [
+                    {
+                      sequence: 1,
+                      commandId: null,
+                      event: { type: "subagent.updated", payload: task },
+                    },
+                  ],
+                } as never),
+              ),
+          }),
+          ServerSettings.layerTest(),
+          Layer.mock(ProviderRegistry.ProviderRegistry)({
+            getProviders: Effect.sync(() => providers),
+            refreshInstance: () =>
+              Ref.update(probes, (count) => count + 1).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    providers = [codex, recovered ? healthy : unavailable];
+                    return providers;
+                  }),
+                ),
+              ),
+          }),
+          adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
+          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+          Layer.mock(ProjectService.ProjectService)({}),
+          Layer.mock(SecretRequests.SecretRequests)({}),
+        );
 
-      yield* Effect.gen(function* () {
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const delegate = (clientRequestId: string) =>
-          service.delegateTask(scope, {
-            task: "Review the diff.",
-            target: { providerInstanceId: claudeInstanceId, model: "claude-opus-5-5" },
-            mode: "async",
-            clientRequestId,
-          });
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const delegate = (clientRequestId: string) =>
+            service.delegateTask(scope, {
+              task: "Review the diff.",
+              target:
+                targetKind === "driver"
+                  ? { driverKind: claudeDriver }
+                  : targetKind === "explicit"
+                    ? { providerInstanceId: claudeInstanceId, model: "claude-opus-5-5" }
+                    : undefined,
+              mode: "async",
+              clientRequestId,
+            });
 
-        const error = yield* delegate("delegate-recheck-1").pipe(Effect.flip);
-        assert.equal(error.code, "provider_unavailable");
-        assert.equal(yield* Ref.get(probes), 1);
-        assert.equal(yield* Ref.get(dispatched), 0);
+          const error = yield* delegate("delegate-recheck-1").pipe(Effect.flip);
+          assert.equal(error.code, "provider_unavailable");
+          assert.equal(yield* Ref.get(probes), 1);
+          assert.equal(yield* Ref.get(dispatched), 0);
 
-        cliInstalled = true;
-        const result = yield* delegate("delegate-recheck-2");
-        assert.equal(result.providerInstanceId, claudeInstanceId);
-        assert.equal(yield* Ref.get(probes), 2);
-        assert.equal(yield* Ref.get(dispatched), 1);
-      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
-    }),
+          recovered = true;
+          const result = yield* delegate("delegate-recheck-2");
+          assert.equal(result.providerInstanceId, claudeInstanceId);
+          assert.equal(yield* Ref.get(probes), 2);
+          assert.equal(yield* Ref.get(dispatched), 1);
+
+          const healthyResult = yield* delegate("delegate-recheck-3");
+          assert.equal(healthyResult.providerInstanceId, claudeInstanceId);
+          assert.equal(yield* Ref.get(probes), 2);
+          assert.equal(yield* Ref.get(dispatched), 2);
+        }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+      }),
   );
 
-  it.effect("re-probes a driver-only target's instances once before refusing it", () =>
+  it.effect("create_threads uses recovered registry state throughout a driver-only batch", () =>
     Effect.gen(function* () {
-      const claudeInstanceId = ProviderInstanceId.make("claudeAgent");
-      const claudeDriver = ProviderDriverKind.make("claudeAgent");
-      const task = {
-        id: taskId,
-        threadId: parentThreadId,
-        runId: parentRunId,
-        parentNodeId,
-        origin: "app_owned",
-        createdBy: "agent",
-        driver: claudeDriver,
-        providerInstanceId: claudeInstanceId,
-        providerThreadId: null,
-        childThreadId,
-        nativeTaskRef: null,
-        prompt: "Review the diff.",
-        title: null,
-        model: "claude-opus-5-5",
-        status: "running",
-        result: null,
-        startedAt: null,
-        completedAt: null,
-      };
+      const driver = ProviderDriverKind.make("claudeAgent");
+      const firstId = ProviderInstanceId.make("claude-first");
+      const secondId = ProviderInstanceId.make("claude-second");
       const healthy = providerSnapshot({
-        instanceId: claudeInstanceId,
-        driver: claudeDriver,
+        instanceId: secondId,
+        driver,
         model: "claude-opus-5-5",
       });
-      const timedOut: ServerProvider = {
-        ...healthy,
-        status: "error",
-        message:
-          "Claude Agent CLI is installed but failed to run. Timed out while running command.",
-      };
-      const codex = providerSnapshot({
-        instanceId: codexInstanceId,
-        driver: ProviderDriverKind.make("codex"),
-        model: "gpt-5.4",
-      });
-      // The cache still holds a startup probe timeout; a re-probe reports `probeSucceeds`.
-      let probeSucceeds = false;
-      const probed = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([]);
-      const dispatched = yield* Ref.make(0);
-      const layerDependencies = Layer.mergeAll(
+      const unavailable: ServerProvider = { ...healthy, status: "error" };
+      const providers = yield* Ref.make<ReadonlyArray<ServerProvider>>([
+        { ...unavailable, instanceId: firstId },
+        unavailable,
+        { ...unavailable, instanceId: ProviderInstanceId.make("disabled"), enabled: false },
+        { ...unavailable, instanceId: ProviderInstanceId.make("missing"), installed: false },
+        { ...unavailable, instanceId: codexInstanceId, driver: ProviderDriverKind.make("codex") },
+      ]);
+      const probes = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([]);
+      const dispatched = yield* Ref.make<
+        ReadonlyArray<
+          Parameters<ThreadManagementService.ThreadManagementService["Service"]["dispatch"]>[0]
+        >
+      >([]);
+      const dependencies = Layer.mergeAll(
         NodeServices.layer,
-        Layer.mock(ThreadManagementService.ThreadManagementService)({
-          hasReceipt: () => Effect.succeed(false),
-          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
-          assertProviderInstanceEnabled: () => Effect.void,
-          getThreadRecords: (threadId) =>
-            Effect.succeed(
-              threadId === parentThreadId ? parentProjection([task]) : childProjection,
-            ),
-          dispatch: () =>
-            Ref.update(dispatched, (count) => count + 1).pipe(
-              Effect.as({
-                sequence: 1,
-                storedEvents: [
-                  {
-                    sequence: 1,
-                    commandId: null,
-                    event: { type: "subagent.updated", payload: task },
-                  },
-                ],
-              } as never),
-            ),
-        }),
         ServerSettings.layerTest(),
-        Layer.mock(ProviderRegistry.ProviderRegistry)({
-          getProviders: Effect.succeed([codex, timedOut]),
-          refreshInstance: (instanceId) =>
-            Ref.update(probed, (ids) => [...ids, instanceId]).pipe(
-              Effect.as([codex, probeSucceeds ? healthy : timedOut]),
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(threadId === parentThreadId ? parentProjection([]) : childProjection),
+          assertProviderInstanceEnabled: () => Effect.void,
+          isProviderInstanceEnabledForProject: () => Effect.succeed(true),
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.as({ sequence: 1, storedEvents: [] }),
             ),
         }),
-        adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Ref.get(providers),
+          refreshInstance: (instanceId) =>
+            Ref.update(probes, (ids) => [...ids, instanceId]).pipe(
+              Effect.andThen(
+                Ref.updateAndGet(providers, (current) =>
+                  current.map((provider) =>
+                    provider.instanceId === instanceId && instanceId === secondId
+                      ? healthy
+                      : provider,
+                  ),
+                ),
+              ),
+            ),
+        }),
+        adapterRegistryLayer([codexInstanceId, firstId, secondId]),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         Layer.mock(ProjectService.ProjectService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
@@ -1865,25 +1867,27 @@ describe("OrchestratorMcpService provider resolution", () => {
 
       yield* Effect.gen(function* () {
         const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const delegate = (clientRequestId: string) =>
-          service.delegateTask(scope, {
-            task: "Review the diff.",
-            target: { driverKind: claudeDriver },
-            mode: "async",
-            clientRequestId,
-          });
-
-        const error = yield* delegate("delegate-driver-recheck-1").pipe(Effect.flip);
-        assert.equal(error.code, "provider_unavailable");
-        assert.deepStrictEqual(yield* Ref.get(probed), [claudeInstanceId]);
-        assert.equal(yield* Ref.get(dispatched), 0);
-
-        probeSucceeds = true;
-        const result = yield* delegate("delegate-driver-recheck-2");
-        assert.equal(result.providerInstanceId, claudeInstanceId);
-        assert.deepStrictEqual(yield* Ref.get(probed), [claudeInstanceId, claudeInstanceId]);
-        assert.equal(yield* Ref.get(dispatched), 1);
-      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+        const result = yield* service.createThreads(scope, {
+          threads: [
+            { prompt: "Review the diff.", target: { driverKind: driver } },
+            { prompt: "Review the tests.", target: { driverKind: driver } },
+          ],
+          clientRequestId: "create-driver-recheck",
+        });
+        assert.deepStrictEqual(
+          result.threads.map((thread) => thread.providerInstanceId),
+          [secondId, secondId],
+        );
+        const commands = yield* Ref.get(dispatched);
+        assert.deepStrictEqual(
+          commands
+            .filter((command) => command.type === "thread.create")
+            .map((command) => command.modelSelection.instanceId),
+          [secondId, secondId],
+        );
+        assert.equal(commands.filter((command) => command.type === "message.dispatch").length, 2);
+        assert.deepStrictEqual(yield* Ref.get(probes), [firstId, secondId]);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
     }),
   );
 

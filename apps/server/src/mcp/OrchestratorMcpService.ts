@@ -1158,12 +1158,6 @@ const make = Effect.gen(function* () {
   const loadOrchestrationCapableInstanceIds = () =>
     providerAdapters.list().pipe(Effect.map((instanceIds) => new Set(instanceIds)));
 
-  /**
-   * Provider snapshots only re-probe while a client is in the foreground, so an
-   * unattended agent can see a provider as unavailable after it was fixed.
-   * Re-probe the requested instance (or, for a driver-only target, each enabled
-   * and installed instance of that driver) once before refusing it.
-   */
   const assertTargetEnabledForProject = (
     parent: Pick<OrchestrationV2ThreadProjection, "thread">,
     commandId: CommandId,
@@ -1177,6 +1171,7 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(threadManagementFailure));
 
+  // Provider health may be stale when no client is refreshing it.
   const resolveTargetRechecking = (input: Parameters<typeof resolveTarget>[0]) => {
     const requestedDriver = input.target?.driverKind;
     const requestedInstanceId =
@@ -1197,12 +1192,11 @@ const make = Effect.gen(function* () {
       Effect.catchIf(
         (error) => error.code === "provider_unavailable",
         () =>
-          // Each refresh returns the whole registry, so the last one carries every re-probe.
-          Effect.forEach(instanceIds, providerRegistry.refreshInstance).pipe(
-            Effect.flatMap((snapshots) =>
-              resolveTarget({ ...input, providers: snapshots.at(-1) ?? input.providers }),
-            ),
-          ),
+          Effect.reduce(
+            instanceIds,
+            () => input.providers,
+            (_, instanceId) => providerRegistry.refreshInstance(instanceId),
+          ).pipe(Effect.flatMap((providers) => resolveTarget({ ...input, providers }))),
       ),
     );
   };
@@ -2313,12 +2307,12 @@ const make = Effect.gen(function* () {
           );
         }
         const parentNodeId = parentRun.rootNodeId;
-        const providers = yield* loadProviders;
         const key = yield* requestKey(input.clientRequestId);
         const created = yield* Effect.forEach(
           input.threads,
           (request, index) =>
             Effect.gen(function* () {
+              const providers = yield* loadProviders;
               const target = yield* resolveTargetRechecking({
                 parent,
                 target: request.target,
