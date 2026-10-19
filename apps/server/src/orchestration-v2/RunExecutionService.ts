@@ -50,6 +50,7 @@ import {
 } from "@t3tools/provider-core/server/failure";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import { checkpointCaptureEffectId } from "./RunFinalized.ts";
+import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
 export interface ProviderEventRoutingState {
   readonly ownedThreadIds: ReadonlySet<ThreadId>;
@@ -165,6 +166,10 @@ function isRunOwnedSubagentTerminalStatus(
   status: ProviderTerminalEvent["status"],
 ): status is RunOwnedSubagentTerminalStatus {
   return status === "interrupted" || status === "failed" || status === "cancelled";
+}
+
+function childTurnsContinue(terminal: ProviderTerminalEvent): boolean {
+  return terminal.status === "failed" && terminal.childTurnsContinue === true;
 }
 
 /**
@@ -565,6 +570,7 @@ export const layer: Layer.Layer<
   | ProviderEventIngestor.ProviderEventIngestorV2
   | ServerSettings.ServerSettingsService
   | McpAppModelContext.McpAppModelContext
+  | TurnItemPositionStore.TurnItemPositionStoreV2
 > = Layer.effect(
   RunExecutionServiceV2,
   Effect.gen(function* () {
@@ -574,6 +580,7 @@ export const layer: Layer.Layer<
     const providerEventIngestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const mcpAppModelContext = yield* McpAppModelContext.McpAppModelContext;
+    const turnItemPositions = yield* TurnItemPositionStore.TurnItemPositionStoreV2;
     const finalizationObserver = yield* RunFinalizationService.RunFinalizationObserver;
 
     const writeFinalRunEvents = (input: {
@@ -643,7 +650,9 @@ export const layer: Layer.Layer<
           open.childTurnItems.size > 0 ||
           open.nodes.size > 0;
         const cascadedSubagentEvents =
-          isRunOwnedSubagentTerminalStatus(input.terminal.status) && hasOpenSubagentProjection
+          isRunOwnedSubagentTerminalStatus(input.terminal.status) &&
+          !childTurnsContinue(input.terminal) &&
+          hasOpenSubagentProjection
             ? yield* cascadeTerminalizeRunOwnedSubagents({
                 run: input.run,
                 open,
@@ -1009,7 +1018,10 @@ export const layer: Layer.Layer<
                   (cause) => new RunExecutionIngestError({ runId: input.run.id, cause }),
                 ),
               );
-              if (isRunOwnedSubagentTerminalStatus(terminal.status)) {
+              if (
+                isRunOwnedSubagentTerminalStatus(terminal.status) &&
+                !childTurnsContinue(terminal)
+              ) {
                 yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
               }
               yield* Ref.set(rootRunFinalized, true);
@@ -1159,7 +1171,11 @@ export const layer: Layer.Layer<
               return false;
             }
             const terminal = yield* Ref.get(terminalEvent);
-            if (terminal !== null && terminal.status !== "completed") {
+            if (
+              terminal !== null &&
+              terminal.status !== "completed" &&
+              !childTurnsContinue(terminal)
+            ) {
               return true;
             }
             const childProviderTurns = yield* Ref.get(activeChildProviderTurns);
@@ -1196,6 +1212,9 @@ export const layer: Layer.Layer<
             return true;
           });
           const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
+          // Held text writes nothing, so its item would take a position only
+          // when finally written, behind every item that began after it.
+          const reservedHeldTurnItemIds = new Set<TurnItemId>();
           const providerEventFiber = yield* eventSubscription.events.pipe(
             Stream.filterEffect((event) =>
               Ref.modify(eventRouting, (state) => routeProviderEvent(event, routeIdentity, state)),
@@ -1251,6 +1270,19 @@ export const layer: Layer.Layer<
                   ) {
                     yield* Ref.set(providerThreadOwnerLost, true);
                   }
+                } else if (
+                  event.type === "turn_item.updated" &&
+                  (event.turnItem.type === "assistant_message" ||
+                    event.turnItem.type === "reasoning") &&
+                  event.turnItem.streaming &&
+                  !reservedHeldTurnItemIds.has(event.turnItem.id)
+                ) {
+                  yield* turnItemPositions.allocate({
+                    threadId: event.turnItem.threadId,
+                    turnItemId: event.turnItem.id,
+                    runId: event.turnItem.runId,
+                  });
+                  reservedHeldTurnItemIds.add(event.turnItem.id);
                 }
                 if (event.type === "provider_thread.updated") {
                   if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
