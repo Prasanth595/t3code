@@ -605,7 +605,41 @@ const make = Effect.gen(function* () {
         const changes = yield* localChangesReason(submodule, rules);
         if (changes !== null) return { force: false, reason: `submodule ${changes}` };
       }
-      return { force: stored || paths.length > 0, reason: null };
+      const force = stored || paths.length > 0;
+      if (force && rules.worktreeKeepWhen === "any-local-files") {
+        // Git status and foreach omit files inside deinitialized gitlink directories.
+        const populatedPaths = new Set(paths.map(pathKey));
+        const unchecked: string[] = [];
+        for (const repository of [cwd, ...paths]) {
+          const index = yield* inspect(["-C", repository, "ls-files", "--stage", "-z"]);
+          if (index.stdoutTruncated || index.stderrTruncated)
+            return { force: false, reason: "submodule inspection exceeded the limit" };
+          for (const entry of index.stdout.split("\0")) {
+            if (!entry.startsWith("160000 ")) continue;
+            const submodule = path.resolve(repository, entry.slice(entry.indexOf("\t") + 1));
+            if (!inside(cwd, submodule))
+              return { force: false, reason: "submodules could not be inspected" };
+            if (!populatedPaths.has(pathKey(submodule)) && (yield* fs.exists(submodule)))
+              unchecked.push(submodule);
+          }
+        }
+        let inspected = unchecked.length;
+        while (unchecked.length > 0) {
+          if (inspected > 10_000)
+            return { force: false, reason: "submodule inspection exceeded the limit" };
+          const target = unchecked.pop()!;
+          if (
+            (yield* fs.realPath(target)) !== path.resolve(target) ||
+            (yield* fs.stat(target)).type !== "Directory"
+          )
+            return { force: false, reason: "submodule has local files" };
+          if (path.basename(target) === "node_modules") continue;
+          const names = yield* fs.readDirectory(target);
+          inspected += names.length;
+          for (const name of names) unchecked.push(path.join(target, name));
+        }
+      }
+      return { force, reason: null };
     },
     Effect.orElseSucceed(() => ({ force: false, reason: "submodules could not be inspected" })),
   );
