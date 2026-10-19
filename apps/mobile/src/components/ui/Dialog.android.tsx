@@ -14,7 +14,7 @@ import {
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState, useSyncExternalStore } from "react";
 import { themeColorWithContrast } from "../../lib/mobileTheme";
 import type { Alert, AlertButton } from "react-native";
 import type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
@@ -33,32 +33,44 @@ type DialogRequest =
   | { readonly kind: "confirm"; readonly request: ConfirmDialogRequest }
   | { readonly kind: "text-input"; readonly request: TextInputDialogRequest };
 
-let presentRequest: ((request: DialogRequest) => void) | null = null;
+// Startup notices can arrive before Host subscribes or while Strict Mode replays its effects.
+let requests: ReadonlyArray<DialogRequest & { readonly id: number }> = [];
+let nextPresentationId = 0;
+const listeners = new Set<() => void>();
+const subscribe = (listener: () => void) => {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+};
+const getSnapshot = () => requests;
+function presentRequest(request: DialogRequest) {
+  requests = [...requests, { ...request, id: ++nextPresentationId }];
+  for (const listener of listeners) listener();
+}
 
 export function alert(...[title, message, buttons, options]: Parameters<typeof Alert.alert>): void {
   const actions = buttons?.length ? buttons.slice(0, 3) : [{ text: "OK" }];
   const normalized = actions.map((action, index) =>
     index === actions.length - 1 ? { ...action, text: action.text || "OK" } : action,
   );
-  presentRequest?.({
+  presentRequest({
     kind: "alert",
     request: { title, message, buttons: normalized, options },
   });
 }
 
 export function confirm(request: ConfirmDialogRequest): void {
-  presentRequest?.({ kind: "confirm", request });
+  presentRequest({ kind: "confirm", request });
 }
 
 export function prompt(request: TextInputDialogRequest): void {
-  presentRequest?.({ kind: "text-input", request });
+  presentRequest({ kind: "text-input", request });
 }
 
 /** Android presenter for Dialog.alert, Dialog.confirm and Dialog.prompt; mounted once at the app root. */
 export function Host() {
-  // Requests wait their turn, so a second dialog never replaces one that is
-  // still waiting for an answer.
-  const [queue, setQueue] = useState<ReadonlyArray<DialogRequest & { readonly id: number }>>([]);
+  const queue = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   const presented = queue[0] ?? null;
   const [input, setInput] = useState<{ readonly id: number; readonly value: string } | null>(null);
   const inputValue =
@@ -67,16 +79,12 @@ export function Host() {
       : presented?.kind === "text-input"
         ? presented.request.initialValue
         : "";
-  const nextPresentationId = useRef(0);
-  useEffect(() => {
-    presentRequest = (request) => {
-      setQueue((current) => [...current, { ...request, id: ++nextPresentationId.current }]);
-    };
-    return () => {
-      presentRequest = null;
-    };
-  }, []);
-  const dismissPresented = useCallback(() => setQueue((current) => current.slice(1)), []);
+  const dismissPresented = useCallback(() => {
+    if (presented === null || requests[0]?.id !== presented.id) return false;
+    requests = requests.slice(1);
+    for (const listener of listeners) listener();
+    return true;
+  }, [presented]);
   const setInputValue = useCallback(
     (value: string) => {
       if (presented !== null) setInput({ id: presented.id, value });
@@ -85,14 +93,14 @@ export function Host() {
   );
 
   const handleCancel = useCallback(() => {
-    dismissPresented();
+    if (!dismissPresented()) return;
     if (presented?.kind === "alert") presented.request.options?.onDismiss?.();
     else presented?.request.onCancel?.();
   }, [dismissPresented, presented]);
 
   const handleConfirm = useCallback(
     (nativeInputValue?: string) => {
-      dismissPresented();
+      if (!dismissPresented()) return;
       if (presented?.kind === "confirm") {
         presented.request.onConfirm();
       } else if (presented?.kind === "text-input") {
@@ -114,8 +122,7 @@ export function Host() {
         alertActions={presented.request.buttons ?? [{ text: "OK" }]}
         dismissable={presented.request.options?.cancelable ?? false}
         onAlertAction={(action) => {
-          dismissPresented();
-          action.onPress?.();
+          if (dismissPresented()) action.onPress?.();
         }}
         onCancel={handleCancel}
         onConfirm={handleConfirm}

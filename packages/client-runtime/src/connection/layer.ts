@@ -56,10 +56,8 @@ export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscovere
               (previous.descriptor?.orchestrationProtocolVersion ?? 1) !==
                 (descriptor.orchestrationProtocolVersion ?? 1) ||
               previous.descriptor?.serverVersion !== descriptor.serverVersion;
-            // Only a new health result applies: a replayed one must neither clear
-            // a newer socket rejection nor re-block a host a retry found compatible.
-            // A live session already passed the protocol check, so even a new
-            // result that disagrees with it is stale; the next connect checks again.
+            // Replayed discovery cannot supersede a newer socket verdict.
+            // Even fresh discovery can lag behind an already-compatible session.
             if (fresh) {
               yield* registry.setCompatibility(
                 environmentId,
@@ -69,11 +67,7 @@ export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscovere
             }
             seenChecks.set(environmentId, status);
           }
-        }).pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("Could not apply discovered environment compatibility.", { error }),
-          ),
-        ),
+        }),
       ),
     );
   },

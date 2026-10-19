@@ -143,8 +143,6 @@ export function WelcomeWizard({
     for (const environment of newComputers) {
       autoSelectedComputers.add(environment.environmentId);
     }
-    // A computer the user switched off, or one this app cannot talk to yet,
-    // stays unselected until they pick it.
     const enabledComputers = newComputers.filter(isConnectable);
     if (enabledComputers.length === 0) return;
     // oxlint-disable-next-line react/set-state-in-effect -- The registry marks each computer once, and only after commit; render must not mutate it.

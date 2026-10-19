@@ -54,10 +54,7 @@ export interface ConnectionCatalogEntry {
   readonly alternateRoutes?: ReadonlyArray<ConnectionRoute>;
   /** The user's persisted choice. False means saved, but never connects. */
   readonly enabled: boolean;
-  /**
-   * Runtime protocol rejection, never persisted. Pauses the connection without
-   * changing `enabled`, so it reconnects once the host is compatible again.
-   */
+  /** Runtime protocol rejection; pauses connections without changing the saved choice. */
   readonly unsupportedReason?: string;
   readonly serverUpdateRequired?: boolean;
 }

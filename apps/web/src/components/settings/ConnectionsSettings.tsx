@@ -1466,7 +1466,6 @@ function SavedBackendListRow({
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   const environmentId = environment.environmentId;
   const unsupported = environment.connection.phase === "unsupported";
-  // The switch shows the user's choice; a version mismatch only pauses it.
   const switchedOn = environment.entry.enabled;
   const enabled = switchedOn && !unsupported;
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
@@ -2075,8 +2074,6 @@ export function ConnectionsSettings() {
       ];
     },
   );
-  // Switched-off and unsupported machines never receive threads, so they stay
-  // out of the load balancing and GitHub sharing lists.
   const loadBalancingEnvironments = [
     ...(primaryEnvironment ? [primaryEnvironment] : []),
     ...savedEnvironments.filter((environment) => environment.entry.enabled),

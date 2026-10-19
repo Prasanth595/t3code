@@ -69,7 +69,6 @@ function unsupportedState(
   };
 }
 
-/** The user wants it on and its host is not known to be incompatible. */
 function shouldConnect(entry: ConnectionCatalogEntry): boolean {
   return entry.enabled && entry.unsupportedReason === undefined;
 }
@@ -160,19 +159,14 @@ export class EnvironmentRegistry extends Context.Service<
       enabled: boolean,
     ) => Effect.Effect<
       void,
-      | EnvironmentNotRegisteredError
-      | Persistence.ConnectionPersistenceError
-      | ConnectionBlockedError
+      EnvironmentNotRegisteredError | Persistence.ConnectionPersistenceError
     >;
-    /**
-     * Pauses or resumes an environment for protocol compatibility. With
-     * `keepLiveSession`, a block is ignored while a session is connected.
-     */
+    /** Discovery cannot reject a session that passed the socket protocol check. */
     readonly setCompatibility: (
       environmentId: EnvironmentId,
       error: ConnectionBlockedError | null,
       options?: { readonly keepLiveSession?: boolean },
-    ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
+    ) => Effect.Effect<void>;
     readonly state: (
       environmentId: EnvironmentId,
     ) => Effect.Effect<SupervisorConnectionState, EnvironmentNotRegisteredError>;
@@ -386,14 +380,7 @@ export const make = Effect.gen(function* () {
           yield* SubscriptionRef.changes(supervisor.state).pipe(
             Stream.runForEach((state) =>
               state.phase === "blocked" && state.lastFailure?.reason === "unsupported"
-                ? setCompatibility(environmentId, state.lastFailure).pipe(
-                    Effect.catch((error) =>
-                      Effect.logWarning("Could not mark an environment unsupported.", {
-                        environmentId,
-                        error,
-                      }),
-                    ),
-                  )
+                ? setCompatibility(environmentId, state.lastFailure)
                 : Effect.void,
             ),
             Effect.forkIn(scope),
@@ -1015,9 +1002,7 @@ export const make = Effect.gen(function* () {
     },
   );
 
-  // An incompatible environment the user left on retries by dropping its
-  // block: the socket handshake checks the protocol again and blocks it anew
-  // if still mismatched. A switched-off one has no handshake to re-check it.
+  // Only enabled environments can recheck compatibility through a socket handshake.
   const retryNow = (environmentId: EnvironmentId) =>
     getEntry(environmentId).pipe(
       Effect.flatMap((entry) =>
@@ -1060,8 +1045,6 @@ export const make = Effect.gen(function* () {
           nextEntries.set(environmentId, next);
           return nextEntries;
         });
-        // Switching on an incompatible environment saves the choice and stays
-        // paused until its host is compatible again.
         if (lease !== undefined) {
           yield* shouldConnect(next) ? lease.supervisor.connect : lease.supervisor.disconnect;
         } else if (enabled) {
@@ -1126,9 +1109,6 @@ export const make = Effect.gen(function* () {
           serverUpdateRequired: _previousUpdateRequired,
           ...rest
         } = entry;
-        // Compatibility is runtime state: it pauses the connection without
-        // touching the user's persisted on/off choice, so an environment the
-        // user left on reconnects once its host speaks our protocol again.
         const next: ConnectionCatalogEntry =
           error === null
             ? rest
@@ -1159,9 +1139,7 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  // Nothing else re-checks an incompatible host, so coming back to the app,
-  // changing networks, or coming back online retries the ones the user left
-  // on, in case the host has updated meanwhile.
+  // Paused supervisors cannot retry until their compatibility block is cleared.
   const retryPaused = SubscriptionRef.get(entries).pipe(
     Effect.flatMap((current) =>
       Effect.forEach(

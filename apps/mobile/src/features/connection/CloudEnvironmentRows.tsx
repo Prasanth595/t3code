@@ -184,11 +184,8 @@ function ConnectedCloudEnvironmentRow(props: {
   const serverConfig = useAtomValue(
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
-  // The switch shows the user's choice; a version mismatch only pauses it.
   const switchedOn = props.environment.isEnabled;
   const unsupported = props.environment.connectionState === "unsupported";
-  // Discovery empties its map on every refresh; hold the last descriptor seen
-  // so the glyph does not blink back to the generic one each time.
   const [lastDescriptor, setLastDescriptor] = useState(props.descriptor);
   if (props.descriptor !== undefined && props.descriptor !== lastDescriptor) {
     setLastDescriptor(props.descriptor);

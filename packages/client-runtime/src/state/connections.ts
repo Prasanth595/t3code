@@ -18,6 +18,8 @@ import {
   createAtomCommandScheduler,
   createRuntimeCommand,
   followStreamInEnvironment,
+  isAtomCommandInterrupted,
+  type AtomCommandResult,
 } from "./runtime.ts";
 
 export interface EnvironmentCatalogState {
@@ -25,11 +27,7 @@ export interface EnvironmentCatalogState {
   readonly entries: ReadonlyMap<EnvironmentIdType, ConnectionCatalogEntry>;
 }
 
-/**
- * Environments that take part in the workspace: projects, threads, and shell
- * summaries only come from these. Disabled environments, and ones whose host
- * this client cannot talk to, stay in `entries` so Settings can list them.
- */
+/** Workspace aggregates omit paused environments without changing their saved choice. */
 export function* enabledEnvironmentIds(
   catalog: EnvironmentCatalogState,
 ): Generator<EnvironmentIdType> {
@@ -40,29 +38,75 @@ export function* enabledEnvironmentIds(
   }
 }
 
-/**
- * Saved environments switched off on this device. Older builds also
- * switched environments off when their host ran an incompatible version, and
- * nothing records which ones, so clients ask about these once instead of
- * switching anything back on themselves. Remove it with both notices once no
- * client in use predates that fix.
- */
-export function switchedOffSavedEnvironments(
-  catalog: EnvironmentCatalogState,
-): ReadonlyArray<{ readonly environmentId: EnvironmentIdType; readonly label: string }> {
-  return [...catalog.entries]
-    .filter(([, entry]) => !entry.enabled && entry.target._tag !== "PrimaryConnectionTarget")
-    .map(([environmentId, entry]) => ({ environmentId, label: entry.target.label }));
-}
-
-/** Names for a notice line: the first few, then how many more. */
 export function summarizeEnvironmentLabels(
   environments: ReadonlyArray<{ readonly label: string }>,
-  shown = 3,
 ): string {
-  const names = environments.slice(0, shown).map(({ label }) => label);
+  const names = environments.slice(0, 3).map(({ label }) => label);
   const rest = environments.length - names.length;
   return rest > 0 ? `${names.join(", ")} and ${rest} more` : names.join(", ");
+}
+
+// Older clients did not record why they switched a computer off. Ask once rather than guessing.
+export function createSwitchedOffEnvironmentsReview(storage: {
+  readonly read: () => boolean | Promise<boolean>;
+  readonly write: () => void | Promise<void>;
+}) {
+  // Claim before reading storage so remounts and Strict Mode cannot present twice.
+  let started = false;
+  return async (
+    catalog: EnvironmentCatalogState,
+    setEnabled: (input: {
+      readonly environmentId: EnvironmentIdType;
+      readonly enabled: boolean;
+    }) => Promise<AtomCommandResult<unknown, unknown>>,
+  ) => {
+    if (!catalog.isReady || started) return null;
+    started = true;
+    try {
+      if (await storage.read()) return null;
+    } catch {}
+    const environments = [...catalog.entries]
+      .filter(([, entry]) => !entry.enabled && entry.target._tag !== "PrimaryConnectionTarget")
+      .map(([environmentId, entry]) => ({ environmentId, label: entry.target.label }));
+    const markReviewed = async () => {
+      try {
+        await storage.write();
+      } catch {
+        // The launch still counts as reviewed if storage is unavailable.
+      }
+    };
+    if (environments.length === 0) {
+      await markReviewed();
+      return null;
+    }
+    const one = environments.length === 1;
+    const names = summarizeEnvironmentLabels(environments);
+    let answering = false;
+    return {
+      title: one ? `${names} is switched off` : `${environments.length} computers are switched off`,
+      description: `${one ? "" : `${names}. `}An earlier update could switch computers off by mistake. Turn ${one ? "it" : "them"} back on to see ${one ? "its" : "their"} threads again.`,
+      keepOff: () => {
+        if (answering) return;
+        answering = true;
+        void markReviewed();
+      },
+      turnOn: async () => {
+        if (answering) return [];
+        answering = true;
+        const results = await Promise.all(
+          environments.map(async (environment) => ({
+            environment,
+            result: await setEnabled({ environmentId: environment.environmentId, enabled: true }),
+          })),
+        );
+        // Failed or interrupted writes leave the question unanswered for the next launch.
+        if (results.every(({ result }) => result._tag === "Success")) await markReviewed();
+        return results
+          .filter(({ result }) => result._tag === "Failure" && !isAtomCommandInterrupted(result))
+          .map(({ environment }) => environment);
+      },
+    };
+  };
 }
 
 const EMPTY_ENVIRONMENT_CATALOG_STATE: EnvironmentCatalogState = Object.freeze({

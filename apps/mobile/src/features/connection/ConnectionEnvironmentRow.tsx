@@ -52,7 +52,6 @@ export function ConnectionEnvironmentRow(props: {
     serverEnvironment.configValueAtom(props.environment.environmentId),
   );
   const unsupported = props.environment.connectionState === "unsupported";
-  // The switch shows the user's choice; a version mismatch only pauses it.
   const switchedOn = props.environment.isEnabled;
   const enabled = switchedOn && !unsupported;
   const statusLabel = connectionStatusLabel(props.environment);

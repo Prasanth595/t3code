@@ -70,10 +70,7 @@ export const updateOutdatedHost = Effect.fn("clientRuntime.connection.updateOutd
     const { prepared, descriptor } = yield* Effect.firstSuccessOf(
       usableRoutes(entry).map((route) => resolver.prepareForUpdate(routeEntry(entry, route))),
     );
-    // Discovery still holds the old relay descriptor and would re-block the
-    // environment from it, so replace that before clearing the block.
-    // Clearing the block reconnects it if the user left it on; the on/off
-    // choice itself stays theirs.
+    // Refresh stale relay discovery before reconnecting; preserve the saved on/off choice.
     const clearBlock = Effect.gen(function* () {
       if (hasRelayRoute(entry)) {
         const discovery = yield* RelayEnvironmentDiscovery.RelayEnvironmentDiscovery;
