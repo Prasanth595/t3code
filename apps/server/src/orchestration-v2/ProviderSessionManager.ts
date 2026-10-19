@@ -1894,17 +1894,6 @@ export const layerWithOptions = (
           if (current?.runtime !== entry.runtime) {
             return;
           }
-          if (event.providerSession.status === "error") {
-            yield* Ref.update(sessions, (sessions) => {
-              const key = sessionKey(entry.runtime.providerSessionId);
-              const latest = sessions.get(key);
-              if (latest?.runtime !== entry.runtime) return sessions;
-              return new Map(sessions).set(key, {
-                ...latest,
-                loadedProviderThreadKeyByThread: new Map(),
-              });
-            });
-          }
           yield* writeProviderSessionEvents({
             runtime: entry.runtime,
             threadIds: current.attachedThreadIds,
@@ -1963,6 +1952,25 @@ export const layerWithOptions = (
               ),
               Effect.andThen(
                 Effect.gen(function* () {
+                  if (
+                    event.type === "provider_thread.updated" &&
+                    event.providerThread.status === "error"
+                  ) {
+                    const threadId = event.providerThread.appThreadId;
+                    yield* Ref.update(sessions, (sessions) => {
+                      const key = sessionKey(entry.runtime.providerSessionId);
+                      const latest = sessions.get(key);
+                      if (latest?.runtime !== entry.runtime || threadId === null) return sessions;
+                      const loadedProviderThreadKeyByThread = new Map(
+                        latest.loadedProviderThreadKeyByThread,
+                      );
+                      loadedProviderThreadKeyByThread.delete(threadId);
+                      return new Map(sessions).set(key, {
+                        ...latest,
+                        loadedProviderThreadKeyByThread,
+                      });
+                    });
+                  }
                   // Some providers can block before a run subscriber exists
                   // (project trust, login, or session-switch hooks). Persist
                   // their runless request artifacts directly so the normal T3
