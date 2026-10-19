@@ -4,14 +4,12 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Dialog from "../../components/ui/Dialog";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 
-/** Asks before removing an environment from the signed-in T3 Connect account. */
 export function confirmDeregister(environment: { readonly label: string }, onConfirm: () => void) {
   const title = "Deregister server?";
   const message = `“${environment.label}” will be removed from this account. T3 Connect access will be revoked, any managed tunnel will be removed, and a host space will become available. Local connections on your devices are not changed.`;
   Dialog.confirm({ title, message, confirmText: "Deregister", destructive: true, onConfirm });
 }
 
-/** Reports a failed deregistration, with its trace ID when the relay sent one. */
 export function alertDeregisterFailure(environmentId: EnvironmentId, cause: unknown) {
   const message = cause instanceof Error ? cause.message : "Could not deregister the server.";
   const traceId = findErrorTraceId(cause);

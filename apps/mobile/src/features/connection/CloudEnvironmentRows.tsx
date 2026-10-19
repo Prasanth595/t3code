@@ -15,7 +15,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { Pressable, type AccessibilityActionEvent, type TextLayoutEvent, View } from "react-native";
 
 import { AppText as Text } from "../../components/ui/AppText";
@@ -23,6 +23,7 @@ import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSym
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { appAtomRegistry } from "../../state/atom-registry";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -34,10 +35,6 @@ import {
 } from "../cloud/managedRelayState";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { ConnectionStatusDot } from "./ConnectionStatusDot";
-import {
-  type DeregisteringEnvironments,
-  settleDeregisteringEnvironments,
-} from "./deregisteringEnvironments";
 import { environmentStatusText } from "./environmentStatusText";
 import { type RelayEnvironmentView, useConnectionController } from "./useConnectionController";
 
@@ -81,25 +78,9 @@ function CloudEnvironmentRowsContent(
 ) {
   const controller = useConnectionController();
   const discoveryAvailable = props.discoveryAvailable ?? true;
-  const [deregistering, setDeregistering] = useState<DeregisteringEnvironments>(new Map());
-  const listedCloudEnvironments = discoveryAvailable
+  const availableCloudEnvironments = discoveryAvailable
     ? (props.showcaseAvailableEnvironments ?? controller.availableRelayEnvironments)
     : [];
-  const listingComplete =
-    props.showcaseAvailableEnvironments !== undefined ||
-    !discoveryAvailable ||
-    (!controller.relayDiscovery.isRefreshing &&
-      !controller.relayDiscovery.isOffline &&
-      controller.relayDiscovery.error === null);
-  const listedIds = listingComplete
-    ? new Set(listedCloudEnvironments.map((entry) => entry.environment.environmentId))
-    : null;
-  if (settleDeregisteringEnvironments(deregistering, listedIds) !== deregistering) {
-    setDeregistering((current) => settleDeregisteringEnvironments(current, listedIds));
-  }
-  const availableCloudEnvironments = listedCloudEnvironments.filter(
-    (entry) => !deregistering.has(entry.environment.environmentId),
-  );
   const [expandedErrorId, setExpandedErrorId] = useState<string | null>(null);
   const hasCloudRows =
     props.connectedCloudEnvironments.length > 0 || availableCloudEnvironments.length > 0;
@@ -109,41 +90,47 @@ function CloudEnvironmentRowsContent(
     [controller],
   );
 
-  // An account environment that is not saved here has nothing to remove from
-  // this device, so its only way out of the list is deregistering it.
   const relaySession = useAtomValue(managedRelaySessionAtom);
+  const mutationPendingRef = useRef(false);
   const deregisterEnvironment = useAtomCommand(deregisterManagedRelayEnvironmentCommand, {
     reportFailure: false,
   });
-  const handleDeregisterCloudEnvironment = (entry: RelayEnvironmentView) =>
+  const handleDeregisterCloudEnvironment = (entry: RelayEnvironmentView) => {
+    const session = relaySession;
+    if (
+      !session ||
+      appAtomRegistry.get(managedRelaySessionAtom) !== session ||
+      mutationPendingRef.current
+    )
+      return;
+
     confirmDeregister(entry.environment, async () => {
+      if (appAtomRegistry.get(managedRelaySessionAtom) !== session || mutationPendingRef.current)
+        return;
+
+      mutationPendingRef.current = true;
       const { environmentId } = entry.environment;
-      const accountId = relaySession?.accountId;
-      if (!accountId) {
-        alertDeregisterFailure(
-          environmentId,
-          new Error("Sign in to T3 Connect before deregistering an environment."),
-        );
-        return;
+      try {
+        const result = await deregisterEnvironment({ accountId: session.accountId, environmentId });
+        if (result._tag === "Success") {
+          refreshManagedRelayEnvironments(session.accountId);
+          if (appAtomRegistry.get(managedRelaySessionAtom) === session) {
+            await controller.refreshRelayEnvironments();
+          }
+          return;
+        }
+        if (
+          appAtomRegistry.get(managedRelaySessionAtom) !== session ||
+          isAtomCommandInterrupted(result)
+        )
+          return;
+
+        alertDeregisterFailure(environmentId, squashAtomCommandFailure(result));
+      } finally {
+        mutationPendingRef.current = false;
       }
-      setDeregistering((current) => new Map(current).set(environmentId, "pending"));
-      const result = await deregisterEnvironment({ accountId, environmentId });
-      if (result._tag === "Success") {
-        setDeregistering((current) =>
-          current.has(environmentId) ? new Map(current).set(environmentId, "unlinked") : current,
-        );
-        void controller.refreshRelayEnvironments();
-        refreshManagedRelayEnvironments(accountId);
-        return;
-      }
-      setDeregistering((current) => {
-        const next = new Map(current);
-        next.delete(environmentId);
-        return next;
-      });
-      if (isAtomCommandInterrupted(result)) return;
-      alertDeregisterFailure(environmentId, squashAtomCommandFailure(result));
     });
+  };
 
   const discoveredDescriptors = new Map(
     controller.relayEnvironments.flatMap((entry) =>
@@ -308,7 +295,9 @@ function CloudEnvironmentRow(props: {
       accessibilityHint={
         props.onDeregister ? "Offers to deregister it from your T3 Connect account" : undefined
       }
-      accessibilityLabel={props.onDeregister ? props.environment.environment.label : undefined}
+      accessibilityLabel={
+        props.onDeregister ? `Deregister ${props.environment.environment.label}` : undefined
+      }
       onPress={props.onDeregister}
       onLongPress={props.onDeregister}
       showsChevron={props.onDeregister !== undefined}
@@ -335,11 +324,7 @@ function CloudEnvironmentRow(props: {
   );
 }
 
-/**
- * One T3 Connect row. The label and chevron share the row's press actions;
- * the switch sits outside them so its taps never reach the row (an Android
- * switch inside a Pressable can hand its touch to the Pressable).
- */
+// Keep switches outside press targets: Android can pass their touches to a parent Pressable.
 function CloudEnvironmentRowShell(props: {
   readonly accessibilityHint?: string;
   readonly accessibilityLabel?: string | undefined;
@@ -405,7 +390,6 @@ function CloudEnvironmentRowShell(props: {
     props.onPress || props.onLongPress
       ? {
           accessibilityHint: props.accessibilityHint,
-          // A label replaces what screen readers would read from the children.
           accessibilityLabel: props.accessibilityLabel
             ? `${props.accessibilityLabel}, ${statusText}${errorTraceId ? `, Trace ID ${errorTraceId}` : ""}`
             : undefined,
@@ -463,7 +447,13 @@ function CloudEnvironmentRowShell(props: {
         ) : null}
         <StatusContainer
           {...(errorCanExpand
-            ? { accessibilityRole: "button" as const, onPress: props.onToggleError }
+            ? {
+                accessibilityRole: "button" as const,
+                onPress: (event) => {
+                  event.stopPropagation();
+                  props.onToggleError();
+                },
+              }
             : {})}
           className="min-w-0 flex-row items-start gap-1"
         >
