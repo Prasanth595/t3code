@@ -477,6 +477,13 @@ describe("formatModelSelectionEffort", () => {
         reported,
       ),
     ).toBe("Medium");
+    expect(
+      formatModelSelectionEffort(
+        selection([{ id: "effort", value: "retired-effort" }]),
+        catalog({ currentValue: "medium" }),
+        reported,
+      ),
+    ).toBeNull();
   });
 
   it("shows nothing when neither the selection nor the provider states an effort", () => {

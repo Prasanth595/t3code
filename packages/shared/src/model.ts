@@ -213,15 +213,14 @@ function getReportedOptionValue(
   return getRawSelectionValueById(reportedSelection.options, id);
 }
 
-/** A catalog default or current value is a guess, so it does not count as stated. */
-export function isProviderOptionValueStated(
+export function getProviderOptionStatedValue(
   id: string,
   selection?: ModelSelection | null,
   reportedSelection?: ModelSelection | null,
-): boolean {
+) {
   return (
-    selection?.options?.some((option) => option.id === id) === true ||
-    getReportedOptionValue(id, selection, reportedSelection) !== undefined
+    getRawSelectionValueById(selection?.options, id) ??
+    getReportedOptionValue(id, selection, reportedSelection)
   );
 }
 
