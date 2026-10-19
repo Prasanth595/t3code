@@ -98,136 +98,78 @@ it("omits an empty macOS bundle identifier", async () => {
   assert.deepEqual(window?.owner, { name: "cli", processId: 9, path: "" });
 });
 
-it("skips transparent and tiny auxiliary windows before the main window", async () => {
-  stubMacLookup(
-    macLookup([
+it.each([
+  {
+    name: "transparent and untitled helpers",
+    helpers: [
       {
         id: 1,
         title: "",
-        bounds: { x: 0, y: -32, width: 1_680, height: 32 },
+        bounds: { x: -1, y: -44, width: 1_680, height: 44 },
         alpha: 0,
       },
-      {
-        id: 2,
-        title: "",
-        bounds: { x: 0, y: 0, width: 1_680, height: 68 },
-      },
-      {
-        id: 3,
-        title: "Pull request · Browser",
-        bounds: { x: 0, y: 0, width: 1_680, height: 1_050 },
-      },
+      { id: 2, title: "", bounds: { x: 0, y: 0, width: 1_680, height: 68 } },
+    ],
+    content: {
+      id: 3,
+      title: "Document",
+      bounds: { x: 0, y: 0, width: 1_680, height: 1_050 },
+    },
+  },
+  {
+    name: "Chrome strips stacked above the content window",
+    helpers: [
+      { id: 75, title: "", bounds: { x: 0, y: 39, width: 1_800, height: 41 } },
+      { id: 74, title: "", bounds: { x: 0, y: 80, width: 1_800, height: 81 } },
+      { id: 1691, title: "", bounds: { x: 0, y: 39, width: 1_800, height: 158 } },
+    ],
+    content: {
+      id: 71,
+      title: "(10) Video - YouTube",
+      bounds: { x: 0, y: 161, width: 1_800, height: 1_008 },
+    },
+  },
+  {
+    name: "a smaller front window's strips with a larger background window",
+    helpers: [
+      { id: 75, title: "", bounds: { x: 100, y: 139, width: 1_200, height: 41 } },
+      { id: 74, title: "", bounds: { x: 100, y: 180, width: 1_200, height: 81 } },
+    ],
+    content: {
+      id: 71,
+      title: "Video - YouTube",
+      bounds: { x: 100, y: 261, width: 1_200, height: 700 },
+    },
+    background: [
+      { id: 80, title: "Other document", bounds: { x: 0, y: 39, width: 1_800, height: 1_130 } },
+    ],
+  },
+])("selects the content window behind $name", async ({ helpers, content, background = [] }) => {
+  stubMacLookup(macLookup([...helpers, content, ...background]));
+
+  const window = await activeWindow("darwin");
+
+  assert.strictEqual(window?.id, content.id);
+  assert.deepEqual(window?.bounds, content.bounds);
+});
+
+it.each([
+  { name: "untitled dialog", title: "", bounds: { x: 300, y: 200, width: 400, height: 240 } },
+  { name: "titled palette", title: "Palette", bounds: { x: 0, y: 0, width: 800, height: 50 } },
+  { name: "offset untitled strip", title: "", bounds: { x: 100, y: 100, width: 800, height: 50 } },
+  { name: "tall untitled window", title: "", bounds: { x: 0, y: 0, width: 800, height: 900 } },
+])("keeps a frontmost $name ahead of a larger document", async ({ title, bounds }) => {
+  stubMacLookup(
+    macLookup([
+      { id: 1, title, bounds },
+      { id: 2, title: "Document", bounds: { x: 0, y: 0, width: 800, height: 1_000 } },
     ]),
   );
 
   const window = await activeWindow("darwin");
 
-  assert.strictEqual(window?.id, 3);
-  assert.deepEqual(window?.bounds, { x: 0, y: 0, width: 1_680, height: 1_050 });
-});
-
-it("skips untitled full-width strips stacked above the main window", async () => {
-  stubMacLookup(
-    macLookup([
-      { id: 75, title: "", bounds: { x: 0, y: 39, width: 1_800, height: 41 } },
-      { id: 74, title: "", bounds: { x: 0, y: 80, width: 1_800, height: 81 } },
-      { id: 1691, title: "", bounds: { x: 0, y: 39, width: 1_800, height: 158 } },
-      {
-        id: 71,
-        title: "(10) Video - YouTube",
-        bounds: { x: 0, y: 161, width: 1_800, height: 1_008 },
-      },
-    ]),
-  );
-
-  assert.strictEqual((await activeWindow("darwin"))?.id, 71);
-});
-
-it("keeps a tall untitled window that shares the main window's width", async () => {
-  stubMacLookup(
-    macLookup([
-      { id: 12, title: "", bounds: { x: 0, y: 0, width: 800, height: 900 } },
-      { id: 13, title: "Document", bounds: { x: 0, y: 0, width: 800, height: 1_000 } },
-    ]),
-  );
-
-  assert.strictEqual((await activeWindow("darwin"))?.id, 12);
-});
-
-it("keeps an untitled frontmost dialog ahead of a titled parent", async () => {
-  stubMacLookup(
-    macLookup([
-      {
-        id: 4,
-        title: "",
-        bounds: { x: 300, y: 200, width: 400, height: 240 },
-      },
-      {
-        id: 5,
-        title: "Document",
-        bounds: { x: 0, y: 0, width: 1_680, height: 1_050 },
-      },
-    ]),
-  );
-
-  assert.strictEqual((await activeWindow("darwin"))?.id, 4);
-});
-
-it("keeps a small frontmost window ahead of a larger window", async () => {
-  stubMacLookup(
-    macLookup([
-      {
-        id: 6,
-        title: "Widget",
-        bounds: { x: 20, y: 20, width: 109, height: 68 },
-      },
-      {
-        id: 7,
-        title: "Document",
-        bounds: { x: 0, y: 0, width: 1_680, height: 1_050 },
-      },
-    ]),
-  );
-
-  assert.strictEqual((await activeWindow("darwin"))?.id, 6);
-});
-
-it("keeps a titled edge-strip window ahead of a larger window", async () => {
-  stubMacLookup(
-    macLookup([
-      {
-        id: 8,
-        title: "Palette",
-        bounds: { x: 0, y: 0, width: 1_000, height: 50 },
-      },
-      {
-        id: 9,
-        title: "Document",
-        bounds: { x: 0, y: 0, width: 1_000, height: 800 },
-      },
-    ]),
-  );
-
-  assert.strictEqual((await activeWindow("darwin"))?.id, 8);
-});
-
-it("keeps an offset untitled edge-strip window ahead of a larger window", async () => {
-  stubMacLookup(
-    macLookup([
-      {
-        id: 10,
-        title: "",
-        bounds: { x: 100, y: 100, width: 1_000, height: 50 },
-      },
-      {
-        id: 11,
-        title: "Document",
-        bounds: { x: 0, y: 0, width: 1_000, height: 800 },
-      },
-    ]),
-  );
-
-  assert.strictEqual((await activeWindow("darwin"))?.id, 10);
+  assert.strictEqual(window?.id, 1);
+  assert.deepEqual(window?.bounds, bounds);
 });
 
 it("resolves undefined when macOS has no frontmost window", async () => {
