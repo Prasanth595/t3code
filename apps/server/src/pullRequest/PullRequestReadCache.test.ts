@@ -65,21 +65,16 @@ it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
   it.effect("shares one scoped prune loop across cache layer consumers", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const { providerStatusCacheDir } = yield* ServerConfig.ServerConfig;
-      const directory = path.join(providerStatusCacheDir, "pull-requests");
       const activation = yield* Deferred.make<void>();
       let scans = 0;
       const observedFs = FileSystem.FileSystem.of({
         ...fs,
         // An empty directory keeps every sweep synchronous under the test clock.
-        readDirectory: (path) =>
-          path === directory
-            ? Effect.sync(() => {
-                scans++;
-                return [];
-              })
-            : fs.readDirectory(path),
+        readDirectory: () =>
+          Effect.sync(() => {
+            scans++;
+            return [];
+          }),
       });
       const caches: Array<PullRequestReadCache.PullRequestReadCache["Service"]> = [];
       const sharedLayer = PullRequestReadCache.layer.pipe(
@@ -122,22 +117,17 @@ it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
   it.effect("uses memory without starting cleanup when the cache directory is unavailable", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
       const { providerStatusCacheDir } = yield* ServerConfig.ServerConfig;
-      const directory = path.join(providerStatusCacheDir, "pull-requests");
       yield* fs.remove(providerStatusCacheDir, { recursive: true });
       yield* fs.writeFileString(providerStatusCacheDir, "blocks the cache directory");
       let scans = 0;
       const observedFs = FileSystem.FileSystem.of({
         ...fs,
-        readDirectory: (path) =>
-          fs.readDirectory(path).pipe(
-            Effect.onExit(() =>
-              Effect.sync(() => {
-                if (path === directory) scans++;
-              }),
-            ),
-          ),
+        readDirectory: () =>
+          Effect.sync(() => {
+            scans++;
+            return [];
+          }),
       });
       yield* Effect.gen(function* () {
         const cache = yield* PullRequestReadCache.PullRequestReadCache;
