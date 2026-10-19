@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vite-plus/test";
+import { assert, describe, expect, it } from "vite-plus/test";
 
 import {
   resolveInlineCodeFileLinkMeta,
@@ -6,6 +6,7 @@ import {
   rewriteMarkdownFileUriHref,
   shouldOpenMarkdownFileLinkInBrowserByDefault,
   shouldOpenMarkdownFileLinkInEditor,
+  withMarkdownFileLinkPath,
 } from "./markdown-links";
 
 describe("shouldOpenMarkdownFileLinkInEditor", () => {
@@ -264,6 +265,23 @@ describe("resolveInlineCodeFileLinkMeta", () => {
 
   it("ignores relative paths without a cwd to resolve against", () => {
     expect(resolveInlineCodeFileLinkMeta("docs/internals/workspace-layout.md")).toBeNull();
+  });
+});
+
+describe("withMarkdownFileLinkPath", () => {
+  it("points every path field at the new file and keeps the position", () => {
+    const meta = resolveInlineCodeFileLinkMeta("docs/plan.md:12:3", "/repo");
+    assert(meta);
+    expect(withMarkdownFileLinkPath(meta, "/repo/BudgetLens/docs/plan.md", "/repo")).toEqual({
+      filePath: "/repo/BudgetLens/docs/plan.md",
+      workspaceLookupPath: null,
+      targetPath: "/repo/BudgetLens/docs/plan.md:12:3",
+      displayPath: "repo/BudgetLens/docs/plan.md:12:3",
+      workspaceRelativePath: "BudgetLens/docs/plan.md",
+      basename: "plan.md",
+      line: 12,
+      column: 3,
+    });
   });
 });
 

@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   claimWorkspaceBasenameLookup,
+  findWorkspaceFileMatch,
   needsWorkspaceBasenameLookup,
   pickWorkspaceBasenameMatch,
+  type WorkspaceEntryCandidate,
 } from "./workspaceBasenameLookup";
 
 describe("needsWorkspaceBasenameLookup", () => {
@@ -73,6 +75,137 @@ describe("pickWorkspaceBasenameMatch", () => {
         { path: "apps/web/src/components/ChatHeader.tsx", kind: "file" },
       ]),
     ).toBeNull();
+  });
+});
+
+describe("findWorkspaceFileMatch", () => {
+  const nestedPlan: WorkspaceEntryCandidate = {
+    path: "BudgetLens/docs/plan.md",
+    kind: "file",
+  };
+  const lookup = (
+    literalExists: boolean,
+    entries: ReadonlyArray<WorkspaceEntryCandidate> | null,
+    truncated = false,
+  ) => ({
+    literalExists: vi.fn(async () => literalExists),
+    searchFiles: vi.fn(async (_query: string) => (entries ? { entries, truncated } : null)),
+  });
+
+  it("keeps the literal path without searching unless it is known to be missing", async () => {
+    // The literal file may be ignored by the index; metadata uncertainty also keeps it.
+    const deps = lookup(true, [nestedPlan]);
+    await expect(findWorkspaceFileMatch("docs/plan.md", deps)).resolves.toBeNull();
+    await expect(findWorkspaceFileMatch("./docs/plan.md", deps)).resolves.toBeNull();
+    expect(deps.searchFiles).not.toHaveBeenCalled();
+  });
+
+  it("finds a unique nested file when the literal path is missing", async () => {
+    for (const path of ["docs/plan.md", "./docs/plan.md"]) {
+      const deps = lookup(false, [nestedPlan]);
+      await expect(findWorkspaceFileMatch(path, deps)).resolves.toBe(nestedPlan.path);
+      expect(deps.searchFiles).toHaveBeenCalledWith("docs/plan.md");
+    }
+  });
+
+  it("prefers a deterministic project-prefix target to other suffixes, even in truncated results", async () => {
+    for (const { cwd, path, indexedPath } of [
+      {
+        cwd: "/school/courses/physics",
+        path: "courses/physics/notes/a.md",
+        indexedPath: "notes/a.md",
+      },
+      {
+        cwd: "C:/school/courses/Physics",
+        path: "courses/physics/notes/a.md",
+        indexedPath: "Notes/A.md",
+      },
+    ]) {
+      const entries: WorkspaceEntryCandidate[] = [
+        { path: "other/notes/a.md", kind: "file" },
+        { path: indexedPath, kind: "file" },
+      ];
+      for (const truncated of [false, true]) {
+        const deps = { ...lookup(false, entries, truncated), cwd };
+        await expect(findWorkspaceFileMatch(path, deps)).resolves.toBe(indexedPath);
+        expect(deps.searchFiles).toHaveBeenCalledExactlyOnceWith("notes/a.md");
+      }
+      const existing = { ...lookup(true, entries), cwd };
+      await expect(findWorkspaceFileMatch(path, existing)).resolves.toBeNull();
+      expect(existing.searchFiles).not.toHaveBeenCalled();
+
+      const nestedPath = `other/${path}`;
+      const suffixOnly = [{ path: nestedPath, kind: "file" as const }];
+      await expect(
+        findWorkspaceFileMatch(path, { ...lookup(false, suffixOnly), cwd }),
+      ).resolves.toBe(nestedPath);
+      await expect(
+        findWorkspaceFileMatch(path, { ...lookup(false, suffixOnly, true), cwd }),
+      ).resolves.toBeNull();
+    }
+  });
+
+  it("prefers exact case, then accepts a unique case-folded suffix across separators", async () => {
+    const caseTwin: WorkspaceEntryCandidate = { path: "Other/Docs/Plan.md", kind: "file" };
+    await expect(
+      findWorkspaceFileMatch("docs/plan.md", lookup(false, [caseTwin, nestedPlan])),
+    ).resolves.toBe(nestedPlan.path);
+    await expect(
+      findWorkspaceFileMatch("DOCS\\PLAN.MD", lookup(false, [nestedPlan])),
+    ).resolves.toBe(nestedPlan.path);
+    await expect(
+      findWorkspaceFileMatch(
+        "docs/plan.md",
+        lookup(false, [{ ...nestedPlan, path: "app\\docs\\plan.md" }]),
+      ),
+    ).resolves.toBe("app\\docs\\plan.md");
+  });
+
+  it("keeps the literal path for ambiguous suffixes, partial segments, or directories", async () => {
+    await expect(
+      findWorkspaceFileMatch(
+        "docs/plan.md",
+        lookup(false, [nestedPlan, { path: "Other/docs/plan.md", kind: "file" }]),
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      findWorkspaceFileMatch(
+        "DOCS/PLAN.MD",
+        lookup(false, [nestedPlan, { path: "Other/Docs/Plan.md", kind: "file" }]),
+      ),
+    ).resolves.toBeNull();
+    await expect(
+      findWorkspaceFileMatch(
+        "docs/plan.md",
+        lookup(false, [
+          { path: "app/mydocs/plan.md", kind: "file" },
+          { path: "app/docs/plan.md", kind: "directory" },
+        ]),
+      ),
+    ).resolves.toBeNull();
+  });
+
+  it("rejects truncated suffix results even when a fuzzy file follows the only match", async () => {
+    // Truncation also signals an incomplete scan, so page order cannot prove uniqueness.
+    const fuzzy: WorkspaceEntryCandidate = { path: "docs/plan.old.md", kind: "file" };
+    await expect(
+      findWorkspaceFileMatch("docs/plan.md", lookup(false, [nestedPlan], true)),
+    ).resolves.toBeNull();
+    await expect(
+      findWorkspaceFileMatch("docs/plan.md", lookup(false, [nestedPlan, fuzzy], true)),
+    ).resolves.toBeNull();
+  });
+
+  it("keeps the literal path when search fails or returns no files", async () => {
+    await expect(findWorkspaceFileMatch("docs/plan.md", lookup(false, null))).resolves.toBeNull();
+    await expect(findWorkspaceFileMatch("docs/plan.md", lookup(false, []))).resolves.toBeNull();
+  });
+
+  it("still resolves bare filenames without checking the literal, even with truncated duplicates", async () => {
+    const deps = lookup(true, [nestedPlan, { path: "Other/plan.md", kind: "file" }], true);
+    await expect(findWorkspaceFileMatch("plan.md", deps)).resolves.toBe(nestedPlan.path);
+    expect(deps.literalExists).not.toHaveBeenCalled();
+    expect(deps.searchFiles).toHaveBeenCalledWith("plan.md");
   });
 });
 

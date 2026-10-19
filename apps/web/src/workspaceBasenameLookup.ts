@@ -49,6 +49,66 @@ export function pickWorkspaceBasenameMatch(
   return foldedMatches.length === 1 ? (foldedMatches[0]?.path ?? null) : null;
 }
 
+function slashPath(path: string): string {
+  return path.trim().replaceAll("\\", "/");
+}
+
+function pickWorkspaceSuffixMatch(
+  relativePath: string,
+  entries: ReadonlyArray<WorkspaceEntryCandidate>,
+): string | null {
+  const target = slashPath(relativePath);
+  if (!target) return null;
+  const files = entries.filter((entry) => entry.kind === "file");
+  const matching = (fold: (path: string) => string) => {
+    const suffix = fold(target);
+    return files.filter((entry) => {
+      const path = fold(slashPath(entry.path));
+      return path === suffix || path.endsWith(`/${suffix}`);
+    });
+  };
+  const exact = matching((path) => path);
+  const matches = exact.length > 0 ? exact : matching((path) => path.toLowerCase());
+  return matches.length === 1 ? (matches[0]?.path ?? null) : null;
+}
+
+export async function findWorkspaceFileMatch(
+  relativePath: string,
+  lookup: {
+    readonly cwd?: string;
+    /** False only when the literal file is known to be missing. */
+    readonly literalExists: () => Promise<boolean>;
+    /** Indexed candidates for the query, or null when the search failed. */
+    readonly searchFiles: (query: string) => Promise<{
+      readonly entries: ReadonlyArray<WorkspaceEntryCandidate>;
+      readonly truncated: boolean;
+    } | null>;
+  },
+): Promise<string | null> {
+  try {
+    if (needsWorkspaceBasenameLookup(relativePath)) {
+      const result = await lookup.searchFiles(relativePath);
+      return result ? pickWorkspaceBasenameMatch(relativePath, result.entries) : null;
+    }
+    if (!/[\\/]/.test(relativePath) || (await lookup.literalExists()) !== false) return null;
+    const query = slashPath(relativePath).replace(/^(?:\.\/)+/, "");
+    const strippedPath = lookup.cwd ? stripRepeatedWorkspacePrefix(query, lookup.cwd) : null;
+    if (strippedPath !== null && lookup.cwd) {
+      const strippedResult = await lookup.searchFiles(strippedPath);
+      const match = strippedResult
+        ? pickStrippedWorkspaceMatch(strippedPath, lookup.cwd, strippedResult.entries)
+        : null;
+      // This exact target does not depend on suffix uniqueness or a complete index.
+      if (match !== null) return match;
+    }
+    const result = await lookup.searchFiles(query);
+    // Truncation also covers an incomplete index scan, so uniqueness is unknown.
+    return result && !result.truncated ? pickWorkspaceSuffixMatch(query, result.entries) : null;
+  } catch {
+    return null;
+  }
+}
+
 // Repository-relative paths can repeat the project's suffix in subfolder projects.
 export function stripRepeatedWorkspacePrefix(relativePath: string, cwd: string): string | null {
   if (isAbsolutePath(relativePath)) return null;

@@ -6,22 +6,36 @@ import { act, type ReactElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { filesystemEnvironment } from "../state/filesystem";
+import { projectEnvironment } from "../state/projects";
 import { useRightPanelStore } from "../rightPanelStore";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { MarkdownFindContext } from "./chat/markdownFindContext";
 import { useThreadFindHighlights } from "./chat/threadFindHighlights";
 import { setMarkdownTaskChecked } from "./files/filePreviewMode";
 
-const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
+const { workspaceSearch, filesystemMetadata, invalidateMetadata } = vi.hoisted(() => ({
   workspaceSearch: vi.fn(),
   filesystemMetadata: vi.fn(),
+  invalidateMetadata: vi.fn(),
 }));
 vi.mock(import("../state/use-atom-query-runner"), async (original) => ({
   ...(await original()),
   useAtomQueryRunner: ((family: unknown) =>
-    family === filesystemEnvironment.getMetadata ? filesystemMetadata : workspaceSearch) as never,
+    family === projectEnvironment.fileMetadata ? filesystemMetadata : workspaceSearch) as never,
 }));
+
+vi.mock(import("../state/use-atom-command"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    useAtomCommand: ((command, options) => {
+      const runCommand = actual.useAtomCommand(command, options);
+      return Object.is(command, projectEnvironment.invalidateFileMetadata)
+        ? invalidateMetadata
+        : runCommand;
+    }) as typeof actual.useAtomCommand,
+  };
+});
 
 // Atoms derived from the server config run in the real registry over a missing config.
 vi.mock(import("../state/server"), async (original) => {
@@ -61,7 +75,8 @@ const roots: Root[] = [];
 
 beforeEach(() => {
   workspaceSearch.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
-  filesystemMetadata.mockReset().mockResolvedValue(AsyncResult.success({ entries: [null] }));
+  filesystemMetadata.mockReset().mockResolvedValue(AsyncResult.success(null));
+  invalidateMetadata.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 });
 
@@ -456,9 +471,7 @@ describe("ChatMarkdown workspace file opens", () => {
   );
 
   it("prefers an existing literal nested file over the stripped Windows match", async () => {
-    filesystemMetadata.mockResolvedValue(
-      AsyncResult.success({ entries: [{ kind: "file", byteLength: 10 }] }),
-    );
+    filesystemMetadata.mockResolvedValue(AsyncResult.success({ kind: "file", byteLength: 10 }));
     workspaceSearch.mockResolvedValue(
       AsyncResult.success({
         entries: [
@@ -488,9 +501,7 @@ describe("ChatMarkdown workspace file opens", () => {
         truncated: true,
       }),
     );
-    filesystemMetadata.mockResolvedValue(
-      AsyncResult.success({ entries: [{ kind: "file", byteLength: 10 }] }),
-    );
+    filesystemMetadata.mockResolvedValue(AsyncResult.success({ kind: "file", byteLength: 10 }));
     const openFile = vi
       .spyOn(useRightPanelStore.getState(), "openFile")
       .mockImplementation(() => {});
@@ -504,7 +515,7 @@ describe("ChatMarkdown workspace file opens", () => {
     expect(openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "physics/notes/a.md", 7);
     expect(filesystemMetadata).toHaveBeenCalledExactlyOnceWith({
       environmentId: threadRef.environmentId,
-      input: { paths: ["/school/physics/physics/notes/a.md"] },
+      input: { path: "/school/physics/physics/notes/a.md" },
     });
   });
 
