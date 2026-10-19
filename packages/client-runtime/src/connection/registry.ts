@@ -69,11 +69,6 @@ function unsupportedState(
   };
 }
 
-/** The user wants it on and its host is not known to be incompatible. */
-function shouldConnect(entry: ConnectionCatalogEntry): boolean {
-  return entry.enabled && entry.unsupportedReason === undefined;
-}
-
 export class EnvironmentNotRegisteredError extends Schema.TaggedError<EnvironmentNotRegisteredError>()(
   "EnvironmentNotRegisteredError",
   {
@@ -361,10 +356,9 @@ export const make = Effect.gen(function* () {
           const environmentId = entry.target.environmentId;
           const scope = yield* Scope.fork(registryScope);
           const supervisor = yield* EnvironmentSupervisor.make(entry, {
-            // An enabled environment starts out connecting. Starting it idle and
-            // then asking it to connect would first publish the state of an
-            // environment the user switched off.
-            initiallyDesired: shouldConnect(entry),
+            // Seed the intent to avoid publishing a false switched-off state
+            // before an enabled, compatible environment starts connecting.
+            initiallyDesired: entry.enabled && entry.unsupportedReason === undefined,
             learnRoutes: (input) => learnRoutes({ environmentId, ...input }),
           }).pipe(
             Effect.provideService(Connectivity.Connectivity, connectivity),
@@ -381,14 +375,7 @@ export const make = Effect.gen(function* () {
           yield* SubscriptionRef.changes(supervisor.state).pipe(
             Stream.runForEach((state) =>
               state.phase === "blocked" && state.lastFailure?.reason === "unsupported"
-                ? setCompatibility(environmentId, state.lastFailure).pipe(
-                    Effect.catch((error) =>
-                      Effect.logWarning("Could not mark an environment unsupported.", {
-                        environmentId,
-                        error,
-                      }),
-                    ),
-                  )
+                ? setCompatibility(environmentId, state.lastFailure)
                 : Effect.void,
             ),
             Effect.forkIn(scope),
@@ -1119,9 +1106,7 @@ export const make = Effect.gen(function* () {
           serverUpdateRequired: _previousUpdateRequired,
           ...rest
         } = entry;
-        // Compatibility is runtime state: it pauses the connection without
-        // touching the user's persisted on/off choice, so an environment the
-        // user left on reconnects once its host speaks our protocol again.
+        // Compatibility pauses connections without changing the user's saved on/off choice.
         const next: ConnectionCatalogEntry =
           error === null
             ? rest
@@ -1136,7 +1121,7 @@ export const make = Effect.gen(function* () {
             new Map(current).set(environmentId, { ...lease, entry: next }),
           );
           if (error !== null) yield* lease.supervisor.disconnect;
-          else if (shouldConnect(next)) yield* lease.supervisor.connect;
+          else if (next.enabled) yield* lease.supervisor.connect;
         }
         yield* SubscriptionRef.update(entries, (current) =>
           new Map(current).set(environmentId, next),
