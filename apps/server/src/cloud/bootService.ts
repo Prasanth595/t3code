@@ -810,12 +810,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* fs
         .makeDirectory(path.dirname(unitPath), { recursive: true })
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-      // Written first, on every install: once the files below name the new
-      // version, whatever is running is behind them. A started install removes
-      // the marker after `activate`, and so do `restart` and the launcher when
-      // it comes up on that version, so a failed start leaves `status`
-      // reporting `restart-pending` and the next install repairs it instead
-      // of calling itself current (#12197).
+      // Files can match the new version even when activation fails; keep that install retryable.
       yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
       yield* writeDurably(
         statePath,
