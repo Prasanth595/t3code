@@ -1,152 +1,271 @@
-import type { FileTree as FileTreeModel } from "@pierre/trees";
 import { EnvironmentId, type ProjectEntry } from "@t3tools/contracts";
-import { act, type ComponentProps } from "react";
+import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-
-const { listEntries, captured } = vi.hoisted(() => ({
-  listEntries: vi.fn(),
-  captured: { model: null as unknown },
-}));
-vi.mock("~/state/projects", async () => {
-  const { Atom } = await import("effect/reactivity");
-  const Effect = await import("effect/Effect");
-  return {
-    projectEnvironment: {
-      listEntries: (request: unknown) => Atom.make(Effect.promise(() => listEntries(request))),
-    },
-  };
-});
-vi.mock("~/state/queries", () => ({
-  useProjectPathSearch: () => ({
-    entries: [],
-    isPending: false,
-    error: null,
-    truncated: false,
-    refresh: () => {},
-  }),
-}));
-vi.mock("~/fileContextMenu", () => ({
-  useFileContextMenu: () => ({ buildItems: () => [], activate: async () => {} }),
-}));
-// Read the tree model the panel builds, so tests can open a folder the way a click does.
-vi.mock(import("@pierre/trees/react"), async (original) => {
-  const actual = await original();
-  const RealFileTree = actual.FileTree;
-  return {
-    ...actual,
-    FileTree: ((props: ComponentProps<typeof RealFileTree>) => {
-      captured.model = props.model;
-      return <RealFileTree {...props} />;
-    }) as typeof RealFileTree,
-  };
-});
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import FileBrowserPanel from "./FileBrowserPanel";
 
-const directory = (path: string, ignored = false): ProjectEntry =>
-  ignored ? { path, kind: "directory", ignored } : { path, kind: "directory" };
-const file = (path: string, ignored = false): ProjectEntry =>
-  ignored ? { path, kind: "file", ignored } : { path, kind: "file" };
+const files = vi.hoisted(() => ({
+  directoryEntries: [] as ProjectEntry[],
+  searchEntries: [] as ProjectEntry[],
+  searchPending: false,
+  searchError: null as string | null,
+  loadingDirectories: new Set<string>() as ReadonlySet<string>,
+  load: vi.fn(async (_directoryPath: string) => {}),
+  refresh: vi.fn(),
+}));
 
-const workspace: Record<string, readonly ProjectEntry[]> = {
-  "": [directory("src"), directory("node_modules", true), file("README.md")],
-  src: [directory("src/lib"), file("src/index.ts")],
-  "src/lib": [file("src/lib/util.ts")],
-  node_modules: [directory("node_modules/react", true), file("node_modules/.modules.yaml", true)],
-  "node_modules/react": [file("node_modules/react/index.js", true)],
-};
+vi.mock("./useDirectoryEntries", () => ({
+  useDirectoryEntries: () => ({
+    entries: files.directoryEntries,
+    loadingDirectories: files.loadingDirectories,
+    load: files.load,
+    refresh: files.refresh,
+    ready: true,
+    error: null,
+    isPending: false,
+  }),
+}));
+vi.mock("~/state/queries", () => ({
+  useProjectPathSearch: () => ({
+    entries: files.searchEntries,
+    isPending: files.searchPending,
+    error: files.searchError,
+    truncated: false,
+    refresh: files.refresh,
+  }),
+}));
+vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
+vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: vi.fn() }));
+vi.mock("~/composerHandleContext", () => ({ useComposerHandleContext: () => null }));
+vi.mock("~/fileContextMenu", () => ({ useFileContextMenu: () => ({}) }));
+vi.mock("~/localApi", () => ({ readLocalApi: () => undefined }));
+vi.mock("~/components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
+vi.mock("~/components/MorphIcon", () => ({ MorphIcon: () => null }));
+vi.mock("~/components/ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: ReactNode }) => children,
+  TooltipTrigger: ({ render }: { render: ReactNode }) => render,
+  TooltipPopup: () => null,
+}));
 
-let root: Root | null;
-let container: HTMLDivElement;
-let listed: string[];
+describe("Files panel", () => {
+  let root: Root | undefined;
+  let container: HTMLDivElement | undefined;
+  const props = {
+    environmentId: EnvironmentId.make("test-environment"),
+    cwd: "/workspace",
+    projectName: "Test project",
+    selectedPath: null,
+    selectedPathRevealId: 0,
+    onOpenFile: vi.fn(),
+    workspaceMutationId: null,
+  };
 
-const model = () => captured.model as FileTreeModel;
+  async function render() {
+    if (!container) {
+      container = document.body.appendChild(document.createElement("div"));
+      // The tree virtualizes its rows, so it needs a real viewport to render any.
+      container.style.cssText =
+        "display: flex; flex-direction: column; width: 320px; height: 480px;";
+      root = createRoot(container);
+    }
+    await act(async () => root!.render(<FileBrowserPanel {...props} />));
+  }
 
-function toggleButton(label: "Expand all folders" | "Collapse all folders") {
-  const button = container.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
-  expect(button, label).not.toBeNull();
-  return button!;
-}
+  function searchInput() {
+    const input = container!.querySelector<HTMLInputElement>('input[type="search"]');
+    expect(input).not.toBeNull();
+    return input!;
+  }
 
-async function waitForListing(path: string) {
-  await vi.waitFor(() => expect(listed).toContain(path));
-  await act(async () => {});
-}
+  async function search(value: string) {
+    const input = searchInput();
+    // React tracks the last value it saw on the element, so set it through the native setter.
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, value);
+    await act(async () => {
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
 
-function folder(path: string) {
-  const item = model().getItem(path);
-  if (!item || !("isExpanded" in item)) throw new Error(`no folder ${path}`);
-  return item;
-}
+  function visiblePaths() {
+    const tree = container!.querySelector("file-tree-container");
+    if (!tree) return [];
+    return [...tree.shadowRoot!.querySelectorAll("[data-item-path]")].map((row) =>
+      row.getAttribute("data-item-path"),
+    );
+  }
 
-async function setExpanded(path: string, expanded: boolean) {
-  await act(async () => {
-    if (expanded) folder(path).expand();
-    else folder(path).collapse();
+  function hasMessage(message: string) {
+    return [...container!.querySelectorAll("div")].some(
+      (node) => node.childNodes.length === 1 && node.textContent === message,
+    );
+  }
+
+  beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    files.directoryEntries = [
+      { path: "src", kind: "directory" },
+      { path: "src/app.ts", kind: "file" },
+      { path: "package.json", kind: "file" },
+    ];
+    files.searchEntries = [];
+    files.searchPending = false;
+    files.searchError = null;
   });
-}
 
-beforeEach(async () => {
-  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-  container = document.createElement("div");
-  container.style.cssText = "display: flex; flex-direction: column; width: 320px; height: 480px";
-  document.body.append(container);
-  listed = [];
-  listEntries.mockReset().mockImplementation(async (request) => {
-    const path: string = request.input.directoryPath;
-    listed.push(path);
-    return { entries: workspace[path] ?? [], truncated: false };
+  afterEach(async () => {
+    await act(async () => root?.unmount());
+    container?.remove();
+    root = undefined;
+    container = undefined;
+    vi.unstubAllGlobals();
   });
-  root = createRoot(container);
-  await act(async () =>
-    root!.render(
-      <FileBrowserPanel
-        environmentId={EnvironmentId.make("files-test")}
-        cwd="/workspace"
-        projectName="workspace"
-        selectedPath={null}
-        selectedPathRevealId={0}
-        onOpenFile={() => {}}
-        workspaceMutationId={null}
-      />,
-    ),
-  );
-  await waitForListing("");
-});
 
-afterEach(async () => {
-  await act(async () => root?.unmount());
-  root = null;
-  container.remove();
-  vi.unstubAllGlobals();
-});
+  it("shows no matching files instead of the full tree when a filename is absent", async () => {
+    await render();
+    expect(visiblePaths()).toEqual(["src/", "package.json"]);
 
-it("expands every folder except ignored ones, which it never lists", async () => {
-  await act(async () => toggleButton("Expand all folders").click());
-  await waitForListing("src/lib");
+    await search(".env.local");
+    expect(visiblePaths()).toEqual([]);
+    expect(hasMessage("No matching files.")).toBe(true);
 
-  expect(listed.toSorted()).toEqual(["", "src", "src/lib"]);
-  expect(folder("node_modules/").isExpanded()).toBe(false);
+    await search("package");
+    expect(visiblePaths()).toEqual(["package.json"]);
+    expect(hasMessage("No matching files.")).toBe(false);
 
-  // Collapsing a folder by hand ends expand all. The button then reads every folder expanded
-  // again once that folder reopens, with the ignored folder still collapsed.
-  await setExpanded("src/lib/", false);
-  toggleButton("Expand all folders");
-  await setExpanded("src/lib/", true);
-  toggleButton("Collapse all folders");
-});
+    await search("");
+    expect(visiblePaths()).toEqual(["src/", "package.json"]);
+  });
 
-it("keeps folders inside an ignored folder opened by hand collapsed, and collapses all of it", async () => {
-  await act(async () => toggleButton("Expand all folders").click());
-  await waitForListing("src/lib");
+  it("still finds ignored files already loaded from a directory", async () => {
+    files.directoryEntries.push({ path: ".env.local", kind: "file", ignored: true });
+    await render();
+    await search(".env.local");
+    expect(visiblePaths()).toEqual([".env.local"]);
+    expect(hasMessage("No matching files.")).toBe(false);
+  });
 
-  await setExpanded("node_modules/", true);
-  await waitForListing("node_modules");
-  expect(listed).not.toContain("node_modules/react");
-  expect(folder("node_modules/react/").isExpanded()).toBe(false);
+  it("waits for remote matches without showing unrelated files or a premature empty result", async () => {
+    await render();
+    files.searchPending = true;
+    await search("settings.ts");
+    expect(visiblePaths()).toEqual([]);
+    expect(hasMessage("Loading files…")).toBe(true);
+    expect(hasMessage("No matching files.")).toBe(false);
 
-  await act(async () => toggleButton("Collapse all folders").click());
-  expect(folder("node_modules/").isExpanded()).toBe(false);
-  expect(folder("src/").isExpanded()).toBe(false);
+    files.searchEntries = [{ path: "config/settings.ts", kind: "file" }];
+    files.searchPending = false;
+    await render();
+    expect(visiblePaths()).toEqual(["config/", "config/settings.ts"]);
+    expect(hasMessage("No matching files.")).toBe(false);
+  });
+
+  it("restores the tree on Escape after an unsuccessful search", async () => {
+    await render();
+    await search("missing-file");
+    expect(visiblePaths()).toEqual([]);
+
+    const input = searchInput();
+    input.focus();
+    await act(async () => {
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(document.activeElement).not.toBe(input);
+    expect(visiblePaths()).toEqual(["src/", "package.json"]);
+    expect(hasMessage("No matching files.")).toBe(false);
+  });
+
+  it("does not report an empty result when the search failed", async () => {
+    await render();
+    files.searchError = "Workspace search failed.";
+    await search("missing-file");
+    expect(visiblePaths()).toEqual([]);
+    expect(hasMessage("No matching files.")).toBe(false);
+    expect(container!.textContent).toContain("Workspace search failed.");
+  });
+
+  describe("expand all", () => {
+    const workspace: Record<string, ProjectEntry[]> = {
+      src: [
+        { path: "src/lib", kind: "directory" },
+        { path: "src/index.ts", kind: "file" },
+      ],
+      "src/lib": [{ path: "src/lib/util.ts", kind: "file" }],
+      node_modules: [
+        { path: "node_modules/react", kind: "directory", ignored: true },
+        { path: "node_modules/.modules.yaml", kind: "file", ignored: true },
+      ],
+      "node_modules/react": [{ path: "node_modules/react/index.js", kind: "file", ignored: true }],
+    };
+    const listed = () => files.load.mock.calls.map(([path]) => path);
+
+    // Answer each listing the panel asks for, as the server would, until it asks for no more.
+    async function answerListings() {
+      const answered = new Set<string>();
+      for (;;) {
+        const path = listed().find((requested) => !answered.has(requested));
+        if (path === undefined) return;
+        answered.add(path);
+        files.directoryEntries = [...files.directoryEntries, ...(workspace[path] ?? [])];
+        await render();
+      }
+    }
+
+    function button(label: "Expand all folders" | "Collapse all folders") {
+      const match = container!.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`);
+      expect(match, label).not.toBeNull();
+      return match!;
+    }
+
+    async function clickRow(path: string) {
+      const row = container!
+        .querySelector("file-tree-container")!
+        .shadowRoot!.querySelector<HTMLElement>(`[data-item-path="${path}"]`);
+      expect(row, path).not.toBeNull();
+      await act(async () => row!.click());
+      await answerListings();
+    }
+
+    beforeEach(() => {
+      files.load.mockClear();
+      files.directoryEntries = [
+        { path: "src", kind: "directory" },
+        { path: "node_modules", kind: "directory", ignored: true },
+        { path: "README.md", kind: "file" },
+      ];
+    });
+
+    it("opens every folder except ignored ones, which it never lists", async () => {
+      await render();
+      await act(async () => button("Expand all folders").click());
+      await answerListings();
+
+      expect(listed().toSorted()).toEqual(["src", "src/lib"]);
+      expect(visiblePaths()).toContain("src/lib/util.ts");
+      expect(visiblePaths()).not.toContain("node_modules/.modules.yaml");
+      button("Collapse all folders");
+
+      // Collapsing a folder by hand ends expand all; reopening it counts as all expanded again,
+      // with the ignored folder still closed.
+      await clickRow("src/lib/");
+      button("Expand all folders");
+      await clickRow("src/lib/");
+      button("Collapse all folders");
+    });
+
+    it("opens an ignored folder by hand without walking into it, and collapses it with the rest", async () => {
+      await render();
+      await act(async () => button("Expand all folders").click());
+      await answerListings();
+
+      await clickRow("node_modules/");
+      expect(listed()).toContain("node_modules");
+      expect(listed()).not.toContain("node_modules/react");
+      expect(visiblePaths()).toContain("node_modules/react/");
+      expect(visiblePaths()).not.toContain("node_modules/react/index.js");
+
+      await act(async () => button("Collapse all folders").click());
+      expect(visiblePaths()).toEqual(["node_modules/", "src/", "README.md"]);
+    });
+  });
 });
