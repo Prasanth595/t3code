@@ -1,4 +1,5 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -39,8 +40,6 @@ const config = {
 
 const DESCRIPTOR_URL = "http://127.0.0.1:3773/.well-known/t3/environment";
 
-// Answers the ownership check as the backend `config` launched, and passes
-// every other request (the token exchange) to `handler`.
 const asLaunchedBackend =
   (
     handler: (
@@ -261,10 +260,6 @@ describe("DesktopLocalEnvironmentAuth", () => {
 
   it.effect.each([
     { name: "a page that is not a T3 server", body: () => new Response("<html></html>") },
-    {
-      name: "a T3 server this app did not launch",
-      body: () => Response.json({ desktopLaunchId: "launch-from-another-app" }),
-    },
     { name: "a T3 server launched without an id", body: () => Response.json({ label: "WSL" }) },
   ])("never sends the bootstrap token to $name", ({ body }) =>
     Effect.gen(function* () {
@@ -296,5 +291,57 @@ describe("DesktopLocalEnvironmentAuth", () => {
       assert.include(error.message, "port 3773");
       assert.deepEqual(yield* Ref.get(requests), [`GET ${DESCRIPTOR_URL}`]);
     }),
+  );
+
+  it.effect("rechecks ownership before retrying the bootstrap token exchange", () =>
+    Effect.gen(function* () {
+      const firstExchange = yield* Deferred.make<void>();
+      const requests: string[] = [];
+      let exchanged = false;
+      const layerHttpClient = Layer.succeed(
+        HttpClient.HttpClient,
+        HttpClient.make((request) => {
+          requests.push(`${request.method} ${new URL(request.url).pathname}`);
+          if (request.url === DESCRIPTOR_URL) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({
+                  desktopLaunchId: exchanged ? "another-launch" : config.bootstrap.desktopLaunchId,
+                }),
+              ),
+            );
+          }
+          exchanged = true;
+          return Deferred.succeed(firstExchange, void 0).pipe(
+            Effect.as(HttpClientResponse.fromWeb(request, new Response("", { status: 503 }))),
+          );
+        }),
+      );
+      const result = yield* DesktopLocalEnvironmentAuth.DesktopLocalEnvironmentAuth.pipe(
+        Effect.flatMap((auth) => auth.getBearerToken),
+        Effect.result,
+        Effect.provide(
+          DesktopLocalEnvironmentAuth.layer.pipe(
+            Layer.provide(Layer.mergeAll(layerPool, layerHttpClient)),
+          ),
+        ),
+        Effect.forkChild,
+      );
+
+      yield* Deferred.await(firstExchange);
+      yield* TestClock.adjust(Duration.seconds(15));
+
+      const outcome = yield* Fiber.join(result);
+      assert.equal(outcome._tag, "Failure");
+      if (outcome._tag === "Failure") {
+        assert.equal(outcome.failure._tag, "DesktopLocalEnvironmentAuthForeignServerError");
+      }
+      assert.deepEqual(requests, [
+        "GET /.well-known/t3/environment",
+        "POST /oauth/token",
+        "GET /.well-known/t3/environment",
+      ]);
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 });
