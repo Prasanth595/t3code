@@ -3164,7 +3164,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 turnItem = {
                   ...base,
                   type: "command_execution",
-                  input: toolCall.command ?? monitorCommand ?? toolCall.title ?? "Command",
+                  input:
+                    toolCall.command ??
+                    monitorCommand ??
+                    toolCall.detail ??
+                    toolCall.title ??
+                    "Command",
                   ...(textFromUnknown(rawOutput) === undefined
                     ? {}
                     : { output: textFromUnknown(rawOutput) }),
@@ -4036,7 +4041,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }
                 const key = `${nativeTaskId}:tool:${toolCall.toolCallId}`;
                 const previous = context.tools.get(key);
-                const merged = mergeToolCallState(previous, toolCall);
+                const mergedToolCall = mergeToolCallState(previous, toolCall);
+                const merged = flavor.normalizeToolCall?.(mergedToolCall) ?? mergedToolCall;
                 context.tools.set(key, merged);
                 if (!shouldPersistToolUpdate(context, key, previous, merged, merged.status))
                   continue;
