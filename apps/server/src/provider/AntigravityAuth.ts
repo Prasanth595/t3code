@@ -47,6 +47,9 @@ interface AuthFlow {
   readonly ownerSessionId: string;
   readonly expiresAtMillis: number;
   state: ProviderAuthState;
+  // Phase entry owns the deadline, even if its monitor has not started yet.
+  progressDeadlineMillis: number;
+  phaseChanged: Deferred.Deferred<void>;
   pending: AntigravityAuthorizationUrl | undefined;
   callbackSent: boolean;
   fiber: Fiber.Fiber<void> | undefined;
@@ -169,10 +172,19 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
     SubscriptionRef.get(snapshot).pipe(
       Effect.map((value) => visibleSnapshot(value, ownerSessionId)),
     );
-  const publishFlow = (flow: AuthFlow, state: ProviderAuthState) => {
-    flow.state = state;
-    return SubscriptionRef.set(snapshot, { ownerSessionId: flow.ownerSessionId, state });
-  };
+  const publishFlow = (flow: AuthFlow, state: ProviderAuthState) =>
+    Effect.gen(function* () {
+      const changed = state.phase !== flow.state.phase ? flow.phaseChanged : undefined;
+      if (changed) {
+        const deadline = (yield* Clock.currentTimeMillis) + AUTH_PROGRESS_TIMEOUT_MS;
+        const phaseChanged = yield* Deferred.make<void>();
+        flow.progressDeadlineMillis = deadline;
+        flow.phaseChanged = phaseChanged;
+      }
+      flow.state = state;
+      if (changed) yield* Deferred.succeed(changed, undefined);
+      yield* SubscriptionRef.set(snapshot, { ownerSessionId: flow.ownerSessionId, state });
+    });
   const stopOwnedProcesses = Effect.suspend(() =>
     Effect.forEach(
       Array.from(processes),
@@ -273,28 +285,33 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
     );
 
   const progressDeadline = (flow: AuthFlow) =>
-    SubscriptionRef.changes(snapshot).pipe(
-      Stream.filter(({ state }) => state.flowId === flow.id),
-      Stream.map(({ state }) => state.phase),
-      Stream.changes,
-      Stream.switchMap((phase) =>
-        phase === "starting" || phase === "verifying"
-          ? Stream.fromEffect(
-              Effect.never.pipe(
-                Effect.timeoutOrElse({
-                  duration: AUTH_PROGRESS_TIMEOUT_MS,
-                  orElse: () => Effect.fail(authTimeout(flow)),
-                }),
-              ),
-            )
-          : Stream.never,
-      ),
-      Stream.runDrain,
-    );
+    Effect.gen(function* () {
+      while (true) {
+        const changed = flow.phaseChanged;
+        const deadline = flow.progressDeadlineMillis;
+        if (flow.state.phase === "waiting") {
+          yield* Deferred.await(changed);
+          continue;
+        }
+        const now = yield* Clock.currentTimeMillis;
+        if (flow.phaseChanged !== changed) continue;
+        if (now >= deadline) return yield* authTimeout(flow);
+        yield* Deferred.await(changed).pipe(
+          Effect.timeoutOrElse({
+            duration: deadline - now,
+            orElse: () =>
+              flow.phaseChanged === changed ? Effect.fail(authTimeout(flow)) : Effect.void,
+          }),
+        );
+      }
+    });
 
   const runSignIn = (flow: AuthFlow, stopSessions: Effect.Effect<void, ProviderSetupError>) =>
     Effect.gen(function* () {
       yield* stopSessions.pipe(Effect.ensuring(stopOwnedProcesses));
+      if ((yield* Clock.currentTimeMillis) >= flow.progressDeadlineMillis) {
+        return yield* authTimeout(flow);
+      }
       yield* progressDeadline(flow).pipe(
         Effect.raceFirst(
           Effect.gen(function* () {
@@ -319,7 +336,6 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
         ),
       );
     }).pipe(
-      Effect.scoped,
       Effect.timeoutOrElse({
         duration: AUTH_TIMEOUT_MS,
         orElse: () => Effect.fail(authTimeout(flow)),
@@ -327,6 +343,7 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
       Effect.onError(() =>
         flow.forwarding ? Fiber.interrupt(flow.forwarding).pipe(Effect.asVoid) : Effect.void,
       ),
+      Effect.scoped,
       Effect.exit,
       Effect.flatMap((result) => finishFlow(flow, result)),
     );
@@ -392,7 +409,8 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
                   setupError("start", "Could not start Google sign-in. Try again."),
                 ),
               );
-            const expiresAtMillis = (yield* Clock.currentTimeMillis) + AUTH_TIMEOUT_MS;
+            const startedAtMillis = yield* Clock.currentTimeMillis;
+            const expiresAtMillis = startedAtMillis + AUTH_TIMEOUT_MS;
             const state: ProviderAuthState = {
               ...emptyState,
               phase: "starting",
@@ -405,6 +423,8 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
               ownerSessionId,
               expiresAtMillis,
               state,
+              progressDeadlineMillis: startedAtMillis + AUTH_PROGRESS_TIMEOUT_MS,
+              phaseChanged: yield* Deferred.make<void>(),
               pending: undefined,
               callbackSent: false,
               fiber: undefined,
