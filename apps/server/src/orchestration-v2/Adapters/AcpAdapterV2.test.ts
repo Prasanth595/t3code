@@ -14,6 +14,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import {
   CheckpointId,
+  CommandId,
   EnvironmentId,
   MessageId,
   type ModelSelection,
@@ -73,7 +74,7 @@ import {
 } from "@t3tools/provider-grok/testing";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
-import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
   AcpProviderCapabilitiesV2,
   acpProviderItemNativeId,
@@ -99,6 +100,11 @@ import {
   acpRegistryPromptFailure,
   registerMistralVibeAcpExtensions,
 } from "@t3tools/provider-acp-registry/testing";
+
+import * as Orchestrator from "../Orchestrator.ts";
+import * as ProviderAdapterRegistry from "../ProviderAdapterRegistry.ts";
+import * as ProviderReplayHarness from "../testkit/ProviderReplayHarness.ts";
+import { queuedRunsInDeliveryOrder } from "../QueuedRunOrder.ts";
 
 const DEFAULT_GROK_SETTINGS = Schema.decodeSync(GrokSettings)({});
 
@@ -767,6 +773,7 @@ describe("Grok child results", () => {
       assert.equal(event.type === "turn.terminal" && event.status, "completed");
     });
     return {
+      adapter,
       runtime,
       turn,
       prompts,
@@ -972,16 +979,86 @@ describe("Grok child results", () => {
   );
 
   it.effect(
-    "invalidates held child result text on a user turn while retaining native wake output",
+    "invalidates held and durably queued child result text on a user turn while retaining native wake output",
     () =>
       Effect.gen(function* () {
         const session = yield* makeMixedWakeSession();
         assert.isDefined(session.request.dispatchIfCurrent);
-        assert.isTrue(Option.isSome(yield* session.request.dispatchIfCurrent!(Effect.void)));
+        const userMessageId = MessageId.make("message-grok-new-user-turn");
+        // Hold the effect worker at the durable starting boundary, before adapter.startTurn.
+        const queuedMessages = yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const threadId = session.turn.threadId;
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("create-grok-queued-wake"),
+            threadId,
+            projectId: session.turn.appThread.projectId,
+            title: "Queued Grok wake",
+            modelSelection: session.turn.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("dispatch-grok-new-user"),
+            threadId,
+            messageId: userMessageId,
+            text: "A new user request.",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const starting = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            starting.runs.map((run) => run.status),
+            ["starting"],
+          );
+          const dispatched = yield* Deferred.make<void>();
+          const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+          yield* requests.offer({
+            ...session.request,
+            dispatchIfCurrent: (effect) =>
+              session.request.dispatchIfCurrent!(effect).pipe(
+                Effect.ensuring(Deferred.succeed(dispatched, undefined)),
+              ),
+          });
+          yield* Deferred.await(dispatched);
+          const persisted = yield* orchestrator.getThreadProjection(threadId);
+          assert.deepEqual(
+            persisted.runs.map((run) => run.status),
+            ["starting", "queued"],
+          );
+          const queuedRun = queuedRunsInDeliveryOrder(persisted)[0]!;
+          assert.equal(queuedRun.userMessageId, session.request.messageId);
+          const wake = persisted.messages.find(
+            (message) => message.id === queuedRun.userMessageId,
+          )!;
+          const user = persisted.messages.find((message) => message.id === userMessageId)!;
+          assert.equal(wake.creationSource, "server");
+          assert.include(wake.text, "REVIEW_DONE");
+          return { user, wake };
+        }).pipe(
+          Effect.provide(
+            Layer.merge(
+              ProviderContinuationRequests.layer,
+              ProviderReplayHarness.layerWithRegistry(
+                { name: "grok-queued-wake" },
+                ProviderAdapterRegistry.layerFromAdapters([session.adapter]),
+                { runEffectWorker: false, runContinuationWorker: true },
+              ),
+            ),
+          ),
+        );
+        assert.lengthOf(session.prompts, 1, "durable dispatch has not started the user prompt");
         yield* session.startFollowup(2, {
-          ...session.turn.message,
-          messageId: MessageId.make("message-grok-new-user-turn"),
-          text: "A new user request.",
+          ...queuedMessages.user,
+          messageId: queuedMessages.user.id,
         });
         let staleTextDispatched = false;
         const staleDispatch = yield* session.request.dispatchIfCurrent!(
@@ -995,7 +1072,16 @@ describe("Grok child results", () => {
         assert.lengthOf(session.prompts, 2);
         assert.notInclude(JSON.stringify(session.prompts[1]!.prompt), "REVIEW_DONE");
 
+        // Consume the persisted FIFO wake after the user turn, without consulting the old offer.
         yield* session.startFollowup(3, {
+          ...queuedMessages.wake,
+          messageId: queuedMessages.wake.id,
+        });
+        yield* session.nextEvent(
+          (event) => event.type === "turn.terminal" && event.runOrdinal === 3,
+        );
+        const promptsBeforeDrain = session.prompts.length;
+        yield* session.startFollowup(4, {
           createdBy: "agent",
           creationSource: "provider",
           messageId: MessageId.make("message-grok-native-drain"),
@@ -1007,18 +1093,33 @@ describe("Grok child results", () => {
           sessionUpdate: "agent_message_chunk",
           content: { type: "text", text: "Drain barrier." },
         });
-        const drained = yield* session.nextEvent(
+        yield* session.nextEvent(
           (event) =>
             event.type === "message.updated" && event.message.text.endsWith("Drain barrier."),
         );
-        assert.include(
-          drained.type === "message.updated" ? drained.message.text : "",
-          "NATIVE_TESTS_DONE",
+        assert.isTrue(
+          session.observed.some(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.role === "assistant" &&
+              event.message.runId !== session.turn.runId &&
+              event.message.text.includes("NATIVE_TESTS_DONE"),
+          ),
+          "invalidating stale text must retain native wake output for delivery",
         );
-        assert.lengthOf(session.prompts, 2, "native output drains without another prompt");
+        assert.lengthOf(
+          session.prompts,
+          promptsBeforeDrain,
+          "native output drains without another prompt",
+        );
         assert.deepEqual(
           { stillCurrent: Option.isSome(staleDispatch), staleTextDispatched },
           { stillCurrent: false, staleTextDispatched: false },
+        );
+        assert.notInclude(
+          JSON.stringify(session.prompts.slice(1).map((prompt) => prompt.prompt)),
+          "REVIEW_DONE",
+          "a durably queued child result must not prompt stale detail after the user turn",
         );
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
