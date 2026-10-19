@@ -11,10 +11,9 @@ import type {
   VcsSwitchRefResult,
 } from "@t3tools/contracts";
 import { deriveLocalBranchNameFromRemoteRef } from "@t3tools/shared/git";
+import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
-
-import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 
 const VCS_REF_QUERY_MAX_LENGTH = 256;
 
@@ -36,13 +35,7 @@ export async function checkoutNewTaskBranch<E>(input: {
       Cause.fail(new Error("The selected project is unavailable. Reconnect and try again.")),
     );
   }
-  if (
-    !shouldCheckoutNewTaskBranch({
-      branchIsCurrent: input.branch.current,
-      branchWorktreePath: input.branch.worktreePath,
-      workspaceMode: input.workspaceMode,
-    })
-  ) {
+  if (input.workspaceMode === "worktree" || input.branch.current) {
     return AsyncResult.success(
       input.branch.current ? { ...input.branch, worktreePath: null } : input.branch,
     );
@@ -69,7 +62,29 @@ export async function checkoutNewTaskBranch<E>(input: {
       (!input.branch.isRemote || local.upstreamRef === `refs/remotes/${input.branch.name}`) &&
       (local.current || local.worktreePath)
     ) {
-      return AsyncResult.success(local.current ? { ...local, worktreePath: null } : local);
+      if (local.current) return AsyncResult.success({ ...local, worktreePath: null });
+      if (!refs.value.rootPath) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new Error(
+              "The server did not report the repository root, so this worktree cannot be reused safely. Update the server or choose another branch.",
+            ),
+          ),
+        );
+      }
+      if (
+        normalizeProjectPathForComparison(refs.value.rootPath) !==
+        normalizeProjectPathForComparison(input.project.workspaceRoot)
+      ) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new Error(
+              "This project is a repository subdirectory. Choose another branch or add the repository root as a project to reuse this worktree.",
+            ),
+          ),
+        );
+      }
+      return AsyncResult.success(local);
     }
     if (local || refs.value.nextCursor === null) break;
     cursor = refs.value.nextCursor;

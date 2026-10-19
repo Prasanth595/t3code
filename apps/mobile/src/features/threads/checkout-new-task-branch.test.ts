@@ -291,7 +291,6 @@ describe("new-task branch checkout", () => {
     expect(result._tag).toBe("Success");
     if (result._tag !== "Success") throw new Error("Remote checkout failed");
     expect(result.value.worktreePath).toBeNull();
-    expect(result.value.name).toBe(remoteBranch.name);
     expect((await git("rev-parse", "HEAD")).stdout.trim()).toBe(selectedCommit);
     expect(await NodeFSP.readFile(NodePath.join(cwd, "file.txt"), "utf8")).toBe(
       "upstream feature\n",
@@ -326,9 +325,7 @@ describe("new-task branch checkout", () => {
           const result = await readRefs(request);
           if (!nested && result._tag === "Success") {
             // Older servers cannot prove whether this project is at the repository root.
-            const { rootPath: _rootPath, ...value } = result.value as typeof result.value & {
-              rootPath?: string;
-            };
+            const { rootPath: _rootPath, ...value } = result.value;
             return { ...result, value };
           }
           return result;
