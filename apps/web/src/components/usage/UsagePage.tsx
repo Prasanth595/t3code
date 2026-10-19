@@ -993,10 +993,7 @@ function UsageOverview({
             aria-label="Usage breakdown by time"
             tabIndex={0}
           >
-            <table
-              className="w-full text-sm whitespace-nowrap"
-              style={{ minWidth: `${(activeProviders.length + 3) * 7}rem` }}
-            >
+            <table className="w-full text-sm whitespace-nowrap">
               <colgroup>
                 <col className="w-2/5" />
               </colgroup>
