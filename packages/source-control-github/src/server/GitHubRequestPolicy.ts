@@ -260,9 +260,8 @@ export const make = Effect.gen(function* () {
     return { token: held.token, fingerprint: held.fingerprint };
   });
 
-  const request: GitHubRequestPolicy["Service"]["request"] = Effect.fn(
-    "GitHubRequestPolicy.request",
-  )(function* <A, E, R>(
+  // The REST/GraphQL transport span owns request and quota metadata.
+  const request: GitHubRequestPolicy["Service"]["request"] = Effect.fnUntraced(function* <A, E, R>(
     input: GitHubRequest,
     send: (headers: Readonly<Record<string, string>>) => Effect.Effect<GitHubAnswer<A>, E, R>,
   ) {
