@@ -955,76 +955,69 @@ describe("resolveAppModelSelectionState with the opencode plan agent", () => {
   });
 });
 
-describe("resolveEffectiveDefaultModelSelection", () => {
-  const driver = ProviderDriverKind.make("claudeAgent");
-  const instanceId = ProviderInstanceId.make("claudeAgent");
-  const providers = [
-    provider({
-      provider: driver,
-      instanceId: "claudeAgent",
-      models: ["claude-opus-5-5", "claude-opus-5"],
-    }),
-  ];
-  const stored = createModelSelection(instanceId, "claude-opus-5", [
-    { id: "effort", value: "high" },
-  ]);
-  const hiding = (hiddenModels: string[]): UnifiedSettings => ({
-    ...settingsWithProviderInstances(),
-    providerModelPreferences: { [instanceId]: { hiddenModels, modelOrder: [] } },
-  });
+describe("default model settings and new-thread composer parity", () => {
+  it.each([
+    ["hidden", "claudeAgent", "claude-opus-5", "claude-opus-5-5", "medium"],
+    ["visible", "claudeAgent", "claude-opus-5", "claude-opus-5", "max"],
+    ["unavailable", "opencode", "openrouter/kimi-k3", "openrouter/kimi-k3", null],
+  ] as const)(
+    "resolves the %s default and its traits",
+    (visibility, kind, model, expectedModel, effort) => {
+      const driver = ProviderDriverKind.make(kind);
+      const instanceId = ProviderInstanceId.make(`${kind}_work`);
+      const snapshot = provider({ provider: driver, instanceId });
+      const models: ServerProvider["models"] = ["claude-opus-5-5", "claude-opus-5"].map(
+        (slug, index) => ({
+          slug,
+          name: slug,
+          isCustom: false,
+          capabilities: {
+            optionDescriptors: [
+              {
+                id: "effort",
+                label: "Effort",
+                type: "select",
+                options: (index === 0 ? ["medium", "high"] : ["high", "max"]).map(
+                  (id, optionIndex) => ({ id, label: id, isDefault: optionIndex === 0 }),
+                ),
+              },
+            ],
+          },
+        }),
+      );
+      const providers = [{ ...snapshot, models }];
+      const stored = createModelSelection(instanceId, model, [{ id: "effort", value: "max" }]);
+      const settings: UnifiedSettings = {
+        ...settingsWithProviderInstances(),
+        providerModelPreferences: {
+          [instanceId]: { hiddenModels: visibility === "hidden" ? [model] : [], modelOrder: [] },
+        },
+      };
+      // ChatView builds the local draft with the project default as its thread selection.
+      const composer = deriveEffectiveComposerModelState({
+        draft: null,
+        providers,
+        selectedProvider: driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection: stored,
+        projectModelSelection: stored,
+        settings,
+      });
+      const effective = resolveEffectiveDefaultModelSelection(settings, providers, stored);
+      const traits = (model: string, modelOptions: typeof stored.options) =>
+        getComposerProviderState({
+          provider: driver,
+          model,
+          models,
+          modelOptions,
+          planModeEnabled: settings.planModeEnabled,
+        });
+      const composerTraits = traits(composer.selectedModel, composer.modelOptions?.[instanceId]);
 
-  it("resolves a hidden stored default to the model a new thread gets", () => {
-    const settings = hiding(["claude-opus-5"]);
-    const newThread = deriveEffectiveComposerModelState({
-      draft: null,
-      providers,
-      selectedProvider: driver,
-      selectedInstanceId: instanceId,
-      threadModelSelection: null,
-      projectModelSelection: stored,
-      settings,
-    });
-
-    const effective = resolveEffectiveDefaultModelSelection(settings, providers, stored);
-
-    expect(effective.model).toBe("claude-opus-5-5");
-    expect(effective.model).toBe(newThread.selectedModel);
-    expect(effective.options).toEqual(stored.options);
-  });
-
-  it("keeps a visible stored default as it is", () => {
-    expect(resolveEffectiveDefaultModelSelection(hiding([]), providers, stored)).toBe(stored);
-  });
-
-  it("falls back from an unavailable stored default like a new thread does", () => {
-    const opencodeInstance = ProviderInstanceId.make("opencode_work");
-    const opencodeDriver = ProviderDriverKind.make("opencode");
-    const opencodeProviders = [
-      provider({ provider: opencodeDriver, instanceId: "opencode_work", models: ["gpt-5.6-sol"] }),
-    ];
-    const storedCustom = createModelSelection(opencodeInstance, "openrouter/kimi-k3");
-    const settings = {
-      ...settingsWithProviderInstances(),
-      providerModelPreferences: { [opencodeInstance]: { hiddenModels: [], modelOrder: [] } },
-    } as UnifiedSettings;
-
-    const newThread = deriveEffectiveComposerModelState({
-      draft: null,
-      providers: opencodeProviders,
-      selectedProvider: opencodeDriver,
-      selectedInstanceId: opencodeInstance,
-      threadModelSelection: null,
-      projectModelSelection: storedCustom,
-      settings,
-    });
-
-    const effective = resolveEffectiveDefaultModelSelection(
-      settings,
-      opencodeProviders,
-      storedCustom,
-    );
-
-    expect(effective.model).toBe("gpt-5.6-sol");
-    expect(effective.model).toBe(newThread.selectedModel);
-  });
+      expect(composer.selectedModel).toBe(expectedModel);
+      expect(traits(effective.model, effective.options)).toEqual(composerTraits);
+      expect(effective).toEqual({ ...stored, model: composer.selectedModel });
+      expect(composerTraits.promptEffort).toBe(effort);
+    },
+  );
 });

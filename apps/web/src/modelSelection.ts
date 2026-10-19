@@ -281,11 +281,7 @@ export function resolveAppModelSelectionForInstance(
   return options.find((option) => option.isDefault)?.slug ?? options[0]?.slug ?? null;
 }
 
-/**
- * The stored default model as a new thread resolves it. A hidden model falls
- * back to a visible one, keeping the stored options, so settings shows and
- * edits what new threads actually get rather than the hidden id.
- */
+// New drafts carry the stored selection; capabilities resolve its raw options later.
 export function resolveEffectiveDefaultModelSelection(
   settings: UnifiedSettings,
   providers: ReadonlyArray<ServerProvider>,
@@ -296,6 +292,7 @@ export function resolveEffectiveDefaultModelSelection(
     settings,
     providers,
     selection.model,
+    { preserveUnavailableSelection: true },
   );
   return model === null || model === selection.model ? selection : { ...selection, model };
 }
