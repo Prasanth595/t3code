@@ -1,4 +1,4 @@
-import { SshDeviceHostConfigs } from "./device.ts";
+import { DeviceHostConfigs } from "./device.ts";
 import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
@@ -1154,7 +1154,7 @@ export const ServerSettings = Schema.Struct({
    */
   enableDeviceSupport: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   deviceOnboardingCompleted: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
-  deviceHosts: SshDeviceHostConfigs.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  deviceHosts: DeviceHostConfigs.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
@@ -1470,7 +1470,7 @@ export const ServerSettingsPatch = Schema.Struct({
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
-  deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
+  deviceHosts: Schema.optionalKey(DeviceHostConfigs),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   compactIdleThreads: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),
