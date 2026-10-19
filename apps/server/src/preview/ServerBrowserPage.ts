@@ -20,11 +20,12 @@ import {
 import { constVoid } from "effect/Function";
 import type { CDPSession, Frame, Locator, Page } from "playwright-core";
 import * as NodeCrypto from "node:crypto";
+import { pngDimensions } from "../imageMime.ts";
 import { BrowserControlInterrupted } from "./SessionControl.ts";
 
 const MAX_EVALUATION_BYTES = 64_000;
 const MAX_VISIBLE_TEXT_LENGTH = 20_000;
-const MAX_SCREENSHOT_WIDTH = 1280;
+const MAX_SCREENSHOT_DIMENSION = 1280;
 const WAIT_POLL_MS = 100;
 export const DIAGNOSTIC_BUFFER_LIMIT = 200;
 
@@ -373,35 +374,79 @@ const maskTree = (tree: string, dotted: RegExp) =>
     })
     .join("\n");
 
-// Scaled captures repaint live screencasts, so callers pause them. Clips use document offsets.
+// Device pixels only: a scaled capture makes Chromium re-render at the new scale, which a
+// hidden desktop webview can't do, so it returns a blurry upscale of a stale frame.
 export const captureViewport = async (
-  page: Page,
   cdp: CDPSession,
-  options: { readonly format: "png" | "jpeg"; readonly quality?: number; readonly scale: number },
+  options: {
+    readonly format: "png" | "jpeg";
+    readonly quality?: number;
+    readonly optimizeForSpeed?: boolean;
+  },
 ) => {
-  let clip;
-  if (options.scale < 1) {
-    const viewport = page.viewportSize() ?? { width: 1280, height: 800 };
-    const { cssVisualViewport } = await cdp.send("Page.getLayoutMetrics");
-    clip = {
-      x: cssVisualViewport.pageX,
-      y: cssVisualViewport.pageY,
-      ...viewport,
-      scale: options.scale,
-    };
-  }
   const { data } = await cdp.send("Page.captureScreenshot", {
     format: options.format,
     ...(options.quality === undefined ? {} : { quality: options.quality }),
-    ...(clip ? { clip } : {}),
+    ...(options.optimizeForSpeed ? { optimizeForSpeed: true } : {}),
   });
   return data;
+};
+
+// A page's own encoder globals are not trusted, and its CSP may forbid blob images, so the
+// resize runs in an isolated world. Chromium hands back the same world for a name while the
+// document lives, so repeated snapshots do not pile up contexts.
+const ENCODER_WORLD = "t3-snapshot-encoder";
+const RESIZE_PNG = `async function(data, width, height) {
+  const source = new Blob([Uint8Array.fromBase64(data)], { type: "image/png" });
+  const image = await createImageBitmap(source);
+  try {
+    const canvas = new OffscreenCanvas(width, height);
+    const context = canvas.getContext("2d");
+    context.imageSmoothingQuality = "high";
+    context.drawImage(image, 0, 0, width, height);
+    const png = await canvas.convertToBlob({ type: "image/png" });
+    return new Uint8Array(await png.arrayBuffer()).toBase64();
+  } finally {
+    image.close();
+  }
+}`;
+
+// Captured at device pixels and shrunk afterwards: a forced DPR of 2 on a 4K viewport would
+// otherwise return a PNG past 100 MB.
+const captureSnapshot = async (
+  cdp: CDPSession,
+): Promise<PreviewAutomationSnapshot["screenshot"]> => {
+  // The native PNG is discarded after the resize, so encode it for speed, not size.
+  const native = await captureViewport(cdp, { format: "png", optimizeForSpeed: true });
+  // The IHDR sits in the first 24 bytes; decoding only those avoids a copy of a large frame.
+  const size = pngDimensions(Buffer.from(native.slice(0, 32), "base64"));
+  const scale = Math.min(1, MAX_SCREENSHOT_DIMENSION / Math.max(size.width, size.height));
+  if (scale === 1) return { mimeType: "image/png", data: native, ...size };
+  const width = Math.max(1, Math.round(size.width * scale));
+  const height = Math.max(1, Math.round(size.height * scale));
+  const { frameTree } = await cdp.send("Page.getFrameTree");
+  const { executionContextId } = await cdp.send("Page.createIsolatedWorld", {
+    frameId: frameTree.frame.id,
+    worldName: ENCODER_WORLD,
+  });
+  const { result, exceptionDetails } = await cdp.send("Runtime.callFunctionOn", {
+    executionContextId,
+    functionDeclaration: RESIZE_PNG,
+    arguments: [{ value: native }, { value: width }, { value: height }],
+    awaitPromise: true,
+    returnByValue: true,
+  });
+  if (exceptionDetails || typeof result.value !== "string") {
+    throw new Error(
+      `Snapshot resize failed: ${exceptionDetails?.exception?.description ?? exceptionDetails?.text ?? "no image"}`,
+    );
+  }
+  return { mimeType: "image/png", data: result.value, width, height };
 };
 
 type SnapshotInput = {
   readonly page: Page;
   readonly cdp: CDPSession;
-  readonly renderScale: number;
   readonly consoleEntries: ReadonlyArray<PreviewAutomationConsoleEntry>;
   readonly networkEntries: ReadonlyArray<PreviewAutomationNetworkEntry>;
   readonly actionTimeline: PreviewAutomationSnapshot["actionTimeline"];
@@ -411,8 +456,6 @@ const capture = async (
   input: SnapshotInput,
   deadline: number,
 ): Promise<PreviewAutomationSnapshot> => {
-  const viewport = input.page.viewportSize() ?? { width: 1280, height: 800 };
-  const scale = Math.min(1, MAX_SCREENSHOT_WIDTH / (viewport.width * input.renderScale));
   const state = refsFor(input.page);
   invalidateRefs(input.page);
   const generation = state.generation;
@@ -427,7 +470,7 @@ const capture = async (
         "url" | "title" | "loading" | "visibleText" | "interactiveElements"
       >
     >,
-    captureViewport(input.page, input.cdp, { format: "png", scale }),
+    captureSnapshot(input.cdp),
   ]);
   void pageAndScreenshot.catch(constVoid);
   // Leaves time for the second read; a frame that never loads holds the tree until then.
@@ -452,7 +495,7 @@ const capture = async (
     void iframe.dispose().catch(constVoid);
     if (frame && unread.includes(frame)) throw tooBusy();
   }
-  const [page, data] = await pageAndScreenshot;
+  const [page, screenshot] = await pageAndScreenshot;
   if (state.generation !== generation) throw pageChanged();
   const mask = (text: string) => (dotted ? text.replace(dotted, MASKED_VALUE) : text);
   const accessibilityTree = (dotted ? maskTree(tree, dotted) : tree)
@@ -471,12 +514,7 @@ const capture = async (
     consoleEntries: [...input.consoleEntries],
     networkEntries: [...input.networkEntries],
     actionTimeline: [...input.actionTimeline],
-    screenshot: {
-      mimeType: "image/png",
-      data,
-      width: Math.round(viewport.width * input.renderScale * scale),
-      height: Math.round(viewport.height * input.renderScale * scale),
-    },
+    screenshot,
   };
 };
 

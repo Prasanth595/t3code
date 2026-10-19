@@ -249,8 +249,6 @@ interface ViewerState {
   readonly pressedKeys: Map<string, { key: string; code: string }>;
   readonly pressedButtons: Map<"left" | "middle" | "right", { x: number; y: number }>;
   readonly push: (output: ServerBrowserViewerOutput) => void;
-  readonly pause: () => Promise<void>;
-  readonly resume: () => Promise<void>;
   scrolledAt: number;
 
   requestedSize: { width: number; height: number; order: number } | null;
@@ -320,7 +318,6 @@ interface ServerTab {
 
   recordingStart: Promise<Recording> | null;
   captureLock: Promise<void>;
-  capturing: number;
 }
 
 interface ServerDownload {
@@ -781,7 +778,6 @@ const make = Effect.gen(function* () {
       navigationGeneration: 0,
       abortedNavigation: null,
       captureLock: Promise.resolve(),
-      capturing: 0,
     };
     if (!desktop) {
       await page.setViewportSize(fixedViewportSize(tab.setting) ?? UNATTACHED_FILL_VIEWPORT);
@@ -1464,10 +1460,9 @@ const make = Effect.gen(function* () {
       try {
         await encoder.evaluate(ServerBrowserPage.RECORDING_ENCODER_SCRIPT);
         // Seed idle pages before returning so an immediate stop has a frame to encode.
-        const firstFrame = await ServerBrowserPage.captureViewport(tab.page, tab.cdp, {
+        const firstFrame = await ServerBrowserPage.captureViewport(tab.cdp, {
           format: "jpeg",
           quality: RECORDING_SCREENCAST.quality,
-          scale: 1,
         });
         await encoder.evaluate(
           ([data, width]) =>
@@ -1518,29 +1513,6 @@ const make = Effect.gen(function* () {
     tab.recordingStart = started;
     return started;
   };
-
-  // Scaled captures repaint every screencast; pause them to avoid leaking that frame.
-  const withScreencastsPaused = <A>(tab: ServerTab, capture: () => Promise<A>): Promise<A> =>
-    withCaptureLock(tab, async () => {
-      tab.capturing += 1;
-      const recording = tab.recording;
-      try {
-        await Promise.all([
-          ...[...tab.viewers].map((viewer) => viewer.pause()),
-          recording?.session.send("Page.stopScreencast").catch(constVoid),
-        ]);
-        return await capture();
-      } finally {
-        tab.capturing -= 1;
-
-        await Promise.all([
-          ...[...tab.viewers].map((viewer) => viewer.resume()),
-          recording && tab.recording === recording
-            ? recording.session.send("Page.startScreencast", RECORDING_SCREENCAST).catch(constVoid)
-            : undefined,
-        ]);
-      }
-    });
 
   const stopRecording = (tab: ServerTab) =>
     withCaptureLock(tab, async () => {
@@ -1945,9 +1917,7 @@ const make = Effect.gen(function* () {
         return { tabId: tab.tabId, colorScheme };
       }
       case "snapshot": {
-        return withScreencastsPaused(tab, () =>
-          ServerBrowserPage.snapshot({ ...tab, renderScale: RENDER_SCALE }),
-        );
+        return withCaptureLock(tab, () => ServerBrowserPage.snapshot(tab));
       }
       case "click": {
         const clickInput = input as PreviewAutomationClickInput;
@@ -2250,7 +2220,6 @@ const make = Effect.gen(function* () {
       const startScreencast = (scale: number) => {
         screencastScale = scale;
         screencastParams = screencastParams.then(async () => {
-          if (tab.capturing > 0) return;
           await session.send("Page.stopScreencast").catch(constVoid);
           await session
             .send("Page.startScreencast", {
@@ -2284,13 +2253,6 @@ const make = Effect.gen(function* () {
             for (const item of dropped.value) if (item._tag === "frame") runFork(item.ack);
           }
         },
-        pause: () => {
-          screencastParams = screencastParams.then(() =>
-            session.send("Page.stopScreencast").then(constVoid, constVoid),
-          );
-          return screencastParams;
-        },
-        resume: () => startScreencast(screencastScale),
         scrolledAt: 0,
         requestedSize: null,
       };
@@ -2312,14 +2274,9 @@ const make = Effect.gen(function* () {
       }
       broadcastControl(tab);
       pushFileChooser(tab);
-      // Full scale: a scaled capture would flash in every other viewer.
       const pushStill = async () => {
         const data = await withCaptureLock(tab, () =>
-          ServerBrowserPage.captureViewport(tab.page, session, {
-            format: "jpeg",
-            quality,
-            scale: 1,
-          }),
+          ServerBrowserPage.captureViewport(session, { format: "jpeg", quality }),
         ).catch(() => null);
         if (data)
           viewer.push({ _tag: "frame", data: Buffer.from(data, "base64"), ack: Effect.void });

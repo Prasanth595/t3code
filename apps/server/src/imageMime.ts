@@ -134,3 +134,15 @@ export function inferImageExtension(input: { mimeType: string; fileName?: string
 
   return ".bin";
 }
+
+export function pngDimensions(png: Uint8Array): { width: number; height: number } {
+  if (png.length < 24) return { width: 0, height: 0 };
+  const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
+  const isPng =
+    view.getUint32(0) === 0x89504e47 &&
+    view.getUint32(4) === 0x0d0a1a0a &&
+    view.getUint32(12) === 0x49484452;
+  return isPng
+    ? { width: view.getUint32(16), height: view.getUint32(20) }
+    : { width: 0, height: 0 };
+}

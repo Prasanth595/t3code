@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../../../config.ts";
+import { pngDimensions } from "../../../imageMime.ts";
 import { ensureAgentDeviceShim } from "../../../device/AgentDeviceShim.ts";
 import { nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 
@@ -244,18 +245,6 @@ const handlers = {
     }).pipe(Effect.mapError(toolError)),
   ),
 } satisfies McpToolAccess.Handlers<typeof DeviceToolkit.tools>;
-
-export function pngDimensions(png: Uint8Array): { width: number; height: number } {
-  if (png.length < 24) return { width: 0, height: 0 };
-  const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
-  const isPng =
-    view.getUint32(0) === 0x89504e47 &&
-    view.getUint32(4) === 0x0d0a1a0a &&
-    view.getUint32(12) === 0x49484452;
-  return isPng
-    ? { width: view.getUint32(16), height: view.getUint32(20) }
-    : { width: 0, height: 0 };
-}
 
 const { device_screenshot, ...standardHandlers } = handlers;
 
