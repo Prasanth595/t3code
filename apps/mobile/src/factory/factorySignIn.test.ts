@@ -6,7 +6,8 @@ import {
   mintPairingToken,
   parseFactoryMessage,
   probeFactory,
-  signInDecision,
+  nextSignIn,
+  type SignInState,
 } from "./factorySignIn";
 
 const BASE = "https://mac.tail1234.ts.net";
@@ -50,36 +51,88 @@ describe("factoryLinkAction", () => {
   });
 });
 
-describe("signInDecision", () => {
-  it("signs in on the pair page, with or without a trailing slash", () => {
-    expect(signInDecision({ type: "location", href: `${BASE}/pair` }, BASE, false)).toBe("sign-in");
-    expect(signInDecision({ type: "location", href: `${BASE}/pair/#token=x` }, BASE, false)).toBe(
-      "sign-in",
-    );
+describe("nextSignIn", () => {
+  const pair = { type: "location", href: `${BASE}/pair` } as const;
+  const factory = { type: "location", href: `${BASE}/factory/runs/1` } as const;
+  const unauthorized = { type: "unauthorized" } as const;
+  const step = (
+    state: SignInState,
+    event: Parameters<typeof nextSignIn>[1],
+    eventUrl: string = `${BASE}/pair`,
+  ) => nextSignIn(state, event, eventUrl, BASE);
+
+  it("mints once when idle on the pair page, with or without a trailing slash", () => {
+    expect(step("idle", pair)).toEqual({ state: "minting", action: "mint" });
+    expect(step("idle", { type: "location", href: `${BASE}/pair/#token=x` })).toEqual({
+      state: "minting",
+      action: "mint",
+    });
+    expect(step("idle", unauthorized)).toEqual({ state: "minting", action: "mint" });
   });
 
-  it("signs in on a 401 from the status endpoint", () => {
-    expect(signInDecision({ type: "unauthorized" }, BASE, false)).toBe("sign-in");
+  it("mints nothing when the WebView lands on /factory with a valid cookie", () => {
+    expect(step("idle", factory, `${BASE}/factory`)).toEqual({ state: "idle", action: "none" });
+    expect(step("idle", { type: "location", href: `${BASE}/settings` })).toEqual({
+      state: "idle",
+      action: "none",
+    });
   });
 
-  it("does nothing on the factory pages, other paths or other origins", () => {
-    expect(signInDecision({ type: "location", href: `${BASE}/factory` }, BASE, false)).toBe(
-      "ignore",
-    );
-    expect(signInDecision({ type: "location", href: `${BASE}/settings` }, BASE, false)).toBe(
-      "ignore",
-    );
+  it("ignores duplicate signals while a sign-in is in flight", () => {
+    expect(step("minting", unauthorized).action).toBe("none");
+    expect(step("exchanging", pair).action).toBe("none");
+    expect(step("minting", unauthorized).state).toBe("minting");
+  });
+
+  it("moves minting -> exchanging -> exchanged -> signed-in", () => {
+    expect(step("minting", { type: "minted" })).toEqual({ state: "exchanging", action: "none" });
+    expect(step("exchanging", { type: "exchange", ok: true })).toEqual({
+      state: "exchanged",
+      action: "none",
+    });
+    expect(step("exchanged", factory, `${BASE}/factory`)).toEqual({
+      state: "signed-in",
+      action: "none",
+    });
+  });
+
+  it("fails instead of looping when unauthenticated after an accepted exchange", () => {
+    expect(step("exchanged", pair).action).toBe("rejected");
+    expect(step("exchanged", unauthorized).action).toBe("rejected");
+  });
+
+  it("signs in again when a signed-in session later ends", () => {
+    expect(step("signed-in", unauthorized)).toEqual({ state: "minting", action: "mint" });
+    expect(step("signed-in", pair)).toEqual({ state: "minting", action: "mint" });
+  });
+
+  it("reports a failed exchange", () => {
+    expect(step("exchanging", { type: "exchange", ok: false })).toEqual({
+      state: "idle",
+      action: "exchange-failed",
+    });
+  });
+
+  it("ignores exchange messages when no exchange was started", () => {
+    expect(step("idle", { type: "exchange", ok: false }).action).toBe("none");
+  });
+
+  it("ignores messages whose top frame is not the server", () => {
+    expect(step("idle", unauthorized, "https://evil.example/pair")).toEqual({
+      state: "idle",
+      action: "none",
+    });
+    expect(step("idle", pair, "about:blank").action).toBe("none");
     expect(
-      signInDecision({ type: "location", href: "https://other.example/pair" }, BASE, false),
-    ).toBe("ignore");
+      step("exchanging", { type: "exchange", ok: false }, "https://evil.example/").action,
+    ).toBe("none");
   });
 
-  it("gives up instead of looping when a sign-in was already tried", () => {
-    expect(signInDecision({ type: "location", href: `${BASE}/pair` }, BASE, true)).toBe("failed");
-    expect(signInDecision({ type: "unauthorized" }, BASE, true)).toBe("failed");
-    expect(signInDecision({ type: "location", href: `${BASE}/factory` }, BASE, true)).toBe(
-      "ignore",
-    );
+  it("accepts a base URL with a trailing slash", () => {
+    expect(nextSignIn("idle", unauthorized, `${BASE}/pair`, `${BASE}/`)).toEqual({
+      state: "minting",
+      action: "mint",
+    });
   });
 });
 
