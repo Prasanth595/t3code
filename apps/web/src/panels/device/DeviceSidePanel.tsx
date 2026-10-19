@@ -1,7 +1,7 @@
 import { DeviceHostUpdates } from "~/components/device/DeviceHostUpdates";
 import type { DevicePlatform, DeviceServiceState, DeviceSummary } from "@t3tools/contracts";
 import { Smartphone, X } from "lucide-react";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
 import { useRightPanelStore, type RightPanelSurface } from "~/rightPanelStore";
@@ -41,17 +41,16 @@ export default function DeviceSidePanel(props: {
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const open = useAtomCommand(deviceEnvironment.open);
   const close = useAtomCommand(deviceEnvironment.close);
-  const [operationError, setOperationError] = useState<string | null>(null);
-  const [pendingDevice, setPendingDevice] = useState<DeviceSummary | null>(null);
-  // Operation state belongs to one scoped thread; drop it when the panel moves on.
-  const scopeKey = `${environmentId}\u0000${threadId}`;
-  const [operationScopeKey, setOperationScopeKey] = useState(scopeKey);
-  if (operationScopeKey !== scopeKey) {
-    setOperationScopeKey(scopeKey);
-    setOperationError(null);
-    setPendingDevice(null);
-  }
-  const isCurrentScope = useScopeGuard(scopeKey);
+  // The panel stays mounted across thread switches, so an in-flight open or
+  // power-off is tagged with the thread it belongs to and only shown there.
+  const scope = `${environmentId}\u0000${threadId}`;
+  const [operation, setOperation] = useState<{
+    readonly scope: string;
+    readonly pending: DeviceSummary | null;
+    readonly error: string | null;
+  } | null>(null);
+  const pendingDevice = operation?.scope === scope ? operation.pending : null;
+  const operationError = operation?.scope === scope ? operation.error : null;
   const pendingDeviceKey = pendingDevice ? deviceKey(pendingDevice) : null;
 
   const hostDisabled = state.hostStatus === "disabled";
@@ -78,36 +77,39 @@ export default function DeviceSidePanel(props: {
 
   const grouped = groupDevices(state);
 
+  const startOperation = (pending: DeviceSummary | null) => {
+    const started = { scope, pending, error: null };
+    setOperation(started);
+    // Returning to the same thread can start a newer operation before this one settles.
+    return (error: string | null) =>
+      setOperation((current) =>
+        current === started ? { ...started, pending: null, error } : current,
+      );
+  };
+
   const selectDevice = async (value: string) => {
     const device = state.devices.find((candidate) => deviceKey(candidate) === value);
     if (!device) return;
-    setOperationError(null);
-    setPendingDevice(device);
-    const stillCurrent = isCurrentScope();
-    try {
-      const result = await open({
-        environmentId,
-        input: {
-          threadId,
-          hostId: device.hostId,
-          deviceId: device.id,
-          platform: device.platform,
-        },
+    const settleOperation = startOperation(device);
+    const result = await open({
+      environmentId,
+      input: {
+        threadId,
+        hostId: device.hostId,
+        deviceId: device.id,
+        platform: device.platform,
+      },
+    });
+    if (result._tag === "Failure") settleOperation(formatEnvironmentQueryError(result.cause));
+    else {
+      // The server opened the device for the starting thread, so its tab opens there.
+      useRightPanelStore.getState().openDevice(threadRef, {
+        hostId: result.value.hostId,
+        deviceId: result.value.deviceId,
+        platform: device.platform,
+        name: device.name,
       });
-      // The server opened the device for the starting thread, so its tab opens
-      // there even after a switch; only this panel's own state is scope-guarded.
-      if (result._tag === "Failure") {
-        if (stillCurrent()) setOperationError(formatEnvironmentQueryError(result.cause));
-      } else {
-        useRightPanelStore.getState().openDevice(threadRef, {
-          hostId: result.value.hostId,
-          deviceId: result.value.deviceId,
-          platform: device.platform,
-          name: device.name,
-        });
-      }
-    } finally {
-      if (stillCurrent()) setPendingDevice(null);
+      settleOperation(null);
     }
   };
 
@@ -129,8 +131,7 @@ export default function DeviceSidePanel(props: {
       return;
     }
     if (!activeSession) return;
-    setOperationError(null);
-    const stillCurrent = isCurrentScope();
+    const settleOperation = startOperation(null);
     void close({
       environmentId,
       input: {
@@ -140,11 +141,8 @@ export default function DeviceSidePanel(props: {
         shutdown: powerOff,
       },
     }).then((result) => {
-      if (result._tag === "Failure") {
-        if (stillCurrent()) setOperationError(formatEnvironmentQueryError(result.cause));
-      } else {
-        useRightPanelStore.getState().closeSurface(threadRef, props.surface.id);
-      }
+      if (result._tag === "Failure") settleOperation(formatEnvironmentQueryError(result.cause));
+      else useRightPanelStore.getState().closeSurface(threadRef, props.surface.id);
     });
   };
 
@@ -177,7 +175,9 @@ export default function DeviceSidePanel(props: {
       {hostReady && !activeDevice && state.hostStatusDetail ? (
         <div
           role="status"
-          className="whitespace-pre-line border-b px-3 py-2 text-xs text-muted-foreground"
+          aria-label="Device host diagnostics"
+          tabIndex={0}
+          className="max-h-32 shrink-0 overflow-y-auto whitespace-pre-line break-words border-b px-3 py-2 text-xs text-muted-foreground"
         >
           {state.hostStatusDetail}
         </div>
@@ -198,7 +198,7 @@ export default function DeviceSidePanel(props: {
             size="icon-xs"
             variant="ghost"
             aria-label="Dismiss device error"
-            onClick={() => setOperationError(null)}
+            onClick={() => setOperation(null)}
           >
             <X className="size-3" />
           </Button>
@@ -249,7 +249,10 @@ export default function DeviceSidePanel(props: {
               {grouped.length === 0 ? (
                 <>
                   <Smartphone className="size-6 opacity-60" />
-                  <p className="max-w-sm">
+                  <p
+                    className="max-h-32 w-full max-w-sm overflow-y-auto whitespace-pre-line break-words"
+                    tabIndex={state.hostStatus === "failed" ? 0 : undefined}
+                  >
                     {state.hostStatus === "failed"
                       ? (state.hostStatusDetail ?? "The device hub failed to start.")
                       : "No simulators or emulators were found on this environment."}
@@ -318,27 +321,6 @@ export default function DeviceSidePanel(props: {
       </div>
     </PreviewPanelShell>
   );
-}
-
-/**
- * Binds async work to the committed scope. Call the returned function when the
- * work starts; the check it returns is false once the panel moved to another
- * thread (even back again) or unmounted, so late results are dropped.
- */
-function useScopeGuard(scopeKey: string) {
-  const scopeRef = useRef<{ readonly key: string } | null>(null);
-  useLayoutEffect(() => {
-    // A fresh token per commit of a scope, so returning to a thread is a new scope.
-    const scope = { key: scopeKey };
-    scopeRef.current = scope;
-    return () => {
-      scopeRef.current = null;
-    };
-  }, [scopeKey]);
-  return () => {
-    const started = scopeRef.current;
-    return () => started !== null && scopeRef.current === started;
-  };
 }
 
 function groupDevices(state: DeviceServiceState) {
