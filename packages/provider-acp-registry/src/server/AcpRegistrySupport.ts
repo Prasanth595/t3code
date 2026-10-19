@@ -1589,7 +1589,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     return distribution;
   });
 
-  const search: AcpRegistryCatalog["Service"]["search"] = Effect.fn("AcpRegistrySupport.search")(
+  const search: AcpRegistryCatalog["Service"]["search"] = Effect.fn("AcpRegistryCatalog.search")(
     function* (input) {
       const registry = yield* refreshRegistry();
       const ranked = registry.agents.flatMap((agent) => {
@@ -1635,7 +1635,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     },
   );
 
-  const prepare: AcpRegistryCatalog["Service"]["prepare"] = Effect.fn("AcpRegistrySupport.prepare")(
+  const prepare: AcpRegistryCatalog["Service"]["prepare"] = Effect.fn("AcpRegistryCatalog.prepare")(
     function* (input) {
       const registry = yield* refreshRegistry();
       const agent = yield* findAgent(registry, input.agentId);
@@ -1673,7 +1673,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         )
       : Effect.void;
 
-  const inspect: AcpRegistryCatalog["Service"]["inspect"] = Effect.fn("AcpRegistrySupport.inspect")(
+  const inspect: AcpRegistryCatalog["Service"]["inspect"] = Effect.fn("AcpRegistryCatalog.inspect")(
     function* (settings, environment) {
       if (settings.source === "local") {
         const command = settings.commandPath.trim();
@@ -1787,7 +1787,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     },
   );
 
-  const resolve: AcpRegistryCatalog["Service"]["resolve"] = Effect.fn("AcpRegistrySupport.resolve")(
+  const resolve: AcpRegistryCatalog["Service"]["resolve"] = Effect.fn("AcpRegistryCatalog.resolve")(
     function* (settings, cwd, environment) {
       if (settings.source === "local") {
         const executable = settings.commandPath.trim();

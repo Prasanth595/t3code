@@ -448,7 +448,10 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
 
     yield* Stream.fromQueue(outgoing).pipe(Stream.run(options.stdio.stdout()), Effect.forkScoped);
 
-    const request = Effect.fn("protocol.request")(function* (method: string, payload?: unknown) {
+    const request = Effect.fn("CodexAppServerProtocol.request")(function* (
+      method: string,
+      payload?: unknown,
+    ) {
       const requestId = yield* Ref.modify(
         nextRequestId,
         (current) => [current, current + 1] as const,

@@ -227,7 +227,7 @@ export const makeAcpRegistryAuth = Effect.fn("makeAcpRegistryAuth")(function* (o
       return yield* failure("start", "The provider login command did not finish successfully.");
   });
 
-  const authenticate = Effect.fn("auth.authenticate")(function* (
+  const authenticate = Effect.fn("AcpRegistryAuth.authenticate")(function* (
     methodId: string,
     context: ProviderAuthFlow.ProviderAuthFlowContext,
   ) {

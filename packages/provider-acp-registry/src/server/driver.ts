@@ -464,7 +464,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
   },
   configSchema: AcpRegistrySettings,
   defaultConfig: () => decodeSettings({}),
-  create: Effect.fn("driver.create")(function* ({
+  create: Effect.fn("AcpRegistryDriver.create")(function* ({
     instanceId,
     displayName,
     accentColor,
@@ -535,7 +535,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         environment,
         processEnvironment,
       });
-    const withLiveRuntimeState = Effect.fn("driver.withLiveRuntimeState")(function* (
+    const withLiveRuntimeState = Effect.fn("AcpRegistryDriver.withLiveRuntimeState")(function* (
       input: ServerProvider,
     ) {
       if (input.auth.status === "unauthenticated") yield* confirmedAuthentication.set(false);
@@ -595,7 +595,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       generation: current.generation + 1,
       entry: null,
     }));
-    const enrichProviderCached = Effect.fn("driver.enrichProviderCached")(function* (
+    const enrichProviderCached = Effect.fn("AcpRegistryDriver.enrichProviderCached")(function* (
       baseSnapshot: ServerProvider,
     ) {
       const now = yield* Clock.currentTimeMillis;
