@@ -180,7 +180,7 @@ describe("Android workspace navigation", () => {
     expect(state.routes[1]?.key).not.toBe(previous.routes[1]?.key);
   });
 
-  it("returns from a child thread to the previous thread, then to the workspace list", () => {
+  it("returns to a distinct previous thread, otherwise to the workspace list", () => {
     const parent = select(router.getInitialState(options), thread);
     let state = apply(
       parent,
@@ -211,6 +211,25 @@ describe("Android workspace navigation", () => {
     expect(state.routes).toEqual([parent.routes[0]]);
     expect(state.index).toBe(0);
     expect(listSelected).toBe(true);
+
+    state = apply(
+      parent,
+      StackActions.push("Thread", { ...thread.params, environmentId: "environment-b" }),
+    );
+    listSelected = false;
+    back();
+    expect(state.routes).toEqual(parent.routes);
+    expect(state.index).toBe(parent.index);
+    expect(listSelected).toBe(false);
+
+    // Confirming a Git action from the inline inspector can duplicate the current thread.
+    state = apply(parent, StackActions.push("Thread", thread.params));
+    back();
+    expect({ routes: names(state), index: state.index, listSelected }).toEqual({
+      routes: ["Home"],
+      index: 0,
+      listSelected: true,
+    });
   });
 
   it("recognizes a parent only when its environment and thread are immediately below", () => {
