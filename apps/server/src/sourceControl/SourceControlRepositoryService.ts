@@ -29,11 +29,13 @@ import {
 } from "../project/gitCloneProgress.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
+import { GitHubNotSignedInError } from "@t3tools/source-control-github/server/GitHubCredentials";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
 const isSourceControlProviderError = Schema.is(SourceControlProviderError);
 const isBitbucketRepositoryLocatorError = Schema.is(BitbucketApi.BitbucketRepositoryLocatorError);
+const isGitHubNotSignedInError = Schema.is(GitHubNotSignedInError);
 
 export class SourceControlRepositoryService extends Context.Service<
   SourceControlRepositoryService,
@@ -98,6 +100,9 @@ function userSafeRepositoryDetail(cause: unknown): string | null {
   }
   if (cause.provider === "bitbucket" && isBitbucketRepositoryLocatorError(cause.cause)) {
     return BitbucketApi.BitbucketRepositoryLocatorError.detail;
+  }
+  if (cause.provider === "github" && isGitHubNotSignedInError(cause.cause)) {
+    return "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry.";
   }
   if (cause.provider === "github" && USER_SAFE_GITHUB_REPOSITORY_DETAILS.has(cause.detail)) {
     return cause.detail;

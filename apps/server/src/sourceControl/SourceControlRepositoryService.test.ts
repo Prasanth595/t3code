@@ -17,6 +17,7 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as BitbucketApi from "@t3tools/source-control-bitbucket/server/BitbucketApi";
 import * as BitbucketSourceControlProvider from "@t3tools/source-control-bitbucket/server/BitbucketSourceControlProvider";
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
+import { GitHubNotSignedInError } from "@t3tools/source-control-github/server/GitHubCredentials";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as SourceControlRepositoryService from "./SourceControlRepositoryService.ts";
 
@@ -128,14 +129,25 @@ it.effect("looks up repositories through the requested provider without search",
   }).pipe(Effect.provide(layer({ provider })));
 });
 
-it.effect("exposes only exact GitHub lookup guidance while retaining provider failures", () =>
+it.effect("exposes only safe GitHub lookup guidance while retaining provider failures", () =>
   Effect.gen(function* () {
     const safeDetail = "Repository not found. Check the owner and name and try again.";
     const genericDetail = "The source control operation could not be completed.";
-    for (const [providerKind, detail, expectedDetail] of [
-      ["github", safeDetail, safeDetail],
-      ["github", `${safeDetail} credential token abc123 was rejected`, genericDetail],
-      ["gitlab", safeDetail, genericDetail],
+    const signedOutCause = new GitHubNotSignedInError({
+      host: "private-github.example.com",
+      account: "private-account",
+    });
+    for (const [providerKind, detail, expectedDetail, cause] of [
+      ["github", safeDetail, safeDetail, undefined],
+      ["github", `${safeDetail} credential token abc123 was rejected`, genericDetail, undefined],
+      ["gitlab", safeDetail, genericDetail, undefined],
+      ["gitlab", signedOutCause.message, genericDetail, signedOutCause],
+      [
+        "github",
+        signedOutCause.message,
+        "GitHub is not authenticated. Run `gh auth login` (or set GH_TOKEN) and retry.",
+        signedOutCause,
+      ],
     ] as const) {
       const providerKindValue = SourceControlProviderKind.make(providerKind);
       const providerCause = new SourceControlProviderError({
@@ -144,6 +156,7 @@ it.effect("exposes only exact GitHub lookup guidance while retaining provider fa
         cwd: "/workspace",
         repository: "octocat/missing",
         detail,
+        cause,
       });
       const provider = makeProvider({
         kind: providerKindValue,
@@ -162,9 +175,11 @@ it.effect("exposes only exact GitHub lookup guidance while retaining provider fa
 
       assert.strictEqual(error.provider, providerKindValue);
       assert.strictEqual(error.operation, "lookupRepository");
-      assert.strictEqual(error.detail, expectedDetail);
       assert.notInclude(error.message, "abc123");
+      assert.notInclude(error.message, signedOutCause.host);
+      assert.notInclude(error.message, "private-account");
       assert.strictEqual(error.cause, providerCause);
+      assert.strictEqual(error.detail, expectedDetail);
     }
   }),
 );
