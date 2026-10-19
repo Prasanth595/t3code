@@ -19,12 +19,11 @@ import {
   BOOT_SERVICE_UNIT_FILE,
   bootServiceBaseDirOf,
 } from "./cloud/bootService.ts";
-import { decodeServicePreflightResult } from "./cloud/servicePreflight.ts";
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
-  SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STATE_FILE,
+  compareExactServiceVersions,
   serviceStateActiveVersion,
 } from "./cloud/serviceProtocol.ts";
 import * as ProcessRunner from "./processRunner.ts";
@@ -56,7 +55,7 @@ export class OlderBootServiceError extends Schema.TaggedError<OlderBootServiceEr
   override readonly [Runtime.errorExitCode] = SERVER_EXIT_CODE_STATE_DIR_OWNED;
 
   override get message(): string {
-    return `A T3 Code background service set up for ${this.baseDir} may still run a release without the ownership lock. On that machine, update it with \`t3 update\` and let it restart (or run \`t3 service restart\` if the update is already installed), or remove it with \`t3 service uninstall\`. Pass \`--base-dir ${this.baseDir}\` to each command, and use \`npx t3\` if \`t3\` is not installed. Then retry. No server was stopped.`;
+    return `A T3 Code background service set up for ${this.baseDir} may still run a release without the ownership lock. On that machine, try \`t3 update\` and let it restart (or run \`t3 service restart\` if the update is already installed). If the older launcher cannot update, run \`t3 service uninstall\`, then reinstall with \`t3 service install\` from a current CLI. You can also leave the service uninstalled. Pass \`--base-dir ${this.baseDir}\` to each command, and use \`npx t3@latest\` if \`t3\` is not installed or is outdated. Then retry. No server was stopped.`;
   }
 }
 
@@ -109,10 +108,8 @@ const legacyOwnerIsLive = Effect.fn("legacyOwnerIsLive")(function* (
   return !Number.isFinite(startedAt) || startedAt <= recordedAt + 1_000;
 });
 
-const decodeJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
-
 // Pre-lock services become invisible when another server replaces their runtime
-// record. Probe their installed runtime; unreadable or unavailable probes allow startup.
+// record. Unreadable configuration or an unavailable manager allows startup.
 const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
   function* (stateDir: string) {
     if ((yield* HostProcess.Environment)[SERVICE_LAUNCHER_CONTEXT_ENV] !== undefined) {
@@ -170,21 +167,9 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
     if (loaded && (yield* fs.exists(NodePath.join(runtimeDir, SERVICE_RESTART_PENDING_FILE)))) {
       return baseDir;
     }
-    const preflight = yield* runner.run({
-      command: NodePath.join(runtimeDir, "versions", version, "t3"),
-      args: [
-        "__service-preflight",
-        "--database-path",
-        NodePath.join(stateDir, "statev2.sqlite"),
-        "--launcher-protocol",
-        String(SERVICE_LAUNCHER_PROTOCOL),
-      ],
-      timeout: Duration.seconds(15),
-      maxOutputBytes: 65_536,
-    });
-    if (preflight.code !== 0) return undefined;
-    const answer = decodeServicePreflightResult(yield* decodeJson(preflight.stdout));
-    return answer !== undefined && answer.ownershipProtocol === undefined ? baseDir : undefined;
+    // Stable 0.1.0 shipped the ownership lock. Earlier lock-aware prereleases
+    // are conservatively refused because older runtimes expose no capability marker.
+    return compareExactServiceVersions(version, "0.1.0") < 0 ? baseDir : undefined;
   },
   Effect.orElseSucceed(() => undefined),
 );
