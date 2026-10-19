@@ -1952,11 +1952,11 @@ export const layerWithOptions = (
               ),
               Effect.andThen(
                 Effect.gen(function* () {
-                  // Some providers can block before a run subscriber exists
-                  // (project trust, login, or session-switch hooks). Persist
-                  // their runless request artifacts directly so the normal T3
-                  // request UI can answer them and unblock session setup.
-                  const threadId = sessionScopedRuntimeRequestThreadId(event);
+                  // Session-owned artifacts (including requests before a run
+                  // starts and background outcomes after it ends) have no run
+                  // subscriber responsible for persistence.
+                  const threadId =
+                    event.sessionThreadId ?? sessionScopedRuntimeRequestThreadId(event);
                   if (threadId !== undefined) {
                     yield* Effect.gen(function* () {
                       const current = (yield* Ref.get(sessions)).get(
@@ -1981,7 +1981,10 @@ export const layerWithOptions = (
                           ),
                         );
                     }).pipe(entry.requestEventPermit.withPermits(1));
-                    return;
+                    if (event.sessionThreadId === undefined) {
+                      yield* releaseLiveOutput;
+                      return;
+                    }
                   }
                   yield* publishToSubscribers(entry.eventSubscribers, { type: "event", event });
                   yield* releaseLiveOutput;

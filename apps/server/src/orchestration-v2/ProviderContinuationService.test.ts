@@ -19,6 +19,8 @@ import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -95,10 +97,14 @@ const makeGuard = Effect.fnUntraced(function* (completed?: Deferred.Deferred<voi
 function layerTest(input: {
   readonly dispatched: Queue.Queue<unknown>;
   readonly getThreadRecords: () => Effect.Effect<OrchestrationV2ThreadProjection>;
+  readonly dispatch?: ThreadManagementService.ThreadManagementService["Service"]["dispatch"];
 }) {
   const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+    streamDomainEvents: Stream.never,
     getThreadRecords: input.getThreadRecords,
-    dispatch: (command) => Queue.offer(input.dispatched, command).pipe(Effect.as({} as never)),
+    dispatch:
+      input.dispatch ??
+      ((command) => Queue.offer(input.dispatched, command).pipe(Effect.as({} as never))),
   });
   const layerWorker = ProviderContinuationService.layer.pipe(
     Layer.provide(
@@ -300,6 +306,7 @@ describe("ProviderContinuationService", () => {
       const attempts = yield* Ref.make(0);
       const dispatched = yield* Queue.unbounded<unknown>();
       const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        streamDomainEvents: Stream.never,
         getThreadRecords: () => Effect.succeed(delegatedProjection()),
         dispatch: (command) =>
           Ref.getAndUpdate(attempts, (count) => count + 1).pipe(
@@ -352,6 +359,7 @@ describe("ProviderContinuationService", () => {
       const attempts = yield* Ref.make(0);
       const disposition = yield* Ref.make<"open" | "disposed">("open");
       const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        streamDomainEvents: Stream.never,
         getThreadRecords: () =>
           Ref.get(disposition).pipe(Effect.map((state) => delegatedProjection(state))),
         dispatch: () =>
@@ -409,6 +417,7 @@ describe("ProviderContinuationService", () => {
         const blockedRequestDropped = yield* Deferred.make<void>();
         const state = yield* Ref.make<"open" | "blocked" | "disposed">("open");
         const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          streamDomainEvents: Stream.never,
           getThreadRecords: () =>
             Effect.gen(function* () {
               const currentState = yield* Ref.get(state);
@@ -490,6 +499,7 @@ describe("ProviderContinuationService", () => {
       const attempts = yield* Ref.make(0);
       const disposition = yield* Ref.make<"open" | "disposed">("open");
       const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        streamDomainEvents: Stream.never,
         getThreadRecords: () =>
           Ref.get(disposition).pipe(Effect.map((state) => delegatedProjection(state))),
         dispatch: () =>
@@ -539,6 +549,7 @@ describe("ProviderContinuationService", () => {
         const cleared = yield* Ref.make(false);
         const acknowledged = yield* Queue.unbounded<unknown>();
         const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          streamDomainEvents: Stream.never,
           getThreadRecords: () => Effect.succeed(delegatedProjection()),
           dispatch: (command) => {
             if ((command as { type: string }).type === "message.dispatch") {
@@ -615,6 +626,7 @@ describe("ProviderContinuationService", () => {
       return Effect.gen(function* () {
         const requested = yield* Ref.make(true);
         const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          streamDomainEvents: Stream.never,
           getThreadRecords: () => Effect.succeed(projection),
           dispatch: () =>
             Effect.fail(
@@ -668,6 +680,7 @@ describe("ProviderContinuationService", () => {
       return Effect.gen(function* () {
         const wakeHeld = yield* Ref.make(true);
         const layerThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+          streamDomainEvents: Stream.never,
           getThreadRecords: () => Effect.succeed(projection),
           dispatch: () =>
             Effect.fail(
@@ -988,45 +1001,69 @@ describe("ProviderContinuationService", () => {
     });
   });
 
-  it.effect("drops a buffered wake once the thread runs another provider instance", () => {
-    return Effect.gen(function* () {
-      const onProvider = (instanceId: string) =>
-        ({
-          ...projection,
-          thread: { ...projection.thread, modelSelection: { instanceId } },
-          providerThreads: [{ id: providerThreadId, providerInstanceId: "claude-work" }],
-        }) as unknown as OrchestrationV2ThreadProjection;
-      for (const [instanceId, dispatches] of [
-        ["codex", false],
-        // Another account of the same driver cannot replay this buffer either.
-        ["claude-personal", false],
-        ["claude-work", true],
-      ] as const) {
+  it.effect.each(["before eligibility", "after eligibility"] as const)(
+    "drops a buffered wake when the provider switches %s",
+    (timing) =>
+      Effect.gen(function* () {
         const dispatched = yield* Queue.unbounded<unknown>();
         const cleared = yield* Deferred.make<void>();
+        const owner = ProviderInstanceId.make("claude-work");
+        const other = ProviderInstanceId.make("claude-personal");
+        const selected = yield* Ref.make(timing === "before eligibility" ? other : owner);
         yield* Effect.gen(function* () {
           const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
           yield* requests.offer({
             ...request(),
             clearIfCurrent: () => Deferred.succeed(cleared, undefined),
+            dispatchIfCurrent: (dispatch) =>
+              Ref.set(selected, other).pipe(Effect.andThen(dispatch), Effect.asSome),
           });
           const outcome = yield* Effect.raceFirst(
             Queue.take(dispatched).pipe(Effect.as("dispatched")),
             Deferred.await(cleared).pipe(Effect.as("dropped")),
           );
-          assert.equal(outcome, dispatches ? "dispatched" : "dropped", instanceId);
+          assert.equal(outcome, "dropped");
+          assert.isTrue(Option.isNone(yield* Queue.poll(dispatched)));
         }).pipe(
           Effect.provide(
             layerTest({
               dispatched,
-              getThreadRecords: () => Effect.succeed(onProvider(instanceId)),
+              dispatch: (command, options) =>
+                Effect.gen(function* () {
+                  if (
+                    options?.providerContinuationOfThreadId !== undefined &&
+                    (yield* Ref.get(selected)) !== owner
+                  ) {
+                    return yield* new Orchestrator.OrchestratorProviderContinuationStaleError({
+                      commandId: command.commandId,
+                      commandType: command.type,
+                      threadId,
+                      providerThreadId,
+                    });
+                  }
+                  yield* Queue.offer(dispatched, command);
+                  return {} as never;
+                }),
+              getThreadRecords: () =>
+                Ref.get(selected).pipe(
+                  Effect.map(
+                    (instanceId) =>
+                      ({
+                        ...projection,
+                        thread: {
+                          ...projection.thread,
+                          modelSelection: { instanceId, model: "claude-sonnet-4-6" },
+                        },
+                        providerThreads: [{ id: providerThreadId, providerInstanceId: owner }],
+                      }) as unknown as OrchestrationV2ThreadProjection,
+                  ),
+                ),
             }),
           ),
           Effect.scoped,
         );
-      }
-    });
-  });
+      }),
+  );
 
   it.effect("clears a sticky continuation offer when its thread is archived", () => {
     return Effect.gen(function* () {

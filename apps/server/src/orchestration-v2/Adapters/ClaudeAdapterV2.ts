@@ -177,6 +177,10 @@ import {
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 
+const sessionEventThread = Context.Reference<ThreadId | undefined>("t3/claude/sessionEventThread", {
+  defaultValue: () => undefined,
+});
+
 export const CLAUDE_PROVIDER = ProviderDriverKind.make("claudeAgent");
 export const CLAUDE_AGENT_SDK_QUERY_PROTOCOL = "claude-agent-sdk.query" as const;
 
@@ -3761,8 +3765,33 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const runtimeContext = yield* Effect.context<never>();
         const runPromise = Effect.runPromiseWith(runtimeContext);
 
-        const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
-          Queue.offer(events, event).pipe(Effect.asVoid);
+        const emitProviderEvent = Effect.fnUntraced(function* (
+          event: ProviderAdapter.ProviderAdapterV2Event,
+        ) {
+          // Persist child artifacts in session order, even while their original
+          // run still subscribes. A queued running update must not overwrite a
+          // terminal outcome persisted by a dropped wake.
+          const artifactThreadId =
+            event.type === "subagent.updated"
+              ? event.subagent.threadId
+              : event.type === "node.updated" &&
+                  (event.node.kind === "subagent" || event.node.runId === null)
+                ? event.node.threadId
+                : event.type === "turn_item.updated" &&
+                    (event.turnItem.type === "subagent" ||
+                      (event.turnItem.runId === null &&
+                        event.turnItem.type !== "assistant_message" &&
+                        event.turnItem.type !== "reasoning"))
+                  ? event.turnItem.threadId
+                  : event.type === "app_thread.created"
+                    ? event.appThread.id
+                    : undefined;
+          const sessionThreadId = (yield* sessionEventThread) ?? artifactThreadId;
+          yield* Queue.offer(
+            events,
+            sessionThreadId === undefined ? event : { ...event, sessionThreadId },
+          );
+        });
 
         // Reports one root request's usage as the current context. Usage
         // without input is a placeholder, never a measurement.
@@ -4993,8 +5022,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly onlyIfRunningInRun?: RunId | null;
         }) {
           const registeredSubagent = (yield* Ref.get(sessionSubagentsByTaskId)).get(input.taskId);
+          const sessionOwned = (yield* sessionEventThread) !== undefined;
           const existingSubagent =
-            input.onlyIfRunningInRun !== undefined
+            input.onlyIfRunningInRun !== undefined || sessionOwned
               ? registeredSubagent
               : (input.context.subagentsByTaskId.get(input.taskId) ??
                 (input.toolUseId === undefined
@@ -5039,7 +5069,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             input.prompt !== undefined
               ? input.toolUseId
               : null;
+          // A prior run may never have ingested this generation's artifacts.
           const lifecycleChanged =
+            sessionOwned ||
             existingSubagent === undefined ||
             existingSubagent.task.status !== input.status ||
             (input.reopen === true && input.status === "running");
@@ -6473,13 +6505,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           });
         });
 
-        // The worker drops a continuation it will not start: the thread was
-        // archived, it now runs another provider, or the dispatch failed. No
-        // Claude turn will drain the buffer, so the subagents it reports end
-        // here, through the turn that settled last, and the next wake can
-        // request a continuation again. Claude's own session keeps the wake.
-        // Use the SDK frame lock through outcome application: a new start
-        // must not slip between buffer removal and the registry update.
+        // No run will drain a dropped wake. Persist its outcomes through the
+        // session, holding the SDK lock so a resume cannot race cleanup.
         const dropBufferedWake = Effect.fnUntraced(function* (
           nativeThreadId: string,
           generation: number,
@@ -6492,7 +6519,44 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return [[] as ReadonlyArray<SDKMessage>, current] as const;
             }
             const updated = new Map(current);
-            updated.delete(nativeThreadId);
+            // A resume can arrive while the old offer waits in the worker.
+            // Its start belongs to the next wake and must still block early
+            // outcome application until that generation is replayed or dropped.
+            const startsByTask = new Map<
+              string,
+              {
+                readonly message: Extract<SDKMessage, { readonly subtype: "task_started" }>;
+                readonly index: number;
+              }
+            >();
+            for (const [index, message] of entry.messages.entries()) {
+              if (message.type !== "system") continue;
+              if (message.subtype === "task_started")
+                startsByTask.set(message.task_id, { message, index });
+              else if (message.subtype === "task_notification")
+                startsByTask.delete(message.task_id);
+            }
+            const retained = entry.messages.filter((message, index) => {
+              if (message.type === "system" && "task_id" in message) {
+                const start = startsByTask.get(message.task_id);
+                if (start !== undefined && index >= start.index) return true;
+              }
+              const parent = parentToolUseIdFromSdkMessage(message);
+              return [...startsByTask.values()].some(
+                (start) =>
+                  index >= start.index &&
+                  ((parent !== null && start.message.tool_use_id === parent) ||
+                    (message.type === "user" &&
+                      Array.isArray(message.message.content) &&
+                      message.message.content.some(
+                        (block) =>
+                          block.type === "tool_result" &&
+                          block.tool_use_id === start.message.tool_use_id,
+                      ))),
+              );
+            });
+            if (retained.length === 0) updated.delete(nativeThreadId);
+            else updated.set(nativeThreadId, { messages: retained, detail: null });
             return [entry.messages, updated] as const;
           });
           const settled = settledTurnByNativeThread.get(nativeThreadId);
@@ -6508,11 +6572,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             }
           }
           for (const message of buffered) {
+            const subagent =
+              message.type === "system" && message.subtype === "task_notification"
+                ? subagents.get(message.task_id)
+                : undefined;
             if (
               message.type !== "system" ||
               message.subtype !== "task_notification" ||
-              !subagents.has(message.task_id) ||
-              latestLifecycle.get(message.task_id) !== message
+              subagent === undefined ||
+              latestLifecycle.get(message.task_id) !== message ||
+              appliedSubagentOutcomes.has(message)
             ) {
               continue;
             }
@@ -6523,7 +6592,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               workflowFrame: message,
               result: message.summary,
               status: claudeTaskOutcome(message.status),
-            });
+              nativeOutcome: message,
+            }).pipe(Effect.provideService(sessionEventThread, settled.input.threadId));
           }
         }, sdkMessageLock.withPermits(1));
 

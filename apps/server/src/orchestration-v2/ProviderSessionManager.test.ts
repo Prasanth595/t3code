@@ -16,6 +16,7 @@ import {
   ProviderInstanceId,
   type ProviderSessionId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -542,7 +543,11 @@ function layerTest(input: {
       ),
     ),
   );
+  const layerCommandOutput = CommandOutputHub.layer.pipe(
+    Layer.provide(Layer.merge(layerConfiguredEventSink, layerTestStores)),
+  );
   return Layer.mergeAll(
+    layerCommandOutput,
     layerTestStores,
     layerConfiguredEventSink,
     IdAllocator.layer,
@@ -555,9 +560,7 @@ function layerTest(input: {
       Layer.provide(
         Layer.mergeAll(
           layerRegistry.pipe(Layer.provideMerge(McpProviderSessions.layer)),
-          CommandOutputHub.layer.pipe(
-            Layer.provide(Layer.merge(layerConfiguredEventSink, layerTestStores)),
-          ),
+          layerCommandOutput,
           layerConfiguredEventSink,
           IdAllocator.layer,
           layerProviderEventIngestorTest,
@@ -4906,5 +4909,98 @@ it.effect(
         projectExists: false,
       });
       assert.isFalse(denied?.capabilities?.has("device"));
+    }),
+);
+
+it.effect(
+  "persists session-owned command settlement once, forwards it and releases its live output slot",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const sink = yield* EventSink.EventSinkV2;
+          const store = yield* EventStore.EventStoreV2;
+          const output = yield* CommandOutputHub.CommandOutputHub;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const now = yield* DateTime.now;
+          const threadId = ThreadId.make("thread:session-owned-command");
+          yield* sink.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+          });
+          const providerSessionId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          const runtime = yield* manager.open({
+            threadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy,
+          });
+          const subscription = yield* runtime.subscribeEvents!;
+          const forwarded = yield* subscription.events.pipe(
+            Stream.take(2),
+            Stream.runCollect,
+            Effect.forkScoped,
+          );
+          const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+          const itemId = TurnItemId.make("command:session-owned");
+          yield* Queue.offer(queue, {
+            type: "command_output.delta",
+            driver: CODEX_DRIVER,
+            threadId,
+            itemId,
+            chunk: "Child output before settlement.",
+          });
+          yield* Queue.offer(queue, {
+            type: "turn_item.updated",
+            driver: CODEX_DRIVER,
+            sessionThreadId: threadId,
+            turnItem: {
+              id: itemId,
+              threadId,
+              runId: null,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "failed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "command_execution",
+              input: "run child work",
+            },
+          });
+          yield* Queue.offer(queue, {
+            type: "provider_session.updated",
+            driver: CODEX_DRIVER,
+            providerSession: runtime.providerSession,
+          });
+          const events = Array.from(yield* Fiber.join(forwarded));
+          assert.equal(events[0]?.sessionThreadId, threadId);
+          const persisted = yield* store
+            .read({ threadId, eventType: "turn-item.updated" })
+            .pipe(Stream.runCollect);
+          assert.lengthOf(persisted, 1);
+          for (let index = 0; index < 65; index++)
+            yield* output.append({
+              threadId,
+              itemId: TurnItemId.make(`other-command:${index}`),
+              chunk: "Other output",
+            });
+          const final = yield* output.subscribe({ threadId, itemId }).pipe(Stream.runHead);
+          assert.isTrue(Option.isSome(final));
+          if (Option.isSome(final)) {
+            assert.equal(final.value.text, "Child output before settlement.");
+            assert.isFalse(final.value.running);
+          }
+        }),
+      ).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
     }),
 );

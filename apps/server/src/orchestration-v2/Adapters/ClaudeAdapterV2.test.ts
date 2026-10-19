@@ -10783,7 +10783,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("a stale wake drop preserves a newer wake", () =>
+  it.effect("dropped and failed wakes release later offers without clearing a newer wake", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeWakeHarness;
@@ -10792,49 +10792,95 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             threadId: harness.threadId,
             providerThread: harness.providerThread,
             now: yield* DateTime.now,
-            attemptId: RunAttemptId.make("attempt-stale-wake-drop"),
-            text: "Start two background tasks.",
+            attemptId: RunAttemptId.make("attempt-wake-cleanup"),
+            text: "Start three background tasks.",
             attachments: [],
           }),
         );
-        for (const name of ["first", "second"]) {
+        for (const taskId of ["first", "second", "third"]) {
           yield* harness.offerAndWait(
-            makeSubagentTaskStartedFrame({
-              taskId: `concurrent-${name}`,
-              toolUseId: `toolu-concurrent-${name}`,
-              uuid: `concurrent-start-${name}`,
-            }),
+            makeSubagentTaskStartedFrame({ taskId, toolUseId: taskId, uuid: `start-${taskId}` }),
           );
+          yield* Queue.take(harness.subagentReceipts);
         }
-        yield* harness.offerAndWait(
-          makeResultFrame({
-            uuid: "concurrent-root-result",
-            result: "Working in the background.",
-          }),
-        );
-        const notify = (name: string) =>
+        yield* harness.offerAndWait(makeResultFrame({ uuid: "root-done", result: "Started." }));
+        yield* Queue.take(harness.terminalReceipts);
+
+        const outcomeFor = Effect.fnUntraced(function* (taskId: string) {
+          while (true) {
+            const event = yield* Queue.take(harness.subagentReceipts);
+            if (event.subagent.nativeTaskRef?.nativeId === taskId) return event.subagent;
+          }
+        });
+        const finish = (taskId: string) =>
           harness.offerAndWait(
-            makeSubagentNotificationFrame({
-              taskId: `concurrent-${name}`,
-              toolUseId: `toolu-concurrent-${name}`,
-              uuid: `concurrent-end-${name}`,
-              summary: `${name} finished`,
+            claudeSdkFrame({
+              type: "system",
+              subtype: "task_notification",
+              task_id: taskId,
+              tool_use_id: taskId,
+              status: "failed",
+              summary: `${taskId} failed`,
+              output_file: `/tmp/${taskId}.output`,
+              uuid: `end-${taskId}`,
+              session_id: WAKE_NATIVE_SESSION,
             }),
           );
-        yield* notify("first");
+        yield* finish("first");
         const first = yield* Queue.take(harness.continuationReceipts);
         assert.isDefined(first.clearIfCurrent);
         yield* first.clearIfCurrent!();
-        yield* notify("second");
-        const newer = harness.continuationRequests[1];
-        assert.isDefined(newer, "the second notification offered its own continuation");
-        yield* first.clearIfCurrent!();
-        assert.isTrue(
-          yield* harness.hasPendingBackgroundWork,
-          "a stale drop preserves the newer wake",
+        const firstOutcome = yield* outcomeFor("first");
+        assert.equal(firstOutcome.status, "failed");
+        assert.equal(firstOutcome.result, "first failed");
+
+        yield* finish("second");
+        assert.lengthOf(harness.continuationRequests, 2);
+        const second = yield* Queue.take(harness.continuationReceipts);
+        assert.isDefined(second.dispatchIfCurrent);
+        const dispatchFailure = yield* Effect.exit(
+          second.dispatchIfCurrent!(Effect.fail("dispatch rejected")),
         );
-        yield* newer!.clearIfCurrent!();
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        assert.isTrue(Exit.isFailure(dispatchFailure));
+        const secondOutcome = yield* outcomeFor("second");
+        assert.equal(secondOutcome.status, "failed");
+        assert.equal(secondOutcome.result, "second failed");
+
+        yield* finish("third");
+        assert.lengthOf(harness.continuationRequests, 3);
+        const third = yield* Queue.take(harness.continuationReceipts);
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: "latest-output", text: "Latest wake transcript." }),
+        );
+        yield* first.clearIfCurrent!();
+        yield* second.clearIfCurrent!();
+        // Replaying the latest wake proves stale cleanup left its buffer intact.
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-latest-wake"),
+            text: third.detail ?? "",
+            messageCreatedBy: "agent",
+            messageCreationSource: "provider",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(makeResultFrame({ uuid: "wake-done", result: "Handled." }));
+        yield* Queue.take(harness.terminalReceipts);
+        const outcomes = harness.events.flatMap((event) =>
+          event.type === "subagent.updated" && event.subagent.status === "failed"
+            ? [event.subagent.result]
+            : [],
+        );
+        assert.deepEqual([...new Set(outcomes)], ["first failed", "second failed", "third failed"]);
+        assert.isTrue(
+          harness.events.some(
+            (event) =>
+              event.type === "message.updated" && event.message.text === "Latest wake transcript.",
+          ),
+        );
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -10843,186 +10889,85 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect.each(["buffered", "during drop"] as const)(
-    "a dropped wake does not end a subagent that has started again (%s)",
-    (startTiming) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const harness = yield* makeWakeHarness;
-          const taskId = "task-drop-resumed";
-          const started = (uuid: string) =>
-            makeSubagentTaskStartedFrame({ taskId, toolUseId: uuid, uuid });
-          const notification = (uuid: string) =>
-            makeSubagentNotificationFrame({ taskId, toolUseId: uuid, uuid, summary: uuid });
-          yield* harness.runtime.startTurn(
+  it.effect("keeps only the newer resumed generation transcript when dropping an old wake", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const startTurn = (attemptId: string, continuation = false) =>
+          harness.runtime.startTurn(
             makeClaudeTestTurnInput({
               threadId: harness.threadId,
               providerThread: harness.providerThread,
-              now: yield* DateTime.now,
-              attemptId: RunAttemptId.make("attempt-drop-resumed"),
-              text: "Start a background subagent.",
+              now: DateTime.makeUnsafe("2026-07-21T12:00:00.000Z"),
+              attemptId: RunAttemptId.make(attemptId),
+              text: "Research.",
               attachments: [],
+              ...(continuation
+                ? { messageCreatedBy: "agent", messageCreationSource: "provider" }
+                : {}),
             }),
           );
-          yield* harness.offerAndWait(started("drop-resumed-start"));
-          yield* Queue.take(harness.subagentReceipts);
-          yield* harness.offerAndWait(
-            makeResultFrame({ uuid: "drop-resumed-root-result", result: "Working in background." }),
-          );
-          yield* Queue.take(harness.terminalReceipts);
-          yield* harness.offerAndWait(notification("drop-resumed-old-end"));
-          const oldWake = yield* Queue.take(harness.continuationReceipts);
-          assert.isDefined(oldWake.clearIfCurrent);
-
-          // SendMessage resumes the same task while its earlier outcome still
-          // waits for the worker to drop the wake.
-          if (startTiming === "buffered") {
-            yield* harness.offerAndWait(started("drop-resumed-new-start"));
-            yield* oldWake.clearIfCurrent!();
-          } else {
-            const clock = yield* Clock.Clock;
-            const paused = yield* Deferred.make<void>();
-            const resume = yield* Deferred.make<void>();
-            // The first timestamp read in drop occurs after its atomic buffer
-            // removal, before it publishes the subagent's terminal state.
-            const dropping = yield* oldWake.clearIfCurrent!().pipe(
-              Effect.provideService(Clock.Clock, {
-                ...clock,
-                currentTimeMillis: Deferred.succeed(paused, undefined).pipe(
-                  Effect.andThen(Deferred.await(resume)),
-                  Effect.andThen(clock.currentTimeMillis),
-                ),
-              }),
-              Effect.forkScoped,
-            );
-            yield* Deferred.await(paused);
-            const offered = yield* Deferred.make<void>();
-            const restarting = yield* harness
-              .offerAndWait(started("drop-resumed-new-start"), offered)
-              .pipe(Effect.forkScoped);
-            yield* Deferred.await(offered);
-            // Let the SDK handler attempt the start while the drop is paused.
-            // The shared lock makes it wait until the outcome has been applied.
-            yield* Effect.yieldNow;
-            yield* Deferred.succeed(resume, undefined);
-            yield* Fiber.join(dropping);
-            yield* Fiber.join(restarting);
-          }
-          assert.isTrue(
-            yield* harness.hasPendingBackgroundWork,
-            "the newer start remains running after the older wake is dropped",
-          );
-          if (startTiming === "buffered") {
-            assert.isFalse(
-              harness.events.some(
-                (event) =>
-                  event.type === "subagent.updated" &&
-                  event.subagent.result === "drop-resumed-old-end",
-              ),
-              "the superseded notification is not projected",
-            );
-          } else {
-            yield* Queue.take(harness.subagentReceipts);
-          }
-
-          yield* harness.offerAndWait(notification("drop-resumed-new-end"));
-          const newWake = yield* Queue.take(harness.continuationReceipts);
-          assert.isDefined(newWake.clearIfCurrent);
-          yield* newWake.clearIfCurrent!();
-          const ended = yield* Queue.take(harness.subagentReceipts);
-          assert.equal(ended.subagent.result, "drop-resumed-new-end");
-          assert.equal(ended.subagent.status, "completed");
-          assert.isFalse(yield* harness.hasPendingBackgroundWork);
-        }).pipe(
-          Effect.provide(
-            Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
-          ),
-        ),
-      ),
-  );
-
-  it.effect("ends buffered subagents when the worker drops their wake continuation", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const subagentFrames = (name: string, ordinal: number) => ({
-          started: claudeSdkFrame({
-            type: "system",
-            subtype: "task_started",
-            task_id: `task-dropped-wake-${name}`,
-            tool_use_id: `toolu-dropped-wake-${name}`,
-            description: `Background research ${name}`,
-            subagent_type: "general-purpose",
-            task_type: "local_agent",
-            prompt: "Investigate the flaky test.",
-            uuid: `00000000-0000-4000-8000-00000000d1${ordinal}0`,
-            session_id: WAKE_NATIVE_SESSION,
-          }),
-          failed: claudeSdkFrame({
-            type: "system",
-            subtype: "task_notification",
-            task_id: `task-dropped-wake-${name}`,
-            tool_use_id: `toolu-dropped-wake-${name}`,
-            status: "failed",
-            output_file: `/tmp/task-dropped-wake-${name}.output`,
-            summary: "You've hit your limit.",
-            uuid: `00000000-0000-4000-8000-00000000d1${ordinal}1`,
-            session_id: WAKE_NATIVE_SESSION,
-          }),
-        });
-        const first = subagentFrames("first", 1);
-        const second = subagentFrames("second", 2);
-
-        const harness = yield* makeWakeHarness;
-        const now = yield* DateTime.now;
-        const awaitStatus = Effect.fnUntraced(function* (taskId: string, status: string) {
-          while (true) {
-            const event = yield* Queue.take(harness.subagentReceipts);
-            if (
-              event.subagent.nativeTaskRef?.nativeId === taskId &&
-              event.subagent.status === status
-            ) {
-              return;
-            }
-          }
-        });
-
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now,
-            attemptId: RunAttemptId.make("attempt-claude-dropped-wake"),
-            text: "Spawn two background subagents and stop.",
-            attachments: [],
+        yield* startTurn("attempt-before-resume");
+        yield* harness.offerAndWait(
+          makeSubagentTaskStartedFrame({
+            taskId: "research",
+            toolUseId: "original",
+            uuid: "original-start",
           }),
         );
-        yield* harness.offerAndWait(first.started);
-        yield* harness.offerAndWait(second.started);
-        yield* awaitStatus("task-dropped-wake-second", "running");
+        yield* Queue.take(harness.subagentReceipts);
         yield* harness.offerAndWait(
-          makeResultFrame({
-            uuid: "00000000-0000-4000-8000-00000000d100",
-            result: "Spawned two subagents in the background.",
-          }),
+          makeResultFrame({ uuid: "original-root-end", result: "Started." }),
         );
         yield* Queue.take(harness.terminalReceipts);
-
-        // The thread moved to another provider, so the worker drops this wake
-        // instead of starting a Claude continuation.
-        yield* harness.offerAndWait(first.failed);
-        const firstDrop = (yield* Queue.take(harness.continuationReceipts)).clearIfCurrent;
-        assert.isDefined(firstDrop);
-        yield* firstDrop!();
-        yield* awaitStatus("task-dropped-wake-first", "failed");
-
-        // The sticky offer is gone, so the next wake asks again; a failed
-        // dispatch drops it the same way.
-        yield* harness.offerAndWait(second.failed);
-        const secondDispatch = (yield* Queue.take(harness.continuationReceipts)).dispatchIfCurrent;
-        assert.isDefined(secondDispatch);
-        yield* Effect.exit(secondDispatch!(Effect.fail("dispatch failed")));
-        yield* awaitStatus("task-dropped-wake-second", "failed");
-        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        yield* harness.offerAndWait(
+          makeSubagentNotificationFrame({
+            taskId: "research",
+            toolUseId: "original",
+            summary: "Original result",
+            uuid: "original-end",
+          }),
+        );
+        const oldWake = yield* Queue.take(harness.continuationReceipts);
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({ uuid: "discarded-output", text: "Old wake output." }),
+        );
+        yield* harness.offerAndWait(
+          makeSubagentTaskStartedFrame({
+            taskId: "research",
+            toolUseId: "resumed",
+            uuid: "resumed-start",
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...makeAssistantTextFrame({
+              uuid: "resumed-output",
+              text: "Resumed child transcript.",
+            }),
+            parent_tool_use_id: "resumed",
+          }),
+        );
+        yield* oldWake.clearIfCurrent!();
+        yield* harness.offerAndWait(
+          makeSubagentNotificationFrame({
+            taskId: "research",
+            toolUseId: "resumed",
+            summary: "Resumed result",
+            uuid: "resumed-end",
+          }),
+        );
+        yield* Queue.take(harness.continuationReceipts);
+        yield* startTurn("attempt-after-resume", true);
+        yield* harness.offerAndWait(
+          makeResultFrame({ uuid: "resumed-root-end", result: "Handled." }),
+        );
+        yield* Queue.take(harness.terminalReceipts);
+        const messages = harness.events.flatMap((event) =>
+          event.type === "message.updated" ? [event.message.text] : [],
+        );
+        assert.include(messages, "Resumed child transcript.");
+        assert.notInclude(messages, "Old wake output.");
       }).pipe(
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),

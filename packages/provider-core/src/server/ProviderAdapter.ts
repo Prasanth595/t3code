@@ -36,6 +36,7 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
+import * as Tuple from "effect/Tuple";
 import type * as Effect from "effect/Effect";
 import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
@@ -171,7 +172,15 @@ export const ProviderAdapterV2Event = Schema.Union([
      */
     childTurnsContinue: Schema.optional(Schema.Literal(true)),
   }),
-]);
+]).mapMembers(
+  Tuple.map(
+    Schema.fieldsAssign({
+      // Session-owned artifacts outlive any run subscription. The session
+      // manager persists them directly; runs only track their lifecycle.
+      sessionThreadId: Schema.optional(ThreadId),
+    }),
+  ),
+);
 export type ProviderAdapterV2Event = typeof ProviderAdapterV2Event.Type;
 
 export class ProviderAdapterCapabilitiesError extends Schema.TaggedError<ProviderAdapterCapabilitiesError>()(
