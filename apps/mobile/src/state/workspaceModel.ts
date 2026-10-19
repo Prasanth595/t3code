@@ -14,6 +14,7 @@ export type { EnvironmentConnectionSummary as WorkspaceEnvironment } from "@t3to
 export interface WorkspaceConnectionState {
   readonly isLoadingConnections: boolean;
   readonly hasConnections: boolean;
+  readonly hasEnabledEnvironment: boolean;
   readonly hasReadyEnvironment: boolean;
   readonly hasConnectingEnvironment: boolean;
   readonly connectingEnvironments: ReadonlyArray<WorkspaceEnvironment>;
@@ -65,6 +66,11 @@ export function projectWorkspaceConnectionState(input: {
   readonly environments: ReadonlyArray<WorkspaceEnvironment>;
 }): WorkspaceConnectionState {
   const activeEnvironments = input.environments.filter((environment) => environment.isEnabled);
+  // An incompatible host is switched off, but its reason is what the user needs
+  // to see; leaving it out would present the workspace as merely offline.
+  const reportedEnvironments = input.environments.filter(
+    (environment) => environment.isEnabled || environment.connectionState === "unsupported",
+  );
   const connectingEnvironments = activeEnvironments.filter(
     (environment) =>
       environment.connectionState === "connecting" ||
@@ -74,14 +80,15 @@ export function projectWorkspaceConnectionState(input: {
   return {
     isLoadingConnections: !input.isReady,
     hasConnections: input.environments.length > 0,
+    hasEnabledEnvironment: activeEnvironments.length > 0,
     hasReadyEnvironment:
       input.networkStatus !== "offline" &&
       activeEnvironments.some((environment) => environment.connectionState === "connected"),
     hasConnectingEnvironment: connectingEnvironments.length > 0,
     connectingEnvironments,
-    connectionState: overallConnectionState(activeEnvironments, input.networkStatus),
+    connectionState: overallConnectionState(reportedEnvironments, input.networkStatus),
     connectionError:
-      activeEnvironments.find((environment) => environment.connectionError !== null)
+      reportedEnvironments.find((environment) => environment.connectionError !== null)
         ?.connectionError ?? null,
     networkStatus: input.networkStatus,
   };

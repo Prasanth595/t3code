@@ -116,4 +116,46 @@ describe("mobile workspace projection", () => {
     expect(state.hasReadyEnvironment).toBe(false);
     expect(state.connectionState).toBe("reconnecting");
   });
+
+  it("reports why an incompatible host was switched off instead of calling it offline", () => {
+    const blocked = environment("unsupported");
+    const environments = [
+      projectWorkspaceEnvironment(ENVIRONMENT_ID, {
+        ...blocked,
+        entry: { ...blocked.entry, enabled: false },
+        connection: { ...blocked.connection, error: "Update T3 Code on the host to connect." },
+      }),
+    ];
+    const state = projectWorkspaceState({
+      isReady: true,
+      networkStatus: "online",
+      environments,
+      shellSummary: EMPTY_SHELL_SUMMARY,
+    });
+
+    expect(state.hasEnabledEnvironment).toBe(false);
+    expect(state.connectionState).toBe("unsupported");
+    expect(state.connectionError).toBe("Update T3 Code on the host to connect.");
+  });
+
+  it("does not report environments the user switched off", () => {
+    const failed = environment("error");
+    const environments = [
+      projectWorkspaceEnvironment(ENVIRONMENT_ID, {
+        ...failed,
+        entry: { ...failed.entry, enabled: false },
+      }),
+    ];
+    const state = projectWorkspaceState({
+      isReady: true,
+      networkStatus: "online",
+      environments,
+      shellSummary: EMPTY_SHELL_SUMMARY,
+    });
+
+    expect(state.hasConnections).toBe(true);
+    expect(state.hasEnabledEnvironment).toBe(false);
+    expect(state.connectionState).toBe("available");
+    expect(state.connectionError).toBeNull();
+  });
 });
