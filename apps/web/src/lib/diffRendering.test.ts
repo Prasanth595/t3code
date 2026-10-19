@@ -1,5 +1,6 @@
 import { hydratePartialDiff } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
+import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "./diffCollapse";
 import { resolveDiffReviewPosition } from "../reviewCommentContext";
 import {
   buildFileDiffContentVersion,
@@ -292,7 +293,11 @@ describe("diff file reconciliation", () => {
     if (!deleted || !added) return;
 
     expect(buildFileDiffIdentityKey(deleted)).not.toBe(buildFileDiffIdentityKey(added));
-    expect(new Set(parsed.files.map(buildFileDiffIdentityKey)).size).toBe(parsed.files.length);
+    const keys = parsed.files.map(buildFileDiffIdentityKey);
+    const collapsed = new Set(toggleAllDiffFiles(keys, new Set()));
+    collapsed.delete(buildFileDiffIdentityKey(added));
+    expect(collapsed.has(buildFileDiffIdentityKey(deleted))).toBe(true);
+    expect(areAllDiffFilesCollapsed(keys, collapsed)).toBe(false);
   });
 
   it("keeps identities stable and versions local to the changed file", () => {

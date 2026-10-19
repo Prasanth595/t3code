@@ -1,7 +1,38 @@
-import { describe, expect, it } from "vite-plus/test";
+import { EnvironmentId, type ReviewDiffPreviewSource } from "@t3tools/contracts";
+import * as AsyncResult from "effect/reactivity/AsyncResult";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+
+import { useReviewFilePatches } from "../components/diffs/useReviewFilePatches";
 
 import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "./diffCollapse";
-import { buildLazyFileDiffIdentityKey, getRenderablePatch } from "./diffRendering";
+import { buildLazyFileDiffIdentityKey } from "./diffRendering";
+
+const { registry, patchAtom } = await vi.hoisted(async () => {
+  const Atom = await import("effect/reactivity/Atom");
+  const AtomRegistry = await import("effect/reactivity/AtomRegistry");
+  const AsyncResult = await import("effect/reactivity/AsyncResult");
+  return {
+    registry: AtomRegistry.make(),
+    patchAtom: Atom.make<AsyncResult.AsyncResult<ReviewDiffPreviewSource>>(AsyncResult.initial()),
+  };
+});
+
+vi.mock("react", () => ({
+  useContext: () => registry,
+  useEffect: () => {},
+  useLayoutEffect: () => {},
+  useRef: <A>(value: A) => ({ current: value }),
+  useState: <A>(initialize: () => A) => [initialize(), vi.fn()],
+}));
+vi.mock("@effect/atom-react", () => ({
+  RegistryContext: {},
+  useAtomValue: registry.get.bind(registry),
+}));
+vi.mock("../state/review", () => ({
+  reviewEnvironment: { diffFilePatch: () => patchAtom },
+}));
+
+afterEach(() => registry.reset());
 
 const FILE_KEYS = ["src/app.ts", "src/index.ts"];
 const FIRST_FILE_KEY = FILE_KEYS[0]!;
@@ -22,7 +53,6 @@ describe("diff collapse controls", () => {
   });
 
   it.each([
-    ["change", ["--- a/later.ts", "+++ b/later.ts", "@@ -1 +1 @@", "-before", "+after"]],
     ["new", ["new file mode 100644", "--- /dev/null", "+++ b/later.ts", "@@ -0,0 +1 @@", "+after"]],
     [
       "deleted",
@@ -43,25 +73,60 @@ describe("diff collapse controls", () => {
       ],
     ],
   ])("preserves bulk and individual collapse choices when a lazy %s file loads", (type, lines) => {
-    const parsed = getRenderablePatch(["diff --git a/later.ts b/later.ts", ...lines].join("\n"));
-    expect(parsed?.kind).toBe("files");
-    if (parsed?.kind !== "files") throw new Error("Expected a parsed diff");
-    const loaded = parsed.files[0]!;
-    expect(loaded.type).toBe(type);
-    const pendingKey = buildLazyFileDiffIdentityKey({
-      ...loaded,
-      type: loaded.prevName ? "rename-changed" : "change",
-    });
-    const loadedKey = buildLazyFileDiffIdentityKey(loaded);
+    const previousPath = type.startsWith("rename") ? "before.ts" : null;
+    const source: ReviewDiffPreviewSource = {
+      id: "working-tree",
+      kind: "working-tree",
+      title: "Working tree",
+      baseRef: null,
+      headRef: null,
+      diff: "",
+      diffHash: type,
+      truncated: true,
+      files: [{ path: "later.ts", previousPath, additions: 1, deletions: 1 }],
+    };
+    const readFiles = () =>
+      useReviewFilePatches({
+        environmentId: EnvironmentId.make("test"),
+        cwd: "/repo",
+        source,
+        baseRef: null,
+        ignoreWhitespace: false,
+        theme: "light",
+        revision: "1",
+        preview: null,
+      }).renderableFiles;
+    const pending = readFiles();
+    expect(pending).toHaveLength(1);
+    expect(pending[0]!.hunks).toEqual([]);
+    const pendingKey = buildLazyFileDiffIdentityKey(pending[0]!);
     const collapsed = toggleAllDiffFiles([FIRST_FILE_KEY, pendingKey], new Set());
-    expect(collapsed.has(loadedKey)).toBe(true);
-    expect(areAllDiffFilesCollapsed([FIRST_FILE_KEY, loadedKey], collapsed)).toBe(true);
-    expect(toggleAllDiffFiles([FIRST_FILE_KEY, loadedKey], collapsed)).toEqual(new Set());
 
-    // A file-tree reveal can expand a placeholder before its patch arrives.
-    const expanded = new Set(collapsed);
-    expanded.delete(pendingKey);
-    expect(expanded.has(loadedKey)).toBe(false);
-    expect(expanded.has(FIRST_FILE_KEY)).toBe(true);
+    const revealedWhilePending = new Set(collapsed);
+    revealedWhilePending.delete(pendingKey);
+
+    registry.set(
+      patchAtom,
+      AsyncResult.success({
+        ...source,
+        truncated: false,
+        diff: [`diff --git a/${previousPath ?? "later.ts"} b/later.ts`, ...lines, ""].join("\n"),
+      }),
+    );
+    const loaded = readFiles();
+    expect(loaded).toHaveLength(1);
+    expect(loaded[0]!.type).toBe(type);
+    const loadedKey = buildLazyFileDiffIdentityKey(loaded[0]!);
+    const loadedKeys = [FIRST_FILE_KEY, loadedKey];
+    expect(revealedWhilePending.has(loadedKey)).toBe(false);
+    expect(areAllDiffFilesCollapsed(loadedKeys, collapsed)).toBe(true);
+    expect(toggleAllDiffFiles(loadedKeys, collapsed)).toEqual(new Set());
+
+    // Revealing the loaded file must also clear its pending collapse choice.
+    const revealed = new Set(collapsed);
+    revealed.delete(loadedKey);
+    expect(revealed).toEqual(new Set([FIRST_FILE_KEY]));
+    expect(revealed.has(pendingKey)).toBe(false);
+    expect(toggleAllDiffFiles(loadedKeys, revealed)).toEqual(new Set(loadedKeys));
   });
 });
