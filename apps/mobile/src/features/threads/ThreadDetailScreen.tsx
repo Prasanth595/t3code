@@ -418,19 +418,13 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
   const [anchorMessageId, setAnchorMessageId] = useState<MessageId | null>(null);
   const [submittedMessageId, setSubmittedMessageId] = useState<MessageId | null>(null);
   const [endFollowEnabled, setEndFollowEnabled] = useState(true);
-  // Keyboard visibility only flips on keyboardDidHide, after the hide
-  // animation, so no platform may key the safe-area padding on it: the
-  // composer would ride down flush to the screen edge and then snap up into
-  // the inset. iOS keys it on focus, since blur precedes the hide. Android
-  // keeps it constant (#5988: the back gesture closes the keyboard while the
-  // editor stays focused): the sticky view tucks it behind the open keyboard
-  // and the feed lifts by the same amount less, so showing and hiding stay
-  // pure UI-thread translation with no layout change to fall out of step.
-  // Dictation keeps that focus while the composer switches to its compact pill.
-  const restingComposerBottomInset = Math.max(insets.bottom, 12);
+  // Android Back hides the keyboard without blurring. Keep its safe-area padding
+  // fixed through the animation and cancel it with matching composer/list offsets.
   const composerBottomInset =
-    Platform.OS === "ios" && (composerExpanded || composerFocused) ? 0 : restingComposerBottomInset;
-  const keyboardTuckedInset = Platform.OS === "android" ? restingComposerBottomInset : 0;
+    Platform.OS === "ios" && (composerExpanded || composerFocused)
+      ? 0
+      : Math.max(insets.bottom, 12);
+  const composerKeyboardOffset = Platform.OS === "android" ? composerBottomInset : 0;
   const contentPresentationKind = props.contentPresentation.kind;
   const realThreadSyncLabel = (() => {
     switch (props.threadSyncStatus) {
@@ -1055,7 +1049,7 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
               anchorMessageId={anchorMessageId}
               submittedMessageId={submittedMessageId}
               contentInsetEndAdjustment={combinedContentInsetEndAdjustment}
-              keyboardOffset={keyboardTuckedInset}
+              keyboardOffset={composerKeyboardOffset}
               contentTopInset={0}
               contentBottomInset={
                 estimatedOverlayHeight +
@@ -1091,14 +1085,11 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
 
       {showContent ? (
         <KeyboardStickyView
-          // Stay subscribed for the full transition: gating on keyboard
-          // visibility waits a React render after will-show, leaving the
-          // composer behind the rising keyboard. Android retains its
-          // background/resume stale-state quarantine.
+          // Waiting for a visibility render misses the first keyboard frames.
           enabled={Platform.OS === "ios" || !keyboardStateSuspect}
           pointerEvents="box-none"
           style={{ position: "absolute", bottom: 0, left: 0, right: 0, top: 0 }}
-          offset={{ closed: 0, opened: keyboardTuckedInset }}
+          offset={{ closed: 0, opened: composerKeyboardOffset }}
         >
           <ComposerPopoverHost hidden={composerSlotHidden}>
             {/* The fixed sticky host gives this bottom-anchored child a stable

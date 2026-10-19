@@ -302,7 +302,6 @@ export interface ThreadFeedProps {
   readonly anchorMessageId: MessageId | null;
   readonly submittedMessageId: MessageId | null;
   readonly contentInsetEndAdjustment: SharedValue<number>;
-  /** Composer padding the open keyboard covers; the list lifts by the keyboard height less this. */
   readonly keyboardOffset: number;
   readonly contentTopInset?: number;
   readonly contentBottomInset?: number;
