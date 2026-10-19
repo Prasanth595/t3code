@@ -8957,35 +8957,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         }).pipe(Effect.scoped, provideServices),
       );
 
-      it.effect("holds the run for the turn Codex starts once the goal is active", () =>
-        Effect.gen(function* () {
-          const { harness, requests } = yield* runResume("goal-resume-continuation", [
-            // A turn that already finished has nothing left to attach to.
-            turnStarted("finished-turn"),
-            turnCompleted("finished-turn"),
-            ...resumeRequests("paused", "active"),
-            turnStarted("continuation"),
-            goalUpdated("active", "continuation"),
-            turnCompleted("continuation"),
-            goalUpdated("complete", null),
-          ]);
-
-          assert.notInclude(requests, "turn/start");
-          assert.deepEqual(runningTurns(harness.events), [
-            [null, 1],
-            ["continuation", 2],
-          ]);
-          const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
-            driver: CodexAdapterV2.CODEX_DRIVER_KIND,
-            nativeTurnId: "continuation",
-          });
-          assert.deepEqual(
-            harness.terminalEvents().map((event) => [event.providerTurnId, event.status]),
-            [[providerTurnId, "completed"]],
-          );
-        }).pipe(Effect.scoped, provideServices),
-      );
-
       it.effect("settles the run when Codex leaves the goal inactive", () =>
         Effect.gen(function* () {
           const { harness, requests } = yield* runResume("goal-resume-inactive", [
@@ -9001,15 +8972,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         }).pipe(Effect.scoped, provideServices),
       );
 
-      it.effect("keeps the run open while the goal is still being reactivated", () =>
+      it.effect("waits through slow activation and adopts the next native goal turn", () =>
         Effect.gen(function* () {
           const activationRequested = yield* Deferred.make<void>();
+          const activate = yield* Deferred.make<void>();
           const requests: Array<string> = [];
           const harness = yield* makeCodexReplayHarness(
             makeCodexReplayTranscript({
               scenario: "goal-resume-slow-activation",
               entries: [
                 ...sessionStart,
+                turnStarted("finished-turn"),
+                turnCompleted("finished-turn"),
                 ...resumeRequests("paused", "active"),
                 turnStarted("continuation"),
                 goalUpdated("active", "continuation"),
@@ -9025,25 +8999,24 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 Effect.andThen(
                   method === "thread/goal/set"
                     ? Deferred.succeed(activationRequested, undefined).pipe(
-                        Effect.andThen(Effect.sleep("10 seconds")),
+                        Effect.andThen(Deferred.await(activate)),
                       )
                     : Effect.void,
                 ),
               ),
           );
-          yield* harness.runtime
+          const start = yield* harness.runtime
             .startTurn(yield* goalTurnInput(harness, "/goal resume"))
             .pipe(Effect.forkChild({ startImmediately: true }));
           yield* Deferred.await(activationRequested);
-          for (let tick = 0; tick < 20; tick++) yield* Effect.yieldNow;
 
           // The continuation grace is for Codex to start a turn once the goal is
           // active, so it must not run out while the activation is in flight.
           yield* TestClock.adjust("6 seconds");
-          for (let tick = 0; tick < 20; tick++) yield* Effect.yieldNow;
           assert.lengthOf(harness.terminalEvents(), 0);
 
-          yield* TestClock.adjust("5 seconds");
+          yield* Deferred.succeed(activate, undefined);
+          yield* Fiber.join(start);
           yield* harness.firstTerminal;
 
           const providerTurnId = (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
@@ -9054,6 +9027,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             harness.terminalEvents().map((event) => [event.providerTurnId, event.status]),
             [[providerTurnId, "completed"]],
           );
+          assert.notInclude(requests, "turn/start");
           assert.notInclude(requests, "turn/interrupt");
           assert.deepEqual(runningTurns(harness.events), [
             [null, 1],
