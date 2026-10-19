@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import { assert, it, vi } from "@effect/vitest";
 import { CheckpointRef, CheckpointScopeId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -36,6 +37,7 @@ function makeProjection(): ProjectionCheckpointContext {
       {
         scopeId: secondScopeId,
         runId: secondRunId,
+        ordinalWithinScope: 1,
         appRunOrdinal: 2,
         status: "ready",
         ref: secondRef,
@@ -44,9 +46,10 @@ function makeProjection(): ProjectionCheckpointContext {
   };
 }
 
-function makeLayer(input: {
+function layerFor(input: {
   readonly projection: Effect.Effect<ProjectionCheckpointContext, OrchestratorProjectionError>;
   readonly diffCheckpoints?: CheckpointStore.CheckpointStore["Service"]["diffCheckpoints"];
+  readonly authoredPaths?: ReadonlySet<string>;
 }) {
   return CheckpointDiffQuery.layer.pipe(
     Layer.provide(
@@ -56,9 +59,11 @@ function makeLayer(input: {
         }),
         Layer.mock(CheckpointStore.CheckpointStore)({
           diffCheckpoints: input.diffCheckpoints ?? (() => Effect.succeed("diff")),
+          listAuthoredPaths: () => Effect.succeed(input.authoredPaths ?? null),
         }),
       ),
     ),
+    Layer.provideMerge(NodeCrypto.layer),
   );
 }
 
@@ -66,7 +71,7 @@ it.effect("computes V2 run diffs from projected checkpoint scopes", () => {
   const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
     Effect.succeed("diff --git a/file b/file"),
   );
-  const layer = makeLayer({ projection: Effect.succeed(makeProjection()), diffCheckpoints });
+  const layer = layerFor({ projection: Effect.succeed(makeProjection()), diffCheckpoints });
 
   return Effect.gen(function* () {
     const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -80,7 +85,7 @@ it.effect("computes V2 run diffs from projected checkpoint scopes", () => {
     });
     assert.deepEqual(diffCheckpoints.mock.calls[0]?.[0], {
       cwd: "/repo",
-      fromCheckpointRef: checkpointRefForScopeOrdinal({
+      fromCheckpointRef: yield* checkpointRefForScopeOrdinal({
         scopeId: firstScopeId,
         ordinalWithinScope: 0,
       }),
@@ -91,8 +96,36 @@ it.effect("computes V2 run diffs from projected checkpoint scopes", () => {
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("leaves Git imports out of large turn diffs", () => {
+  const ownPaths = Array.from({ length: 1_000 }, (_, index) => `src/module-${index}/file.ts`);
+  const diffCheckpoints = vi.fn((input: CheckpointStore.DiffCheckpointsInput) =>
+    Effect.succeed(
+      input.format === "numstat"
+        ? [...ownPaths, "upstream.ts"].map((path) => `1\t0\t${path}\0`).join("")
+        : (input.filePaths ?? ["all"]).join("\n"),
+    ),
+  );
+  const layer = layerFor({
+    projection: Effect.succeed(makeProjection()),
+    diffCheckpoints,
+    authoredPaths: new Set(ownPaths),
+  });
+
+  return Effect.gen(function* () {
+    const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+    yield* query.getFullThreadDiff({ threadId, toTurnCount: 2 });
+
+    const patchPaths = diffCheckpoints.mock.calls
+      .map(([call]) => call)
+      .filter((call) => call.format !== "numstat")
+      .map((call) => call.filePaths ?? ["all"]);
+    assert.isAbove(patchPaths.length, 1);
+    assert.sameMembers(patchPaths.flat(), ownPaths);
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("preserves the typed missing-thread error contract", () => {
-  const layer = makeLayer({
+  const layer = layerFor({
     projection: Effect.fail(new OrchestratorProjectionError({ threadId })),
   });
 
@@ -111,7 +144,7 @@ it.effect("preserves the typed missing-thread error contract", () => {
 });
 
 it.effect("preserves the typed unavailable-range error contract", () => {
-  const layer = makeLayer({ projection: Effect.succeed(makeProjection()) });
+  const layer = layerFor({ projection: Effect.succeed(makeProjection()) });
 
   return Effect.gen(function* () {
     const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
@@ -132,7 +165,7 @@ it.effect("preserves the typed unavailable-range error contract", () => {
 
 it.effect("excludes ready checkpoints from rolled-back runs", () => {
   const projection = makeProjection();
-  const layer = makeLayer({
+  const layer = layerFor({
     projection: Effect.succeed({
       ...projection,
       runs: projection.runs.map((run) =>
@@ -168,9 +201,93 @@ it.effect("excludes ready checkpoints from rolled-back runs", () => {
   }).pipe(Effect.provide(layer));
 });
 
+function makeProjectionAfterStoppedRun(stoppedRunCheckpoint: boolean) {
+  const thirdRunId = RunId.make("run:checkpoint-diff-v2:3");
+  const checkpoint = (
+    ordinalWithinScope: number,
+    runId: RunId | null,
+  ): ProjectionCheckpointContext["checkpoints"][number] => ({
+    scopeId: firstScopeId,
+    runId,
+    ordinalWithinScope,
+    appRunOrdinal: runId === null ? null : ordinalWithinScope,
+    status: "ready",
+    ref: CheckpointRef.make(`refs/t3/test/ordinal/${ordinalWithinScope}`),
+  });
+  return {
+    runs: [
+      { id: firstRunId, ordinal: 1, status: "completed" },
+      { id: secondRunId, ordinal: 2, status: "interrupted" },
+      { id: thirdRunId, ordinal: 3, status: "completed" },
+    ],
+    checkpointScopes: [
+      { id: firstScopeId, runId: thirdRunId, kind: "root_run", cwd: "/repo" },
+      { id: secondScopeId, runId: secondRunId, kind: "tool", cwd: "/repo" },
+    ],
+    checkpoints: [
+      {
+        ...checkpoint(2, null),
+        scopeId: secondScopeId,
+        ref: CheckpointRef.make("refs/t3/test/tool/2"),
+      },
+      checkpoint(0, null),
+      checkpoint(1, firstRunId),
+      checkpoint(2, stoppedRunCheckpoint ? secondRunId : null),
+      checkpoint(3, thirdRunId),
+    ],
+  } satisfies ProjectionCheckpointContext;
+}
+
+it.effect.each([false, true])(
+  "diffs the turn after a stopped run from its parent checkpoint (stopped run captured: %s)",
+  (stoppedRunCheckpoint) => {
+    const diffCheckpoints = vi.fn((_input: CheckpointStore.DiffCheckpointsInput) =>
+      Effect.succeed("diff --git a/file b/file"),
+    );
+    const layer = layerFor({
+      projection: Effect.succeed(makeProjectionAfterStoppedRun(stoppedRunCheckpoint)),
+      diffCheckpoints,
+    });
+
+    return Effect.gen(function* () {
+      const query = yield* CheckpointDiffQuery.CheckpointDiffQuery;
+      const result = yield* query.getTurnDiff({ threadId, fromTurnCount: 2, toTurnCount: 3 });
+
+      assert.strictEqual(result.diff, "diff --git a/file b/file");
+      yield* query.getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 3 });
+      yield* query.getFullThreadDiff({ threadId, toTurnCount: 3 });
+      assert.deepEqual(
+        diffCheckpoints.mock.calls.map(([input]) => ({
+          from: input.fromCheckpointRef,
+          to: input.toCheckpointRef,
+        })),
+        [
+          { from: "refs/t3/test/ordinal/2", to: "refs/t3/test/ordinal/3" },
+          { from: "refs/t3/test/ordinal/1", to: "refs/t3/test/ordinal/3" },
+          {
+            from: yield* checkpointRefForScopeOrdinal({
+              scopeId: firstScopeId,
+              ordinalWithinScope: 0,
+            }),
+            to: "refs/t3/test/ordinal/3",
+          },
+        ],
+      );
+      const stoppedTurnError = yield* query
+        .getTurnDiff({ threadId, fromTurnCount: 1, toTurnCount: 2 })
+        .pipe(Effect.flip);
+      assert.instanceOf(stoppedTurnError, CheckpointRefUnavailableError);
+      assert.deepEqual(
+        { checkpoint: stoppedTurnError.checkpoint, turnCount: stoppedTurnError.turnCount },
+        { checkpoint: "to", turnCount: 2 },
+      );
+    }).pipe(Effect.provide(layer));
+  },
+);
+
 it.effect("preserves the typed missing-baseline-ref error contract", () => {
   const projection = makeProjection();
-  const layer = makeLayer({
+  const layer = layerFor({
     projection: Effect.succeed({
       ...projection,
       checkpointScopes: projection.checkpointScopes.map((scope) => ({
