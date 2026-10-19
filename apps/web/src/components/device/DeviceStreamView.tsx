@@ -399,7 +399,7 @@ export function DeviceStreamView(props: {
           className={cn("relative select-none", showPhone && "invisible pointer-events-none")}
           style={{ width: frame.width, height: frame.height }}
           onPointerDown={(event) => {
-            if (activePointer.current !== null) return;
+            if (event.button !== 0 || activePointer.current !== null) return;
             event.currentTarget.setPointerCapture(event.pointerId);
             (event.currentTarget.parentElement as HTMLElement | null)?.focus();
             const { x, y } = normalizedPoint(event);
