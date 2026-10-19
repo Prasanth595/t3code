@@ -3493,7 +3493,7 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
-  it.live("Grok sends a leading picked $skill as the /skill command it expands", () =>
+  it.live("Grok sends a leading picked $skill as the native /skill command", () =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -3559,7 +3559,10 @@ describe("AcpAdapterV2", () => {
         ),
         Stream.runHead,
       );
-      assert.match(rawProtocolPromptText(Option.getOrThrow(prompt)), /^\/deploy ship it/);
+      // Same shape as a typed native command: one bare text block, no T3 instructions.
+      assert.deepEqual(rawProtocolPromptTextBlocks(Option.getOrThrow(prompt)), [
+        { type: "text", text: "/deploy ship it" },
+      ]);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
