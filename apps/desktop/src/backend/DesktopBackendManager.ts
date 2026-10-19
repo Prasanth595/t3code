@@ -575,9 +575,10 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     );
   }
   // Slow cold boots can outlast a readiness budget. Keep probing while the child lives.
-  const portTaken = yield* Ref.make(false);
+  const ownership = yield* Ref.make<BackendOwnership | undefined>(undefined);
+  const exitObserved = yield* Ref.make(false);
   const probeReadiness = Effect.fn("desktop.backendProcess.probeReadiness")(function* () {
-    const ownership = yield* waitForHttpReady({
+    const result = yield* waitForHttpReady({
       ...options,
       desktopLaunchId: options.bootstrap.desktopLaunchId,
       timeout: options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
@@ -587,14 +588,17 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
           (options.onReadinessFailure?.(error) ?? Effect.void).pipe(Effect.as(undefined)),
       }),
     );
-    if (ownership === undefined) {
+    if (result === undefined) {
       return false;
     }
-    if (ownership === "foreign") {
+    yield* Ref.set(ownership, result);
+    if (yield* Ref.get(exitObserved)) {
+      return true;
+    }
+    if (result === "foreign") {
       yield* logBackendProcessWarning("another server is answering on the backend port", {
         httpBaseUrl: options.httpBaseUrl.href,
       });
-      yield* Ref.set(portTaken, true);
       yield* handle
         .kill({ killSignal: "SIGTERM", forceKillAfter: DEFAULT_BACKEND_TERMINATE_GRACE })
         .pipe(Effect.ignore);
@@ -604,7 +608,10 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     return true;
   });
 
-  yield* probeReadiness().pipe(Effect.repeat({ while: (done) => !done }), Effect.forkScoped);
+  const readinessFiber = yield* probeReadiness().pipe(
+    Effect.repeat({ while: (done) => !done }),
+    Effect.forkScoped,
+  );
 
   const exit = yield* handle.exitCode.pipe(
     Effect.mapError(
@@ -620,7 +627,15 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     ),
     Effect.exit,
   );
+  yield* Ref.set(exitObserved, true);
   yield* options.onExitObserved?.() ?? Effect.void;
+  const stateDirOwned = Exit.isSuccess(exit) && exit.value === SERVER_EXIT_CODE_STATE_DIR_OWNED;
+  if (!stateDirOwned && (yield* Ref.get(ownership)) === undefined) {
+    // A bind failure can exit before the pending descriptor identifies the foreign listener.
+    yield* Fiber.await(readinessFiber).pipe(
+      Effect.timeoutOption(DEFAULT_BACKEND_READINESS_REQUEST_TIMEOUT),
+    );
+  }
   yield* Effect.forEach(outputFibers, Fiber.await, {
     concurrency: "unbounded",
     discard: true,
@@ -628,7 +643,7 @@ export const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     Effect.timeout(options.outputDrainTimeout ?? DEFAULT_BACKEND_OUTPUT_DRAIN_TIMEOUT),
     Effect.ignore,
   );
-  if (yield* Ref.get(portTaken)) {
+  if (!stateDirOwned && (yield* Ref.get(ownership)) === "foreign") {
     return {
       code: Option.none(),
       reason: `another server is answering on ${options.httpBaseUrl.href}`,

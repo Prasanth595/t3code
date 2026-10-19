@@ -1347,12 +1347,15 @@ describe("DesktopBackendManager", () => {
         yield* instance.start;
 
         assert.equal(yield* Queue.take(starts), 1);
+        yield* TestClock.adjust(Duration.seconds(1));
         assert.equal(yield* Queue.take(failures), "pid=123 code=1");
 
         yield* TestClock.adjust(Duration.millis(499));
         assert.equal(yield* Queue.size(starts), 0);
         yield* TestClock.adjust(Duration.millis(1));
         assert.equal(yield* Queue.take(starts), 2);
+        yield* TestClock.adjust(Duration.seconds(1));
+        assert.equal(yield* Queue.take(failures), "pid=123 code=1");
 
         yield* TestClock.adjust(Duration.millis(999));
         assert.equal(yield* Queue.size(starts), 0);
@@ -1627,6 +1630,7 @@ describe("DesktopBackendManager", () => {
         yield* instance.start;
 
         assert.equal(yield* Queue.take(starts), 1);
+        yield* TestClock.adjust(Duration.seconds(1));
         let restartScheduled = false;
         while (!restartScheduled) {
           restartScheduled = (yield* instance.snapshot).restartScheduled;
@@ -1673,6 +1677,7 @@ describe("DesktopBackendManager", () => {
 
         yield* instance.start;
         assert.equal(yield* Queue.take(starts), 1);
+        yield* TestClock.adjust(Duration.seconds(1));
 
         let restartScheduled = false;
         while (!restartScheduled) {
