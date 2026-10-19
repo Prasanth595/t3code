@@ -2314,70 +2314,92 @@ describe("waitForRevertedMessage", () => {
     await expect(waiting).rejects.toThrow("The provider could not roll back.");
   });
 
-  it("waits for the retained rollback suffix when the edited message and run are paged out", async () => {
-    vi.useFakeTimers();
-    const { state, projection } = projectionAtom();
-    const latestRunId = RunId.make("latest-run-9");
-    const latestRun = {
-      ...projection.runs[3]!,
-      id: latestRunId,
-      ordinal: 9,
-      userMessageId: MessageId.make("latest-message-9"),
-      status: "cancelled" as const,
-    };
-    const bounded = {
-      ...projection,
-      messages: [],
-      providerThreads: projection.providerThreads.map((thread) => ({
-        ...thread,
-        lastRunOrdinal: 9,
-      })),
-      runs: [
-        {
-          ...latestRun,
-          id: RunId.make("old-rewound-run-3"),
-          userMessageId: MessageId.make("old-rewound-message-3"),
-          ordinal: 3,
-          status: "rolled_back" as const,
+  it.each([
+    ["same", "streamed"],
+    ["replacement", "streamed"],
+    ["replacement", "refetched"],
+  ] as const)(
+    "waits for the retained rollback suffix when the edited message and run are paged out (%s provider, %s)",
+    async (providerIdentity, projectionSource) => {
+      vi.useFakeTimers();
+      const { state, projection } = projectionAtom();
+      const latestRunId = RunId.make("latest-run-9");
+      const latestRun = {
+        ...projection.runs[3]!,
+        id: latestRunId,
+        ordinal: 9,
+        userMessageId: MessageId.make("latest-message-9"),
+        status: "cancelled" as const,
+      };
+      const bounded = {
+        ...projection,
+        messages: [],
+        providerThreads: projection.providerThreads.map((thread) => ({
+          ...thread,
+          lastRunOrdinal: 9,
+        })),
+        runs: [
+          {
+            ...latestRun,
+            id: RunId.make("old-rewound-run-3"),
+            userMessageId: MessageId.make("old-rewound-message-3"),
+            ordinal: 3,
+            status: "rolled_back" as const,
+          },
+          latestRun,
+        ],
+      };
+      const oldProviderThread = bounded.providerThreads[0]!;
+      const completedProviderThread = {
+        ...oldProviderThread,
+        ...(providerIdentity === "replacement"
+          ? { id: ProviderThreadId.make("replacement-provider-thread"), firstRunOrdinal: null }
+          : {}),
+        lastRunOrdinal: null,
+      };
+      appAtomRegistry.set(state, { data: Option.some(bounded) });
+      let outcome = "pending";
+      const waiting = waitForRevertedMessage(threadRef, 0, requestId, async () => {}).then(
+        () => {
+          outcome = "reverted";
         },
-        latestRun,
-      ],
-    };
-    appAtomRegistry.set(state, { data: Option.some(bounded) });
-    let outcome = "pending";
-    const waiting = waitForRevertedMessage(threadRef, 0, requestId, async () => {}).then(
-      () => {
-        outcome = "reverted";
-      },
-      (error: Error) => {
-        outcome = error.message;
-      },
-    );
+        (error: Error) => {
+          outcome = error.message;
+        },
+      );
 
-    try {
-      await vi.advanceTimersByTimeAsync(0);
-      expect(outcome).toBe("pending");
+      try {
+        await vi.advanceTimersByTimeAsync(0);
+        expect(outcome).toBe("pending");
 
-      appAtomRegistry.set(state, {
-        data: Option.some({
-          ...bounded,
-          providerThreads: bounded.providerThreads.map((thread) => ({
-            ...thread,
-            lastRunOrdinal: null,
-          })),
-          runs: bounded.runs.map((run) =>
-            run.id === latestRunId ? { ...run, status: "rolled_back" as const } : run,
-          ),
-        }),
-      });
-      await vi.advanceTimersByTimeAsync(0);
-      expect(outcome).toBe("reverted");
-      await waiting;
-    } finally {
-      vi.clearAllTimers();
-      vi.useRealTimers();
-    }
-  });
+        appAtomRegistry.set(state, {
+          data: Option.some({
+            ...bounded,
+            thread: {
+              ...bounded.thread,
+              activeProviderThreadId:
+                projectionSource === "refetched"
+                  ? completedProviderThread.id
+                  : oldProviderThread.id,
+            },
+            providerThreads:
+              providerIdentity === "replacement"
+                ? [oldProviderThread, completedProviderThread]
+                : [completedProviderThread],
+            runs: bounded.runs.map((run) =>
+              run.id === latestRunId ? { ...run, status: "rolled_back" as const } : run,
+            ),
+          }),
+        });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(outcome).toBe("reverted");
+        await waiting;
+      } finally {
+        vi.clearAllTimers();
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("waits for the requested target when another client finishes a shallower rewind", async () => {
     vi.useFakeTimers();
