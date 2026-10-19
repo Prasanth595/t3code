@@ -36,6 +36,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Stream from "effect/Stream";
@@ -117,6 +118,7 @@ const claudeAdapter = {
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 
 interface HarnessOptions {
+  readonly existingPaths?: ReadonlyArray<string>;
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
@@ -200,6 +202,7 @@ function makeHarness(options: HarnessOptions = {}) {
       renameBranch,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
+      isRepository: () => Effect.succeed(true),
       remoteExists: options.remoteExists ?? (() => Effect.succeed(true)),
       remoteBranchExists: () => Effect.succeed(true),
       removeWorktree,
@@ -230,6 +233,10 @@ function makeHarness(options: HarnessOptions = {}) {
         layerThreadManagement,
         layerReceipts,
         IdAllocator.layer,
+        FileSystem.layerNoop({
+          exists: (path) => Effect.succeed(options.existingPaths?.includes(path) === true),
+        }),
+        Path.layer,
       ),
     ),
   );
@@ -3080,12 +3087,33 @@ it.effect.each([
   { name: "a repository with no commits yet", baseRef: "main", commits: [] },
   { name: "the previous checkout", baseRef: "-", commits: ["@{-1}", "HEAD"] },
   { name: "a commit search", baseRef: ":/fix", commits: ["HEAD"] },
-  { name: "a folder that is not a repository", baseRef: "main", commits: null },
+  { name: "a Git that cannot answer", baseRef: "main", commits: null },
+  { name: "a failing repository probe", baseRef: "main", commits: ["HEAD"], probeFails: true },
+  {
+    name: "a repository Git refuses to read",
+    baseRef: "main",
+    commits: ["HEAD"],
+    existingPaths: ["/.git"],
+  },
 ])("leaves $name to the launch", (testCase) =>
   Effect.gen(function* () {
     const { commits } = testCase;
     const harness = makeHarness({
-      git: { hasRefNamed: () => Effect.succeed(testCase.remoteBranch === true) },
+      existingPaths: testCase.existingPaths ?? [],
+      git: {
+        isRepository: () =>
+          testCase.probeFails === true
+            ? Effect.fail(
+                new GitCommandError({
+                  operation: "GitWorkflowService.isRepository",
+                  command: "git rev-parse",
+                  cwd: "/repo",
+                  detail: "Repository probe failed.",
+                }),
+              )
+            : Effect.succeed(testCase.existingPaths === undefined),
+        hasRefNamed: () => Effect.succeed(testCase.remoteBranch === true),
+      },
       hasCommit: ({ refName }) =>
         commits === null
           ? Effect.fail(
@@ -3093,7 +3121,7 @@ it.effect.each([
                 operation: "GitWorkflowService.hasCommit",
                 command: "git rev-parse",
                 cwd: "/repo",
-                detail: "Not a Git repository.",
+                detail: "fatal: bad object",
               }),
             )
           : Effect.succeed(commits.includes(refName)),
@@ -3447,3 +3475,20 @@ it.effect.each(
       }).pipe(Effect.provide(Layer.merge(harness.layer, layerService)));
     }),
 );
+
+it.effect("refuses a new worktree in a non-Git folder even for a commit-search base", () => {
+  const harness = makeHarness({ git: { isRepository: () => Effect.succeed(false) } });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const result = yield* Effect.result(
+      launches.checkWorktreeBase({
+        projectId,
+        workspaceStrategy: { type: "worktree", baseRef: ":/fix", startFromOrigin: true },
+      }),
+    );
+    assert.isTrue(Result.isFailure(result));
+    if (Result.isFailure(result)) {
+      assert.match(result.failure.message, /not a Git repository/i);
+    }
+  }).pipe(Effect.provide(harness.layer));
+});

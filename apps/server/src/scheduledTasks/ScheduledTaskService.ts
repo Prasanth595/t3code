@@ -358,6 +358,7 @@ export const listDueTasks = Effect.fn("ScheduledTaskService.listDueTasks")(funct
 export const layer = Layer.effect(
   ScheduledTaskService,
   Effect.gen(function* () {
+    const serviceScope = yield* Effect.scope;
     const sql = yield* SqlClient.SqlClient;
     const crypto = yield* Crypto.Crypto;
     const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
@@ -664,6 +665,57 @@ export const layer = Layer.effect(
         ),
       );
 
+    const recordFailedPreparation = Effect.fn("ScheduledTaskService.recordFailedPreparation")(
+      function* (input: {
+        readonly task: ScheduledTask;
+        readonly threadId: ThreadId;
+        readonly messageId: MessageId;
+      }) {
+        // Replay the fresh thread from creation: preparation may have failed or
+        // even been retried before launch returns. Only its first departure counts.
+        const departure = yield* threadManagement
+          .streamStoredEventsFrom({
+            threadId: input.threadId,
+            afterSequence: 0,
+            eventType: "run.updated",
+          })
+          .pipe(
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "run.updated" &&
+                stored.event.payload.userMessageId === input.messageId &&
+                stored.event.payload.status !== "preparing",
+            ),
+            Stream.runHead,
+          );
+        if (
+          Option.isNone(departure) ||
+          departure.value.event.type !== "run.updated" ||
+          departure.value.event.payload.status !== "failed"
+        )
+          return;
+        const now = yield* localNow;
+        const changed = yield* sql<{ task_id: string }>`
+          UPDATE scheduled_tasks
+          SET last_run_status = 'failed',
+              last_run_error = ${`Workspace preparation failed. See thread ${input.threadId}.`},
+              updated_at = ${iso(now)}
+          WHERE task_id = ${input.task.id}
+            AND created_at = ${input.task.createdAt}
+            AND last_run_at = ${input.task.lastRunAt}
+            AND run_count = ${input.task.runCount}
+            AND last_run_status = 'succeeded'
+          RETURNING task_id
+        `;
+        if (changed.length > 0) yield* notifyChanged;
+      },
+      Effect.catchCause((cause) =>
+        Cause.hasInterruptsOnly(cause)
+          ? Effect.void
+          : Effect.logWarning("Could not record a failed workspace preparation", { cause }),
+      ),
+    );
+
     const runTask = Effect.fn("ScheduledTaskService.runTask")(function* (
       task: ScheduledTask,
       trigger: "scheduled" | "manual" | "webhook",
@@ -744,39 +796,47 @@ export const layer = Layer.effect(
         const result =
           active.threadId === null
             ? yield* Effect.exit(
-                threadLaunch.launch({
-                  commandId,
-                  projectId: active.projectId,
-                  title: active.title,
-                  modelSelection: active.modelSelection,
-                  runtimeMode: active.runtimeMode,
-                  interactionMode: active.interactionMode,
-                  workspaceStrategy: active.workspaceStrategy,
-                  initialMessage: {
-                    messageId,
-                    scheduledTaskId: active.id,
-                    text: prompt,
-                    attachments: [],
-                  },
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
+                Effect.gen(function* () {
+                  if (active.workspaceStrategy.type === "worktree")
+                    yield* threadLaunch.checkWorktreeBase(active);
+                  return yield* threadLaunch
+                    .launch({
+                      commandId,
+                      projectId: active.projectId,
+                      title: active.title,
+                      modelSelection: active.modelSelection,
+                      runtimeMode: active.runtimeMode,
+                      interactionMode: active.interactionMode,
+                      workspaceStrategy: active.workspaceStrategy,
+                      initialMessage: {
+                        messageId,
+                        scheduledTaskId: active.id,
+                        text: prompt,
+                        attachments: [],
+                      },
+                      createdBy: active.createdBy,
+                      creationSource: active.creationSource,
+                    })
+                    .pipe(Effect.map((launched) => launched.threadId));
                 }),
               )
             : yield* Effect.exit(
                 // The stored selection only seeds fresh threads. A bound run
                 // follows the thread's current provider, so it passes none.
-                threadManagement.sendToThread({
-                  projectId: active.projectId,
-                  commandId,
-                  threadId: ThreadId.make(active.threadId),
-                  messageId,
-                  scheduledTaskId: active.id,
-                  text: prompt,
-                  attachments: [],
-                  mode: "queue",
-                  createdBy: active.createdBy,
-                  creationSource: active.creationSource,
-                }),
+                threadManagement
+                  .sendToThread({
+                    projectId: active.projectId,
+                    commandId,
+                    threadId: ThreadId.make(active.threadId),
+                    messageId,
+                    scheduledTaskId: active.id,
+                    text: prompt,
+                    attachments: [],
+                    mode: "queue",
+                    createdBy: active.createdBy,
+                    creationSource: active.creationSource,
+                  })
+                  .pipe(Effect.as(null)),
               );
 
         const completedAt = yield* localNow;
@@ -807,6 +867,17 @@ export const layer = Layer.effect(
             startedAtIso,
           });
           yield* notifyChanged;
+          if (
+            active.workspaceStrategy.type === "worktree" &&
+            result._tag === "Success" &&
+            result.value !== null
+          ) {
+            yield* recordFailedPreparation({
+              task: completed,
+              threadId: result.value,
+              messageId,
+            }).pipe(Effect.forkIn(serviceScope));
+          }
         }
         return completed;
       }).pipe(
@@ -1310,8 +1381,6 @@ export const layer = Layer.effect(
             : [raced, permits];
         });
       });
-
-    const serviceScope = yield* Effect.scope;
 
     const observeDelivery = (
       request: WebhookTriggerRequest,
