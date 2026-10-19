@@ -276,7 +276,7 @@ export interface BoundComposerAttachment {
   attachmentId: string;
 }
 
-/** The record for an attachment that already exists on the server, or null before then. */
+/** Returns null until the attachment has a server id. */
 export function uploadedAttachmentContextRecord(
   attachment: ComposerImageAttachment | ComposerFileAttachment,
   upload: AttachmentUploadState | undefined,

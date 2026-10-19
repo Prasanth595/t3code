@@ -3058,11 +3058,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
   };
   const countReservedAttachmentsStable = useStableCallback(countReservedAttachments);
-  /**
-   * Bytes for a pasted image or file come back through the source environment's asset URL
-   * (the client is the only party that can reach both) and re-enter this draft as a normal
-   * attachment under a fresh id.
-   */
   const runAttachmentImport = async (
     record: Extract<ComposerContextRecord, { kind: "image" | "file" }>,
     localId: string,
@@ -3076,11 +3071,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         description: `${reason} Remove the chip or attach the file again.`,
       });
     };
-    const download = async (): Promise<File | null> => {
+    let file = copiedComposerAttachmentFile(sourceEnvironmentId, record.attachmentId);
+    if (!file) {
       const sourceConnection = readPreparedConnection(sourceEnvironmentId);
       if (!sourceConnection) {
         fail("The environment it came from is not connected.");
-        return null;
+        return;
       }
       const result = await createAssetUrl({
         environmentId: sourceEnvironmentId,
@@ -3092,18 +3088,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           : null;
       if (!url) {
         fail("The original attachment is no longer available.");
-        return null;
+        return;
       }
       const blob = await downloadAttachmentBlob(url);
       if (!blob) {
         fail("Downloading it from the source failed.");
-        return null;
+        return;
       }
-      return new File([blob], record.name, { type: record.mimeType || blob.type });
-    };
-    const file =
-      copiedComposerAttachmentFile(sourceEnvironmentId, record.attachmentId) ?? (await download());
-    if (!file) return;
+      file = new File([blob], record.name, { type: record.mimeType || blob.type });
+    }
     // The draft these bytes belong to may have been sent or switched away from while they
     // downloaded. Dropping them here keeps them out of whatever draft is open now.
     if (attachmentTargetKeyRef.current !== importTargetKey) return;
@@ -3193,6 +3186,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         const found = composerContextRecords.get(contextId);
         return found ? [found] : [];
       })[0];
+      // Upload completion can change the server id since copy; the local bytes still match.
       if (
         sourceEnvironmentId !== null &&
         (record.kind === "image" || record.kind === "file") &&
