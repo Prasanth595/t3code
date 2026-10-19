@@ -79,10 +79,10 @@ describe("Files panel", () => {
     );
   }
 
-  async function remount() {
+  async function remount(overrides: Partial<ComponentProps<typeof FileBrowserPanel>> = {}) {
     await act(async () => root!.unmount());
     root = createRoot(container!);
-    await render();
+    await render(overrides);
   }
 
   async function toggleFolder(path: string) {
@@ -238,13 +238,17 @@ describe("Files panel", () => {
     expect(visiblePaths()).not.toContain("src/app.ts");
     expect(visiblePaths()).not.toContain("docs/guide.md");
 
-    await render();
+    const retainedSelection = { selectedPath: "src/app.ts", selectedPathRevealId: 1 };
+    await render(retainedSelection);
     expect(visiblePaths()).toContain("src/app.ts");
     await toggleFolder("src");
     expect(visiblePaths()).not.toContain("src/app.ts");
-    await remount();
+    await remount(retainedSelection);
     expect(visiblePaths()).not.toContain("src/app.ts");
     expect(localStorage.getItem("t3code.fileTreeExpanded:test-environment:/workspace")).toBeNull();
+
+    await render({ ...retainedSelection, selectedPathRevealId: 2 });
+    expect(visiblePaths()).toContain("src/app.ts");
   });
 
   it("loads remembered parents before restoring children as their listings arrive", async () => {
