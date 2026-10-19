@@ -76,6 +76,7 @@ const createRun = Effect.fn(function* (
   threadId: ThreadId,
   status: OrchestrationV2Run["status"] = "completed",
   ordinal = 1,
+  completedAt = old,
 ) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const runId = RunId.make(`run:${threadId}:${ordinal}`);
@@ -97,7 +98,7 @@ const createRun = Effect.fn(function* (
       status,
       requestedAt: old,
       startedAt: status === "queued" ? null : old,
-      completedAt: ["completed", "rolled_back", "failed"].includes(status) ? old : null,
+      completedAt: ["completed", "rolled_back", "failed"].includes(status) ? completedAt : null,
       checkpointId: null,
       contextHandoffId: null,
     },
@@ -355,62 +356,35 @@ it.effect.each([
 );
 
 it.effect.each([
-  ["sql", SqlLayer],
+  ["sql", layerSql],
   ["memory", ProjectionStore.layerMemory],
 ] as const)(
-  "%s: the user-authored run finish time counts only runs carrying the user's own messages",
+  "%s: derives reply completion from user messages, including steering",
   ([, testLayer]) =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
-      const minutesAgo = (minutes: number) => DateTime.subtract(now, { minutes });
-      const run = (
-        threadId: ThreadId,
-        ordinal: number,
-        completedAt: DateTime.Utc | null,
-        userMessageId: string,
-      ) =>
-        store.apply({
-          id: EventId.make(`event:run:${threadId}:${ordinal}`),
-          type: "run.created",
-          threadId,
-          occurredAt: old,
-          payload: {
-            id: RunId.make(`run:${threadId}:${ordinal}`),
-            threadId,
-            ordinal,
-            providerInstanceId,
-            modelSelection,
-            providerThreadId: null,
-            userMessageId: MessageId.make(userMessageId),
-            rootNodeId: null,
-            activeAttemptId: null,
-            status: completedAt === null ? "interrupted" : "completed",
-            requestedAt: old,
-            startedAt: old,
-            completedAt,
-            checkpointId: null,
-            contextHandoffId: null,
-          },
-        });
+      const threadId = yield* createThread("reply-completion");
+      const firstReplyAt = DateTime.subtract(now, { minutes: 20 });
+      const latestReplyAt = DateTime.subtract(now, { minutes: 5 });
       const message = (
-        threadId: ThreadId,
         id: string,
+        runId: RunId,
         createdBy: "user" | "agent",
-        runOrdinal: number | null,
+        role: "user" | "assistant" = "user",
       ) =>
         store.apply({
-          id: EventId.make(`event:message:${id}`),
+          id: EventId.make(`event:${id}`),
           type: "message.updated",
           threadId,
           occurredAt: old,
           payload: {
-            createdBy,
-            creationSource: createdBy === "user" ? "web" : "provider",
             id: MessageId.make(id),
             threadId,
-            runId: runOrdinal === null ? null : RunId.make(`run:${threadId}:${runOrdinal}`),
+            runId,
+            createdBy,
+            creationSource: createdBy === "user" ? "web" : "provider",
             nodeId: null,
-            role: "user",
+            role,
             text: id,
             attachments: [],
             streaming: false,
@@ -418,48 +392,22 @@ it.effect.each([
             updatedAt: old,
           },
         });
-      const latest = (threadId: ThreadId) =>
-        store
-          .getSettlementCandidates(threadId)
-          .pipe(
-            Effect.map(([candidate]) =>
-              candidate?.latestUserAuthoredRunCompletedAt == null
-                ? null
-                : DateTime.formatIso(candidate.latestUserAuthoredRunCompletedAt),
-            ),
-          );
+      const completion = store
+        .getSettlementCandidates(threadId)
+        .pipe(Effect.map(([candidate]) => candidate!.latestUserAuthoredRunCompletedAt));
 
-      // The latest of the user's runs wins over earlier ones and over a later
-      // run that an agent notification started.
-      const mixed = yield* createThread("run-finish-mixed");
-      yield* run(mixed, 1, minutesAgo(30), "mixed:first");
-      yield* message(mixed, "mixed:first", "user", 1);
-      yield* run(mixed, 2, minutesAgo(20), "mixed:second");
-      yield* message(mixed, "mixed:second", "user", 2);
-      yield* run(mixed, 3, minutesAgo(10), "mixed:notification");
-      yield* message(mixed, "mixed:notification", "agent", 3);
-      assert.equal(yield* latest(mixed), DateTime.formatIso(minutesAgo(20)));
+      const steered = yield* createRun(threadId, "completed", 1, firstReplyAt);
+      yield* message(`message:${steered}`, steered, "agent");
+      yield* message("non-user-role", steered, "user", "assistant");
+      assert.isNull(yield* completion);
+      yield* message("steering", steered, "user");
+      assert.deepEqual(yield* completion, firstReplyAt);
 
-      // A message the user steered into an agent-started run makes it theirs.
-      const steered = yield* createThread("run-finish-steered");
-      yield* run(steered, 1, minutesAgo(5), "steered:notification");
-      yield* message(steered, "steered:notification", "agent", 1);
-      yield* message(steered, "steered:steer", "user", 1);
-      assert.equal(yield* latest(steered), DateTime.formatIso(minutesAgo(5)));
-
-      // Only agent-started runs, a user run with no finish time, or a user
-      // message no run picked up leave no finish time.
-      const agentOnly = yield* createThread("run-finish-agent-only");
-      yield* run(agentOnly, 1, minutesAgo(5), "agent-only:notification");
-      yield* message(agentOnly, "agent-only:notification", "agent", 1);
-      assert.isNull(yield* latest(agentOnly));
-      const unfinished = yield* createThread("run-finish-unfinished");
-      yield* run(unfinished, 1, null, "unfinished:first");
-      yield* message(unfinished, "unfinished:first", "user", 1);
-      assert.isNull(yield* latest(unfinished));
-      const unclaimed = yield* createThread("run-finish-unclaimed");
-      yield* message(unclaimed, "unclaimed:first", "user", null);
-      assert.isNull(yield* latest(unclaimed));
+      const reply = yield* createRun(threadId, "completed", 2, latestReplyAt);
+      yield* message(`message:${reply}`, reply, "user");
+      const background = yield* createRun(threadId, "completed", 3, now);
+      yield* message(`message:${background}`, background, "agent");
+      assert.deepEqual(yield* completion, latestReplyAt);
     }).pipe(Effect.provide(testLayer)),
 );
 
