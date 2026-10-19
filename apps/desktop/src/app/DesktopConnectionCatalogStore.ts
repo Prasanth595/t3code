@@ -47,10 +47,8 @@ const RuntimeConnectionCatalogDocumentJson = Schema.fromJsonString(
 const encodeRuntimeConnectionCatalogDocumentJson = Schema.encodeEffect(
   RuntimeConnectionCatalogDocumentJson,
 );
-// A wrong key can still unpad cleanly, so recovered plaintext must look like a catalog.
-const decodeCatalogJsonOption = Schema.decodeOption(
-  Schema.fromJsonString(Schema.Struct({ schemaVersion: Schema.Literal(1) })),
-);
+const decodeCatalogJsonOption = Schema.decodeOption(RuntimeConnectionCatalogDocumentJson);
+const decodeNativeCatalogJson = Schema.decodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 const DesktopConnectionCatalogStoreWriteOperation = Schema.Literals([
   "create-temporary-file-name",
@@ -479,14 +477,12 @@ export const make = Effect.gen(function* () {
     return Option.some(encoded);
   });
 
-  // Re-encrypting under the current name means only the first read after an
-  // upgrade pays for the previous key lookup.
   const recoverPreviousIdentityCatalog = Effect.fn(
     "desktop.connectionCatalogStore.recoverPreviousIdentityCatalog",
   )(function* (
     document: EncryptedConnectionCatalogDocument,
     encryptedCatalog: Uint8Array,
-    cause: ElectronSafeStorage.ElectronSafeStorageDecryptError,
+    cause: ElectronSafeStorage.ElectronSafeStorageDecryptError | Schema.SchemaError,
   ) {
     const recovered = Option.filter(
       yield* safeStorageIdentity.decryptWithPreviousName(encryptedCatalog),
@@ -526,13 +522,17 @@ export const make = Effect.gen(function* () {
       }
       const decrypted = yield* decodeSecretBytes(catalogPath, document.value.encryptedCatalog).pipe(
         Effect.flatMap((encryptedCatalog) =>
-          safeStorage
-            .decryptString(encryptedCatalog)
-            .pipe(
-              Effect.catch((cause) =>
-                recoverPreviousIdentityCatalog(document.value, encryptedCatalog, cause),
-              ),
+          safeStorage.decryptString(encryptedCatalog).pipe(
+            // CBC can decrypt with the wrong key without failing its padding check.
+            Effect.tap((catalog) =>
+              environment.platform === "darwin" || environment.platform === "linux"
+                ? decodeNativeCatalogJson(catalog)
+                : Effect.void,
             ),
+            Effect.catch((cause) =>
+              recoverPreviousIdentityCatalog(document.value, encryptedCatalog, cause),
+            ),
+          ),
         ),
       );
       return Option.some(decrypted);

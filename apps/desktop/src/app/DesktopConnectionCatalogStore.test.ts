@@ -60,7 +60,7 @@ const savedCatalog = JSON.stringify({
   disabledEnvironmentIds: [],
 });
 
-const encryptBetaCatalog = (platform: NodeJS.Platform) => {
+const encryptBetaCatalog = (platform: NodeJS.Platform, catalog = savedCatalog) => {
   const key = NodeCrypto.pbkdf2Sync(
     "beta-secret",
     "saltysalt",
@@ -71,7 +71,7 @@ const encryptBetaCatalog = (platform: NodeJS.Platform) => {
   const cipher = NodeCrypto.createCipheriv("aes-128-cbc", key, Buffer.alloc(16, " "));
   return Buffer.concat([
     Buffer.from(platform === "darwin" ? "v10" : "v11"),
-    cipher.update(savedCatalog, "utf8"),
+    cipher.update(catalog, "utf8"),
     cipher.final(),
   ]);
 };
@@ -86,7 +86,11 @@ const encodeLegacySavedEnvironments = Schema.encodeEffect(
     Schema.Struct({ version: Schema.Literal(1), records: Schema.Array(Schema.Unknown) }),
   ),
 );
-function layerSafeStorageFor(available: boolean, failDecrypt: Ref.Ref<boolean> | null = null) {
+function layerSafeStorageFor(
+  available: boolean,
+  failDecrypt: Ref.Ref<boolean> | null = null,
+  currentSecret?: string,
+) {
   return Layer.succeed(ElectronSafeStorage.ElectronSafeStorage, {
     isEncryptionAvailable: Effect.succeed(available),
     encryptString: (value) => Effect.succeed(textEncoder.encode(`encrypted:${value}`)),
@@ -97,6 +101,23 @@ function layerSafeStorageFor(available: boolean, failDecrypt: Ref.Ref<boolean> |
           !decoded.startsWith("encrypted:") ||
           (failDecrypt !== null && (yield* Ref.get(failDecrypt)))
         ) {
+          if (currentSecret !== undefined) {
+            return yield* Effect.try({
+              try: () => {
+                const key = NodeCrypto.pbkdf2Sync(currentSecret, "saltysalt", 1003, 16, "sha1");
+                const decipher = NodeCrypto.createDecipheriv(
+                  "aes-128-cbc",
+                  key,
+                  Buffer.alloc(16, " "),
+                );
+                return Buffer.concat([
+                  decipher.update(value.subarray(3)),
+                  decipher.final(),
+                ]).toString("utf8");
+              },
+              catch: (cause) => new ElectronSafeStorage.ElectronSafeStorageDecryptError({ cause }),
+            });
+          }
           return yield* new ElectronSafeStorage.ElectronSafeStorageDecryptError({
             cause: new Error("invalid encrypted catalog"),
           });
@@ -140,6 +161,7 @@ const layerLinuxKeyAccess = (lookup: Effect.Effect<string | null>) =>
 interface RecoveryOptions {
   readonly platform?: NodeJS.Platform;
   readonly linuxKeyLookup?: Effect.Effect<string | null>;
+  readonly currentSecret?: string | undefined;
 }
 
 function layerFor(
@@ -164,7 +186,11 @@ function layerFor(
       Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({ T3CODE_HOME: baseDir })),
     ),
   );
-  const layerSafeStorage = layerSafeStorageFor(encryptionAvailable, failDecrypt);
+  const layerSafeStorage = layerSafeStorageFor(
+    encryptionAvailable,
+    failDecrypt,
+    recovery.currentSecret,
+  );
   const layerDependencies = Layer.mergeAll(
     layerEnvironment,
     layerSafeStorage,
@@ -541,7 +567,10 @@ describe("DesktopConnectionCatalogStore", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  const writeBetaCatalog = (platform: NodeJS.Platform) =>
+  const writeBetaCatalog = (
+    platform: NodeJS.Platform,
+    encryptedCatalog = encryptBetaCatalog(platform),
+  ) =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       const environment = yield* DesktopEnvironment.DesktopEnvironment;
@@ -549,16 +578,24 @@ describe("DesktopConnectionCatalogStore", () => {
       const catalogPath = path.join(environment.stateDir, "connection-catalog.json");
       const contents = `${JSON.stringify({
         version: 1,
-        encryptedCatalog: Base64.encode(encryptBetaCatalog(platform)),
+        encryptedCatalog: Base64.encode(encryptedCatalog),
       })}\n`;
       yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
       yield* fileSystem.writeFileString(catalogPath, contents);
       return { catalogPath, contents };
     });
 
-  it.effect.each(["darwin", "linux"] as const)(
-    "recovers a Beta catalog on %s and reopens it without the Beta key",
-    (platform) =>
+  it.effect.each([
+    { platform: "darwin" as const, currentSecret: undefined, label: "macOS" },
+    { platform: "linux" as const, currentSecret: undefined, label: "Linux" },
+    {
+      platform: "darwin" as const,
+      currentSecret: "wrong-key-494",
+      label: "macOS with valid padding under the wrong current key",
+    },
+  ])(
+    "recovers a Beta catalog on $label and reopens it without the Beta key",
+    ({ platform, currentSecret }) =>
       withStore(
         Effect.gen(function* () {
           getBetaPassword.mockReturnValue("beta-secret");
@@ -579,21 +616,33 @@ describe("DesktopConnectionCatalogStore", () => {
           assert.deepStrictEqual(yield* reopened.get, Option.some(savedCatalog));
         }),
         true,
-        { platform, linuxKeyLookup: Effect.succeed("beta-secret") },
+        { platform, currentSecret, linuxKeyLookup: Effect.succeed("beta-secret") },
       ),
   );
 
   it.effect.each([
     // This wrong key has valid CBC padding, so decryption alone cannot validate recovery.
-    { platform: "darwin" as const, secret: "wrong-key-494", label: "wrong" },
-    { platform: "linux" as const, secret: null, label: "missing" },
-  ])("leaves the catalog bytes intact with a $label Beta key", ({ platform, secret }) =>
+    { platform: "darwin" as const, secret: "wrong-key-494", label: "a wrong Beta key" },
+    { platform: "linux" as const, secret: null, label: "a missing Beta key" },
+    {
+      platform: "darwin" as const,
+      secret: "beta-secret",
+      label: "unencrypted input",
+      encryptedCatalog: Buffer.from(savedCatalog),
+    },
+    {
+      platform: "linux" as const,
+      secret: "beta-secret",
+      label: "an invalid catalog",
+      encryptedCatalog: encryptBetaCatalog("linux", '{"schemaVersion":1,"targets":null}'),
+    },
+  ])("leaves the catalog bytes intact for $label", ({ platform, secret, encryptedCatalog }) =>
     withStore(
       Effect.gen(function* () {
         getBetaPassword.mockReturnValue(secret);
         const fileSystem = yield* FileSystem.FileSystem;
         const store = yield* DesktopConnectionCatalogStore.DesktopConnectionCatalogStore;
-        const { catalogPath, contents } = yield* writeBetaCatalog(platform);
+        const { catalogPath, contents } = yield* writeBetaCatalog(platform, encryptedCatalog);
 
         const error = yield* store.get.pipe(Effect.flip);
         assert.instanceOf(
