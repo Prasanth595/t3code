@@ -211,30 +211,6 @@ export function resolveFileDiffPreviousPath(fileDiff: FileDiffMetadata): string 
   return fileDiff.prevName ?? fileDiff.name ?? "";
 }
 
-const collapsedFileDiffStubs = new WeakMap<FileDiffMetadata, FileDiffMetadata>();
-
-/**
- * Header-only stand-in for a collapsed file, so the viewer gets no content and never highlights
- * lines it does not display. The `:collapsed` suffix keeps it apart from a `:pending` placeholder,
- * which disables the expand control.
- */
-export function getCollapsedFileDiffStub(fileDiff: FileDiffMetadata): FileDiffMetadata {
-  const cached = collapsedFileDiffStubs.get(fileDiff);
-  if (cached) return cached;
-  const stub: FileDiffMetadata = {
-    ...fileDiff,
-    hunks: [],
-    additionLines: [],
-    deletionLines: [],
-    splitLineCount: 0,
-    unifiedLineCount: 0,
-    isPartial: true,
-    cacheKey: `${fileDiff.cacheKey ?? resolveFileDiffPath(fileDiff)}:collapsed`,
-  };
-  collapsedFileDiffStubs.set(fileDiff, stub);
-  return stub;
-}
-
 /**
  * A type change (regular file to symlink) arrives as a deletion and an addition
  * of the same path, so the change type is part of the identity.
