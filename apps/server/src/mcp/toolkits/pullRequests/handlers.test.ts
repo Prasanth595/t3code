@@ -434,13 +434,14 @@ describe("pull request toolkit handlers", () => {
           locator: {
             source: "git-remote",
             remoteName: "origin",
-            remoteUrl: "https://scm.example.test/tfs/Collection/Project/_git/Repo",
+            remoteUrl: "http://dummy:secret@scm.example.test:8080/tfs/Collection/Project/_git/Repo",
           },
           provider: "unknown",
           displayName: "tfs/collection/project/_git/repo",
         }),
       });
-      const generated = "https://scm.example.test/tfs/collection/project/_git/repo/pullrequest/124";
+      const generated =
+        "http://scm.example.test:8080/tfs/collection/project/_git/repo/pullrequest/124";
       const fromNumber = yield* harness.call("link_pull_request", {
         repository: "tfs/Collection/Project/_git/Repo",
         number: 124,
