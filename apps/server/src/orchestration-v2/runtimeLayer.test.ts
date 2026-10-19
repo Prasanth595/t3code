@@ -18,6 +18,7 @@ import {
   TurnItemId,
   type ModelSelection,
   type OrchestrationV2Run,
+  type OrchestrationV2RuntimeRequest,
   ProjectId,
   type PullRequestDetail,
   type PullRequestComment,
@@ -25,6 +26,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  ProviderSessionId,
   ProviderTurnId,
   RunId,
   ThreadId,
@@ -1004,15 +1006,266 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
     }),
   );
 
+  const seedPendingQuestion = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    runId: RunId | null,
+    responseCapability: OrchestrationV2RuntimeRequest["responseCapability"],
+  ) {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const now = yield* DateTime.now;
+    const requestId = RuntimeRequestId.make(`${threadId}:request`);
+    const nodeId = NodeId.make(`${threadId}:node`);
+    const itemId = TurnItemId.make(`${threadId}:item`);
+    yield* eventSink.write({
+      commandId: CommandId.make(`${threadId}:seed`),
+      events: [
+        {
+          id: EventId.make(`${threadId}:node-event`),
+          type: "node.updated",
+          threadId,
+          nodeId,
+          occurredAt: now,
+          payload: {
+            id: nodeId,
+            threadId,
+            runId,
+            parentNodeId: null,
+            rootNodeId: nodeId,
+            kind: "user_input_request",
+            status: "waiting",
+            countsForRun: false,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: requestId,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: null,
+          },
+        },
+        {
+          id: EventId.make(`${threadId}:request-event`),
+          type: "runtime-request.updated",
+          threadId,
+          nodeId,
+          occurredAt: now,
+          payload: {
+            id: requestId,
+            nodeId,
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: "user_input",
+            status: "pending",
+            responseCapability,
+            createdAt: now,
+            resolvedAt: null,
+          },
+        },
+        {
+          id: EventId.make(`${threadId}:item-event`),
+          type: "turn-item.updated",
+          threadId,
+          nodeId,
+          occurredAt: now,
+          payload: {
+            id: itemId,
+            type: "user_input_request",
+            threadId,
+            runId,
+            nodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 0,
+            status: "waiting",
+            title: null,
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+            requestId,
+            questions: [
+              { id: "color", header: "Color", question: "Which color?", options: [] },
+              {
+                id: "sizes",
+                header: "Sizes",
+                question: "Which sizes?",
+                options: [],
+                multiSelect: true,
+              },
+            ],
+          },
+        },
+      ],
+    });
+    return { requestId, nodeId, itemId };
+  });
+
+  it.effect.each(["startup", "shutdown"] as const)(
+    "recovers only reconstructable user questions and keeps their cards pending on %s",
+    (trigger) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make(`runtime-recovered-question-${trigger}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`runtime-recovered-question-create-${trigger}`),
+          createdBy: "user",
+          creationSource: "web",
+          threadId,
+          projectId: ProjectId.make(`runtime-recovered-question-project-${trigger}`),
+          title: "Async question",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`${threadId}:run`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:message`),
+          text: "Ask me a question",
+          attachments: [],
+          createdBy: "user",
+          creationSource: "web",
+          dispatchMode: { type: "start_immediately" },
+        });
+        const runId = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!.id;
+        const { requestId, nodeId, itemId } = yield* seedPendingQuestion(threadId, runId, {
+          type: "live",
+          providerSessionId: ProviderSessionId.make(`lost-session-${trigger}`),
+        });
+        const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;
+        const original = yield* orchestrator.getThreadProjection(threadId);
+        const request = original.runtimeRequests[0]!;
+        const questionItem = original.turnItems.find((item) => item.type === "user_input_request")!;
+        const nativeThreadId = ThreadId.make(`runtime-recovered-native-child-${trigger}`);
+        const nativeRequestId = RuntimeRequestId.make(
+          `runtime-recovered-native-request-${trigger}`,
+        );
+        const approvalId = RuntimeRequestId.make(`runtime-recovered-approval-${trigger}`);
+        const missingTextId = RuntimeRequestId.make(`runtime-recovered-missing-text-${trigger}`);
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`recovery-approval-${trigger}`),
+              type: "runtime-request.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...request, id: approvalId, kind: "command" },
+            },
+            {
+              id: EventId.make(`recovery-missing-text-${trigger}`),
+              type: "runtime-request.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...request, id: missingTextId },
+            },
+            {
+              id: EventId.make(`recovery-native-thread-${trigger}`),
+              type: "thread.created",
+              threadId: nativeThreadId,
+              occurredAt: now,
+              payload: {
+                ...original.thread,
+                id: nativeThreadId,
+                creationSource: "provider",
+                lineage: {
+                  parentThreadId: threadId,
+                  rootThreadId: threadId,
+                  relationshipToParent: "subagent",
+                },
+              },
+            },
+            {
+              id: EventId.make(`recovery-native-request-${trigger}`),
+              type: "runtime-request.updated",
+              threadId: nativeThreadId,
+              occurredAt: now,
+              payload: { ...request, id: nativeRequestId },
+            },
+            {
+              id: EventId.make(`recovery-native-item-${trigger}`),
+              type: "turn-item.updated",
+              threadId: nativeThreadId,
+              occurredAt: now,
+              payload: {
+                ...questionItem,
+                id: TurnItemId.make(`recovery-native-item-${trigger}`),
+                type: "user_input_request",
+                threadId: nativeThreadId,
+                runId: null,
+                requestId: nativeRequestId,
+                questions: [
+                  { id: "color", header: "Color", question: "Which color?", options: [] },
+                ],
+              },
+            },
+          ],
+        });
+        yield* recovery.reconcile(trigger);
+        const recovered = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(recovered.runs[0]?.status, "cancelled");
+        assert.deepEqual(
+          recovered.runtimeRequests.find((row) => row.id === requestId),
+          {
+            ...request,
+            responseCapability: { type: "message" },
+          },
+        );
+        assert.equal(recovered.nodes.find((row) => row.id === nodeId)?.status, "waiting");
+        assert.equal(recovered.turnItems.find((row) => row.id === itemId)?.status, "waiting");
+        for (const id of [approvalId, missingTextId]) {
+          const closed = recovered.runtimeRequests.find((row) => row.id === id);
+          assert.equal(closed?.status, trigger === "startup" ? "expired" : "cancelled");
+          assert.equal(closed?.responseCapability.type, "not_resumable");
+        }
+        const native = yield* orchestrator.getThreadProjection(nativeThreadId);
+        assert.equal(
+          native.runtimeRequests[0]?.status,
+          trigger === "startup" ? "expired" : "cancelled",
+        );
+        assert.equal(native.runtimeRequests[0]?.responseCapability.type, "not_resumable");
+        yield* recovery.reconcile("shutdown");
+        yield* recovery.reconcile("startup");
+        assert.deepEqual(
+          (yield* orchestrator.getThreadProjection(threadId)).runtimeRequests,
+          recovered.runtimeRequests,
+        );
+        yield* orchestrator.dispatch({
+          type: "runtime-request.respond",
+          commandId: CommandId.make(`recovery-answer-${trigger}`),
+          threadId,
+          requestId,
+          answers: { color: "Blue", sizes: ["Small", "Large"] },
+        });
+        const answered = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          answered.runtimeRequests.find((row) => row.id === requestId)?.status,
+          "resolved",
+        );
+        assert.equal(
+          answered.messages.at(-1)?.text,
+          "Which color?\nBlue\n\nWhich sizes?\nSmall, Large",
+        );
+        assert.deepEqual(
+          (yield* (yield* EffectOutbox.EffectOutboxV2).listByCommandId(
+            CommandId.make(`recovery-answer-${trigger}`),
+          )).map((effect) => effect.request.type),
+          ["provider-turn.start"],
+        );
+      }),
+  );
+
   it.effect("answers an async question after its provider exits and commits the answer once", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
       const eventSink = yield* EventSink.EventSinkV2;
-      const now = yield* DateTime.now;
       const threadId = ThreadId.make("runtime-async-question");
-      const requestId = RuntimeRequestId.make("runtime-async-question-request");
-      const nodeId = NodeId.make("runtime-async-question-node");
-      const itemId = TurnItemId.make("runtime-async-question-item");
       yield* orchestrator.dispatch({
         type: "thread.create",
         commandId: CommandId.make("runtime-async-question-create"),
@@ -1027,102 +1280,33 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         branch: null,
         worktreePath: process.cwd(),
       });
-      yield* eventSink.write({
-        commandId: CommandId.make("runtime-async-question-seed"),
-        events: [
-          {
-            id: EventId.make("runtime-async-question-node-event"),
-            type: "node.updated",
-            threadId,
-            nodeId,
-            occurredAt: now,
-            payload: {
-              id: nodeId,
-              threadId,
-              runId: null,
-              parentNodeId: null,
-              rootNodeId: nodeId,
-              kind: "user_input_request",
-              status: "waiting",
-              countsForRun: false,
-              providerThreadId: null,
-              providerTurnId: null,
-              nativeItemRef: null,
-              runtimeRequestId: requestId,
-              checkpointScopeId: null,
-              startedAt: now,
-              completedAt: null,
-            },
-          },
-          {
-            id: EventId.make("runtime-async-question-request-event"),
-            type: "runtime-request.updated",
-            threadId,
-            nodeId,
-            occurredAt: now,
-            payload: {
-              id: requestId,
-              nodeId,
-              providerTurnId: null,
-              nativeRequestRef: null,
-              kind: "user_input",
-              status: "pending",
-              responseCapability: { type: "message" },
-              createdAt: now,
-              resolvedAt: null,
-            },
-          },
-          {
-            id: EventId.make("runtime-async-question-item-event"),
-            type: "turn-item.updated",
-            threadId,
-            nodeId,
-            occurredAt: now,
-            payload: {
-              id: itemId,
-              type: "user_input_request",
-              threadId,
-              runId: null,
-              nodeId,
-              providerThreadId: null,
-              providerTurnId: null,
-              nativeItemRef: null,
-              parentItemId: null,
-              ordinal: 0,
-              status: "waiting",
-              title: null,
-              startedAt: now,
-              completedAt: null,
-              updatedAt: now,
-              requestId,
-              responseMode: "message",
-              questions: [
-                { id: "color", header: "Color", question: "Which color?", options: [] },
-                {
-                  id: "sizes",
-                  header: "Sizes",
-                  question: "Which sizes?",
-                  options: [],
-                  multiSelect: true,
-                },
-              ],
-            },
-          },
-        ],
+      const { requestId, nodeId, itemId } = yield* seedPendingQuestion(threadId, null, {
+        type: "message",
       });
-      const invalid = yield* orchestrator
-        .dispatch({
-          type: "runtime-request.respond",
-          commandId: CommandId.make("runtime-async-question-blank"),
-          threadId,
-          requestId,
-          answers: { color: " ", sizes: ["Small"] },
-        })
-        .pipe(Effect.result);
-      assert.equal(invalid._tag, "Failure");
-      const unanswered = yield* orchestrator.getThreadProjection(threadId);
-      assert.equal(unanswered.runtimeRequests[0]?.status, "pending");
-      assert.deepEqual(unanswered.messages, []);
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const beforeInvalid = yield* orchestrator.getThreadProjection(threadId);
+      const beforeSequence = yield* eventSink.latestSequence();
+      for (const [index, answers] of [
+        { color: " ", sizes: ["Small"] },
+        { color: "Blue", sizes: ["Small", 7] },
+        { color: "Blue", sizes: [] },
+        { color: "Blue", sizes: ["Small", " "] },
+      ].entries()) {
+        const commandId = CommandId.make(`runtime-async-question-invalid:${index}`);
+        const invalid = yield* orchestrator
+          .dispatch({
+            type: "runtime-request.respond",
+            commandId,
+            threadId,
+            requestId,
+            answers,
+          })
+          .pipe(Effect.result);
+        assert.equal(invalid._tag, "Failure", JSON.stringify(answers));
+        assert.deepEqual(yield* orchestrator.getThreadProjection(threadId), beforeInvalid);
+        assert.equal(yield* eventSink.latestSequence(), beforeSequence);
+        assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+      }
 
       const command = {
         type: "runtime-request.respond" as const,
@@ -1153,6 +1337,10 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       assert.equal(answered.messages[0]?.text, "Which color?\nBlue\n\nWhich sizes?\nSmall, Large");
       assert.equal(answered.messages[0]?.role, "user");
       assert.equal(answered.runs.length, 1);
+      assert.deepEqual(
+        (yield* outbox.listByCommandId(command.commandId)).map((effect) => effect.request.type),
+        ["provider-turn.start"],
+      );
 
       const duplicate = yield* orchestrator
         .dispatch({
