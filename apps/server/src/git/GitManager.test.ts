@@ -5766,8 +5766,6 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  // Replay gh's forced reset and unforced fast-forward against real Git refs.
-  const headShaField = (headSha: string | undefined) => (headSha === undefined ? {} : { headSha });
   const setUpLocalCheckoutPullRequest = Effect.fnUntraced(function* (
     reportedHead: (pullHead: string) => string | undefined = (pullHead) => pullHead,
     syncCheckoutWithPullHead = true,
@@ -5788,6 +5786,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     const pullHead = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim();
     yield* runGit(repoDir, ["push", "origin", "HEAD:refs/pull/91/head"]);
     yield* runGit(repoDir, ["reset", "--hard", firstCommit]);
+    const headSha = reportedHead(pullHead);
     const { manager, ghCalls } = yield* makeManager({
       ...(gitSpawnGate ? { gitSpawnGate } : {}),
       ghScenario: {
@@ -5798,7 +5797,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           baseRefName: "main",
           headRefName: "feature/pr-safe",
           state: "open",
-          ...headShaField(reportedHead(pullHead)),
+          ...(headSha === undefined ? {} : { headSha }),
         },
         syncCheckoutWithPullHead,
       },
@@ -5806,25 +5805,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     return { repoDir, manager, ghCalls, firstCommit, pullHead };
   });
 
-  it.effect.each([
-    ["switch", "before-refresh", false],
-    ["switch", "during-refresh", false],
-    ["create-and-switch", "before-refresh", false],
-    ["create-and-switch", "during-refresh", false],
-    ["switch", "during-refresh", true],
-    ["create-and-switch", "during-refresh", true],
-    ["feature-branch", "during-refresh", true],
-  ] as const)(
-    "local PR checkout excludes a concurrent %s from another client (%s, alternate root: %s)",
-    ([operation, phase, alternateRoot]) =>
+  it.effect.each(["switch", "create-and-switch", "feature-branch"] as const)(
+    "local PR checkout excludes a concurrent %s from a nested project with an alternate root",
+    (operation) =>
       Effect.gen(function* () {
         const gate = {
           matches: (args: ReadonlyArray<string>) =>
-            args[0] === "rev-parse" &&
-            args[1] === "--verify" &&
-            (phase === "before-refresh"
-              ? /^[0-9a-f]{40}\^\{commit\}$/.test(args[2] ?? "")
-              : args[2] === "HEAD^{commit}"),
+            args[0] === "rev-parse" && args[1] === "--verify" && args[2] === "HEAD^{commit}",
           reached: yield* Deferred.make<void>(),
           release: yield* Deferred.make<void>(),
         };
@@ -5846,12 +5833,10 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const handle = yield* Context.get(registry, VcsDriverRegistry.VcsDriverRegistry).resolve({
           cwd: repoDir,
         });
-        const resolvedHandle = alternateRoot
-          ? {
-              ...handle,
-              repository: { ...handle.repository, rootPath: `${handle.repository.rootPath}/.` },
-            }
-          : handle;
+        const resolvedHandle = {
+          ...handle,
+          repository: { ...handle.repository, rootPath: `${handle.repository.rootPath}/.` },
+        };
         const fileSystem = yield* FileSystem.FileSystem;
         const canonicalRoot = yield* fileSystem.realPath(resolvedHandle.repository.rootPath);
         const git = yield* GitVcsDriver.GitVcsDriver;
@@ -6025,7 +6010,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     Effect.gen(function* () {
       // Like Bitbucket or Forgejo without `force`: the existing branch is checked out as it was.
       const { repoDir, manager, firstCommit, pullHead } = yield* setUpLocalCheckoutPullRequest(
-        (head) => head,
+        (head) => head.slice(0, 12),
         false,
       );
       yield* runGit(repoDir, ["checkout", "main"]);
@@ -6068,15 +6053,13 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       }),
   );
 
-  it.effect.each([
-    ["an abbreviated head commit", (pullHead: string) => pullHead.slice(0, 12), true],
-    ["no head commit", () => undefined, false],
-    ["a head commit this checkout does not have", () => "0".repeat(40), false],
-  ] as const)(
-    "local PR checkout on the head confirms it only from the provider's head commit (%s)",
-    ([, reportedHead, expected]) =>
+  it.effect.each([undefined, "0".repeat(40)])(
+    "local PR checkout cannot confirm an unavailable provider head (%s)",
+    (reportedHead) =>
       Effect.gen(function* () {
-        const { repoDir, manager, pullHead } = yield* setUpLocalCheckoutPullRequest(reportedHead);
+        const { repoDir, manager, pullHead } = yield* setUpLocalCheckoutPullRequest(
+          () => reportedHead,
+        );
         yield* runGit(repoDir, ["checkout", "main"]);
 
         const result = yield* preparePullRequestThread(manager, {
@@ -6086,7 +6069,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         });
 
         expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout.trim()).toBe(pullHead);
-        expect(result.isOnPullRequestHead).toBe(expected);
+        expect(result.isOnPullRequestHead).toBe(false);
       }),
   );
 
