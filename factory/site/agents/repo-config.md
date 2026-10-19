@@ -4,10 +4,10 @@ File: `.dw/config.yml` in the repo. Parsed by [`apps/server/src/factory/config.t
 
 ## Where it is read
 
-| Purpose                     | Source                                                                                                                                                              |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Whether the repo is watched | The T3 project's checkout on disk; falls back to `git show origin/HEAD:.dw/config.yml`. Opted in when the root and `factory` are both mappings. Not validated here. |
-| The config runs use         | The tip of the repo's default branch on GitHub, read on every pass.                                                                                                 |
+| Purpose                     | Source                                                                                                                                                                                                                |
+| --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Whether the repo is watched | The T3 project's checkout on disk; falls back to `git show origin/HEAD:.dw/config.yml`. Opted in when the root and `factory` are both mappings. Not validated here.                                                   |
+| The config runs use         | The tip of the repo's default branch on GitHub, read on every pass. Only when GitHub says the file is not there, the checkout's working tree, so a checkout-only config takes effect on the next pass without a push. |
 
 ## Schema
 
