@@ -74,9 +74,10 @@ export function useManagedRelayEnvironments() {
   };
 }
 
-export function refreshManagedRelayEnvironments(): void {
-  const session = appAtomRegistry.get(managedRelaySessionAtom);
-  if (session) {
-    managedRelayQueryManager.refreshEnvironments(appAtomRegistry, session.accountId);
+/** Refreshes one account's environment list, or the signed-in account's by default. */
+export function refreshManagedRelayEnvironments(accountId?: string): void {
+  const targetAccountId = accountId ?? appAtomRegistry.get(managedRelaySessionAtom)?.accountId;
+  if (targetAccountId) {
+    managedRelayQueryManager.refreshEnvironments(appAtomRegistry, targetAccountId);
   }
 }
