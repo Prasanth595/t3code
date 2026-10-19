@@ -22,11 +22,11 @@ class T3TerminalView(context: Context, appContext: AppContext) : ExpoView(contex
   private val container = FrameLayout(context)
   private val terminalCanvas = TerminalCanvasView(context)
 
-  // Autofill services read the visible-password input below as a login field. Newer Android
-  // versions also send fill requests for views that opt out with importantForAutofill, so
-  // report no autofill type, the one check every version runs first.
+  // Autofill treats a visible-password EditText as a login field, and newer Android still sends
+  // fill requests to views marked importantForAutofill=no. No autofill type is the check every
+  // version runs first (#12755).
   private val inputView = object : EditText(context) {
-    override fun getAutofillType() = View.AUTOFILL_TYPE_NONE
+    override fun getAutofillType(): Int = View.AUTOFILL_TYPE_NONE
   }
   private val onInput by EventDispatcher()
   private val onResize by EventDispatcher()
