@@ -47,6 +47,14 @@ export type EnvironmentPullRequestProviderSummary = PullRequestProviderSummary &
   readonly environmentId: EnvironmentId;
 };
 
+export type EnvironmentPullRequestListError = {
+  readonly environmentId: EnvironmentId;
+  readonly projectId?: string;
+  readonly projectTitle: string;
+  readonly message: string;
+  readonly host?: string;
+};
+
 export const scopedPullRequestListKey = (entry: EnvironmentPullRequestListEntry) =>
   `${entry.environmentId}:${pullRequestListKey(entry)}`;
 
@@ -113,67 +121,40 @@ export function mergeEnvironmentPullRequestPages(
   };
 }
 
-/**
- * Prefer the provider's actionable cause over the generic repository errors it produced.
- * A failed environment always keeps its own line; `connectedEnvironmentIds` only hides the
- * cached provider and repository details of environments that are no longer connected.
- */
-export function groupPullRequestListErrors<
-  ListError extends {
-    readonly environmentId: EnvironmentId;
-    readonly projectId?: string;
-    readonly projectTitle: string;
-    readonly host?: string;
-  },
-  Provider extends {
-    readonly environmentId: EnvironmentId;
-    readonly host: string;
-    readonly detail: string | null;
-  },
->(
-  errors: readonly ListError[],
-  providers: readonly Provider[] = [],
+export function groupPullRequestListErrors(
+  errors: readonly EnvironmentPullRequestListError[],
+  providers: readonly EnvironmentPullRequestProviderSummary[] = [],
   connectedEnvironmentIds?: ReadonlySet<EnvironmentId>,
 ) {
-  const environments: ListError[] = [];
+  const environments: EnvironmentPullRequestListError[] = [];
   const failedEnvironments = new Set<EnvironmentId>();
   for (const error of errors) {
     if (error.projectTitle) continue;
     environments.push(error);
     failedEnvironments.add(error.environmentId);
   }
-  const hosts = new Map<string, Provider>();
+  const hosts = new Map<string, EnvironmentPullRequestProviderSummary>();
   for (const provider of providers) {
     if (connectedEnvironmentIds && !connectedEnvironmentIds.has(provider.environmentId)) continue;
     if (provider.detail === null || failedEnvironments.has(provider.environmentId)) continue;
     hosts.set(`${provider.environmentId}:${provider.host}`, provider);
   }
-  const repositories = new Map<string, ListError>();
+  const repositories = new Map<string, EnvironmentPullRequestListError>();
   for (const error of errors) {
     if (connectedEnvironmentIds && !connectedEnvironmentIds.has(error.environmentId)) continue;
     if (!error.projectTitle) continue;
     if (failedEnvironments.has(error.environmentId)) continue;
+    // A host failure already explains its repositories; older servers omit the host.
     if (error.host && hosts.has(`${error.environmentId}:${error.host}`)) continue;
     repositories.set(`${error.environmentId}:${error.projectId ?? error.projectTitle}`, error);
   }
   return { environments, providers: [...hosts.values()], repositories: [...repositories.values()] };
 }
 
-/** Cause-aware messages for a failed continuation, short enough for the list footer. */
-export function pullRequestListErrorMessage<
-  ListError extends {
-    readonly environmentId: EnvironmentId;
-    readonly projectId?: string;
-    readonly projectTitle: string;
-    readonly message: string;
-    readonly host?: string;
-  },
-  Provider extends {
-    readonly environmentId: EnvironmentId;
-    readonly host: string;
-    readonly detail: string | null;
-  },
->(errors: readonly ListError[], providers: readonly Provider[] = []) {
+export function pullRequestListErrorMessage(
+  errors: readonly EnvironmentPullRequestListError[],
+  providers: readonly EnvironmentPullRequestProviderSummary[] = [],
+) {
   const grouped = groupPullRequestListErrors(errors, providers);
   const messages = grouped.providers.map((provider) => `${provider.host}: ${provider.detail}`);
   if (grouped.repositories.length === 1) {
@@ -259,6 +240,7 @@ export function appendPullRequestListPage(
     page.errors.some((error) => error.cursorKey === undefined) ||
     (page.errors.length > 0 && input.cursors === undefined)
   ) {
+    // Without per-repository cursors, retry the same request and deduplicate readable rows.
     return {
       ...previous,
       entries: mergePullRequestListEntries(previous.entries, page.entries),

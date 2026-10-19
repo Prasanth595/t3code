@@ -97,10 +97,12 @@ export function usePullRequestList(targets: readonly ListTarget[]) {
           );
           if (controller.signal.aborted || activeScope.current !== scopeKey) return;
           if (response._tag === "Failure") throw squashAtomCommandFailure(response);
-          const previous = registry.get(pagesAtom) ?? pages;
-          const next = appendPullRequestListPage(previous, response.value, input);
+          const next = appendPullRequestListPage(
+            registry.get(pagesAtom) ?? pages,
+            response.value,
+            input,
+          );
           registry.set(pagesAtom, next);
-          // Keep failed repositories eligible for retry after appending the readable rows.
           if (response.value.errors.length)
             return {
               errors: response.value.errors.map((error) => ({

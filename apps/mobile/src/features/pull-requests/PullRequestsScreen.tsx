@@ -39,6 +39,8 @@ import {
   pullRequestListRowsAreEqual,
   scopedPullRequestListKey as pullRequestKey,
   type EnvironmentPullRequestListEntry,
+  type EnvironmentPullRequestListError,
+  type EnvironmentPullRequestProviderSummary,
   withoutScratchProjectScope,
 } from "./pullRequestList";
 import { useDebouncedValue } from "../../state/queries";
@@ -59,20 +61,9 @@ function PullRequestScrollView(props: ScrollViewProps) {
   );
 }
 
-/** Repository failures collapse to one line so the pull requests below stay in view. */
 function PullRequestListErrors(props: {
-  readonly errors: readonly {
-    readonly environmentId: EnvironmentId;
-    readonly projectId?: string;
-    readonly projectTitle: string;
-    readonly message: string;
-    readonly host?: string;
-  }[];
-  readonly providers: readonly {
-    readonly environmentId: EnvironmentId;
-    readonly host: string;
-    readonly detail: string | null;
-  }[];
+  readonly errors: readonly EnvironmentPullRequestListError[];
+  readonly providers: readonly EnvironmentPullRequestProviderSummary[];
   readonly connectedEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly environmentLabel: (environmentId: EnvironmentId) => string;
 }) {
@@ -93,6 +84,7 @@ function PullRequestListErrors(props: {
   );
   if (repositories.length === 1)
     lines.push(`${repositories[0]!.projectTitle}: ${repositories[0]!.message}`);
+  if (!lines.length && !repositories.length) return null;
   return (
     <View className="px-4 py-3">
       {lines.length ? (
@@ -379,19 +371,15 @@ export function PullRequestsScreen(
               }
               projects={projects}
             />
-            {result.data &&
-            (result.data.errors.length ||
-              result.data.providers.some((provider) => provider.detail !== null)) ? (
-              <PullRequestListErrors
-                errors={result.data.errors}
-                providers={result.data.providers}
-                connectedEnvironmentIds={connectedEnvironmentIds}
-                environmentLabel={(id) =>
-                  environments.find((environment) => environment.environmentId === id)
-                    ?.environmentLabel ?? "Environment"
-                }
-              />
-            ) : null}
+            <PullRequestListErrors
+              errors={result.data.errors}
+              providers={result.data.providers}
+              connectedEnvironmentIds={connectedEnvironmentIds}
+              environmentLabel={(id) =>
+                environments.find((environment) => environment.environmentId === id)
+                  ?.environmentLabel ?? "Environment"
+              }
+            />
           </>
         }
         ListFooterComponent={
