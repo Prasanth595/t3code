@@ -145,6 +145,7 @@ function ThreadNavigationSidebarPane(
     settleThread,
     snoozeThread,
     unsnoozeThread,
+    dismissThreadWoke,
     unsettleThread,
     pinThread,
     unpinThread,
@@ -584,6 +585,7 @@ function ThreadNavigationSidebarPane(
             hasQueuedMessages={item.hasQueuedMessages}
             snoozed={item.item.snoozed}
             pinned={item.item.pinned}
+            woke={item.item.woke}
             snoozePresetMinute={item.snoozePresetMinute ?? ""}
             snoozeWakeLabelText={item.snoozeWakeLabelText}
             timeLabel={item.timeLabel}
@@ -628,6 +630,7 @@ function ThreadNavigationSidebarPane(
             canMoveDown={item.canMoveDown}
             onSnoozeThread={snoozeThread}
             onUnsnoozeThread={unsnoozeThread}
+            onDismissThreadWoke={dismissThreadWoke}
             onUnsettleThread={unsettleThread}
             onPinThread={pinThread}
             onUnpinThread={unpinThread}

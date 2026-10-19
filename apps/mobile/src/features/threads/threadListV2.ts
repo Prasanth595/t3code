@@ -152,15 +152,7 @@ export function threadHasUnseenCompletion(
   return completedAtMs > lastVisitedAtMs;
 }
 
-/**
- * The web sidebar's Woke marker: a snoozed thread came back and the user has
- * not re-engaged since. A visit after the wake (reading a completion-triggered
- * wake) clears it; a timer wake survives a visit and clears on Dismiss Woke,
- * settle, pin, snooze, or a new message, all of which move the watermark or
- * drop the snooze. Servers without visited tracking (field absent) never
- * report Woke, since nothing could clear it. An unparseable visit counts as
- * never-visited so corrupt data cannot eat the wake signal.
- */
+// Older servers omit visit tracking, leaving no way to acknowledge Woke.
 export function threadIsWoke(thread: EnvironmentThreadShell, options: { readonly now: string }) {
   if (thread.settledOverride === "settled" || thread.lastVisitedAt === undefined) return false;
   const wokeAtMs = Date.parse(threadWokeAt(thread, options) ?? "");
@@ -257,10 +249,7 @@ export interface ThreadListV2Item {
   readonly variant: "card" | "slim";
   readonly snoozed: boolean;
   readonly pinned: boolean;
-  /** Card back from a snooze and not yet re-engaged (see threadIsWoke); slim
-      rows are still snoozed or settled, so never woke. Resolved against the
-      layout's second-precise clock: the minute clock would hide a wake for
-      up to a minute after the row leaves the snoozed shelf. */
+  // Use the layout's wake clock so the marker appears as the thread leaves Snoozed.
   readonly woke: boolean;
   readonly isLast: boolean;
 }

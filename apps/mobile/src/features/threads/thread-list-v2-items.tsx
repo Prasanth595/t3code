@@ -18,6 +18,10 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
+import {
+  formatWorkingDurationLabel,
+  resolveThreadWorkingStartedAt,
+} from "@t3tools/client-runtime/state/models";
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -110,6 +114,33 @@ const DONE_STATUS_LABEL: StatusLabel = {
   icon: "checkmark.circle",
   className: "text-adaptive-emerald-700-300",
   iconTintClassName: "accent-adaptive-emerald-700-300",
+};
+const WOKE_STATUS_LABEL: StatusLabel = {
+  label: "Woke",
+  icon: "alarm",
+  className: "text-warning-foreground",
+  iconTintClassName: "accent-warning-foreground",
+};
+
+// Keep clock updates inside the label, ticking only when its displayed unit changes.
+function ThreadListV2WorkingDuration(props: { readonly startedAt: string }) {
+  const startedAtMs = Date.parse(props.startedAt);
+  const [nowMs, setNowMs] = useState(Date.now);
+  useEffect(() => {
+    if (!Number.isFinite(startedAtMs)) return;
+    const elapsedMs = Math.max(0, nowMs - startedAtMs);
+    const stepMs = elapsedMs < 60_000 ? 1_000 : 60_000;
+    const id = setTimeout(() => setNowMs(Date.now()), stepMs - (elapsedMs % stepMs));
+    return () => clearTimeout(id);
+  }, [nowMs, startedAtMs]);
+  if (!Number.isFinite(startedAtMs)) return null;
+  return ` ${formatWorkingDurationLabel(nowMs - startedAtMs)}`;
+}
+
+const DISMISS_WOKE_MENU_ACTION: MenuAction = {
+  id: "dismiss-woke",
+  title: "Dismiss Woke",
+  image: "bell.slash",
 };
 
 const CARD_MENU_ACTIONS: MenuAction[] = [
@@ -477,6 +508,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly hasQueuedMessages?: boolean;
   readonly snoozed?: boolean;
   readonly pinned?: boolean;
+  readonly woke: boolean;
   readonly snoozeWakeLabelText?: string;
   readonly timeLabel: string;
   readonly snoozePresetMinute: string;
@@ -502,6 +534,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onSettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly onSnoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => void;
   readonly onUnsnoozeThread: (thread: EnvironmentThreadShell) => void;
+  readonly onDismissThreadWoke: (thread: EnvironmentThreadShell) => void;
   readonly onUnsettleThread: (thread: EnvironmentThreadShell) => void;
   readonly onArchiveThread: (thread: EnvironmentThreadShell) => void;
   readonly onPinThread: (thread: EnvironmentThreadShell) => void;
@@ -539,6 +572,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onSettleThread,
     onSnoozeThread,
     onUnsnoozeThread,
+    onDismissThreadWoke,
     onUnsettleThread,
     onArchiveThread,
     onPinThread,
@@ -583,11 +617,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const status = resolveThreadListV2Status(thread);
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
+  const showsWoke = workingLabel === undefined && props.woke;
   const statusLabel =
     (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
       ? { ...workingLabel, label: "Goal" }
-      : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
+      : workingLabel) ?? (showsWoke ? WOKE_STATUS_LABEL : isUnread ? DONE_STATUS_LABEL : undefined);
   const recede = shouldRecedeThreadRow({ status, selected });
+  const workingStartedAt = status === "working" ? resolveThreadWorkingStartedAt(thread) : null;
   const timeLabel = props.timeLabel;
 
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
@@ -614,6 +650,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [onSnoozeThread, thread],
   );
   const handleUnsnooze = useCallback(() => onUnsnoozeThread(thread), [onUnsnoozeThread, thread]);
+  const handleDismissWoke = useCallback(
+    () => onDismissThreadWoke(thread),
+    [onDismissThreadWoke, thread],
+  );
   const handleUnsettle = useCallback(() => onUnsettleThread(thread), [onUnsettleThread, thread]);
   const handlePin = useCallback(() => onPinThread(thread), [onPinThread, thread]);
   const handleUnpin = useCallback(() => onUnpinThread(thread), [onUnpinThread, thread]);
@@ -798,6 +838,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
       if (nativeEvent.event === "unsnooze") handleUnsnooze();
+      if (nativeEvent.event === "dismiss-woke") handleDismissWoke();
       if (nativeEvent.event === "pin") handlePin();
       if (nativeEvent.event === "unpin") handleUnpin();
       if (nativeEvent.event === "auto-settle:enabled") handleSetAutoSettle(true);
@@ -846,6 +887,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleUnpin,
       handleUnsettle,
       handleUnsnooze,
+      handleDismissWoke,
       setCustomSnoozeOpen,
       snoozePresets,
     ],
@@ -957,11 +999,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             />
             <Text
               className={cn(
-                "text-xs font-t3-bold",
+                "text-xs font-t3-bold tabular-nums",
                 selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
               )}
             >
               {statusLabel.label}
+              {workingStartedAt !== null ? (
+                <ThreadListV2WorkingDuration key={workingStartedAt} startedAt={workingStartedAt} />
+              ) : null}
             </Text>
           </View>
         ) : (
@@ -1286,6 +1331,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   ]
                 : []),
               { id: "copy-thread-id", title: "Copy thread ID", image: "doc.on.doc" },
+              ...(showsWoke ? [DISMISS_WOKE_MENU_ACTION] : []),
               ...(snoozedRow
                 ? snoozedMenuActions
                 : !props.settlementSupported

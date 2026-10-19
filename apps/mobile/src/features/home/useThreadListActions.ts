@@ -1,6 +1,10 @@
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  canSnooze,
+  effectiveSnoozed,
+  threadWokeAt,
+} from "@t3tools/client-runtime/state/thread-settled";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
@@ -219,6 +223,7 @@ export function useThreadListActions(): {
   readonly settleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly snoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => Promise<boolean>;
   readonly unsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
+  readonly dismissThreadWoke: (thread: EnvironmentThreadShell) => Promise<void>;
   readonly unsettleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly pinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly unpinThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
@@ -236,6 +241,7 @@ export function useThreadListActions(): {
   const executeAction = useThreadActionExecutor();
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
+  const visitMutation = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
   const pinMutation = useAtomCommand(threadEnvironment.pin, { reportFailure: false });
   const unpinMutation = useAtomCommand(threadEnvironment.unpin, { reportFailure: false });
   const setAutoSettleMutation = useAtomCommand(threadEnvironment.setAutoSettle, {
@@ -252,6 +258,25 @@ export function useThreadListActions(): {
   };
   const settleThread = async (thread: EnvironmentThreadShell) =>
     (await executeAction("settle", thread)) === true;
+  const dismissThreadWoke = async (thread: EnvironmentThreadShell) => {
+    if (!checkThreadOperationPermission(thread, "Could not dismiss Woke")) return;
+    const wokeAt = threadWokeAt(thread, { now: new Date().toISOString() });
+    if (wokeAt === null) return;
+    selectionHaptic();
+    const result = await visitMutation({
+      environmentId: thread.environmentId,
+      input: { threadId: thread.id, visitedAt: wokeAt },
+    });
+    if (result._tag === "Failure") {
+      const error = Cause.squash(result.cause);
+      Dialog.alert(
+        "Could not dismiss Woke",
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "The Woke marker could not be dismissed.",
+      );
+    }
+  };
   const snoozeThread = async (thread: EnvironmentThreadShell, snoozedUntil: string) => {
     if (!checkThreadOperationPermission(thread, "Could not snooze thread")) return false;
     const key = scopedThreadKey(thread.environmentId, thread.id);
@@ -672,6 +697,7 @@ export function useThreadListActions(): {
     settleThread,
     snoozeThread,
     unsnoozeThread,
+    dismissThreadWoke,
     unsettleThread,
     pinThread,
     unpinThread,
