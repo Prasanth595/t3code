@@ -125,6 +125,7 @@ export function useProactivePanels(input: {
     };
     if (eligibleLink && pullRequestsCapabilityKnown) {
       if (
+        !followSelectedPullRequest &&
         pullRequestsSurfaceAvailable &&
         (visiblePullRequestCount > 1 || !hasLinkedPullRequestDetail || !supportsPullRequests)
       ) {
