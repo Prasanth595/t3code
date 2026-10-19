@@ -7,9 +7,8 @@ import * as Schema from "effect/Schema";
 import { loadWindowsForegroundApi } from "../electron/WindowsForeground.ts";
 
 /**
- * The foreground window as the snapshot service needs it. `id` is the
- * CGWindowNumber on macOS and the HWND on Windows, which is what the capture
- * backends key on.
+ * `id` is the CGWindowNumber on macOS and the HWND on Windows, which is what
+ * the capture backends key on.
  */
 export type ActiveWindow = {
   readonly platform: "macos" | "windows";
@@ -31,40 +30,24 @@ export type ActiveWindow = {
 
 const MAC_LOOKUP_TIMEOUT_MS = 5_000;
 
-const MacWindowBounds = Schema.Struct({
-  x: Schema.Number,
-  y: Schema.Number,
-  width: Schema.Number,
-  height: Schema.Number,
-});
-
-const MacActiveWindowLookup = Schema.Struct({
+const MacActiveWindow = Schema.Struct({
+  id: Schema.Number,
+  title: Schema.String,
+  bounds: Schema.Struct({
+    x: Schema.Number,
+    y: Schema.Number,
+    width: Schema.Number,
+    height: Schema.Number,
+  }),
   owner: Schema.Struct({
     name: Schema.String,
     processId: Schema.Number,
     path: Schema.String,
     bundleId: Schema.String,
   }),
-  windows: Schema.Array(
-    Schema.Struct({
-      id: Schema.Number,
-      title: Schema.String,
-      bounds: MacWindowBounds,
-      alpha: Schema.Number,
-    }),
-  ),
 });
-const decodeMacActiveWindowLookup = Schema.decodeUnknownSync(
-  Schema.fromJsonString(MacActiveWindowLookup),
-);
+const decodeMacActiveWindow = Schema.decodeUnknownSync(Schema.fromJsonString(MacActiveWindow));
 
-// CoreGraphics returns windows in front-to-back order, but some apps, such as
-// Chrome, Brave, and Zed, put transparent or untitled strip windows ahead of
-// their real window. Keep that order while ignoring untitled thin strips that
-// span the full width or height of the app's largest window.
-// Window titles need Screen Recording, which the snapshot service has already
-// requested by the time this runs.
-const MAC_HELPER_STRIP_MAX_THICKNESS_RATIO = 0.25;
 const MAC_LOOKUP_SCRIPT = `
 ObjC.import("CoreGraphics");
 ObjC.import("AppKit");
@@ -72,38 +55,30 @@ function run() {
   const app = $.NSWorkspace.sharedWorkspace.frontmostApplication;
   if (app.isNil()) return "";
   const pid = app.processIdentifier;
-  let ownerName = String(app.localizedName.js || "");
   const list = $.CGWindowListCopyWindowInfo(
     $.kCGWindowListOptionOnScreenOnly | $.kCGWindowListExcludeDesktopElements,
     $.kCGNullWindowID,
   );
   $.CFMakeCollectable(list);
   const count = $.CFArrayGetCount(list);
-  const windows = [];
   for (let i = 0; i < count; i++) {
     const w = ObjC.castRefToObject($.CFArrayGetValueAtIndex(list, i));
     if (w.objectForKey("kCGWindowOwnerPID").js !== pid) continue;
-    if (!ownerName) {
-      ownerName = String(ObjC.unwrap(w.objectForKey("kCGWindowOwnerName")) || "");
-    }
     if (w.objectForKey("kCGWindowLayer").js !== 0) continue;
     const b = ObjC.deepUnwrap(w.objectForKey("kCGWindowBounds"));
-    windows.push({
+    return JSON.stringify({
       id: w.objectForKey("kCGWindowNumber").js,
       title: String(ObjC.unwrap(w.objectForKey("kCGWindowName")) || ""),
       bounds: { x: b.X, y: b.Y, width: b.Width, height: b.Height },
-      alpha: w.objectForKey("kCGWindowAlpha").js,
+      owner: {
+        name: String(app.localizedName.js || ObjC.unwrap(w.objectForKey("kCGWindowOwnerName")) || ""),
+        processId: pid,
+        path: String(app.bundleURL.path.js || ""),
+        bundleId: String(app.bundleIdentifier.js || ""),
+      },
     });
   }
-  return JSON.stringify({
-    owner: {
-      name: ownerName,
-      processId: pid,
-      path: String(app.bundleURL.path.js || ""),
-      bundleId: String(app.bundleIdentifier.js || ""),
-    },
-    windows,
-  });
+  return "";
 }`;
 
 function runMacLookup(): Promise<string> {
@@ -111,7 +86,7 @@ function runMacLookup(): Promise<string> {
     NodeChildProcess.execFile(
       "/usr/bin/osascript",
       ["-l", "JavaScript", "-e", MAC_LOOKUP_SCRIPT],
-      { timeout: MAC_LOOKUP_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+      { timeout: MAC_LOOKUP_TIMEOUT_MS, maxBuffer: 64 * 1024 },
       (error, stdout) => {
         if (error) reject(error);
         else resolve(stdout);
@@ -123,40 +98,17 @@ function runMacLookup(): Promise<string> {
 async function macActiveWindow(): Promise<ActiveWindow | undefined> {
   const output = (await runMacLookup()).trim();
   if (!output) return undefined;
-  const lookup = decodeMacActiveWindowLookup(output);
-  const visible = lookup.windows.filter(
-    (window) => window.alpha > 0 && window.bounds.width > 0 && window.bounds.height > 0,
-  );
-  const largest = visible.reduce<(typeof visible)[number] | undefined>(
-    (current, window) =>
-      !current ||
-      window.bounds.width * window.bounds.height > current.bounds.width * current.bounds.height
-        ? window
-        : current,
-    undefined,
-  );
-  const isAuxiliaryStrip = (window: (typeof visible)[number]) =>
-    largest !== undefined &&
-    window !== largest &&
-    window.title.trim() === "" &&
-    ((window.bounds.x === largest.bounds.x &&
-      window.bounds.width === largest.bounds.width &&
-      window.bounds.height <= largest.bounds.height * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO) ||
-      (window.bounds.y === largest.bounds.y &&
-        window.bounds.height === largest.bounds.height &&
-        window.bounds.width <= largest.bounds.width * MAC_HELPER_STRIP_MAX_THICKNESS_RATIO));
-  const window = visible.find((candidate) => !isAuxiliaryStrip(candidate));
-  if (!window) return undefined;
+  const window = decodeMacActiveWindow(output);
   return {
     platform: "macos",
     id: window.id,
     title: window.title,
     bounds: window.bounds,
     owner: {
-      name: lookup.owner.name,
-      processId: lookup.owner.processId,
-      path: lookup.owner.path,
-      ...(lookup.owner.bundleId ? { bundleId: lookup.owner.bundleId } : {}),
+      name: window.owner.name,
+      processId: window.owner.processId,
+      path: window.owner.path,
+      ...(window.owner.bundleId ? { bundleId: window.owner.bundleId } : {}),
     },
   };
 }
@@ -179,7 +131,6 @@ async function windowsActiveWindow(): Promise<ActiveWindow | undefined> {
   };
 }
 
-/** Resolve the OS foreground window, or `undefined` when there is none. */
 export function activeWindow(platform: NodeJS.Platform): Promise<ActiveWindow | undefined> {
   if (platform === "darwin") return macActiveWindow();
   if (platform === "win32") return windowsActiveWindow();
