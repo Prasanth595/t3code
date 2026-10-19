@@ -3715,9 +3715,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       }
       worktreePath = path.join(parentDir, repoName, sanitizedBranch);
     }
-    const args = input.newRefName
-      ? ["worktree", "add", "-b", input.newRefName, "--", worktreePath, input.refName]
-      : ["worktree", "add", "--", worktreePath, input.refName];
+    if (input.newRefName) {
+      // Branch creation may write upstream config. Keep it under the same lock
+      // as renames, but leave the expensive checkout outside the lock.
+      yield* configLocks.withLock(
+        yield* resolveGitCommonDir(input.cwd),
+        runGit("GitVcsDriver.createWorktree.createBranch", input.cwd, [
+          "branch",
+          "--",
+          input.newRefName,
+          input.refName === "-" ? "@{-1}" : input.refName,
+        ]),
+      );
+    }
+    const args = ["worktree", "add", "--", worktreePath, targetBranch];
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
