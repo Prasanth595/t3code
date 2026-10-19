@@ -21,7 +21,6 @@ interface PendingUserInputPanelProps {
   respondingRequestIds: RuntimeRequestId[];
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
-  /** Whether the composer holds the answer rather than the user's message. */
   isAnswering: boolean;
   onToggleAnswering: () => void;
   onToggleOption: (questionId: string, optionValue: string) => void;
@@ -309,8 +308,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               })}
             </div>
             <div className="mt-2">
-              {/* Back to message only switches drafts, so it stays available even
-                  when the question cannot be answered or operated. */}
+              {/* Returning to the message does not require permission to answer. */}
               <Button
                 type="button"
                 size="xs"

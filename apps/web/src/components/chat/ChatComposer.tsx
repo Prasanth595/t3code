@@ -87,7 +87,6 @@ import {
   composerRequiresModifier,
   composerSubmissionIntentForKey,
   composerStateAtPromptEnd,
-  composerStateForReturningDraft,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
@@ -2011,14 +2010,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const holdingUserInput = incomingPendingUserInputs[0]
     ? heldRequestIds.has(incomingPendingUserInputs[0].requestId)
     : false;
-  // The panel shows a question once it is no longer held. The editor, Send and
-  // attachments belong to it unless the user went Back to message.
-  const [backToMessageRequestId, setBackToMessageRequestId] = useState<string | null>(null);
+  const pendingUserInputRequestKey = incomingPendingUserInputs[0]
+    ? JSON.stringify([composerDraftTargetKey, incomingPendingUserInputs[0].requestId])
+    : null;
+  // Keep the message selected as options advance within the same request.
+  const [messageModeRequestKey, setMessageModeRequestKey] = useState<string | null>(null);
+  if (messageModeRequestKey !== null && messageModeRequestKey !== pendingUserInputRequestKey) {
+    setMessageModeRequestKey(null);
+  }
   const shownPendingUserInputs = holdingUserInput ? [] : incomingPendingUserInputs;
   const shownPendingUserInput = shownPendingUserInputs[0] ?? null;
   const shownPendingIsResponding = !holdingUserInput && incomingPendingIsResponding;
   const answeringUserInput =
-    shownPendingUserInput !== null && shownPendingUserInput.requestId !== backToMessageRequestId;
+    shownPendingUserInput !== null && pendingUserInputRequestKey !== messageModeRequestKey;
   const pendingUserInputs = answeringUserInput ? shownPendingUserInputs : [];
   const activePendingProgress = answeringUserInput ? incomingPendingProgress : null;
   const activePendingIsResponding = answeringUserInput && incomingPendingIsResponding;
@@ -3277,9 +3281,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const importContextFragmentStable = useStableCallback(importContextFragment);
 
   useEffect(() => {
-    if (isLiteralPendingAnswer) return;
+    if (activePendingProgress !== null) return;
     promptRef.current = prompt;
-  }, [isLiteralPendingAnswer, prompt, promptRef]);
+  }, [activePendingProgress, prompt, promptRef]);
   const [cursorClampedFor, setCursorClampedFor] = useState({ prompt, isLiteralPendingAnswer });
   if (
     cursorClampedFor.prompt !== prompt ||
@@ -3337,76 +3341,68 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     setComposerHighlightedSearchKey(resolvedHighlightedSearchKey);
   }
 
-  const lastSyncedPendingInputRef = useRef<{
-    requestId: string | null;
-    questionId: string | null;
-  } | null>(null);
-  // Where the message caret was while the editor last showed the message, so
-  // the effect below can put it back after a question had the editor. Keyed by
-  // the draft, so another thread's draft with the same text does not inherit it.
-  const messageCaretRef = useRef<{ targetKey: string; text: string; cursor: number } | null>(null);
+  const pendingAnswerKey =
+    activePendingProgress && activePendingUserInput
+      ? JSON.stringify([
+          composerDraftTargetKey,
+          activePendingUserInput.requestId,
+          activePendingProgress.activeQuestion?.id,
+        ])
+      : null;
+  const composerText = activePendingProgress?.customAnswer ?? prompt;
+  const lastSyncedPendingInputRef = useRef<string | null>(null);
+  const draftCaretsRef = useRef<{
+    message: { key: string; text: string; cursor: number } | null;
+    answer: { key: string; text: string; cursor: number } | null;
+  }>({ message: null, answer: null });
+
   useEffect(() => {
-    if (activePendingProgress !== null || lastSyncedPendingInputRef.current !== null) return;
-    messageCaretRef.current = {
-      targetKey: composerDraftTargetKey,
-      text: prompt,
+    // During a switch, the cursor still belongs to the draft being left.
+    if (
+      lastSyncedPendingInputRef.current !== pendingAnswerKey ||
+      promptRef.current !== composerText
+    ) {
+      return;
+    }
+    draftCaretsRef.current[pendingAnswerKey === null ? "message" : "answer"] = {
+      key: pendingAnswerKey ?? composerDraftTargetKey,
+      text: composerText,
       cursor: composerCursor,
     };
-  }, [activePendingProgress, composerCursor, composerDraftTargetKey, prompt]);
+  }, [composerCursor, composerDraftTargetKey, composerText, pendingAnswerKey, promptRef]);
 
   useEffect(() => {
-    const nextCustomAnswer = activePendingProgress?.customAnswer;
-    if (typeof nextCustomAnswer !== "string") {
-      if (lastSyncedPendingInputRef.current !== null) {
-        promptRef.current = prompt;
-        const { cursor, trigger } = composerStateForReturningDraft(
-          prompt,
-          composerDraftTargetKey,
-          messageCaretRef.current,
-        );
-        setComposerCursor(cursor);
-        resetComposerTrigger(trigger);
-      }
-      lastSyncedPendingInputRef.current = null;
+    const draftChanged = lastSyncedPendingInputRef.current !== pendingAnswerKey;
+    lastSyncedPendingInputRef.current = pendingAnswerKey;
+    if (!draftChanged && (pendingAnswerKey === null || promptRef.current === composerText)) {
       return;
     }
 
-    const nextRequestId = activePendingUserInput?.requestId ?? null;
-    const nextQuestionId = activePendingProgress?.activeQuestion?.id ?? null;
-    const questionChanged =
-      lastSyncedPendingInputRef.current?.requestId !== nextRequestId ||
-      lastSyncedPendingInputRef.current?.questionId !== nextQuestionId;
-    const textChangedExternally = promptRef.current !== nextCustomAnswer;
-
-    lastSyncedPendingInputRef.current = {
-      requestId: nextRequestId,
-      questionId: nextQuestionId,
-    };
-
-    if (!questionChanged && !textChangedExternally) {
-      return;
-    }
-
-    promptRef.current = nextCustomAnswer;
-    const { cursor, trigger } = composerStateAtPromptEnd(nextCustomAnswer, isLiteralPendingAnswer);
+    const saved = draftCaretsRef.current[pendingAnswerKey === null ? "message" : "answer"];
+    const cursor =
+      saved?.key === (pendingAnswerKey ?? composerDraftTargetKey) && saved.text === composerText
+        ? clampCollapsedComposerCursor(composerText, saved.cursor, isLiteralPendingAnswer)
+        : composerStateAtPromptEnd(composerText, isLiteralPendingAnswer).cursor;
+    promptRef.current = composerText;
     setComposerCursor(cursor);
-    resetComposerTrigger(trigger);
+    resetComposerTrigger(
+      isLiteralPendingAnswer
+        ? null
+        : detectComposerTrigger(composerText, expandCollapsedComposerCursor(composerText, cursor)),
+    );
     setComposerHighlightedItemId(null);
   }, [
-    activePendingProgress?.customAnswer,
-    activePendingProgress?.activeQuestion?.id,
-    isLiteralPendingAnswer,
-    activePendingUserInput?.requestId,
     composerDraftTargetKey,
-    prompt,
+    composerText,
+    isLiteralPendingAnswer,
+    pendingAnswerKey,
     promptRef,
     resetComposerTrigger,
   ]);
 
   const toggleAnsweringPendingUserInput = () => {
     if (!shownPendingUserInput) return;
-    setBackToMessageRequestId(answeringUserInput ? shownPendingUserInput.requestId : null);
-    // Focus once the editor shows the other draft, at the caret it brings back.
+    setMessageModeRequestKey(answeringUserInput ? pendingUserInputRequestKey : null);
     window.requestAnimationFrame(() => composerEditorRef.current?.focus());
   };
   const toggleAnsweringPendingUserInputStable = useStableCallback(toggleAnsweringPendingUserInput);
