@@ -285,10 +285,12 @@ export const layer: Layer.Layer<
           (turn.runAttemptId === null || !rolledBackAttemptIds.has(turn.runAttemptId)),
       );
 
+      const rollbackThread =
+        runsToRollback.length === 0 ? session.reconcileRollbackTarget : session.rollbackThread;
       const snapshot =
-        runsToRollback.length === 0
+        rollbackThread === undefined
           ? { providerThread }
-          : yield* session.rollbackThread({
+          : yield* rollbackThread({
               providerThread,
               target: rollbackTarget,
               providerThreadTurns,

@@ -48,8 +48,8 @@ export const revertCodexThread = Effect.fn("revertCodexThread")(function* (
     cursor = page.nextCursor ?? null;
     if (cursor === null) break;
   }
-  // The retained turn must be found before any destructive request. Newer turns
-  // can be goal continuations with no durable provider turn of their own.
+  // The retained turn must be found before any destructive request. Newer native
+  // turns may have no durable provider turn.
   if (typeof target !== "number" && target.type === "after_turn" && !boundaryFound) {
     return yield* CodexErrors.CodexAppServerRequestError.internalError(
       "Cannot revert thread: retained native turn was not found.",

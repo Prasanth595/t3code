@@ -753,15 +753,26 @@ it.effect.each([
 );
 
 it.effect.each([
-  "retained turn",
-  "goal continuations",
-  "thread start",
-  "missing native boundary",
-  "unidentified native boundary",
-])("replays a Codex rewind safely: %s", (scenario) => {
-  const targetOrdinal = scenario === "thread start" ? 0 : 1;
-  const invalidBoundary =
-    scenario === "missing native boundary" || scenario === "unidentified native boundary";
+  { scenario: "retained turn" },
+  { scenario: "goal continuations", continuations: true },
+  { scenario: "thread start", threadStart: true },
+  { scenario: "missing native boundary", missingBoundary: true },
+  { scenario: "goal control boundary", goalControl: true },
+  { scenario: "first goal control boundary", goalControl: true, firstGoalControl: true },
+  { scenario: "no later runs: continuation", noLaterRuns: true, continuations: true },
+  { scenario: "no later runs: missing native boundary", noLaterRuns: true, missingBoundary: true },
+  { scenario: "no later runs: thread start", noLaterRuns: true, threadStart: true },
+])("replays a Codex rewind safely: $scenario", (scenario) => {
+  const {
+    continuations = false,
+    threadStart = false,
+    missingBoundary = false,
+    goalControl = false,
+    firstGoalControl = false,
+    noLaterRuns = false,
+  } = scenario;
+  const targetOrdinal = threadStart ? 0 : goalControl && !firstGoalControl ? 2 : 1;
+  const runOrdinals = noLaterRuns ? (threadStart ? [] : [1]) : [1, 2, 3];
   const threadId = ThreadId.make("rewind-replay");
   const providerThreadId = ProviderThreadId.make("rewind-replay-provider");
   const providerSessionId = ProviderSessionId.make("rewind-replay-session");
@@ -781,22 +792,25 @@ it.effect.each([
     },
     providerThreads: [providerThread],
     providerSessions: [],
-    providerTurns: [1, 2, 3].map((ordinal) => ({
+    providerTurns: runOrdinals.map((ordinal) => ({
       id: `turn-${ordinal}`,
       providerThreadId,
       runAttemptId: `attempt-${ordinal}`,
       ordinal,
       status: "completed",
       nativeTurnRef:
-        scenario === "unidentified native boundary" && ordinal === 1
+        goalControl && ordinal === targetOrdinal
           ? null
           : { driver: "codex", nativeId: `native-${ordinal}`, strength: "strong" },
     })),
     nodes: [],
-    attempts: [1, 2, 3].map((ordinal) => ({ id: `attempt-${ordinal}`, runId: `run-${ordinal}` })),
+    attempts: runOrdinals.map((ordinal) => ({
+      id: `attempt-${ordinal}`,
+      runId: `run-${ordinal}`,
+    })),
     checkpoints: [{ id: checkpointId, scopeId, status: "ready", appRunOrdinal: targetOrdinal }],
     checkpointScopes: [{ id: scopeId, cwd: process.cwd() }],
-    runs: [1, 2, 3].map((ordinal) => ({
+    runs: runOrdinals.map((ordinal) => ({
       id: `run-${ordinal}`,
       ordinal,
       status: "completed",
@@ -804,14 +818,15 @@ it.effect.each([
       activeAttemptId: `attempt-${ordinal}`,
     })),
   } as unknown as OrchestrationV2ThreadProjection;
-  // A goal can produce several native turns under one durable provider turn.
-  const retainedTurns = ["native-1-initial", "native-1"];
+  // Native turns can exist with no durable provider turn.
+  const retainedTurns = firstGoalControl ? [] : ["native-1-initial", "native-1"];
   const initialTurns = [
-    ...retainedTurns.filter((id) => scenario !== "missing native boundary" || id !== "native-1"),
-    ...(scenario === "goal continuations" ? ["native-2-initial"] : []),
-    "native-2",
-    "native-3",
-    ...(scenario === "goal continuations" || scenario === "thread start" ? ["native-3-goal"] : []),
+    ...retainedTurns.filter((id) => !missingBoundary || id !== "native-1"),
+    ...(continuations && !noLaterRuns ? ["native-2-initial"] : []),
+    ...runOrdinals
+      .filter((ordinal) => ordinal > 1 && !(goalControl && ordinal === targetOrdinal))
+      .map((ordinal) => `native-${ordinal}`),
+    ...(continuations || threadStart ? ["native-untracked-goal"] : []),
   ];
   let nativeTurns = [...initialTurns];
   const codex = {
@@ -845,14 +860,16 @@ it.effect.each([
   } as unknown as Parameters<typeof revertCodexThread>[0];
   let restores = 0;
   const writes: Array<ReadonlyArray<string>> = [];
+  const rollbackThread = (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) =>
+    resolveCodexRollbackBoundary(input).pipe(
+      Effect.flatMap((boundary) => revertCodexThread(codex, "native-thread", boundary)),
+      Effect.as({ providerThread }),
+    );
   const layerSessions = Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
     open: () =>
       Effect.succeed({
-        rollbackThread: (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) =>
-          resolveCodexRollbackBoundary(input).pipe(
-            Effect.flatMap((boundary) => revertCodexThread(codex, "native-thread", boundary)),
-            Effect.as({ providerThread }),
-          ),
+        rollbackThread,
+        reconcileRollbackTarget: rollbackThread,
       } as never),
   });
   const layerRollback = layerCheckpointRollbackService.pipe(
@@ -934,7 +951,7 @@ it.effect.each([
       },
     ]);
 
-    if (invalidBoundary) {
+    if (missingBoundary) {
       yield* worker.drain();
       assert.deepEqual(nativeTurns, initialTurns);
       assert.equal(restores, 0);

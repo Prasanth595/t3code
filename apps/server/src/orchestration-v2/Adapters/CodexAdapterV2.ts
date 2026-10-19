@@ -1062,10 +1062,8 @@ export const resolveCodexRollbackBoundary = Effect.fn("CodexAdapterV2.resolveRol
       });
     }
 
-    const boundaryTurn = providerTurnsForThread(
-      input.providerThreadTurns,
-      input.providerThread,
-    ).find((turn) => turn.id === targetTurn.id);
+    const threadTurns = providerTurnsForThread(input.providerThreadTurns, input.providerThread);
+    const boundaryTurn = threadTurns.find((turn) => turn.id === targetTurn.id);
     if (boundaryTurn === undefined) {
       return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
         driver: CODEX_PROVIDER,
@@ -1073,15 +1071,18 @@ export const resolveCodexRollbackBoundary = Effect.fn("CodexAdapterV2.resolveRol
         cause: `Cannot roll back Codex thread ${input.providerThread.id} to provider turn ${targetTurn.id}: target turn was not found in durable provider turn history.`,
       });
     }
-    const nativeTurnId = boundaryTurn.nativeTurnRef?.nativeId;
-    if (nativeTurnId == null) {
-      return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
-        driver: CODEX_PROVIDER,
-        providerThreadId: input.providerThread.id,
-        cause: `Cannot roll back Codex thread ${input.providerThread.id} to provider turn ${targetTurn.id}: target turn has no native Codex turn reference.`,
-      });
+    // Goal control commands do not add native turns to the conversation.
+    let nativeBoundary: OrchestrationV2ProviderTurn | undefined;
+    for (const turn of threadTurns) {
+      if (turn.ordinal > boundaryTurn.ordinal || turn.nativeTurnRef == null) continue;
+      if (nativeBoundary === undefined || turn.ordinal > nativeBoundary.ordinal) {
+        nativeBoundary = turn;
+      }
     }
-    return { type: "after_turn" as const, nativeTurnId };
+    const nativeTurnId = nativeBoundary?.nativeTurnRef?.nativeId;
+    return nativeTurnId == null
+      ? { type: "thread_start" as const }
+      : { type: "after_turn" as const, nativeTurnId };
   },
 );
 
@@ -7250,6 +7251,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   }),
               ),
             ),
+          reconcileRollbackTarget: (threadInput) => runtime.rollbackThread(threadInput),
           forkThread: (threadInput) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(threadInput.sourceProviderThread);
