@@ -697,10 +697,10 @@ describe("PullRequestSyncReactor", () => {
           });
           yield* Queue.take(fixture.snapshotReads);
           yield* reactor.drain;
-          assert.sameMembers(yield* Ref.get(invalidated), [
-            PROJECT_ID,
-            ProjectId.make("second-project"),
-          ]);
+          assert.sameMembers(
+            [...(yield* Ref.get(invalidated))],
+            [PROJECT_ID, ProjectId.make("second-project")],
+          );
           assert.sameMembers(
             (yield* Ref.get(fixture.stackCalls)).map((call) => call.projectId),
             [PROJECT_ID, ProjectId.make("second-project")],
