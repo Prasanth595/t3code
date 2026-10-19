@@ -9,6 +9,7 @@ import {
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2Run,
   type OrchestrationV2ThreadShellSnapshot,
   NodeId,
   ProjectId,
@@ -72,8 +73,9 @@ const traceSqlStatements = () => {
   return { statements, tracer };
 };
 
-const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate")(function* (
+const addRecoveryCandidate = Effect.fn("addRecoveryCandidate")(function* (
   suffix: string,
+  status: OrchestrationV2Run["status"] = "rolled_back",
 ) {
   const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
   const now = yield* DateTime.now;
@@ -108,7 +110,7 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
       creationSource: "web",
       id: threadId,
       projectId: ProjectId.make(`project:${suffix}`),
-      title: "Rolled-back recovery candidate",
+      title: "Recovery candidate",
       providerInstanceId,
       modelSelection,
       runtimeMode: "full-access",
@@ -169,16 +171,17 @@ const addRolledBackRecoveryCandidate = Effect.fn("addRolledBackRecoveryCandidate
       input: "sleep 60",
     },
   });
-  yield* projectionStore.apply({
-    id: EventId.make(`event:${suffix}:run-rolled-back`),
-    type: "run.updated",
-    threadId,
-    runId,
-    nodeId: rootNodeId,
-    driver,
-    occurredAt: now,
-    payload: { ...run, status: "rolled_back", completedAt: now },
-  });
+  if (status !== "running")
+    yield* projectionStore.apply({
+      id: EventId.make(`event:${suffix}:run-${status}`),
+      type: "run.updated",
+      threadId,
+      runId,
+      nodeId: rootNodeId,
+      driver,
+      occurredAt: now,
+      payload: { ...run, status, completedAt: now },
+    });
 
   return threadId;
 });
@@ -191,11 +194,12 @@ it.effect.each([
   ([, layer]) =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
-      const threadId = yield* addRolledBackRecoveryCandidate("duplicate-provider-thread-owner");
+      const threadId = yield* addRecoveryCandidate("duplicate-provider-thread-owner", "running");
       const initial = yield* store.getThreadProjection(threadId);
       const at = initial.updatedAt;
-      const otherThreadId = yield* addRolledBackRecoveryCandidate(
+      const otherThreadId = yield* addRecoveryCandidate(
         "duplicate-provider-thread-owner:other",
+        "running",
       );
       const other = yield* store.getThreadProjection(otherThreadId);
       const otherRun = other.runs[0]!;
@@ -485,7 +489,7 @@ it("includes imported runless history when selecting fork context through a run"
 
 const restartCancelledWorkSurvivesStaleRunUpdate = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
-  const threadId = yield* addRolledBackRecoveryCandidate("restart-cancelled-work-stale-update");
+  const threadId = yield* addRecoveryCandidate("restart-cancelled-work-stale-update", "running");
   const run = (yield* store.getThreadProjection(threadId)).runs[0]!;
   const now = yield* DateTime.now;
   const work = [{ kind: "subagent" as const, label: "Background subagent test" }];
@@ -570,7 +574,7 @@ const threadWorktreePathsReadActiveThreads = Effect.gen(function* () {
 const commandReadsSkipSettledLeafNodes = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const now = yield* DateTime.now;
-  const threadId = yield* addRolledBackRecoveryCandidate("settled-leaf-nodes");
+  const threadId = yield* addRecoveryCandidate("settled-leaf-nodes");
   const settledRun = (yield* store.getThreadProjection(threadId)).runs[0]!;
   const activeRun = {
     ...settledRun,
@@ -661,7 +665,7 @@ it.effect("memory projection keeps restart-cancelled work through a stale run.up
 it.effect("memory recovery selection ignores unfinished items from rolled-back runs", () =>
   Effect.gen(function* () {
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-    const threadId = yield* addRolledBackRecoveryCandidate("memory-recovery-candidates");
+    const threadId = yield* addRecoveryCandidate("memory-recovery-candidates");
 
     assert.notInclude(yield* projectionStore.getRecoveryThreadIds("runtime"), threadId);
   }).pipe(Effect.provide(ProjectionStore.layerMemory)),
@@ -678,7 +682,7 @@ it.effect("memory recovery selection includes unfinished items from missing runs
 
 const runlessNativeSubagentNeedsRecovery = Effect.gen(function* () {
   const store = yield* ProjectionStore.ProjectionStoreV2;
-  const threadId = yield* addRolledBackRecoveryCandidate("runless-native-recovery");
+  const threadId = yield* addRecoveryCandidate("runless-native-recovery");
   const now = yield* DateTime.now;
   const id = NodeId.make("node:runless-native-recovery");
   assert.notInclude(yield* store.getRecoveryThreadIds("runtime"), threadId);
@@ -889,7 +893,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect("records restart-cancelled work without regressing a run that completed since", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
-      const threadId = yield* addRolledBackRecoveryCandidate("restart-cancelled-work");
+      const threadId = yield* addRecoveryCandidate("restart-cancelled-work", "running");
       const run = (yield* store.getThreadProjection(threadId)).runs[0]!;
       const now = yield* DateTime.now;
       yield* store.apply({
@@ -928,7 +932,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect("limits turn-start history to the requested runs, including an empty selection", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
-      const threadId = yield* addRolledBackRecoveryCandidate("selected-turn-start-history");
+      const threadId = yield* addRecoveryCandidate("selected-turn-start-history");
       const runId = (yield* store.getThreadProjection(threadId)).runs[0]!.id;
       const history = yield* store.getTurnStartHistory(threadId);
       assert.isNotEmpty(history);
@@ -940,7 +944,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect("answers empty record filters without reading the filtered tables", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
-      const threadId = yield* addRolledBackRecoveryCandidate("empty-record-filters");
+      const threadId = yield* addRecoveryCandidate("empty-record-filters");
       const runId = (yield* store.getThreadProjection(threadId)).runs[0]!.id;
       const queries: Array<string> = [];
       const recordQueries: Statement.Transformer = (statement) => {
@@ -2974,71 +2978,83 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const now = yield* DateTime.now;
-      const threadId = ThreadId.make("thread:projection-shell-interruptible");
-      const projectId = ProjectId.make("project:projection-shell-interruptible");
-      const runId = RunId.make("run:projection-shell-interruptible");
-      const rootNodeId = NodeId.make("node:projection-shell-interruptible");
-      const run = {
-        id: runId,
-        threadId,
-        ordinal: 1,
-        providerInstanceId,
-        modelSelection,
-        providerThreadId: null,
-        userMessageId: MessageId.make("message:projection-shell-interruptible"),
-        rootNodeId,
-        activeAttemptId: null,
-        status: "running" as const,
-        requestedAt: now,
-        startedAt: now,
-        completedAt: null,
-        checkpointId: null,
-        contextHandoffId: null,
-      };
-
-      yield* projectionStore.apply({
-        id: EventId.make("event:projection-shell-interruptible:thread"),
-        type: "thread.created",
-        threadId,
-        occurredAt: now,
-        payload: {
-          createdBy: "user",
-          creationSource: "web",
-          id: threadId,
-          projectId,
-          title: "Interruptible shell run",
+      const createScenario = Effect.fnUntraced(function* (
+        suffix: string,
+        status: "running" | "preparing" | "completed" | "queued",
+      ) {
+        const threadId = ThreadId.make(`thread:projection-shell-interruptible:${suffix}`);
+        const projectId = ProjectId.make("project:projection-shell-interruptible");
+        const runId = RunId.make(`run:projection-shell-interruptible:${suffix}`);
+        const rootNodeId = NodeId.make(`node:projection-shell-interruptible:${suffix}`);
+        const run = {
+          id: runId,
+          threadId,
+          ordinal: 1,
           providerInstanceId,
           modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: null,
-          activeProviderThreadId: null,
-          lineage: {
-            parentThreadId: null,
-            relationshipToParent: null,
-            rootThreadId: threadId,
+          providerThreadId: null,
+          userMessageId: MessageId.make(`message:projection-shell-interruptible:${suffix}`),
+          rootNodeId,
+          activeAttemptId: null,
+          status,
+          ...(status === "queued" ? { queueHeld: true } : {}),
+          requestedAt: now,
+          startedAt: status === "queued" || status === "preparing" ? null : now,
+          completedAt: status === "completed" ? now : null,
+          checkpointId: null,
+          contextHandoffId: null,
+        };
+
+        yield* projectionStore.apply({
+          id: EventId.make(`event:projection-shell-interruptible:${suffix}:thread`),
+          type: "thread.created",
+          threadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: threadId,
+            projectId,
+            title: "Interruptible shell run",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: threadId,
+            },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
           },
-          forkedFrom: null,
-          createdAt: now,
-          updatedAt: now,
-          archivedAt: null,
-          settledOverride: null,
-          settledAt: null,
-          lastVisitedAt: null,
-          deletedAt: null,
-        },
+        });
+        yield* projectionStore.apply({
+          id: EventId.make(`event:projection-shell-interruptible:${suffix}:created`),
+          type: "run.created",
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          driver,
+          occurredAt: now,
+          payload: run,
+        });
+
+        return { threadId, runId, rootNodeId, run };
       });
-      yield* projectionStore.apply({
-        id: EventId.make("event:projection-shell-interruptible:running"),
-        type: "run.created",
-        threadId,
-        runId,
-        nodeId: rootNodeId,
-        driver,
-        occurredAt: now,
-        payload: run,
-      });
+      const { threadId, runId, rootNodeId, run } = yield* createScenario(
+        "interruptible",
+        "running",
+      );
 
       let shell = (yield* projectionStore.getShellSnapshot()).threads.find(
         (thread) => thread.id === threadId,
@@ -3073,15 +3089,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       assert.isNull(shell?.activeRunId);
       const later = DateTime.add(now, { hours: 1 });
       for (const status of ["queued", "cancelled"] as const) {
+        const { threadId, run } = yield* createScenario(status, "preparing");
         yield* projectionStore.apply({
           id: EventId.make(`event:clock:newer:${status}`),
-          type: "run.updated",
+          type: "run.created",
           threadId,
           occurredAt: later,
           payload: {
             ...run,
-            id: RunId.make("run:clock:newer"),
+            id: RunId.make(`run:clock:newer:${threadId}`),
             ordinal: 2,
+            rootNodeId: NodeId.make(`node:clock:newer:${threadId}`),
+            userMessageId: MessageId.make(`message:clock:newer:${threadId}`),
             status,
             requestedAt: later,
             startedAt: null,
@@ -3111,88 +3130,87 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             value == null ? null : DateTime.toEpochMillis(value);
           assert.equal(timestamp(sqlShell.activityRunStartedAt), expected);
           assert.equal(timestamp(memoryShell.activityRunStartedAt), expected);
-          assert.equal(sqlShell.latestRunId, "run:clock:newer");
+          assert.equal(sqlShell.latestRunId, `run:clock:newer:${threadId}`);
         }
       }
 
-      yield* projectionStore.apply({
-        id: EventId.make("event:clock:newer:held"),
-        type: "run.updated",
-        threadId,
-        occurredAt: later,
-        payload: {
-          ...run,
-          id: RunId.make("run:clock:newer"),
-          ordinal: 2,
-          status: "queued",
-          queueHeld: true,
-          requestedAt: later,
-          startedAt: null,
-          completedAt: null,
-        },
-      });
-      const heldProjection = yield* projectionStore.getThreadProjection(threadId);
-      const heldSqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
-        (row) => row.id === threadId,
-      )!;
-      for (const heldShell of [
-        heldSqlShell,
-        ProjectionStore.threadShellFromProjection(heldProjection),
-      ]) {
-        assert.equal(heldShell.latestRunId, runId);
-        assert.equal(heldShell.status, "completed");
+      {
+        const { threadId, runId, run } = yield* createScenario("held-newer", "completed");
+        yield* projectionStore.apply({
+          id: EventId.make("event:clock:newer:held"),
+          type: "run.created",
+          threadId,
+          occurredAt: later,
+          payload: {
+            ...run,
+            id: RunId.make(`run:clock:newer:${threadId}`),
+            ordinal: 2,
+            rootNodeId: NodeId.make(`node:clock:newer:${threadId}`),
+            userMessageId: MessageId.make(`message:clock:newer:${threadId}`),
+            status: "queued",
+            queueHeld: true,
+            requestedAt: later,
+            startedAt: null,
+            completedAt: null,
+          },
+        });
+        const heldProjection = yield* projectionStore.getThreadProjection(threadId);
+        const heldSqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+          (row) => row.id === threadId,
+        )!;
+        for (const heldShell of [
+          heldSqlShell,
+          ProjectionStore.threadShellFromProjection(heldProjection),
+        ]) {
+          assert.equal(heldShell.latestRunId, runId);
+          assert.equal(heldShell.status, "completed");
+        }
       }
 
-      yield* projectionStore.apply({
-        id: EventId.make("event:projection-shell-interruptible:held-first"),
-        type: "run.updated",
-        threadId,
-        runId,
-        nodeId: rootNodeId,
-        driver,
-        occurredAt: later,
-        payload: { ...run, status: "queued", queueHeld: true, startedAt: null, completedAt: null },
-      });
-      const onlyHeldProjection = yield* projectionStore.getThreadProjection(threadId);
-      const onlyHeldSqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
-        (row) => row.id === threadId,
-      )!;
-      for (const onlyHeldShell of [
-        onlyHeldSqlShell,
-        ProjectionStore.threadShellFromProjection(onlyHeldProjection),
-      ]) {
-        assert.isNull(onlyHeldShell.latestRunId);
-        assert.equal(onlyHeldShell.status, "idle");
-      }
+      {
+        const { threadId, runId, rootNodeId, run } = yield* createScenario("held-only", "queued");
+        const onlyHeldProjection = yield* projectionStore.getThreadProjection(threadId);
+        const onlyHeldSqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+          (row) => row.id === threadId,
+        )!;
+        for (const onlyHeldShell of [
+          onlyHeldSqlShell,
+          ProjectionStore.threadShellFromProjection(onlyHeldProjection),
+        ]) {
+          assert.isNull(onlyHeldShell.latestRunId);
+          assert.equal(onlyHeldShell.status, "idle");
+        }
 
-      yield* projectionStore.apply({
-        id: EventId.make("event:projection-shell-interruptible:wake"),
-        type: "run.updated",
-        threadId,
-        runId,
-        nodeId: rootNodeId,
-        driver,
-        occurredAt: later,
-        payload: {
-          ...run,
-          status: "running",
-          requestedAt: later,
-          startedAt: later,
-          workStartedAt: now,
-        },
-      });
-      const wakeProjection = yield* projectionStore.getThreadProjection(threadId);
-      const wakeSqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
-        (row) => row.id === threadId,
-      )!;
-      for (const wakeShell of [
-        wakeSqlShell,
-        ProjectionStore.threadShellFromProjection(wakeProjection),
-      ]) {
-        assert.equal(
-          wakeShell.activityRunStartedAt && DateTime.toEpochMillis(wakeShell.activityRunStartedAt),
-          DateTime.toEpochMillis(now),
-        );
+        yield* projectionStore.apply({
+          id: EventId.make("event:projection-shell-interruptible:wake"),
+          type: "run.updated",
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          driver,
+          occurredAt: later,
+          payload: {
+            ...run,
+            status: "running",
+            requestedAt: later,
+            startedAt: later,
+            workStartedAt: now,
+          },
+        });
+        const wakeProjection = yield* projectionStore.getThreadProjection(threadId);
+        const wakeSqlShell = (yield* projectionStore.getShellSnapshot()).threads.find(
+          (row) => row.id === threadId,
+        )!;
+        for (const wakeShell of [
+          wakeSqlShell,
+          ProjectionStore.threadShellFromProjection(wakeProjection),
+        ]) {
+          assert.equal(
+            wakeShell.activityRunStartedAt &&
+              DateTime.toEpochMillis(wakeShell.activityRunStartedAt),
+            DateTime.toEpochMillis(now),
+          );
+        }
       }
     }),
   );
@@ -3205,7 +3223,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const runningThreadId = ThreadId.make("thread:recovery-candidates:running");
       const memberThreadId = ThreadId.make("thread:recovery-candidates:member");
       const childThreadId = ThreadId.make("thread:recovery-candidates:child");
-      const rolledBackThreadId = yield* addRolledBackRecoveryCandidate("recovery-candidates");
+      const rolledBackThreadId = yield* addRecoveryCandidate("recovery-candidates");
       const orphanedThreadId = yield* addOrphanedRecoveryCandidate("recovery-candidates");
       const projectId = ProjectId.make("project:recovery-candidates");
       const makeThread = (threadId: ThreadId) => ({
@@ -3394,8 +3412,8 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
   it.effect("projects only the latest failed root turn's limit into SQL and memory shells", () =>
     Effect.gen(function* () {
       const store = yield* ProjectionStore.ProjectionStoreV2;
-      const threadId = yield* addRolledBackRecoveryCandidate("limit-shell");
-      const otherThreadId = yield* addRolledBackRecoveryCandidate("other-limit-shell");
+      let threadId = yield* addRecoveryCandidate("limit-shell", "running");
+      const otherThreadId = yield* addRecoveryCandidate("other-limit-shell");
       const original = (yield* store.getThreadProjection(threadId)).runs[0]!;
       const now = yield* DateTime.now;
       const limitItem = {
@@ -3422,14 +3440,6 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           retryable: null,
         },
       };
-      const applyRun = (status: typeof original.status, rootNodeId = original.rootNodeId) =>
-        store.apply({
-          id: EventId.make(`event:limit-shell:run:${status}:${rootNodeId}`),
-          type: "run.updated",
-          threadId,
-          occurredAt: now,
-          payload: { ...original, rootNodeId, status },
-        });
       const assertSummary = Effect.fnUntraced(function* (
         lastError: string | null,
         lastErrorClass: string | null,
@@ -3478,7 +3488,13 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         occurredAt: now,
         payload: limitItem,
       });
-      yield* applyRun("failed");
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:run:failed"),
+        type: "run.updated",
+        threadId,
+        occurredAt: now,
+        payload: { ...original, status: "failed", completedAt: now },
+      });
       yield* assertSummary("Plan limit reached.", "usage_limit");
       const queuedRunId = RunId.make("run:limit-shell:queued");
       yield* store.apply({
@@ -3746,10 +3762,38 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         "cancelled",
         "rolled_back",
       ] as const) {
-        yield* applyRun(status);
+        threadId = yield* addRecoveryCandidate(`limit-shell:${status}`, status);
+        const run = (yield* store.getThreadProjection(threadId)).runs[0]!;
+        yield* store.apply({
+          id: EventId.make(`event:limit-shell:${status}:error`),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            ...limitItem,
+            id: TurnItemId.make(`limit-shell:${status}:error`),
+            threadId,
+            runId: run.id,
+            nodeId: run.rootNodeId,
+          },
+        });
         yield* assertSummary(null, null);
       }
-      yield* applyRun("failed", NodeId.make("new-attempt-root"));
+      threadId = yield* addRecoveryCandidate("limit-shell:new-root", "failed");
+      const failed = (yield* store.getThreadProjection(threadId)).runs[0]!;
+      yield* store.apply({
+        id: EventId.make("event:limit-shell:new-root:error"),
+        type: "turn-item.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          ...limitItem,
+          id: TurnItemId.make("limit-shell:new-root:error"),
+          threadId,
+          runId: failed.id,
+          nodeId: original.rootNodeId,
+        },
+      });
       yield* assertSummary(null, null);
     }),
   );
@@ -4195,7 +4239,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
       const suffix = "shell-pending-secret";
-      const threadId = yield* addRolledBackRecoveryCandidate(suffix);
+      const threadId = yield* addRecoveryCandidate(suffix);
       const runId = RunId.make(`run:${suffix}:rolled-back`);
       const nodeId = NodeId.make(`node:${suffix}:rolled-back`);
       const now = yield* DateTime.now;

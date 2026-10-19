@@ -1,5 +1,6 @@
 import * as ServerSettings from "../serverSettings.ts";
 import { assert, it } from "@effect/vitest";
+import { applyOrchestrationV2ProjectionEvent } from "../../../../packages/client-runtime/src/state/orchestrationV2Projection.ts";
 import {
   CheckpointId,
   CheckpointRef,
@@ -127,7 +128,7 @@ function threadCreatedEvent(input: {
   readonly id: string;
   readonly thread: OrchestrationV2AppThread;
   readonly now: DateTime.Utc;
-}): OrchestrationV2DomainEvent {
+}): Extract<OrchestrationV2DomainEvent, { readonly type: "thread.created" }> {
   return {
     id: EventId.make(input.id),
     type: "thread.created",
@@ -137,6 +138,259 @@ function threadCreatedEvent(input: {
     payload: input.thread,
   };
 }
+
+function runProjectionFixture(now: DateTime.Utc) {
+  const thread = makeThread(ThreadId.make("thread:run-race"), now);
+  const created = threadCreatedEvent({ id: "event:run-race:thread", thread, now });
+  const completed: OrchestrationV2Run = {
+    id: RunId.make("run:run-race"),
+    threadId: thread.id,
+    ordinal: 1,
+    providerInstanceId,
+    modelSelection,
+    providerThreadId: ProviderThreadId.make("provider-thread:old"),
+    userMessageId: MessageId.make("message:run-race"),
+    rootNodeId: NodeId.make("node:old"),
+    activeAttemptId: RunAttemptId.make("attempt:old"),
+    status: "completed",
+    queuePosition: null,
+    requestedAt: now,
+    startedAt: now,
+    completedAt: now,
+    checkpointId: CheckpointId.make("checkpoint:run-race"),
+    contextHandoffId: null,
+  };
+  const updated = (id: string, payload: OrchestrationV2Run): OrchestrationV2DomainEvent => ({
+    id: EventId.make(id),
+    type: "run.updated",
+    threadId: thread.id,
+    runId: payload.id,
+    occurredAt: now,
+    payload,
+  });
+  const attemptCreated = (
+    run: OrchestrationV2Run,
+    attemptOrdinal: number,
+  ): Extract<OrchestrationV2DomainEvent, { readonly type: "run-attempt.created" }> => ({
+    id: EventId.make(`event:attempt:${run.id}:${attemptOrdinal}`),
+    type: "run-attempt.created",
+    threadId: thread.id,
+    runId: run.id,
+    occurredAt: now,
+    payload: {
+      id: run.activeAttemptId!,
+      runId: run.id,
+      attemptOrdinal,
+      rootNodeId: run.rootNodeId!,
+      providerInstanceId: run.providerInstanceId,
+      providerThreadId: run.providerThreadId!,
+      providerTurnId: null,
+      reason: attemptOrdinal === 1 ? "initial" : "steering_restart",
+      status: "running",
+      startedAt: now,
+      completedAt: null,
+    },
+  });
+  return { created, completed, updated, attemptCreated };
+}
+
+const assertRunProjection = Effect.fnUntraced(function* (
+  events: ReadonlyArray<OrchestrationV2DomainEvent>,
+  expected: OrchestrationV2Run,
+) {
+  const store = yield* ProjectionStore.ProjectionStoreV2;
+  const persisted = (yield* store.getThreadProjection(expected.threadId)).runs[0];
+  assert.deepEqual(persisted, expected);
+  const created = events[0]!;
+  assert.equal(created.type, "thread.created");
+  if (created.type !== "thread.created") throw new Error("Missing thread fixture");
+  const replayed = events.reduce(
+    ProjectionStore.applyToProjection,
+    ProjectionStore.emptyProjection(created),
+  );
+  assert.deepEqual(replayed.runs[0], expected);
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{
+    status: string;
+    completed_at: string | null;
+    provider_instance_id: string;
+    provider_thread_id: string | null;
+  }>`
+    SELECT status, completed_at, provider_instance_id, provider_thread_id
+    FROM orchestration_v2_projection_runs WHERE run_id = ${expected.id}
+  `;
+  assert.deepEqual(rows, [
+    {
+      status: expected.status,
+      completed_at: expected.completedAt === null ? null : DateTime.formatIso(expected.completedAt),
+      provider_instance_id: expected.providerInstanceId,
+      provider_thread_id: expected.providerThreadId,
+    },
+  ]);
+});
+
+it.effect("preserves a completed run and checkpoint when stale delivery metadata arrives", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const { created, completed, updated } = runProjectionFixture(yield* DateTime.now);
+    const delegatedCompletion = { disposition: "open", nextGeneration: 1, delivery: null } as const;
+    const events = [
+      created,
+      updated("event:checkpoint", completed),
+      updated("event:delivery", {
+        ...completed,
+        status: "waiting",
+        completedAt: null,
+        checkpointId: null,
+        delegatedCompletion,
+      }),
+    ];
+    yield* sink.write({ events });
+    yield* assertRunProjection(events, { ...completed, delegatedCompletion });
+
+    const failed = {
+      ...completed,
+      status: "failed" as const,
+      workspacePreparation: { type: "worktree", baseRef: "main" } as const,
+      delegatedCompletion,
+    };
+    const afterFailure = [
+      ...events,
+      updated("event:failure", failed),
+      updated("event:stale-preparation", { ...failed, status: "preparing", completedAt: null }),
+    ];
+    yield* sink.write({ events: afterFailure.slice(events.length) });
+    yield* assertRunProjection(afterFailure, failed);
+
+    const rolledBack = { ...failed, status: "rolled_back" as const };
+    const afterRollback = [
+      ...afterFailure,
+      updated("event:rollback", rolledBack),
+      updated("event:late-terminal", {
+        ...rolledBack,
+        status: "completed",
+        checkpointId: null,
+        completedAt: null,
+      }),
+    ];
+    yield* sink.write({ events: afterRollback.slice(afterFailure.length) });
+    yield* assertRunProjection(afterRollback, rolledBack);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps the newer attempt while accepting metadata from an older run snapshot", () =>
+  Effect.gen(function* () {
+    const sink = yield* EventSink.EventSinkV2;
+    const store = yield* ProjectionStore.ProjectionStoreV2;
+    const { created, completed, updated, attemptCreated } = runProjectionFixture(
+      yield* DateTime.now,
+    );
+    const restarted: OrchestrationV2Run = {
+      ...completed,
+      activeAttemptId: RunAttemptId.make("attempt:new"),
+      rootNodeId: NodeId.make("node:new"),
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "claude-sonnet-4-6" },
+      providerThreadId: ProviderThreadId.make("provider-thread:new"),
+      status: "waiting",
+      startedAt: DateTime.add(completed.startedAt!, { seconds: 1 }),
+      completedAt: null,
+      checkpointId: null,
+    };
+    const oldAttempt = attemptCreated(completed, 1);
+    const currentAttempt = attemptCreated(restarted, 2);
+    const events: Array<OrchestrationV2DomainEvent> = [
+      created,
+      updated("event:completed", completed),
+      {
+        ...oldAttempt,
+        payload: {
+          ...oldAttempt.payload,
+          status: "superseded",
+          completedAt: completed.completedAt,
+        },
+      },
+      updated("event:restart", restarted),
+      currentAttempt,
+    ];
+    for (const run of [
+      restarted,
+      {
+        ...completed,
+        id: RunId.make("run:unrelated-history"),
+        ordinal: 2,
+        activeAttemptId: RunAttemptId.make("attempt:unrelated-history"),
+      },
+      {
+        ...completed,
+        id: RunId.make("run:recent"),
+        ordinal: 3,
+        activeAttemptId: RunAttemptId.make("attempt:recent"),
+      },
+    ]) {
+      if (run.id !== restarted.id) {
+        const attempt = attemptCreated(run, 1);
+        events.push(updated(`event:${run.id}`, run), {
+          ...attempt,
+          payload: { ...attempt.payload, status: "completed", completedAt: completed.completedAt },
+        });
+      }
+      events.push({
+        id: EventId.make(`event:item:${run.id}`),
+        type: "turn-item.updated",
+        threadId: run.threadId,
+        runId: run.id,
+        occurredAt: run.requestedAt,
+        payload: {
+          id: TurnItemId.make(`item:${run.id}`),
+          threadId: run.threadId,
+          runId: run.id,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: run.ordinal,
+          status: "completed",
+          title: null,
+          startedAt: run.requestedAt,
+          completedAt: run.requestedAt,
+          updatedAt: run.requestedAt,
+          type: "command_execution",
+          input: "echo ok",
+          output: "ok",
+          exitCode: 0,
+        },
+      });
+    }
+    yield* sink.write({ events });
+    const snapshot = yield* store.getThreadSnapshotWindow(completed.threadId, { rowLimit: 1 });
+    assert.deepEqual(
+      snapshot.projection.turnItems.map((item) => item.runId),
+      [RunId.make("run:recent")],
+    );
+    assert.deepEqual(
+      snapshot.projection.runs.map((run) => run.id),
+      [restarted.id, RunId.make("run:recent")],
+    );
+
+    const delegatedCompletion = { disposition: "open", nextGeneration: 2, delivery: null } as const;
+    const lateDelivery = updated("event:late-delivery", { ...completed, delegatedCompletion });
+    const expected = { ...restarted, delegatedCompletion };
+    const client = applyOrchestrationV2ProjectionEvent(snapshot.projection, lateDelivery);
+    assert.deepEqual(client?.runs[0], expected);
+    assert.deepEqual(
+      snapshot.projection.attempts.map((attempt) => attempt.id),
+      [RunAttemptId.make("attempt:recent"), completed.activeAttemptId, restarted.activeAttemptId],
+    );
+    yield* sink.write({ events: [lateDelivery] });
+    events.push(lateDelivery);
+    yield* assertRunProjection(events, expected);
+    const preattempt = updated("event:pre-attempt", { ...completed, activeAttemptId: null });
+    yield* sink.write({ events: [preattempt] });
+    yield* assertRunProjection([...events, preattempt], expected);
+  }).pipe(Effect.provide(layerTest)),
+);
 
 it.effect("rebuilds event history one bounded page at a time", () =>
   Effect.gen(function* () {

@@ -36,9 +36,7 @@ const layerProjectionStoreTest = Layer.mergeAll(
   SqlitePersistence.layerMemory,
 );
 
-const threadId = ThreadId.make("thread:checkpoint-capture-delegated");
 const projectId = ProjectId.make("project:checkpoint-capture-delegated");
-const runId = RunId.make("run:checkpoint-capture-delegated");
 const scopeId = CheckpointScopeId.make("scope:checkpoint-capture-delegated");
 const rootNodeId = NodeId.make("node:checkpoint-capture-delegated-root");
 const taskId = NodeId.make("node:checkpoint-capture-task");
@@ -56,6 +54,15 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
     "captures without decoding history or losing newer delegated completion, ref lookup fails=%s",
     (refLookupFails) =>
       Effect.gen(function* () {
+        const threadId = ThreadId.make(`thread:checkpoint-capture-delegated:${refLookupFails}`);
+        const runId = RunId.make(`run:checkpoint-capture-delegated:${refLookupFails}`);
+        const scopeId = CheckpointScopeId.make(
+          `scope:checkpoint-capture-delegated:${refLookupFails}`,
+        );
+        const rootNodeId = NodeId.make(`node:checkpoint-capture-delegated-root:${refLookupFails}`);
+        const providerThreadId = ProviderThreadId.make(
+          `provider-thread:checkpoint-capture-delegated:${refLookupFails}`,
+        );
         const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
         const now = yield* DateTime.now;
         const later = DateTime.add(now, { seconds: 1 });
@@ -140,7 +147,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           updatedAt: now,
         };
         const readyBaseline = {
-          id: CheckpointId.make("checkpoint:baseline-0"),
+          id: CheckpointId.make(`checkpoint:baseline-0:${refLookupFails}`),
           threadId,
           scopeId,
           runId: null,
@@ -154,7 +161,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           capturedAt: now,
         };
         const captured = {
-          id: CheckpointId.make("checkpoint:captured-1"),
+          id: CheckpointId.make(`checkpoint:captured-1:${refLookupFails}`),
           threadId,
           scopeId,
           runId,
@@ -254,7 +261,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         yield* sql`INSERT OR REPLACE INTO orchestration_v2_projection_turn_items
           (turn_item_id, thread_id, run_id, node_id, provider_thread_id, provider_turn_id,
             parent_item_id, ordinal, type, status, updated_at, payload_json)
-          VALUES ('obsolete-history', ${threadId}, ${runId}, ${rootNodeId}, NULL, NULL,
+          VALUES (${`obsolete-history:${refLookupFails}`}, ${threadId}, ${runId}, ${rootNodeId}, NULL, NULL,
             NULL, 1, 'assistant_message', 'completed', ${DateTime.formatIso(now)}, '{"obsolete":true}')`;
         yield* sql`UPDATE orchestration_v2_projection_checkpoints
           SET payload_json = json_set(payload_json, '$.files', 'obsolete file summary')

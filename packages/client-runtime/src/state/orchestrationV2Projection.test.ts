@@ -3,8 +3,12 @@ import {
   type ThreadPullRequestLink,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
+  type OrchestrationV2RunAttempt,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  CheckpointId,
+  RunAttemptId,
+  EventId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -106,6 +110,132 @@ const emptyProjection = {
 } as OrchestrationV2ThreadProjection;
 
 describe("applyOrchestrationV2ProjectionEvent", () => {
+  it("preserves a completed run and checkpoint when stale delivery metadata arrives", () => {
+    const completed: OrchestrationV2Run = {
+      ...run,
+      activeAttemptId: RunAttemptId.make("attempt:completed"),
+      checkpointId: CheckpointId.make("checkpoint:completed"),
+    };
+    const delegatedCompletion = { disposition: "open", nextGeneration: 1, delivery: null } as const;
+    const next = applyOrchestrationV2ProjectionEvent(
+      { ...emptyProjection, runs: [completed] },
+      {
+        id: EventId.make("event:delivery"),
+        type: "run.updated",
+        threadId,
+        runId,
+        occurredAt: now,
+        payload: {
+          ...completed,
+          status: "waiting",
+          completedAt: null,
+          checkpointId: null,
+          delegatedCompletion,
+        },
+      },
+    )!;
+    expect(next.runs).toEqual([{ ...completed, delegatedCompletion }]);
+  });
+
+  it("keeps the newer attempt while accepting metadata from an older run snapshot", () => {
+    const completed: OrchestrationV2Run = {
+      ...run,
+      activeAttemptId: RunAttemptId.make("attempt:old"),
+      rootNodeId: NodeId.make("node:old"),
+      providerThreadId: ProviderThreadId.make("provider-thread:old"),
+      checkpointId: CheckpointId.make("checkpoint:old"),
+    };
+    const restarted: OrchestrationV2Run = {
+      ...completed,
+      activeAttemptId: RunAttemptId.make("attempt:new"),
+      rootNodeId: NodeId.make("node:new"),
+      providerInstanceId: ProviderInstanceId.make("claude"),
+      modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "claude-sonnet-4-6" },
+      providerThreadId: ProviderThreadId.make("provider-thread:new"),
+      status: "running",
+      startedAt: DateTime.add(now, { seconds: 1 }),
+      completedAt: null,
+      checkpointId: null,
+    };
+    const attempt = (
+      snapshot: OrchestrationV2Run,
+      attemptOrdinal: number,
+    ): OrchestrationV2RunAttempt => ({
+      id: snapshot.activeAttemptId!,
+      runId,
+      attemptOrdinal,
+      rootNodeId: snapshot.rootNodeId!,
+      providerInstanceId: snapshot.providerInstanceId,
+      providerThreadId: snapshot.providerThreadId!,
+      providerTurnId: null,
+      reason: "steering_restart",
+      status: "running",
+      startedAt: now,
+      completedAt: null,
+    });
+    const updated = (payload: OrchestrationV2Run): OrchestrationV2DomainEvent => ({
+      id: EventId.make("event:run-update"),
+      type: "run.updated",
+      threadId,
+      runId,
+      occurredAt: now,
+      payload,
+    });
+    const next = applyOrchestrationV2ProjectionEvent(
+      { ...emptyProjection, runs: [completed], attempts: [attempt(completed, 1)] },
+      updated(restarted),
+    )!;
+    expect(next.runs).toEqual([restarted]);
+    const delegatedCompletion = { disposition: "open", nextGeneration: 2, delivery: null } as const;
+    const afterDelivery = applyOrchestrationV2ProjectionEvent(
+      { ...next, attempts: [...next.attempts, attempt(restarted, 2)] },
+      updated({ ...completed, delegatedCompletion }),
+    )!;
+    expect(afterDelivery.runs).toEqual([{ ...restarted, delegatedCompletion }]);
+    const afterPreattempt = applyOrchestrationV2ProjectionEvent(
+      afterDelivery,
+      updated({ ...completed, activeAttemptId: null }),
+    )!;
+    expect(afterPreattempt.runs).toEqual(afterDelivery.runs);
+  });
+
+  it("allows workspace preparation to retry only before provider work starts", () => {
+    const failed: OrchestrationV2Run = {
+      ...run,
+      activeAttemptId: RunAttemptId.make("attempt:workspace"),
+      status: "failed",
+      startedAt: null,
+      workspacePreparation: { type: "worktree", baseRef: "main" },
+    };
+    const updated = (payload: OrchestrationV2Run): OrchestrationV2DomainEvent => ({
+      id: EventId.make("event:retry"),
+      type: "run.updated",
+      threadId,
+      runId,
+      occurredAt: now,
+      payload,
+    });
+    const preparing: OrchestrationV2Run = { ...failed, status: "preparing", completedAt: null };
+    const next = applyOrchestrationV2ProjectionEvent(
+      { ...emptyProjection, runs: [failed] },
+      updated(preparing),
+    )!;
+    expect(next.runs).toEqual([preparing]);
+
+    const started = { ...failed, startedAt: now };
+    const staleRetry = applyOrchestrationV2ProjectionEvent(
+      { ...emptyProjection, runs: [started] },
+      updated({ ...started, status: "preparing", completedAt: null }),
+    )!;
+    expect(staleRetry.runs).toEqual([started]);
+
+    const { workspacePreparation: _workspacePreparation, ...providerFailure } = failed;
+    const stalePreparation = applyOrchestrationV2ProjectionEvent(
+      { ...emptyProjection, runs: [providerFailure] },
+      updated({ ...providerFailure, status: "preparing", completedAt: null }),
+    )!;
+    expect(stalePreparation.runs).toEqual([providerFailure]);
+  });
   it("applies a compact PR sync without replacing other links or thread metadata", () => {
     const link = (number: number): ThreadPullRequestLink => ({
       host: "github.com",

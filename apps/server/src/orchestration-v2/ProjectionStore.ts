@@ -7,6 +7,7 @@ import type {
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
+import { preserveRunRecordedFields } from "@t3tools/shared/orchestrationV2RunProjection";
 import {
   latestRootProviderFailure,
   latestUnheldRun,
@@ -78,7 +79,6 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
-import type * as Statement from "effect/sql/Statement";
 
 import { MCP_APP_OUTPUT_KEY } from "@t3tools/shared/mcpApp";
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
@@ -654,24 +654,6 @@ export function upsertProviderTurn(
   });
 }
 
-/** A stale run snapshot must not erase fields that other events recorded on the run. */
-function preserveRunRecordedFields(
-  current: OrchestrationV2Run | undefined,
-  next: OrchestrationV2Run,
-): OrchestrationV2Run {
-  if (current === undefined) return next;
-  return {
-    ...next,
-    ...(next.delegatedCompletion === undefined && current.delegatedCompletion !== undefined
-      ? { delegatedCompletion: current.delegatedCompletion }
-      : {}),
-    ...(next.restartCancelledBackgroundWork === undefined &&
-    current.restartCancelledBackgroundWork !== undefined
-      ? { restartCancelledBackgroundWork: current.restartCancelledBackgroundWork }
-      : {}),
-  };
-}
-
 function preserveCompletionDelivery(
   current: OrchestrationV2Subagent | undefined,
   next: OrchestrationV2Subagent,
@@ -773,6 +755,7 @@ export function applyToProjection(
           preserveRunRecordedFields(
             base.runs.find((run) => run.id === event.payload.id),
             event.payload,
+            base.attempts,
           ),
         ),
       });
@@ -1833,20 +1816,6 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
 
-    // For run upserts: a snapshot without `path` keeps the value another event recorded there.
-    const keepRecordedRunField = (payload: Statement.Fragment, path: string) => sql`
-      CASE
-        WHEN json_type(excluded.payload_json, ${path}) IS NULL
-          AND json_type(orchestration_v2_projection_runs.payload_json, ${path}) IS NOT NULL
-        THEN json_set(
-          ${payload},
-          ${path},
-          json_extract(orchestration_v2_projection_runs.payload_json, ${path})
-        )
-        ELSE ${payload}
-      END
-    `;
-
     const apply: ProjectionStoreV2Shape["apply"] = (event) =>
       Effect.gen(function* () {
         switch (event.type) {
@@ -1932,7 +1901,38 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           }
           case "run.created":
           case "run.updated": {
-            const payloadJson = yield* encodeRunPayload(event.payload);
+            // EventSink serializes projection writes in the event transaction.
+            const rows = yield* sql<{
+              readonly payload_json: string;
+              readonly attempt_id: RunAttemptId | null;
+              readonly attempt_ordinal: number | null;
+            }>`
+              SELECT run.payload_json, attempt.attempt_id, attempt.attempt_ordinal
+              FROM orchestration_v2_projection_runs AS run
+              LEFT JOIN orchestration_v2_projection_run_attempts AS attempt
+                ON attempt.attempt_id IN (
+                  json_extract(run.payload_json, '$.activeAttemptId'), ${event.payload.activeAttemptId}
+                ) AND attempt.run_id = run.run_id
+              WHERE run.run_id = ${event.payload.id}
+            `;
+            const current =
+              rows[0] === undefined ? undefined : yield* decodeRunPayload(rows[0].payload_json);
+            const run = preserveRunRecordedFields(
+              current,
+              event.payload,
+              rows.flatMap((row) =>
+                row.attempt_id === null || row.attempt_ordinal === null
+                  ? []
+                  : [
+                      {
+                        id: row.attempt_id,
+                        runId: event.payload.id,
+                        attemptOrdinal: row.attempt_ordinal,
+                      },
+                    ],
+              ),
+            );
+            const payloadJson = yield* encodeRunPayload(run);
             const payload = parseEncodedPayload(payloadJson);
             yield* sql`
               INSERT INTO orchestration_v2_projection_runs (
@@ -1948,13 +1948,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 payload_json
               )
               VALUES (
-                ${event.payload.id},
-                ${event.payload.threadId},
-                ${event.payload.ordinal},
-                ${event.payload.providerInstanceId},
-                ${event.payload.providerInstanceId},
-                ${event.payload.providerThreadId},
-                ${event.payload.status},
+                ${run.id},
+                ${run.threadId},
+                ${run.ordinal},
+                ${run.providerInstanceId},
+                ${run.providerInstanceId},
+                ${run.providerThreadId},
+                ${run.status},
                 ${stringField(payload, "requestedAt")},
                 ${nullableStringField(payload, "completedAt")},
                 ${payloadJson}
@@ -1969,10 +1969,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 status = excluded.status,
                 requested_at = excluded.requested_at,
                 completed_at = excluded.completed_at,
-                payload_json = ${keepRecordedRunField(
-                  keepRecordedRunField(sql`excluded.payload_json`, "$.delegatedCompletion"),
-                  "$.restartCancelledBackgroundWork",
-                )}
+                payload_json = excluded.payload_json
             `;
             break;
           }
@@ -3062,7 +3059,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT payload_json FROM orchestration_v2_projection_run_attempts
             WHERE thread_id = ${threadId}
               AND (status IN ('pending','starting','running','waiting')
-                OR run_id IN (SELECT value FROM json_each(${cohortRunIds})))
+                OR run_id IN (SELECT value FROM json_each(${cohortRunIds}))
+                OR run_id IN (
+                  -- Retained runs need prior ordinals to reject delayed snapshots after reconnect.
+                  SELECT run_id FROM orchestration_v2_projection_runs
+                  WHERE thread_id = ${threadId}
+                    AND (status IN ('queued','preparing','starting','running','waiting')
+                      OR run_id = ${window.requiredRunId ?? null})
+                ))
             ORDER BY run_id ASC, attempt_ordinal ASC
           `,
           fields !== undefined && !fields.includes("nodes")

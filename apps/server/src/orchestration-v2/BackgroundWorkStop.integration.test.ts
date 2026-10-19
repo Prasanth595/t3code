@@ -219,39 +219,18 @@ const stopEarlierBackgroundWork = ({
           const attempt = before.attempts[0]!;
           if (stalledRun === "missing-session" || stalledRun === "missing-session-terminal") {
             const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
-            const failed = yield* watch(
-              (event) => event.type === "run.updated" && event.payload.status === "failed",
-            );
+            // Shutdown removes the runtime without terminalizing its persisted run.
             yield* sessions.release({
               providerSessionId: first.providerThread.providerSessionId!,
-              reason: "runtime_error",
+              reason: "server_shutdown",
             });
-            yield* Fiber.join(failed);
-            yield* sink.write({
-              events: [
-                {
-                  id: EventId.make("stale-run"),
-                  type: "run.updated",
-                  threadId,
-                  occurredAt: now,
-                  payload: run,
-                },
-                {
-                  id: EventId.make("stale-node"),
-                  type: "node.updated",
-                  threadId,
-                  occurredAt: now,
-                  payload: node,
-                },
-                {
-                  id: EventId.make("stale-attempt"),
-                  type: "run-attempt.updated",
-                  threadId,
-                  occurredAt: now,
-                  payload: attempt,
-                },
-              ],
-            });
+            const released = yield* orchestrator.getThreadProjection(threadId);
+            assert.deepEqual(released.runs[0], run);
+            assert.deepEqual(released.attempts[0], attempt);
+            assert.deepEqual(
+              released.nodes.find((candidate) => candidate.id === node.id),
+              node,
+            );
           }
           const messageId = MessageId.make("partial-output");
           const item = before.turnItems.find((candidate) => candidate.id === devServerId)!;
@@ -542,8 +521,9 @@ const stopEarlierBackgroundWork = ({
             ],
           });
         }
-        const settledRun = (input: {
+        const backgroundRun = (input: {
           readonly ordinal: number;
+          readonly status?: "starting" | "waiting";
           readonly providerThreadId: ProviderThreadId;
           readonly runningItem?: {
             readonly id: TurnItemId;
@@ -554,6 +534,9 @@ const stopEarlierBackgroundWork = ({
           const attemptId = RunAttemptId.make(`attempt:${input.ordinal}`);
           const nodeId = NodeId.make(`node:${input.ordinal}`);
           const providerTurnId = ProviderTurnId.make(`provider-turn:${input.ordinal}`);
+          const starting = input.status === "starting";
+          const startedAt = starting ? null : now;
+          const completedAt = input.status === undefined ? now : null;
           const events: Array<OrchestrationV2DomainEvent> = [
             {
               id: EventId.make(`run:${input.ordinal}`),
@@ -570,10 +553,10 @@ const stopEarlierBackgroundWork = ({
                 userMessageId: MessageId.make(`message:${input.ordinal}`),
                 rootNodeId: nodeId,
                 activeAttemptId: attemptId,
-                status: "completed",
+                status: input.status ?? "completed",
                 requestedAt: now,
-                startedAt: now,
-                completedAt: now,
+                startedAt,
+                completedAt,
                 checkpointId: null,
                 contextHandoffId: null,
               },
@@ -591,15 +574,15 @@ const stopEarlierBackgroundWork = ({
                 parentNodeId: null,
                 rootNodeId: nodeId,
                 kind: "root_turn",
-                status: "completed",
+                status: starting ? "pending" : "completed",
                 countsForRun: true,
                 providerThreadId: input.providerThreadId,
-                providerTurnId,
+                providerTurnId: starting ? null : providerTurnId,
                 nativeItemRef: null,
                 runtimeRequestId: null,
                 checkpointScopeId: null,
-                startedAt: now,
-                completedAt: now,
+                startedAt,
+                completedAt: starting ? null : now,
               },
             },
             {
@@ -614,14 +597,16 @@ const stopEarlierBackgroundWork = ({
                 rootNodeId: nodeId,
                 providerInstanceId: instanceId,
                 providerThreadId: input.providerThreadId,
-                providerTurnId,
+                providerTurnId: starting ? null : providerTurnId,
                 reason: "initial",
-                status: "completed",
-                startedAt: now,
-                completedAt: now,
+                status: starting ? "pending" : "completed",
+                startedAt,
+                completedAt: starting ? null : now,
               },
             },
-            {
+          ];
+          if (!starting) {
+            events.push({
               id: EventId.make(`provider-turn:${input.ordinal}`),
               type: "provider-turn.updated",
               threadId,
@@ -637,8 +622,8 @@ const stopEarlierBackgroundWork = ({
                 startedAt: now,
                 completedAt: now,
               },
-            },
-          ];
+            });
+          }
           const item = input.runningItem;
           if (item !== undefined) {
             const base = {
@@ -709,18 +694,23 @@ const stopEarlierBackgroundWork = ({
 
         const watcherId = TurnItemId.make("turn-item:watcher");
         const otherProviderThreadId = ProviderThreadId.make("provider-thread:other");
-        const watcherRun = settledRun({
+        const watcherRun = backgroundRun({
           ordinal: 2,
+          ...(olderStart ? { status: "starting" as const } : {}),
           providerThreadId: olderStart ? otherProviderThreadId : codexProviderThread.id,
           ...(olderStart ? {} : { runningItem: { id: watcherId, kind: "command" as const } }),
         });
         const reviewerId = TurnItemId.make("turn-item:reviewer");
-        const reviewerRun = settledRun({
+        const reviewerRun = backgroundRun({
           ordinal: 3,
           providerThreadId: codexProviderThread.id,
           runningItem: { id: reviewerId, kind: "subagent" },
         });
-        const latestRun = settledRun({ ordinal: 4, providerThreadId: otherProviderThreadId });
+        const latestRun = backgroundRun({
+          ordinal: 4,
+          providerThreadId: otherProviderThreadId,
+          ...(stopWithQueue === undefined ? {} : { status: "waiting" as const }),
+        });
         yield* sink.write({
           events: [
             ...watcherRun.events,
@@ -741,7 +731,7 @@ const stopEarlierBackgroundWork = ({
           ],
         });
 
-        const failedRun = settledRun({ ordinal: 5, providerThreadId: otherProviderThreadId });
+        const failedRun = backgroundRun({ ordinal: 5, providerThreadId: otherProviderThreadId });
         if (failedStart) {
           yield* sink.write({
             events: failedRun.events.flatMap((event): Array<OrchestrationV2DomainEvent> => {
@@ -775,18 +765,6 @@ const stopEarlierBackgroundWork = ({
           const owner = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
             (run) => run.id === latestRun.runId,
           )!;
-          yield* sink.write({
-            events: [
-              {
-                id: EventId.make("latest-run-waiting"),
-                type: "run.updated",
-                threadId,
-                runId: owner.id,
-                occurredAt: now,
-                payload: { ...owner, status: "waiting", completedAt: null },
-              },
-            ],
-          });
           yield* orchestrator.dispatch({
             type: "message.dispatch",
             commandId: CommandId.make("queue-follow-up"),
@@ -816,25 +794,7 @@ const stopEarlierBackgroundWork = ({
                 threadId,
                 runId: owner.id,
                 occurredAt: now,
-                payload: owner,
-              },
-            ],
-          });
-        }
-
-        if (olderStart) {
-          const older = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
-            (run) => run.id === watcherRun.runId,
-          )!;
-          yield* sink.write({
-            events: [
-              {
-                id: EventId.make("older-run-starting"),
-                type: "run.updated",
-                threadId,
-                runId: older.id,
-                occurredAt: now,
-                payload: { ...older, status: "starting", startedAt: null, completedAt: null },
+                payload: { ...owner, status: "completed", completedAt: now },
               },
             ],
           });
