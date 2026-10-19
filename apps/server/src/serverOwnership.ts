@@ -19,6 +19,7 @@ import {
   BOOT_SERVICE_UNIT_FILE,
   bootServiceBaseDirOf,
 } from "./cloud/bootService.ts";
+import { ServiceLauncherHostProcess } from "./cloud/serviceLauncherClient.ts";
 import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_RESTART_PENDING_FILE,
@@ -112,7 +113,10 @@ const legacyOwnerIsLive = Effect.fn("legacyOwnerIsLive")(function* (
 // record. Unreadable configuration or an unavailable manager allows startup.
 const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
   function* (stateDir: string) {
-    if ((yield* HostProcess.Environment)[SERVICE_LAUNCHER_CONTEXT_ENV] !== undefined) {
+    if (
+      (yield* ServiceLauncherHostProcess).connected &&
+      (yield* HostProcess.Environment)[SERVICE_LAUNCHER_CONTEXT_ENV] !== undefined
+    ) {
       return undefined;
     }
     const platform = yield* HostProcess.Platform;
