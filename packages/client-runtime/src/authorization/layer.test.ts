@@ -51,9 +51,11 @@ const isDescriptorUrl = (url: RequestInfo | URL) =>
 
 // Descriptor requests can run next to other requests, so they are answered by
 // URL from `descriptors` (default: DESCRIPTOR) and the rest in call order.
+type FetchResponse = Response | Promise<Response> | (() => Promise<Response>);
+
 function recordedFetch(
-  responses: ReadonlyArray<Response>,
-  descriptors: ReadonlyArray<Response | Promise<Response>> = [],
+  responses: ReadonlyArray<FetchResponse>,
+  descriptors: ReadonlyArray<FetchResponse> = [],
 ) {
   const calls: Array<readonly [RequestInfo | URL, RequestInit]> = [];
   let responseIndex = 0;
@@ -61,12 +63,15 @@ function recordedFetch(
   const fetchFn = ((input, init) => {
     calls.push([input, init ?? {}]);
     if (isDescriptorUrl(input)) {
-      return Promise.resolve(descriptors[descriptorIndex++] ?? Response.json(DESCRIPTOR));
+      const response = descriptors[descriptorIndex++] ?? Response.json(DESCRIPTOR);
+      return typeof response === "function" ? response() : Promise.resolve(response);
     }
     const response = responses[responseIndex++];
     return response === undefined
       ? Promise.reject(new Error(`Unexpected fetch call to ${String(input)}`))
-      : Promise.resolve(response);
+      : typeof response === "function"
+        ? response()
+        : Promise.resolve(response);
   }) satisfies typeof fetch;
   return { calls, fetchFn };
 }
@@ -120,8 +125,8 @@ const persistedToken = (
 
 const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (input: {
   readonly initialToken?: TokenStore.RemoteDpopAccessToken;
-  readonly responses: ReadonlyArray<Response>;
-  readonly descriptors?: ReadonlyArray<Response | Promise<Response>>;
+  readonly responses: ReadonlyArray<FetchResponse>;
+  readonly descriptors?: ReadonlyArray<FetchResponse>;
   readonly bootstrap?: RelayEnvironmentConnectResponse;
   readonly beforeBootstrap?: Effect.Effect<void, ManagedRelay.ManagedRelayClientError>;
   readonly beforePut?: Effect.Effect<void>;
@@ -267,8 +272,6 @@ describe("RemoteEnvironmentAuthorization", () => {
 
       expect(first.socketUrl).toContain("wsTicket=first-ticket");
       expect(second.socketUrl).toContain("wsTicket=second-ticket");
-      // Only the call that fetched the descriptor passes it on. The cached one
-      // may be stale, so the resolver fetches a current one for its own checks.
       expect(first.descriptor?.environmentId).toBe(ENVIRONMENT_ID);
       expect(second.descriptor).toBeUndefined();
       expect(
@@ -355,16 +358,24 @@ describe("RemoteEnvironmentAuthorization", () => {
     }),
   );
 
-  it.live("returns the relay descriptor it requested next to the websocket ticket", () =>
+  it.effect("requests the relay ticket before the fresh descriptor finishes", () =>
     Effect.gen(function* () {
-      let releaseDescriptor: (response: Response) => void = () => undefined;
+      const descriptorRequested = yield* Deferred.make<void>();
+      const ticketRequested = yield* Deferred.make<void>();
+      const descriptorResponse = Promise.withResolvers<Response>();
       const harness = yield* makeHarness({
         initialToken: persistedToken(),
-        responses: [websocketTicket("cached-ticket")],
+        responses: [
+          () => {
+            Deferred.doneUnsafe(ticketRequested, Effect.void);
+            return Promise.resolve(websocketTicket("cached-ticket"));
+          },
+        ],
         descriptors: [
-          new Promise<Response>((resolve) => {
-            releaseDescriptor = resolve;
-          }),
+          () => {
+            Deferred.doneUnsafe(descriptorRequested, Effect.void);
+            return descriptorResponse.promise;
+          },
         ],
       });
 
@@ -372,20 +383,13 @@ describe("RemoteEnvironmentAuthorization", () => {
         const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
         return yield* remote.authorizeDpop({ expectedEnvironmentId: ENVIRONMENT_ID });
       }).pipe(Effect.provide(harness.layer), Effect.forkChild);
-      // Both requests are sent before the descriptor response arrives.
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        if (harness.fetch.calls.length >= 2) break;
-        yield* Effect.sleep("1 millis");
-      }
-      expect(harness.fetch.calls.map(([url]) => String(url)).toSorted()).toEqual([
-        `${ENDPOINT.httpBaseUrl}/.well-known/t3/environment`,
-        `${ENDPOINT.httpBaseUrl}/api/auth/websocket-ticket`,
-      ]);
+      yield* Deferred.await(descriptorRequested);
+      yield* Deferred.await(ticketRequested);
 
-      releaseDescriptor(Response.json(DESCRIPTOR));
+      descriptorResponse.resolve(Response.json(DESCRIPTOR));
       const authorized = yield* Fiber.join(authorizing);
       expect(authorized.socketUrl).toContain("wsTicket=cached-ticket");
-      expect(authorized.descriptor?.environmentId).toBe(ENVIRONMENT_ID);
+      expect(authorized.descriptor).toMatchObject(DESCRIPTOR);
     }),
   );
 

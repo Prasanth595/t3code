@@ -215,14 +215,16 @@ const makeFactory = Effect.fn("TestRpcSessionFactory.make")(function* (
   options: RpcSession.RpcSessionOptions = {},
 ) {
   const sockets: TestWebSocket[] = [];
+  const socketCreated = yield* Deferred.make<TestWebSocket>();
   const constructorLayer = Layer.succeed(Socket.WebSocketConstructor, (url) => {
     const socket = new TestWebSocket(url);
     sockets.push(socket);
+    Deferred.doneUnsafe(socketCreated, Effect.succeed(socket));
     return socket as unknown as globalThis.WebSocket;
   });
   const layer = RpcSession.layer(options).pipe(Layer.provide(constructorLayer));
   const factory = yield* RpcSession.RpcSessionFactory.pipe(Effect.provide(layer));
-  return { factory, sockets };
+  return { factory, sockets, socketCreated };
 });
 
 const awaitSocket = Effect.fn("TestRpcSessionFactory.awaitSocket")(function* (
@@ -370,18 +372,18 @@ describe("RpcSessionFactory", () => {
 
   it.effect("finishes a pending stream cancel when the transport drops", () =>
     Effect.gen(function* () {
-      const { factory, sockets } = yield* makeFactory();
+      const { factory, socketCreated } = yield* makeFactory();
       const session = yield* factory.connect(PREPARED);
-      const socket = yield* awaitSocket(sockets);
+      const socket = yield* Deferred.await(socketCreated);
       const lifecycle = yield* session.client[WS_METHODS.subscribeServerLifecycle]({}).pipe(
         Stream.runDrain,
-        Effect.forkChild,
+        Effect.forkChild({ startImmediately: true }),
       );
-      yield* Effect.yieldNow;
 
       // The socket is not open yet, so canceling waits to write its interrupt.
-      const canceling = yield* Effect.forkChild(Fiber.interrupt(lifecycle));
-      yield* Effect.yieldNow;
+      const canceling = yield* Fiber.interrupt(lifecycle).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
       socket.close(1006, "network lost");
 
       // The session never reopens this socket; the cancel must not wait for it.

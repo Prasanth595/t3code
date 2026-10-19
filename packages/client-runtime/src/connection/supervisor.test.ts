@@ -102,17 +102,12 @@ function awaitState(
   );
 }
 
-const eventuallyReleased = Effect.fn("TestConnectionHarness.eventuallyReleased")(function* (
-  releaseCount: Ref.Ref<number>,
-  expected: number,
-) {
-  // Finished attempts release their session in the background.
-  for (let iteration = 0; iteration < 100; iteration += 1) {
-    if ((yield* Ref.get(releaseCount)) >= expected) break;
-    yield* Effect.yieldNow;
-  }
-  expect(yield* Ref.get(releaseCount)).toBe(expected);
-});
+const awaitRelease = (releaseCount: SubscriptionRef.SubscriptionRef<number>, expected: number) =>
+  SubscriptionRef.changes(releaseCount).pipe(
+    Stream.filter((count) => count >= expected),
+    Stream.runHead,
+    Effect.map((count) => expect(Option.getOrThrow(count)).toBe(expected)),
+  );
 
 const eventuallyState = Effect.fn("TestConnectionHarness.eventuallyState")(function* (
   state: SubscriptionRef.SubscriptionRef<SupervisorConnectionState>,
@@ -148,7 +143,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
   );
   const prepareCount = yield* Ref.make(0);
   const sessionCount = yield* Ref.make(0);
-  const releaseCount = yield* Ref.make(0);
+  const releaseCount = yield* SubscriptionRef.make(0);
   const wakeups = yield* SubscriptionRef.make<{
     readonly sequence: number;
     readonly reason: ConnectionWakeups.ConnectionWakeup;
@@ -196,7 +191,7 @@ const makeHarness = Effect.fn("TestConnectionHarness.make")(function* (options?:
         closed: Deferred.await(closed),
       } satisfies RpcSession.RpcSession),
       () =>
-        Ref.update(releaseCount, (count) => count + 1).pipe(
+        SubscriptionRef.update(releaseCount, (count) => count + 1).pipe(
           Effect.andThen(options?.release?.(attempt) ?? Effect.void),
         ),
     );
@@ -302,7 +297,7 @@ describe("EnvironmentSupervisor", () => {
       expect(attempts).toHaveLength(2);
       expect(attempts[0]?.traceId).not.toBe(attempts[1]?.traceId);
       expect(attempts[1]?.links.map((link) => link.span.spanId)).toContain(attempts[0]?.spanId);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect(yield* SubscriptionRef.get(harness.releaseCount)).toBe(0);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -329,7 +324,7 @@ describe("EnvironmentSupervisor", () => {
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
 
       expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect(yield* SubscriptionRef.get(harness.releaseCount)).toBe(0);
     }),
   );
 
@@ -483,7 +478,7 @@ describe("EnvironmentSupervisor", () => {
           message: "Test environment did not respond during connection setup.",
         },
       });
-      yield* eventuallyReleased(harness.releaseCount, 1);
+      yield* awaitRelease(harness.releaseCount, 1);
       expect(Option.isNone(yield* SubscriptionRef.get(supervisor.prepared))).toBe(true);
     }).pipe(Effect.provide(TestClock.layer())),
   );
@@ -708,7 +703,7 @@ describe("EnvironmentSupervisor", () => {
 
       expect(yield* Ref.get(probeCount)).toBe(1);
       expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect(yield* SubscriptionRef.get(harness.releaseCount)).toBe(0);
       expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
         phase: "connected",
         generation: 1,
@@ -748,7 +743,7 @@ describe("EnvironmentSupervisor", () => {
       expect(replaced.attempt).toBe(1);
       expect(yield* Ref.get(probeCount)).toBe(1);
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
-      yield* eventuallyReleased(harness.releaseCount, 1);
+      yield* awaitRelease(harness.releaseCount, 1);
     }),
   );
 
@@ -771,7 +766,7 @@ describe("EnvironmentSupervisor", () => {
         yield* TestClock.adjust("3 seconds");
         yield* awaitState(supervisor.state, (state) => state.phase === "offline");
 
-        expect(yield* Ref.get(harness.releaseCount)).toBe(1);
+        expect(yield* SubscriptionRef.get(harness.releaseCount)).toBe(1);
         expect(Option.isNone(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
 
         yield* harness.setNetworkStatus("online");
@@ -802,7 +797,7 @@ describe("EnvironmentSupervisor", () => {
 
       expect(yield* Ref.get(probeCount)).toBe(1);
       expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect(yield* SubscriptionRef.get(harness.releaseCount)).toBe(0);
     }),
   );
 
@@ -976,62 +971,48 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
-  it.effect("reconnects without waiting for a stuck session release", () =>
+  it.effect("reconnects during a stuck release and finishes cleanup on supervisor close", () =>
     Effect.gen(function* () {
-      // Releasing an RPC session on a dead socket can wait for a timeout.
       const releaseGate = yield* Deferred.make<void>();
-      const harness = yield* makeHarness({
-        release: (attempt) => (attempt === 1 ? Deferred.await(releaseGate) : Effect.void),
-      });
-      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
-        initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies));
-
-      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      yield* harness.wake("application-active-reconnect");
-      yield* awaitState(
-        supervisor.state,
-        (state) => state.phase === "connected" && state.generation === 2,
-      );
-      expect(yield* Ref.get(harness.sessionCount)).toBe(2);
-      yield* Deferred.succeed(releaseGate, undefined);
-    }),
-  );
-
-  it.effect("finishes an in-flight session release when the supervisor closes", () =>
-    Effect.gen(function* () {
-      // A release that is still waiting on a dead socket must run to the end
-      // when the environment is removed, or its socket and ping loop leak.
-      const releaseGate = yield* Deferred.make<void>();
-      const releaseFinished = yield* Ref.make(false);
+      const releaseFinished = yield* Deferred.make<void>();
       const harness = yield* makeHarness({
         release: (attempt) =>
           attempt === 1
-            ? Deferred.await(releaseGate).pipe(Effect.andThen(Ref.set(releaseFinished, true)))
+            ? Deferred.await(releaseGate).pipe(
+                Effect.andThen(Deferred.succeed(releaseFinished, undefined)),
+                Effect.asVoid,
+              )
             : Effect.void,
       });
       const supervisorScope = yield* Scope.make();
-      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
-        initiallyDesired: true,
-      }).pipe(Effect.provide(harness.dependencies), Scope.provide(supervisorScope));
+      yield* Effect.gen(function* () {
+        const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies), Scope.provide(supervisorScope));
 
-      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
-      yield* harness.wake("application-active-reconnect");
-      yield* awaitState(
-        supervisor.state,
-        (state) => state.phase === "connected" && state.generation === 2,
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        yield* harness.wake("application-active-reconnect");
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.phase === "connected" && state.generation === 2,
+        );
+        yield* awaitRelease(harness.releaseCount, 1);
+        expect(yield* Ref.get(harness.sessionCount)).toBe(2);
+
+        const closing = yield* Scope.close(supervisorScope, Exit.void).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        expect(yield* Deferred.isDone(releaseFinished)).toBe(false);
+        yield* Deferred.succeed(releaseGate, undefined);
+        yield* Fiber.join(closing);
+        expect(yield* Deferred.isDone(releaseFinished)).toBe(true);
+      }).pipe(
+        Effect.ensuring(
+          Deferred.succeed(releaseGate, undefined).pipe(
+            Effect.andThen(Scope.close(supervisorScope, Exit.void)),
+          ),
+        ),
       );
-      yield* eventuallyReleased(harness.releaseCount, 1);
-
-      const closing = yield* Scope.close(supervisorScope, Exit.void).pipe(Effect.forkChild);
-      // Let the close reach the blocked release before opening the gate.
-      for (let index = 0; index < 20; index += 1) {
-        yield* Effect.yieldNow;
-      }
-      expect(yield* Ref.get(releaseFinished)).toBe(false);
-      yield* Deferred.succeed(releaseGate, undefined);
-      yield* Fiber.join(closing);
-      expect(yield* Ref.get(releaseFinished)).toBe(true);
     }),
   );
 
@@ -1158,10 +1139,7 @@ describe("EnvironmentSupervisor", () => {
         (state) => state.phase === "connecting" && state.attempt === 2,
       );
       yield* harness.wake("application-active-reconnect");
-      // Let the in-flight attempt observe the wakeup before it fails.
-      for (let index = 0; index < 20; index += 1) {
-        yield* Effect.yieldNow;
-      }
+      yield* TestClock.adjust("100 millis");
       yield* Deferred.succeed(failSetup, undefined);
 
       const backoff = yield* awaitState(
@@ -1195,7 +1173,7 @@ describe("EnvironmentSupervisor", () => {
 
       expect(yield* Ref.get(probeCount)).toBe(1);
       expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect(yield* SubscriptionRef.get(harness.releaseCount)).toBe(0);
       expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connected");
     }),
   );
@@ -1222,7 +1200,7 @@ describe("EnvironmentSupervisor", () => {
 
       expect(yield* Ref.get(probeCount)).toBe(0);
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
-      yield* eventuallyReleased(harness.releaseCount, 1);
+      yield* awaitRelease(harness.releaseCount, 1);
     }),
   );
 
@@ -1248,7 +1226,7 @@ describe("EnvironmentSupervisor", () => {
       );
 
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
-      yield* eventuallyReleased(harness.releaseCount, 1);
+      yield* awaitRelease(harness.releaseCount, 1);
     }),
   );
 
@@ -1313,7 +1291,7 @@ describe("EnvironmentSupervisor", () => {
       );
 
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
-      yield* eventuallyReleased(harness.releaseCount, 1);
+      yield* awaitRelease(harness.releaseCount, 1);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -1437,7 +1415,7 @@ describe("EnvironmentSupervisor", () => {
       yield* supervisor.disconnect;
       yield* awaitState(supervisor.state, (state) => state.phase === "available");
 
-      yield* eventuallyReleased(harness.releaseCount, 1);
+      yield* awaitRelease(harness.releaseCount, 1);
     }),
   );
 
@@ -1453,7 +1431,7 @@ describe("EnvironmentSupervisor", () => {
       yield* Effect.yieldNow;
 
       expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect(yield* SubscriptionRef.get(harness.releaseCount)).toBe(0);
       expect((yield* SubscriptionRef.get(supervisor.state)).phase).toBe("connected");
     }),
   );
@@ -1473,7 +1451,7 @@ describe("EnvironmentSupervisor", () => {
       );
 
       expect(yield* Ref.get(harness.sessionCount)).toBe(2);
-      yield* eventuallyReleased(harness.releaseCount, 1);
+      yield* awaitRelease(harness.releaseCount, 1);
     }),
   );
 
@@ -1501,7 +1479,7 @@ describe("EnvironmentSupervisor", () => {
       yield* TestClock.adjust("2 hours");
 
       expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect(yield* SubscriptionRef.get(harness.releaseCount)).toBe(0);
       expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session))).toBe(session);
       expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
         phase: "connected",
@@ -1670,7 +1648,7 @@ describe("EnvironmentSupervisor", () => {
       expect(sessionAuthorizations).toEqual(["DPoP access-token-2"]);
       expect(yield* Ref.get(bootstrapCalls)).toBe(1);
       expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session))).toBe(session);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect(yield* SubscriptionRef.get(harness.releaseCount)).toBe(0);
       expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
         phase: "connected",
         generation: 1,
@@ -1685,7 +1663,7 @@ describe("EnvironmentSupervisor", () => {
       expect(httpPaths.filter((path) => path === "/api/auth/websocket-ticket")).toHaveLength(1);
       expect(httpPaths.filter((path) => path === "/oauth/token")).toHaveLength(1);
       expect(yield* Ref.get(harness.sessionCount)).toBe(1);
-      expect(yield* Ref.get(harness.releaseCount)).toBe(0);
+      expect(yield* SubscriptionRef.get(harness.releaseCount)).toBe(0);
       expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.session))).toBe(session);
       expect(yield* SubscriptionRef.get(supervisor.state)).toMatchObject({
         phase: "connected",
@@ -1727,7 +1705,7 @@ describe("EnvironmentSupervisor", () => {
       yield* supervisor.disconnect;
       yield* awaitState(supervisor.state, (state) => state.phase === "available");
 
-      yield* eventuallyReleased(harness.releaseCount, 1);
+      yield* awaitRelease(harness.releaseCount, 1);
       expect(Option.isNone(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
       expect(Option.isNone(yield* SubscriptionRef.get(supervisor.prepared))).toBe(true);
     }),
@@ -1752,7 +1730,7 @@ describe("EnvironmentSupervisor", () => {
       );
       yield* awaitState(supervisor.state, (state) => state.phase === "available");
 
-      yield* eventuallyReleased(harness.releaseCount, 1);
+      yield* awaitRelease(harness.releaseCount, 1);
       expect(Option.isNone(yield* SubscriptionRef.get(supervisor.session))).toBe(true);
     }),
   );
