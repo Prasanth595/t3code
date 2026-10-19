@@ -20,6 +20,15 @@ export function MachineStickers({ machine }: { machine: MachineRecord }) {
   return (
     <>
       <AlertStickers machineId={machine.id} href={formatRoute({ view: "health", selection })} />
+      {queue.rejoinRequired && (
+        <StickerLink
+          className="sticker wait"
+          href={formatRoute({ view: portal.route.view, selection })}
+          label="Join again with a new code"
+        >
+          join again
+        </StickerLink>
+      )}
       {status && status.runningTurns > 0 && (
         <StickerLink className="sticker ok" href={t3} label={`Open T3 on ${machine.name}`}>
           {status.runningTurns} running

@@ -89,6 +89,8 @@ A setting with a shared value syncs to every machine, also to an offline or a ne
 
 The map has no edges. Cards stay where you drop them. The map zooms, pans and fits all cards, also on phones and small windows. "Auto layout" places every card so that the map reads well, as one change with Undo.
 
+Before rotating a machine token, check that it can connect within 24 hours. The old secret stops at confirmation or at that deadline. If the deadline passes without confirmation, select "Join again with a new code" on the machine and use the code there. The portal keeps that recovery notice until the machine joins again or confirms the new secret.
+
 ### Approved clients
 
 Clients are the browsers and phones of the owner (MM-904). A new browser waits in the Clients view until the owner approves it with a fresh MFA step. Each client gets a card and a level per machine.
@@ -145,6 +147,8 @@ Each machine sends CPU, memory, disk, swap and battery samples. The portal keeps
 ### Installable portal
 
 The portal installs as an app, with an offline page and an app badge. Turn on Web Push per device in Clients > "Notifications on this device". Pushes go out for health alerts, Inbox proposals, sign-ins that wait for approval, and the pause (MM-1801 to MM-1809).
+
+"Sign out everywhere" turns notifications off on every device. Signing in again keeps them off until you select "Turn on" on that device, even if the browser still holds its old push subscription.
 
 ### Machines panel
 

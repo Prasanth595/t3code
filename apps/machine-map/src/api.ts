@@ -166,11 +166,13 @@ export interface RotationResponse {
   readonly delivered: boolean;
 }
 
-/** A token rotation that waits for its machine (MM-207). The secret never leaves the portal. */
+/** A token rotation awaiting confirmation, or its expired recovery marker (MM-207). */
 export interface PendingRotation {
   readonly machineId: MachineId;
   readonly createdAt: string;
   readonly expiresAt: string;
+  /** The deadline passed without confirmation. Only a rejoin marker remains, never a secret. */
+  readonly expired?: boolean;
 }
 
 /**
@@ -391,7 +393,7 @@ export const PushSubscribeRequest = Schema.Struct({
 });
 export type PushSubscribeRequest = typeof PushSubscribeRequest.Type;
 
-/** POST /api/push/unsubscribe and POST /api/push/test: one subscription of this device. */
+/** POST /api/push/status, /api/push/unsubscribe and /api/push/test: one device subscription. */
 export const PushEndpointRequest = Schema.Struct({
   endpoint: PushSubscribeRequest.fields.endpoint,
 });
@@ -400,6 +402,11 @@ export type PushEndpointRequest = typeof PushEndpointRequest.Type;
 /** GET /api/push: null when the portal has no `VAPID_JWK` secret. */
 export interface PushKeyResponse {
   readonly publicKey: string | null;
+}
+
+/** POST /api/push/status: reads registration without turning notifications on. */
+export interface PushStatusResponse {
+  readonly subscribed: boolean;
 }
 
 /** The encrypted body of one push message. The service worker shows it (MM-1808). */

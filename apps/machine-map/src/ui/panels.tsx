@@ -29,7 +29,7 @@ import {
   roleRank,
   sameValue,
 } from "../rules/map.ts";
-import { DEFAULT_COMMAND_MINUTES } from "../rules/queue.ts";
+import { DEFAULT_COMMAND_MINUTES, ROTATION_MINUTES } from "../rules/queue.ts";
 import { callApi, StepUpNeeded } from "./apiClient.ts";
 import { ApprovalsSetup, confirmWithPasskey, PasskeyStepUp } from "./Approvals.tsx";
 import { usePortalContext, type CommandOptions, type Portal } from "./context.ts";
@@ -565,6 +565,21 @@ function MachinePanel({ id }: { id: string }) {
         <MachineStickers machine={machine} />
       </div>
       <div className="actions spaced">
+        {portal.rotations.some((r) => r.machineId === machine.id && r.expired) && (
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() =>
+              portal.open({
+                _tag: "newJoinCode",
+                machineId: machine.id,
+                machineName: machine.name,
+              })
+            }
+          >
+            Join again with a new code
+          </button>
+        )}
         {machine.hostname ? (
           <a
             className="btn primary"
@@ -1004,21 +1019,35 @@ function MachineManage({ machine }: { machine: MachineRecord }) {
       </p>
       {queue.rotation && (
         <p className="hint">
-          A new secret waits for {machine.name}. It expires{" "}
-          {timeUntil(queue.rotation.expiresAt, now)}.
+          A new secret waits for {machine.name}. The old secret stops{" "}
+          {timeUntil(queue.rotation.expiresAt, now)}. If the machine does not confirm the new secret
+          by then, it must join again with a new code.
+        </p>
+      )}
+      {queue.rejoinRequired && (
+        <p className="hint">
+          The rotation deadline passed without confirmation. The old secret no longer works.
         </p>
       )}
       <div className="actions spaced">
         <button
           type="button"
           className="btn small"
+          disabled={queue.rejoinRequired}
           onClick={() =>
-            portal.call(async () => {
-              await callApi<{ delivered: boolean }>(
-                "POST",
-                `/api/machines/${encodeURIComponent(machine.id)}/rotate`,
-              );
-            }, `A new secret waits for ${machine.name}.`)
+            portal.open({
+              _tag: "confirm",
+              title: `Rotate token on ${machine.name}?`,
+              body: `${snapshot.presence[machine.id]?.online ? "" : `${machine.name} is offline. `}The old secret stops when the machine confirms the new one, or after ${ROTATION_MINUTES / 60} hours. If it does not confirm before that deadline, it must join again with a new code.`,
+              confirmLabel: "Rotate token",
+              action: () =>
+                portal.call(async () => {
+                  await callApi<{ delivered: boolean }>(
+                    "POST",
+                    `/api/machines/${encodeURIComponent(machine.id)}/rotate`,
+                  );
+                }, `A new secret waits for ${machine.name}.`),
+            })
           }
         >
           Rotate token

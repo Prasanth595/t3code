@@ -1,7 +1,7 @@
 /** MM-1809: turns push notifications on or off for this device. */
 import { useEffect, useState } from "react";
 
-import type { PushKeyResponse } from "../api.ts";
+import type { PushKeyResponse, PushStatusResponse } from "../api.ts";
 import { callApi } from "./apiClient.ts";
 import { usePortalContext } from "./context.ts";
 
@@ -31,11 +31,10 @@ function unsupportedReason(): string | null {
     : "This browser has no Web Push.";
 }
 
-/** Sends the subscription to the portal again, so the portal always has the current keys. */
 const register = (subscription: PushSubscription) =>
   callApi("POST", "/api/push/subscribe", subscription.toJSON());
 
-async function readState(): Promise<PushState> {
+export async function readPushState(): Promise<PushState> {
   const reason = unsupportedReason();
   if (reason) return { _tag: "unavailable", reason };
   const { publicKey } = await callApi<PushKeyResponse>("GET", "/api/push");
@@ -55,8 +54,12 @@ async function readState(): Promise<PushState> {
     await subscription.unsubscribe();
     return { _tag: "off", publicKey };
   }
-  await register(subscription);
-  return { _tag: "on", publicKey, endpoint: subscription.endpoint };
+  const { subscribed } = await callApi<PushStatusResponse>("POST", "/api/push/status", {
+    endpoint: subscription.endpoint,
+  });
+  return subscribed
+    ? { _tag: "on", publicKey, endpoint: subscription.endpoint }
+    : { _tag: "off", publicKey };
 }
 
 export function PushSettings() {
@@ -66,7 +69,7 @@ export function PushSettings() {
 
   useEffect(() => {
     let current = true;
-    readState()
+    readPushState()
       .then((next) => current && setState(next))
       .catch(
         (error: unknown) =>

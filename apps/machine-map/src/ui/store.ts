@@ -146,7 +146,12 @@ export function settleHeld<T>(
 
 const RotationsEventSchema = Schema.TaggedStruct("rotations", {
   rotations: Schema.Array(
-    Schema.Struct({ machineId: MachineId, createdAt: Schema.String, expiresAt: Schema.String }),
+    Schema.Struct({
+      machineId: MachineId,
+      createdAt: Schema.String,
+      expiresAt: Schema.String,
+      expired: Schema.optionalKey(Schema.Boolean),
+    }),
   ),
 });
 const decodeEvent = Schema.decodeUnknownSync(
