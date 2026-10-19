@@ -15,6 +15,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSessionId,
+  ServerSettingsError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
@@ -636,6 +637,10 @@ function runBrowserAccessScenario(input: {
   readonly deviceOverride?: boolean;
   readonly createThread?: boolean;
   readonly projectExists?: boolean;
+  readonly toolsOverride?: boolean;
+  readonly projectToolsOverride?: boolean;
+  readonly disabledSkills?: ReadonlyArray<string>;
+  readonly settingsUnavailable?: boolean;
 }) {
   return Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -677,17 +682,44 @@ function runBrowserAccessScenario(input: {
           idleTimeoutMs: 1_000,
           mcpConfigs,
           projectServiceLayer: layerProjectService,
-          serverSettingsLayer: ServerSettings.layerTest({
-            enableAgentBrowserAccess: input.enableAgentBrowserAccess,
-            projectSettingsOverrides: {
-              [projectId]: {
-                enableAgentBrowserAccess: input.projectOverride,
-                ...(input.deviceOverride === undefined
-                  ? {}
-                  : { enableAgentDeviceAccess: input.deviceOverride }),
-              },
-            },
-          }),
+          serverSettingsLayer: input.settingsUnavailable
+            ? Layer.mock(ServerSettings.ServerSettingsService)({
+                getSettings: Effect.fail(
+                  new ServerSettingsError({
+                    settingsPath: "/test/settings.json",
+                    operation: "read-file",
+                    cause: new Error("unavailable"),
+                  }),
+                ),
+              })
+            : ServerSettings.layerTest({
+                enableAgentBrowserAccess: input.enableAgentBrowserAccess,
+                disabledSkills: input.disabledSkills ?? [],
+                ...(input.toolsOverride
+                  ? {
+                      mcpServers: {
+                        docs: {
+                          enabled: true,
+                          transport: { type: "http", url: "https://example.com/mcp", headers: [] },
+                        },
+                      },
+                    }
+                  : {}),
+                projectSettingsOverrides: {
+                  [projectId]: {
+                    enableAgentBrowserAccess: input.projectOverride,
+                    ...(input.toolsOverride && input.projectToolsOverride !== false
+                      ? {
+                          mcpServers: { docs: { enabled: false } },
+                          disabledSkills: { review: true },
+                        }
+                      : {}),
+                    ...(input.deviceOverride === undefined
+                      ? {}
+                      : { enableAgentDeviceAccess: input.deviceOverride }),
+                  },
+                },
+              }),
         }),
       ),
     );
@@ -1916,6 +1948,19 @@ it.effect(
         const captured = (yield* Ref.get(mcpConfigs))[0];
         assert.isDefined(captured);
         assert.equal(captured?.browserToolsAvailable, false);
+        assert.deepEqual(captured?.tools?.servers, [
+          {
+            name: "docs",
+            transport: {
+              type: "http",
+              url: "https://example.com/mcp",
+              headers: [{ name: "Authorization", value: "provider-secret", sensitive: true }],
+            },
+          },
+        ]);
+        assert.deepEqual(captured?.tools?.disabledSkills, ["review"]);
+        assert.match(captured!.tools!.fingerprint, /^[a-f0-9]{64}$/);
+        assert.notInclude(captured!.tools!.fingerprint, "provider-secret");
         const token = captured?.authorizationHeader.replace(/^Bearer\s+/, "");
         const resolved = yield* registry.resolve(token!);
         assert.deepEqual(
@@ -1934,6 +1979,26 @@ it.effect(
             mcpConfigs,
             serverSettingsLayer: ServerSettings.layerTest({
               enableAgentBrowserAccess: false,
+              disabledSkills: ["review"],
+              mcpServers: {
+                docs: {
+                  enabled: true,
+                  transport: {
+                    type: "http",
+                    url: "https://example.com/mcp",
+                    headers: [{ name: "Authorization", value: "provider-secret", sensitive: true }],
+                  },
+                },
+                disabled: {
+                  enabled: false,
+                  transport: {
+                    type: "stdio",
+                    command: "must-not-start",
+                    args: [],
+                    env: [],
+                  },
+                },
+              },
             }).pipe(Layer.orDie),
           }),
         ),
@@ -1969,21 +2034,56 @@ it.effect("ProviderSessionManagerV2 fails browser access closed for a missing pr
       enableAgentBrowserAccess: true,
       projectOverride: true,
       projectExists: false,
+      toolsOverride: true,
     });
     assert.isDefined(captured);
     assert.equal(captured?.browserToolsAvailable, false);
+    assert.deepEqual(captured?.tools?.servers, []);
+    assert.deepEqual(captured?.tools?.disabledSkills, ["review"]);
   }),
 );
 
 it.effect("ProviderSessionManagerV2 fails browser access closed for a missing thread", () =>
   Effect.gen(function* () {
-    const captured = yield* runBrowserAccessScenario({
+    const environment = {
       enableAgentBrowserAccess: true,
       projectOverride: true,
+      disabledSkills: ["environment-off"],
+    };
+    const healthy = yield* runBrowserAccessScenario({
+      ...environment,
+      toolsOverride: true,
+      projectToolsOverride: false,
+    });
+    assert.deepEqual(
+      healthy?.tools?.servers.map((server) => server.name),
+      ["docs"],
+    );
+    assert.deepEqual(healthy?.tools?.disabledSkills, ["environment-off"]);
+    const captured = yield* runBrowserAccessScenario({
+      ...environment,
       createThread: false,
+      toolsOverride: true,
     });
     assert.isDefined(captured);
     assert.equal(captured?.browserToolsAvailable, false);
+    assert.deepEqual(captured?.tools?.disabledSkills, ["environment-off"]);
+    assert.deepEqual(captured?.tools?.servers, []);
+    assert.notEqual(captured?.tools?.fingerprint, healthy?.tools?.fingerprint);
+    const withoutServers = yield* runBrowserAccessScenario(environment);
+    assert.deepEqual(captured?.tools, withoutServers?.tools);
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 refuses to start with unavailable tool settings", () =>
+  Effect.gen(function* () {
+    const captured = yield* runBrowserAccessScenario({
+      enableAgentBrowserAccess: true,
+      projectOverride: true,
+      toolsOverride: true,
+      settingsUnavailable: true,
+    });
+    assert.isUndefined(captured);
   }),
 );
 
