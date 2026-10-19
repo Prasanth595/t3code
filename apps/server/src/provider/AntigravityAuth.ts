@@ -80,14 +80,12 @@ export interface AntigravityAuthOptions<
     result: AcpSessionRuntime.AcpSessionRuntimeStartResult,
     runtime: Runtime,
   ) => Effect.Effect<void>;
-  readonly onSignedOut: Effect.Effect<void>;
+  readonly onSignedOut: Effect.Effect<void, ProviderSetupError>;
   readonly forwardCallback?: (callback: URL) => Effect.Effect<void, ProviderSetupError>;
   readonly usesBrowser?: boolean;
-  /**
-   * Hides the saved Google credentials for the sign-in's scope. The agent signs in silently
-   * whenever they are valid, so without this "Change account" never reaches Google.
-   */
-  readonly setAsideCredentials?: Effect.Effect<void, ProviderSetupError, Scope.Scope>;
+  readonly withFreshCredentials?: (
+    task: Effect.Effect<void, AcpErrors.AcpError | ProviderSetupError>,
+  ) => Effect.Effect<void, AcpErrors.AcpError | ProviderSetupError>;
 }
 
 function visibleSnapshot(snapshot: AuthSnapshot, ownerSessionId: string): ProviderAuthState {
@@ -269,26 +267,29 @@ export const makeAntigravityAuth = Effect.fn("makeAntigravityAuth")(function* <
   const runSignIn = (flow: AuthFlow, stopSessions: Effect.Effect<void, ProviderSetupError>) =>
     Effect.gen(function* () {
       yield* stopSessions.pipe(Effect.ensuring(stopOwnedProcesses));
-      if (usesBrowser && options.setAsideCredentials) yield* options.setAsideCredentials;
-      const runtime = yield* options.makeRuntime({
-        onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url),
-      });
-      const started = yield* runtime.start();
-      yield* lock.withPermits(1)(
-        Effect.gen(function* () {
-          if (activeFlow !== flow) return;
-          flow.pending = undefined;
-          yield* publishFlow(flow, {
-            ...flow.state,
-            phase: "verifying",
-            authorizationUrl: null,
-            message: "Checking Antigravity access and models.",
-          });
-        }),
-      );
-      yield* options.onAuthenticated(started, runtime);
+      const authenticate = Effect.gen(function* () {
+        const runtime = yield* options.makeRuntime({
+          onAuthorizationUrl: (url) => receiveAuthorizationUrl(flow, url),
+        });
+        const started = yield* runtime.start();
+        yield* lock.withPermits(1)(
+          Effect.gen(function* () {
+            if (activeFlow !== flow) return;
+            flow.pending = undefined;
+            yield* publishFlow(flow, {
+              ...flow.state,
+              phase: "verifying",
+              authorizationUrl: null,
+              message: "Checking Antigravity access and models.",
+            });
+          }),
+        );
+        yield* options.onAuthenticated(started, runtime);
+      }).pipe(Effect.scoped);
+      yield* usesBrowser && options.withFreshCredentials
+        ? options.withFreshCredentials(authenticate)
+        : authenticate;
     }).pipe(
-      Effect.scoped,
       Effect.timeoutOrElse({
         duration: AUTH_TIMEOUT_MS,
         orElse: () =>

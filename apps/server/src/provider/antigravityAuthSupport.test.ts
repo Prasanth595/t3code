@@ -36,9 +36,9 @@ import {
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
   resolveAntigravityInstanceDirectories,
-  restoreAntigravityCredentials,
-  setAsideAntigravityCredentials,
 } from "./antigravityAuthSupport.ts";
+
+import * as AntigravityCredentials from "./AntigravityCredentials.ts";
 
 const authorizationUrl =
   "https://accounts.google.com/o/oauth2/v2/auth?response_type=code" +
@@ -759,72 +759,103 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
   );
 });
 
-it.layer(NodeServices.layer)("Antigravity credentials during sign-in", (it) => {
+it.layer(NodeServices.layer)("Antigravity credential recovery", (it) => {
   const makeProfile = Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const profileDirectory = yield* fs.makeTempDirectoryScoped();
-    const acpDirectory = path.join(profileDirectory, "antigravity-acp");
-    yield* fs.makeDirectory(acpDirectory, { recursive: true });
-    const tokenPath = path.join(acpDirectory, "acp_token.json");
-    const readToken = fs
-      .exists(tokenPath)
-      .pipe(
-        Effect.flatMap((exists) => (exists ? fs.readFileString(tokenPath) : Effect.succeed(null))),
-      );
-    const remainingFiles = fs.readDirectory(acpDirectory).pipe(Effect.map((files) => files.sort()));
-    return { fs, profileDirectory, tokenPath, readToken, remainingFiles };
+    const directory = path.join(profileDirectory, "antigravity-acp");
+    yield* fs.makeDirectory(directory);
+    const tokenPath = path.join(directory, "acp_token.json");
+    const backupPath = `${tokenPath}.before-sign-in`;
+    yield* fs.writeFileString(backupPath, "previous-account");
+    return { fs, profileDirectory, tokenPath, backupPath };
   });
 
-  it.effect("hides the saved token while sign-in runs and keeps the new one", () =>
+  it.effect("recovers an interrupted sign-in and retires backups when a newer token exists", () =>
     Effect.gen(function* () {
       const profile = yield* makeProfile;
-      yield* profile.fs.writeFileString(profile.tokenPath, "previous-account");
-      yield* Effect.gen(function* () {
-        yield* setAsideAntigravityCredentials(profile.profileDirectory);
-        expect(yield* profile.readToken).toBeNull();
-        yield* profile.fs.writeFileString(profile.tokenPath, "chosen-account");
-      }).pipe(Effect.scoped);
-      expect(yield* profile.readToken).toBe("chosen-account");
-      expect(yield* profile.remainingFiles).toEqual(["acp_token.json"]);
+      const credentials = yield* AntigravityCredentials.AntigravityCredentials.pipe(
+        Effect.provide(AntigravityCredentials.layer(profile.profileDirectory)),
+      );
+      yield* credentials.recover;
+      expect(yield* profile.fs.readFileString(profile.tokenPath)).toBe("previous-account");
+      expect(yield* profile.fs.exists(profile.backupPath)).toBe(false);
+
+      yield* profile.fs.writeFileString(profile.backupPath, "previous-account");
+      yield* profile.fs.writeFileString(profile.tokenPath, "chosen-account");
+      yield* credentials.recover;
+      expect(yield* profile.fs.readFileString(profile.tokenPath)).toBe("chosen-account");
+      expect(yield* profile.fs.exists(profile.backupPath)).toBe(false);
     }),
   );
 
-  it.effect("restores the saved token when sign-in fails before Google saves a new one", () =>
+  it.effect("keeps both accounts intact when a previous backup cannot be retired", () =>
     Effect.gen(function* () {
       const profile = yield* makeProfile;
-      yield* profile.fs.writeFileString(profile.tokenPath, "previous-account");
-      const result = yield* Effect.gen(function* () {
-        yield* setAsideAntigravityCredentials(profile.profileDirectory);
-        return yield* Effect.fail("cancelled");
-      }).pipe(Effect.scoped, Effect.result);
+      const { fs } = profile;
+      yield* fs.writeFileString(profile.tokenPath, "chosen-account");
+      let failCleanup = true;
+      const credentials = yield* AntigravityCredentials.AntigravityCredentials.pipe(
+        Effect.provide(AntigravityCredentials.layer(profile.profileDirectory)),
+        Effect.provideService(
+          FileSystem.FileSystem,
+          FileSystem.FileSystem.of({
+            ...fs,
+            remove: (file, options) =>
+              file === profile.backupPath && failCleanup
+                ? fs.remove(profile.profileDirectory)
+                : fs.remove(file, options),
+          }),
+        ),
+      );
+      let started = false;
+      const result = yield* credentials
+        .withFreshSignIn(
+          Effect.sync(() => {
+            started = true;
+          }),
+        )
+        .pipe(Effect.result);
       expect(Result.isFailure(result)).toBe(true);
-      expect(yield* profile.readToken).toBe("previous-account");
-      expect(yield* profile.remainingFiles).toEqual(["acp_token.json"]);
+      expect(started).toBe(false);
+      expect(yield* fs.readFileString(profile.tokenPath)).toBe("chosen-account");
+      expect(yield* fs.readFileString(profile.backupPath)).toBe("previous-account");
+
+      failCleanup = false;
+      yield* credentials.withFreshSignIn(
+        Effect.gen(function* () {
+          expect(yield* fs.exists(profile.tokenPath)).toBe(false);
+          expect(yield* fs.readFileString(profile.backupPath)).toBe("chosen-account");
+        }),
+      );
+      expect(yield* fs.readFileString(profile.tokenPath)).toBe("chosen-account");
+      expect(yield* fs.exists(profile.backupPath)).toBe(false);
     }),
   );
 
-  it.effect("keeps the token Google saved even when a later step fails", () =>
+  it.effect("preserves credentials written concurrently with recovery", () =>
     Effect.gen(function* () {
       const profile = yield* makeProfile;
-      yield* profile.fs.writeFileString(profile.tokenPath, "previous-account");
-      yield* Effect.gen(function* () {
-        yield* setAsideAntigravityCredentials(profile.profileDirectory);
-        yield* profile.fs.writeFileString(profile.tokenPath, "chosen-account");
-        return yield* Effect.fail("model discovery failed");
-      }).pipe(Effect.scoped, Effect.result);
-      expect(yield* profile.readToken).toBe("chosen-account");
-      expect(yield* profile.remainingFiles).toEqual(["acp_token.json"]);
-    }),
-  );
-
-  it.effect("restores a token left aside when the app stopped during sign-in", () =>
-    Effect.gen(function* () {
-      const profile = yield* makeProfile;
-      yield* profile.fs.writeFileString(`${profile.tokenPath}.before-sign-in`, "previous-account");
-      yield* restoreAntigravityCredentials(profile.profileDirectory);
-      expect(yield* profile.readToken).toBe("previous-account");
-      expect(yield* profile.remainingFiles).toEqual(["acp_token.json"]);
+      const { fs } = profile;
+      // An orphaned native process can save credentials just before recovery installs its token.
+      const beforeInstall = (destination: string) =>
+        destination === profile.tokenPath
+          ? fs.writeFileString(destination, "chosen-account")
+          : Effect.void;
+      const concurrentFs = FileSystem.FileSystem.of({
+        ...fs,
+        rename: (from, to) => beforeInstall(to).pipe(Effect.andThen(fs.rename(from, to))),
+        link: (from, to) => beforeInstall(to).pipe(Effect.andThen(fs.link(from, to))),
+        copyFile: (from, to) => beforeInstall(to).pipe(Effect.andThen(fs.copyFile(from, to))),
+      });
+      const credentials = yield* AntigravityCredentials.AntigravityCredentials.pipe(
+        Effect.provide(AntigravityCredentials.layer(profile.profileDirectory)),
+        Effect.provideService(FileSystem.FileSystem, concurrentFs),
+      );
+      yield* credentials.recover;
+      expect(yield* fs.readFileString(profile.tokenPath)).toBe("chosen-account");
+      expect(yield* fs.exists(profile.backupPath)).toBe(false);
     }),
   );
 });
