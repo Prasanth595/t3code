@@ -138,6 +138,27 @@ describe("mobile workspace projection", () => {
     expect(state.connectionError).toBe("Update T3 Code on the host to connect.");
   });
 
+  it("keeps the detail with the environment whose state names the title", () => {
+    const blocked = environment("unsupported");
+    const environments = [
+      projectWorkspaceEnvironment(EnvironmentId.make("environment-failed"), environment("error")),
+      projectWorkspaceEnvironment(ENVIRONMENT_ID, {
+        ...blocked,
+        entry: { ...blocked.entry, enabled: false },
+        connection: { ...blocked.connection, error: "Update T3 Code on the host to connect." },
+      }),
+    ];
+    const state = projectWorkspaceState({
+      isReady: true,
+      networkStatus: "online",
+      environments,
+      shellSummary: EMPTY_SHELL_SUMMARY,
+    });
+
+    expect(state.connectionState).toBe("unsupported");
+    expect(state.connectionError).toBe("Update T3 Code on the host to connect.");
+  });
+
   it("does not report environments the user switched off", () => {
     const failed = environment("error");
     const environments = [

@@ -77,6 +77,18 @@ export function projectWorkspaceConnectionState(input: {
       environment.connectionState === "reconnecting",
   );
 
+  const connectionState = overallConnectionState(reportedEnvironments, input.networkStatus);
+  const withError = reportedEnvironments.filter(
+    (environment) => environment.connectionError !== null,
+  );
+  // The detail must explain the state the title names, so prefer an
+  // environment in that state over whichever failed first.
+  const connectionError =
+    (
+      withError.find((environment) => environment.connectionState === connectionState) ??
+      withError[0]
+    )?.connectionError ?? null;
+
   return {
     isLoadingConnections: !input.isReady,
     hasConnections: input.environments.length > 0,
@@ -86,10 +98,8 @@ export function projectWorkspaceConnectionState(input: {
       activeEnvironments.some((environment) => environment.connectionState === "connected"),
     hasConnectingEnvironment: connectingEnvironments.length > 0,
     connectingEnvironments,
-    connectionState: overallConnectionState(reportedEnvironments, input.networkStatus),
-    connectionError:
-      reportedEnvironments.find((environment) => environment.connectionError !== null)
-        ?.connectionError ?? null,
+    connectionState,
+    connectionError,
     networkStatus: input.networkStatus,
   };
 }
