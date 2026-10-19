@@ -220,7 +220,6 @@ import {
   resolveWorkGroupScrollIndex,
   shouldCollapseUserMessage,
   shouldFollowWorkGroupAppend,
-  timelineEntryTurnFoldRunId,
   timelineTurnFoldRunIdsByEntryId,
   threadReadLabelPrefix,
   threadReadTargetId,
@@ -653,11 +652,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   }
   const citationThreadRef = parseScopedThreadKey(routeThreadKey);
   const openPullRequest = useOpenPrLink(citationThreadRef ?? undefined);
-  const getCitedTurnFoldRunId = (entryId: string) =>
-    timelineEntryTurnFoldRunId(
-      { timelineEntries, latestRun, runningRunId, isWorking, runlessWorkActive },
-      entryId,
-    );
   const expandCitedRun = (runId: RunId) => {
     setExpandedRunIds((current) => (current.has(runId) ? current : new Set([...current, runId])));
   };
@@ -806,20 +800,19 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   }, [latestRun, listIdentityKey]);
 
-  // Find the fold that hides the match: imported turns have no run id but still
-  // fold under a synthetic key, so the match's own run id cannot open them.
-  const findFoldRunIds = findActive
-    ? timelineTurnFoldRunIdsByEntryId({
-        timelineEntries,
-        latestRun,
-        runningRunId,
-        isWorking,
-        runlessWorkActive,
-      })
-    : null;
-  const activeFindRunId = activeFindMatch
-    ? findFoldRunIds?.get(activeFindMatch.entryId)
-    : undefined;
+  // Imported turns fold under synthetic keys rather than the entries' own run ids.
+  const turnFoldRunIds =
+    findActive || citationRequest !== null
+      ? timelineTurnFoldRunIdsByEntryId({
+          timelineEntries,
+          latestRun,
+          runningRunId,
+          isWorking,
+          runlessWorkActive,
+        })
+      : null;
+  const activeFindRunId =
+    findActive && activeFindMatch ? turnFoldRunIds?.get(activeFindMatch.entryId) : undefined;
   const [expandedFindRunId, setExpandedFindRunId] = useState<RunId | undefined>();
   if (expandedFindRunId !== activeFindRunId) {
     setExpandedFindRunId(activeFindRunId);
@@ -1009,7 +1002,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     viewport: timelineViewportElement,
     historyLoading: citationHistoryLoading,
     loadEarlier,
-    getTurnFoldRunId: getCitedTurnFoldRunId,
+    turnFoldRunIds,
     onExpandTurn: expandCitedRun,
     onManualNavigation,
   });
@@ -1319,7 +1312,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     if (!findPositionReaderRef || !timelineViewportElement) return;
     const read: ThreadFindPositionReader = (query) => {
       const foldRunIds =
-        findFoldRunIds ??
+        turnFoldRunIds ??
         timelineTurnFoldRunIdsByEntryId({
           timelineEntries,
           latestRun,
@@ -1369,7 +1362,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     };
   }, [
     contentInsetEndAdjustment,
-    findFoldRunIds,
+    turnFoldRunIds,
     findPositionReaderRef,
     isWorking,
     latestRun,
