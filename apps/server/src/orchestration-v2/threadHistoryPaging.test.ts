@@ -252,13 +252,15 @@ describe("threadHistoryPaging", () => {
       inRun(run * 4 + 2, run, notification(`Steer ${run}`)),
       inRun(run * 4 + 3, run),
     ]).flat();
-    const first = selectRecentTimelineWindow({ items, snapshotSequence: 1 });
+    const policy = { maxUserTurns: 10, maxItems: 1_000, maxEncodedBytes: 10_000_000 };
+    const first = selectRecentTimelineWindow({ items, snapshotSequence: 1, policy });
     expect(first.items).toHaveLength(150 * 4 - 1);
     expect(first.items[0]?.sourceItemId).toBe(`item-${11 * 4 + 1}`);
     const older = selectHistoryPageFromCursor({
       items,
       cursor: first.nextCursor!,
       snapshotSequence: 1,
+      policy,
     });
     expect([...older.items, ...first.items].map((row) => row.sourceItemId)).toEqual(
       items.map((row) => row.sourceItemId),
@@ -364,42 +366,78 @@ describe("threadHistoryPaging", () => {
     expect(older.nextCursor).toBeNull();
   });
 
-  it("applies item and byte budgets to anchored histories at turn boundaries", () => {
-    const items = [
-      makeTurnStartRow(0),
-      makeRow(1),
-      makeTurnStartRow(2),
-      makeRow(3),
-      makeTurnStartRow(4),
-      makeRow(5),
-    ];
-    const page = selectRecentTimelineWindow({
-      items,
-      snapshotSequence: 1,
-      policy: { maxUserTurns: 10, maxItems: 3, maxEncodedBytes: 1_000 },
-      rowEncodedBytes: () => 400,
-    });
+  it.each(["item", "byte", "user-turn"] as const)(
+    "applies the %s budget to complete anchored turns across history pages",
+    (budget) => {
+      const items = Array.from({ length: 5 }, (_, turn) => [
+        makeTurnStartRow(turn * 2),
+        makeRow(turn * 2 + 1, { outputBytes: 2_000 }),
+      ]).flat();
+      const policy = {
+        maxUserTurns: budget === "user-turn" ? 2 : 10,
+        maxItems: budget === "item" ? 5 : 100,
+        maxEncodedBytes:
+          budget === "byte"
+            ? items.slice(-4).reduce((total, row) => total + projectedRowEncodedBytes(row), 0)
+            : 1_000_000,
+      };
+      const recent = selectRecentTimelineWindow({ items, snapshotSequence: 1, policy });
+      expect(recent.items.map((row) => row.sourceItemId)).toEqual([
+        "item-6",
+        "item-7",
+        "item-8",
+        "item-9",
+      ]);
+      expect(recent.hasMoreHistory).toBe(true);
 
-    expect(page.items.map((row) => String(row.sourceItemId))).toEqual(["item-4", "item-5"]);
-    expect(page.items[0]?.item.type).toBe("user_message");
+      const older = selectHistoryPageFromCursor({
+        items,
+        cursor: recent.nextCursor!,
+        snapshotSequence: 1,
+        policy,
+      });
+      expect(older.items.map((row) => row.sourceItemId)).toEqual([
+        "item-2",
+        "item-3",
+        "item-4",
+        "item-5",
+      ]);
+      expect(older.hasMoreHistory).toBe(true);
+
+      const oldest = selectHistoryPageFromCursor({
+        items,
+        cursor: older.nextCursor!,
+        snapshotSequence: 1,
+        policy,
+      });
+      expect(oldest.items.map((row) => row.sourceItemId)).toEqual(["item-0", "item-1"]);
+      expect(oldest.hasMoreHistory).toBe(false);
+      expect(oldest.nextCursor).toBeNull();
+    },
+  );
+
+  it("keeps a complete 150,000-row turn over both budgets and can page past it", () => {
+    const items = Array.from({ length: 150_002 }, (_, index) =>
+      index === 0 || index === 2 ? makeTurnStartRow(index) : makeRow(index),
+    );
+    const policy = { maxUserTurns: 10, maxItems: 1, maxEncodedBytes: 100 };
+    const page = selectRecentTimelineWindow({ items, snapshotSequence: 1, policy });
+
+    expect(page.items).toHaveLength(150_000);
+    expect(
+      page.items.every((row, index) => row.sourceItemId === items[index + 2]?.sourceItemId),
+    ).toBe(true);
     expect(page.hasMoreHistory).toBe(true);
-  });
 
-  it("keeps one complete anchored turn when that turn exceeds the page budget", () => {
-    const items = [
-      makeTurnStartRow(0),
-      makeRow(1),
-      makeTurnStartRow(2),
-      makeRow(3, { outputBytes: 50_000 }),
-    ];
-    const page = selectRecentTimelineWindow({
+    const older = selectHistoryPageFromCursor({
       items,
+      cursor: page.nextCursor!,
       snapshotSequence: 1,
-      policy: { maxUserTurns: 10, maxItems: 1, maxEncodedBytes: 100 },
+      policy,
     });
-
-    expect(page.items.map((row) => String(row.sourceItemId))).toEqual(["item-2", "item-3"]);
-    expect(page.hasMoreHistory).toBe(true);
+    expect(older.items.map((row) => row.sourceItemId)).toEqual(["item-0", "item-1"]);
+    expect(older.hasMoreHistory).toBe(false);
+    expect(older.nextCursor).toBeNull();
   });
 
   it("recovers identity-miss cursors when position is past a shrunken timeline", () => {
