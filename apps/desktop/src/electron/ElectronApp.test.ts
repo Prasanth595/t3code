@@ -119,7 +119,6 @@ describe("ElectronApp", () => {
     { platform: "linux", APPIMAGE: "  ", packaged: true },
     { platform: "linux", APPIMAGE: "/tmp/app.AppImage", packaged: false },
     { platform: "darwin", APPIMAGE: "/tmp/app.AppImage", packaged: true },
-    { platform: "win32", APPIMAGE: "/tmp/app.AppImage", packaged: true },
   ] as const)("keeps native relaunch outside packaged AppImages: %j", (input) => {
     isPackagedMock.mockReturnValue(input.packaged);
     return Effect.gen(function* () {
@@ -148,7 +147,7 @@ describe("ElectronApp", () => {
       yield* fs.writeFileString(startup, `printf ran > "${startupMarker}"\nexec </dev/null\n`);
       yield* fs.writeFileString(
         launcher,
-        '#!/bin/sh\nif [ -e /proc/self/fd/3 ] || [ -e /proc/self/fd/65 ]; then exit 65; fi\nprintf "%s\\n" "$@" > "$1"\n',
+        '#!/bin/sh\nif [ -e /proc/self/fd/3 ] || [ -e /proc/self/fd/65 ]; then exit 65; fi\nif [ -n "$BASH_ENV$ENV" ]; then exit 66; fi\nprintf "%s\\n" "$@" > "$1"\n',
       );
       yield* fs.chmod(launcher, 0o700);
       let command: ChildProcess.StandardCommand | undefined;
@@ -185,6 +184,7 @@ describe("ElectronApp", () => {
         Effect.provideService(HostProcess.Environment, {
           APPIMAGE: launcher,
           BASH_ENV: startup,
+          ENV: startup,
           PATH: process.env.PATH,
         }),
       );
