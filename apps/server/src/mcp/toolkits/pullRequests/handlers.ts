@@ -224,7 +224,6 @@ const make = Effect.gen(function* () {
     return thread.value;
   });
 
-  /** Every project's GitHub hosts, so an agent's URL is read the way the web client reads it. */
   const knownGitHubHosts = (project: OrchestrationProjectShell | undefined) =>
     projects.listShells().pipe(
       Effect.map(gitHubHostsOf),

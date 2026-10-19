@@ -21,13 +21,13 @@ import {
   type SourceControlProviderDiscoveryItem,
   type SourceControlRepositoryCloneUrls,
 } from "@t3tools/contracts";
-import {
-  detectSourceControlProviderFromGitRemoteUrl,
-  normalizeGitRemoteUrl,
-} from "@t3tools/shared/git";
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
-import { isSshRemoteUrl } from "@t3tools/shared/sourceControl";
+import {
+  detectSourceControlProviderFromRemoteUrl,
+  isSshRemoteUrl,
+} from "@t3tools/shared/sourceControl";
 
 import * as GitHubRest from "./GitHubRest.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
@@ -448,11 +448,7 @@ export function pullRequestCheckoutBranchName(input: {
     : input.headRefName;
 }
 
-/**
- * A GitHub Enterprise host named nothing like GitHub reads as an unknown host from its remote
- * URL alone. Discovery claims it by the credential GitHub holds for its web host, and marking
- * the identity GitHub lets clients open its pull request links the way they open github.com's.
- */
+// Discovery needs the web origin to look up a custom host's GitHub credential.
 const refineRepositoryIdentity: NonNullable<
   SourceControlProvider.SourceControlProvider["Service"]["refineRepositoryIdentity"]
 > = Effect.fn("GitHubSourceControlProvider.refineRepositoryIdentity")(function* ({
@@ -461,7 +457,7 @@ const refineRepositoryIdentity: NonNullable<
 }) {
   if (!identity.rootPath || (identity.provider !== undefined && identity.provider !== "unknown"))
     return identity;
-  const baseUrl = detectSourceControlProviderFromGitRemoteUrl(identity.locator.remoteUrl)?.baseUrl;
+  const baseUrl = detectSourceControlProviderFromRemoteUrl(identity.locator.remoteUrl)?.baseUrl;
   if (!baseUrl) return identity;
   const context = yield* resolveContext({
     cwd: identity.rootPath,

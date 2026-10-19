@@ -73,10 +73,9 @@ export function resolveLinkPullRequestInput(input: {
     readonly webUrl: (number: number) => string | null;
   } | null;
   readonly hasProject: (reference: ResolvedLink) => boolean;
-  /** Reads a change request URL with the environment's GitHub hosts. */
   readonly parse?: (url: string) => ReturnType<typeof parseChangeRequestUrl>;
 }): { link: ResolvedLink } | { error: string } | null {
-  const parse = input.parse ?? ((url: string) => parseChangeRequestUrl(url));
+  const parse = input.parse ?? parseChangeRequestUrl;
   const parsed =
     parse(input.reference.trim()) !== null
       ? input.reference.trim()

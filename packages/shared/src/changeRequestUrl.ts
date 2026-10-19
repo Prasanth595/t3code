@@ -23,10 +23,7 @@ function isHostOf(hostname: string, apex: string, label?: string): boolean {
   return label !== undefined && hostname.split(".").includes(label);
 }
 
-/**
- * `gitHubHosts` names GitHub hosts known from checked-out projects (see `gitHubHostsOf`), so a
- * GitHub Enterprise install named nothing like GitHub is still read as one.
- */
+/** Custom GitHub hosts must come from provider-claimed identities or stored provider URLs. */
 export function parseChangeRequestUrl(
   targetUrl: string,
   gitHubHosts: ReadonlyArray<string> = [],
@@ -66,11 +63,6 @@ export function parseChangeRequestUrl(
   return null;
 }
 
-/**
- * The hosts of the GitHub repositories these projects were checked out from. The server refines
- * a GitHub Enterprise identity to GitHub before the project reaches a client, so an install
- * named nothing like GitHub is still listed; a host no provider claimed is not.
- */
 export function gitHubHostsOf(
   projects: ReadonlyArray<{ readonly repositoryIdentity?: RepositoryIdentity | null | undefined }>,
 ): string[] {
@@ -81,10 +73,7 @@ export function gitHubHostsOf(
   );
 }
 
-/**
- * The host of a change request URL a provider returned itself or a thread already accepted, as
- * `parseChangeRequestUrl`'s `gitHubHosts`: reading such a URL back needs no lookalike guard.
- */
+/** Only for URLs returned by a provider or already stored on a thread, never arbitrary links. */
 export function providerUrlHosts(url: string): string[] {
   const host = URL.parse(url)?.hostname.toLowerCase();
   return host ? [host] : [];
