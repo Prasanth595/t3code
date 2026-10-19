@@ -317,29 +317,34 @@ describe("GitHubCredentials", () => {
       Layer.provide(NodeCrypto.layer),
     );
 
-  it.effect("fails with GitHubCliMissingError when gh is not on PATH", () =>
-    Effect.gen(function* () {
-      const credentials = yield* GitHubCredentials.GitHubCredentials;
-      const error = yield* Effect.flip(credentials.get("git.acme.internal"));
-      expect(error._tag).toBe("GitHubCliMissingError");
-    }).pipe(
-      Effect.provide(
-        credentialsWith(() =>
-          Effect.fail(
-            new VcsProcessSpawnError({
-              operation: "GitHubCredentials.get",
-              command: "gh",
-              cwd: "/",
-              cause: PlatformError.systemError({
-                _tag: "NotFound",
-                module: "ChildProcess",
-                method: "spawn",
+  it.effect.each([
+    { module: "ChildProcess", method: "spawn", expected: "GitHubCliMissingError" },
+    { module: "FileSystem", method: "access", expected: "GitHubCliFailedError" },
+  ] as const)(
+    "classifies a missing $module resource as $expected",
+    ({ module, method, expected }) =>
+      Effect.gen(function* () {
+        const credentials = yield* GitHubCredentials.GitHubCredentials;
+        const error = yield* Effect.flip(credentials.get("git.acme.internal", "/repo"));
+        expect(error._tag).toBe(expected);
+      }).pipe(
+        Effect.provide(
+          credentialsWith(() =>
+            Effect.fail(
+              new VcsProcessSpawnError({
+                operation: "GitHubCredentials.get",
+                command: "gh",
+                cwd: "/repo",
+                cause: PlatformError.systemError({
+                  _tag: "NotFound",
+                  module,
+                  method,
+                }),
               }),
-            }),
+            ),
           ),
         ),
       ),
-    ),
   );
 
   it.effect("does not cache a gh failure that is not about signing in", () => {
