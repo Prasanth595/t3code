@@ -1963,6 +1963,41 @@ describe("EnvironmentRegistry", () => {
           (yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId),
         ).toMatchObject({ enabled: true, unsupportedReason: error.message });
         expect(yield* Ref.get(harness.sessions)).toHaveLength(1);
+        yield* registry.setEnabled(TARGET.environmentId, false);
+        for (let refresh = 0; refresh < 2; refresh += 1) {
+          yield* registry.reconcilePlatform([registration]);
+          expect
+            .soft((yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId))
+            .toMatchObject({ enabled: false, unsupportedReason: error.message });
+          expect(yield* Ref.get(harness.sessions)).toHaveLength(1);
+        }
+
+        yield* registry.setCompatibility(TARGET.environmentId, null);
+        yield* registry.retryNow(TARGET.environmentId);
+        for (const network of ["offline", "online"] as const) {
+          yield* SubscriptionRef.set(harness.networkStatus, network);
+          const state = yield* awaitConnectionState(
+            registry,
+            TARGET.environmentId,
+            (state) => state.network === network,
+          );
+          expect.soft(state).toMatchObject({ desired: false, phase: "available" });
+        }
+        const recovered = (yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId);
+        expect.soft(recovered?.enabled).toBe(false);
+        expect(recovered?.unsupportedReason).toBeUndefined();
+        expect.soft(yield* Ref.get(harness.sessions)).toHaveLength(1);
+
+        yield* registry.setCompatibility(TARGET.environmentId, error);
+        yield* registry.setEnabled(TARGET.environmentId, true);
+        yield* awaitConnectionState(
+          registry,
+          TARGET.environmentId,
+          (state) => !state.desired && state.phase === "available",
+        );
+        expect(
+          (yield* SubscriptionRef.get(registry.entries)).get(TARGET.environmentId),
+        ).toMatchObject({ enabled: true, unsupportedReason: error.message });
         yield* registry.registerPlatform(
           new PrimaryConnectionRegistration({
             target: new PrimaryConnectionTarget({
