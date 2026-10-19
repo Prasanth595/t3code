@@ -43,7 +43,9 @@ export async function checkoutNewTaskBranch<E>(input: {
       workspaceMode: input.workspaceMode,
     })
   ) {
-    return AsyncResult.success(input.branch);
+    return AsyncResult.success(
+      input.branch.current ? { ...input.branch, worktreePath: null } : input.branch,
+    );
   }
 
   // Remote refs omit local worktrees, and historical thread metadata can be stale.
@@ -62,7 +64,13 @@ export async function checkoutNewTaskBranch<E>(input: {
     });
     if (refs._tag === "Failure") return AsyncResult.failure(refs.cause);
     const local = refs.value.refs.find((ref) => ref.name === localName);
-    if (local && (local.current || local.worktreePath)) return AsyncResult.success(local);
+    if (
+      local &&
+      (!input.branch.isRemote || local.upstreamRef === `refs/remotes/${input.branch.name}`) &&
+      (local.current || local.worktreePath)
+    ) {
+      return AsyncResult.success(local.current ? { ...local, worktreePath: null } : local);
+    }
     if (local || refs.value.nextCursor === null) break;
     cursor = refs.value.nextCursor;
   }
