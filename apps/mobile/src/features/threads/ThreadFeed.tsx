@@ -120,7 +120,7 @@ import { composerImageGallery } from "../../lib/composerImageGallery";
 import { messageImageGallery } from "./messageImageGallery";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { isPdfFile } from "../../lib/filePreview";
-import { flattenThemeColor } from "../../lib/mobileTheme";
+import { flattenThemeColor, seeThroughThemeColor } from "../../lib/mobileTheme";
 import { PresentationSource } from "../../components/ui/NativePresentation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Animated, { FadeIn, FadeInUp, type SharedValue } from "react-native-reanimated";
@@ -869,6 +869,9 @@ function useMarkdownStyles(): MarkdownStyleSets {
   const markdownLinkColor = theme["--color-md-link"];
   const markdownBlockquoteBorder = theme["--color-md-blockquote-border"];
   const markdownCodeBg = theme["--color-md-code-bg"];
+  // Enriched paints a code block nested in a list over the iOS selection highlight
+  // (software-mansion/enriched-markdown#1024); a see-through box that looks the same lets it show.
+  const markdownCodeBlockBg = seeThroughThemeColor(markdownCodeBg, theme["--color-screen"]);
   const markdownCodeText = theme["--color-md-code-text"];
   const markdownInlineCodeText = theme["--color-foreground-secondary"];
   const markdownHrColor = theme["--color-md-hr"];
@@ -918,7 +921,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
           inlineCodeColor: markdownInlineCodeText,
           codeColor: markdownCodeText,
           codeBackgroundColor: markdownCodeBg,
-          codeBlockBackgroundColor: markdownCodeBg,
+          codeBlockBackgroundColor: markdownCodeBlockBg,
           fileTextColor: markdownCodeText,
           quoteMarkerColor: markdownBlockquoteBorder,
           dividerColor: markdownHrColor,
@@ -938,6 +941,7 @@ function useMarkdownStyles(): MarkdownStyleSets {
     markdownBlockquoteBorder,
     markdownBodyColor,
     markdownCodeBg,
+    markdownCodeBlockBg,
     markdownCodeText,
     markdownHrColor,
     markdownInlineCodeText,
