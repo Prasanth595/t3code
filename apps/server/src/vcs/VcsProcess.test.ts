@@ -188,6 +188,7 @@ describe("VcsProcess.run", () => {
               "-c",
               "core.fsync=objects,reference",
               "-c",
+              ...(fsyncMethods[0] === "batch" ? ["core.fsyncMethod=fsync", "-c"] : []),
               `core.fsyncMethod=${fsyncMethods[0]}`,
               "add",
             ],
@@ -198,6 +199,9 @@ describe("VcsProcess.run", () => {
             "-c",
             "core.fsync=objects,reference",
             "-c",
+            ...(fsyncMethods[0] === "batch"
+              ? [`core.fsyncMethod=${method === "batch" ? "fsync" : method}`, "-c"]
+              : []),
             `core.fsyncMethod=${method}`,
             "add",
           ]),

@@ -784,13 +784,14 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   // an unclean restart can leave 0-byte files under refs/t3/** that break every
   // later fetch and push. Checkpoint writes flush before they are published;
   // macOS defaults to writeout-only, which does not reach the disk either.
-  // Batch mode writes out the new objects of one command and flushes the disk
-  // once before it publishes them, instead of once per object: a turn can add
-  // thousands of files. Refs still get a full flush each.
+  // Set fsync first: Git 2.36 ignores unknown batch without resetting the method.
+  // Git 2.37+ batches object flushes per command; refs still get a full flush.
   // On macOS, VcsProcess retries unsupported full flushes with plain fsync.
   const durableWrite = [
     "-c",
     "core.fsync=objects,reference",
+    "-c",
+    "core.fsyncMethod=fsync",
     "-c",
     "core.fsyncMethod=batch",
   ] as const;
