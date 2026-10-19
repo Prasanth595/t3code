@@ -255,8 +255,8 @@ const runObservedSetup = Effect.fnUntraced(function* (command: string, stdin = "
   assert.equal(result.status, "started");
   if (result.status !== "started" || !result.completion) return yield* Effect.die("no completion");
 
-  // Enter becomes a newline at the terminal boundary; the transport assertion below
-  // separately rejects wrappers that depend on accepting multiple submitted lines.
+  // Enter becomes a newline at the terminal boundary; transport assertions below
+  // cover line-editor submissions and canonical TTY limits that bash -c bypasses.
   const child = NodeChildProcess.spawnSync(
     "/bin/bash",
     ["--noprofile", "--norc", "-c", submitted.replaceAll("\r", "\n")],
@@ -294,6 +294,30 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("POSIX setup co
         "done",
       ]);
       assert.equal(result.exitCode, 0);
+    }),
+  );
+
+  it.effect("completes long scripts without exceeding canonical terminal line limits", () =>
+    Effect.gen(function* () {
+      const expected = Array.from(
+        { length: 120 },
+        (_, index) => `line-${index}: café 雪 'quoted' \\path`,
+      );
+      const command = expected
+        .map((line) => `printf '%s\\n' "${line.replaceAll("\\", "\\\\")}"`)
+        .join("\n");
+      const utf8 = new TextEncoder();
+      assert.isAbove(utf8.encode(command).byteLength, 4_096);
+
+      const result = yield* runObservedSetup(command);
+      assert.deepEqual(result.lines, expected);
+      assert.equal(result.exitCode, 0);
+      assert.equal(result.submitted.at(-1), "\r");
+      assert.notInclude(result.submitted, "\n");
+      // The runner can write before the shell switches the terminal out of canonical mode.
+      for (const line of result.submitted.slice(0, -1).split("\r")) {
+        assert.isBelow(utf8.encode(line).byteLength, 1_024);
+      }
     }),
   );
 
