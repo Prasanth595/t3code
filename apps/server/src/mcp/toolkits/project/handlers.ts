@@ -1,4 +1,10 @@
-import { MessageId, ThreadId, OrchestratorMcpFailure, ProjectId } from "@t3tools/contracts";
+import {
+  CommandId,
+  MessageId,
+  ThreadId,
+  OrchestratorMcpFailure,
+  ProjectId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -57,7 +63,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       Effect.gen(function* () {
         const context = yield* readCaller();
         const { caller } = context;
-        const commandId = yield* newCommandId();
+        const commandId =
+          input.clientRequestId === undefined
+            ? yield* newCommandId()
+            : CommandId.make(
+                `command:mcp:${encodeURIComponent(context.scope.requestNamespace)}:thread-launch:${encodeURIComponent(input.clientRequestId)}`,
+              );
         const threadId = ThreadId.make(commandId);
         const messageId = MessageId.make(commandId);
         const attachments = input.attachments ?? [];
@@ -166,6 +177,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               return new OrchestratorMcpFailure({
                 code: "invalid_request",
                 message: error.message,
+              });
+            }
+            if (error._tag === "ThreadLaunchError" && error.operation === "validate-intent") {
+              return new OrchestratorMcpFailure({
+                code: "invalid_request",
+                message:
+                  "The original launch intent for this clientRequestId does not match or cannot be verified. Inspect the accepted thread with t3_thread_list/t3_thread_read. Retry with the original arguments when their intent is recorded, or use a new clientRequestId for a fresh launch.",
               });
             }
             return unavailable();

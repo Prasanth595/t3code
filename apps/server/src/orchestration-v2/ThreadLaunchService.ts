@@ -1,3 +1,4 @@
+import { stableStringify } from "@t3tools/shared/relaySigning";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
@@ -21,7 +22,9 @@ import {
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
+import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -98,6 +101,28 @@ export interface ThreadLaunchInput {
   readonly creationSource: OrchestrationV2CreationSource;
 }
 
+export const LaunchRequest = Context.Reference<ThreadLaunchInput | undefined>(
+  "t3/orchestration-v2/ThreadLaunchService/LaunchRequest",
+  { defaultValue: () => undefined },
+);
+
+const launchIntentFingerprint = Effect.fnUntraced(function* (input: ThreadLaunchInput) {
+  const crypto = yield* Crypto.Crypto;
+  const { commandId: _, threadId: _threadId, ...intent } = input;
+  return yield* crypto.digest("SHA-256", new TextEncoder().encode(stableStringify(intent))).pipe(
+    Effect.map(Hex.encode),
+    Effect.mapError(
+      (cause) =>
+        new ThreadLaunchError({
+          operation: "validate-intent",
+          commandId: input.commandId,
+          projectId: input.projectId,
+          cause,
+        }),
+    ),
+  );
+});
+
 type PreparationInput = Pick<
   ThreadLaunchInput,
   "commandId" | "projectId" | "workspaceStrategy" | "initialMessage"
@@ -123,6 +148,7 @@ export class ThreadLaunchError extends Schema.TaggedError<ThreadLaunchError>()(
     operation: Schema.Literals([
       "resolve-project",
       "read-receipt",
+      "validate-intent",
       "generate-metadata",
       "provision-worktree",
       "run-setup-script",
@@ -196,6 +222,7 @@ function failureDetail(error: unknown): string {
 }
 
 const make = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
   const projects = yield* ProjectService.ProjectService;
   const setupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
   const cloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
@@ -251,6 +278,7 @@ const make = Effect.gen(function* () {
         threadId,
       )("Only an empty active thread in the target project can change workspace during launch.");
     }
+    return projection.thread;
   });
 
   const checkWorktreeBase: ThreadLaunchService["Service"]["checkWorktreeBase"] = Effect.fn(
@@ -888,9 +916,10 @@ const make = Effect.gen(function* () {
           }
         }
 
-        if (input.reuseExistingThread === true && Option.isNone(launchReceipt)) {
-          yield* validateReusableThread(input, candidateThreadId);
-        }
+        const reusableThread =
+          input.reuseExistingThread === true && Option.isNone(launchReceipt)
+            ? yield* validateReusableThread(input, candidateThreadId)
+            : undefined;
 
         const workspaceStrategy: ThreadLaunchWorkspaceStrategy =
           input.workspaceStrategy.type === "root" && Option.isNone(launchReceipt)
@@ -911,6 +940,8 @@ const make = Effect.gen(function* () {
         const initialBranch = workspaceStrategy.branch ?? null;
         const initialWorktreePath =
           workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null;
+        // Unprepared drafts keep their branch selection until preparation succeeds;
+        // a fresh claim must replace an existing checkout binding.
         const claimDispatch =
           input.reuseExistingThread === true
             ? threads.dispatch({
@@ -918,6 +949,11 @@ const make = Effect.gen(function* () {
                 commandId: input.commandId,
                 threadId: candidateThreadId,
                 expectedEmpty: true,
+                expectedWorktreePath: reusableThread?.worktreePath,
+                ...(initialWorktreePath !== null ||
+                (reusableThread !== undefined && reusableThread.worktreePath !== null)
+                  ? { branch: initialBranch, worktreePath: initialWorktreePath }
+                  : {}),
               })
             : threads.dispatch({
                 type: "thread.create",
@@ -936,7 +972,15 @@ const make = Effect.gen(function* () {
                 createdBy: input.createdBy,
                 creationSource: input.creationSource,
               });
+        const request = yield* LaunchRequest;
+        const fingerprint = yield* launchIntentFingerprint(
+          request?.commandId === input.commandId ? request : input,
+        ).pipe(Effect.provideService(Crypto.Crypto, crypto));
         const claimed = yield* claimDispatch.pipe(
+          Effect.provideService(CommandReceiptStore.LaunchIntent, {
+            commandId: input.commandId,
+            fingerprint,
+          }),
           Effect.mapError(
             mapError(
               input,
@@ -948,15 +992,62 @@ const make = Effect.gen(function* () {
         const threadId =
           claimed.storedEvents.find((stored) => stored.event.type.startsWith("thread."))?.event
             .threadId ?? candidateThreadId;
-        if (project.id !== input.projectId) {
+        const shell = yield* threads
+          .getThreadShell(threadId)
+          .pipe(Effect.mapError(mapError(input, "resolve-project", threadId)));
+        if (shell?.projectId !== project.id) {
           return yield* mapError(input, "resolve-project", threadId)("Project identity changed.");
+        }
+        const claimEvent = claimed.storedEvents.find(
+          ({ event }) =>
+            event.type === "thread.created" || event.type === "thread.metadata-updated",
+        )?.event;
+        const claimedThread =
+          claimEvent?.type === "thread.created" || claimEvent?.type === "thread.metadata-updated"
+            ? claimEvent.payload
+            : undefined;
+        const messageWorkspaceStrategy: ThreadLaunchWorkspaceStrategy =
+          workspaceStrategy.type === "root" &&
+          claimedThread !== undefined &&
+          claimedThread.worktreePath !== null
+            ? {
+                type: "existing_worktree",
+                worktreePath: claimedThread.worktreePath,
+                branch: claimedThread.branch ?? undefined,
+              }
+            : workspaceStrategy;
+
+        // Re-read after claiming: another caller may have accepted the key since our first read.
+        const accepted = yield* readReceipt(input, input.commandId);
+        const messageCommandId = CommandId.make(`${input.commandId}:initial-message`);
+        const messageReceipt = yield* readReceipt(input, messageCommandId);
+        const acceptedFingerprint = Option.isSome(accepted)
+          ? accepted.value.launchIntentFingerprint
+          : undefined;
+        if (acceptedFingerprint !== undefined && acceptedFingerprint !== fingerprint) {
+          return yield* mapError(
+            input,
+            "validate-intent",
+            threadId,
+          )("Launch request identity changed.");
+        }
+        if (
+          acceptedFingerprint === undefined &&
+          (Option.isNone(messageReceipt) ||
+            messageReceipt.value.status !== "accepted" ||
+            messageReceipt.value.commandType !== "message.dispatch" ||
+            messageReceipt.value.threadId !== threadId)
+        ) {
+          return yield* mapError(
+            input,
+            "validate-intent",
+            threadId,
+          )("Historical launch has no recorded initial-message intent.");
         }
 
         let runId: RunId | null = null;
         let messageWasAlreadyAccepted = false;
         if (input.initialMessage !== undefined) {
-          const messageCommandId = CommandId.make(`${input.commandId}:initial-message`);
-          const messageReceipt = yield* readReceipt(input, messageCommandId);
           messageWasAlreadyAccepted = Option.isSome(messageReceipt);
           const messageId =
             input.initialMessage.messageId ??
@@ -980,7 +1071,7 @@ const make = Effect.gen(function* () {
               ...(input.initialMessage.context ? { context: input.initialMessage.context } : {}),
               ...(input.generateTitle === true ? { titleSeed: input.title } : {}),
               modelSelection: input.modelSelection,
-              dispatchMode: { type: "defer_start", workspaceStrategy },
+              dispatchMode: { type: "defer_start", workspaceStrategy: messageWorkspaceStrategy },
               createdBy: input.createdBy,
               creationSource: input.creationSource,
             })
@@ -1020,16 +1111,30 @@ const make = Effect.gen(function* () {
           const ownsPreparation = yield* reservePreparation(input.commandId);
           if (ownsPreparation) {
             yield* Effect.gen(function* () {
-              const preparationStillRequired =
+              const preparingRun =
                 runId === null
-                  ? true
+                  ? undefined
                   : yield* threads.getThreadRecords(threadId, ["runs"], { runIds: [runId] }).pipe(
                       Effect.map((current) =>
-                        current.runs.some((run) => run.id === runId && run.status === "preparing"),
+                        current.runs.find((run) => run.id === runId && run.status === "preparing"),
                       ),
                       Effect.mapError(mapError(input, "update-thread", threadId)),
                     );
-              if (preparationStillRequired) {
+              if (preparingRun !== undefined) {
+                if (preparingRun.workspacePreparation === undefined) {
+                  return yield* mapError(
+                    input,
+                    "provision-worktree",
+                    threadId,
+                  )("Accepted run has no recorded workspace preparation.");
+                }
+                yield* scheduleRunPreparation(
+                  { commandId: input.commandId, threadId, runId: preparingRun.id },
+                  projection,
+                  preparingRun,
+                  preparingRun.workspacePreparation,
+                );
+              } else if (runId === null) {
                 yield* schedulePreparation(
                   { ...input, workspaceStrategy: preparationStrategy },
                   threadId,
