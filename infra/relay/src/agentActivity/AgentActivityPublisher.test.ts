@@ -270,15 +270,14 @@ describe("AgentActivityPublisher", () => {
     });
   });
 
-  it.effect("ends an idle card only once nothing is left to show", () => {
-    const deliveredBefore: Array<string> = [];
+  it.effect("ends an idle card after finished work ages out without another publish", () => {
     const sent: Array<Parameters<ApnsDeliveries.ApnsDeliveries["Service"]["sendForTarget"]>[0]> =
       [];
     let activeStates: ReadonlyArray<RelayAgentActivityState> = [state];
     const endIdle = AgentActivityPublisher.AgentActivityPublisher.pipe(
       Effect.flatMap((publisher) => publisher.endIdleLiveActivities),
       Effect.provide(
-        publisherLayer.pipe(
+        layerPublisher.pipe(
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(
@@ -289,11 +288,8 @@ describe("AgentActivityPublisher", () => {
               Layer.succeed(
                 LiveActivities.LiveActivities,
                 makeLiveActivities({
-                  listIdleArmedTargets: (input) =>
-                    Effect.sync(() => {
-                      deliveredBefore.push(input.deliveredBefore);
-                      return [{ user_id: "dev:julius", device_id: "device-1" }];
-                    }),
+                  listIdleArmedTargets: () =>
+                    Effect.succeed([{ user_id: "dev:julius", device_id: "device-1" }]),
                   listTargets: () =>
                     Effect.succeed([
                       { ...target("device-1"), activity_push_token: "activity-token" },
@@ -319,12 +315,15 @@ describe("AgentActivityPublisher", () => {
 
     return Effect.gen(function* () {
       yield* TestClock.adjust("1 hour");
-      // Work started again since the last delivery; its own publish owns the card.
       yield* endIdle;
-      expect(deliveredBefore).toEqual(["1970-01-01T00:45:00.000Z"]);
       expect(sent).toEqual([]);
 
-      activeStates = [];
+      activeStates = [{ ...state, phase: "completed", updatedAt: "1970-01-01T01:00:00.000Z" }];
+      yield* TestClock.adjust("15 minutes");
+      yield* endIdle;
+      expect(sent).toEqual([]);
+
+      yield* TestClock.adjust("5 minutes");
       yield* endIdle;
       expect(sent).toMatchObject([
         { target: { device_id: "device-1" }, aggregate: null, replay: true },
