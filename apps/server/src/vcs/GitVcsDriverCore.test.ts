@@ -947,6 +947,132 @@ it.effect("backs off and logs failed fetch attempts across linked worktrees", ()
       yield* readRemoteStatus(cwd);
       assert.equal(yield* Ref.get(fetchAttempts), 3);
       assert.lengthOf(warnings, 3);
+
+      for (const cooldown of [120, 240, 480, 900, 900]) {
+        const attempts = yield* Ref.get(fetchAttempts);
+        yield* TestClock.adjust((cooldown - 1) * 1_000);
+        yield* readRemoteStatus(worktreePath);
+        assert.equal(yield* Ref.get(fetchAttempts), attempts);
+        yield* TestClock.adjust("1 second");
+        yield* readRemoteStatus(cwd);
+        assert.equal(yield* Ref.get(fetchAttempts), attempts + 1);
+        assert.lengthOf(warnings, attempts + 1);
+      }
+    }),
+  ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.effect("stops background fetches after repeated timeouts until a pull succeeds", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const fetchStarts = yield* Queue.unbounded<void>();
+      const fetchAttempts = yield* Ref.make(0);
+      const pullStarts = yield* Queue.unbounded<void>();
+      const releasePull = yield* Deferred.make<void>();
+      const recoveryStarted = yield* Deferred.make<void>();
+      let overlapPull = false;
+      let pullReturned = false;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (!ChildProcess.isStandardCommand(command)) {
+            return yield* Effect.die("expected a standard Git command");
+          }
+          if (command.args.includes("fetch") && command.args.includes("--no-auto-gc")) {
+            yield* Ref.update(fetchAttempts, (count) => count + 1);
+            yield* Queue.offer(fetchStarts, undefined);
+            return ChildProcessSpawner.makeHandle({
+              ...makeSuccessfulHandle(""),
+              // Models a credential helper waiting for an unanswered dialog.
+              exitCode: Effect.never,
+            });
+          }
+          if (overlapPull && command.args[0] === "pull") {
+            yield* Queue.offer(pullStarts, undefined);
+            yield* Deferred.await(releasePull);
+            pullReturned = true;
+            return makeSuccessfulHandle("");
+          }
+          // Keep recovery bookkeeping synchronous so the clock advances after it reaches the cache.
+          if (pullReturned && command.args.at(-1) === "@{upstream}") {
+            return makeSuccessfulHandle(`origin/${initialBranch}\n`);
+          }
+          if (pullReturned && command.args.length === 1 && command.args[0] === "remote") {
+            yield* Deferred.succeed(recoveryStarted, undefined);
+            return makeSuccessfulHandle("origin\n");
+          }
+          return yield* delegate.spawn(command);
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+      const cwd = yield* makeTmpDir();
+      const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+      const { initialBranch } = yield* initRepoWithCommit(cwd).pipe(
+        Effect.provideService(GitVcsDriver.GitVcsDriver, driver),
+      );
+      yield* Effect.gen(function* () {
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", initialBranch]);
+      }).pipe(Effect.provideService(GitVcsDriver.GitVcsDriver, driver));
+
+      const readStatus = Effect.gen(function* () {
+        const read = yield* driver.statusDetailsRemote(cwd).pipe(Effect.forkChild);
+        // Cached reads finish without spawning; fresh fetches must start before the clock advances.
+        yield* Effect.raceFirst(
+          Fiber.join(read),
+          Queue.take(fetchStarts).pipe(Effect.andThen(TestClock.adjust("5 seconds"))),
+        );
+        return yield* Fiber.join(read);
+      });
+
+      yield* readStatus;
+      yield* TestClock.adjust("30 seconds");
+      yield* readStatus;
+      yield* TestClock.adjust("60 seconds");
+      yield* readStatus;
+      assert.equal(yield* Ref.get(fetchAttempts), 3);
+
+      yield* TestClock.adjust("1 hour");
+      assert.isTrue((yield* readStatus).hasUpstream);
+      assert.equal(yield* Ref.get(fetchAttempts), 3);
+
+      yield* driver.pullCurrentBranch(cwd);
+      yield* TestClock.adjust("14 seconds");
+      yield* readStatus;
+      assert.equal(yield* Ref.get(fetchAttempts), 3);
+      yield* TestClock.adjust("1 second");
+      yield* readStatus;
+      assert.equal(yield* Ref.get(fetchAttempts), 4);
+
+      // A further timeout starts at the initial cooldown, proving pull cleared both counters.
+      yield* TestClock.adjust("30 seconds");
+      yield* readStatus;
+      assert.equal(yield* Ref.get(fetchAttempts), 5);
+
+      // Another status read can start a fetch while the explicit pull is running.
+      yield* TestClock.adjust("59 seconds");
+      overlapPull = true;
+      const pull = yield* driver.pullCurrentBranch(cwd).pipe(Effect.forkChild);
+      yield* Queue.take(pullStarts);
+      yield* TestClock.adjust("1 second");
+      const concurrentStatus = yield* driver.statusDetailsRemote(cwd).pipe(Effect.forkChild);
+      yield* Queue.take(fetchStarts);
+      yield* Deferred.succeed(releasePull, undefined);
+      yield* Deferred.await(recoveryStarted);
+      yield* TestClock.adjust("5 seconds");
+      yield* Fiber.join(concurrentStatus);
+      yield* Fiber.join(pull);
+      assert.equal(yield* Ref.get(fetchAttempts), 6);
+
+      yield* TestClock.adjust("15 seconds");
+      yield* readStatus;
+      assert.equal(yield* Ref.get(fetchAttempts), 7);
+      yield* TestClock.adjust("30 seconds");
+      yield* readStatus;
+      assert.equal(yield* Ref.get(fetchAttempts), 8);
     }),
   ).pipe(Effect.provide(layerServerConfig.pipe(Layer.provideMerge(NodeServices.layer)))),
 );
