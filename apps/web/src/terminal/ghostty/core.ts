@@ -9,9 +9,8 @@ import { GhosttyRuntime, loadGhosttyRuntime } from "./runtime";
 
 const GHOSTTY_SUCCESS = 0;
 const GHOSTTY_OUT_OF_SPACE = -3;
-// The pinned libghostty-vt counts max_scrollback in bytes despite its header saying lines.
-// Ghostty's own default: roughly 9k rows at 80 columns. A larger cap makes a full terminal
-// reflow noticeably on every width change.
+// The pinned ABI measures max_scrollback in bytes despite its header saying lines.
+// Match Ghostty's default scrollback-limit.
 const MAX_SCROLLBACK_BYTES = 10_000_000;
 // wasm32 C ABI layout for GhosttyTerminalSelectionFormatOptions at the
 // libghostty-vt revision pinned alongside this module.
