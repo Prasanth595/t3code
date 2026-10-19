@@ -95,6 +95,25 @@ describe("chat math parsing", () => {
     ).toEqual([["display", "\\begin{aligned} a &= b \\\\ c &= d \\end{aligned}"]]);
   });
 
+  it.each([" is the first formula.", ", followed by prose.", " \tthen more text."])(
+    "keeps text after a same-line formula separate from later display math: %s",
+    (trailing) => {
+      const source = `$$a$$${trailing}\nSome prose.\n$$\nb\n$$`;
+      const nodes = collect(parse(source));
+      expect(
+        nodes.filter((node) => node.type === "inlineMath" || node.type === "math"),
+      ).toMatchObject([
+        { type: "inlineMath", value: "a" },
+        { type: "math", value: "b" },
+      ]);
+      expect(text(source)).toContain(`${trailing}\nSome prose.`);
+      expect(markdownMathRanges(source).map((formula) => formula.source)).toEqual([
+        "$$a$$",
+        "$$\nb\n$$",
+      ]);
+    },
+  );
+
   it("keeps block syntax inside display blocks as TeX", () => {
     expect(formulas("\\[\nx\n- y\n# z\n\\]\nafter")).toEqual([["display", "x\n- y\n# z"]]);
     expect(formulas("> $$\n> x\n> $$")).toEqual([["display", "x"]]);
