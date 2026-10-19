@@ -1855,9 +1855,8 @@ code {
   content: attr(data-marker) " ";
 }
 
-/* The prompt has its own font and size, so a rem gutter clips markers drawn in
-   a monospace or larger composer font. `ch` follows the composer font: a marker
-   and its space take at most (length + 1)ch, so `1. ` fits in 3ch. */
+/* The prompt font and size can differ from the interface, so its gutter must
+   also follow the prompt's font metrics. */
 .composer-tiptap ol {
   --list-gutter: max(1.25rem, 3ch);
 }
