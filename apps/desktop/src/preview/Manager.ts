@@ -1157,20 +1157,23 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             scope,
             onMessage,
           };
-          // Chromium drops the debugger on its own when the guest's renderer dies or
-          // DevTools opened outside the manager take it over. The cached session would
-          // then fail every command until the webview is replaced.
+          // Electron emits `detach` when Chromium closes the debugger session on its
+          // own. The cached session would then fail every command until the webview
+          // is replaced.
+          let dropped = false;
           const onDetach = () => {
+            dropped = true;
             runFork(recoverDetachedControlSession(wc, control));
           };
-          // The listener comes off before detach() so a detach this manager
-          // requested never looks like a dropped one.
+          // The listener comes off before detach() so a detach this manager requested
+          // never looks like a dropped one. A dropped session has nothing left to
+          // detach: `wc.debugger` is shared, so detaching here would hit a successor.
           yield* Scope.addFinalizer(
             scope,
             attempt({ operation: "detachControlSession", webContentsId: wc.id }, () => {
               wcDebugger.off("message", onMessage);
               wcDebugger.off("detach", onDetach);
-              if (wcDebugger.isAttached()) wcDebugger.detach();
+              if (!dropped && wcDebugger.isAttached()) wcDebugger.detach();
             }).pipe(Effect.ignore),
           );
           const initialize = Effect.fn("PreviewManager.initializeControlSession")(function* () {
@@ -2394,17 +2397,6 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       if (wc.isDestroyed()) return;
       const tabId = yield* tabIdForWebContents(wc.id);
       if (tabId === null) return;
-      if (wc.isDevToolsOpened()) {
-        yield* attempt(
-          { operation: "recoverDetachedControlSession", tabId, webContentsId: wc.id },
-          () => {
-            wc.once("devtools-closed", () => {
-              if (!wc.isDestroyed()) runFork(restoreControlSession(tabId, wc));
-            });
-          },
-        );
-        return;
-      }
       yield* restoreControlSession(tabId, wc);
     },
     (recover) => Effect.ignore(recover),

@@ -1888,7 +1888,6 @@ describe("PreviewManager", () => {
     );
     const detachListeners = new Set<() => void>();
     let chromiumDetaches = 0;
-    let devToolsOpen = false;
     let destroyed = false;
     const wc = {
       id,
@@ -1896,7 +1895,7 @@ describe("PreviewManager", () => {
       isDevToolsOpened: () => {
         // Electron throws from native methods once a WebContents is destroyed.
         if (destroyed) throw new TypeError("Object has been destroyed");
-        return devToolsOpen;
+        return false;
       },
       getType: () => "webview",
       getURL: () => "http://localhost:5173/README.md",
@@ -1941,15 +1940,6 @@ describe("PreviewManager", () => {
       detach,
       sendCommand,
       chromiumDetach,
-      /** DevTools opened outside the manager, e.g. from the app menu, take the debugger. */
-      openDevTools: () => {
-        devToolsOpen = true;
-        chromiumDetach();
-      },
-      closeDevTools: () => {
-        devToolsOpen = false;
-        listeners.get("devtools-closed")?.();
-      },
       destroy: () => {
         destroyed = true;
         listeners.get("destroyed")?.();
@@ -2002,16 +1992,7 @@ describe("PreviewManager", () => {
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
         expect(guest.attach).toHaveBeenCalledTimes(2);
-
-        // DevTools hold the debugger until they close.
-        guest.openDevTools();
-        yield* Effect.yieldNow;
-        yield* Effect.yieldNow;
-        expect(guest.attach).toHaveBeenCalledTimes(2);
-        guest.closeDevTools();
-        yield* Effect.yieldNow;
-        yield* Effect.yieldNow;
-        expect(guest.attach).toHaveBeenCalledTimes(3);
+        expect(guest.detach).not.toHaveBeenCalled();
       }),
     ),
   );
