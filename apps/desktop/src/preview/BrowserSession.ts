@@ -41,9 +41,8 @@ const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
   // Deliberately NOT local-fonts: preview sessions run untrusted web content,
   // and silently granting it would hand every page the user's installed-font
   // fingerprint (and font file bytes via FontData.blob()).
-  // Deliberately NOT notifications: granting it would let any page raise native
-  // OS notifications branded as T3 Code. T3's own notifications come from the
-  // app window's default session, not these partitions.
+  // Deliberately NOT notifications: a page could post OS notifications branded
+  // as T3 Code. T3's own come from the app window on the default session.
 ]);
 
 const NEVER_EXTERNAL_PROTOCOLS: ReadonlySet<string> = new Set([
