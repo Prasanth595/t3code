@@ -1,11 +1,3 @@
-/**
- * Usage history for Claude Code: the transcript format of its
- * `<home>/projects/**.jsonl` session files and where each instance keeps them.
- *
- * @module provider/Drivers/claudeUsage
- */
-import * as NodeOS from "node:os";
-
 import type { ClaudeSettings } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
@@ -18,6 +10,10 @@ import {
   type TranscriptUsageFormat,
   type UsageRecord,
 } from "@t3tools/provider-core/server/usage";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+
+// Claude Code uses this model for local placeholders that never reached the API.
+export const CLAUDE_SYNTHETIC_MODEL = "<synthetic>";
 
 /**
  * Parses one line of a Claude Code transcript.
@@ -55,12 +51,10 @@ function parseClaudeRecord(parsed: unknown): UsageRecord | null {
   if (timestampMs === null) return null;
 
   const model = typeof messageRecord["model"] === "string" ? messageRecord["model"] : "";
-  if (model.length === 0) return null;
+  if (model.length === 0 || model === CLAUDE_SYNTHETIC_MODEL) return null;
 
   const messageId = typeof messageRecord["id"] === "string" ? messageRecord["id"] : null;
   const requestId = typeof record["requestId"] === "string" ? record["requestId"] : null;
-  // Matches ccusage: prefer the message/request pair, fall back to whichever
-  // half exists. Records with neither cannot be de-duplicated.
   const dedupeKey =
     messageId === null && requestId === null ? null : `${messageId ?? ""}:${requestId ?? ""}`;
 
@@ -95,7 +89,6 @@ const orEmpty = (record: UsageRecord | null): readonly UsageRecord[] =>
   record === null ? [] : [record];
 
 export const claudeUsageFormat: TranscriptUsageFormat<void> = {
-  // Keeps the dedupe and cost metadata. The `usage` subtree keeps future token fields.
   selectFields: {
     type: true,
     timestamp: true,
@@ -104,7 +97,7 @@ export const claudeUsageFormat: TranscriptUsageFormat<void> = {
     costUSD: true,
     message: { id: true, model: true, usage: true },
   },
-  mightCarryUsage: (line) => line.includes('"usage"'),
+  usageMarkers: ['"usage"'],
   parseLine: (line) => orEmpty(parseClaudeLine(line)),
   parseProjected: (projected) => orEmpty(parseClaudeRecord(projected)),
 };
@@ -114,13 +107,13 @@ export const claudeUsageReader: ProviderUsageReader<ClaudeSettings, Path.Path> =
   provider: "claude",
   format: claudeUsageFormat,
   directories: Effect.fn("claudeUsageReader.directories")(function* ({ config, environment }) {
-    // An undecodable config has no trustworthy home to read.
     if (config === undefined) return [];
     const path = yield* Path.Path;
+    const homeDirectory = yield* HostProcess.HomeDirectory;
     const configured = config.homePath.trim();
     const home = configured
-      ? expandHomePath(configured)
-      : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(NodeOS.homedir(), ".claude");
+      ? expandHomePath(configured, homeDirectory)
+      : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(homeDirectory, ".claude");
     return [{ dir: path.resolve(home, "projects") }];
   }),
 };

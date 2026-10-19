@@ -1,9 +1,3 @@
-/**
- * Shapes merged daily totals into the per-day provider stacks both chart
- * implementations (Swift Charts on iOS, plain views elsewhere) render.
- *
- * @module usageChartData
- */
 import type { UsageProviderKind } from "@t3tools/contracts";
 import type { DailyTotals } from "@t3tools/shared/usageMerge";
 
@@ -22,7 +16,6 @@ export interface UsageChartDay {
   readonly total: number;
 }
 
-/** One entry per day in the window, zero-filled where nothing happened. */
 export function buildChartDays(
   days: readonly string[],
   daily: readonly DailyTotals[],

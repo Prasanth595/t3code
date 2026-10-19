@@ -1,6 +1,6 @@
 import { ProviderDriverKind } from "@t3tools/contracts";
 import { MuseSettings } from "../settings.ts";
-import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -69,16 +69,16 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
       const eventLoggers = yield* ProviderEventLoggers.ProviderEventLoggers;
       const { cwd } = host.paths;
       const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
-      const hostEnvironment = yield* HostProcessEnvironment;
+      const hostEnvironment = yield* HostProcess.Environment;
       // Drop an inherited META_API_KEY so Muse uses its login; an instance value still wins.
-      const processEnvironment = mergeProviderInstanceEnvironment(
+      const processEnvironment = yield* mergeProviderInstanceEnvironment(
         environment,
         makeMuseEnvironment(hostEnvironment),
       );
       const effectiveConfig = {
         ...config,
         enabled,
-        binaryPath: expandHomePath(config.binaryPath),
+        binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
       } satisfies MuseSettings;
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -119,7 +119,16 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
           return latestVersion !== undefined ? { ...capabilities, latestVersion } : capabilities;
         });
       const snapshot = yield* makeManagedServerProvider<ProviderSnapshotSettings<MuseSettings>>({
-        resolveMaintenance,
+        // Status refresh respects update checks; explicit updates use the resolver below.
+        resolveMaintenance: (options) =>
+          host.settings.get.pipe(
+            Effect.orDie,
+            Effect.flatMap((settings) =>
+              settings.enableProviderUpdateChecks
+                ? resolveMaintenance(options)
+                : resolveInstallation(options),
+            ),
+          ),
         getSettings: snapshotSettings.getSettings,
         streamSettings: snapshotSettings.streamSettings,
         haveSettingsChanged: haveProviderSnapshotSettingsChanged,
@@ -176,7 +185,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
         displayName,
         accentColor,
         enabled,
-        snapshot,
+        snapshot: { ...snapshot, resolveMaintenance },
         orchestrationAdapter,
         textGeneration,
       } satisfies ProviderInstance;
