@@ -13,6 +13,7 @@ import { afterAll, afterEach, beforeAll, describe, expect } from "vite-plus/test
 
 import {
   builtinFetchUsesHttp2,
+  extendConnectionAttemptTimeout,
   ignoreMacosTypeOfServiceEinval,
   installHttp1FetchDispatcher,
 } from "./outboundHttp.ts";
@@ -239,4 +240,18 @@ describe("ignoreMacosTypeOfServiceEinval", () => {
       );
     },
   );
+});
+
+describe("extendConnectionAttemptTimeout", () => {
+  it("raises a default below the floor to 1000 ms", () => {
+    NodeNet.setDefaultAutoSelectFamilyAttemptTimeout(50);
+    extendConnectionAttemptTimeout();
+    expect(NodeNet.getDefaultAutoSelectFamilyAttemptTimeout()).toBe(1_000);
+  });
+
+  it("keeps a larger configured timeout", () => {
+    NodeNet.setDefaultAutoSelectFamilyAttemptTimeout(5_000);
+    extendConnectionAttemptTimeout();
+    expect(NodeNet.getDefaultAutoSelectFamilyAttemptTimeout()).toBe(5_000);
+  });
 });

@@ -72,3 +72,14 @@ export function ignoreMacosTypeOfServiceEinval(
     }
   };
 }
+
+/**
+ * Node's 250 ms Happy Eyeballs attempt timeout abandons a working-but-slow IPv4
+ * connect when IPv6 is advertised but unroutable, which broke the ACP registry
+ * fetch (#15039). A larger `--network-family-autoselection-attempt-timeout` still wins.
+ */
+export function extendConnectionAttemptTimeout(): void {
+  NodeNet.setDefaultAutoSelectFamilyAttemptTimeout(
+    Math.max(NodeNet.getDefaultAutoSelectFamilyAttemptTimeout(), 1_000),
+  );
+}
