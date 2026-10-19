@@ -17,6 +17,7 @@ import type { CodexEffectiveRuntime } from "../../provider/CodexManagedRuntime.t
 import {
   buildCodexInitializeParams,
   codexAppServerEnvironment,
+  codexTurnReasoningSummary,
 } from "../../provider/CodexProvider.ts";
 import {
   codexRateLimitsToUpdate,
@@ -714,6 +715,7 @@ function codexRuntimeModeTurnDefaults(runtimeMode: RuntimeMode): {
 
 export function buildCodexTurnStartParams(input: {
   readonly nativeThreadId: string;
+  readonly reasoningSummary?: CodexSchema.V2ConfigReadResponse__ReasoningSummary;
   readonly codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
   readonly modelSelection: ModelSelection;
@@ -791,11 +793,7 @@ export function buildCodexTurnStartParams(input: {
       ...(additionalContext ? { additionalContext } : {}),
       cwd: input.runtimePolicy.cwd,
       model: input.modelSelection.model,
-      // Model catalogues can default summaries to "none". Request them on every
-      // turn, including resumed threads, for T3's reasoning timeline. "auto" is
-      // the most detailed level each model supports; endpoints such as Bedrock
-      // reject "detailed".
-      summary: "auto",
+      summary: input.reasoningSummary ?? "auto",
       // Always explicit: omitting this on resume leaves Codex's previous
       // reviewer sticky after switching away from Auto mode.
       approvalsReviewer: runtimeModeDefaults.approvalsReviewer,
@@ -6195,8 +6193,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           Effect.gen(function* () {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+            const config = yield* client.request("config/read", {
+              cwd: turnInput.runtimePolicy.cwd,
+            });
             const turnStartParams = yield* buildCodexTurnStartParams({
               nativeThreadId: threadId,
+              reasoningSummary: codexTurnReasoningSummary(config),
               codexInput,
               runtimePolicy: turnInput.runtimePolicy,
               modelSelection: turnInput.modelSelection,

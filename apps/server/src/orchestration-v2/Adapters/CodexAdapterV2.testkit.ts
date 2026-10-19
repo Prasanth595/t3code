@@ -49,13 +49,23 @@ const decodeConfigReadParams = Schema.decodeUnknownSync(CodexSchema.V2ConfigRead
 
 export function withCodexReplayConfig(
   client: CodexClient.CodexAppServerClient["Service"],
+  transcript: CodexReplay.CodexAppServerReplayTranscript,
   readConfig: (
     params: CodexSchema.V2ConfigReadParams,
   ) => Effect.Effect<CodexSchema.V2ConfigReadResponse> = () =>
     Effect.succeed({ config: {}, origins: {}, layers: [] }),
 ): CodexClient.CodexAppServerClient["Service"] {
-  // Older recordings have no config/read frames. Keep their request IDs intact
-  // while modeling a machine with no explicit summary preference.
+  if (
+    transcript.entries.some(
+      (entry) =>
+        entry.type === "expect_outbound" &&
+        Predicate.isObject(entry.frame) &&
+        entry.frame.method === "config/read",
+    )
+  ) {
+    return client;
+  }
+  // Older recordings have no config/read frames. Preserve their request IDs.
   return {
     ...client,
     request: (method, params) =>
@@ -237,7 +247,10 @@ export function layer(input: {
         );
         return yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
           Effect.map((client) =>
-            withCodexReplayChildMetadata(withCodexReplayConfig(client), input.transcript),
+            withCodexReplayChildMetadata(
+              withCodexReplayConfig(client, input.transcript),
+              input.transcript,
+            ),
           ),
           Effect.provide(context),
         );

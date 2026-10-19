@@ -2,7 +2,10 @@ import * as NodeOS from "node:os";
 
 import { CODEX_THREAD_CONFIG } from "../src/orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { revertCodexThread } from "../src/provider/CodexThreadRevert.ts";
-import { buildCodexInitializeParams } from "../src/provider/CodexProvider.ts";
+import {
+  buildCodexInitializeParams,
+  codexTurnReasoningSummary,
+} from "../src/provider/CodexProvider.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -1403,12 +1406,13 @@ function runReplaySession({
       step: TurnReplayStep,
     ) =>
       Effect.gen(function* () {
+        const config = yield* client.request("config/read", { cwd: process.cwd() });
         const turnParams: TurnStartParams = {
           approvalPolicy: "never",
           sandboxPolicy: { type: "dangerFullAccess" },
           cwd: process.cwd(),
           model,
-          summary: "auto",
+          summary: codexTurnReasoningSummary(config),
           approvalsReviewer: "user",
           ...(run.interactionMode === "plan"
             ? { collaborationMode: planCollaborationMode(model) }

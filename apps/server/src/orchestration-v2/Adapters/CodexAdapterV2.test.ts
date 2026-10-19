@@ -1777,7 +1777,7 @@ describe("CodexAdapterV2 session initialize", () => {
             Layer.build(CodexReplay.layerReplayWithDriver(driver)).pipe(
               Effect.flatMap((context) =>
                 Effect.service(CodexClient.CodexAppServerClient).pipe(
-                  Effect.map((client) => withCodexReplayConfig(client)),
+                  Effect.map((client) => withCodexReplayConfig(client, transcript)),
                   Effect.provide(context),
                 ),
               ),
@@ -1969,7 +1969,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
-    readConfig?: Parameters<typeof withCodexReplayConfig>[1],
+    readConfig?: Parameters<typeof withCodexReplayConfig>[2],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1992,7 +1992,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               Effect.service(CodexClient.CodexAppServerClient).pipe(
                 Effect.map((client) =>
                   withCodexReplayChildMetadata(
-                    withCodexReplayConfig(client, readConfig),
+                    withCodexReplayConfig(client, transcript, readConfig),
                     transcript,
                     readChildMetadata,
                   ),
@@ -2210,7 +2210,25 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 },
         };
         const harness = yield* makeCodexReplayHarness(
-          transcript,
+          name === "user detailed"
+            ? {
+                ...transcript,
+                entries: [
+                  ...transcript.entries.slice(0, 5),
+                  {
+                    type: "expect_outbound",
+                    label: "config/read",
+                    frame: { id: 3, method: "config/read", params: { cwd: "/workspace" } },
+                  },
+                  {
+                    type: "emit_inbound",
+                    label: "config/read",
+                    frame: { id: 3, result: config },
+                  },
+                  ...transcript.entries.slice(5).map((entry) => withReplayRequestId(entry, 4)),
+                ],
+              }
+            : transcript,
           undefined,
           undefined,
           undefined,
@@ -2221,7 +2239,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 "/workspace",
                 "project preferences require the turn working directory",
               );
-              return { ...config, layers: params.includeLayers ? config.layers : null };
+              return { ...config, layers: params.includeLayers ? layers : null };
             }),
         );
         const providerThread =
@@ -2234,8 +2252,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             : lifecycle === "fork"
               ? yield* harness.runtime.forkThread({
                   sourceProviderThread: harness.providerThread,
-                  providerThreadTurns: [],
-                  providerTurnId: null,
                   targetThreadId,
                   modelSelection: CODEX_TEST_MODEL_SELECTION,
                   runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
