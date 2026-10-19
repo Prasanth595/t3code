@@ -7642,6 +7642,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
   it.effect.each([
     { name: "current Codex Sol", model: "gpt-6-sol" },
     { name: "current Codex known spawn model", model: "gpt-6-sol" },
+    { name: "known spawn model with null metadata model", model: "gpt-6-sol" },
+    { name: "known spawn model with blank metadata model", model: "gpt-6-sol" },
     { name: "current Codex wrong child", model: null },
     { name: "Sol", model: "gpt-5.6-sol" },
     { name: "Fable", model: "gpt-5.6-fable" },
@@ -7655,37 +7657,36 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         const metadataRead = yield* Deferred.make<void>();
         const modelReported = yield* Deferred.make<void>();
         let metadataRequests = 0;
-        const transcript =
-          name === "current Codex known spawn model"
-            ? {
-                ...resumeSubagentTranscript,
-                entries: resumeSubagentTranscript.entries.map((entry) =>
-                  entry.type === "emit_inbound" &&
-                  entry.label === "item/completed/subAgentActivity-started"
-                    ? {
-                        ...entry,
-                        frame: {
-                          method: "item/completed",
-                          params: {
-                            threadId: RESUME_NATIVE_THREAD,
-                            turnId: RESUME_NATIVE_TURN,
-                            item: {
-                              type: "collabAgentToolCall",
-                              id: "call-codex-resume-spawn",
-                              tool: "spawnAgent",
-                              status: "completed",
-                              senderThreadId: RESUME_NATIVE_THREAD,
-                              receiverThreadIds: [RESUME_CHILD_THREAD],
-                              model,
-                              agentsStates: {},
-                            },
+        const transcript = name.includes("known spawn model")
+          ? {
+              ...resumeSubagentTranscript,
+              entries: resumeSubagentTranscript.entries.map((entry) =>
+                entry.type === "emit_inbound" &&
+                entry.label === "item/completed/subAgentActivity-started"
+                  ? {
+                      ...entry,
+                      frame: {
+                        method: "item/completed",
+                        params: {
+                          threadId: RESUME_NATIVE_THREAD,
+                          turnId: RESUME_NATIVE_TURN,
+                          item: {
+                            type: "collabAgentToolCall",
+                            id: "call-codex-resume-spawn",
+                            tool: "spawnAgent",
+                            status: "completed",
+                            senderThreadId: RESUME_NATIVE_THREAD,
+                            receiverThreadIds: [RESUME_CHILD_THREAD],
+                            model,
+                            agentsStates: {},
                           },
                         },
-                      }
-                    : entry,
-                ),
-              }
-            : resumeSubagentTranscript;
+                      },
+                    }
+                  : entry,
+              ),
+            }
+          : resumeSubagentTranscript;
         const harness = yield* makeCodexReplayHarness(
           transcript,
           (event) =>
@@ -7707,11 +7708,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                           ? { model: "gpt-6-sol", reasoningEffort: "high" }
                           : {}),
                       },
-                      model: name.startsWith("current Codex")
+                      model: name.includes("null metadata model")
                         ? null
-                        : name === "wrong child"
-                          ? "gpt-5.6-sol"
-                          : model,
+                        : name.includes("blank metadata model")
+                          ? " \t "
+                          : name.startsWith("current Codex")
+                            ? null
+                            : name === "wrong child"
+                              ? "gpt-5.6-sol"
+                              : model,
                       reasoningEffort: "high",
                       serviceTier: "priority",
                     },
@@ -7728,7 +7733,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             text: RESUME_PROMPT,
           }),
         );
-        if (name !== "current Codex known spawn model") yield* Deferred.await(metadataRead);
+        if (!name.includes("known spawn model")) yield* Deferred.await(metadataRead);
         yield* Deferred.await(modelReported);
         yield* TestClock.adjust("100 millis");
         yield* harness.firstTerminal;

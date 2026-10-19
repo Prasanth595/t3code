@@ -2674,9 +2674,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           effort?: string | null,
           tier?: string | null,
         ) {
-          const model = value?.trim();
-          if (!model) return;
           const previous = subagentSelections.get(nativeThreadId);
+          const model = value?.trim() || previous?.model;
+          if (!model) return;
           const previousOptions = previous?.options;
           const options =
             effort === undefined && tier === undefined
