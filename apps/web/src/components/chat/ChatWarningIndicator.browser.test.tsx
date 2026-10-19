@@ -2,6 +2,7 @@ import "../../index.css";
 
 import {
   EnvironmentId,
+  type OrchestrationV2ProviderFailureClass,
   ProviderDriverKind,
   ProviderInstanceId,
   type ServerProvider,
@@ -134,18 +135,20 @@ it("keeps exact dismissals through remounts and reconnects, scoped to the enviro
     run = "run-a",
     thread = "thread-a",
     reason = "Turn failed",
+    failureClass = null,
   }: {
     environment?: EnvironmentId;
     run?: string | null;
     thread?: string;
     reason?: string;
+    failureClass?: OrchestrationV2ProviderFailureClass | null;
   }) {
     const store = useChatWarningDismissals();
     useEffect(() => {
       dismissals = store;
     });
     const { warnings, dismissForNow, dismissForever } = useChatWarnings(
-      [resolveThreadErrorChatWarning(`${environment}:${thread}`, reason)],
+      [resolveThreadErrorChatWarning(`${environment}:${thread}`, reason, failureClass)],
       environment,
       run,
     );
@@ -169,23 +172,34 @@ it("keeps exact dismissals through remounts and reconnects, scoped to the enviro
     await userEvent.click(page.getByRole("button", { name: "Dismiss for now", exact: true }));
     await expect.element(trigger).not.toBeInTheDocument();
     await act(async () => root.render(null));
-    await render();
+    await render({ run: null });
     await expect.element(trigger).not.toBeInTheDocument();
 
-    // Reconnect replays the same ready timestamp, while a restart supplies a new one.
-    await render({ run: null });
-    await expect.element(trigger).toBeVisible();
-    await render({ run: "run-a" });
-    await expect.element(trigger).not.toBeInTheDocument();
+    // Before ready, only exact warnings from the last known run stay hidden.
     for (const props of [
       { environment: otherEnvironmentId },
       { thread: "thread-b" },
       { reason: "A different failure" },
-      { run: "run-b" },
+      { failureClass: "usage_limit" as const },
     ]) {
-      await render(props);
+      await render({ ...props, run: null });
       await expect.element(trigger).toBeVisible();
     }
+    await userEvent.click(trigger);
+    await expect
+      .element(page.getByRole("button", { name: "Dismiss for now", exact: true }))
+      .not.toBeInTheDocument();
+    await render({ run: null });
+    await expect.element(trigger).not.toBeInTheDocument();
+
+    // A replay preserves dismissal; a new ready resurfaces it, even on the next reload.
+    await render({ run: "run-a" });
+    await expect.element(trigger).not.toBeInTheDocument();
+    await render({ run: "run-b" });
+    await expect.element(trigger).toBeVisible();
+    await act(async () => root.render(null));
+    await render({ run: null });
+    await expect.element(trigger).toBeVisible();
     await userEvent.click(trigger);
     await userEvent.click(page.getByRole("button", { name: "Don't show again", exact: true }));
     await expect.element(trigger).not.toBeInTheDocument();

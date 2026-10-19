@@ -121,7 +121,6 @@ export const ChatWarningIndicator = memo(function ChatWarningIndicator({
           padding="none"
           width="sm"
           variant={severity}
-          data-variant={severity}
         >
           <div className="space-y-2">
             {warnings.map((warning) => (

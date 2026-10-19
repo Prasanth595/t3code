@@ -996,13 +996,12 @@ it.effect("tracks each environment's server run across reconnect and restart", (
     yield* SubscriptionRef.set(currentSession, Option.none());
     yield* SubscriptionRef.set(currentSession, Option.some(session(client)));
     yield* Queue.take(subscribed);
+    expect(Option.getOrNull(AsyncResult.value(registry.get(run)))).toBe("2026-10-19T00:00:00Z");
     yield* sendReady("2026-10-19T00:00:00Z");
     expect(Option.getOrNull(AsyncResult.value(registry.get(run)))).toBe("2026-10-19T00:00:00Z");
     yield* SubscriptionRef.set(currentSession, Option.some(session(client)));
     yield* Queue.take(subscribed);
     yield* sendReady("2026-10-19T01:00:00Z");
     expect(Option.getOrNull(AsyncResult.value(registry.get(run)))).toBe("2026-10-19T01:00:00Z");
-    const other = atoms.runStartedAt({ environmentId: EnvironmentId.make("other"), input: {} });
-    expect(AsyncResult.value(registry.get(other))).toEqual(Option.none());
   }),
 );

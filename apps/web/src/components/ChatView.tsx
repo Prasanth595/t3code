@@ -1178,9 +1178,7 @@ export default function ChatView(props: ChatViewProps) {
     return ids;
   })();
   const settings = useEnvironmentSettings(environmentId);
-  const warningEnvironmentId =
-    serverThread?.environmentId ?? draftThread?.environmentId ?? environmentId;
-  const serverRunId = useAtomValue(environmentServerRunIdAtom(warningEnvironmentId));
+  const serverRunId = useAtomValue(environmentServerRunIdAtom(environmentId));
   const clientSettingsHydrated = useClientSettingsHydrated();
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
@@ -2971,19 +2969,12 @@ export default function ChatView(props: ChatViewProps) {
       ? (serverRuntime?.lastErrorClass ?? null)
       : null,
   );
-  const providerStatusWarning = resolveProviderChatWarning(
-    warningEnvironmentId,
-    activeProviderStatus,
-  );
+  const providerStatusWarning = resolveProviderChatWarning(environmentId, activeProviderStatus);
   const {
     warnings: chatWarnings,
     dismissForNow,
     dismissForever,
-  } = useChatWarnings(
-    [threadErrorWarning, providerStatusWarning],
-    warningEnvironmentId,
-    serverRunId,
-  );
+  } = useChatWarnings([threadErrorWarning, providerStatusWarning], environmentId, serverRunId);
   const dismissWarningsForNowStable = useStableCallback(dismissForNow);
   const dismissWarningsForeverStable = useStableCallback(dismissForever);
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
@@ -8035,7 +8026,6 @@ export default function ChatView(props: ChatViewProps) {
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigationStable}
                 cancelPositionRestoreRef={cancelPositionRestoreRef}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
-                topFadeEnabled
                 {...(paintOnlyDisplayedTimeline || threadHistoryControls === undefined
                   ? {}
                   : { historyControls: threadHistoryControls })}

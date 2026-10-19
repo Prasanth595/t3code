@@ -111,6 +111,7 @@ function PopoverPopup({
             className,
           )}
           data-slot="popover-popup"
+          data-variant={alertStyle ? variant : undefined}
           {...props}
         >
           <Viewport
@@ -119,7 +120,7 @@ function PopoverPopup({
               tooltipStyle && padding === "default"
                 ? "py-1 [--viewport-inline-padding:--spacing(2)]"
                 : popoverViewportPaddingClassName[padding],
-              !tooltipStyle && "not-data-transitioning:overflow-y-auto",
+              (!tooltipStyle || alertStyle) && "not-data-transitioning:overflow-y-auto",
               variant === "panel" &&
                 "overflow-visible py-2 [--viewport-inline-padding:--spacing(2)]",
             )}

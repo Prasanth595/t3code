@@ -396,7 +396,6 @@ function timelineListStateFor(identity: string): {
   };
 }
 
-const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FADE_HEADER = (
   <div className="h-[var(--workspace-titlebar-scroll-fade-height)]" />
 );
@@ -519,7 +518,6 @@ interface MessagesTimelineProps {
   findOpen?: boolean;
   cancelPositionRestoreRef?: React.RefObject<(() => void) | null> | undefined;
   hideEmptyPlaceholder?: boolean;
-  topFadeEnabled?: boolean;
   historyControls?: MessagesTimelineHistoryControls | undefined;
   loadEarlier?: CitationHistoryPage | null;
   findPositionReaderRef?: React.RefObject<ThreadFindPositionReader | null>;
@@ -609,7 +607,6 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onManualNavigation,
   cancelPositionRestoreRef,
   hideEmptyPlaceholder = false,
-  topFadeEnabled = false,
   historyControls,
   loadEarlier = null,
 }: MessagesTimelineProps) {
@@ -1275,11 +1272,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   };
   const listHeaderLeadingContent =
     parentThreadLink === null ? (
-      topFadeEnabled ? (
-        TIMELINE_LIST_FADE_HEADER
-      ) : (
-        TIMELINE_LIST_HEADER
-      )
+      TIMELINE_LIST_FADE_HEADER
     ) : (
       <div className="messages-timeline-row-frame">
         <div className="chat-content-lane pt-1 sm:pt-2">
@@ -1483,10 +1476,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
             maintainScrollAtEndThreshold={1}
             onScroll={handleScroll}
             onItemSizeChanged={handleItemSizeChanged}
-            className={cn(
-              "messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain [overflow-anchor:none]",
-              topFadeEnabled && "topbar-scroll-fade",
-            )}
+            className="messages-timeline-scroll scrollbar-gutter-both h-full min-h-0 overflow-x-hidden overscroll-y-contain topbar-scroll-fade [overflow-anchor:none]"
             ListHeaderComponent={listHeader}
             ListFooterComponent={timelineListFooter}
           />

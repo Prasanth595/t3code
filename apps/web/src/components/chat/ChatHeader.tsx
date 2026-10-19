@@ -400,9 +400,7 @@ export const ChatHeader = memo(function ChatHeader({
             </Tooltip>
           ) : (
             <Tooltip>
-              <TooltipTrigger
-                render={<h2 aria-label={activeThreadTitle} className="min-w-0 flex-1" />}
-              >
+              <TooltipTrigger render={<h2 aria-label={activeThreadTitle} className="min-w-0" />}>
                 <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
               </TooltipTrigger>
               <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
