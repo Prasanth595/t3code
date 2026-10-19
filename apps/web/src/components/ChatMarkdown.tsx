@@ -2606,7 +2606,6 @@ function useChatMarkdownState({
     });
     if (result._tag !== "Success") return null;
     const match = pickWorkspaceBasenameMatch(lookupPath, result.value.entries);
-    if (lookupPath.includes("/") && result.value.truncated && match !== lookupPath) return null;
     if (match && match.replaceAll("\\", "/") !== lookupPath && lookupPath.includes("/")) {
       if (!readEnvironmentScope(environmentId, AuthFilesystemReadScope)) return null;
       // Gitignored literal files need a metadata check before an indexed hit can replace them.
