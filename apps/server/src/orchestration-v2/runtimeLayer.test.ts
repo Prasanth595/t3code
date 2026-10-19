@@ -3240,7 +3240,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           watching: true,
           link: { url: "https://github.com/pingdotgg/t3code/pull/12", source: "agent" },
         });
-        let reply: PullRequestComment = {
+        const reply: PullRequestComment = {
           id: "reply-11",
           kind: "review-comment",
           author: { login: "reviewer", name: null, avatarUrl: null },
@@ -3250,14 +3250,35 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           path: "src/index.ts",
           reviewState: null,
         };
-        const firstTen = Array.from({ length: 10 }, (_, index) => ({
-          ...reply,
-          id: `reply-${index}`,
+        let replies = Array.from(
+          { length: mode === "fingerprint changed" ? 2 : 1 },
+          (_, index) => ({
+            ...reply,
+            id: `reply-${index}-11`,
+          }),
+        );
+        const reviewThreads = replies.map((reply, index) => ({
+          id: `review-thread-${index}`,
+          path: "src/index.ts",
+          line: index + 1,
+          side: "right" as const,
+          isResolved: false,
+          isOutdated: false,
+          comments: Array.from({ length: 10 }, (_, index) => ({
+            ...reply,
+            id: `${reply.id}-preview-${index}`,
+          })),
+          commentCount: 11,
+          nextCommentsCursor: "after-10",
         }));
         let fingerprint: string | null = "before";
         let failPage = false;
         let activityReads = 0;
-        const cursors: Array<string> = [];
+        const pageReads: Array<{ threadId: string; cursor: string }> = [];
+        const expectedPages = reviewThreads.map((thread) => ({
+          threadId: thread.id,
+          cursor: "after-10",
+        }));
         const reactor = yield* PullRequestWatchReactor.make.pipe(
           Effect.provide(
             Layer.mergeAll(
@@ -3285,38 +3306,27 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                   Effect.sync(() => {
                     activityReads += 1;
                     return {
-                      comments: firstTen,
-                      commentCount: 11,
+                      comments: reviewThreads.flatMap((thread) => thread.comments),
+                      commentCount: reviewThreads.length * 11,
                       commentsTruncated: true,
                       reviewThreadsTruncated: false,
-                      reviewThreads: [
-                        {
-                          id: "review-thread",
-                          path: "src/index.ts",
-                          line: 1,
-                          side: "right" as const,
-                          isResolved: false,
-                          isOutdated: false,
-                          comments: firstTen,
-                          commentCount: 11,
-                          nextCommentsCursor: "after-10",
-                        },
-                      ],
+                      reviewThreads,
                       commits: [],
                     };
                   }),
                 threadComments: (input) =>
                   Effect.suspend(() => {
-                    assert.equal(input.threadId, "review-thread");
-                    cursors.push(input.cursor);
-                    return failPage
+                    const index = reviewThreads.findIndex((thread) => thread.id === input.threadId);
+                    assert.isAtLeast(index, 0);
+                    pageReads.push({ threadId: input.threadId, cursor: input.cursor });
+                    return failPage && index === 1
                       ? Effect.fail(
                           new PullRequestOperationError({
                             operation: "threadComments",
                             detail: "Page unavailable",
                           }),
                         )
-                      : Effect.succeed({ comments: [reply], nextCursor: null });
+                      : Effect.succeed({ comments: [replies[index]!], nextCursor: null });
                   }),
               }),
             ),
@@ -3330,7 +3340,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           .pipe(Effect.map((thread) => thread?.pullRequests?.[0]?.watch));
         yield* reactor.sweep;
         const baseline = yield* watch;
-        reply = { ...reply, body: "Edited feedback.", editedAt: "2026-10-02T12:00:01.000Z" };
+        replies = replies.map((reply) => ({
+          ...reply,
+          body: "Edited feedback.",
+          editedAt: "2026-10-02T12:00:01.000Z",
+        }));
 
         if (mode === "fingerprint changed") {
           yield* TestClock.adjust("1 minute");
@@ -3339,12 +3353,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           yield* reactor.sweep;
           assert.deepEqual(yield* messages, []);
           assert.deepEqual(yield* watch, baseline);
+          assert.deepEqual(pageReads, [...expectedPages, ...expectedPages]);
+          yield* TestClock.adjust("2 seconds");
+          // Neither deep edit changes the host fingerprint or the thread's comment count.
+          replies = replies.map((reply, index) => ({
+            ...reply,
+            body: `Latest feedback ${index + 1}.`,
+            editedAt: `2026-10-02T12:01:0${index + 1}.000Z`,
+          }));
           failPage = false;
         } else {
           if (mode === "fingerprint lost") fingerprint = null;
           yield* TestClock.adjust(mode === "deadline" ? "29 minutes" : "5 minutes");
           yield* reactor.sweep;
-          assert.deepEqual(cursors, ["after-10"]);
+          assert.deepEqual(pageReads, expectedPages);
           assert.deepEqual(yield* messages, []);
           // An activity read at five minutes must not move the tail's ten-minute deadline.
           assert.equal(activityReads, mode === "deadline" ? 1 : 2);
@@ -3356,14 +3378,27 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           wakes.map((message) => message.notification?.summary),
           ["#12: new comments"],
         );
-        assert.include(wakes[0]?.text ?? "", "Edited feedback.");
+        for (const reply of replies) {
+          assert.include(wakes[0]?.text ?? "", reply.body);
+        }
         assert.notInclude(wakes[0]?.text ?? "", "Original feedback.");
-        assert.deepEqual(cursors, Array(mode === "fingerprint changed" ? 3 : 2).fill("after-10"));
-        assert.equal((yield* watch)?.remarksThrough, reply.editedAt);
-        assert.deepEqual((yield* watch)?.remarkIds, [reply.id]);
+        assert.deepEqual(
+          pageReads,
+          Array.from(
+            { length: mode === "fingerprint changed" ? 3 : 2 },
+            () => expectedPages,
+          ).flat(),
+        );
+        const latestReply = replies.at(-1)!;
+        assert.equal((yield* watch)?.remarksThrough, latestReply.editedAt);
+        assert.deepEqual((yield* watch)?.remarkIds, [latestReply.id]);
         yield* reactor.sweep;
         assert.lengthOf(yield* messages, 1);
-        assert.lengthOf(cursors, mode === "fingerprint changed" ? 3 : 2);
+        assert.lengthOf(pageReads, mode === "fingerprint changed" ? 6 : 2);
+        yield* TestClock.adjust("30 minutes");
+        yield* reactor.sweep;
+        assert.lengthOf(yield* messages, 1);
+        assert.lengthOf(pageReads, mode === "fingerprint changed" ? 8 : 3);
       }),
   );
 
