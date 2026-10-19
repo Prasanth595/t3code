@@ -207,7 +207,7 @@ function useConfirmDeleteThread(
   executeAction: (action: ThreadListAction, thread: EnvironmentThreadShell) => Promise<boolean>,
 ) {
   return useCallback(
-    (thread: EnvironmentThreadShell) => {
+    (thread: EnvironmentThreadShell, onDeleted?: () => void) => {
       if (!checkThreadOperationPermission(thread, actionFailureTitle("delete"))) return;
       const title = "Delete thread?";
       const message = `“${thread.title}” will be permanently deleted, including its terminal history.`;
@@ -216,8 +216,8 @@ function useConfirmDeleteThread(
         message,
         confirmText: "Delete",
         destructive: true,
-        onConfirm: () => {
-          void executeAction("delete", thread);
+        onConfirm: async () => {
+          if (await executeAction("delete", thread)) onDeleted?.();
         },
       });
     },
@@ -227,7 +227,8 @@ function useConfirmDeleteThread(
 
 export function useThreadListActions(): {
   readonly archiveThread: (thread: EnvironmentThreadShell) => void;
-  readonly confirmDeleteThread: (thread: EnvironmentThreadShell) => void;
+  /** `onDeleted` runs only after the server confirms the delete. */
+  readonly confirmDeleteThread: (thread: EnvironmentThreadShell, onDeleted?: () => void) => void;
   readonly settleThread: (thread: EnvironmentThreadShell) => Promise<boolean>;
   readonly snoozeThread: (thread: EnvironmentThreadShell, snoozedUntil: string) => Promise<boolean>;
   readonly unsnoozeThread: (thread: EnvironmentThreadShell) => Promise<boolean>;

@@ -3,6 +3,7 @@ import { threadTitleMenuVersion } from "./thread-title-menu";
 import { ThreadTitleMenu } from "./ThreadTitleMenu";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useMemo } from "react";
+import { Platform } from "react-native";
 import { AppBar } from "../../components/ui/AppBar";
 import { ScreenHeaderButton } from "../../components/ui/ScreenHeaderButton";
 import type { AppBarAction } from "../../components/ui/AppBar.types";
@@ -79,11 +80,14 @@ export function ThreadHeader(
     props.gitControls.canOpenTerminal,
   ]);
 
+  // iOS shows the project subtitle only in the glass header, matching the native options.
+  const titleSubtitle =
+    Platform.OS === "android" || props.usesNativeHeaderGlass ? props.subtitle : "";
   const titleContent = props.thread ? (
     <ThreadTitleMenu
       key={scopedThreadKey(props.thread.environmentId, props.thread.id)}
       thread={props.thread}
-      subtitle={props.subtitle}
+      subtitle={titleSubtitle}
       maxWidth={native.titleMaxWidth}
     />
   ) : undefined;
@@ -103,7 +107,7 @@ export function ThreadHeader(
         }}
         optionsVersion={[
           native.optionsVersion,
-          props.subtitle,
+          titleSubtitle,
           native.titleMaxWidth,
           threadTitleMenuVersion(props.thread),
         ]}

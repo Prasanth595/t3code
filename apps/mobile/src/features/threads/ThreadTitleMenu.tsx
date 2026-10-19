@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { useCallback, useState } from "react";
-import { useFocusEffect } from "@react-navigation/native";
+import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import { AppText } from "../../components/ui/AppText";
 import * as Dialog from "../../components/ui/Dialog";
 import { SymbolView } from "../../components/ui/AppSymbol";
@@ -12,10 +12,12 @@ import { environmentServerConfigsAtom } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import { useThreadListActions } from "../home/useThreadListActions";
+import { useWorkspaceListNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { buildThreadTitleMenu, threadTitleSnoozeUntil } from "./thread-title-menu";
+import { threadRouteStillShows } from "./thread-title-delete-navigation";
 import { ThreadTitleMenuTrigger } from "./ThreadTitleMenuTrigger";
-import { View } from "react-native";
+import { Platform, View } from "react-native";
 
 export function ThreadTitleMenu(props: {
   readonly thread: EnvironmentThreadShell;
@@ -27,6 +29,8 @@ export function ThreadTitleMenu(props: {
   const queuedKeys = useAtomValue(queuedThreadKeysAtom);
   const canOperate = useEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope);
   const handlers = useThreadListActions();
+  const navigation = useNavigation();
+  const returnToList = useWorkspaceListNavigation("threads");
   const [customSnoozeOpen, setCustomSnoozeOpen] = useState(false);
   const [now, setNow] = useState(() => new Date());
   useFocusEffect(
@@ -43,6 +47,7 @@ export function ThreadTitleMenu(props: {
     hasQueuedMessages: queuedKeys.has(scopedThreadKey(thread.environmentId, thread.id)),
     now,
   });
+  const android = Platform.OS === "android";
   const snooze = (until: string) => {
     void handlers.snoozeThread(thread, until);
   };
@@ -77,7 +82,9 @@ export function ThreadTitleMenu(props: {
               void handlers.regenerateThreadTitle(thread);
               return;
             case "delete":
-              handlers.confirmDeleteThread(thread);
+              handlers.confirmDeleteThread(thread, () => {
+                if (threadRouteStillShows(navigation, thread)) returnToList();
+              });
               return;
             case "copy-thread-id":
               void copyTextWithHaptic(thread.id, { target: "thread-id" });
@@ -95,11 +102,23 @@ export function ThreadTitleMenu(props: {
             );
         }}
       >
+        {/* Android matches AndroidScreenHeader's start-aligned, scaled title roles. */}
         <View className="min-w-0">
-          <View className="min-w-0 flex-row items-center justify-center gap-1">
+          <View
+            className={
+              android
+                ? "min-w-0 flex-row items-center gap-1"
+                : "min-w-0 flex-row items-center justify-center gap-1"
+            }
+          >
             <AppText
               numberOfLines={1}
-              className="shrink text-[17px] font-t3-bold text-header-foreground"
+              textRole={android ? "title" : undefined}
+              className={
+                android
+                  ? "shrink text-header-foreground"
+                  : "shrink text-[17px] font-t3-bold text-header-foreground"
+              }
             >
               {thread.title}
             </AppText>
@@ -110,7 +129,11 @@ export function ThreadTitleMenu(props: {
             />
           </View>
           {props.subtitle ? (
-            <AppText numberOfLines={1} className="text-center text-xs text-foreground-muted">
+            <AppText
+              numberOfLines={1}
+              textRole="label"
+              className={android ? "text-foreground-muted" : "text-center text-foreground-muted"}
+            >
               {props.subtitle}
             </AppText>
           ) : null}

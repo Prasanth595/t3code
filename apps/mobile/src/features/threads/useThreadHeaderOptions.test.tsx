@@ -14,6 +14,8 @@ const harness = vi.hoisted(() => ({
   usesDuo: false,
   split: false,
   titleMaxWidth: 0,
+  titleSubtitle: undefined as string | undefined,
+  platform: { OS: "ios" },
   renderedRightItems: [] as Array<ReadonlyArray<Record<string, unknown>>>,
   navigatedRoutes: [] as string[],
 }));
@@ -29,10 +31,14 @@ vi.mock("@react-navigation/native", () => {
     addListener: () => () => {},
     setOptions: (options: {
       unstable_headerRightItems?: () => Array<Record<string, unknown>>;
-      headerTitle?: string | (() => { props: { maxWidth: number } });
+      headerTitle?: string | (() => { props: { maxWidth: number; subtitle: string } });
     }) => {
-      harness.titleMaxWidth =
-        typeof options.headerTitle === "function" ? options.headerTitle().props.maxWidth : 0;
+      // The non-glass Git fallback applies its own options without a title.
+      if (typeof options.headerTitle === "function") {
+        const title = options.headerTitle();
+        harness.titleMaxWidth = title.props.maxWidth;
+        harness.titleSubtitle = title.props.subtitle;
+      }
       harness.setOptionsCalls += 1;
       harness.renderedRightItems.push(options.unstable_headerRightItems?.() ?? []);
     },
@@ -64,7 +70,11 @@ vi.mock("react-native-safe-area-context", () => ({
   useSafeAreaFrame: () => ({ width: harness.headerWidth, height: 874 }),
   useSafeAreaInsets: () => ({ left: 0, right: 0, top: 62, bottom: 34 }),
 }));
-vi.mock("react-native", () => ({ Alert: { alert: () => {} }, Linking: {}, Platform: {} }));
+vi.mock("react-native", () => ({
+  Alert: { alert: () => {} },
+  Linking: {},
+  Platform: harness.platform,
+}));
 vi.mock("../layout/AdaptiveWorkspaceLayout", () => ({
   useAdaptiveWorkspaceLayout: () => ({
     layout: { usesSplitView: harness.split },
@@ -119,6 +129,7 @@ function Header(props: {
   readonly title?: string;
   readonly subtitle?: string;
   readonly thread?: EnvironmentThreadShell;
+  readonly glass?: boolean;
 }) {
   return (
     <ThreadHeader
@@ -126,7 +137,7 @@ function Header(props: {
       title={props.title ?? "Thread"}
       subtitle={props.subtitle ?? ""}
       headerColor="#000"
-      usesNativeHeaderGlass
+      usesNativeHeaderGlass={props.glass ?? true}
       gitControls={{
         environmentId: "environment-1",
         threadId: "thread-1",
@@ -185,6 +196,12 @@ afterEach(() => {
   harness.setOptionsCalls = 0;
   harness.renderedRightItems = [];
   harness.navigatedRoutes = [];
+  harness.titleMaxWidth = 0;
+  harness.titleSubtitle = undefined;
+  harness.headerWidth = 402;
+  harness.usesDuo = false;
+  harness.split = false;
+  harness.platform.OS = "ios";
 });
 
 describe("ThreadHeader", () => {
@@ -197,9 +214,6 @@ describe("ThreadHeader", () => {
     harness.split = split;
     render(<Header gitStatus={status([])} thread={makeThreadShellFixture()} />);
     expect(harness.titleMaxWidth).toBeGreaterThanOrEqual(minimum);
-    harness.headerWidth = 402;
-    harness.usesDuo = false;
-    harness.split = false;
   });
 
   it("updates native title content when the available pane width changes", () => {
@@ -209,7 +223,6 @@ describe("ThreadHeader", () => {
     harness.headerWidth = 600;
     render(<Header gitStatus={status([])} thread={thread} />);
     expect(harness.setOptionsCalls).toBe(applied + 1);
-    harness.headerWidth = 402;
   });
 
   it("does not reapply native options for streaming-only shell updates", () => {
@@ -237,6 +250,28 @@ describe("ThreadHeader", () => {
     const applied = harness.setOptionsCalls;
     render(<Header gitStatus={status([])} thread={thread} subtitle="Renamed project" />);
     expect(harness.setOptionsCalls).toBe(applied + 1);
+  });
+
+  it("shows the project subtitle in iOS title content only with the glass header", () => {
+    const thread = makeThreadShellFixture();
+    render(<Header gitStatus={status([])} thread={thread} subtitle="Project" glass={false} />);
+    expect(harness.titleSubtitle).toBe("");
+
+    render(<Header gitStatus={status([])} thread={thread} subtitle="Project" />);
+    expect(harness.titleSubtitle).toBe("Project");
+  });
+
+  it("always shows the project subtitle in Android title content", () => {
+    harness.platform.OS = "android";
+    render(
+      <Header
+        gitStatus={status([])}
+        thread={makeThreadShellFixture()}
+        subtitle="Project"
+        glass={false}
+      />,
+    );
+    expect(harness.titleSubtitle).toBe("Project");
   });
 
   it("re-applies native header items when Git status changes", () => {
