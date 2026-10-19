@@ -106,27 +106,25 @@ describe("BrowserImport", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  for (const platform of ["darwin", "linux"] as const) {
-    it.effect.skipIf(!symlinksSupported)(
-      `offers Chromium profiles while the source browser is running on ${platform}`,
-      () =>
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
-          const { importer, root } = yield* withImporter(platform);
-          const hostname = yield* HostProcess.Hostname;
-          yield* fileSystem.symlink(`${hostname}-${process.pid}`, `${root}/SingletonLock`);
+  describe.skipIf(!symlinksSupported)("while the source browser is running", () => {
+    it.effect.each(["darwin", "linux"] as const)("offers Chromium profiles on %s", (platform) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const { importer, root } = yield* withImporter(platform);
+        const hostname = yield* HostProcess.Hostname;
+        yield* fileSystem.symlink(`${hostname}-${process.pid}`, `${root}/SingletonLock`);
 
-          const sources = yield* importer.listSources;
-          const source = sources.find((candidate) => candidate.id === "helium");
+        const sources = yield* importer.listSources;
+        const source = sources.find((candidate) => candidate.id === "helium");
 
-          assert.deepEqual(source, {
-            id: "helium",
-            name: "Helium",
-            profiles: [{ directory: "Default", name: "Default" }],
-          });
-        }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+        assert.deepEqual(source, {
+          id: "helium",
+          name: "Helium",
+          profiles: [{ directory: "Default", name: "Default" }],
+        });
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
     );
-  }
+  });
 
   it.effect.skipIf(!symlinksSupported)("still blocks imports from running Firefox", () =>
     Effect.gen(function* () {
