@@ -120,9 +120,26 @@ export function V2LifecycleRow(props: {
           : item.status === "pending" || item.status === "running" || item.status === "waiting"
             ? "Compacting context"
             : "Context compacted";
-    return (
-      <TimelineSystemDivider label={label} detail={item.summary ?? tokenDetail} icon={MinusIcon} />
+    const detail = (
+      <>
+        {item.summary ?? tokenDetail}
+        {item.status === "running" ? (
+          <>
+            {(item.summary ?? tokenDetail) ? " · " : null}
+            <AgentElapsed
+              agent={{
+                status: "running",
+                startedAt: item.startedAt === null ? null : DateTime.formatIso(item.startedAt),
+                completedAt: null,
+              }}
+              compact
+              warnAfterSeconds={120}
+            />
+          </>
+        ) : null}
+      </>
     );
+    return <TimelineSystemDivider label={label} detail={detail} icon={MinusIcon} />;
   }
   if (item.type === "handoff") {
     return (

@@ -3646,11 +3646,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       status: "failed",
     },
     {
-      name: "completes an unlimited failed /compact",
+      name: "fails an unlimited failed /compact",
       limited: false,
       compaction: "failed",
       compact: true,
-      status: "completed",
+      status: "failed",
     },
     {
       name: "completes a successful limited /compact",
@@ -3665,6 +3665,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       compaction: "failed",
       compact: false,
       status: "completed",
+    },
+    {
+      name: "fails /compact with no reported outcome",
+      limited: false,
+      compaction: undefined,
+      compact: true,
+      status: "failed",
     },
   ] as const)("$name", ({ name, limited, compaction, compact, status }) =>
     Effect.gen(function* () {
@@ -3705,28 +3712,49 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               }),
             ]
           : []),
-        claudeSdkFrame({
-          type: "system",
-          subtype: "status",
-          status: null,
-          compact_result: compaction,
-          ...(compaction === "failed"
-            ? { compact_error: limited ? compactError : "Not enough messages to compact." }
-            : {}),
-          uuid: "00000000-0000-4000-8000-000000000612",
-          session_id: WAKE_NATIVE_SESSION,
-        }),
+        ...(compaction === undefined
+          ? []
+          : [
+              claudeSdkFrame({
+                type: "system",
+                subtype: "status",
+                status: null,
+                compact_result: compaction,
+                ...(compaction === "failed"
+                  ? { compact_error: limited ? compactError : "Not enough messages to compact." }
+                  : {}),
+                uuid: "00000000-0000-4000-8000-000000000612",
+                session_id: WAKE_NATIVE_SESSION,
+              }),
+            ]),
         compact ? claudeSdkFrame({ ...result, local_command: "compact" }) : result,
       ]);
 
       const terminal = yield* Queue.take(harness.terminalReceipts);
       assert.equal(terminal.status, status);
+      const compactionItems = harness.events.filter(
+        (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+      );
+      const expectedItemStatus =
+        compaction === "failed" || (compact && compaction === undefined) ? "failed" : "completed";
+      const lastCompaction = compactionItems.at(-1);
+      assert.equal(
+        lastCompaction?.type === "turn_item.updated" ? lastCompaction.turnItem.status : null,
+        expectedItemStatus,
+      );
       if (terminal.status !== "failed") return;
-      assert.equal(terminal.failure.class, "usage_limit");
-      assert.equal(terminal.failure.message, compactError);
+      assert.equal(terminal.failure.class, limited ? "usage_limit" : "provider_error");
+      if (name === "fails /compact with no reported outcome") {
+        assert.equal(terminal.failure.message, "Compaction outcome was not confirmed by Claude.");
+      } else {
+        assert.equal(
+          terminal.failure.message,
+          limited ? compactError : "Not enough messages to compact.",
+        );
+      }
       assert.equal(
         terminal.failure.resetAt,
-        DateTime.formatIso(DateTime.makeUnsafe(resetsAt * 1000)),
+        limited ? DateTime.formatIso(DateTime.makeUnsafe(resetsAt * 1000)) : undefined,
       );
     }).pipe(
       Effect.provide(
@@ -4385,6 +4413,30 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             attachments: [],
           }),
         );
+        yield* Queue.offerAll(harness.sdkMessages, [
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: "compacting",
+            uuid: "00000000-0000-4000-8000-000000000203",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: "compacting",
+            uuid: "00000000-0000-4000-8000-000000000204",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: null,
+            compact_result: "success",
+            uuid: "00000000-0000-4000-8000-000000000205",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        ]);
         yield* Queue.offer(
           harness.sdkMessages,
           claudeSdkFrame({
@@ -4405,14 +4457,32 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         yield* Queue.take(harness.terminalReceipts);
 
         assert.deepEqual(harness.offeredMessages[0]?.message.content, "/compact");
-        const compaction = harness.events.find(
+        const compactions = harness.events.filter(
           (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+        );
+        const compaction = compactions.at(-1);
+        assert.equal(
+          new Set(
+            compactions.map((event) =>
+              event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+                ? event.turnItem.id
+                : null,
+            ),
+          ).size,
+          1,
         );
         assert.isDefined(compaction);
         if (compaction?.type === "turn_item.updated" && compaction.turnItem.type === "compaction") {
           assert.equal(compaction.turnItem.beforeTokenCount, 1500);
           assert.equal(compaction.turnItem.afterTokenCount, 400);
           assert.equal(compaction.turnItem.status, "completed");
+          assert.equal(
+            compaction.turnItem.startedAt,
+            compactions[0]?.type === "turn_item.updated" &&
+              compactions[0].turnItem.type === "compaction"
+              ? compactions[0].turnItem.startedAt
+              : null,
+          );
         }
         const watermark = harness.events.find(
           (event) =>
