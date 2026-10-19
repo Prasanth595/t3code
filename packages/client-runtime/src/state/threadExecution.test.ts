@@ -464,21 +464,38 @@ describe("formatModelSelectionEffort", () => {
     },
   ];
 
-  it("shows the model's default effort when the user never picked one", () => {
-    expect(formatModelSelectionEffort(selection(), catalog({}))).toBe("High");
+  it("does not infer a subagent's effort from the model's default", () => {
+    expect(formatModelSelectionEffort(selection(), catalog({}))).toBeNull();
   });
 
-  it("names a stored effort the way the catalog does", () => {
+  it("names a stored or reported effort the way the catalog does", () => {
     expect(
       formatModelSelectionEffort(selection([{ id: "effort", value: "xhigh" }]), catalog({})),
     ).toBe("Extra High");
+    expect(
+      formatModelSelectionEffort(
+        selection(),
+        catalog({}),
+        selection([{ id: "effort", value: "xhigh" }]),
+      ),
+    ).toBe("Extra High");
   });
 
-  it("uses the descriptor's current value over the default", () => {
-    expect(formatModelSelectionEffort(selection(), catalog({ currentValue: "medium" }))).toBe(
-      "Medium",
-    );
+  it("does not infer a subagent's effort from the descriptor's current value", () => {
+    expect(formatModelSelectionEffort(selection(), catalog({ currentValue: "medium" }))).toBeNull();
   });
+
+  it.each([{ instanceId: ProviderInstanceId.make("other") }, { model: "claude-haiku-4-5" }])(
+    "ignores effort reported for a different selection: %j",
+    (mismatch) => {
+      expect(
+        formatModelSelectionEffort(selection(), catalog({}), {
+          ...selection([{ id: "effort", value: "xhigh" }]),
+          ...mismatch,
+        }),
+      ).toBeNull();
+    },
+  );
 
   it("shows nothing for a model the catalog does not describe", () => {
     expect(formatModelSelectionEffort(selection([{ id: "effort", value: "high" }]))).toBeNull();
@@ -701,7 +718,7 @@ describe("provider-reported model selection", () => {
     ];
     const variantReport = { ...selected, options: [{ id: "variant", value: "default" }] };
     expect(formatModelSelectionEffort(selected, models, variantReport)).toBe("Default");
-    expect(formatModelSelectionEffort(selected, models)).toBe("Unknown");
+    expect(formatModelSelectionEffort(selected, models)).toBeNull();
   });
 });
 
