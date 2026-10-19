@@ -1065,18 +1065,7 @@ export const OrchestrationV2NotificationSource = kindUnionWithFallback(
     Schema.Struct({ kind: Schema.Literal("background_command").transform("command") }),
     SubagentNotificationSource,
     CommandNotificationSource,
-    Schema.Struct({
-      kind: Schema.Literal("monitor"),
-      // Optional so monitor sources persisted before the stamp existed still decode.
-      pullRequest: Schema.optional(
-        Schema.Struct({
-          ...ThreadPullRequestKey.fields,
-          watchStartedAt: IsoDateTime,
-          headSha: Schema.NullOr(TrimmedNonEmptyString),
-          watchEnded: Schema.optional(Schema.Boolean),
-        }),
-      ),
-    }),
+    Schema.Struct({ kind: Schema.Literal("monitor") }),
     Schema.Struct({ kind: Schema.Literal("background_task") }),
     Schema.Struct({ kind: Schema.Literal("system") }),
   ],
@@ -3005,6 +2994,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     ...ThreadPullRequestKey.fields,
     startedAt: IsoDateTime,
     watch: Schema.NullOr(ThreadPullRequestWatch),
+    /** With `watch: null`, the state the ended watch keeps instead of its last saved one. */
+    endedWatch: Schema.optional(ThreadPullRequestWatch),
     wake: Schema.optional(
       Schema.Struct({
         messageId: MessageId,
