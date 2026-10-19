@@ -966,52 +966,6 @@ describe("DesktopBackendManager", () => {
     ),
   );
 
-  it.effect("falls back once when a lower retry limit follows other preflight failures", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const failing = (retryLimit: number) => ({
-          ...baseConfig,
-          preflightFailure: Option.some({
-            reason: `limit ${retryLimit}`,
-            fatal: false,
-            retryLimit,
-          }),
-        });
-        // Three conversion failures (limit 12), then pre-warm timeouts (limit 3).
-        const configs = [failing(12), failing(12), failing(12), failing(3), failing(3)];
-        const attempts = yield* Ref.make(0);
-        const surfaced: string[] = [];
-        const instance = yield* makeTestInstance({
-          spawnerLayer: Layer.succeed(
-            ChildProcessSpawner.ChildProcessSpawner,
-            ChildProcessSpawner.make(() => Effect.die("preflight failures must not spawn")),
-          ),
-          configResolve: Ref.getAndUpdate(attempts, (n) => n + 1).pipe(
-            Effect.map((n) => configs[Math.min(n, configs.length - 1)]!),
-          ),
-          onPreflightFailed: (failure) =>
-            Effect.sync(() => surfaced.push(failure.reason)).pipe(Effect.as(true)),
-        });
-
-        yield* instance.start;
-        for (const delay of [500, 1000, 2000]) {
-          yield* TestClock.adjust(Duration.millis(delay));
-        }
-        assert.equal(yield* Ref.get(attempts), 4);
-        assert.deepEqual(surfaced, ["limit 3"]);
-        assert.isTrue((yield* instance.snapshot).restartScheduled);
-
-        // The fallback asked for a restart, but the next attempt still fails.
-        yield* TestClock.adjust(Duration.millis(4000));
-        assert.equal(yield* Ref.get(attempts), 5);
-        assert.deepEqual(surfaced, ["limit 3"]);
-        const stopped = yield* instance.snapshot;
-        assert.isFalse(stopped.desiredRunning);
-        assert.isFalse(stopped.restartScheduled);
-      }).pipe(Effect.provide(TestClock.layer())),
-    ),
-  );
-
   it.effect("retries config resolution after a start request during stop teardown", () =>
     Effect.scoped(
       Effect.gen(function* () {

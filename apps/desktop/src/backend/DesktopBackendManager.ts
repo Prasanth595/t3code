@@ -1,6 +1,5 @@
 import * as Brand from "effect/Brand";
 import * as Cause from "effect/Cause";
-import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -262,10 +261,6 @@ interface BackendManagerState {
   readonly active: Option.Option<ActiveBackendRun>;
   readonly restartAttempt: number;
   readonly preflightFailureAttempt: number;
-  // Failures carry their own retry limits and share one counter, so a failure
-  // with a lower limit can arrive after the counter has already passed it.
-  // This records whether this run of failures has reached the fallback yet.
-  readonly preflightFallbackSurfaced: boolean;
   readonly restartFiber: Option.Option<Fiber.Fiber<void, never>>;
   readonly nextRunId: number;
 }
@@ -277,7 +272,6 @@ const initialState: BackendManagerState = {
   active: Option.none(),
   restartAttempt: 0,
   preflightFailureAttempt: 0,
-  preflightFallbackSurfaced: false,
   restartFiber: Option.none(),
   nextRunId: 1,
 };
@@ -291,11 +285,6 @@ const withActiveRun =
     ...state,
     active: Option.map(state.active, (run) => (run.id === runId ? f(run) : run)),
   });
-
-const resetPreflightFailures = (state: BackendManagerState): BackendManagerState =>
-  state.preflightFailureAttempt === 0 && !state.preflightFallbackSurfaced
-    ? state
-    : { ...state, preflightFailureAttempt: 0, preflightFallbackSurfaced: false };
 
 const calculateRestartDelay = (attempt: number): Duration.Duration =>
   Duration.min(Duration.times(INITIAL_RESTART_DELAY, 2 ** attempt), MAX_RESTART_DELAY);
@@ -635,10 +624,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const httpClient = yield* HttpClient.HttpClient;
   const state = yield* Ref.make(initialState);
   const mutex = yield* Semaphore.make(1);
-  // start holds the mutex while it resolves its config, which can wait on a
-  // booting WSL distro for a minute. stop completes this first, so a start that
-  // is resolving or waiting for the mutex gives up instead of holding stop back.
-  const stopRequested = yield* Ref.make(yield* Deferred.make<void>());
 
   const { logWarning: logInstanceWarning, logError: logInstanceError } =
     DesktopObservability.makeComponentLogger(`desktop-backend-instance:${spec.id}`);
@@ -672,13 +657,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
     });
   });
 
-  const start: Effect.Effect<void> = Effect.gen(function* () {
-    const stopped = yield* Ref.get(stopRequested);
-    yield* mutex.withPermits(1)(
+  const start: Effect.Effect<void> = Effect.suspend(() =>
+    mutex.withPermits(1)(
       Effect.gen(function* () {
-        if (yield* Deferred.isDone(stopped)) {
-          return;
-        }
         const current = yield* Ref.get(state);
         if (Option.isSome(current.active)) {
           if (!current.desiredRunning) {
@@ -696,22 +677,14 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             latest.ready ? { ...latest, ready: false } : latest,
           );
         }
-        const resolved = yield* Effect.raceFirst(
-          spec.configResolve.pipe(
-            Effect.tapError((error) =>
-              logInstanceError("failed to generate desktop backend configuration", {
-                cause: error.message,
-              }),
-            ),
-            Effect.option,
-            Effect.map(Option.some),
+        const config = yield* spec.configResolve.pipe(
+          Effect.tapError((error) =>
+            logInstanceError("failed to generate desktop backend configuration", {
+              cause: error.message,
+            }),
           ),
-          Deferred.await(stopped).pipe(Effect.as(Option.none())),
+          Effect.option,
         );
-        if (Option.isNone(resolved)) {
-          return;
-        }
-        const config = resolved.value;
         if (Option.isNone(config)) {
           if (current.desiredRunning) {
             yield* scheduleRestart("failed to generate desktop backend configuration");
@@ -731,28 +704,26 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           ready: false,
           config: Option.some(config.value),
           preflightFailureAttempt: resetFatalPreflightCounter ? 0 : latest.preflightFailureAttempt,
-          preflightFallbackSurfaced: resetFatalPreflightCounter
-            ? false
-            : latest.preflightFallbackSurfaced,
         }));
 
         const preflightFailure = config.value.preflightFailure;
         if (Option.isSome(preflightFailure)) {
           const { reason, fatal, retryLimit } = preflightFailure.value;
           if (!fatal && retryLimit === undefined) {
-            yield* Ref.update(state, resetPreflightFailures);
+            yield* Ref.update(state, (latest) =>
+              latest.preflightFailureAttempt === 0
+                ? latest
+                : { ...latest, preflightFailureAttempt: 0 },
+            );
             yield* scheduleRestart(reason);
             return;
           }
           const attemptLimit = retryLimit ?? MAX_PREFLIGHT_FAILURE_ATTEMPTS;
-          const { attempt, surfaced } = yield* Ref.modify(state, (latest) => {
+          const attempt = yield* Ref.modify(state, (latest) => {
             const next = latest.preflightFailureAttempt + 1;
-            return [
-              { attempt: next, surfaced: latest.preflightFallbackSurfaced },
-              { ...latest, preflightFailureAttempt: next },
-            ] as const;
+            return [next, { ...latest, preflightFailureAttempt: next }] as const;
           });
-          if (attempt >= attemptLimit && surfaced) {
+          if (attempt > attemptLimit) {
             yield* logInstanceError("backend preflight still failing after fallback; stopping", {
               reason,
               attempt,
@@ -764,8 +735,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
             }));
             return;
           }
-          if (attempt >= attemptLimit) {
-            yield* Ref.update(state, (latest) => ({ ...latest, preflightFallbackSurfaced: true }));
+          if (attempt === attemptLimit) {
             yield* logInstanceError(
               "backend preflight failed repeatedly; surfacing and falling back",
               { reason, attempt },
@@ -787,7 +757,9 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           yield* scheduleRestart(reason);
           return;
         }
-        yield* Ref.update(state, resetPreflightFailures);
+        yield* Ref.update(state, (latest) =>
+          latest.preflightFailureAttempt === 0 ? latest : { ...latest, preflightFailureAttempt: 0 },
+        );
 
         if (!entryExists) {
           yield* scheduleRestart(`missing server entry at ${config.value.entryPath}`);
@@ -976,8 +948,8 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
           fiber: Option.some(fiber),
         }));
       }),
-    );
-  }).pipe(Effect.withSpan("desktop.backendInstance.start", { attributes: { id: spec.id } }));
+    ),
+  ).pipe(Effect.withSpan("desktop.backendInstance.start", { attributes: { id: spec.id } }));
 
   const scheduleRestart = Effect.fn("desktop.backendInstance.scheduleRestart")(function* (
     reason: string,
@@ -1042,10 +1014,6 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
   const stop = Effect.fn("desktop.backendInstance.stop")(function* (options?: {
     readonly timeout?: Duration.Duration;
   }) {
-    yield* Deferred.succeed(
-      yield* Ref.getAndSet(stopRequested, yield* Deferred.make<void>()),
-      undefined,
-    );
     const { active, restartFiber, notifyShutdown } = yield* mutex.withPermits(1)(
       Effect.gen(function* () {
         const result = yield* Ref.modify(state, (latest) => {
