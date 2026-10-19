@@ -1,12 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import * as Cause from "effect/Cause";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Ref from "effect/Ref";
 import * as PlatformError from "effect/PlatformError";
 
 import * as ServerConfig from "../config.ts";
@@ -98,52 +98,6 @@ const layerRemoveFailureSecretStore = () =>
     Layer.provideMerge(layerRemoveFailureFileSystem),
   );
 
-const layerConcurrentReadMissFileSystem = Layer.effect(
-  FileSystem.FileSystem,
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const readCountRef = yield* Ref.make(0);
-    const readBarrier = yield* Deferred.make<void>();
-
-    return {
-      ...fileSystem,
-      readFile: (path) =>
-        /[\\/]session-signing-key\.bin$/.test(String(path))
-          ? Ref.updateAndGet(readCountRef, (count) => count + 1).pipe(
-              Effect.flatMap((count) => {
-                if (count > 2) {
-                  return fileSystem.readFile(path);
-                }
-                return Effect.gen(function* () {
-                  if (count === 2) {
-                    yield* Deferred.succeed(readBarrier, void 0);
-                  }
-                  yield* Deferred.await(readBarrier);
-                  return yield* Effect.failCause(
-                    Cause.fail(
-                      PlatformError.systemError({
-                        _tag: "NotFound",
-                        module: "FileSystem",
-                        method: "readFile",
-                        pathOrDescriptor: String(path),
-                        description: "Secret file does not exist yet.",
-                      }),
-                    ),
-                  );
-                });
-              }),
-            )
-          : fileSystem.readFile(path),
-    } satisfies FileSystem.FileSystem;
-  }),
-).pipe(Layer.provide(NodeServices.layer));
-
-const layerConcurrentCreateSecretStore = () =>
-  ServerSecretStore.layer.pipe(
-    Layer.provide(layerServerConfig()),
-    Layer.provideMerge(layerConcurrentReadMissFileSystem),
-  );
-
 it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
   it.effect("returns Option.none when a secret file does not exist", () =>
     Effect.gen(function* () {
@@ -166,62 +120,202 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
     }).pipe(Effect.provide(layerServerSecretStore())),
   );
 
-  it.effect("returns the persisted secret when concurrent creators race", () =>
+  it.effect("concurrent creators never read partial bytes and return the complete winner", () =>
     Effect.gen(function* () {
-      const secretStore = yield* ServerSecretStore.ServerSecretStore;
-
-      const [first, second] = yield* Effect.all(
-        [
-          secretStore.getOrCreateRandom("session-signing-key", 32),
-          secretStore.getOrCreateRandom("session-signing-key", 32),
-        ],
-        { concurrency: "unbounded" },
+      const fs = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      const writing = yield* Deferred.make<void>();
+      const resume = yield* Deferred.make<void>();
+      let firstWrite = true;
+      const closed = new Set<string>();
+      const synced = new Set<string>();
+      const secretStore = yield* ServerSecretStore.make.pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          link: Effect.fnUntraced(function* (from, to) {
+            assert.isTrue(synced.has(from), "published file must be synced");
+            assert.isTrue(closed.has(from), "published file must be closed");
+            yield* fs.link(from, to);
+          }),
+          open: (path, options) =>
+            Effect.gen(function* () {
+              // Registered first so the real handle closes before this finalizer.
+              yield* Effect.addFinalizer(() =>
+                Effect.sync(() => {
+                  closed.add(path);
+                }),
+              );
+              return yield* fs.open(path, options);
+            }).pipe(
+              Effect.map((file) => ({
+                ...file,
+                sync: file.sync.pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      synced.add(path);
+                    }),
+                  ),
+                ),
+                writeAll: Effect.fnUntraced(function* (bytes) {
+                  if (firstWrite) {
+                    firstWrite = false;
+                    yield* file.writeAll(bytes.subarray(0, 2));
+                    yield* Deferred.succeed(writing, undefined);
+                    yield* Deferred.await(resume);
+                    yield* file.writeAll(bytes.subarray(2));
+                  } else {
+                    yield* file.writeAll(bytes);
+                  }
+                }),
+              })),
+            ),
+        }),
       );
-      const persisted = yield* secretStore.get("session-signing-key");
-      const persistedBytes = Option.getOrThrow(persisted);
+      const first = yield* secretStore
+        .getOrCreateRandom("session-signing-key", 32)
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(writing);
+      const duringWrite = yield* secretStore.get("session-signing-key");
+      const second = yield* secretStore.getOrCreateRandom("session-signing-key", 32);
+      yield* Deferred.succeed(resume, undefined);
+      const firstValue = yield* Fiber.join(first);
 
-      assert.deepEqual(Array.from(first), Array.from(persistedBytes));
-      assert.deepEqual(Array.from(second), Array.from(persistedBytes));
-    }).pipe(Effect.provide(layerConcurrentCreateSecretStore())),
+      assert.isTrue(Option.isNone(duringWrite));
+      assert.lengthOf(second, 32);
+      assert.deepEqual(firstValue, second);
+      assert.deepEqual(Option.getOrThrow(yield* secretStore.get("session-signing-key")), second);
+      assert.deepEqual(yield* fs.readDirectory(config.secretsDir), ["session-signing-key.bin"]);
+    }).pipe(Effect.provide(layerServerConfig())),
   );
 
-  it.effect("uses restrictive permissions for the secret directory and files", () =>
-    Effect.gen(function* () {
-      const chmodCalls: Array<{ readonly path: string; readonly mode: number }> = [];
-      const layerRecordingFileSystem = Layer.effect(
-        FileSystem.FileSystem,
-        Effect.gen(function* () {
-          const fileSystem = yield* FileSystem.FileSystem;
+  it.effect.each(["write", "interrupt", "sync"] as const)(
+    "recovers after %s during creation without publishing or leaking temporary bytes",
+    (failureStage) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        const writing = yield* Deferred.make<void>();
+        const failure = PlatformError.systemError({
+          _tag: "Unknown",
+          module: "FileSystem",
+          method: failureStage,
+          cause: Object.assign(new Error("Injected I/O failure"), { code: "EIO" }),
+        });
+        const secretStore = yield* ServerSecretStore.make.pipe(
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            open: (path, options) =>
+              fs.open(path, options).pipe(
+                Effect.map((file) => ({
+                  ...file,
+                  sync: failureStage === "sync" ? Effect.fail(failure) : file.sync,
+                  writeAll: Effect.fnUntraced(function* (bytes) {
+                    yield* file.writeAll(failureStage === "sync" ? bytes : bytes.subarray(0, 2));
+                    if (failureStage === "interrupt") {
+                      yield* Deferred.succeed(writing, undefined);
+                      return yield* Effect.never;
+                    }
+                    if (failureStage === "write") return yield* failure;
+                  }),
+                })),
+              ),
+          }),
+        );
+        const value = Uint8Array.from([1, 2, 3, 4]);
+        if (failureStage === "interrupt") {
+          const writer = yield* secretStore
+            .create("session-signing-key", value)
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(writing);
+          yield* Fiber.interrupt(writer);
+        } else {
+          const error = yield* secretStore.create("session-signing-key", value).pipe(Effect.flip);
+          assert.instanceOf(error, ServerSecretStore.SecretStorePersistError);
+          assert.equal(error.cause, failure);
+        }
+        assert.isTrue(Option.isNone(yield* secretStore.get("session-signing-key")));
+        assert.deepEqual(yield* fs.readDirectory(config.secretsDir), []);
 
-          return {
-            ...fileSystem,
-            makeDirectory: () => Effect.void,
-            writeFile: () => Effect.void,
-            rename: () => Effect.void,
-            chmod: (path, mode) =>
-              Effect.sync(() => {
-                chmodCalls.push({ path: String(path), mode });
-              }),
-          } satisfies FileSystem.FileSystem;
-        }),
-      ).pipe(Layer.provide(NodeServices.layer));
+        const recovered = yield* ServerSecretStore.make;
+        yield* recovered.create("session-signing-key", value);
+        assert.deepEqual(Option.getOrThrow(yield* recovered.get("session-signing-key")), value);
+        assert.deepEqual(yield* fs.readDirectory(config.secretsDir), ["session-signing-key.bin"]);
+      }).pipe(Effect.provide(layerServerConfig())),
+  );
 
-      const secretStore = yield* Effect.service(ServerSecretStore.ServerSecretStore).pipe(
-        Effect.provide(
-          ServerSecretStore.layer.pipe(
-            Layer.provide(layerServerConfig()),
-            Layer.provideMerge(layerRecordingFileSystem),
-          ),
-        ),
-      );
+  it.effect.each([
+    ["win32", "open", "EPERM", true],
+    ["win32", "sync", "EPERM", true],
+    ["win32", "sync", "EIO", false],
+    ["linux", "sync", "EPERM", false],
+    ["linux", "open", "EIO", false],
+    ["linux", "sync", "EIO", false],
+  ] as const)(
+    "directory %s %s %s preserves bytes (success: %s)",
+    ([platform, stage, code, succeeds]) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        const failure = PlatformError.systemError({
+          _tag: code === "EPERM" ? "PermissionDenied" : "Unknown",
+          module: "FileSystem",
+          method: stage,
+          pathOrDescriptor: config.secretsDir,
+          cause: Object.assign(new Error("Injected directory failure"), { code }),
+        });
+        const secretStore = yield* ServerSecretStore.make.pipe(
+          Effect.provideService(HostProcess.Platform, platform),
+          Effect.provideService(FileSystem.FileSystem, {
+            ...fs,
+            open: (path, options) => {
+              if (path !== config.secretsDir) return fs.open(path, options);
+              if (stage === "open") return Effect.fail(failure);
+              // A regular handle lets the injected sync error run on Windows too,
+              // where opening the directory can fail before sync is reached.
+              return fs
+                .open(`${config.secretsDir}/session-signing-key.bin`, options)
+                .pipe(Effect.map((file) => ({ ...file, sync: Effect.fail(failure) })));
+            },
+          }),
+        );
+        const value = Uint8Array.from([1, 2, 3, 4]);
+        const result = yield* secretStore.create("session-signing-key", value).pipe(Effect.result);
+        if (result._tag === "Failure") {
+          assert.instanceOf(result.failure, ServerSecretStore.SecretStorePersistError);
+          assert.equal(result.failure.cause, failure);
+        }
+        assert.deepEqual(Option.getOrThrow(yield* secretStore.get("session-signing-key")), value);
+        assert.deepEqual(yield* fs.readDirectory(config.secretsDir), ["session-signing-key.bin"]);
+        assert.equal(result._tag, succeeds ? "Success" : "Failure");
+      }).pipe(Effect.provide(layerServerConfig())),
+  );
 
-      yield* secretStore.set("session-signing-key", Uint8Array.from([1, 2, 3]));
-
-      assert.isTrue(
-        chmodCalls.some((call) => call.mode === 0o700 && /[\\/]secrets$/.test(call.path)),
-      );
-      assert.isAtLeast(chmodCalls.filter((call) => call.mode === 0o600).length, 2);
-    }).pipe(Effect.provide(NodeServices.layer)),
+  it.effect(
+    "keeps restrictive permissions and preserves an existing secret on duplicate creation",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const config = yield* ServerConfig.ServerConfig;
+        const secretStore = yield* ServerSecretStore.make;
+        const value = Uint8Array.from([1, 2, 3]);
+        yield* secretStore.set("set-key", value);
+        yield* secretStore.create("created-key", value);
+        const duplicate = yield* secretStore
+          .create("created-key", new Uint8Array(32))
+          .pipe(Effect.flip);
+        assert.isTrue(ServerSecretStore.isSecretAlreadyExistsError(duplicate));
+        assert.deepEqual(Option.getOrThrow(yield* secretStore.get("created-key")), value);
+        assert.deepEqual((yield* fs.readDirectory(config.secretsDir)).sort(), [
+          "created-key.bin",
+          "set-key.bin",
+        ]);
+        if ((yield* HostProcess.Platform) !== "win32") {
+          assert.equal((yield* fs.stat(config.secretsDir)).mode & 0o777, 0o700);
+          for (const name of ["set-key", "created-key"]) {
+            assert.equal((yield* fs.stat(`${config.secretsDir}/${name}.bin`)).mode & 0o777, 0o600);
+          }
+        }
+      }).pipe(Effect.provide(layerServerConfig())),
   );
 
   it.effect("propagates read failures other than missing-file errors", () =>
