@@ -479,13 +479,18 @@ it.effect("sends a self-hosted Bitbucket remote nowhere unless an API base url i
     const requestedUrls = (setup: ReturnType<typeof makeLayer>) =>
       setup.execute.mock.calls.map(([request]) => request.url).toSorted();
 
-    const selfHosted = makeLayer({ response, env: cloudEnv, remoteUrl });
-    const result = yield* defaultBranch(selfHosted, true).pipe(Effect.result);
-    assert.deepStrictEqual(requestedUrls(selfHosted), []);
-    assert.strictEqual(
-      Result.isFailure(result) && result.failure._tag,
-      "BitbucketRepositoryRemoteNotFoundError",
-    );
+    // A self-hosted remote in the checkout, then a self-hosted context beside a Cloud remote.
+    for (const [setup, withContext] of [
+      [makeLayer({ response, env: cloudEnv, remoteUrl }), false],
+      [makeLayer({ response, env: cloudEnv }), true],
+    ] as const) {
+      const result = yield* defaultBranch(setup, withContext).pipe(Effect.result);
+      assert.deepStrictEqual(requestedUrls(setup), []);
+      assert.strictEqual(
+        Result.isFailure(result) && result.failure._tag,
+        "BitbucketRepositoryRemoteNotFoundError",
+      );
+    }
 
     const cloud = makeLayer({ response, env: cloudEnv });
     yield* defaultBranch(cloud, false);
