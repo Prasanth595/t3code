@@ -535,12 +535,12 @@ const make = Effect.gen(function* () {
 
   const submoduleRemoval = Effect.fn("StorageCleanup.submoduleRemoval")(
     function* (cwd: string, rules: WorktreeCleanupRules) {
-      const inspect = (args: string[]) =>
+      const inspect = (args: string[], maxOutputBytes = 64 * 1024) =>
         git.execute({
           operation: "StorageCleanup.submodules",
           cwd,
           args,
-          maxOutputBytes: 64 * 1024,
+          maxOutputBytes,
         });
       const admin = yield* inspect(["rev-parse", "--absolute-git-dir"]);
       if (admin.stdoutTruncated || admin.stderrTruncated)
@@ -606,18 +606,22 @@ const make = Effect.gen(function* () {
         if (changes !== null) return { force: false, reason: `submodule ${changes}` };
       }
       const force = stored || paths.length > 0;
-      if (force && rules.worktreeKeepWhen === "any-local-files") {
+      if (force && rules.worktreeKeepWhen !== "tracked-changes") {
+        const root = yield* fs.realPath(cwd);
         // Git status and foreach omit files inside deinitialized gitlink directories.
         const populatedPaths = new Set(paths.map(pathKey));
         const unchecked: string[] = [];
-        for (const repository of [cwd, ...paths]) {
-          const index = yield* inspect(["-C", repository, "ls-files", "--stage", "-z"]);
+        for (const repository of [root, ...paths]) {
+          const index = yield* inspect(
+            ["-C", repository, "ls-files", "--stage", "-z"],
+            16 * 1024 * 1024,
+          );
           if (index.stdoutTruncated || index.stderrTruncated)
             return { force: false, reason: "submodule inspection exceeded the limit" };
           for (const entry of index.stdout.split("\0")) {
             if (!entry.startsWith("160000 ")) continue;
             const submodule = path.resolve(repository, entry.slice(entry.indexOf("\t") + 1));
-            if (!inside(cwd, submodule))
+            if (!inside(root, submodule))
               return { force: false, reason: "submodules could not be inspected" };
             if (!populatedPaths.has(pathKey(submodule)) && (yield* fs.exists(submodule)))
               unchecked.push(submodule);
