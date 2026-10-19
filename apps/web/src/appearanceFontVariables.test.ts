@@ -8,7 +8,7 @@ const preferences: AppearanceFontPreferences = {
   sans: "Arial",
   code: "Menlo",
   composer: "",
-  reply: "Absolutely Serif",
+  reply: "Source Serif 4",
   sizeInterface: 16,
   sizePrompt: 14,
   sizeCode: 13,
@@ -20,9 +20,9 @@ describe("reply font appearance", () => {
     const root = document.createElement("div");
     const defaults = { ...preferences, sans: "", code: "", reply: "" };
     applyAppearanceFontVariables(root, { ...defaults, typography: "absolutely" });
-    expect(root.style.getPropertyValue("--font-sans")).toContain('"Absolutely Sans"');
-    expect(root.style.getPropertyValue("--font-mono")).toContain('"Absolutely Mono"');
-    expect(root.style.getPropertyValue("--font-reply")).toContain('"Absolutely Serif"');
+    expect(root.style.getPropertyValue("--font-sans")).toContain('"DM Sans"');
+    expect(root.style.getPropertyValue("--font-mono")).toContain('"JetBrains Mono"');
+    expect(root.style.getPropertyValue("--font-reply")).toContain('"Source Serif 4"');
     expect(root.style.getPropertyValue("--font-composer")).toBe("");
     expect(root.style.getPropertyValue("--font-size-reply")).toBe("0.9375rem");
     expect(root.style.getPropertyValue("--font-size-prompt")).toBe("15px");
@@ -99,7 +99,7 @@ describe("reply font appearance", () => {
   it("removes a previous reply override when reset so the interface font can take over", () => {
     const root = document.createElement("div");
     applyAppearanceFontVariables(root, preferences);
-    expect(root.style.getPropertyValue("--font-reply")).toContain('"Absolutely Serif"');
+    expect(root.style.getPropertyValue("--font-reply")).toContain('"Source Serif 4"');
 
     applyAppearanceFontVariables(root, { ...preferences, reply: "   " });
     expect(root.style.getPropertyValue("--font-reply")).toBe("");

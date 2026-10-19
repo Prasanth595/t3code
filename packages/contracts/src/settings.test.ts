@@ -33,7 +33,7 @@ describe("reply font preferences", () => {
   });
 
   it("round-trips a reply font independently and accepts clearing it", () => {
-    const input = { fontFamilySans: "Arial", fontFamilyReply: "Absolutely Serif" };
+    const input = { fontFamilySans: "Arial", fontFamilyReply: "Source Serif 4" };
     expect(encodeClientSettings(decodeClientSettings(input))).toMatchObject(input);
     expect(decodeClientSettingsPatch(input)).toEqual(input);
     expect(decodeClientSettingsPatch({ fontFamilyReply: "" })).toEqual({ fontFamilyReply: "" });

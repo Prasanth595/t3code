@@ -8,10 +8,10 @@ export const FONT_FAMILIES = {
 } as const;
 
 const ABSOLUTELY_FONT_FAMILIES = {
-  regular: "AbsolutelySans-Regular",
-  medium: "AbsolutelySans-Regular",
-  bold: "AbsolutelySans-Bold",
-  code: "AbsolutelyMono-Regular",
+  regular: "DMSans-Regular",
+  medium: "DMSans-Medium",
+  bold: "DMSans-Bold",
+  code: "JetBrainsMono-Regular",
 } as const;
 
 export function getMobileFontFamilies(themeId: string) {

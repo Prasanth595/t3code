@@ -10,7 +10,7 @@ interface. Leave it blank to follow the theme's typography. Code keeps its own f
 must be installed on the device where you use the app.
 
 **Absolutely** pairs neutral light and dark palettes with serif agent replies on web, desktop,
-and mobile. Its bundled Absolutely Sans, Serif, and Mono fonts match the interface, replies,
+and mobile. It uses bundled DM Sans, Source Serif 4, and JetBrains Mono fonts for the interface, replies,
 and code without installing fonts separately. Explicit typography preferences override the theme.
 
 On web and desktop, use **Change theme** in the command palette to select a theme without leaving chat.

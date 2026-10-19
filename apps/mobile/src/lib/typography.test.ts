@@ -5,10 +5,10 @@ import { getMobileFontFamilies, FONT_FAMILIES } from "./fontFamilies";
 describe("theme typography", () => {
   it("uses the bundled sans, serif, and code families for Absolutely", () => {
     expect(getMobileFontFamilies("absolutely")).toEqual({
-      regular: "AbsolutelySans-Regular",
-      medium: "AbsolutelySans-Regular",
-      bold: "AbsolutelySans-Bold",
-      code: "AbsolutelyMono-Regular",
+      regular: "DMSans-Regular",
+      medium: "DMSans-Medium",
+      bold: "DMSans-Bold",
+      code: "JetBrainsMono-Regular",
     });
     expect(getMobileReplyTypography("absolutely")).toEqual({
       fontSize: 15,
@@ -17,9 +17,9 @@ describe("theme typography", () => {
       codeBlockLineHeight: 22.75,
       headingLineHeightMultiplier: 1.25,
       headingFontSizes: [26.25, 20.625, 16.875, 15, 13.125, 13.125],
-      fontFamily: "AbsolutelySerif-Regular",
-      headingFontFamily: "AbsolutelySerif-Bold",
-      boldFontFamily: "AbsolutelySerif-Bold",
+      fontFamily: "SourceSerif4-Regular",
+      headingFontFamily: "SourceSerif4-Semibold",
+      boldFontFamily: "SourceSerif4-Semibold",
     });
   });
 

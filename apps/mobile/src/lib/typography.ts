@@ -11,9 +11,9 @@ export function getMobileReplyTypography(themeId: string, baseFontSize = 16) {
     codeBlockLineHeight: 22.75 * scale,
     headingLineHeightMultiplier: 1.25,
     headingFontSizes: [26.25, 20.625, 16.875, 15, 13.125, 13.125].map((size) => size * scale),
-    fontFamily: "AbsolutelySerif-Regular",
-    headingFontFamily: "AbsolutelySerif-Bold",
-    boldFontFamily: "AbsolutelySerif-Bold",
+    fontFamily: "SourceSerif4-Regular",
+    headingFontFamily: "SourceSerif4-Semibold",
+    boldFontFamily: "SourceSerif4-Semibold",
   };
 }
 

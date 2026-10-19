@@ -61,8 +61,8 @@ function useFontDefaultFamilies() {
     code: resolveDefaultFamilyLabel(DEFAULT_CODE_FONT_STACK) ?? "System monospace",
   }));
   const defaults = {
-    sans: absolutely ? "Absolutely Sans" : systemDefaults.sans,
-    code: absolutely ? "Absolutely Mono" : systemDefaults.code,
+    sans: absolutely ? "DM Sans" : systemDefaults.sans,
+    code: absolutely ? "JetBrains Mono" : systemDefaults.code,
   };
   return {
     sans: defaults.sans,
@@ -110,7 +110,7 @@ function ReplyFontRow() {
   const typography = getThemeDefinition(
     resolveThemeHalf(theme, themeHalves, resolvedTheme),
   )?.typography;
-  const defaultFamily = typography === "absolutely" ? "Absolutely Serif" : defaults.interfaceFamily;
+  const defaultFamily = typography === "absolutely" ? "Source Serif 4" : defaults.interfaceFamily;
   return (
     <FontFamilySettingsRow
       {...searchableSetting("reply-font")}
