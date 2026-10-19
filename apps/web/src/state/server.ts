@@ -42,6 +42,12 @@ export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   serverConfigValueAtom: serverEnvironment.configValueAtom,
 });
+export const environmentServerRunIdAtom = Atom.family((environmentId: EnvironmentId) => {
+  const target = { environmentId, input: {} };
+  return Atom.make((get) =>
+    Option.getOrNull(AsyncResult.value(get(serverEnvironment.runStartedAt(target)))),
+  ).pipe(Atom.withLabel(`web-server-run-id:${environmentId}`));
+});
 
 interface PrimaryServerState {
   readonly config: ServerConfig | null;

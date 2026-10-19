@@ -54,6 +54,7 @@ import { createModelSelection } from "@t3tools/shared/model";
 import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import * as Schema from "effect/Schema";
+import { useChatWarningDismissals } from "../../chatWarningDismissals";
 import { APP_VERSION, HOSTED_APP_CHANNEL, HOSTED_APP_CHANNEL_LABEL } from "../../branding";
 import { CliCommandSettingsRow } from "./CliCommandSettingsRow";
 import { MobileAppSettingsRow } from "./MobileAppSettingsRow";
@@ -2040,6 +2041,8 @@ function LegacyFeaturesSection() {
 }
 
 export function GeneralSettingsPanel() {
+  const [warningDismissals, setWarningDismissals] = useChatWarningDismissals();
+  const dismissedWarningIds = warningDismissals.permanent;
   const modifierLabel = isMacPlatform(navigator.platform) ? "⌘" : "Ctrl";
   const sendShortcutOptions = [
     { value: "enter", label: "Enter" },
@@ -2802,6 +2805,26 @@ export function GeneralSettingsPanel() {
           }
         />
 
+        <SettingsRow
+          {...searchableSetting("dismissed-warnings")}
+          description={
+            dismissedWarningIds.length === 0
+              ? `Warnings hidden with "Don't show again" will appear here.`
+              : `${dismissedWarningIds.length} ${
+                  dismissedWarningIds.length === 1 ? "warning" : "warnings"
+                } hidden with "Don't show again".`
+          }
+          control={
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={dismissedWarningIds.length === 0}
+              onClick={() => setWarningDismissals((current) => ({ ...current, permanent: [] }))}
+            >
+              Restore all
+            </Button>
+          }
+        />
         <SettingsRow
           {...searchableSetting("continue-threads-after-server-update")}
           serverScoped

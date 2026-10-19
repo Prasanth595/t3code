@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
+  type ProviderInstanceId,
   type ThreadId,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -36,6 +37,7 @@ import {
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { useClientSettings } from "../../hooks/useSettings";
+import { ChatWarningIndicator, type ChatWarning } from "./ChatWarningIndicator";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
@@ -46,6 +48,11 @@ interface ChatHeaderProps {
   parentThreadLink: { threadId: ThreadId; title: string } | null;
   onOpenThread: (threadId: ThreadId) => void;
   rightPanelOpen: boolean;
+  onOpenProviderSetup: (instanceId: ProviderInstanceId) => void;
+  warnings: ReadonlyArray<ChatWarning>;
+  canDismissWarningsForNow: boolean;
+  onDismissWarningsForNow: (warningIds: ReadonlyArray<string>) => void;
+  onDismissWarningsForever: (warningIds: ReadonlyArray<string>) => void;
   onNewThreadInProject: () => void;
   onOpenProjectSettings?: (() => void) | undefined;
 }
@@ -74,6 +81,11 @@ export const ChatHeader = memo(function ChatHeader({
   parentThreadLink,
   onOpenThread,
   rightPanelOpen,
+  onOpenProviderSetup,
+  warnings,
+  canDismissWarningsForNow,
+  onDismissWarningsForNow,
+  onDismissWarningsForever,
   onNewThreadInProject,
   onOpenProjectSettings,
 }: ChatHeaderProps) {
@@ -338,7 +350,7 @@ export const ChatHeader = memo(function ChatHeader({
             </WorkspaceBreadcrumbSeparator>
           </>
         ) : null}
-        <WorkspaceBreadcrumbItem current className="min-w-10 flex-1">
+        <WorkspaceBreadcrumbItem current className="min-w-10 flex-1 gap-1">
           {renamingTitle !== null ? (
             <input
               autoFocus
@@ -388,14 +400,19 @@ export const ChatHeader = memo(function ChatHeader({
             </Tooltip>
           ) : (
             <Tooltip>
-              <TooltipTrigger
-                render={<h2 aria-label={activeThreadTitle} className="min-w-0 flex-1" />}
-              >
+              <TooltipTrigger render={<h2 aria-label={activeThreadTitle} className="min-w-0" />}>
                 <WorkspaceBreadcrumbText>{activeThreadTitle}</WorkspaceBreadcrumbText>
               </TooltipTrigger>
               <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
             </Tooltip>
           )}
+          <ChatWarningIndicator
+            onOpenProviderSetup={onOpenProviderSetup}
+            warnings={warnings}
+            canDismissForNow={canDismissWarningsForNow}
+            onDismissForNow={onDismissWarningsForNow}
+            onDismissForever={onDismissWarningsForever}
+          />
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
     </div>

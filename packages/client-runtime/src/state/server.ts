@@ -1128,6 +1128,17 @@ export function createServerEnvironmentAtoms<R, E>(
       idleTtlMs: 0,
     }),
     configProjection,
+    // The replayed ready timestamp survives reconnects and changes on server restart.
+    runStartedAt: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:run-started-at",
+      tag: WS_METHODS.subscribeServerLifecycle,
+      transform: (stream) =>
+        stream.pipe(
+          Stream.filterMap((event) =>
+            event.type === "ready" ? Result.succeed(event.payload.at) : Result.failVoid,
+          ),
+        ),
+    }),
     welcome,
     legacyThreadMigration: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:legacy-thread-migration",

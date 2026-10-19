@@ -361,6 +361,7 @@ import { useEnvironmentQuery } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
 import {
   environmentServerConfigsAtom,
+  environmentServerRunIdAtom,
   primaryServerAvailableEditorsAtom,
   primaryServerKeybindingsAtom,
   serverEnvironment,
@@ -437,18 +438,7 @@ import {
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
-import {
-  getProviderStatusBannerKey,
-  ProviderStatusBanner,
-  shouldShowProviderStatusBanner,
-} from "./chat/ProviderStatusBanner";
-import {
-  dismissThreadErrorBannerForSession,
-  getThreadErrorBannerKey,
-  isThreadErrorBannerDismissedForSession,
-  shouldShowThreadErrorBanner,
-  ThreadErrorBanner,
-} from "./chat/ThreadErrorBanner";
+import { useChatWarnings } from "../chatWarningDismissals";
 import { QueuedRunsControl, type QueuedRunsControlHandle } from "./chat/QueuedRunsControl";
 import { useThreadLinkedPullRequest } from "./pullRequest/useThreadLinkedPullRequest";
 import { useProactivePanels } from "../hooks/useProactivePanels";
@@ -1188,6 +1178,7 @@ export default function ChatView(props: ChatViewProps) {
     return ids;
   })();
   const settings = useEnvironmentSettings(environmentId);
+  const serverRunId = useAtomValue(environmentServerRunIdAtom(environmentId));
   const clientSettingsHydrated = useClientSettingsHydrated();
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
@@ -1531,15 +1522,6 @@ export default function ChatView(props: ChatViewProps) {
   const threadError = isServerThread
     ? (localServerError ?? serverRuntime?.lastError ?? null)
     : localDraftError;
-  const threadErrorBannerKey = getThreadErrorBannerKey(routeThreadKey, threadError);
-  const visibleThreadError = shouldShowThreadErrorBanner(
-    routeThreadKey,
-    threadError,
-    isThreadErrorBannerDismissedForSession(threadErrorBannerKey),
-  )
-    ? threadError
-    : null;
-  const [, setThreadErrorBannerDismissTick] = useState(0);
   const defaultRuntimeMode = resolveProjectSettings(settings, activeThread?.projectId ?? null)
     .settings.defaultRuntimeMode;
   const runtimeMode =
@@ -1599,9 +1581,9 @@ export default function ChatView(props: ChatViewProps) {
     serverRuntime?.status === "failed" &&
     serverRuntime.lastErrorClass === "usage_limit" &&
     activeThreadShell?.latestRun &&
-    visibleThreadError === serverRuntime.lastError
+    threadError === serverRuntime.lastError
       ? null
-      : visibleThreadError;
+      : threadError;
 
   const [timelineAnchor, setTimelineAnchor] = useState<{
     readonly threadKey: string | null;
@@ -2976,20 +2958,23 @@ export default function ChatView(props: ChatViewProps) {
     resumeCompactionPermanentlyDismissed,
     setResumeCompactionPermanentlyDismissed,
   ]);
-  const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
-  const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
-    string | null
-  >(null);
-  if (providerStatusBannerKey === null && dismissedProviderStatusBannerKey !== null) {
-    setDismissedProviderStatusBannerKey(null);
-  }
-  const visibleProviderStatus = shouldShowProviderStatusBanner(
-    activeProviderStatus,
-    dismissedProviderStatusBannerKey,
-  )
-    ? activeProviderStatus
-    : null;
-  const hasTimelineTopBanner = Boolean(timelineThreadError) || visibleProviderStatus !== null;
+  const {
+    warnings: chatWarnings,
+    dismissForNow,
+    dismissForever,
+  } = useChatWarnings({
+    threadKey: routeThreadKey,
+    error: timelineThreadError,
+    errorClass:
+      localServerError === null && threadError === serverRuntime?.lastError
+        ? (serverRuntime?.lastErrorClass ?? null)
+        : null,
+    providerStatus: activeProviderStatus,
+    environmentId,
+    serverRunId,
+  });
+  const dismissWarningsForNowStable = useStableCallback(dismissForNow);
+  const dismissWarningsForeverStable = useStableCallback(dismissForever);
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -7884,6 +7869,11 @@ export default function ChatView(props: ChatViewProps) {
             parentThreadLink={parentThreadLink}
             onOpenThread={onOpenRelatedThreadStable}
             rightPanelOpen={inlineRightPanelOwnsTitleBar}
+            onOpenProviderSetup={openProviderSetupStable}
+            warnings={chatWarnings}
+            canDismissWarningsForNow={serverRunId !== null}
+            onDismissWarningsForNow={dismissWarningsForNowStable}
+            onDismissWarningsForever={dismissWarningsForeverStable}
             onNewThreadInProject={handleNewThreadInActiveProjectStable}
             {...(activeDraftLogicalProjectKey
               ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
@@ -7926,26 +7916,6 @@ export default function ChatView(props: ChatViewProps) {
                 </div>
               </div>
             ) : null}
-            <div className="chat-banner-lane pointer-events-none absolute top-0 z-20 flex flex-col">
-              <ProviderStatusBanner
-                status={visibleProviderStatus}
-                onDismiss={() => setDismissedProviderStatusBannerKey(providerStatusBannerKey)}
-                onOpenProviderSetup={openProviderSetupStable}
-              />
-              <ThreadErrorBanner
-                error={timelineThreadError}
-                errorClass={
-                  localServerError === null && visibleThreadError === serverRuntime?.lastError
-                    ? (serverRuntime?.lastErrorClass ?? null)
-                    : null
-                }
-                onDismiss={() => {
-                  setThreadError(activeThread.id, null);
-                  dismissThreadErrorBannerForSession(threadErrorBannerKey);
-                  setThreadErrorBannerDismissTick((tick) => tick + 1);
-                }}
-              />
-            </div>
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               <MessagesTimeline
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
@@ -8065,7 +8035,6 @@ export default function ChatView(props: ChatViewProps) {
                 onManualNavigation={cancelTimelineLiveFollowForUserNavigationStable}
                 cancelPositionRestoreRef={cancelPositionRestoreRef}
                 hideEmptyPlaceholder={isDraftHeroState || threadDetailLoading}
-                topFadeEnabled={!hasTimelineTopBanner}
                 {...(paintOnlyDisplayedTimeline || threadHistoryControls === undefined
                   ? {}
                   : { historyControls: threadHistoryControls })}

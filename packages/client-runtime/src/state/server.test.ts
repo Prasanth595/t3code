@@ -3,6 +3,7 @@ import {
   type ServerConfig,
   type ServerConfigStreamEvent,
   type ServerLifecycleWelcomePayload,
+  type ServerLifecycleStreamEvent,
   WS_METHODS,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -13,12 +14,14 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { RpcClientError } from "effect/rpc";
 import * as Socket from "effect/socket/Socket";
 
@@ -28,10 +31,12 @@ import {
   type PreparedConnection,
 } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as Persistence from "../platform/persistence.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import {
+  createServerEnvironmentAtoms,
   applyServerWelcomeEvent,
   makeEnvironmentServerWelcomeState,
   makeEnvironmentServerConfigState,
@@ -923,3 +928,80 @@ describe("server state projection", () => {
     }),
   );
 });
+
+it.effect("tracks each environment's server run across reconnect and restart", () =>
+  Effect.gen(function* () {
+    const events = yield* Queue.unbounded<ServerLifecycleStreamEvent>();
+    const subscribed = yield* Queue.unbounded<void>();
+    const client = {
+      [WS_METHODS.subscribeServerLifecycle]: () =>
+        Stream.fromQueue(events).pipe(Stream.onStart(Queue.offer(subscribed, undefined))),
+    } as unknown as WsRpcProtocolClient;
+    const currentSession = yield* SubscriptionRef.make(Option.some(session(client)));
+    const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+      target: TARGET,
+      state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+      session: currentSession,
+      prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+      connect: Effect.void,
+      disconnect: Effect.void,
+      retryNow: Effect.void,
+    });
+    const environments = EnvironmentRegistry.EnvironmentRegistry.of({
+      followStream: (_environmentId, stream) =>
+        Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+    } as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+    const cache = Persistence.EnvironmentCacheStore.of({
+      loadShell: () => Effect.succeedNone,
+      saveShell: () => Effect.void,
+      loadThread: () => Effect.succeedNone,
+      saveThread: () => Effect.void,
+      removeThread: () => Effect.void,
+      loadServerConfig: () => Effect.succeedNone,
+      saveServerConfig: () => Effect.void,
+      loadVcsRefs: () => Effect.succeedNone,
+      saveVcsRefs: () => Effect.void,
+      removeVcsRefs: () => Effect.void,
+      clearVcsRefs: () => Effect.void,
+      clear: () => Effect.void,
+    });
+    const atoms = createServerEnvironmentAtoms(
+      Atom.runtime(
+        Layer.merge(
+          Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environments),
+          Layer.succeed(Persistence.EnvironmentCacheStore, cache),
+        ),
+      ),
+      { initialConfigValueAtom: () => Atom.make(CONFIG) },
+    );
+    const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+      Effect.sync(() => registry.dispose()),
+    );
+    const run = atoms.runStartedAt({ environmentId: TARGET.environmentId, input: {} });
+    registry.mount(run);
+    yield* Queue.take(subscribed);
+    const sendReady = Effect.fn(function* (at: string) {
+      yield* Queue.offer(events, {
+        version: 1,
+        sequence: 1,
+        type: "ready",
+        payload: { at, environment: CONFIG.environment },
+      });
+      yield* AtomRegistry.toStream(registry, run).pipe(
+        Stream.filter((result) => Option.contains(at)(AsyncResult.value(result))),
+        Stream.runHead,
+      );
+    });
+    yield* sendReady("2026-10-19T00:00:00Z");
+    yield* SubscriptionRef.set(currentSession, Option.none());
+    yield* SubscriptionRef.set(currentSession, Option.some(session(client)));
+    yield* Queue.take(subscribed);
+    expect(Option.getOrNull(AsyncResult.value(registry.get(run)))).toBe("2026-10-19T00:00:00Z");
+    yield* sendReady("2026-10-19T00:00:00Z");
+    expect(Option.getOrNull(AsyncResult.value(registry.get(run)))).toBe("2026-10-19T00:00:00Z");
+    yield* SubscriptionRef.set(currentSession, Option.some(session(client)));
+    yield* Queue.take(subscribed);
+    yield* sendReady("2026-10-19T01:00:00Z");
+    expect(Option.getOrNull(AsyncResult.value(registry.get(run)))).toBe("2026-10-19T01:00:00Z");
+  }),
+);

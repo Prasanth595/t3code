@@ -47,7 +47,7 @@ function PopoverPopup({
   ...props
 }: PopoverPrimitive.Popup.Props & {
   padding?: keyof typeof popoverViewportPaddingClassName;
-  variant?: "default" | "panel";
+  variant?: "default" | "panel" | "error" | "warning";
   side?: PopoverPrimitive.Positioner.Props["side"];
   align?: PopoverPrimitive.Positioner.Props["align"];
   sideOffset?: PopoverPrimitive.Positioner.Props["sideOffset"];
@@ -62,6 +62,7 @@ function PopoverPopup({
   // Viewport rekeys its children when the active trigger clears on close. Persistent
   // single-trigger forms need a stable container to retain drafts and submit guards.
   const Viewport = keepMounted ? "div" : PopoverPrimitive.Viewport;
+  const alertStyle = variant === "error" || variant === "warning";
   return (
     <PopoverPrimitive.Portal keepMounted={keepMounted}>
       {touchBackdrop ? (
@@ -98,12 +99,19 @@ function PopoverPopup({
             !tooltipStyle &&
               variant !== "panel" &&
               "shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)] dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]",
-            width !== "auto" && ["max-w-[calc(100vw-2rem)]", popoverPopupWidthClassName[width]],
+            width !== "auto" && [
+              alertStyle ? "max-w-[calc(100vw-1rem)]" : "max-w-[calc(100vw-2rem)]",
+              popoverPopupWidthClassName[width],
+            ],
+            alertStyle && "alert-glass p-2.5 text-left",
+            variant === "error" && "border-destructive/40! text-error-foreground",
+            variant === "warning" && "border-warning/40! text-warning-foreground",
             variant === "panel" &&
               "w-full overflow-visible rounded-none border-0 bg-transparent shadow-none before:hidden [backdrop-filter:none] [-webkit-backdrop-filter:none]",
             className,
           )}
           data-slot="popover-popup"
+          data-variant={alertStyle ? variant : undefined}
           {...props}
         >
           <Viewport
@@ -112,7 +120,8 @@ function PopoverPopup({
               tooltipStyle && padding === "default"
                 ? "py-1 [--viewport-inline-padding:--spacing(2)]"
                 : popoverViewportPaddingClassName[padding],
-              !tooltipStyle && "not-data-transitioning:overflow-y-auto",
+              (!tooltipStyle || alertStyle) && "not-data-transitioning:overflow-y-auto",
+              alertStyle && "max-h-[calc(var(--available-height)---spacing(5)-2px)]",
               variant === "panel" &&
                 "overflow-visible py-2 [--viewport-inline-padding:--spacing(2)]",
             )}
