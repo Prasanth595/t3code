@@ -32,7 +32,7 @@ import {
   type VcsStatusResult,
   type WorktreeSubmodules,
 } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
   makeGitVcsDriverCore,
   PATCH_RENDER_PREFIX_ARGS,
@@ -793,12 +793,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
     "core.fsyncMethod=fsync",
   ] as const;
 
-  // Git for Windows cannot open paths longer than MAX_PATH (260 characters) unless
-  // core.longpaths is on, and it is off by default. Without it, checkpoint `git add -A` exits
-  // 128 with "Filename too long" in any workspace holding such a path, and restore cannot write
-  // or clean those files. Checkpoints only snapshot and restore paths that already exist, so
-  // commands that touch the working tree turn it on even if the user's config says false.
-  const longPaths = (yield* HostProcessPlatform) === "win32" ? ["-c", "core.longpaths=true"] : [];
+  // Checkpoints must handle existing paths beyond Windows MAX_PATH, even when
+  // core.longpaths is disabled in the user's Git configuration.
+  const longPaths = (yield* HostProcess.Platform) === "win32" ? ["-c", "core.longpaths=true"] : [];
 
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
