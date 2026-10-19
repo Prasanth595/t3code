@@ -226,7 +226,7 @@
   "apps/web/src/components/chat/ChangedFilesTree.tsx": 1,
   "apps/web/src/components/chat/ChatCanvas.tsx": 1,
   "apps/web/src/components/chat/ChatComposer.tsx": 26,
-  "apps/web/src/components/chat/ChatHeader.tsx": 2,
+  "apps/web/src/components/chat/ChatHeader.tsx": 3,
   "apps/web/src/components/chat/ChatMarkdownMedia.tsx": 1,
   "apps/web/src/components/chat/ChatOverlayHosts.tsx": 1,
   "apps/web/src/components/chat/CommandOutputPanel.tsx": 1,

@@ -19,6 +19,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
+import { subscribeThreadRenameStart } from "./threadRenameActionBus";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { useThreadActionMenu } from "~/hooks/useThreadActionMenu";
@@ -195,6 +196,7 @@ export const ChatHeader = memo(function ChatHeader({
     onStartRename: startRename,
     canShareWithGuest,
   });
+  useEffect(() => subscribeThreadRenameStart(startRename), [startRename]);
   const titleButtonRef = useRef<HTMLButtonElement | null>(null);
   const titleMenuTimerRef = useRef<number | null>(null);
   const cancelPendingTitleMenu = () => {
