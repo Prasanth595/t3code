@@ -1,4 +1,5 @@
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import * as DateTime from "effect/DateTime";
 import { deriveActiveWorkStartedAt } from "../session-logic.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -22,6 +23,7 @@ import {
   getSidebarThreadIdsToPrewarm,
   hasUnseenCompletion,
   isContextMenuPointerDown,
+  isOptimisticDropReleased,
   isSidebarSubagentThread,
   isSidebarThreadWorking,
   isTrailingDoubleClick,
@@ -60,6 +62,7 @@ import {
   type SidebarListItem,
   type SidebarListMarker,
   type SidebarSection,
+  type SidebarOptimisticDrop,
   resolveSidebarDropVerb,
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
@@ -2384,6 +2387,50 @@ describe("Working shelf (beta)", () => {
         ]);
       },
     );
+
+    it("releases a collapsed pinned drop only after the hidden key assignments land", () => {
+      const now = "2026-03-09T12:00:00.000Z";
+      const threads = ["x", "h1", "h2"].map((id) =>
+        makeThreadFixture({
+          id: ThreadId.make(id),
+          environmentId: localEnvironmentId,
+          pinnedAt: now,
+          pinOrderKey: id === "x" ? "ff" : null,
+        }),
+      );
+      const keys = threads.map((thread) =>
+        scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      );
+      const assignedKeys = new Map(keys.map((key, index) => [key, ["ff", "nn", "tt"][index]!]));
+      const optimisticDrop: SidebarOptimisticDrop = {
+        key: keys[0]!,
+        sourceSection: "active",
+        section: "pinned",
+        occurredAt: now,
+        clearsSnooze: true,
+        order: [keys[0]!],
+        keysAtDrop: new Map(keys.map((key) => [key, null])),
+        assignedKeys,
+      };
+      const released = (canonicalThreads: readonly Thread[]) =>
+        isOptimisticDropReleased({
+          optimisticDrop,
+          threads: canonicalThreads,
+          pinnedKeys: [keys[0]!],
+          activeKeys: [],
+          now,
+        });
+      expect(released(threads)).toBe(false);
+      const partiallyLanded = threads.map((thread, index) =>
+        index === 1 ? { ...thread, pinOrderKey: assignedKeys.get(keys[index]!)! } : thread,
+      );
+      expect(released(partiallyLanded)).toBe(false);
+      const allLanded = threads.map((thread, index) => ({
+        ...thread,
+        pinOrderKey: assignedKeys.get(keys[index]!)!,
+      }));
+      expect(released(allLanded)).toBe(true);
+    });
 
     it("arranges the rows it can write when another row's server cannot store an order", () => {
       const plan = planSidebarThreadDrop({

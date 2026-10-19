@@ -2,6 +2,7 @@ import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/mod
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
+import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   type AtomCommandResult,
@@ -165,6 +166,93 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
     else if (item.marker === "settled-header") section = "settled";
   }
   return section;
+}
+
+export type SidebarOptimisticDrop = {
+  readonly key: string;
+  readonly sourceSection: SidebarSection;
+  readonly section: "pinned" | "active" | "settled";
+  readonly occurredAt: string;
+  readonly clearsSnooze: boolean;
+  readonly order: readonly string[] | null;
+  readonly keysAtDrop: ReadonlyMap<string, string | null>;
+  readonly assignedKeys: ReadonlyMap<string, string>;
+};
+
+export function isOptimisticDropReleased(input: {
+  readonly optimisticDrop: SidebarOptimisticDrop;
+  readonly threads: readonly SidebarThreadSummary[];
+  readonly pinnedKeys: readonly string[];
+  readonly activeKeys: readonly string[];
+  readonly now: string;
+}): boolean {
+  const { optimisticDrop, threads, pinnedKeys, activeKeys, now } = input;
+  const canonicalByKey = new Map(
+    threads.map((thread) => [
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      thread,
+    ]),
+  );
+  const thread = canonicalByKey.get(optimisticDrop.key);
+  if (thread === undefined || thread.archivedAt !== null) {
+    return true;
+  }
+  const canonicalSection = effectiveSnoozed(thread, { now })
+    ? "snoozed"
+    : thread.settledOverride === "settled"
+      ? "settled"
+      : thread.pinnedAt != null
+        ? "pinned"
+        : "active";
+  if (
+    canonicalSection !== optimisticDrop.sourceSection &&
+    canonicalSection !== optimisticDrop.section
+  ) {
+    return true;
+  }
+  if (optimisticDrop.order === null) {
+    // Settle also emits unpin/unsnooze events. Wait for the entire move
+    // before releasing the projected fields and sort timestamps.
+    if (
+      canonicalSection === optimisticDrop.section &&
+      thread.pinnedAt == null &&
+      (!optimisticDrop.clearsSnooze || thread.snoozedUntil == null)
+    ) {
+      return true;
+    }
+    return false;
+  }
+  if (canonicalSection !== optimisticDrop.section) return false;
+  if (optimisticDrop.clearsSnooze && thread.snoozedUntil != null) return false;
+  const destinationKeys = optimisticDrop.section === "pinned" ? pinnedKeys : activeKeys;
+  const canonicalDestination = destinationKeys.flatMap((key) => {
+    const canonical = canonicalByKey.get(key);
+    return canonical === undefined ? [] : [canonical];
+  });
+  const keyByThread = new Map(
+    canonicalDestination.map((thread) => [
+      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+      (optimisticDrop.section === "pinned" ? thread.pinOrderKey : thread.activeOrderKey) ?? null,
+    ]),
+  );
+  const heldOrder = optimisticDrop.order;
+  const heldKeys = new Set(heldOrder);
+  const membershipChanged =
+    destinationKeys.length !== heldOrder.length ||
+    destinationKeys.some((key) => !heldKeys.has(key));
+  const foreignKeyLanded = destinationKeys.some((threadKey) => {
+    const currentKey = keyByThread.get(threadKey) ?? null;
+    if (currentKey === (optimisticDrop.keysAtDrop.get(threadKey) ?? null)) return false;
+    return currentKey !== optimisticDrop.assignedKeys.get(threadKey);
+  });
+  const allAssignmentsLanded = [...optimisticDrop.assignedKeys].every(([threadKey, orderKey]) => {
+    const canonical = canonicalByKey.get(threadKey);
+    return (
+      (optimisticDrop.section === "pinned" ? canonical?.pinOrderKey : canonical?.activeOrderKey) ===
+      orderKey
+    );
+  });
+  return membershipChanged || foreignKeyLanded || allAssignmentsLanded;
 }
 
 export type SidebarDropTarget = {

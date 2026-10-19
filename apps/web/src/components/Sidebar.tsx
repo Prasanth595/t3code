@@ -199,6 +199,8 @@ import {
   firstValidTimestampMs,
   hasUnseenCompletion,
   isSidebarNestedLinkClick,
+  isOptimisticDropReleased,
+  type SidebarOptimisticDrop,
   isSidebarThreadWorking,
   isTrailingDoubleClick,
   orderItemsByPreferredIds,
@@ -369,17 +371,6 @@ const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
 const PINNED_SHELF_EXPANDED_KEY = "t3code:sidebar:pinned-expanded";
 
 const inboxReturns = createInboxReturnTracker();
-
-type SidebarOptimisticDrop = {
-  readonly key: string;
-  readonly sourceSection: SidebarSection;
-  readonly section: "pinned" | "active" | "settled";
-  readonly occurredAt: string;
-  readonly clearsSnooze: boolean;
-  readonly order: readonly string[] | null;
-  readonly keysAtDrop: ReadonlyMap<string, string | null>;
-  readonly assignedKeys: ReadonlyMap<string, string>;
-};
 
 interface SidebarThreadPartitionInput {
   readonly threads: readonly EnvironmentThreadShell[];
@@ -684,78 +675,6 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     settledThreads: sortSettledThreads(settled),
     snoozeNow: preciseNow,
   };
-}
-
-function isOptimisticDropReleased(input: {
-  readonly optimisticDrop: SidebarOptimisticDrop;
-  readonly threads: readonly EnvironmentThreadShell[];
-  readonly pinnedKeys: readonly string[];
-  readonly activeKeys: readonly string[];
-  readonly now: string;
-}): boolean {
-  const { optimisticDrop, threads, pinnedKeys, activeKeys, now } = input;
-  const canonicalByKey = new Map(
-    threads.map((thread) => [
-      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      thread,
-    ]),
-  );
-  const thread = canonicalByKey.get(optimisticDrop.key);
-  if (thread === undefined || thread.archivedAt !== null) {
-    return true;
-  }
-  const canonicalSection = effectiveSnoozed(thread, { now })
-    ? "snoozed"
-    : thread.settledOverride === "settled"
-      ? "settled"
-      : thread.pinnedAt != null
-        ? "pinned"
-        : "active";
-  if (
-    canonicalSection !== optimisticDrop.sourceSection &&
-    canonicalSection !== optimisticDrop.section
-  ) {
-    return true;
-  }
-  if (optimisticDrop.order === null) {
-    // Settle also emits unpin/unsnooze events. Wait for the entire move
-    // before releasing the projected fields and sort timestamps.
-    if (
-      canonicalSection === optimisticDrop.section &&
-      thread.pinnedAt == null &&
-      (!optimisticDrop.clearsSnooze || thread.snoozedUntil == null)
-    ) {
-      return true;
-    }
-    return false;
-  }
-  if (canonicalSection !== optimisticDrop.section) return false;
-  if (optimisticDrop.clearsSnooze && thread.snoozedUntil != null) return false;
-  const destinationKeys = optimisticDrop.section === "pinned" ? pinnedKeys : activeKeys;
-  const canonicalDestination = destinationKeys.flatMap((key) => {
-    const canonical = canonicalByKey.get(key);
-    return canonical === undefined ? [] : [canonical];
-  });
-  const keyByThread = new Map(
-    canonicalDestination.map((thread) => [
-      scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-      (optimisticDrop.section === "pinned" ? thread.pinOrderKey : thread.activeOrderKey) ?? null,
-    ]),
-  );
-  const heldOrder = optimisticDrop.order;
-  const heldKeys = new Set(heldOrder);
-  const membershipChanged =
-    destinationKeys.length !== heldOrder.length ||
-    destinationKeys.some((key) => !heldKeys.has(key));
-  const foreignKeyLanded = destinationKeys.some((threadKey) => {
-    const currentKey = keyByThread.get(threadKey) ?? null;
-    if (currentKey === (optimisticDrop.keysAtDrop.get(threadKey) ?? null)) return false;
-    return currentKey !== optimisticDrop.assignedKeys.get(threadKey);
-  });
-  const allAssignmentsLanded = [...optimisticDrop.assignedKeys].every(
-    ([threadKey, orderKey]) => keyByThread.get(threadKey) === orderKey,
-  );
-  return membershipChanged || foreignKeyLanded || allAssignmentsLanded;
 }
 
 // Sidebar() is large enough that the compiler cannot prove its local maps stay
@@ -3731,6 +3650,8 @@ export default function Sidebar() {
     });
     if (plan.kind === "none") return;
     if (plan.kind === "settle" && settlingThreadKeysRef.current.has(activeKey)) return;
+    // Rebalancing can assign keys to pins hidden by a collapsed shelf.
+    const operationThreadByKey = new Map(threads.map((thread) => [threadShellKey(thread), thread]));
     const assignments =
       plan.kind === "pin"
         ? [
@@ -3743,7 +3664,7 @@ export default function Sidebar() {
     if (
       !checkThreadOperations(
         [activeKey, ...assignments.map(({ id }) => id)].flatMap((key) => {
-          const thread = threadByKey.get(key);
+          const thread = operationThreadByKey.get(key);
           return thread ? [thread] : [];
         }),
       )
@@ -3827,7 +3748,7 @@ export default function Sidebar() {
       }
       const keyWrites = plan.kind === "pin" ? plan.extraAssignments : plan.assignments;
       for (const assignment of keyWrites) {
-        const thread = threadByKey.get(assignment.id);
+        const thread = operationThreadByKey.get(assignment.id);
         if (thread === undefined) continue;
         if (
           !(await run(
