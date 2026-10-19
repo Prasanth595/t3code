@@ -73,54 +73,45 @@ it.effect("marks a never-visited thread's first completion unread", () =>
       createdBy: "user",
       creationSource: "web",
     });
-    yield* TestClock.adjust("1 second");
     assert.isNull((yield* projections.getThreadShell(threadId))?.lastVisitedAt);
-    const firstDispatch = {
-      type: "message.dispatch" as const,
-      commandId: CommandId.make("first-completion-watermark"),
-      threadId,
-      messageId: MessageId.make("first-completion-watermark"),
-      text: "Run in the background",
-      attachments: [],
-      dispatchMode: { type: "defer_start" as const },
-      createdBy: "agent" as const,
-      creationSource: "mcp" as const,
-    };
-    yield* orchestrator.dispatch(firstDispatch);
-    const first = yield* projections.getThreadProjection(threadId);
-    assert.isNotNull(first.thread.lastVisitedAt);
-
-    // A completion in the dispatch's millisecond is still newer than the watermark.
+    const dispatch = (id: string) =>
+      orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(id),
+        threadId,
+        messageId: MessageId.make(id),
+        text: "Run in the background",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "agent",
+        creationSource: "mcp",
+      });
+    yield* TestClock.adjust("1 second");
+    const dispatchedAt = yield* DateTime.now;
+    yield* dispatch("first-completion-watermark");
     yield* orchestrator.dispatch({
       type: "run.interrupt",
       commandId: CommandId.make("interrupt-completion-watermark"),
       threadId,
-      runId: first.runs[0]!.id,
+      runId: (yield* projections.getThreadProjection(threadId)).runs[0]!.id,
     });
+    // The run ends in the dispatch's millisecond and must still be unread.
     const ended = yield* projections.getThreadShell(threadId);
-    assert.ok(ended?.latestRunCompletedAt);
+    assert.ok(ended?.lastVisitedAt && ended.latestRunCompletedAt);
+    assert.equal(
+      DateTime.toEpochMillis(ended.lastVisitedAt),
+      DateTime.toEpochMillis(dispatchedAt) - 1,
+    );
     assert.isAbove(
       DateTime.toEpochMillis(ended.latestRunCompletedAt),
-      DateTime.toEpochMillis(ended.lastVisitedAt!),
+      DateTime.toEpochMillis(ended.lastVisitedAt),
     );
 
-    // Later dispatches leave an existing watermark alone.
-    const visitedAt = DateTime.formatIso(yield* DateTime.now);
-    yield* orchestrator.dispatch({
-      type: "thread.visit",
-      commandId: CommandId.make("visit-completion-watermark"),
-      threadId,
-      visitedAt,
-    });
     yield* TestClock.adjust("1 second");
-    yield* orchestrator.dispatch({
-      ...firstDispatch,
-      commandId: CommandId.make("second-completion-watermark"),
-      messageId: MessageId.make("second-completion-watermark"),
-    });
-    assert.equal(
-      DateTime.formatIso((yield* projections.getThread(threadId)).lastVisitedAt!),
-      visitedAt,
+    yield* dispatch("second-completion-watermark");
+    assert.deepEqual(
+      (yield* projections.getThreadShell(threadId))?.lastVisitedAt,
+      ended.lastVisitedAt,
     );
   }).pipe(Effect.provide(layerTest)),
 );
