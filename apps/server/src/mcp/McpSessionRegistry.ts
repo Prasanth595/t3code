@@ -60,13 +60,9 @@ export interface McpSessionRegistryOptions {
 }
 
 /**
- * Credentials stop authenticating after this long without a sign of life.
- * Expired ones cannot refresh themselves through MCP traffic, but stay registered so a provider turn's `touch` can restore the
- * token its subprocess still holds. `stopSession` and `stopAll` revoke eagerly.
- *
- * The bound matters because `/mcp` is mounted outside the environment auth
- * stack and is reachable on whatever host the server binds to, so this token is
- * the only thing guarding the `t3-code` toolkits on a remote-reachable server.
+ * `/mcp` is outside environment auth, so idle tokens stop authenticating.
+ * Keep expired records until explicit revocation: a trusted provider turn can
+ * refresh the token its subprocess still holds; MCP requests cannot.
  */
 const DEFAULT_LIVENESS_WINDOW_MS = 24 * 60 * 60 * 1_000;
 
