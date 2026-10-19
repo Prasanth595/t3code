@@ -931,6 +931,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
       "restarted",
       "stopped",
       "overlapping",
+      "after-cancel",
     ] as const;
     it.effect.each(outcomes)(
       "delivers a %s follow-up independently of the original task",
@@ -975,6 +976,25 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             taskId: child.taskId,
             observedByRunId: parentRunId,
           });
+          if (outcome === "after-cancel") {
+            // A follow-up is its own task, even after task_cancel reached the original.
+            const settled = (yield* orchestrator.getThreadProjection(
+              parentThreadId,
+            )).subagents.find((task) => task.id === child.taskId)!;
+            yield* eventSink.write({
+              commandId: reconcileCommandId("followup-original-cancelled"),
+              events: [
+                {
+                  id: EventId.make("event:followup-original-cancelled"),
+                  type: "subagent.updated",
+                  threadId: parentThreadId,
+                  nodeId: settled.id,
+                  occurredAt: now,
+                  payload: { ...settled, cancelRequestedAt: now },
+                },
+              ],
+            });
+          }
           const original = (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
             (task) => task.id === child.taskId,
           )!;
@@ -1098,7 +1118,9 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
                   status:
                     outcome === "stopped"
                       ? "interrupted"
-                      : outcome === "restarted" || outcome === "overlapping"
+                      : outcome === "restarted" ||
+                          outcome === "overlapping" ||
+                          outcome === "after-cancel"
                         ? "completed"
                         : outcome,
                   startedAt: now,
@@ -1128,7 +1150,7 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
             followup.status,
             outcome === "stopped"
               ? "interrupted"
-              : outcome === "restarted" || outcome === "overlapping"
+              : outcome === "restarted" || outcome === "overlapping" || outcome === "after-cancel"
                 ? "completed"
                 : outcome,
           );
@@ -1482,6 +1504,48 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
       assert.equal(task?.status, "interrupted");
       assert.equal(task?.result, "Child task ended with status interrupted.");
       assert.equal(task?.completionDelivery?.state, "claimed");
+    }),
+  );
+
+  it.effect("cancelling a task whose child already finished keeps its completed result", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:cancel-finished-parent");
+      const projectId = ProjectId.make("project:cancel-finished-parent");
+      const runId = RunId.make("run:cancel-finished-parent");
+      const rootNodeId = NodeId.make("node:cancel-finished-parent-root");
+      yield* seedParentWithTerminalTask({
+        threadId,
+        projectId,
+        runId,
+        rootNodeId,
+        taskId: NodeId.make("node:cancel-finished-parent-settled"),
+        deliveryState: "delivered",
+        now,
+      });
+      // The child run finished, but its parent row has not been finalized yet.
+      const child = yield* seedRestartCancelledChild({
+        parentThreadId: threadId,
+        projectId,
+        parentRunId: runId,
+        rootNodeId,
+        name: "cancel-finished-child",
+        completionWake: "always",
+        continuationPending: false,
+        runStatus: "completed",
+        now,
+      });
+      yield* orchestrator.cancelDelegatedTask({
+        parentThreadId: threadId,
+        taskId: child.taskId,
+        stop: Effect.void,
+      });
+      const task = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
+        (row) => row.id === child.taskId,
+      );
+      assert.equal(task?.status, "completed");
+      assert.isUndefined(task?.cancelRequestedAt);
     }),
   );
 

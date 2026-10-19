@@ -50,17 +50,23 @@ const driver = ProviderDriverKind.make("claudeAgent");
 const instanceId = ProviderInstanceId.make("claudeAgent");
 const modelSelection = { instanceId, model: "claude-test" };
 
-// A delegated Claude child ends its turn while a background native subagent it
-// started keeps running (#17154).
-
-it.effect("task_cancel ends a delegated child's background native subagent", () =>
+// A delegated Claude child ends its turn while a background native subagent
+// (#17154) or shell command (#16739) it started keeps running. task_cancel
+// arrives once the run settles, while it still captures its checkpoint, or
+// while the turn still runs and then finishes before Stop reaches the work.
+const cancelBackgroundOnlyTask = (
+  background: "subagent" | "command",
+  { cancelAt = "settled" }: { readonly cancelAt?: "settled" | "checkpoint" | "turn" } = {},
+) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const cwd = yield* checkpointWorkspace("task-cancel-native-subagent");
+      const cwd = yield* checkpointWorkspace(`task-cancel-background-${background}`);
       const turns: Array<{
         readonly turn: ProviderAdapter.ProviderAdapterV2TurnInput;
         readonly events: Queue.Queue<ProviderAdapter.ProviderAdapterV2Event>;
       }> = [];
+      const interrupted: Array<ProviderAdapter.ProviderAdapterV2InterruptInput["providerThread"]> =
+        [];
       const adapter: ProviderAdapter.ProviderAdapterV2["Service"] = {
         instanceId,
         driver,
@@ -126,7 +132,10 @@ it.effect("task_cancel ends a delegated child's background native subagent", () 
                   });
                 }),
               steerTurn: () => Effect.die("unused"),
-              interruptTurn: () => Effect.void,
+              interruptTurn: ({ providerThread }) =>
+                Effect.sync(() => {
+                  interrupted.push(providerThread);
+                }),
               respondToRuntimeRequest: () => Effect.die("unused"),
               readThreadSnapshot: () => Effect.die("unused"),
               rollbackThread: () => Effect.die("unused"),
@@ -257,7 +266,7 @@ it.effect("task_cancel ends a delegated child's background native subagent", () 
             event.payload.id === child.turn.runId &&
             event.payload.status === "waiting",
         );
-        for (const event of [
+        const nativeSubagentEvents = [
           {
             type: "node.updated",
             driver,
@@ -306,26 +315,56 @@ it.effect("task_cancel ends a delegated child's background native subagent", () 
               subagentId,
             },
           },
+        ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>;
+        const shellEvents = [
           {
-            type: "provider_turn.updated",
+            type: "provider_thread.updated",
             driver,
-            providerTurn: { ...childTurn, status: "completed", completedAt: now },
+            providerThread: {
+              ...child.turn.providerThread,
+              status: "active",
+              pendingBackgroundTasks: [
+                { taskId: "bg-sleep", description: "sleep 300", kind: "command" },
+              ],
+              updatedAt: now,
+            },
           },
-          {
-            type: "turn.terminal",
-            driver,
-            providerThreadId: childTurn.providerThreadId,
-            providerTurnId: childTurn.id,
-            runOrdinal: child.turn.runOrdinal,
-            status: "completed",
-            failure: null,
-            threadDisposition: "reusable",
-          },
-        ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) {
+        ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>;
+        const started = yield* watch((event) =>
+          background === "subagent"
+            ? event.type === "subagent.updated" && event.payload.id === subagentId
+            : event.type === "provider-thread.updated" &&
+              event.threadId === task.childThreadId &&
+              (event.payload.pendingBackgroundTasks?.length ?? 0) > 0,
+        );
+        for (const event of background === "subagent" ? nativeSubagentEvents : shellEvents) {
           yield* Queue.offer(child.events, event);
         }
-        yield* Fiber.join(waiting);
-        yield* worker.drain();
+        yield* Fiber.join(started);
+        const endTurn = Effect.gen(function* () {
+          for (const event of [
+            {
+              type: "provider_turn.updated",
+              driver,
+              providerTurn: { ...childTurn, status: "completed", completedAt: now },
+            },
+            {
+              type: "turn.terminal",
+              driver,
+              providerThreadId: childTurn.providerThreadId,
+              providerTurnId: childTurn.id,
+              runOrdinal: child.turn.runOrdinal,
+              status: "completed",
+              failure: null,
+              threadDisposition: "reusable",
+            },
+          ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) {
+            yield* Queue.offer(child.events, event);
+          }
+          yield* Fiber.join(waiting);
+        });
+        if (cancelAt !== "turn") yield* endTurn;
+        if (cancelAt === "settled") yield* worker.drain();
 
         const scope: McpInvocationScope = {
           environmentId: EnvironmentId.make("environment:task-cancel"),
@@ -341,33 +380,78 @@ it.effect("task_cancel ends a delegated child's background native subagent", () 
         };
         const before = yield* service.taskStatus(scope, task.id);
         assert.equal(before.status, "running");
-        assert.equal(before.workState, "waiting_for_children");
+        assert.equal(before.workState, cancelAt === "settled" ? "waiting_for_children" : "working");
 
+        const settled = yield* watch(
+          (event) =>
+            event.type === "subagent.updated" &&
+            event.payload.id === task.id &&
+            event.payload.status === "interrupted",
+        );
         const cancelled = yield* service.cancelTask(scope, {
           taskId: task.id,
           clientRequestId: "cancel-task",
         });
         assert.equal(cancelled.status, "cancel_requested");
+        // The turn completes normally after Stop, before its interrupt reaches the provider.
+        if (cancelAt === "turn") yield* endTurn;
         yield* worker.drain();
+        const parentTask = Effect.map(orchestrator.getThreadProjection(parentThreadId), (parent) =>
+          parent.subagents.find((entry) => entry.id === task.id),
+        );
+        // task_cancel settles a finished turn itself; a running one settles when it ends.
+        if ((yield* parentTask)?.status !== "interrupted") yield* Fiber.join(settled);
 
         const childAfter = yield* orchestrator.getThreadProjection(task.childThreadId!);
-        assert.equal(
-          childAfter.subagents.find((entry) => entry.id === subagentId)?.status,
-          "interrupted",
-        );
-        assert.equal(
-          childAfter.nodes.find((entry) => entry.id === subagentId)?.status,
-          "interrupted",
-        );
-        assert.equal(
-          childAfter.turnItems.find((item) => item.type === "subagent")?.status,
-          "interrupted",
-        );
+        if (background === "subagent") {
+          assert.equal(
+            childAfter.subagents.find((entry) => entry.id === subagentId)?.status,
+            "interrupted",
+          );
+          assert.equal(
+            childAfter.nodes.find((entry) => entry.id === subagentId)?.status,
+            "interrupted",
+          );
+          assert.equal(
+            childAfter.turnItems.find((item) => item.type === "subagent")?.status,
+            "interrupted",
+          );
+        } else {
+          // Stop reached the provider turn that owns the shell.
+          assert.deepEqual(
+            interrupted.map((thread) => thread.pendingBackgroundTasks?.map((work) => work.taskId)),
+            [["bg-sleep"]],
+          );
+        }
+        assert.equal(childAfter.runs.length, 1);
+        assert.equal(childAfter.runs[0]!.status, "completed");
 
         const after = yield* service.taskStatus(scope, task.id);
-        assert.equal(after.status, "completed");
-        assert.notEqual(after.workState, "waiting_for_children");
+        assert.equal(after.status, "interrupted");
+        assert.equal(after.workState, "result_available");
+        const settledTask = yield* parentTask;
+        assert.equal(settledTask?.status, "interrupted");
+        assert.notEqual(settledTask?.completedAt, null);
+
+        // Startup recovery keeps the outcome.
+        yield* orchestrator.recoverDelegatedTasks;
+        assert.equal((yield* service.taskStatus(scope, task.id)).status, "interrupted");
       }).pipe(Effect.provide(layerTest));
     }),
-  ),
+  );
+
+it.effect("task_cancel ends a delegated child's background native subagent", () =>
+  cancelBackgroundOnlyTask("subagent"),
+);
+
+it.effect("task_cancel ends a delegated child's background shell command", () =>
+  cancelBackgroundOnlyTask("command"),
+);
+
+it.effect("task_cancel ends background work while the child's run captures its checkpoint", () =>
+  cancelBackgroundOnlyTask("command", { cancelAt: "checkpoint" }),
+);
+
+it.effect("task_cancel ends background work left by a turn that finishes after Stop", () =>
+  cancelBackgroundOnlyTask("command", { cancelAt: "turn" }),
 );
