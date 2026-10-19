@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  type McpServerConfig,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -9,6 +10,7 @@ import {
 import * as Duration from "effect/Duration";
 import { describe, expect, it } from "vite-plus/test";
 import { resolveServerBackgroundActivitySettings } from "./backgroundActivitySettings.ts";
+import { clearProjectSettingsOverrides } from "./projectSettings.ts";
 import { createModelSelection } from "./model.ts";
 import { resolveProjectScripts, projectScriptsInheritDefaults } from "./projectScripts.ts";
 import {
@@ -652,7 +654,7 @@ describe("serverSettings helpers", () => {
     });
   });
 
-  it("keeps a project's providerInstances override when a patch entry omits the key", () => {
+  it("keeps a project's newer overrides when a patch entry omits the key", () => {
     const instanceId = ProviderInstanceId.make("codex_work");
     const projectId = ProjectId.make("project-a");
     const current = {
@@ -661,6 +663,8 @@ describe("serverSettings helpers", () => {
         [projectId]: {
           newWorktreesStartFromOrigin: true,
           providerInstances: { [instanceId]: { enabled: false } },
+          mcpServers: { docs: { enabled: false } },
+          disabledSkills: { review: true },
         },
       },
     };
@@ -671,13 +675,28 @@ describe("serverSettings helpers", () => {
       },
     });
 
+    const compatible = applyServerSettingsPatch(patched, {
+      projectSettingsOverrides: {
+        [projectId]: {
+          newWorktreesStartFromOrigin: false,
+          mcpServers: undefined,
+          disabledSkills: undefined,
+        },
+      },
+    });
+    expect(compatible.projectSettingsOverrides[projectId]).toEqual(
+      patched.projectSettingsOverrides[projectId],
+    );
+
     expect(patched.projectSettingsOverrides[projectId]).toEqual({
       newWorktreesStartFromOrigin: false,
       providerInstances: { [instanceId]: { enabled: false } },
+      mcpServers: { docs: { enabled: false } },
+      disabledSkills: { review: true },
     });
   });
 
-  it("clears a project's providerInstances override when a patch entry sends an empty map", () => {
+  it("clears a project's newer overrides when a patch entry sends an empty map", () => {
     const instanceId = ProviderInstanceId.make("codex_work");
     const projectId = ProjectId.make("project-a");
     const current = {
@@ -686,19 +705,48 @@ describe("serverSettings helpers", () => {
         [projectId]: {
           newWorktreesStartFromOrigin: true,
           providerInstances: { [instanceId]: { enabled: false } },
+          mcpServers: { docs: { enabled: false } },
+          disabledSkills: { review: true },
         },
       },
     };
 
     const patched = applyServerSettingsPatch(current, {
       projectSettingsOverrides: {
-        [projectId]: { newWorktreesStartFromOrigin: true, providerInstances: {} },
+        [projectId]: {
+          newWorktreesStartFromOrigin: true,
+          providerInstances: {},
+          mcpServers: {},
+          disabledSkills: {},
+        },
       },
+    });
+
+    const resetSkills = applyServerSettingsPatch(current, {
+      projectSettingsOverrides: {
+        [projectId]: clearProjectSettingsOverrides(current, projectId, ["disabledSkills"]),
+      },
+    });
+    expect(resetSkills.projectSettingsOverrides[projectId]).toEqual({
+      ...current.projectSettingsOverrides[projectId],
+      disabledSkills: {},
+    });
+    const resetServers = applyServerSettingsPatch(resetSkills, {
+      projectSettingsOverrides: {
+        [projectId]: clearProjectSettingsOverrides(resetSkills, projectId, ["mcpServers"]),
+      },
+    });
+    expect(resetServers.projectSettingsOverrides[projectId]).toEqual({
+      ...current.projectSettingsOverrides[projectId],
+      disabledSkills: {},
+      mcpServers: {},
     });
 
     expect(patched.projectSettingsOverrides[projectId]).toEqual({
       newWorktreesStartFromOrigin: true,
       providerInstances: {},
+      mcpServers: {},
+      disabledSkills: {},
     });
   });
 
@@ -1145,5 +1193,39 @@ describe("synchronized model preferences", () => {
       favorites: [],
       providerModelPreferences: {},
     });
+  });
+});
+
+describe("MCP server patches", () => {
+  const linear: McpServerConfig = {
+    enabled: true,
+    transport: { type: "http", url: "https://mcp.linear.app/mcp", headers: [] },
+  };
+  const supabase: McpServerConfig = {
+    enabled: true,
+    transport: {
+      type: "stdio",
+      command: "npx",
+      args: ["-y", "@supabase/mcp-server-supabase"],
+      env: [{ name: "SUPABASE_ACCESS_TOKEN", value: "env-token", sensitive: true }],
+    },
+  };
+
+  it("replaces one server at a time and removes it with null", () => {
+    const current = {
+      ...DEFAULT_SERVER_SETTINGS,
+      mcpServers: { linear, supabase, retained: linear },
+    };
+    const switched: McpServerConfig = {
+      enabled: true,
+      transport: { type: "http", url: "https://example.com/mcp", headers: [] },
+    };
+
+    const next = applyServerSettingsPatch(current, {
+      mcpServers: { supabase: switched, linear: null },
+    });
+
+    // A stdio server edited into an http one keeps no stdio fields.
+    expect(next.mcpServers).toEqual({ supabase: switched, retained: linear });
   });
 });

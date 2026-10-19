@@ -178,14 +178,17 @@ export class ServerSettingsService extends Context.Service<
 
     readonly getSettings: Effect.Effect<ServerSettings, ServerSettingsError>;
 
-    readonly updateSettings: (
+    // Authorization runs under the write semaphore, against the state being replaced.
+    readonly updateSettings: <E = never>(
       patch: ServerSettingsPatch,
-    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+      authorize?: (current: ServerSettings) => Effect.Effect<void, E>,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError | NoInfer<E>>;
 
-    readonly updateProviderInstance: (
+    readonly updateProviderInstance: <E = never>(
       mutation: ProviderInstanceMutation,
       patch?: ServerSettingsPatch,
-    ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+      authorize?: (current: ServerSettings) => Effect.Effect<void, E>,
+    ) => Effect.Effect<ServerSettings, ServerSettingsError | NoInfer<E>>;
 
     readonly withSettingsSnapshot: <A, E, R>(
       use: (settings: ServerSettings) => Effect.Effect<A, E, R>,
@@ -221,9 +224,9 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
     const writeSemaphore = yield* Semaphore.make(1);
     const getSettings = Ref.get(currentSettingsRef).pipe(Effect.map(resolveTextGenerationProvider));
 
-    const updateTestSettings = (
-      update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
-    ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    const updateTestSettings = <E>(
+      update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError | E>,
+    ): Effect.Effect<ServerSettings, ServerSettingsError | E> =>
       writeSemaphore.withPermits(1)(
         Ref.get(currentSettingsRef).pipe(
           Effect.flatMap(update),
@@ -237,13 +240,16 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
       start: Effect.void,
       ready: Effect.void,
       getSettings,
-      updateSettings: (patch) =>
+      updateSettings: (patch, authorize) =>
         updateTestSettings((currentSettings) =>
-          Effect.succeed(applyServerSettingsPatch(currentSettings, patch)),
+          (authorize?.(currentSettings) ?? Effect.void).pipe(
+            Effect.as(applyServerSettingsPatch(currentSettings, patch)),
+          ),
         ),
-      updateProviderInstance: (mutation, patch = {}) =>
+      updateProviderInstance: (mutation, patch = {}, authorize) =>
         updateTestSettings((currentSettings) =>
           Effect.gen(function* () {
+            yield* authorize?.(currentSettings) ?? Effect.void;
             yield* ensureProviderInstanceMutationAllowed(
               currentSettings,
               mutation,
@@ -629,7 +635,12 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const pending: SettingsSecret[] = [];
       mapSettingsSecrets(settings, (secret) => {
-        if (secret.kind === "field" && !secret.redacted && secret.value.length > 0) {
+        if (
+          (secret.kind === "field" || secret.kind === "mcp") &&
+          secret.sensitive &&
+          !secret.redacted &&
+          secret.value.length > 0
+        ) {
           pending.push(secret);
         }
         return secret;
@@ -833,7 +844,7 @@ const make = Effect.gen(function* () {
           secret.sensitive && secret.redacted
             ? (storedSecrets.get(secret.secretName) ?? "")
             : secret.value,
-        redacted: secret.sensitive && secret.kind === "environment" && secret.redacted,
+        redacted: secret.sensitive && secret.kind !== "field" && secret.redacted,
       }));
     });
 
@@ -863,11 +874,20 @@ const make = Effect.gen(function* () {
     | { readonly kind: "remove"; readonly operation: "remove-secret" | "remove-stale-secret" }
   );
 
-  const persistSettingsSecrets = (current: ServerSettings, next: ServerSettings) =>
+  const persistSettingsSecrets = (
+    current: ServerSettings,
+    materializedCurrent: ServerSettings,
+    next: ServerSettings,
+  ) =>
     Effect.sync(() => {
       const previous = new Map<string, SettingsSecret>();
       mapSettingsSecrets(current, (secret) => {
         previous.set(secret.secretName, secret);
+        return secret;
+      });
+      const materializedPrevious = new Map<string, SettingsSecret>();
+      mapSettingsSecrets(materializedCurrent, (secret) => {
+        materializedPrevious.set(secret.secretName, secret);
         return secret;
       });
       const changes: SecretChange[] = [];
@@ -886,9 +906,15 @@ const make = Effect.gen(function* () {
           changes.push({ ...metadata, kind: "remove", operation: "remove-secret" });
           return { value: secret.value, redacted: false };
         }
-        const old = previous.get(secret.secretName);
+        const sourceSecretName = secret.sourceSecretName ?? secret.secretName;
+        const moving = sourceSecretName !== secret.secretName;
+        const old = moving
+          ? materializedPrevious.get(sourceSecretName)
+          : previous.get(secret.secretName);
         const inlineValue =
-          old?.sensitive && !old.redacted && old.value.length > 0 ? old.value : undefined;
+          old?.sensitive && (moving || !old.redacted) && old.value.length > 0
+            ? old.value
+            : undefined;
         const value = secret.redacted ? inlineValue : secret.value;
         if (value === undefined) {
           nextSecretNames.add(secret.secretName);
@@ -996,14 +1022,15 @@ const make = Effect.gen(function* () {
     );
   };
 
-  const updateAndPersistSettings = (
-    update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>,
-  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+  const updateAndPersistSettings = <E>(
+    update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError | E>,
+  ): Effect.Effect<ServerSettings, ServerSettingsError | E> =>
     writeSemaphore.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* getSettingsFromCache;
         const updated = yield* update(current);
-        const persisted = yield* persistSettingsSecrets(current, updated);
+        const materializedCurrent = yield* materializeSettingsSecrets(current);
+        const persisted = yield* persistSettingsSecrets(current, materializedCurrent, updated);
         const next = yield* normalizeServerSettings(persisted.settings);
         const materialized = yield* Effect.uninterruptibleMask(() =>
           Effect.gen(function* () {
@@ -1148,13 +1175,16 @@ const make = Effect.gen(function* () {
       Effect.flatMap(materializeSettingsSecrets),
       Effect.map(resolveTextGenerationProvider),
     ),
-    updateSettings: (patch) =>
+    updateSettings: (patch, authorize) =>
       updateAndPersistSettings((current) =>
-        Effect.succeed(applyServerSettingsPatch(current, patch)),
+        (authorize?.(current) ?? Effect.void).pipe(
+          Effect.as(applyServerSettingsPatch(current, patch)),
+        ),
       ),
-    updateProviderInstance: (mutation, patch = {}) =>
+    updateProviderInstance: (mutation, patch = {}, authorize) =>
       updateAndPersistSettings((current) =>
         Effect.gen(function* () {
+          yield* authorize?.(current) ?? Effect.void;
           yield* ensureProviderInstanceMutationAllowed(current, mutation, settingsPath);
           const patched = applyServerSettingsPatch(current, patch);
           return applyProviderInstanceMutation(patched, mutation);

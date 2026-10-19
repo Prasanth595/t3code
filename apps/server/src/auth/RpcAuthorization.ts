@@ -6,6 +6,7 @@ import {
   AssetCreateUrlInput,
   AuthAccessReadScope,
   ServerSettingsPatch,
+  type ServerSettings,
   ProviderInstanceMutation,
   requiredScopesForServerSettingsPatch,
   requiredScopesForProjectMutation,
@@ -229,9 +230,13 @@ const SettingsUpdate = Schema.Struct({
   providerInstanceMutation: Schema.optionalKey(ProviderInstanceMutation),
 });
 
-const requiredScopesForSettingsUpdate = (payload: unknown) => {
-  const input = Schema.decodeUnknownSync(SettingsUpdate)(payload);
-  const scopes = requiredScopesForServerSettingsPatch(input.patch);
+const decodeSettingsUpdate = Schema.decodeUnknownSync(SettingsUpdate);
+
+const requiredScopesForSettingsUpdate = (
+  input: typeof SettingsUpdate.Type,
+  current?: Pick<ServerSettings, "projectSettingsOverrides">,
+) => {
+  const scopes = requiredScopesForServerSettingsPatch(input.patch, current);
   if (input.providerInstanceMutation === undefined) return scopes;
   // An atomic provider mutation carries an empty patch unless it also changes settings.
   return Object.values(input.patch).every((value) => value === undefined)
@@ -239,11 +244,25 @@ const requiredScopesForSettingsUpdate = (payload: unknown) => {
     : [...new Set([...scopes, AuthProvidersManageScope])];
 };
 
+export const authorizeSettingsUpdate = (
+  scopes: ReadonlyArray<AuthEnvironmentScope>,
+  patch: ServerSettingsPatch,
+  current: ServerSettings,
+  providerInstanceMutation?: ProviderInstanceMutation,
+) => {
+  const missing = requiredScopesForSettingsUpdate(
+    { patch, ...(providerInstanceMutation === undefined ? {} : { providerInstanceMutation }) },
+    current,
+  ).find((scope) => !scopes.includes(scope));
+  return missing === undefined ? Effect.void : Effect.fail(rpcAuthorizationError(missing));
+};
+
 const decodeProjectMutation = Schema.decodeUnknownSync(ProjectMutation);
 
 const requiredScopesForRpcCall = (
   method: string,
   payload: unknown,
+  current?: Pick<ServerSettings, "projectSettingsOverrides">,
 ): ReadonlyArray<AuthEnvironmentScope> => {
   if (method === WS_METHODS.serverRetryResourceTelemetry) {
     return [AuthEnvironmentMaintainScope, AuthDiagnosticsReadScope];
@@ -258,7 +277,8 @@ const requiredScopesForRpcCall = (
         : AuthOrchestrationReadScope,
     ];
   }
-  if (method === WS_METHODS.serverUpdateSettings) return requiredScopesForSettingsUpdate(payload);
+  if (method === WS_METHODS.serverUpdateSettings)
+    return requiredScopesForSettingsUpdate(decodeSettingsUpdate(payload), current);
   if (method === WS_METHODS.projectsMutate) {
     return requiredScopesForProjectMutation(decodeProjectMutation(payload));
   }
@@ -275,15 +295,23 @@ const requiredScopesForRpcCall = (
 export const layer = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   onAuthorized?: (method: string, payload: unknown) => Effect.Effect<void>,
+  currentSettings: Effect.Effect<
+    Pick<ServerSettings, "projectSettingsOverrides"> | undefined
+  > = Effect.succeed(undefined),
 ) =>
-  Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) => {
-    const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload);
-    const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
-    if (requiredScope !== undefined) return Effect.fail(rpcAuthorizationError(requiredScope));
-    return onAuthorized === undefined
-      ? effect
-      : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
-  });
+  Layer.succeed(RpcScopeAuthorization)((effect, { rpc, payload }) =>
+    Effect.gen(function* () {
+      const current =
+        rpc._tag === WS_METHODS.serverUpdateSettings ? yield* currentSettings : undefined;
+      const requiredScopes = requiredScopesForRpcCall(rpc._tag, payload, current);
+      const requiredScope = requiredScopes.find((scope) => !scopes.includes(scope));
+      if (requiredScope !== undefined)
+        return yield* Effect.fail(rpcAuthorizationError(requiredScope));
+      return yield* onAuthorized === undefined
+        ? effect
+        : Effect.tap(effect, () => onAuthorized(rpc._tag, payload));
+    }),
+  );
 
 /** Retrying can install or restart tools even though ordinary listing is readable. */
 export const requiredScopeForDeviceList = (input: DeviceListInput): AuthEnvironmentScope =>
