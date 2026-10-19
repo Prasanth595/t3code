@@ -3708,6 +3708,13 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         claudeSdkFrame({
           type: "system",
           subtype: "status",
+          status: "compacting",
+          uuid: "00000000-0000-4000-8000-000000000610",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
           status: null,
           compact_result: compaction,
           ...(compaction === "failed"
@@ -3716,10 +3723,44 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           uuid: "00000000-0000-4000-8000-000000000612",
           session_id: WAKE_NATIVE_SESSION,
         }),
-        compact ? claudeSdkFrame({ ...result, local_command: "compact" }) : result,
+        claudeSdkFrame({
+          type: "system",
+          subtype: "informational",
+          content: "Compaction finished; turn continues.",
+          level: "warning",
+          uuid: "00000000-0000-4000-8000-000000000614",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
       ]);
+      yield* Queue.take(harness.systemNoticeReceipts);
+      const updates = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+          ? [event.turnItem]
+          : [],
+      );
+      assert.lengthOf(updates, 2);
+      const [running, settled] = updates;
+      assert.equal(running?.status, "running");
+      assert.equal(settled?.status, compaction === "success" ? "completed" : "failed");
+      assert.equal(settled?.id, running?.id);
+      assert.equal(settled?.ordinal, running?.ordinal);
+      assert.deepEqual(settled?.startedAt, running?.startedAt);
+      assert.isNotNull(settled?.completedAt);
+      assert.isEmpty(harness.terminalEvents());
 
+      yield* Queue.offer(
+        harness.sdkMessages,
+        compact ? claudeSdkFrame({ ...result, local_command: "compact" }) : result,
+      );
       const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "compaction"
+            ? [event.turnItem]
+            : [],
+        ),
+        updates,
+      );
       assert.equal(terminal.status, status);
       if (terminal.status !== "failed") return;
       assert.equal(terminal.failure.class, "usage_limit");
@@ -4498,6 +4539,23 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       yield* harness.offerAndWait(
         claudeSdkFrame({
           type: "system",
+          subtype: "status",
+          status: null,
+          compact_result: "success",
+          uuid: "00000000-0000-4000-8000-000000000222",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      const reported = yield* observeCompactions("00000000-0000-4000-8000-000000000223");
+      assert.lengthOf(reported, 2);
+      assert.equal(reported[1]?.id, running.id);
+      assert.equal(reported[1]?.status, "completed");
+      assert.isUndefined(reported[1]?.afterTokenCount);
+      assert.isEmpty(harness.terminalEvents());
+      yield* TestClock.adjust(1_000);
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
           subtype: "compact_boundary",
           compact_metadata: { trigger: "auto", pre_tokens: 1500, post_tokens: 400 },
           uuid: "00000000-0000-4000-8000-000000000213",
@@ -4505,15 +4563,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       const afterBoundary = yield* observeCompactions("00000000-0000-4000-8000-000000000216");
-      assert.lengthOf(afterBoundary, 2);
-      const completed = afterBoundary[1]!;
+      assert.lengthOf(afterBoundary, 3);
+      const completed = afterBoundary[2]!;
       assert.equal(completed.status, "completed");
       assert.equal(completed.id, running.id);
       assert.equal(completed.ordinal, running.ordinal);
       assert.deepEqual(completed.startedAt, running.startedAt);
       assert.equal(completed.beforeTokenCount, 1500);
       assert.equal(completed.afterTokenCount, 400);
-      assert.deepEqual(completed.completedAt, yield* DateTime.now);
+      assert.deepEqual(completed.completedAt, reported[1]?.completedAt);
 
       yield* harness.offerAndWait(
         claudeSdkFrame({
@@ -4534,9 +4592,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       const nextCompactions = yield* observeCompactions("00000000-0000-4000-8000-000000000219");
-      assert.lengthOf(nextCompactions, 4);
-      const boundaryOnly = nextCompactions[2]!;
-      const nextRunning = nextCompactions[3]!;
+      assert.lengthOf(nextCompactions, 5);
+      const boundaryOnly = nextCompactions[3]!;
+      const nextRunning = nextCompactions[4]!;
       assert.equal(boundaryOnly.status, "completed");
       assert.notEqual(boundaryOnly.id, completed.id);
       assert.isAbove(boundaryOnly.ordinal, completed.ordinal);
@@ -4545,6 +4603,29 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(nextRunning.status, "running");
       assert.notEqual(nextRunning.id, boundaryOnly.id);
       assert.isAbove(nextRunning.ordinal, boundaryOnly.ordinal);
+
+      for (const [index, outcome] of [
+        { status: null, compact_result: "failed", compact_error: "Temporary compaction failure." },
+        { status: "compacting" },
+      ].entries()) {
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            ...outcome,
+            uuid: `00000000-0000-4000-8000-00000000023${index}`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+      }
+      const retried = yield* observeCompactions("00000000-0000-4000-8000-000000000232");
+      assert.lengthOf(retried, 7);
+      assert.equal(retried[5]?.id, nextRunning.id);
+      assert.equal(retried[5]?.status, "failed");
+      const retryRunning = retried[6]!;
+      assert.equal(retryRunning.status, "running");
+      assert.notEqual(retryRunning.id, nextRunning.id);
+      assert.isAbove(retryRunning.ordinal, nextRunning.ordinal);
 
       yield* harness.offerAndWait(
         claudeSdkFrame({
@@ -4556,12 +4637,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         }),
       );
       const allCompactions = yield* observeCompactions("00000000-0000-4000-8000-000000000221");
-      assert.lengthOf(allCompactions, 5);
-      assert.equal(allCompactions[4]?.id, nextRunning.id);
-      assert.equal(allCompactions[4]?.ordinal, nextRunning.ordinal);
-      assert.equal(allCompactions[4]?.status, "completed");
-      assert.equal(allCompactions[4]?.beforeTokenCount, 3000);
-      assert.equal(allCompactions[4]?.afterTokenCount, 600);
+      assert.lengthOf(allCompactions, 8);
+      assert.equal(allCompactions[7]?.id, retryRunning.id);
+      assert.equal(allCompactions[7]?.ordinal, retryRunning.ordinal);
+      assert.equal(allCompactions[7]?.status, "completed");
+      assert.equal(allCompactions[7]?.beforeTokenCount, 3000);
+      assert.equal(allCompactions[7]?.afterTokenCount, 600);
 
       yield* Queue.offer(
         harness.sdkMessages,

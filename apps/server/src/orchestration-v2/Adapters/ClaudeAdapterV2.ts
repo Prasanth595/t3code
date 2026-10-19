@@ -3044,6 +3044,7 @@ interface ActiveClaudeTurnContext {
   // compaction makes the usage stale (null) without forgetting the request.
   streamUsage: { readonly messageId: string; usage: ClaudeMessageUsage | null } | null;
   readonly toolCalls: Map<string, ActiveClaudeToolCall>;
+  // A successful status can precede the boundary that supplies its token counts.
   compaction: Extract<OrchestrationV2TurnItem, { type: "compaction" }> | null;
   readonly ignoredTaskIds: Set<string>;
   readonly announcedUsageLimits: Set<string>;
@@ -6049,7 +6050,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly result?: SDKResultMessage;
         }) {
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
-          if (input.context.compaction !== null) {
+          if (input.context.compaction?.status === "running") {
             yield* emitProviderEvent({
               type: "turn_item.updated",
               driver: CLAUDE_PROVIDER,
@@ -6064,8 +6065,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 updatedAt: input.completedAt,
               },
             });
-            input.context.compaction = null;
           }
+          input.context.compaction = null;
           if (input.status !== "completed") {
             const liveQuery = yield* Ref.get(queryContext);
             for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
@@ -7139,6 +7140,25 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           ) {
             context.compactionFailure =
               message.compact_result === "failed" ? { message: message.compact_error } : null;
+            if (context.compaction?.status === "running") {
+              const now = yield* DateTime.now;
+              context.compaction = {
+                ...context.compaction,
+                status: message.compact_result === "success" ? "completed" : "failed",
+                title:
+                  message.compact_result === "success"
+                    ? "Context compacted"
+                    : "Context compaction failed",
+                completedAt: now,
+                updatedAt: now,
+              };
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: context.compaction,
+              });
+              if (message.compact_result === "failed") context.compaction = null;
+            }
           }
 
           if (
@@ -7146,11 +7166,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             (message.subtype === "compact_boundary" ||
               (message.subtype === "status" && message.status === "compacting"))
           ) {
-            if (message.subtype === "status" && context.compaction !== null) return;
+            if (message.subtype === "status" && context.compaction?.status === "running") return;
             const now = yield* DateTime.now;
             const nativeItemId = message.uuid;
             const compaction =
-              context.compaction ??
+              (message.subtype === "compact_boundary" ? context.compaction : null) ??
               ({
                 id: idAllocator.derive.turnItemFromProviderItem({
                   driver: CLAUDE_PROVIDER,
@@ -7225,7 +7245,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 ...compaction,
                 status: "completed",
                 title: "Context compacted",
-                completedAt: now,
+                completedAt: compaction.completedAt ?? now,
                 updatedAt: now,
                 ...(message.compact_metadata.pre_tokens === undefined
                   ? {}
