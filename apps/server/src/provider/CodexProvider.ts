@@ -266,15 +266,29 @@ export function applyPreferredCodexDefaultModel(
 }
 
 /**
- * Codex has no static default capability set, so a bare custom slug borrows
- * the first built-in's descriptors; an entry with its own capabilities keeps
- * them.
+ * Bare custom slugs borrow built-in choices, but the built-in's effort default
+ * is not known to apply. Authored capabilities stay intact.
  */
 function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
 ): ReadonlyArray<ServerProviderModel> {
-  const fallbackCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
+  const builtinCapabilities = models.find((model) => model.capabilities)?.capabilities;
+  const fallbackCapabilities = builtinCapabilities
+    ? {
+        ...builtinCapabilities,
+        optionDescriptors: builtinCapabilities.optionDescriptors?.map((descriptor) => {
+          if (descriptor.id !== "reasoningEffort" || descriptor.type !== "select") {
+            return descriptor;
+          }
+          const { currentValue: _currentValue, ...rest } = descriptor;
+          return {
+            ...rest,
+            options: descriptor.options.map(({ isDefault: _isDefault, ...option }) => option),
+          };
+        }),
+      }
+    : null;
   return providerModelsFromSettings(models, customModels, fallbackCapabilities);
 }
 
