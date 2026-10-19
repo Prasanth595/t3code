@@ -229,7 +229,6 @@ interface PendingRequest {
   node: OrchestrationV2ExecutionNode;
   item: OrchestrationV2TurnItem;
   response?: Pick<OrchestrationV2RuntimeRequest, "decision" | "answers">;
-  /** False while T3 approves a workflow child's request for the user. */
   shown: boolean;
 }
 
@@ -1215,16 +1214,13 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                   required: true,
                 })),
               };
-        // Muse does not give workflow children the session's allowAll mode, so in full
-        // access T3 approves for them without showing the request. If Muse rejects that,
-        // the request is shown and waits for the user.
+        // Muse does not propagate allowAll to workflow children; T3 answers for them.
         const autoApprove = child && input.runtimePolicy.runtimeMode === "full-access";
         const entry: PendingRequest = {
           native,
           request: runtimeRequest,
           node,
           item,
-          // A request the user already sees stays visible when Muse updates it.
           shown: !autoApprove || previous?.shown === true,
         };
         pending.set(requestId, entry);
@@ -1233,13 +1229,11 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           yield* decideApproval(entry, "accept").pipe(
             Effect.catch(() =>
               Effect.gen(function* () {
-                // Muse may have settled or replaced the request while T3 waited, or the
-                // session may be closing. Nothing is left to show then.
+                // Native updates may settle or replace this entry while the RPC is in flight.
                 if (!closed && !broken && pending.get(requestId) === entry)
                   yield* showRequest(entry);
               }).pipe(eventPermit.withPermits(1)),
             ),
-            Effect.ignore,
             Effect.forkIn(scope),
           );
       });
@@ -1287,8 +1281,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               if (!entry.response && native) entry.response = { decision: native };
               yield* resolvePending(entry, "resolved");
             }
-            // A request T3 is still approving for the user is hidden and does not keep
-            // the session waiting.
             if (![...pending.values()].some((candidate) => candidate.shown))
               yield* updateSession(active ? "running" : "ready");
           }
