@@ -2,9 +2,12 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
@@ -36,11 +39,15 @@ import {
 
 const withWindowsEnvironmentMocks = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
-  readEnvironment: WindowsShellEnvironmentReader,
+  readEnvironment: (
+    ...args: Parameters<WindowsShellEnvironmentReader>
+  ) => Partial<Record<string, string>>,
   commandAvailable: CommandAvailabilityChecker,
 ) =>
   effect.pipe(
-    Effect.provideService(WindowsShellEnvironment, readEnvironment),
+    Effect.provideService(WindowsShellEnvironment, (...args) =>
+      Effect.sync(() => readEnvironment(...args)),
+    ),
     Effect.provideService(CommandAvailability, commandAvailable),
   );
 
@@ -218,91 +225,176 @@ describe("mergePathEntries", () => {
 });
 
 describe("readEnvironmentFromWindowsShell", () => {
-  it("extracts environment variables from a PowerShell command", () => {
-    const execFile = vi.fn<
-      (
-        file: string,
-        args: ReadonlyArray<string>,
-        options: { encoding: "utf8"; timeout: number },
-      ) => string
-    >(
-      () =>
-        "__T3CODE_ENV_PATH_START__\nC:\\Users\\testuser\\AppData\\Roaming\\npm\n__T3CODE_ENV_PATH_END__\n",
-    );
+  effectIt.effect("yields while the native shell probe is pending", () =>
+    Effect.gen(function* () {
+      let completed = false;
+      const [environment, completedBeforeProbeReturned] = yield* Effect.all(
+        [
+          readEnvironmentFromWindowsShell(["PATH"]).pipe(
+            Effect.tap(() =>
+              Effect.sync(() => {
+                completed = true;
+              }),
+            ),
+          ),
+          Effect.sync(() => completed),
+        ],
+        { concurrency: 2 },
+      );
+      expect(completedBeforeProbeReturned).toBe(false);
+      expect(environment).toBeTypeOf("object");
+    }),
+  );
 
-    expect(readEnvironmentFromWindowsShell(["PATH"], execFile)).toEqual({
-      PATH: "C:\\Users\\testuser\\AppData\\Roaming\\npm",
-    });
-    expect(execFile).toHaveBeenCalledWith(
-      "pwsh.exe",
-      expect.arrayContaining(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]),
-      { encoding: "utf8", timeout: 5000 },
-    );
-  });
+  effectIt.effect("returns an empty environment after both shell candidates fail", () =>
+    Effect.gen(function* () {
+      const execFile = vi.fn(() => Effect.succeed(Option.none<string>()));
+      expect(yield* readEnvironmentFromWindowsShell(["PATH"], {}, execFile)).toEqual({});
+      expect(execFile).toHaveBeenCalledTimes(2);
+    }),
+  );
 
-  it("strips CRLF delimiters from captured PowerShell values", () => {
-    const execFile = vi.fn<
-      (
-        file: string,
-        args: ReadonlyArray<string>,
-        options: { encoding: "utf8"; timeout: number },
-      ) => string
-    >(
-      () =>
-        "__T3CODE_ENV_FNM_DIR_START__\r\nC:\\Users\\testuser\\AppData\\Roaming\\fnm\r\n__T3CODE_ENV_FNM_DIR_END__\r\n",
-    );
+  effectIt.effect("does not launch a shell when no variables are requested", () =>
+    Effect.gen(function* () {
+      const execFile = vi.fn(() => Effect.succeed(Option.none<string>()));
+      expect(yield* readEnvironmentFromWindowsShell([], {}, execFile)).toEqual({});
+      expect(execFile).not.toHaveBeenCalled();
+    }),
+  );
 
-    expect(readEnvironmentFromWindowsShell(["FNM_DIR"], execFile)).toEqual({
-      FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
-    });
-  });
+  effectIt.effect("interrupts a pending probe without trying the next shell", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      let interrupted = false;
+      const execFile = vi.fn(() =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              interrupted = true;
+            }),
+          ),
+        ),
+      );
+      const fiber = yield* readEnvironmentFromWindowsShell(["PATH"], {}, execFile).pipe(
+        Effect.forkChild,
+      );
+      yield* Deferred.await(started);
+      yield* Fiber.interrupt(fiber);
+      expect(interrupted).toBe(true);
+      expect(execFile).toHaveBeenCalledTimes(1);
+    }),
+  );
 
-  it("omits -NoProfile when loadProfile is enabled", () => {
-    const execFile = vi.fn<
-      (
-        file: string,
-        args: ReadonlyArray<string>,
-        options: { encoding: "utf8"; timeout: number },
-      ) => string
-    >(() => "__T3CODE_ENV_PATH_START__\nC:\\Tools\n__T3CODE_ENV_PATH_END__\n");
+  effectIt.effect("extracts environment variables from a PowerShell command", () =>
+    Effect.gen(function* () {
+      const execFile = vi.fn<
+        (
+          file: string,
+          args: ReadonlyArray<string>,
+          options: { encoding: "utf8"; timeout: number },
+        ) => string
+      >(
+        () =>
+          "__T3CODE_ENV_PATH_START__\nC:\\Users\\testuser\\AppData\\Roaming\\npm\n__T3CODE_ENV_PATH_END__\n",
+      );
 
-    expect(readEnvironmentFromWindowsShell(["PATH"], { loadProfile: true }, execFile)).toEqual({
-      PATH: "C:\\Tools",
-    });
-    expect(execFile).toHaveBeenCalledWith(
-      "pwsh.exe",
-      expect.arrayContaining(["-NoLogo", "-NonInteractive", "-Command"]),
-      { encoding: "utf8", timeout: 5000 },
-    );
-    expect(execFile.mock.calls[0]?.[1]).not.toContain("-NoProfile");
-  });
+      expect(
+        yield* readEnvironmentFromWindowsShell(["PATH"], {}, (...args) =>
+          Effect.try(() => execFile(...args)).pipe(Effect.option),
+        ),
+      ).toEqual({
+        PATH: "C:\\Users\\testuser\\AppData\\Roaming\\npm",
+      });
+      expect(execFile).toHaveBeenCalledWith(
+        "pwsh.exe",
+        expect.arrayContaining(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command"]),
+        { encoding: "utf8", timeout: 5000 },
+      );
+    }),
+  );
 
-  it("falls back to Windows PowerShell when pwsh.exe is unavailable", () => {
-    const execFile = vi.fn<
-      (
-        file: string,
-        args: ReadonlyArray<string>,
-        options: { encoding: "utf8"; timeout: number },
-      ) => string
-    >((file) => {
-      if (file === "pwsh.exe") {
-        throw new Error("spawn pwsh.exe ENOENT");
-      }
-      return "__T3CODE_ENV_PATH_START__\nC:\\Tools\n__T3CODE_ENV_PATH_END__\n";
-    });
+  effectIt.effect("strips CRLF delimiters from captured PowerShell values", () =>
+    Effect.gen(function* () {
+      const execFile = vi.fn<
+        (
+          file: string,
+          args: ReadonlyArray<string>,
+          options: { encoding: "utf8"; timeout: number },
+        ) => string
+      >(
+        () =>
+          "__T3CODE_ENV_FNM_DIR_START__\r\nC:\\Users\\testuser\\AppData\\Roaming\\fnm\r\n__T3CODE_ENV_FNM_DIR_END__\r\n",
+      );
 
-    expect(readEnvironmentFromWindowsShell(["PATH"], execFile)).toEqual({
-      PATH: "C:\\Tools",
-    });
-    expect(execFile).toHaveBeenNthCalledWith(1, "pwsh.exe", expect.any(Array), {
-      encoding: "utf8",
-      timeout: 5000,
-    });
-    expect(execFile).toHaveBeenNthCalledWith(2, "powershell.exe", expect.any(Array), {
-      encoding: "utf8",
-      timeout: 5000,
-    });
-  });
+      expect(
+        yield* readEnvironmentFromWindowsShell(["FNM_DIR"], {}, (...args) =>
+          Effect.try(() => execFile(...args)).pipe(Effect.option),
+        ),
+      ).toEqual({
+        FNM_DIR: "C:\\Users\\testuser\\AppData\\Roaming\\fnm",
+      });
+    }),
+  );
+
+  effectIt.effect("omits -NoProfile when loadProfile is enabled", () =>
+    Effect.gen(function* () {
+      const execFile = vi.fn<
+        (
+          file: string,
+          args: ReadonlyArray<string>,
+          options: { encoding: "utf8"; timeout: number },
+        ) => string
+      >(() => "__T3CODE_ENV_PATH_START__\nC:\\Tools\n__T3CODE_ENV_PATH_END__\n");
+
+      expect(
+        yield* readEnvironmentFromWindowsShell(["PATH"], { loadProfile: true }, (...args) =>
+          Effect.try(() => execFile(...args)).pipe(Effect.option),
+        ),
+      ).toEqual({
+        PATH: "C:\\Tools",
+      });
+      expect(execFile).toHaveBeenCalledWith(
+        "pwsh.exe",
+        expect.arrayContaining(["-NoLogo", "-NonInteractive", "-Command"]),
+        { encoding: "utf8", timeout: 5000 },
+      );
+      expect(execFile.mock.calls[0]?.[1]).not.toContain("-NoProfile");
+    }),
+  );
+
+  effectIt.effect("falls back to Windows PowerShell when pwsh.exe is unavailable", () =>
+    Effect.gen(function* () {
+      const execFile = vi.fn<
+        (
+          file: string,
+          args: ReadonlyArray<string>,
+          options: { encoding: "utf8"; timeout: number },
+        ) => string
+      >((file) => {
+        if (file === "pwsh.exe") {
+          throw new Error("spawn pwsh.exe ENOENT");
+        }
+        return "__T3CODE_ENV_PATH_START__\nC:\\Tools\n__T3CODE_ENV_PATH_END__\n";
+      });
+
+      expect(
+        yield* readEnvironmentFromWindowsShell(["PATH"], {}, (...args) =>
+          Effect.try(() => execFile(...args)).pipe(Effect.option),
+        ),
+      ).toEqual({
+        PATH: "C:\\Tools",
+      });
+      expect(execFile).toHaveBeenNthCalledWith(1, "pwsh.exe", expect.any(Array), {
+        encoding: "utf8",
+        timeout: 5000,
+      });
+      expect(execFile).toHaveBeenNthCalledWith(2, "powershell.exe", expect.any(Array), {
+        encoding: "utf8",
+        timeout: 5000,
+      });
+    }),
+  );
 });
 
 describe("mergePathValues", () => {
