@@ -86,6 +86,7 @@ function WindowBar({
   const remaining = remainingPercent(window);
   const elapsed = elapsedShare(window, now);
   const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
+  const tickPosition = timeLeft === null ? null : `clamp(3px, ${timeLeft}%, calc(100% - 3px))`;
   const resetsIn = formatResetsIn(window, now);
   const resetsAt = window.resetsAt
     ? formatUpcomingTimestamp(window.resetsAt, timestampFormat, now)
@@ -106,18 +107,30 @@ function WindowBar({
           />
         }
       >
-        <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
-        {remaining > 0 ? (
-          <div
-            className="absolute inset-y-1.5 left-0 rounded-full"
-            style={{ width: `${remaining}%`, backgroundColor: color }}
-          />
-        ) : null}
-        {timeLeft !== null ? (
+        {/* Mask both layers so the gap exposes even a translucent composer surface. */}
+        <div
+          className="absolute inset-0"
+          style={
+            tickPosition === null
+              ? undefined
+              : {
+                  maskImage: `linear-gradient(to right, black calc(${tickPosition} - 3px), transparent calc(${tickPosition} - 3px), transparent calc(${tickPosition} + 3px), black calc(${tickPosition} + 3px))`,
+                }
+          }
+        >
+          <div className="absolute inset-x-0 inset-y-1.5 rounded-full bg-muted" />
+          {remaining > 0 ? (
+            <div
+              className="absolute inset-y-1.5 left-0 rounded-full"
+              style={{ width: `${remaining}%`, backgroundColor: color }}
+            />
+          ) : null}
+        </div>
+        {tickPosition !== null ? (
           <span
             aria-hidden
-            className="absolute inset-y-0.5 w-px -translate-x-1/2 bg-foreground/60"
-            style={{ left: `${timeLeft}%` }}
+            className="absolute inset-y-1 w-0.5 -translate-x-1/2 rounded-full bg-foreground"
+            style={{ left: tickPosition }}
           />
         ) : null}
       </TooltipTrigger>
@@ -127,7 +140,7 @@ function WindowBar({
             {remaining}% left{timeLeft !== null ? ` · ${timeLeft}% of the window left` : ""}
           </span>
           {timeLeft !== null ? (
-            <span className="text-muted-foreground">The line is where even spending would be.</span>
+            <span className="text-muted-foreground">The tick is where even spending would be.</span>
           ) : null}
           {resetsAt ? (
             <span className="text-muted-foreground">
