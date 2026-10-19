@@ -467,10 +467,12 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "start-from-origin",
-    title: "Start from origin",
+    title: "Start from remote",
     to: "/settings/general",
     scope: "project-defaults",
-    searchTerms: ["new worktrees latest matching remote branch local"],
+    searchTerms: [
+      "new worktrees latest matching remote branch local origin tracking tracked upstream",
+    ],
   },
   {
     id: "add-project-starts-in",

@@ -399,8 +399,8 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                   <SettingsSection title="Worktrees">
                     <SettingsSwitchRow
                       icon="arrow.triangle.branch"
-                      label="Start from origin"
-                      subtitle="Base new worktrees on the remote branch."
+                      label="Start from remote"
+                      subtitle="Fetch the selected base branch's tracked remote, falling back to origin. Start the worktree from its latest remote commit."
                       value={uniform("newWorktreesStartFromOrigin")}
                       disabled={disabledFor("newWorktreesStartFromOrigin")}
                       onValueChange={(value) => write({ newWorktreesStartFromOrigin: value })}

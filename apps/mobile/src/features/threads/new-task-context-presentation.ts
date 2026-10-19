@@ -78,8 +78,7 @@ export function resolveNewTaskBranchLabel(input: {
     return input.branchName;
   }
 
-  const baseRef = input.startFromOrigin ? `origin/${input.branchName}` : input.branchName;
-  return `From ${baseRef}`;
+  return `From ${input.branchName}`;
 }
 
 export function shouldCheckoutNewTaskBranch(input: {
