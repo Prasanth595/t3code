@@ -1078,6 +1078,82 @@ describe("orchestrator MCP toolkit", () => {
               pendingAfterWait.runs.find((run) => run.id === directRead.queuedRun.id)?.status,
             ).toBe("queued");
 
+            const metadataSource = (yield* orchestrator.getThreadProjection(
+              directChildThreadId,
+            )).turnItems.find((item) => item.type === "user_message")!;
+            const privateItems = [
+              {
+                ...metadataSource,
+                id: TurnItemId.make("item:metadata-reasoning"),
+                type: "reasoning" as const,
+                text: "PRIVATE_REASONING_SENTINEL",
+                streaming: false,
+                ordinal: 900,
+              },
+              {
+                ...metadataSource,
+                id: TurnItemId.make("item:metadata-command"),
+                type: "command_execution" as const,
+                input: "PRIVATE_TOOL_INPUT_SENTINEL",
+                output: "PRIVATE_TOOL_OUTPUT_SENTINEL",
+                ordinal: 901,
+              },
+            ];
+            yield* (yield* EventSink.EventSinkV2).write({
+              events: privateItems.map((item) => ({
+                id: EventId.make(`event:${item.id}`),
+                type: "turn-item.updated" as const,
+                threadId: directChildThreadId,
+                occurredAt: metadataSource.updatedAt,
+                payload: item,
+              })),
+            });
+            const metadataItems: Array<OrchestratorMcpThreadReadResult["items"][number]> = [];
+            let afterPosition: number | undefined;
+            let metadataHasMore = true;
+            while (metadataHasMore) {
+              const call = yield* invoke("t3_thread_read", {
+                threadId: directChildThreadId,
+                view: "messages",
+                maxCharsPerItem: 0,
+                limit: 1,
+                ...(afterPosition === undefined ? {} : { afterPosition }),
+              });
+              const page = yield* decodeThreadReadResult(call.structuredContent).pipe(Effect.orDie);
+              expect(call.isError).toBe(false);
+              expect(JSON.stringify(call)).not.toContain("PRIVATE_");
+              expect(page.items).toHaveLength(1);
+              metadataItems.push(...page.items);
+              expect(metadataItems.at(-1)?.position).toBe(metadataItems.length - 1);
+              expect(page.items[0]).toMatchObject({
+                text: null,
+                textTruncated: false,
+                nextTextOffset: null,
+              });
+              afterPosition = page.nextPosition ?? undefined;
+              metadataHasMore = page.hasMore;
+              if (!metadataHasMore) expect(metadataItems).toHaveLength(page.thread.itemCount);
+            }
+            expect(metadataItems.map((item) => item.type)).toEqual(
+              expect.arrayContaining([
+                "user_message",
+                "assistant_message",
+                "reasoning",
+                "command_execution",
+              ]),
+            );
+            expect(metadataItems.find((item) => item.type === "user_message")).toMatchObject({
+              createdBy: "agent",
+              creationSource: "mcp",
+              sourceThreadId: directChildThreadId,
+              visibility: "local",
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.find(
+                (task) => task.id === directRead.task.id,
+              )?.completionDelivery?.state,
+            ).toBe("claimed");
+
             const childPromptReadCall = yield* invoke("t3_thread_read", {
               threadId: directChildThreadId,
               limit: 1,
@@ -1173,23 +1249,28 @@ describe("orchestrator MCP toolkit", () => {
                 },
               ],
             });
-            let recovered = "";
-            let textOffset: number | null = 0;
-            while (textOffset !== null) {
-              const pageCall = yield* invoke("t3_thread_read", {
-                threadId: directChildThreadId,
-                itemId: oversizedItem.id,
-                textOffset,
-                maxCharsPerItem: 50_000,
-              });
-              const page: OrchestratorMcpThreadReadResult = yield* decodeThreadReadResult(
-                pageCall.structuredContent,
-              ).pipe(Effect.orDie);
-              expect(page.items).toHaveLength(1);
-              recovered += page.items[0]!.text;
-              textOffset = page.items[0]!.nextTextOffset ?? null;
+            for (const maxCharsPerItem of [50_000, 14_000, 13_999]) {
+              let recovered = "";
+              let textOffset: number | null = 0;
+              while (textOffset !== null) {
+                const pageCall = yield* invoke("t3_thread_read", {
+                  threadId: directChildThreadId,
+                  itemId: oversizedItem.id,
+                  textOffset,
+                  maxCharsPerItem,
+                });
+                const page: OrchestratorMcpThreadReadResult = yield* decodeThreadReadResult(
+                  pageCall.structuredContent,
+                ).pipe(Effect.orDie);
+                expect(page.items).toHaveLength(1);
+                expect(page.items[0]?.text).toBe(
+                  longText.slice(textOffset, textOffset + maxCharsPerItem),
+                );
+                recovered += page.items[0]!.text;
+                textOffset = page.items[0]!.nextTextOffset ?? null;
+              }
+              expect(recovered).toBe(longText);
             }
-            expect(recovered).toBe(longText);
 
             const acknowledgedByDirectRead = yield* waitForProjection(
               orchestrator,
@@ -1413,6 +1494,23 @@ describe("orchestrator MCP toolkit", () => {
             const threadReadTool = server.tools.find(({ tool }) => tool.name === "t3_thread_read");
             expect(threadReadTool?.tool.annotations?.readOnlyHint).toBe(false);
             expect(threadReadTool?.tool.inputSchema).toMatchObject({ additionalProperties: false });
+            expect(threadReadTool?.tool.outputSchema).toMatchObject({
+              properties: {
+                items: {
+                  items: {
+                    properties: {
+                      type: {
+                        enum: expect.arrayContaining([
+                          "user_message",
+                          "reasoning",
+                          "command_execution",
+                        ]),
+                      },
+                    },
+                  },
+                },
+              },
+            });
             const unknownPagingParamError = yield* invoke("t3_thread_read", {
               threadId: parentThreadId,
               cursor: 90,
@@ -2614,6 +2712,56 @@ describe("orchestrator MCP toolkit", () => {
               createdBy: "agent",
               creationSource: "mcp",
             });
+
+            const forkedMetadataCall = yield* invoke("t3_thread_read", {
+              threadId: forkedThreadId,
+              view: "messages",
+              maxCharsPerItem: 0,
+            });
+            const forkedMetadata = yield* decodeThreadReadResult(
+              forkedMetadataCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(forkedMetadata.items.find((item) => item.type === "user_message")).toMatchObject(
+              {
+                sourceThreadId: promptedThread.threadId,
+                visibility: "inherited",
+                createdBy: "agent",
+                creationSource: "mcp",
+                text: null,
+              },
+            );
+
+            const followupCall = yield* invoke("t3_thread_send", {
+              threadId: promptedThread.threadId,
+              message: "A later inbound message must remain detectable without reading its text.",
+              clientRequestId: "metadata-followup-1",
+            });
+            const followup = yield* decodeThreadSendResult(followupCall.structuredContent).pipe(
+              Effect.orDie,
+            );
+            yield* invoke("t3_thread_wait", {
+              threadId: promptedThread.threadId,
+              runId: followup.runId,
+              timeoutMs: 10_000,
+            });
+            const followupMetadataCall = yield* invoke("t3_thread_read", {
+              threadId: promptedThread.threadId,
+              maxCharsPerItem: 0,
+              limit: 100,
+            });
+            const followupMetadata = yield* decodeThreadReadResult(
+              followupMetadataCall.structuredContent,
+            ).pipe(Effect.orDie);
+            expect(followupMetadata.hasMore).toBe(false);
+            const inbound = followupMetadata.items.filter((item) => item.type === "user_message");
+            expect(inbound.map((item) => item.messageId)).toEqual([
+              promptedRead.items[0]?.messageId,
+              followup.messageId,
+            ]);
+            expect(inbound[0]!.position).toBeLessThan(inbound[1]!.position);
+            expect(
+              inbound.every((item) => item.text === null && item.creationSource === "mcp"),
+            ).toBe(true);
 
             const ordinaryLoopPrompt = "Run an ordinary thread loop iteration.";
             const sendCall = yield* invoke("t3_thread_send", {

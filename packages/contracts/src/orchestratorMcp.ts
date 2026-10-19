@@ -34,6 +34,7 @@ import {
   OrchestrationV2Actor,
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
+  OrchestrationV2TurnItem,
   OrchestrationV2TurnItemStatus,
 } from "./orchestrationV2.ts";
 import {
@@ -361,7 +362,12 @@ export const OrchestratorMcpThreadReadInput = Schema.Struct({
   afterPosition: Schema.optional(NonNegativeInt),
   limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(100))),
   runLimit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(50))),
-  maxCharsPerItem: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(50_000))),
+  maxCharsPerItem: Schema.optional(
+    NonNegativeInt.check(Schema.isLessThanOrEqualTo(50_000)).annotate({
+      description:
+        "Maximum UTF-16 code units per item. Zero returns metadata for every visible timeline item in either view, without text or delegated-result acknowledgment; page from position 0 using afterPosition until hasMore is false.",
+    }),
+  ),
 });
 export type OrchestratorMcpThreadReadInput = typeof OrchestratorMcpThreadReadInput.Type;
 
@@ -421,7 +427,12 @@ export const OrchestratorMcpThreadTimelineItem = Schema.Struct({
   messageId: Schema.NullOr(MessageId),
   createdBy: Schema.NullOr(OrchestrationV2Actor),
   creationSource: Schema.NullOr(OrchestrationV2CreationSource),
-  type: Schema.String,
+  type: Schema.Literals(
+    OrchestrationV2TurnItem.members.map((member) => member.fields.type.literal),
+  ).annotate({
+    description:
+      "Canonical timeline item type. user_message is inbound (including parent-agent dispatches and later messages); createdBy and creationSource distinguish its actor and ingress. visibility and sourceThreadId identify copied history.",
+  }),
   status: OrchestrationV2TurnItemStatus,
   title: Schema.NullOr(Schema.String),
   text: Schema.NullOr(Schema.String),

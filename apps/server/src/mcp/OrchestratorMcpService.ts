@@ -891,7 +891,7 @@ function timelineItem(input: {
   readonly textOffset?: number;
   readonly messagesByThreadId: ReadonlyMap<ThreadId, OrchestrationV2ThreadProjection["messages"]>;
 }): OrchestratorMcpThreadTimelineItem {
-  const text = turnItemText(input.row.item);
+  const text = input.maxChars === 0 ? null : turnItemText(input.row.item);
   const offset = input.textOffset ?? 0;
   const end = offset + input.maxChars;
   const textTruncated = text !== null && text.length > end;
@@ -2547,7 +2547,7 @@ const make = Effect.gen(function* () {
           .getTimelinePage(input.threadId, {
             afterPosition,
             limit,
-            view,
+            view: maxChars === 0 ? "activity" : view,
             ...(input.itemId === undefined ? {} : { itemId: input.itemId }),
           })
           .pipe(Effect.mapError(threadManagementFailure));
@@ -2580,6 +2580,7 @@ const make = Effect.gen(function* () {
           parent !== undefined &&
           scope.thread !== undefined &&
           tasks.length > 0 &&
+          maxChars > 0 &&
           (input.textOffset ?? 0) === 0
         ) {
           for (const task of tasks) {

@@ -368,6 +368,14 @@ reasoning, checkpoint, handoff, and runtime-request items. Large item text is
 bounded and reports whether it was truncated. `afterPosition` and
 `nextPosition` support incremental reads.
 
+With `maxCharsPerItem: 0`, either view instead returns metadata for every visible
+timeline item, including intermediate reasoning and tool items. Each item's
+`text` and `nextTextOffset` are null and `textTruncated` is false. Start without
+`afterPosition`, then pass `nextPosition` until `hasMore` is false to enumerate
+all positions from zero through `thread.itemCount - 1`. This mode does not
+acknowledge a delegated result. Positive text limits retain the view's ordinary
+filtering; exact `itemId` reads paginate text by UTF-16 code-unit offsets.
+
 Thread and message results include required `createdBy` and `creationSource`
 provenance. MCP-created threads and user-role messages use `createdBy: "agent"`
 and `creationSource: "mcp"`; provider output uses `creationSource: "provider"`.

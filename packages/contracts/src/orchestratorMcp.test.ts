@@ -8,6 +8,7 @@ import {
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadListInput,
   OrchestratorMcpThreadReadInput,
+  OrchestratorMcpThreadTimelineItem,
   OrchestratorMcpThreadSendInput,
   OrchestratorMcpThreadWaitInput,
 } from "./orchestratorMcp.ts";
@@ -20,8 +21,38 @@ const decodeThreadListInput = Schema.decodeUnknownSync(OrchestratorMcpThreadList
 const decodeThreadReadInput = Schema.decodeUnknownSync(OrchestratorMcpThreadReadInput);
 const decodeThreadSendInput = Schema.decodeUnknownSync(OrchestratorMcpThreadSendInput);
 const decodeThreadWaitInput = Schema.decodeUnknownSync(OrchestratorMcpThreadWaitInput);
+const isTimelineItemType = Schema.is(OrchestratorMcpThreadTimelineItem.fields.type);
 
 describe("orchestrator MCP contracts", () => {
+  it("advertises metadata-only reads and the canonical item vocabulary", () => {
+    for (const maxCharsPerItem of [0, 13_999, 14_000, 50_000]) {
+      expect(
+        decodeThreadReadInput({ threadId: "thread-metadata", view: "messages", maxCharsPerItem })
+          .maxCharsPerItem,
+      ).toBe(maxCharsPerItem);
+    }
+    for (const maxCharsPerItem of [-1, 0.5, 50_001]) {
+      expect(() =>
+        decodeThreadReadInput({ threadId: "thread-metadata", maxCharsPerItem }),
+      ).toThrow();
+    }
+    const typeSchema = Schema.toJsonSchemaDocument(
+      OrchestratorMcpThreadTimelineItem.fields.type,
+    ).schema;
+    expect(typeSchema).toMatchObject({
+      enum: expect.arrayContaining([
+        "user_message",
+        "assistant_message",
+        "reasoning",
+        "command_execution",
+        "dynamic_tool",
+        "compaction",
+        "handoff",
+      ]),
+    });
+    expect(isTimelineItemType("unknown_item")).toBe(false);
+  });
+
   it("accepts explicit worktree isolation and keeps shared delegation as the default", () => {
     expect(decodeDelegateTaskInput({ task: "Review changes" }).isolation).toBeUndefined();
     expect(
