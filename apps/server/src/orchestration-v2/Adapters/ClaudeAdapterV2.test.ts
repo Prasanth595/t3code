@@ -10597,6 +10597,188 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("preserves transcript receipt source frames and excludes known shell tasks", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const readThrough = Effect.fnUntraced(function* (uuid: string) {
+          yield* harness.offerAndWait(
+            claudeSdkFrame({
+              type: "system",
+              subtype: "informational",
+              level: "warning",
+              content: uuid,
+              uuid,
+              session_id: WAKE_NATIVE_SESSION,
+            }),
+          );
+          yield* Queue.take(harness.systemNoticeReceipts);
+        });
+        const objective = "all tests pass";
+        const receiptText = (taskId: string) =>
+          `<task-notification><task-id>${taskId}</task-id><status>stopped</status><summary>Previous session ended</summary></task-notification>`;
+        const transcript = (taskId: string, uuid: string) =>
+          claudeSdkFrame({
+            type: "user",
+            isSynthetic: true,
+            parent_tool_use_id: null,
+            session_id: WAKE_NATIVE_SESSION,
+            uuid,
+            message: { role: "user", content: receiptText(taskId) },
+          });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: {
+              ...harness.providerThread,
+              goal: { objective, status: "active", checks: 0 },
+            },
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("transcript-source"),
+            text: "Continue",
+            attachments: [],
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...transcript("old-task", "goal-receipt"),
+            user_message_uuid: harness.promptUuid(0),
+            message: {
+              role: "user",
+              content: `Stop hook feedback:\n[${objective}]: One test still fails.\n${receiptText("old-task")}`,
+            },
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...transcript("old-task", "user-quoted-receipt"),
+            isSynthetic: false,
+          }),
+        );
+        const taskId = "registered-task";
+        const taskStatuses = () =>
+          harness.events.flatMap((event) =>
+            event.type === "subagent.updated" && event.subagent.nativeTaskRef?.nativeId === taskId
+              ? [event.subagent.status]
+              : [],
+          );
+        yield* harness.offerAndWait(
+          makeSubagentTaskStartedFrame({ taskId, toolUseId: "launch-task", uuid: "task-started" }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...makeSubagentNotificationFrame({
+              taskId,
+              toolUseId: "launch-task",
+              summary: "Previous session ended",
+              uuid: "task-stopped",
+            }),
+            status: "stopped",
+          }),
+        );
+        yield* harness.offerAndWait(
+          makeSubagentTaskStartedFrame({ taskId, toolUseId: "resume-task", uuid: "task-resumed" }),
+        );
+        yield* readThrough("before-registered-replay");
+        assert.deepEqual(taskStatuses(), ["running", "cancelled", "running"]);
+        yield* harness.offerAndWait(transcript(taskId, "registered-receipt"));
+        yield* harness.offerAndWait(transcript(taskId, "registered-receipt-replayed"));
+        yield* readThrough("after-registered-replay");
+        assert.deepEqual(taskStatuses(), ["running", "cancelled", "running"]);
+        yield* harness.offerAndWait(
+          makeSubagentNotificationFrame({
+            taskId,
+            toolUseId: "resume-task",
+            summary: "Resumed work completed",
+            uuid: "task-completed",
+          }),
+        );
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(transcript(WAKE_TASK_ID, "shell-receipt"));
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...wakeTaskStarted,
+            task_id: "other-shell",
+            tool_use_id: "other-shell-tool",
+            uuid: "other-shell-start",
+          }),
+        );
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: "other-shell",
+            status: "stopped",
+            summary: "Shell ended",
+            session_id: WAKE_NATIVE_SESSION,
+            uuid: "shell-sdk-receipt",
+          }),
+        );
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.deepEqual(taskStatuses(), ["running", "cancelled", "running", "completed"]);
+        assert.deepEqual(
+          providerThreadRosterEvents(harness.events).at(-1)?.providerThread.pendingBackgroundTasks,
+          [],
+        );
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "subagent.native-task-ended" ? [event.nativeTaskId] : [],
+          ),
+          ["old-task"],
+        );
+        assert.isTrue(
+          harness.events.some(
+            (event) =>
+              event.type === "provider_thread.updated" && event.providerThread.goal?.checks === 1,
+          ),
+        );
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("transcript-echo"),
+            text: "Continue again",
+            attachments: [],
+            providerTurnOrdinal: 2,
+          }),
+        );
+        const hasReply = () =>
+          harness.events.some(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.text === "Echo released this reply.",
+          );
+        yield* harness.offerAndWait(
+          makeAssistantTextFrame({
+            uuid: "held-reply",
+            text: "Echo released this reply.",
+          }),
+        );
+        yield* readThrough("before-echo");
+        assert.isFalse(hasReply());
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            ...transcript("echo-task", "echo-receipt"),
+            user_message_uuid: harness.promptUuid(1),
+          }),
+        );
+        yield* readThrough("after-echo");
+        assert.isTrue(hasReply());
+        yield* harness.offerAndWait(makeResultFrame({ uuid: "echo-result", result: "" }));
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        yield* harness.offerAndWait(transcript("another-old-task", "idle-receipt"));
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+  );
+
   it.effect("extracts text from direct content-block subagent results", () =>
     Effect.scoped(
       Effect.gen(function* () {

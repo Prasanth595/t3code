@@ -1305,6 +1305,46 @@ function textFromClaudeContent(content: SDKAssistantMessage["message"]["content"
   return content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("");
 }
 
+/** Resume transcripts can report ended tasks as synthetic XML user messages. */
+function claudeTranscriptTaskNotifications(
+  message: SDKMessage,
+): ReadonlyArray<Extract<SDKMessage, { subtype: "task_notification" }>> {
+  if (
+    message.type !== "user" ||
+    message.isSynthetic !== true ||
+    message.parent_tool_use_id !== null ||
+    message.session_id === undefined ||
+    message.uuid === undefined
+  )
+    return [];
+  const content = message.message.content;
+  const text =
+    typeof content === "string"
+      ? content
+      : content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
+  return Array.from(text.matchAll(/<task-notification>([\s\S]*?)<\/task-notification>/g)).flatMap(
+    (match) => {
+      const body = match[1]!;
+      const taskId = /<task-id>([^<]+)<\/task-id>/.exec(body)?.[1]?.trim();
+      const status = /<status>(completed|failed|stopped)<\/status>/.exec(body)?.[1];
+      const summary = /<summary>([\s\S]*?)<\/summary>/.exec(body)?.[1];
+      if (!taskId || !status || summary === undefined) return [];
+      return [
+        {
+          type: "system" as const,
+          subtype: "task_notification" as const,
+          task_id: taskId,
+          status: status as "completed" | "failed" | "stopped",
+          summary,
+          output_file: "",
+          uuid: message.uuid!,
+          session_id: message.session_id!,
+        },
+      ];
+    },
+  );
+}
+
 // Claude 5.1 and later return the text written ahead of a tool call as a
 // thinking block, at most one per call, instead of a text block. Summarized
 // display makes it look like reasoning, so only the second of two thinking
@@ -7967,11 +8007,43 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
         });
 
+        const emitUntrackedTaskReceipt = Effect.fnUntraced(function* (message: SDKMessage) {
+          if (
+            message.type !== "system" ||
+            message.subtype !== "task_notification" ||
+            (yield* Ref.get(sessionSubagentsByTaskId)).has(message.task_id)
+          )
+            return;
+          const live = yield* Ref.get(queryContext);
+          if (
+            live === null ||
+            (yield* isKnownOpaqueBackgroundTaskOnNativeThread(live.nativeThreadId, message.task_id))
+          )
+            return;
+          yield* emitProviderEvent({
+            type: "subagent.native-task-ended",
+            driver: CLAUDE_PROVIDER,
+            threadId: input.threadId,
+            nativeTaskId: message.task_id,
+            status: claudeTaskOutcome(message.status),
+            result: message.summary,
+          });
+        });
+
         const handleSdkMessage = Effect.fnUntraced(function* (input: {
           readonly query: ClaudeAgentSdkQuerySession;
           readonly message: SDKMessage;
         }) {
           const message = input.message;
+          const transcriptNotifications = claudeTranscriptTaskNotifications(message);
+          for (const notification of transcriptNotifications) {
+            // Transcript outcomes can predate a registered subagent's latest resume.
+            if ((yield* Ref.get(sessionSubagentsByTaskId)).has(notification.task_id)) continue;
+            yield* emitUntrackedTaskReceipt(notification);
+            yield* handleRoutedSdkMessage({ query: input.query, message: notification });
+          }
+          // The source frame still carries prompt echoes, goal updates, and wake evidence.
+          if (transcriptNotifications.length === 0) yield* emitUntrackedTaskReceipt(message);
           const context = yield* Ref.get(activeTurn);
           const liveQuery = yield* Ref.get(queryContext);
           if (
