@@ -11,6 +11,7 @@ import {
   RuntimeRequestId,
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2Run,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import {
@@ -379,6 +380,7 @@ describe("work entry labels", () => {
         isWorking: false,
         activeTurnStartedAt: null,
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       });
       const directRow = rows.find((row) => row.kind === "work");
@@ -729,6 +731,7 @@ describe("deriveMessagesTimelineRows", () => {
         isWorking: true,
         activeTurnStartedAt: at,
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       });
     expect(rows([first]).find((row) => row.kind === "work-live")).toMatchObject({
@@ -782,6 +785,7 @@ describe("deriveMessagesTimelineRows", () => {
         runningRunId: fixture.runId,
         activeTurnStartedAt: fixture.time(0),
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       });
       expect(rows.find((row) => row.kind === "work")).toMatchObject({
@@ -879,6 +883,7 @@ describe("deriveMessagesTimelineRows", () => {
       runningRunId: fixture.runId,
       activeTurnStartedAt: fixture.time(0),
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
     expect(rows.find((row) => row.kind === "work-toggle")).toMatchObject({
@@ -943,6 +948,7 @@ describe("deriveMessagesTimelineRows", () => {
         runningRunId: fixture.runId,
         activeTurnStartedAt: fixture.time(0),
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       });
       const workRows = rows.filter((row) => row.kind === "work-toggle" || row.kind === "work-live");
@@ -954,6 +960,7 @@ describe("deriveMessagesTimelineRows", () => {
         runningRunId: fixture.runId,
         activeTurnStartedAt: fixture.time(0),
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
         expandedWorkGroupIds: new Set([workRows[0]!.groupId]),
       });
@@ -1058,6 +1065,7 @@ describe("deriveMessagesTimelineRows", () => {
           completedAt: state === "running" ? null : notice.createdAt,
         },
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       });
       const row = rows.find(
@@ -1086,6 +1094,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -1120,6 +1129,7 @@ describe("deriveMessagesTimelineRows", () => {
       runningRunId: fixture.runId,
       activeTurnStartedAt: fixture.time(5),
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     };
     const runningEntries = deriveTimelineEntriesFromVisibleTurnItems({
@@ -1215,6 +1225,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -1269,6 +1280,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -1324,6 +1336,10 @@ describe("deriveMessagesTimelineRows", () => {
           },
         },
       ],
+      runs: [
+        { id: RunId.make("discarded-run"), ordinal: 1, status: "rolled_back" },
+        { id: RunId.make("turn-1"), ordinal: 2, status: "completed" },
+      ] satisfies ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal" | "status">>,
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [assistantTurnDiffSummary],
@@ -1339,7 +1355,7 @@ describe("deriveMessagesTimelineRows", () => {
         row.kind === "message" && row.message.role === "assistant",
     );
 
-    expect(userRow?.revertTurnCount).toBe(1);
+    expect(userRow?.revertTurnCount).toBe(0);
     expect(assistantRow?.assistantTurnDiffSummary).toBe(assistantTurnDiffSummary);
   });
 
@@ -1406,6 +1422,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -1428,6 +1445,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -1498,6 +1516,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     };
     const rows = deriveMessagesTimelineRows({ ...input, timelineEntries });
@@ -1594,6 +1613,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -1693,6 +1713,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:00:14Z",
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -1729,6 +1750,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -1768,6 +1790,7 @@ describe("deriveMessagesTimelineRows", () => {
         isWorking: true,
         activeTurnStartedAt: startedAt,
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       });
       expect(rows.slice(0, 2).map((row) => row.id)).toEqual([
@@ -1845,6 +1868,7 @@ describe("deriveMessagesTimelineRows", () => {
             activeTurnStartedAt: time(0),
             expandedRunIds: expanded ? new Set([runId]) : new Set(),
             turnDiffSummaries: [],
+            runs: [],
             supportsConversationRollback: false,
           });
           expect(rows.slice(0, 3).map((row) => row.id)).toEqual([
@@ -1914,6 +1938,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:01:00Z",
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -1956,6 +1981,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     };
 
@@ -2006,6 +2032,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -2100,6 +2127,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:01:00Z",
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -2167,6 +2195,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -2234,6 +2263,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -2348,6 +2378,7 @@ describe("deriveMessagesTimelineRows", () => {
         ...(input.expandedRunIds === undefined ? {} : { expandedRunIds: input.expandedRunIds }),
         activeTurnStartedAt: input.working ? DateTime.formatIso(at(72)) : null,
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       });
     const shape = (timeline: ReadonlyArray<MessagesTimelineRow>) =>
@@ -2492,6 +2523,7 @@ describe("deriveMessagesTimelineRows", () => {
         activeTurnStartedAt: settled ? null : DateTime.formatIso(at(0)),
         ...(expandedRunIds === undefined ? {} : { expandedRunIds }),
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       });
     const shape = (timeline: ReadonlyArray<MessagesTimelineRow>) =>
@@ -2576,6 +2608,7 @@ describe("deriveMessagesTimelineRows", () => {
         isWorking: true,
         activeTurnStartedAt: at(20),
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       }).map((row) =>
         row.kind === "message" ? `${row.message.role}:${row.message.id}` : row.kind,
@@ -2602,6 +2635,7 @@ describe("deriveMessagesTimelineRows", () => {
     const foldRow = deriveMessagesTimelineRows({
       ...foldInput,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     }).find((row) => row.kind === "turn-fold");
     expect(foldRow?.kind === "turn-fold" ? foldRow.runId : null).toBe(foldRunId);
@@ -2610,6 +2644,7 @@ describe("deriveMessagesTimelineRows", () => {
       ...foldInput,
       expandedRunIds: new Set([foldRunId!]),
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
     expect(
@@ -2657,6 +2692,7 @@ describe("deriveMessagesTimelineRows", () => {
         runlessWorkActive: input.working,
         activeTurnStartedAt: input.working ? "2026-01-01T00:00:00Z" : null,
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       });
 
@@ -2699,6 +2735,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -2763,6 +2800,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -2831,6 +2869,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -2878,6 +2917,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:01:00Z",
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -2939,6 +2979,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -2984,6 +3025,7 @@ describe("deriveMessagesTimelineRows", () => {
         isWorking: true,
         activeTurnStartedAt: "2026-01-01T00:00:00Z",
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       });
 
@@ -3034,6 +3076,7 @@ describe("deriveMessagesTimelineRows", () => {
         isWorking: true,
         activeTurnStartedAt: "2026-01-01T00:00:00Z",
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       });
 
@@ -3125,6 +3168,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:01:00Z",
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -3170,6 +3214,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -3208,6 +3253,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -3272,6 +3318,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     };
     const collapsedRows = deriveMessagesTimelineRows(baseInput);
@@ -3366,6 +3413,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -3407,6 +3455,7 @@ describe("deriveMessagesTimelineRows", () => {
         runningRunId: isWorking ? runId : null,
         activeTurnStartedAt: isWorking ? createdAt : null,
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       };
       const collapsedRows = deriveMessagesTimelineRows(input);
@@ -3453,6 +3502,7 @@ describe("deriveMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -3500,6 +3550,7 @@ describe("deriveMessagesTimelineRows", () => {
         isWorking: false,
         activeTurnStartedAt: null,
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       });
 
@@ -3557,6 +3608,7 @@ describe("computeStableMessagesTimelineRows", () => {
       isWorking: true,
       activeTurnStartedAt: startedAt,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     };
     const assistantEntry = {
@@ -3635,6 +3687,7 @@ describe("computeStableMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -3684,6 +3737,7 @@ describe("computeStableMessagesTimelineRows", () => {
         isWorking: false,
         activeTurnStartedAt: null,
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       });
 
@@ -3740,6 +3794,7 @@ describe("computeStableMessagesTimelineRows", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -3869,6 +3924,7 @@ describe("v2 run and attempt history", () => {
       timelineEntries,
       isWorking: false,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -3891,6 +3947,7 @@ describe("v2 run and attempt history", () => {
       expandedRunIds: new Set(["turn-1" as never]),
       isWorking: false,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -3911,6 +3968,7 @@ describe("v2 run and attempt history", () => {
       expandedWorkGroupIds: new Set(["work-group:work-entry-1"]),
       isWorking: false,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
     const expandedWork = openedActivity.find((row) => row.kind === "work");
@@ -3980,6 +4038,7 @@ describe("v2 run and attempt history", () => {
       timelineEntries,
       isWorking: false,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -4107,6 +4166,7 @@ describe("v2 run and attempt history", () => {
       },
       isWorking: false,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     };
 
@@ -4241,6 +4301,7 @@ describe("v2 run and attempt history", () => {
         },
         isWorking: false,
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       });
 
@@ -4324,6 +4385,7 @@ describe("v2 run and attempt history", () => {
       },
       isWorking: false,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -4362,6 +4424,7 @@ describe("v2 run and attempt history", () => {
       },
       isWorking: false,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
     expect(stoppedRows.map((row) => row.id)).toEqual(["stopped-command-entry", "interrupt-result"]);
@@ -4399,6 +4462,10 @@ describe("streaming v2 row projection", () => {
           completedAt: source.time(4),
         },
       ] satisfies ReadonlyArray<TurnDiffSummary>,
+      runs: [
+        { id: source.historyRunId, ordinal: 1, status: "completed" },
+        { id: source.runId, ordinal: 2, status: "running" },
+      ] satisfies ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal" | "status">>,
       supportsConversationRollback: true,
     } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
     return { ...source, timelineInput, timeline, input };
@@ -4438,6 +4505,7 @@ describe("streaming v2 row projection", () => {
       ...initial.input,
       timelineEntries: timeline.entries,
       latestRun: { ...initial.input.latestRun },
+      runs: initial.input.runs.map((run) => ({ ...run })),
       turnDiffSummaries: initial.input.turnDiffSummaries.map((summary) => ({ ...summary })),
     };
     const next = deriveMessagesTimelineRowsWithState(input, previous);
@@ -4670,6 +4738,19 @@ describe("streaming v2 row projection", () => {
       ].map((row, position) => ({ ...row, position })),
     };
     check();
+    expect(projection.rows.find((row) => row.id === "history-user")).toMatchObject({
+      revertTurnCount: 0,
+    });
+    check({
+      runs: initial.input.runs.map((run) => ({ ...run, status: "rolled_back" })),
+    });
+    expect(projection.rows.find((row) => row.id === "history-user")).toMatchObject({
+      revertTurnCount: undefined,
+    });
+    check({ runs: initial.input.runs });
+    expect(projection.rows.find((row) => row.id === "history-user")).toMatchObject({
+      revertTurnCount: 0,
+    });
     check({ supportsConversationRollback: false });
     check({
       turnDiffSummaries: initial.input.turnDiffSummaries.map((summary) => ({
@@ -4688,7 +4769,12 @@ describe("linked timeline resources", () => {
     createdAt: "2026-09-08T10:00:02Z",
     projectedItem: { item: { id, type, runId: eventRunId } } as OrchestrationV2ProjectedTurnItem,
   });
-  const common = { isWorking: false, turnDiffSummaries: [], supportsConversationRollback: false };
+  const common = {
+    isWorking: false,
+    runs: [],
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  };
 
   it("previews a thought and separates subagent cards from worklogs", () => {
     const rows = deriveMessagesTimelineRows({
@@ -4945,6 +5031,7 @@ it.each([true, false])(
       runningRunId: fixture.runId,
       activeTurnStartedAt: fixture.time(0),
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
     expect(
@@ -5008,6 +5095,7 @@ it.each([true, false])(
       isWorking,
       activeTurnStartedAt: time(40),
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
     const ids = rows.map((row) => row.id);
@@ -5070,6 +5158,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
     isWorking: true,
     activeTurnStartedAt: "2026-01-01T00:00:00Z",
     turnDiffSummaries: [],
+    runs: [],
     supportsConversationRollback: false,
     worktreeSetup: snapshot,
   });
@@ -5089,6 +5178,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
     isWorking: true,
     activeTurnStartedAt: "2026-01-01T00:00:00Z",
     turnDiffSummaries: [],
+    runs: [],
     supportsConversationRollback: false,
     worktreeSetup: { ...snapshot, phase: "failed" },
   });
@@ -5126,6 +5216,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
     isWorking: true,
     activeTurnStartedAt: "2026-01-01T00:00:00Z",
     turnDiffSummaries: [],
+    runs: [],
     supportsConversationRollback: false,
     worktreeSetup: asyncSnapshot,
   });
@@ -5136,6 +5227,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
     isWorking: true,
     activeTurnStartedAt: "2026-01-01T00:00:00Z",
     turnDiffSummaries: [],
+    runs: [],
     supportsConversationRollback: false,
     worktreeSetup: asyncSnapshot,
   });
@@ -5147,6 +5239,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
     isWorking: true,
     activeTurnStartedAt: "2026-01-01T00:00:00Z",
     turnDiffSummaries: [],
+    runs: [],
     supportsConversationRollback: false,
     worktreeSetup: {
       ...snapshot,
@@ -5162,6 +5255,7 @@ it("keeps the working header in place across worktree setup handoff", () => {
     isWorking: true,
     activeTurnStartedAt: "2026-01-01T00:00:00Z",
     turnDiffSummaries: [],
+    runs: [],
     supportsConversationRollback: false,
     worktreeSetup: {
       ...asyncSnapshot,
@@ -5268,6 +5362,7 @@ describe("failed turn transcript", () => {
         },
         isWorking: false,
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       });
       expect(
@@ -5302,6 +5397,7 @@ describe("failed turn transcript", () => {
         timelineEntries: entriesWithoutTools,
         isWorking: false,
         turnDiffSummaries: [],
+        runs: [],
         supportsConversationRollback: false,
       });
       expect(compactRows.map((row) => row.kind)).toEqual([
@@ -5418,6 +5514,7 @@ describe("live subagents after their parent turn settles", () => {
       },
       isWorking: false,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
 
@@ -5483,6 +5580,7 @@ describe("live subagents after their parent turn settles", () => {
       },
       isWorking: false,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
     expect(rows.map((row) => row.id)).toEqual([`attempt-fold:${attempt.id}`, "child"]);
@@ -5584,6 +5682,7 @@ describe("subagent continued by a later turn", () => {
       },
       isWorking: false,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
     expect(rows.map((row) => row.id)).toEqual([

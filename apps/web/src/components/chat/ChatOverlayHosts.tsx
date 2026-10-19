@@ -2,6 +2,7 @@ import type {
   DeviceServiceState,
   EnvironmentId,
   MessageId,
+  OrchestrationV2ThreadProjection,
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
@@ -193,11 +194,18 @@ export function openRevertConfirm(threadKey: string, pending: PendingRevert): vo
 
 export function RevertConfirmHost(props: {
   readonly threadKey: string;
+  readonly checkpoints?: OrchestrationV2ThreadProjection["checkpoints"] | undefined;
   readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
 }) {
   const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
+  const target = props.checkpoints?.findLast((checkpoint) =>
+    pending?.turnCount === 0
+      ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
+      : checkpoint.appRunOrdinal === pending?.turnCount,
+  );
+  const canRestoreFiles = target?.status === "ready";
   const confirm = (restoreFiles: boolean) => {
-    if (pending === null) return;
+    if (pending === null || (restoreFiles && !canRestoreFiles)) return;
     closeThreadOverlay(revertConfirmAtom);
     props.onConfirm(pending.turnCount, pending.messageId, restoreFiles);
   };
@@ -217,7 +225,7 @@ export function RevertConfirmHost(props: {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <Button variant="destructive" onClick={() => confirm(true)}>
+          <Button variant="destructive" disabled={!canRestoreFiles} onClick={() => confirm(true)}>
             Revert files too
           </Button>
           <Button onClick={() => confirm(false)}>Revert and keep changes</Button>

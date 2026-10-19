@@ -828,61 +828,65 @@ describe("V2 environment commands", () => {
     Effect.gen(function* () {
       const checkpointId = CheckpointId.make("legacy-checkpoint");
       const scopeId = CheckpointScopeId.make("legacy-checkpoint-scope");
-      for (const status of ["ready", "missing", "error", "stale", null] as const) {
-        const commands: OrchestrationV2Command[] = [];
-        const projectionRequests: ThreadId[] = [];
-        const supervisor = yield* makeSupervisor({
-          commands,
-          projects: [],
-          projectionRequests,
-          advertiseServerResolvedCommandContext: false,
-          projection: {
-            ...v2Projection,
-            checkpoints:
-              status === null
-                ? []
-                : [
-                    {
-                      id: checkpointId,
-                      threadId: v2ThreadId,
-                      scopeId,
-                      runId: null,
-                      nodeId: NodeId.make("legacy-checkpoint-node"),
-                      parentCheckpointId: null,
-                      ordinalWithinScope: 0,
-                      appRunOrdinal: null,
-                      ref: CheckpointRef.make("refs/t3/legacy-checkpoint"),
-                      status,
-                      files: [],
-                      capturedAt: v2Now,
-                    },
-                  ],
-          },
-        });
-        const rollback = revertThreadCheckpoint({
-          commandId: CommandId.make(`legacy-rollback-${status}`),
-          threadId: v2ThreadId,
-          checkpointId,
-          scopeId,
-        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-        if (status === "ready") {
-          yield* rollback;
-          expect(commands).toEqual([
-            {
-              type: "checkpoint.rollback",
-              commandId: "legacy-rollback-ready",
-              threadId: v2ThreadId,
-              checkpointId,
-              scopeId,
+      for (const restoreFiles of [undefined, false] as const) {
+        for (const status of ["ready", "missing", "error", "stale", null] as const) {
+          const commands: OrchestrationV2Command[] = [];
+          const projectionRequests: ThreadId[] = [];
+          const supervisor = yield* makeSupervisor({
+            commands,
+            projects: [],
+            projectionRequests,
+            advertiseServerResolvedCommandContext: false,
+            projection: {
+              ...v2Projection,
+              checkpoints:
+                status === null
+                  ? []
+                  : [
+                      {
+                        id: checkpointId,
+                        threadId: v2ThreadId,
+                        scopeId,
+                        runId: null,
+                        nodeId: NodeId.make("legacy-checkpoint-node"),
+                        parentCheckpointId: null,
+                        ordinalWithinScope: 0,
+                        appRunOrdinal: null,
+                        ref: CheckpointRef.make("refs/t3/legacy-checkpoint"),
+                        status,
+                        files: [],
+                        capturedAt: v2Now,
+                      },
+                    ],
             },
-          ]);
-        } else {
-          const error = yield* rollback.pipe(Effect.flip);
-          expect(error._tag).toBe("OrchestrationV2CheckpointUnavailableError");
-          expect(commands).toEqual([]);
+          });
+          const rollback = revertThreadCheckpoint({
+            commandId: CommandId.make(`legacy-rollback-${status}`),
+            threadId: v2ThreadId,
+            checkpointId,
+            scopeId,
+            ...(restoreFiles === undefined ? {} : { restoreFiles }),
+          }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+          if (status === "ready" || (status === "missing" && restoreFiles === false)) {
+            yield* rollback;
+            expect(commands).toEqual([
+              {
+                type: "checkpoint.rollback",
+                commandId: `legacy-rollback-${status}`,
+                threadId: v2ThreadId,
+                checkpointId,
+                scopeId,
+                ...(restoreFiles === undefined ? {} : { restoreFiles }),
+              },
+            ]);
+          } else {
+            const error = yield* rollback.pipe(Effect.flip);
+            expect(error._tag).toBe("OrchestrationV2CheckpointUnavailableError");
+            expect(commands).toEqual([]);
+          }
+          expect(projectionRequests).toEqual([v2ThreadId]);
         }
-        expect(projectionRequests).toEqual([v2ThreadId]);
       }
     }).pipe(Effect.provide(layerTestCrypto)),
   );

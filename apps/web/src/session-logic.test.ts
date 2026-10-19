@@ -2,6 +2,7 @@ import {
   MessageId,
   RuntimeRequestId,
   CheckpointId,
+  CheckpointRef,
   CheckpointScopeId,
   NodeId,
   PlanId,
@@ -15,6 +16,7 @@ import {
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import type { ThreadRuntimeSummary } from "@t3tools/client-runtime/state/shell";
@@ -277,6 +279,9 @@ describe("V2 session presentation", () => {
 
     const targets = deriveRevertTurnCountByUserMessageId({
       timelineEntries,
+      runs: [{ id: runId, ordinal: 1, status: "completed" }] satisfies ReadonlyArray<
+        Pick<OrchestrationV2Run, "id" | "ordinal" | "status">
+      >,
       checkpoints: [
         {
           runId,
@@ -292,6 +297,154 @@ describe("V2 session presentation", () => {
 
     expect([...targets]).toEqual([[turnStartMessageId, 0]]);
     expect(targets.has(steerMessageId)).toBe(false);
+  });
+
+  it("rewinds messages to their surviving local predecessor after resend, wakes, and forks", () => {
+    const run = (
+      ordinal: number,
+      status: OrchestrationV2Run["status"],
+    ): Pick<OrchestrationV2Run, "id" | "ordinal" | "status"> => ({
+      id: RunId.make(`run-${ordinal}`),
+      ordinal,
+      status,
+    });
+    const checkpoints = [1, 2, 3, 4].map((ordinal) => ({
+      runId: RunId.make(`run-${ordinal}`),
+      checkpointTurnCount: ordinal,
+      checkpointRef: CheckpointRef.make(`checkpoint-${ordinal}`),
+      status: "missing" as const,
+      files: [],
+      assistantMessageId: null,
+      completedAt: "2026-06-20T00:00:03.000Z",
+    }));
+    const timeline = (ordinals: number[]): TimelineEntry[] =>
+      ordinals.map((ordinal) => {
+        const message: ChatMessage = {
+          id: MessageId.make(`message-${ordinal}`),
+          runId: RunId.make(`run-${ordinal}`),
+          role: "user",
+          text: "Start",
+          inputIntent: "turn_start",
+          streaming: false,
+          createdAt: "2026-06-20T00:00:00.000Z",
+          updatedAt: "2026-06-20T00:00:00.000Z",
+        };
+        return { id: message.id, kind: "message", createdAt: message.createdAt, message };
+      });
+    const targets = (
+      ordinals: number[],
+      runs: ReadonlyArray<ReturnType<typeof run>>,
+      hasMoreHistory = false,
+    ) => [
+      ...deriveRevertTurnCountByUserMessageId({
+        timelineEntries: timeline(ordinals),
+        runs,
+        checkpoints,
+        hasMoreHistory,
+      }),
+    ];
+
+    expect(targets([1, 2], [run(1, "completed"), run(2, "completed")])).toEqual([
+      ["message-1", 0],
+      ["message-2", 1],
+    ]);
+    // Rolled-back runs and checkpoints remain in the projection audit history.
+    expect(
+      targets([3], [run(1, "rolled_back"), run(2, "rolled_back"), run(3, "completed")]),
+    ).toEqual([["message-3", 0]]);
+    const survivingRuns = [
+      run(1, "completed"),
+      run(2, "rolled_back"),
+      run(3, "rolled_back"),
+      run(4, "completed"),
+    ];
+    expect(targets([1, 4], survivingRuns)).toEqual([
+      ["message-1", 0],
+      ["message-4", 1],
+    ]);
+    expect(targets([4], survivingRuns, true)).toEqual([["message-4", 1]]);
+    expect(targets([4], [run(4, "completed")], true)).toEqual([]);
+    // Loading all transcript rows does not fill gaps in bounded run metadata.
+    expect(targets([1, 3], [run(3, "completed")])).toEqual([]);
+    expect(targets([1, 3], [run(1, "completed"), run(3, "completed")])).toEqual([["message-1", 0]]);
+    expect([
+      ...deriveRevertTurnCountByUserMessageId({
+        timelineEntries: timeline([1, 2]),
+        runs: [run(1, "completed"), run(2, "completed")],
+        checkpoints: checkpoints.slice(0, 2).map((checkpoint, index) => ({
+          ...checkpoint,
+          status: index === 0 ? "stale" : "error",
+        })),
+      }),
+    ]).toEqual([]);
+    expect([
+      ...deriveRevertTurnCountByUserMessageId({
+        timelineEntries: timeline([1, 4]),
+        runs: [run(1, "completed"), run(2, "rolled_back"), run(3, "queued"), run(4, "completed")],
+        checkpoints: checkpoints.filter((checkpoint) => checkpoint.checkpointTurnCount !== 3),
+      }),
+    ]).toEqual([
+      ["message-1", 0],
+      ["message-4", 1],
+    ]);
+
+    const wake: TimelineEntry = {
+      id: "wake-2",
+      kind: "work",
+      createdAt: "2026-06-20T00:00:01.000Z",
+      entry: {
+        id: "wake-2",
+        runId: RunId.make("run-2"),
+        createdAt: "2026-06-20T00:00:01.000Z",
+        label: "Delegated task finished",
+        tone: "info",
+        itemType: "notification",
+      },
+    };
+    // A folded async answer leaves no separate user message in the timeline.
+    for (const intermediateEntries of [[wake], []]) {
+      for (const status of ["ready", "missing", "stale", "error"] as const) {
+        const rewindTargets = deriveRevertTurnCountByUserMessageId({
+          timelineEntries: [...timeline([1]), ...intermediateEntries, ...timeline([3])],
+          runs: [run(1, "completed"), run(2, "completed"), run(3, "completed")],
+          checkpoints: checkpoints
+            .slice(0, 3)
+            .map((checkpoint) =>
+              checkpoint.checkpointTurnCount === 2 ? { ...checkpoint, status } : checkpoint,
+            ),
+        });
+        expect
+          .soft(
+            [...rewindTargets],
+            `${intermediateEntries.length ? "notification" : "folded answer"} predecessor: ${status}`,
+          )
+          .toEqual(
+            status === "ready" || status === "missing"
+              ? [
+                  ["message-1", 0],
+                  ["message-3", 2],
+                ]
+              : [["message-1", 0]],
+          );
+      }
+    }
+
+    // Forks retain source run IDs in inherited messages, but only project local runs/checkpoints.
+    for (const hasMoreHistory of [false, true]) {
+      expect
+        .soft(
+          [
+            ...deriveRevertTurnCountByUserMessageId({
+              timelineEntries: timeline([10, 11, 1]),
+              runs: [run(1, "completed")],
+              checkpoints: checkpoints.slice(0, 1),
+              hasMoreHistory,
+            }),
+          ],
+          `first local fork run with ${hasMoreHistory ? "paged" : "complete"} inherited history`,
+        )
+        .toEqual([["message-1", 0]]);
+    }
   });
 
   it("uses visible turn item order and keeps provider errors in the work log", () => {
@@ -1067,6 +1220,7 @@ describe("native provider presentation in the v2 timeline", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     });
     expect(rows.map((row) => row.kind)).toEqual(["message"]);
@@ -1285,6 +1439,7 @@ describe("HTML renders in the timeline", () => {
       isWorking: false,
       activeTurnStartedAt: null,
       turnDiffSummaries: [],
+      runs: [],
       supportsConversationRollback: false,
     }).map((row) => row.kind);
 

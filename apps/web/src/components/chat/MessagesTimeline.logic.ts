@@ -50,6 +50,7 @@ import {
   type MessageId,
   type WorktreeSetupSnapshot,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2Run,
   type RunAttemptId,
   RunId,
   type ThreadId,
@@ -1319,6 +1320,8 @@ function deriveTimelineTurnFolds(
 
 export function deriveMessagesTimelineRows(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
+  runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal" | "status">>;
+  hasMoreHistory?: boolean;
   latestRun?: TimelineLatestRun | null;
   runningRunId?: RunId | null;
   expandedRunIds?: ReadonlySet<RunId>;
@@ -1346,7 +1349,9 @@ export function deriveMessagesTimelineRows(input: {
   const revertTurnCountByUserMessageId = input.supportsConversationRollback
     ? deriveRevertTurnCountByUserMessageId({
         timelineEntries: timelineEntries,
+        runs: input.runs,
         checkpoints: input.turnDiffSummaries,
+        hasMoreHistory: input.hasMoreHistory === true,
       })
     : new Map<MessageId, number>();
   const nextRows: MessagesTimelineRow[] = [];
@@ -2030,6 +2035,7 @@ function replaceStreamingMessageRows(
 ): MessagesTimelineRow[] | null {
   const {
     timelineEntries: previousEntries,
+    runs: previousRuns,
     latestRun: previousRun,
     turnDiffSummaries: previousCheckpoints,
     expandedRunIds: previousExpandedRuns,
@@ -2039,6 +2045,7 @@ function replaceStreamingMessageRows(
   } = previous.input;
   const {
     timelineEntries,
+    runs,
     latestRun,
     turnDiffSummaries,
     expandedRunIds,
@@ -2052,6 +2059,11 @@ function replaceStreamingMessageRows(
     timelineEntries.length !== previousEntries.length ||
     !shallow(previousContext, context) ||
     !shallow(previousRun, latestRun) ||
+    previousRuns.length !== runs.length ||
+    previousRuns.some((run, index) => {
+      const next = runs[index]!;
+      return run.id !== next.id || run.ordinal !== next.ordinal || run.status !== next.status;
+    }) ||
     !shallow(previousExpandedRuns, expandedRunIds) ||
     !shallow(previousExpandedAttempts, expandedAttemptIds) ||
     !shallow(previousExpandedGroups, expandedWorkGroupIds) ||

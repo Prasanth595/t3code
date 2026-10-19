@@ -158,13 +158,16 @@ export const layer: Layer.Layer<
         (candidate) => candidate.id === input.checkpointId,
       );
       const scope = projection.checkpointScopes.find((candidate) => candidate.id === input.scopeId);
+      // Missing snapshots support conversation rewind only.
+      const conversationOnlyRollback = input.restoreFiles === false;
       if (
         providerThread === undefined ||
         providerThread.providerSessionId === null ||
         checkpoint === undefined ||
         scope === undefined ||
         checkpoint.scopeId !== scope.id ||
-        checkpoint.status !== "ready"
+        (checkpoint.status !== "ready" &&
+          !(conversationOnlyRollback && checkpoint.status === "missing"))
       ) {
         return yield* new CheckpointRollbackExecutionError({
           reason: "rollback-target-invalid",
@@ -201,7 +204,11 @@ export const layer: Layer.Layer<
               const targetTurn =
                 latestProviderTurnForAttempt(projection.providerTurns, targetAttempt?.id) ??
                 projection.providerTurns.find((turn) => turn.id === targetAttempt?.providerTurnId);
-              if (targetTurn === undefined || targetTurn.providerThreadId !== providerThread.id) {
+              if (
+                targetRun?.status === "rolled_back" ||
+                targetTurn === undefined ||
+                targetTurn.providerThreadId !== providerThread.id
+              ) {
                 return yield* new CheckpointRollbackExecutionError({
                   reason: "provider-turn-unavailable",
                   threadId: input.threadId,

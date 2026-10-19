@@ -4,6 +4,7 @@ import {
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
@@ -1013,13 +1014,31 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
 
 export function deriveRevertTurnCountByUserMessageId(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
+  readonly runs: ReadonlyArray<Pick<OrchestrationV2Run, "id" | "ordinal" | "status">>;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
+  readonly hasMoreHistory?: boolean;
 }): Map<ChatMessage["id"], number> {
-  const readyCheckpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
+  const rewindableCheckpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
   for (const checkpoint of input.checkpoints) {
-    if (checkpoint.status === "ready") {
-      readyCheckpointByRunId.set(checkpoint.runId, checkpoint);
+    // Missing snapshots still pin a conversation position.
+    if (checkpoint.status === "ready" || checkpoint.status === "missing") {
+      rewindableCheckpointByRunId.set(checkpoint.runId, checkpoint);
     }
+  }
+  const targetByRunId = new Map<RunId, number>();
+  // Wake runs and folded answers can survive without a visible user message.
+  let predecessorTurnCount: number | null = 0;
+  let nextOrdinal = 1;
+  for (const run of input.runs.toSorted((left, right) => left.ordinal - right.ordinal)) {
+    // Paging older messages does not load their run/checkpoint metadata.
+    if (run.ordinal !== nextOrdinal) predecessorTurnCount = null;
+    nextOrdinal = run.ordinal + 1;
+    if (run.status === "rolled_back" || run.status === "queued") continue;
+    const checkpoint = rewindableCheckpointByRunId.get(run.id);
+    if (checkpoint !== undefined && predecessorTurnCount !== null) {
+      targetByRunId.set(run.id, predecessorTurnCount);
+    }
+    predecessorTurnCount = checkpoint?.checkpointTurnCount ?? null;
   }
   const byUserMessageId = new Map<ChatMessage["id"], number>();
   for (const entry of input.timelineEntries) {
@@ -1028,9 +1047,8 @@ export function deriveRevertTurnCountByUserMessageId(input: {
       continue;
     }
     if (entry.message.runId === null) continue;
-    const checkpoint = readyCheckpointByRunId.get(entry.message.runId);
-    if (checkpoint === undefined) continue;
-    byUserMessageId.set(entry.message.id, Math.max(0, checkpoint.checkpointTurnCount - 1));
+    const target = targetByRunId.get(entry.message.runId);
+    if (target !== undefined) byUserMessageId.set(entry.message.id, target);
   }
   return byUserMessageId;
 }
