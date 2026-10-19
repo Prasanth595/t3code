@@ -147,6 +147,10 @@ vi.mock(import("./usePreviewSession"), async (original) => ({
   usePreviewSession: () => {},
 }));
 
+vi.mock(import("~/browser/browserViewportActions"), { spy: true });
+
+import { commitBrowserViewportChange } from "~/browser/browserViewportActions";
+import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { useComposerDraftStore } from "~/composerDraftStore";
 import { useBrowserPointerStore } from "~/browser/browserPointerStore";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
@@ -205,6 +209,7 @@ function hasCursor() {
 
 describe("PreviewView", () => {
   beforeEach(() => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     vi.clearAllMocks();
     mocks.readEnvironmentScope.mockReset().mockReturnValue(true);
     mocks.setAnnotationSendEnabled.mockReset().mockResolvedValue(undefined);
@@ -232,6 +237,7 @@ describe("PreviewView", () => {
     for (const each of roots.splice(0)) await act(async () => each.unmount());
     document.body.replaceChildren();
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("shows the cursor in a replacement browser while the old instance still records", async () => {
@@ -252,6 +258,63 @@ describe("PreviewView", () => {
     await render(view());
     expect(hasCursor()).toBe(true);
     expect(mocks.recordingTabIds.has(TEST_RUNTIME_TAB_ID)).toBe(true);
+  });
+
+  it("aligns the cursor and initial responsive viewport after the host zoom changes", async () => {
+    let windowZoom = 1;
+    vi.stubGlobal("desktopBridge", {
+      getWindowZoomFactor: () => windowZoom,
+      getLocalEnvironmentBootstraps: () => [],
+    });
+    const commit = vi.mocked(commitBrowserViewportChange).mockResolvedValueOnce(undefined);
+    try {
+      await render(view());
+      await act(() => {
+        const surfaces = useBrowserSurfaceStore.getState();
+        const slot = document.querySelector<HTMLElement>("[data-browser-surface-slot]")!;
+        slot.style.width = "1020px";
+        slot.style.height = "798px";
+        surfaces.presentContent(TEST_RUNTIME_TAB_ID, {
+          x: 20,
+          y: 40,
+          width: 500,
+          height: 375,
+          scale: 0.5,
+          scrollLeft: 7,
+          scrollTop: 11,
+        });
+        useBrowserPointerStore.setState({
+          byTabId: {
+            [TEST_RUNTIME_TAB_ID]: {
+              tabId: TEST_RUNTIME_TAB_ID,
+              phase: "move",
+              x: 100,
+              y: 200,
+              sequence: 1,
+              createdAt: "2026-07-27T00:00:00Z",
+            },
+          },
+        });
+        windowZoom = 1.25;
+        window.dispatchEvent(new Event("resize"));
+      });
+      const cursor = document.querySelector("[data-agent-browser-cursor]");
+      expect(cursor).not.toBeNull();
+      const position = new DOMMatrixReadOnly(getComputedStyle(cursor!).transform);
+      expect(position.e).toBe(53);
+      expect(position.f).toBe(109);
+
+      await userEvent.click(page.getByRole("button", { name: "Preview menu" }));
+      await userEvent.click(page.getByRole("menuitem", { name: "Show device toolbar" }));
+      expect(commit).toHaveBeenCalledExactlyOnceWith(TEST_RUNTIME_TAB_ID, {
+        _tag: "freeform",
+        width: 1250,
+        height: 938,
+      });
+    } finally {
+      commit.mockReset();
+      await act(() => useBrowserSurfaceStore.setState({ activityByTabId: {}, byTabId: {} }));
+    }
   });
 
   it("does not rerender while loading time passes", async () => {
