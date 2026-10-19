@@ -82,7 +82,7 @@ vi.mock(import("../ui/tooltip"), async () => {
     TooltipTrigger: (({ render, children }: { render: ReactElement; children: ReactNode }) =>
       cloneElement(render, {}, children)) as never,
     TooltipPopup: (({ children }: { children: ReactNode }) =>
-      state.showTooltips ? children : null) as never,
+      state.showTooltips ? <div role="tooltip">{children}</div> : null) as never,
   };
 });
 
@@ -726,10 +726,11 @@ it("shows the matching child agent details and refreshes them when the agent set
   expect(text()).toContain("Lineage · 1 running");
 });
 
-it("keeps a running task active after its child's first turn ends", async () => {
+it("keeps active supervisor status, progress, and task timing after its child turn ends", async () => {
+  using _now = vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-16T12:05:15Z"));
   state.showTooltips = true;
-  // A supervisor ends its first turn while its own worker keeps running, so its
-  // task stays running. The child's first run was requested just after the task.
+  // The child request follows task creation by milliseconds, but finishing that
+  // turn does not settle a supervisor still waiting on its worker.
   state.shells = [
     {
       environmentId: "test",
@@ -746,7 +747,7 @@ it("keeps a running task active after its child's first turn ends", async () => 
       },
     },
   ];
-  state.projection = {
+  const projection = {
     thread: {
       id: "parent",
       lineage: { relationshipToParent: null },
@@ -767,7 +768,7 @@ it("keeps a running task active after its child's first turn ends", async () => 
         prompt: "Coordinate the worker",
         model: "claude-opus-5-5",
         status: "running",
-        progress: null,
+        progress: "Waiting for the worker to finish",
         result: null,
         startedAt: DateTime.makeUnsafe("2026-09-16T12:00:00Z"),
         completedAt: null,
@@ -775,18 +776,26 @@ it("keeps a running task active after its child's first turn ends", async () => 
       },
     ],
   };
-  await render(
-    <ThreadRelationshipsPanel
-      environmentId={EnvironmentId.make("test")}
-      threadId={ThreadId.make("parent")}
-    />,
-  );
-  const text = textNodes(" ").replace(/\s+/g, " ");
+  for (const status of ["pending", "running", "waiting"]) {
+    state.projection = {
+      ...projection,
+      subagents: [{ ...projection.subagents[0], status }],
+    };
+    await render(
+      <ThreadRelationshipsPanel
+        environmentId={EnvironmentId.make("test")}
+        threadId={ThreadId.make("parent")}
+      />,
+    );
 
-  expect(text).toContain("Lineage · 1 running");
-  expect(text).toContain("Supervisor");
-  expect(text).not.toContain("Previous agents");
-  expect(text).not.toMatch(/completed/i);
+    expect(heading()).toBe(status === "running" ? "Lineage · 1 running" : "Lineage");
+    expect(textNodes(" ")).not.toContain("Previous agents");
+    expect(buttons().some((button) => button.textContent?.includes("Supervisor"))).toBe(true);
+    const tooltip = container.querySelector('[role="tooltip"]')?.textContent;
+    expect.soft(tooltip).toContain(status);
+    expect.soft(tooltip).toContain("Waiting for the worker to finish");
+    expect.soft(tooltip).toContain("5m 15s");
+  }
 });
 
 it("shows readable models and only differing workspace details in agent tooltips", async () => {
