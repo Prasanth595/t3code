@@ -670,7 +670,10 @@ function openNewTaskDraft(
   },
 ) {
   navigation.dispatch(
-    CommonActions.reset({ index: 0, routes: [{ name: "NewTaskDraft", params }] }),
+    CommonActions.reset({
+      index: 0,
+      routes: [{ name: "NewTaskDraft", params: { ...params, environmentSelection: "manual" } }],
+    }),
   );
 }
 
@@ -717,6 +720,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
             {
               name: "NewTaskDraft",
               params: {
+                environmentSelection: "manual",
                 environmentId: existing.environmentId,
                 projectId: existing.id,
                 title: existing.title,
@@ -748,6 +752,7 @@ function useCreateProject(environment: EnvironmentOption | null) {
           {
             name: "NewTaskDraft",
             params: {
+              environmentSelection: "manual",
               environmentId: environment.environmentId,
               projectId,
               title: inferProjectTitleFromPath(workspaceRoot),

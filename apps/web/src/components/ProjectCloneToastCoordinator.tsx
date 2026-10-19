@@ -81,7 +81,9 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
   };
 
   const openProject = (projectId: ProjectId) => {
-    void handleNewThread(scopeProjectRef(environmentId, projectId));
+    void handleNewThread(scopeProjectRef(environmentId, projectId), {
+      environmentSelection: "manual",
+    });
   };
 
   useEffect(() => {

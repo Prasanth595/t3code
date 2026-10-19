@@ -424,6 +424,7 @@ function AdaptiveWorkspaceLayoutContent(
       params: {
         environmentId: String(thread.environmentId),
         projectId: String(thread.projectId),
+        environmentSelection: "manual",
         branch: thread.branch,
         worktreePath: thread.worktreePath,
       },

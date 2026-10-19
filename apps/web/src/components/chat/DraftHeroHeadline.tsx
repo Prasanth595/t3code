@@ -7,6 +7,8 @@ import { FolderPlusIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useRef, useState } from "react";
 
+import { useShallow } from "zustand/react/shallow";
+import { useNewThreadProjectTarget } from "~/hooks/useNewThreadProjectTarget";
 import { openCommandPalette } from "~/commandPaletteBus";
 import { shortcutLabelForCommand } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
@@ -62,6 +64,21 @@ export function DraftHeroHeadline({
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
   const projects = useProjects();
+  const resolveProjectTarget = useNewThreadProjectTarget();
+  const manualProjectRef = useComposerDraftStore(
+    useShallow((store) => {
+      const draft = draftId ? store.getDraftSession(draftId) : null;
+      return draft?.environmentSelection === "manual"
+        ? scopeProjectRef(draft.environmentId, draft.projectId)
+        : null;
+    }),
+  );
+  const resolvePickerTarget = (projectRef: ScopedProjectRef) =>
+    resolveProjectTarget(projectRef, {
+      manual:
+        projectRef.environmentId === manualProjectRef?.environmentId &&
+        projectRef.projectId === manualProjectRef.projectId,
+    });
   const threads = useThreadShells();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -107,6 +124,7 @@ export function DraftHeroHeadline({
   const projectPickerEntries = buildSidebarProjectPickerEntries({
     groups: projectGroups,
     preferredProjectRef: activeProjectRef,
+    resolveProjectTarget: resolvePickerTarget,
   });
   const projectEntryByKey = new Map(
     projectPickerEntries.map((entry) => [entry.group.projectKey, entry] as const),
@@ -167,7 +185,19 @@ export function DraftHeroHeadline({
   // An empty draft instead opens the chosen project's own draft, like starting a new thread there:
   // moving it would replace that draft and strand whatever it holds, such as the browser tabs of
   // the no-project draft.
-  const selectProject = (project: (typeof projects)[number], logicalProjectKey: string) => {
+  const selectProject = (
+    requestedProject: (typeof projects)[number],
+    logicalProjectKey: string,
+  ) => {
+    const target = resolvePickerTarget(
+      scopeProjectRef(requestedProject.environmentId, requestedProject.id),
+    );
+    const project =
+      projects.find(
+        (candidate) =>
+          candidate.environmentId === target.projectRef?.environmentId &&
+          candidate.id === target.projectRef.projectId,
+      ) ?? requestedProject;
     if (!draftId) {
       return;
     }
@@ -178,13 +208,17 @@ export function DraftHeroHeadline({
     };
     const currentDraft = getComposerDraft(draftId);
     if (!composerDraftHasUserContent(currentDraft)) {
-      void openProjectDraft(scopeProjectRef(project.environmentId, project.id));
+      void openProjectDraft(
+        scopeProjectRef(project.environmentId, project.id),
+        target.environmentSelection === "manual" ? { environmentSelection: "manual" } : undefined,
+      );
       return;
     }
     setLogicalProjectDraftThreadId(
       logicalProjectKey,
       scopeProjectRef(project.environmentId, project.id),
       draftId,
+      { environmentSelection: target.environmentSelection, loadBalancedEnvironmentId: null },
     );
     if (!hasExplicitComposerModelSelection(currentDraft)) {
       applyStickyState(draftId);
