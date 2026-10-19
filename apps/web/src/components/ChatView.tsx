@@ -5939,6 +5939,8 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const onForkFromRunStable = useStableCallback(onForkFromRun);
+  const onForkWorkspaceSelectedStable = useStableCallback(onForkWorkspaceSelected);
+  const closeForkDialogStable = useStableCallback(() => setForkSource(null));
   const onCompactContext = () => {
     if (compactDisabled) return;
     void sendStandaloneCommand("/compact", "Failed to compact context.");
@@ -7902,8 +7904,8 @@ export default function ChatView(props: ChatViewProps) {
           worktreePath={activeThread.worktreePath}
           branch={activeThread.branch}
           isGitRepo={isGitRepo}
-          onClose={() => setForkSource(null)}
-          onSelect={onForkWorkspaceSelected}
+          onClose={closeForkDialogStable}
+          onSelect={onForkWorkspaceSelectedStable}
         />
       ) : null}
       <DeviceSetupDialogHost
