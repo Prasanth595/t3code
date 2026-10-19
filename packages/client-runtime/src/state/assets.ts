@@ -126,11 +126,7 @@ export function assetUrlStateFromResult(
   };
 }
 
-/**
- * A signed URL request. `scope` stays on the client: it gives one rendering its own cached URL,
- * such as one chat message or work-log row. A later message that shows a file the agent rewrote
- * then signs a fresh URL, instead of reusing the earlier one that the browser already cached.
- */
+/** Client-only cache identity: later messages must re-sign files that may have changed. */
 export type AssetUrlQuery = AssetCreateUrlInput & { readonly scope?: string | undefined };
 
 export function createAssetEnvironmentAtoms<R, E>(
@@ -140,14 +136,11 @@ export function createAssetEnvironmentAtoms<R, E>(
     readonly httpBaseUrl: string;
   } | null>,
 ) {
-  const execute = Effect.fn("assets.createUrl")(function* ({
-    scope: _scope,
-    ...input
-  }: AssetUrlQuery) {
+  const execute = Effect.fn("assets.createUrl")(function* ({ resource }: AssetUrlQuery) {
+    const input = { resource };
     const result = yield* request(WS_METHODS.assetsCreateUrl, input).pipe(Effect.result);
     if (Result.isSuccess(result)) return result.success;
     const error = result.failure;
-    const resource = input.resource;
     const local = localMediaEnvironment
       ? (yield* AtomRegistry.AtomRegistry).get(localMediaEnvironment)
       : null;

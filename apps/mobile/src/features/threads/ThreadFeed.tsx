@@ -2635,7 +2635,12 @@ function MessageImageGalleryScope(props: {
   const images =
     entry.type === "message"
       ? [
-          ...messageImageGallery(entry.message, { environmentId, threadId, workspaceRoot }),
+          ...messageImageGallery(entry.message, {
+            environmentId,
+            threadId,
+            workspaceRoot,
+            scope: entry.message.role === "assistant" ? entry.message.id : undefined,
+          }),
           ...composerImageGallery(entry.pendingMessage?.attachments ?? []),
         ]
       : [];

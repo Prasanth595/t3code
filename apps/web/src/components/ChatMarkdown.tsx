@@ -242,8 +242,7 @@ interface ChatMarkdownProps {
       uploads need; without it those images and videos load unauthenticated and 404. */
   githubMedia?: boolean | undefined;
   headingLevelOffset?: number | undefined;
-  /** Gives this text's workspace images their own signed URLs, such as per chat message. An agent
-      that rewrites a file and shows it again then shows the new file, not the cached one. */
+  /** Keeps rewritten workspace files from reusing an earlier message's cached URL. */
   assetScope?: string | undefined;
 }
 
@@ -1578,7 +1577,6 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly fallbackSrc?: string | undefined;
   readonly workspaceRoot?: string | undefined;
   readonly onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
-  /** See `ChatMarkdownProps.assetScope`. */
   readonly assetScope?: string | undefined;
 }) {
   const assetUrl = useAssetUrlState(props.environmentId, props.resource, props.assetScope);
@@ -2320,6 +2318,7 @@ function useChatMarkdownState({
     explicitEnvironmentId,
     cwd,
     imageBaseDir,
+    assetScope,
   ].join("\u0000");
   // Tagged with the scope it was opened in: a request from the previous scope can
   // resolve before the effect cleanup below invalidates it, and must stay hidden.
@@ -2380,6 +2379,7 @@ function useChatMarkdownState({
       httpBaseUrl:
         environmentId === null ? undefined : readPreparedConnection(environmentId)?.httpBaseUrl,
       createAssetUrl,
+      assetScope,
       onOpenFile: threadRef
         ? (path) => useRightPanelStore.getState().openFile(threadRef, path)
         : undefined,

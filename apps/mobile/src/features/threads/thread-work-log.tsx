@@ -87,7 +87,7 @@ import { notificationChildThreadId } from "@t3tools/client-runtime/state/thread-
 import type { MarkdownImageRenderer } from "../../native/SelectableMarkdownText";
 import type { FilePreviewSource } from "../../components/FilePreviewModal";
 import { FilePreviewGallery } from "../../components/FilePreviewGallery";
-import { ThreadMarkdownImage } from "./ThreadMarkdownImage";
+import { MarkdownImageAssetScopeContext, ThreadMarkdownImage } from "./ThreadMarkdownImage";
 import Animated, {
   cancelAnimation,
   Easing,
@@ -103,7 +103,6 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 import { useAssetUrl } from "../../state/assets";
-import { MarkdownImageAssetScopeContext } from "./ThreadMarkdownImage";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 
 const SHIMMER_WIDTH = 72;
@@ -1167,111 +1166,113 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           layout={WORK_LOG_LAYOUT_TRANSITION}
           className={reasoning ? "ml-7 py-1" : "pb-1 pt-0.5"}
         >
-          <MarkdownImageAssetScopeContext value={row.workEntry.id}>
-            {row.workEntry.questionAnswer ? (
-              <QuestionAnswerHistory
-                environmentId={props.environmentId}
-                answer={row.workEntry.questionAnswer}
-              />
-            ) : null}
-            {viewedImagePath ? (
-              <View className="pb-1.5">
+          {row.workEntry.questionAnswer ? (
+            <QuestionAnswerHistory
+              environmentId={props.environmentId}
+              answer={row.workEntry.questionAnswer}
+            />
+          ) : null}
+          {viewedImagePath ? (
+            <View className="pb-1.5">
+              <MarkdownImageAssetScopeContext value={row.workEntry.id}>
                 {props.renderImage({ href: viewedImagePath, alt: null, title: null })}
-              </View>
-            ) : null}
-            <FilePreviewGallery
-              value={outputImages.map((resource) => ({
-                kind: "image",
-                environmentId: props.environmentId,
-                resource,
-              }))}
-            >
-              {outputImages.map((resource) => (
-                <View key={resource.index} className="pb-1.5">
+              </MarkdownImageAssetScopeContext>
+            </View>
+          ) : null}
+          <FilePreviewGallery
+            value={outputImages.map((resource) => ({
+              kind: "image",
+              environmentId: props.environmentId,
+              resource,
+              scope: row.workEntry.id,
+            }))}
+          >
+            {outputImages.map((resource) => (
+              <View key={resource.index} className="pb-1.5">
+                <MarkdownImageAssetScopeContext value={row.workEntry.id}>
                   <ThreadMarkdownImage
                     environmentId={props.environmentId}
                     resource={resource}
                     alt={null}
                     onPressPreview={props.onPressPreview}
                   />
-                </View>
-              ))}
-            </FilePreviewGallery>
-            <ScrollView
-              nestedScrollEnabled
-              directionalLockEnabled
-              showsVerticalScrollIndicator
-              className="max-h-60"
-              contentContainerStyle={{ paddingRight: 8 }}
-            >
-              {reasoning ? (
-                props.renderReasoning(reasoning.text)
-              ) : call ? (
-                [
-                  call.command,
-                  ...(call.args ?? []).map(([key, value]) =>
-                    key === "code" &&
-                    shownItem.type === "dynamic_tool" &&
-                    isJavaScriptReplTool(shownItem.toolName) ? (
-                      <View key={key}>
-                        <Text className="font-mono text-2xs leading-normal text-foreground-muted">
-                          {key}
-                        </Text>
-                        <ReplCodeText code={value} theme={props.themeAppearance} />
-                      </View>
-                    ) : (
-                      `${key} ${value}`
-                    ),
-                  ),
-                  call.argsText,
-                ]
-                  .filter((line) => Boolean(line))
-                  .map((line, index) =>
-                    typeof line === "string" ? (
-                      <Text
-                        key={`${index}:${line}`}
-                        selectable
-                        className="font-mono text-2xs leading-normal text-foreground"
-                      >
-                        {line}
+                </MarkdownImageAssetScopeContext>
+              </View>
+            ))}
+          </FilePreviewGallery>
+          <ScrollView
+            nestedScrollEnabled
+            directionalLockEnabled
+            showsVerticalScrollIndicator
+            className="max-h-60"
+            contentContainerStyle={{ paddingRight: 8 }}
+          >
+            {reasoning ? (
+              <MarkdownImageAssetScopeContext value={row.workEntry.id}>
+                {props.renderReasoning(reasoning.text)}
+              </MarkdownImageAssetScopeContext>
+            ) : call ? (
+              [
+                call.command,
+                ...(call.args ?? []).map(([key, value]) =>
+                  key === "code" &&
+                  shownItem.type === "dynamic_tool" &&
+                  isJavaScriptReplTool(shownItem.toolName) ? (
+                    <View key={key}>
+                      <Text className="font-mono text-2xs leading-normal text-foreground-muted">
+                        {key}
                       </Text>
-                    ) : (
-                      line
-                    ),
-                  )
-              ) : fullDetail ? (
-                <Text
-                  selectable
-                  className="font-mono text-2xs leading-normal text-foreground-muted"
-                >
-                  {fullDetail}
-                </Text>
-              ) : null}
-              {fetchedOutput ? (
-                <Text
-                  selectable
-                  className={cn(
-                    "font-mono text-2xs leading-normal text-foreground-muted",
-                    (!call || call.command || call.args || call.argsText) && "mt-1.5",
-                  )}
-                >
-                  {fetchedOutput}
-                </Text>
-              ) : null}
-              {streamsOutput ? null : exitLine}
-            </ScrollView>
-            {streamsOutput ? (
-              <>
-                <ThreadCommandOutput
-                  environmentId={props.environmentId}
-                  threadId={row.projectedItem.sourceThreadId}
-                  itemId={row.projectedItem.sourceItemId}
-                  themeAppearance={props.themeAppearance}
-                />
-                {exitLine}
-              </>
+                      <ReplCodeText code={value} theme={props.themeAppearance} />
+                    </View>
+                  ) : (
+                    `${key} ${value}`
+                  ),
+                ),
+                call.argsText,
+              ]
+                .filter((line) => Boolean(line))
+                .map((line, index) =>
+                  typeof line === "string" ? (
+                    <Text
+                      key={`${index}:${line}`}
+                      selectable
+                      className="font-mono text-2xs leading-normal text-foreground"
+                    >
+                      {line}
+                    </Text>
+                  ) : (
+                    line
+                  ),
+                )
+            ) : fullDetail ? (
+              <Text selectable className="font-mono text-2xs leading-normal text-foreground-muted">
+                {fullDetail}
+              </Text>
             ) : null}
-          </MarkdownImageAssetScopeContext>
+            {fetchedOutput ? (
+              <Text
+                selectable
+                className={cn(
+                  "font-mono text-2xs leading-normal text-foreground-muted",
+                  (!call || call.command || call.args || call.argsText) && "mt-1.5",
+                )}
+              >
+                {fetchedOutput}
+              </Text>
+            ) : null}
+            {streamsOutput ? null : exitLine}
+          </ScrollView>
+          {streamsOutput ? (
+            <>
+              <ThreadCommandOutput
+                environmentId={props.environmentId}
+                threadId={row.projectedItem.sourceThreadId}
+                itemId={row.projectedItem.sourceItemId}
+                themeAppearance={props.themeAppearance}
+              />
+              {exitLine}
+            </>
+          ) : null}
         </Animated.View>
       ) : null}
     </Animated.View>

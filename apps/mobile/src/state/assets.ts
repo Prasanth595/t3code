@@ -77,6 +77,7 @@ export function useAssetUrl(
 export function useRefreshAssetUrl(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
+  scope?: string,
 ): () => Promise<string | null> {
   const connection = usePreparedConnection(environmentId);
   const httpBaseUrl = connection._tag === "Some" ? connection.value.httpBaseUrl : null;
@@ -87,9 +88,9 @@ export function useRefreshAssetUrl(
   return useCallback(async () => {
     if (environmentId === null || resource === null || httpBaseUrl === null) return null;
     const state = assetUrlStateFromResult(
-      await createUrl({ environmentId, input: { resource } }),
+      await createUrl({ environmentId, input: { resource, scope } }),
       httpBaseUrl,
     );
     return state._tag === "Success" ? state.url : null;
-  }, [createUrl, environmentId, httpBaseUrl, resource]);
+  }, [createUrl, environmentId, httpBaseUrl, resource, scope]);
 }

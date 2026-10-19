@@ -17,7 +17,6 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 export { resolveAssetUrl, type AssetUrlState } from "@t3tools/client-runtime/state/assets";
 
-/** `scope` gives the caller its own signed URL; see `AssetUrlQuery`. */
 export function useAssetUrlState(
   environmentId: EnvironmentId | null,
   resource: AssetResource | null,
