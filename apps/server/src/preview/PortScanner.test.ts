@@ -1,3 +1,4 @@
+import * as NodeHttp from "node:http";
 import * as NodeNet from "node:net";
 
 import { it as effectIt } from "@effect/vitest";
@@ -22,6 +23,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import { expect } from "vite-plus/test";
 import { FetchHttpClient } from "effect/http";
+import * as Undici from "undici";
 
 import * as ProcessRunner from "../processRunner.ts";
 import * as PortScanner from "./PortScanner.ts";
@@ -979,3 +981,83 @@ effectIt.effect("ignores a partial Windows netstat snapshot when one query exits
     expect(yield* scanner.scan()).toEqual([]);
   }).pipe(Effect.provide(layer));
 });
+
+/**
+ * Emulates `--use-env-proxy` in-process: Node's fetch reads the same global
+ * dispatcher symbol that undici's `setGlobalDispatcher` writes.
+ */
+const loopbackRefusingProxy = Effect.fn("PortScannerTest.loopbackRefusingProxy")(function* () {
+  const authorities: string[] = [];
+  const proxy = yield* Effect.acquireRelease(
+    Effect.callback<NodeHttp.Server>((resume) => {
+      // undici 8 forwards plain http as absolute-form requests; Node 24's bundled
+      // undici 7 tunnels everything with CONNECT. Record the authority either way.
+      const server = NodeHttp.createServer((request, response) => {
+        authorities.push(request.headers.host ?? "");
+        response.writeHead(403);
+        response.end();
+      });
+      server.on("connect", (request, socket) => {
+        authorities.push(request.url ?? "");
+        socket.end("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
+      });
+      server.listen(0, "127.0.0.1", () => resume(Effect.succeed(server)));
+    }),
+    (server) =>
+      Effect.callback<void>((resume) => {
+        server.closeAllConnections();
+        server.close(() => resume(Effect.void));
+      }),
+  );
+  const address = proxy.address();
+  if (!address || typeof address === "string") {
+    return yield* Effect.die(new Error("Could not open the preview scanner test proxy"));
+  }
+  const previous = Undici.getGlobalDispatcher();
+  yield* Effect.acquireRelease(
+    Effect.sync(() => {
+      const agent = new Undici.EnvHttpProxyAgent({
+        httpProxy: `http://127.0.0.1:${address.port}`,
+        noProxy: "",
+      });
+      Undici.setGlobalDispatcher(agent);
+      return agent;
+    }),
+    (agent) =>
+      Effect.promise(async () => {
+        Undici.setGlobalDispatcher(previous);
+        await agent.close();
+      }),
+  );
+  return authorities;
+});
+
+effectIt.effect("probes loopback directly while fetch follows the process proxy", () =>
+  Effect.gen(function* () {
+    const authorities = yield* loopbackRefusingProxy();
+    const { port } = yield* commonDevServer;
+    yield* Effect.promise(() =>
+      fetch(`http://external-proof.invalid:${port}/`).catch(() => undefined),
+    );
+    expect(authorities).toEqual([`external-proof.invalid:${port}`]);
+
+    const scanner = yield* PortScanner.PortDiscovery;
+    const result = yield* scanner.scan([`http://localhost:${port}`]);
+    expect(result.map((server) => server.port)).toEqual([port]);
+    expect(authorities).toEqual([`external-proof.invalid:${port}`]);
+  }).pipe(
+    Effect.scoped,
+    Effect.provide(
+      PortScanner.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            layerNoProc,
+            layerTestProcessRunner,
+            Layer.succeed(HostProcess.Platform, "win32"),
+            PortScanner.layerHttpClient,
+          ),
+        ),
+      ),
+    ),
+  ),
+);
