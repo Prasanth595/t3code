@@ -130,7 +130,7 @@ const replayHttpClient = (
 ) =>
   HttpClient.make((request, url) =>
     Effect.tryPromise({
-      try: async () => {
+      try: async (signal) => {
         if (controller.exited && controller.finished) {
           throw new Error("The replayed OpenCode server has exited.");
         }
@@ -165,6 +165,7 @@ const replayHttpClient = (
         }
         // Recorded responses are the raw HTTP bodies; `null` is an empty 204.
         const body = await controller.response(operation.type);
+        await replayGate?.beforeEmit(operation.type, signal);
         if (body === "<hang>") return new Promise<Response>(() => {});
         if (typeof body === "object" && body !== null && "status" in body && "body" in body) {
           return new Response(encodeJson(body.body), {
