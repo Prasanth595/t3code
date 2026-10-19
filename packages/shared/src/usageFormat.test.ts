@@ -28,6 +28,7 @@ describe("formatTokens", () => {
   });
 
   it("preserves negative signs and NaN", () => {
+    expect(formatTokens(-999.5)).toBe("-1K");
     expect(formatTokens(-999_600)).toBe("-1M");
     expect(formatTokens(Number.NaN)).toBe("NaN");
   });
