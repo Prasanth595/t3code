@@ -1711,12 +1711,13 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       (yield* readConfigValue(cwd, `branch.${refName}.gh-merge-base`)) ?? "";
     const configuredBase = yield* resolveComparisonBaseRef(cwd, configuredBaseBranch);
     if (
+      configuredBase !== null &&
       configuredBaseBranch.includes("/") &&
       !configuredBaseBranch.startsWith("refs/") &&
       (yield* branchExists(cwd, configuredBaseBranch))
     ) {
       const comparisonRef = `refs/heads/${configuredBaseBranch}`;
-      return { baseRef: configuredBase ? comparisonRef : configuredBaseBranch, comparisonRef };
+      return { baseRef: comparisonRef, comparisonRef };
     }
     if (configuredBase !== null) return configuredBase;
 

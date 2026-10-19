@@ -1984,9 +1984,13 @@ export const make = Effect.gen(function* () {
       const localRef = configured.startsWith("refs/") ? configured : `refs/heads/${configured}`;
       const localBranch = yield* gitCore.resolveBranchName(cwd, localRef);
       if (localBranch) {
+        const shadowsRemote =
+          configured.includes("/") &&
+          !configured.startsWith("refs/") &&
+          (yield* gitCore.resolveBranchName(cwd, `refs/remotes/${configured}`)) !== null;
         return {
           baseBranch: localBranch,
-          baseRef: configured.includes("/") ? localRef : localBranch,
+          baseRef: configured.startsWith("refs/") || shadowsRemote ? localRef : localBranch,
         };
       }
       if (configured.includes("/") && !configured.startsWith("refs/")) {
