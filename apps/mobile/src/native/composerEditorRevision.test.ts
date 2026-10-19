@@ -211,7 +211,11 @@ describe("submit preparation", () => {
     const submitted = { ...correction, eventCount: 9 };
     const accepted = reconcileComposerSubmitSnapshot(
       8,
-      [{ eventCount: 7, value: "Teh", selection: { start: 3, end: 3 } }, correction],
+      [
+        { eventCount: 6, value: "", selection: null },
+        { eventCount: 7, value: "Teh", selection: { start: 3, end: 3 } },
+        correction,
+      ],
       submitted,
       true,
     );

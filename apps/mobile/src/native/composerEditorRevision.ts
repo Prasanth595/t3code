@@ -131,7 +131,12 @@ export function reconcileComposerSubmitSnapshot(
 ): { eventCount: number; snapshots: ComposerNativeEventSnapshot[] } | null {
   const eventCount = acknowledgeComposerNativeEvent(mostRecentEventCount, snapshot.eventCount);
   if (eventCount === null) return null;
-  // Old history can stamp replacement content with an obsolete revision or
-  // classify it as an echo. A discarded submit must allow a fresh controlled edit.
-  return { eventCount, snapshots: isCurrent ? [...snapshots, snapshot] : [] };
+  // A submit snapshot supersedes older history: both clearing after Send and
+  // replacing a cancelled edit must be fresh controlled updates.
+  return {
+    eventCount,
+    snapshots: isCurrent
+      ? pruneAcknowledgedComposerNativeEvents([...snapshots, snapshot], eventCount)
+      : [],
+  };
 }
