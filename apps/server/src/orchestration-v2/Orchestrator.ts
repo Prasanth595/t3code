@@ -8602,10 +8602,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }
         }
       }
+      // Stop can close a native query while its adapter session remains live.
       for (const providerThread of input.projection.providerThreads) {
         if (
           (providerThread.pendingBackgroundTasks?.length ?? 0) === 0 ||
-          (yield* hasLiveSession(providerThread.id))
+          (providerThread.id !== input.stoppedProviderThreadId &&
+            (yield* hasLiveSession(providerThread.id)))
         ) {
           continue;
         }

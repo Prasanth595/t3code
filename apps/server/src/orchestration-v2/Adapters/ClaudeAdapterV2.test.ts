@@ -12,6 +12,7 @@ import type {
   SDKUserMessage,
   SpawnedProcess,
   SpawnOptions,
+  StopHookInput,
 } from "@anthropic-ai/claude-agent-sdk";
 import type {
   AskUserQuestionInput,
@@ -4763,9 +4764,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     | { name: "TaskList"; input: Record<string, never>; output: TaskListOutput };
 
   function taskToolFrames(
-    tool:
-      | TaskToolCall
-      | { name: "ScheduleWakeup"; input: Record<string, unknown>; output: Record<string, unknown> },
+    tool: TaskToolCall,
     nextUuid: () => string,
     options?: { parentToolUseId?: string; isError?: boolean; extraToolResult?: boolean },
   ): ReadonlyArray<SDKMessage> {
@@ -5483,205 +5482,253 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect.each([
-    "holds while pending",
-    "keeps an empty native roster",
-    "consumes a due wake",
-    "replaces during a wake",
-    "keeps an early native wake",
-    "keeps a notification wake",
-    "keeps a user turn",
-    "ignores a failed call",
-    "ignores a nested call",
-    "ignores a missing deadline",
-    "stops explicitly",
-    "stops through T3",
-    "keeps earlier success",
-    "stops before failure",
-    "keeps hold before attach",
-  ])("ScheduleWakeup %s", (scenario) =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        let sequence = 900;
-        const nextUuid = () =>
-          `00000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}` as const;
-        let closes = 0;
-        const harness = yield* makeWakeHarnessWithOptions({
-          close: (queue) =>
-            Effect.sync(() => {
-              closes++;
-            }).pipe(Effect.andThen(Queue.shutdown(queue))),
-        });
-        const start = (ordinal: number, continuation = false) =>
-          harness.runtime.startTurn(
-            makeClaudeTestTurnInput({
-              threadId: harness.threadId,
-              providerThread: harness.providerThread,
-              now: DateTime.makeUnsafe(0),
-              attemptId: RunAttemptId.make(`scheduled-${ordinal}`),
-              providerTurnOrdinal: ordinal,
-              text: "Check the timer.",
-              attachments: [],
-              ...(continuation
-                ? { messageCreatedBy: "agent" as const, messageCreationSource: "provider" as const }
-                : {}),
-            }),
-          );
-        const deadline = DateTime.toEpochMillis(yield* DateTime.now) + 60_000;
-        const frames = taskToolFrames(
-          {
-            name: "ScheduleWakeup",
-            input: { delaySeconds: 60, reason: "timer probe", noop: true },
-            output:
-              scenario === "ignores a missing deadline"
-                ? {}
-                : { scheduledFor: deadline, clampedDelaySeconds: 60, wasClamped: false },
-          },
-          nextUuid,
-          {
-            isError: scenario === "ignores a failed call",
-            ...(scenario === "ignores a nested call" ? { parentToolUseId: "parent-agent" } : {}),
-          },
+  const makeScheduledWakeHarness = (options?: Parameters<typeof makeWakeHarnessWithOptions>[0]) =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions(options);
+      let ordinal = 0;
+      let resultSequence = 900;
+      const start = Effect.fnUntraced(function* (continuation = false) {
+        ordinal++;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`scheduled-${ordinal}`),
+            providerTurnOrdinal: ordinal,
+            text: "Check the timer.",
+            attachments: [],
+            ...(continuation
+              ? { messageCreatedBy: "agent" as const, messageCreationSource: "provider" as const }
+              : {}),
+          }),
         );
-        const interleaveFailure = (messages: ReadonlyArray<SDKMessage>) => {
-          const failed = taskToolFrames(
-            { name: "ScheduleWakeup", input: {}, output: {} },
-            nextUuid,
-            { isError: true },
-          );
-          return [messages[0]!, failed[0]!, ...messages.slice(1), ...failed.slice(1)];
-        };
-        const send = Effect.fnUntraced(function* (messages: ReadonlyArray<SDKMessage>) {
-          for (const message of messages) yield* harness.offerAndWait(message);
-        });
-        const finish = Effect.fnUntraced(function* () {
-          yield* harness.offerAndWait(makeResultFrame({ uuid: nextUuid(), result: "Done." }));
-          yield* Queue.take(harness.terminalReceipts);
-        });
-        const roster = () =>
-          providerThreadRosterEvents(harness.events).at(-1)?.providerThread
-            .pendingBackgroundTasks ?? [];
-        yield* start(1);
-        yield* send(scenario === "keeps earlier success" ? interleaveFailure(frames) : frames);
-        yield* finish();
-        if (scenario.startsWith("ignores")) {
-          assert.isFalse(yield* harness.hasPendingBackgroundWork);
-          return;
-        }
-        assert.deepEqual(roster(), [
-          {
-            taskId: "wakeup:tool-00000000-0000-4000-8000-000000000901",
-            kind: "background_task",
-            description: "timer probe",
-          },
-        ]);
-        assert.isTrue(yield* harness.hasPendingBackgroundWork);
-        if (scenario === "holds while pending" || scenario === "keeps earlier success") return;
-        if (scenario === "keeps an empty native roster") {
-          yield* harness.offerAndWait(
-            claudeSdkFrame({ ...wakeTurnInit, subtype: "background_tasks_changed", tasks: [] }),
-          );
-          assert.lengthOf(roster(), 1);
-          return;
-        }
-        if (scenario === "stops through T3") {
-          yield* harness.runtime.interruptTurn({
-            providerThread: providerThreadRosterEvents(harness.events).at(-1)!.providerThread,
-            providerTurnId: harness.terminalEvents()[0]!.providerTurnId,
-            requestRuntimeRestart: true,
-          });
-          assert.equal(closes, 1);
-          assert.isFalse(yield* harness.hasPendingBackgroundWork);
-          return;
-        }
-        if (scenario === "stops explicitly" || scenario === "stops before failure") {
-          yield* start(2);
-          yield* harness.offerAndWait(wakeTaskStarted);
-          const stopping = taskToolFrames(
-            {
-              name: "ScheduleWakeup",
-              input: { stop: true },
-              output: { stopped: true, scheduledFor: 0, cancelledWakeups: 1 },
-            },
-            nextUuid,
-          );
-          yield* send(scenario === "stops before failure" ? interleaveFailure(stopping) : stopping);
-          yield* send(frames);
-          yield* finish();
-          assert.deepEqual(
-            roster().map((task) => task.taskId),
-            [WAKE_TASK_ID],
-          );
-          return;
-        }
-        yield* TestClock.adjust(
-          scenario === "keeps an early native wake" ? "30 seconds" : "60 seconds",
-        );
-        const beforeWake = harness.events.length;
-        if (scenario === "keeps a user turn") {
-          yield* start(2);
-        } else {
-          if (scenario === "keeps a notification wake") {
-            yield* harness.offerAndWait(wakeTaskStarted);
-            yield* harness.offerAndWait(wakeNotification);
-          }
-          yield* harness.offerAndWait(wakeTurnInit);
-          assert.lengthOf(harness.continuationRequests, 1);
-          assert.isTrue(yield* harness.hasPendingBackgroundWork);
-          assert.lengthOf(roster(), 1);
-          if (scenario === "keeps hold before attach") {
-            yield* harness.offerAndWait(wakeAssistant);
-            yield* harness.offerAndWait(makeResultFrame({ uuid: nextUuid(), result: "Done." }));
-          }
-          yield* start(2, true);
-          if (scenario === "keeps hold before attach") {
-            yield* Queue.take(harness.terminalReceipts);
-            const events = harness.events.slice(beforeWake);
-            const attached = events.findIndex((event) => event.type === "provider_turn.updated");
-            assert.isAtLeast(attached, 0);
-            assert.isTrue(
-              providerThreadRosterEvents(events.slice(0, attached)).every(
-                (event) => event.providerThread.pendingBackgroundTasks?.length === 1,
-              ),
-            );
-            assert.isEmpty(roster());
-            return;
-          }
-          assert.lengthOf(harness.terminalEvents(), 1);
-        }
-        yield* harness.offerAndWait({ ...wakeTurnInit, uuid: nextUuid() });
-        if (scenario === "replaces during a wake") {
-          yield* send(
-            taskToolFrames(
+      });
+      const stop = (
+        input: Partial<StopHookInput> = {},
+        queryOptions = harness.getOpenedOptions(),
+      ) =>
+        Effect.tryPromise(async () => {
+          const callbacks = queryOptions?.hooks?.Stop?.flatMap((matcher) => matcher.hooks) ?? [];
+          assert.isNotEmpty(callbacks, "Cannot report pending timers: query has no Stop callback");
+          for (const callback of callbacks) {
+            await callback(
               {
-                name: "ScheduleWakeup",
-                input: { reason: "replacement" },
-                output: { scheduledFor: deadline + 120_000 },
+                hook_event_name: "Stop",
+                session_id: WAKE_NATIVE_SESSION,
+                transcript_path: "/tmp/scheduled-wakeup.jsonl",
+                cwd: "/tmp",
+                stop_hook_active: false,
+                ...input,
               },
-              nextUuid,
-            ),
-          );
-          yield* send(frames);
-        }
-        yield* finish();
-        const consumed = scenario === "consumes a due wake";
-        assert.equal(yield* harness.hasPendingBackgroundWork, !consumed);
-        assert.lengthOf(roster(), consumed ? 0 : 1);
-        if (scenario === "replaces during a wake") {
-          assert.equal(roster()[0]?.description, "replacement");
-          yield* TestClock.adjust("60 seconds");
-          yield* harness.offerAndWait(wakeTurnInit);
-          yield* start(3, true);
-          yield* finish();
-          assert.isTrue(
-            yield* harness.hasPendingBackgroundWork,
-            "the replacement deadline is later",
-          );
-        }
+              undefined,
+              { signal: new AbortController().signal },
+            );
+          }
+        });
+      const result = () =>
+        harness.offerAndWait(
+          makeResultFrame({
+            uuid: `00000000-0000-4000-8000-${String(++resultSequence).padStart(12, "0")}`,
+            result: "Done.",
+          }),
+        );
+      const finish = Effect.suspend(result).pipe(
+        Effect.andThen(Queue.take(harness.terminalReceipts)),
+      );
+      const roster = () => {
+        // Only the roster published before the terminal can reach the final run projection.
+        const terminalIndex = harness.events.findLastIndex(
+          (event) => event.type === "turn.terminal",
+        );
+        return (
+          providerThreadRosterEvents(harness.events.slice(0, terminalIndex)).at(-1)?.providerThread
+            .pendingBackgroundTasks ?? []
+        );
+      };
+      return { ...harness, start, stop, result, finish, roster };
+    });
+
+  const scheduledCron = {
+    id: "timer-1",
+    schedule: "0 9 * * *",
+    recurring: false,
+    prompt: "Check the build",
+  };
+
+  it.effect(
+    "Stop snapshots retain one-shot timers through empty rosters, user turns and API errors",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeScheduledWakeHarness();
+        yield* h.start();
+        yield* h.stop();
+        assert.isFalse(
+          yield* h.hasPendingBackgroundWork,
+          "missing snapshots cannot discover a timer",
+        );
+        yield* h.stop({ session_crons: [scheduledCron] });
+        assert.isTrue(
+          yield* h.hasPendingBackgroundWork,
+          "Stop must install the hold before returning",
+        );
+        yield* h.finish;
+        const pending = h.roster();
+        assert.lengthOf(pending, 1);
+        assert.equal(pending[0]?.kind, "background_task");
+        assert.equal(pending[0]?.description, scheduledCron.prompt);
+
+        yield* h.offerAndWait(
+          claudeSdkFrame({ ...wakeTurnInit, subtype: "background_tasks_changed", tasks: [] }),
+        );
+        yield* h.start();
+        yield* h.stop();
+        yield* h.finish;
+        assert.deepEqual(h.roster(), pending, "an omitted snapshot leaves the timer unchanged");
+        assert.isTrue(yield* h.hasPendingBackgroundWork);
+
+        yield* h.start();
+        // API-error turns emit StopFailure, with no authoritative Stop snapshot.
+        yield* h.offerAndWait(
+          makeResultFrame({
+            uuid: "scheduled-followup-rate-limited",
+            result: "Rate limited",
+            isError: true,
+            apiErrorStatus: 429,
+            terminalReason: "api_error",
+          }),
+        );
+        assert.equal((yield* Queue.take(h.terminalReceipts)).status, "failed");
+        assert.deepEqual(h.roster(), pending);
+        assert.isTrue(yield* h.hasPendingBackgroundWork);
+        assert.lengthOf(h.processQueues, 1);
+
+        yield* h.start();
+        yield* h.offerAndWait(wakeTaskStarted);
+        yield* h.stop({ session_crons: [] });
+        yield* h.finish;
+        assert.deepEqual(
+          h.roster().map((task) => task.taskId),
+          [WAKE_TASK_ID],
+        );
+        assert.isTrue(yield* h.hasPendingBackgroundWork, "clearing timers preserves native work");
       }).pipe(
+        Effect.scoped,
         Effect.provide(
           Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
         ),
+      ),
+  );
+
+  it.effect(
+    "Stop snapshots consume and rearm timers before an idle wake continuation attaches",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeScheduledWakeHarness();
+        yield* h.start();
+        yield* h.stop({ session_crons: [scheduledCron] });
+        yield* h.finish;
+        const firstId = h.roster()[0]?.taskId;
+        assert.lengthOf(h.roster(), 1);
+
+        yield* h.offerAndWait(wakeTurnInit);
+        yield* h.offerAndWait(wakeAssistant);
+        yield* h.stop({
+          session_crons: [{ ...scheduledCron, id: "timer-2", prompt: "Check again" }],
+        });
+        assert.isTrue(yield* h.hasPendingBackgroundWork);
+        yield* h.result();
+        yield* h.start(true);
+        yield* Queue.take(h.terminalReceipts);
+        assert.lengthOf(h.roster(), 1);
+        assert.notEqual(
+          h.roster()[0]?.taskId,
+          firstId,
+          "the replacement has its own snapshot identity",
+        );
+        assert.equal(h.roster()[0]?.description, "Check again");
+
+        yield* h.offerAndWait(wakeTurnInit);
+        yield* h.offerAndWait(wakeAssistant);
+        yield* h.stop({ session_crons: [] });
+        assert.isFalse(
+          yield* h.runtime.hasPendingBackgroundWorkForThread!(h.providerThread),
+          "consumption is installed before SDK result",
+        );
+        yield* h.result();
+        yield* h.start(true);
+        yield* Queue.take(h.terminalReceipts);
+        assert.isEmpty(h.roster());
+        assert.isFalse(yield* h.hasPendingBackgroundWork);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+  );
+
+  it.effect("Stop snapshots ignore recurring, foreign, subagent and closed-query work", () =>
+    Effect.gen(function* () {
+      const h = yield* makeScheduledWakeHarness({
+        freshQueueOnReopen: true,
+        close: (messages) => Queue.shutdown(messages),
+      });
+      yield* h.start();
+      yield* h.stop({ session_crons: [{ ...scheduledCron, recurring: true }] });
+      assert.isFalse(yield* h.hasPendingBackgroundWork);
+      yield* h.stop({ session_id: "another-session", session_crons: [scheduledCron] });
+      yield* h.stop({ agent_id: "child-agent", session_crons: [scheduledCron] });
+      yield* h.finish;
+      assert.isEmpty(h.roster());
+      assert.isFalse(yield* h.hasPendingBackgroundWork);
+
+      yield* h.start();
+      const oldQuery = h.getOpenedOptions();
+      yield* h.stop({
+        agent_type: "root-specialist",
+        session_crons: [{ ...scheduledCron, prompt: "" }],
+      });
+      yield* h.stop({ session_id: "another-session", session_crons: [] });
+      yield* h.stop({ agent_id: "child-agent", session_crons: [] });
+      const terminal = yield* h.finish;
+      assert.lengthOf(h.roster(), 1);
+      assert.equal(h.roster()[0]?.description, "Scheduled wakeup");
+      assert.isTrue(yield* h.hasPendingBackgroundWork);
+
+      yield* h.runtime.interruptTurn({
+        providerThread: h.providerThread,
+        providerTurnId: terminal.providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      yield* h.stop({ session_crons: [scheduledCron] }, oldQuery);
+      assert.isFalse(yield* h.hasPendingBackgroundWork, "a closed query cannot restore its timer");
+
+      yield* h.start();
+      yield* h.stop({ session_crons: [{ ...scheduledCron, id: "replacement-timer" }] });
+      yield* h.stop({ session_crons: [] }, oldQuery);
+      yield* Queue.offer(
+        h.processQueues.at(-1)!,
+        makeResultFrame({ uuid: "replacement-result", result: "Done." }),
+      );
+      yield* Queue.take(h.terminalReceipts);
+      assert.lengthOf(
+        h.roster(),
+        1,
+        "a stale callback cannot clear the new query with the same session ID",
+      );
+      assert.equal(h.roster()[0]?.description, scheduledCron.prompt);
+      assert.isTrue(yield* h.hasPendingBackgroundWork);
+
+      yield* h.start();
+      yield* Queue.shutdown(h.processQueues.at(-1)!);
+      yield* Queue.take(h.terminalReceipts);
+      assert.isEmpty(h.roster(), "query exit clears process-bound timers");
+      assert.isFalse(yield* h.hasPendingBackgroundWork);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
       ),
     ),
   );
