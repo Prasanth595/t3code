@@ -1,5 +1,6 @@
 import type { DeviceHubAccess } from "@t3tools/client-runtime/device/hub-access";
 import type { DevicePlatform } from "@t3tools/contracts";
+import type { PlatformOSType } from "react-native";
 
 export interface DeviceStreamConfiguration {
   readonly access: DeviceHubAccess;
@@ -16,16 +17,16 @@ export interface DeviceStreamConfiguration {
 }
 
 export function deviceStreamBaseUrl(
-  viewerPlatform: string,
+  viewerPlatform: PlatformOSType,
   devicePlatform: DevicePlatform,
   httpBase: string,
 ) {
   if (viewerPlatform !== "android") return "file:///";
-  // iOS targets use an MJPEG image. A synthetic HTTPS origin makes Android
-  // block HTTP image streams as mixed content, even with mixedContentMode="always".
-  if (devicePlatform === "ios") return `${new URL(httpBase).origin}/`;
-  // Android targets use WebCodecs, which requires a secure document.
-  return "https://localhost/";
+  // Android targets stream through WebCodecs, which needs a secure context. iOS targets
+  // stream MJPEG and ws:// from the environment, which a synthetic https document blocks
+  // as mixed content on plain-http environments even with mixedContentMode="always".
+  if (devicePlatform === "android") return "https://localhost/";
+  return `${new URL(httpBase).origin}/`;
 }
 
 export function deviceStreamDocument(configuration: string, script: string) {

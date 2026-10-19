@@ -7,35 +7,19 @@ import {
   deviceStreamMessage,
 } from "./device-stream-document";
 
-describe("native device stream origin", () => {
+describe("native device stream document", () => {
   it.each([
-    "http://100.64.0.1:3773/api/device-hub",
-    "http://192.168.1.10:3773/api/device-hub",
-    "https://environment.example/t3/api/device-hub",
-  ])("keeps iOS MJPEG on the environment origin in Android: %s", (httpBase) => {
-    const documentUrl = new URL(deviceStreamBaseUrl("android", "ios", httpBase));
-    const streamUrl = new URL(`${httpBase}/vendor/serve-sim/helper/device/stream.mjpeg`);
-    expect(documentUrl.origin).toBe(streamUrl.origin);
-    expect(documentUrl.pathname).toBe("/");
-  });
-
-  it.each(["http", "https"])(
-    "retains a secure WebCodecs document for Android targets over %s",
-    (scheme) => {
-      expect(
-        deviceStreamBaseUrl("android", "android", `${scheme}://environment.example/api/device-hub`),
-      ).toBe("https://localhost/");
+    ["android", "ios", "http://192.168.1.10:3773/api/device-hub", "http://192.168.1.10:3773/"],
+    ["android", "ios", "https://env.example/t3/api/device-hub", "https://env.example/"],
+    ["android", "android", "http://192.168.1.10:3773/api/device-hub", "https://localhost/"],
+    ["ios", "ios", "http://192.168.1.10:3773/api/device-hub", "file:///"],
+  ] as const)(
+    "uses a %s viewer base URL for %s targets on %s",
+    (viewer, target, httpBase, expected) => {
+      expect(deviceStreamBaseUrl(viewer, target, httpBase)).toBe(expected);
     },
   );
 
-  it.each(["ios", "android"] as const)("retains the iOS viewer origin for %s targets", (target) => {
-    expect(deviceStreamBaseUrl("ios", target, "http://environment.example/api/device-hub")).toBe(
-      "file:///",
-    );
-  });
-});
-
-describe("native device stream document", () => {
   it("keeps ticket and device values from terminating the embedded script", () => {
     const deviceId = '</script><script>alert("device")</script>';
     const configuration = JSON.stringify({ deviceId, ticket: "<ticket>" });
