@@ -898,8 +898,7 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
       );
     if (
       checkpoint === undefined ||
-      // "missing" checkpoints hold no file snapshot (e.g. non-git workspaces),
-      // so only a conversation-only rewind ("Revert and keep changes") may target them.
+      // Missing snapshots support conversation rewind only.
       (checkpoint.status !== "ready" &&
         !(input.restoreFiles === false && checkpoint.status === "missing"))
     ) {

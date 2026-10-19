@@ -113,9 +113,7 @@ export const layer: Layer.Layer<
       const baselineOrdinalWithinScope = Math.max(0, run.ordinal - 1);
       const hasReadyCheckpoint = (ordinalWithinScope: number) =>
         readyCheckpointOrdinals.includes(ordinalWithinScope);
-      // A runless baseline must not overwrite a checkpoint that already pins a
-      // run: without file snapshots that run link is the only way back to an
-      // earlier message, and the baseline carries no additional information.
+      // Replacing a missing snapshot with a runless baseline would erase its run link.
       const hasRunCheckpoint = (ordinalWithinScope: number) =>
         runCheckpointOrdinals.includes(ordinalWithinScope);
       const threadStartCheckpoint =

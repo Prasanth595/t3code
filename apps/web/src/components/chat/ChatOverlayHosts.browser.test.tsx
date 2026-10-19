@@ -1,4 +1,13 @@
-import { MessageId } from "@t3tools/contracts";
+import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
+  MessageId,
+  NodeId,
+  ThreadId,
+  type OrchestrationV2Checkpoint,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
@@ -27,13 +36,20 @@ const dialog = () => document.querySelector('[role="alertdialog"]');
 
 describe("RevertConfirmHost", () => {
   it("requires a ready baseline before offering first-message file restore", async () => {
-    await act(() =>
-      root.render(
-        <AppAtomRegistryProvider>
-          <RevertConfirmHost threadKey="env:non-git" onConfirm={vi.fn()} />
-        </AppAtomRegistryProvider>,
-      ),
-    );
+    const onConfirm = vi.fn();
+    const render = (checkpoints?: ReadonlyArray<OrchestrationV2Checkpoint>) =>
+      act(() =>
+        root.render(
+          <AppAtomRegistryProvider>
+            <RevertConfirmHost
+              threadKey="env:non-git"
+              checkpoints={checkpoints}
+              onConfirm={onConfirm}
+            />
+          </AppAtomRegistryProvider>,
+        ),
+      );
+    await render();
     await act(() => openRevertConfirm("env:non-git", { turnCount: 0, messageId }));
     const buttons = [...dialog()!.querySelectorAll("button")];
     const restore = buttons.find((button) => button.textContent === "Revert files too")!;
@@ -42,6 +58,28 @@ describe("RevertConfirmHost", () => {
     await act(() => restore.click());
     expect(dialog()).not.toBeNull();
     expect(keep.disabled).toBe(false);
+    expect(onConfirm).not.toHaveBeenCalled();
+
+    const baseline: OrchestrationV2Checkpoint = {
+      id: CheckpointId.make("baseline"),
+      scopeId: CheckpointScopeId.make("scope"),
+      threadId: ThreadId.make("non-git"),
+      runId: null,
+      nodeId: NodeId.make("root"),
+      parentCheckpointId: null,
+      ordinalWithinScope: 0,
+      appRunOrdinal: null,
+      ref: CheckpointRef.make("baseline-ref"),
+      files: [],
+      capturedAt: DateTime.makeUnsafe("2026-10-01T00:00:00.000Z"),
+      status: "missing",
+    };
+    await render([baseline]);
+    expect(restore.disabled).toBe(true);
+    await render([{ ...baseline, status: "ready" }]);
+    expect(restore.disabled).toBe(false);
+    await act(() => restore.click());
+    expect(onConfirm).toHaveBeenCalledExactlyOnceWith(0, messageId, true);
   });
 
   it("shows only its thread's request, confirms it once, and drops it when the thread changes", async () => {

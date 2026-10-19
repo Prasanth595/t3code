@@ -865,6 +865,20 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         rollbackThread.mock.calls[0]![0].providerThreadTurns.map((turn) => turn.id),
         [ProviderTurnId.make("non-git-first-turn"), ProviderTurnId.make("non-git-second-turn")],
       );
+      const discardedCommandId = CommandId.make("non-git-discarded-target");
+      yield* orchestrator
+        .dispatch({
+          type: "checkpoint.rollback",
+          commandId: discardedCommandId,
+          threadId,
+          checkpointId: second.checkpoint.id,
+          scopeId: second.checkpoint.scopeId,
+          restoreFiles: false,
+        })
+        .pipe(Effect.flip);
+      assert.deepEqual(yield* outbox.listByCommandId(discardedCommandId), []);
+      assert.equal(rollbackThread.mock.calls.length, 1);
+
       const resent = yield* completeMessage("non-git-resent");
       assert.isAbove(resent.run.ordinal, second.run.ordinal);
       yield* rewind("non-git-rewind-again");

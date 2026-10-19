@@ -334,6 +334,13 @@ describe("V2 session presentation", () => {
     ]);
     expect([
       ...deriveRevertTurnCountByUserMessageId({
+        timelineEntries: timeline([1, 4]),
+        checkpoints,
+        hasMoreHistory: true,
+      }),
+    ]).toEqual([["message-4", 1]]);
+    expect([
+      ...deriveRevertTurnCountByUserMessageId({
         timelineEntries: timeline([1, 2]),
         checkpoints: checkpoints.slice(0, 2).map((checkpoint, index) => ({
           ...checkpoint,

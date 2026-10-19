@@ -1014,17 +1014,18 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
 export function deriveRevertTurnCountByUserMessageId(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
+  readonly hasMoreHistory?: boolean;
 }): Map<ChatMessage["id"], number> {
   const rewindableCheckpointByRunId = new Map<RunId, ThreadCheckpointSummary>();
   for (const checkpoint of input.checkpoints) {
-    // "missing" checkpoints hold no file snapshot (e.g. non-git workspaces),
-    // but still pin a conversation position that a conversation-only rewind
-    // ("Revert and keep changes") can roll back to.
+    // Missing snapshots still pin a conversation position.
     if (checkpoint.status === "ready" || checkpoint.status === "missing") {
       rewindableCheckpointByRunId.set(checkpoint.runId, checkpoint);
     }
   }
   const byUserMessageId = new Map<ChatMessage["id"], number>();
+  // A partial transcript cannot identify the first loaded message's predecessor.
+  let predecessorTurnCount: number | null = input.hasMoreHistory ? null : 0;
   for (const entry of input.timelineEntries) {
     if (entry.kind !== "message" || entry.message.role !== "user") continue;
     if (entry.message.inputIntent !== "turn_start" && entry.message.inputIntent !== "queued_turn") {
@@ -1032,23 +1033,13 @@ export function deriveRevertTurnCountByUserMessageId(input: {
     }
     if (entry.message.runId === null) continue;
     const checkpoint = rewindableCheckpointByRunId.get(entry.message.runId);
-    if (checkpoint === undefined) continue;
-    byUserMessageId.set(entry.message.id, Math.max(0, checkpoint.checkpointTurnCount - 1));
+    // Run ordinals keep increasing after rewind; only visible predecessors survive.
+    if (checkpoint !== undefined && predecessorTurnCount !== null) {
+      byUserMessageId.set(entry.message.id, predecessorTurnCount);
+    }
+    predecessorTurnCount = checkpoint?.checkpointTurnCount ?? null;
   }
   return byUserMessageId;
-}
-
-export function resolvePendingRevertTarget(
-  summaries: ReadonlyArray<TurnDiffSummary>,
-  turnCount: number,
-): TurnDiffSummary | undefined {
-  return summaries.findLast((summary) => summary.checkpointTurnCount === turnCount);
-}
-
-export function isRevertFilesDisabled(
-  target: Pick<TurnDiffSummary, "status"> | undefined,
-): boolean {
-  return target !== undefined && target.status !== "ready";
 }
 
 export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase {

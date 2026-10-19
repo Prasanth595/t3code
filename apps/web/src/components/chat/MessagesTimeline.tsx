@@ -845,6 +845,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
   const rawRows = useIncrementalTimelineRows(`${listIdentityKey}\0${workspaceRoot ?? ""}`, {
     timelineEntries,
+    hasMoreHistory: historyControls?.hasMoreHistory === true,
     latestRun,
     runningRunId,
     expandedRunIds: visibleExpandedRunIds,

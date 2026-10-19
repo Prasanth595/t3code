@@ -142,8 +142,7 @@ export const layer: Layer.Layer<
         (candidate) => candidate.id === input.checkpointId,
       );
       const scope = projection.checkpointScopes.find((candidate) => candidate.id === input.scopeId);
-      // "missing" checkpoints hold no file snapshot (e.g. non-git workspaces),
-      // so only a conversation-only rewind ("Revert and keep changes") may target them.
+      // Missing snapshots support conversation rewind only.
       const conversationOnlyRollback = input.restoreFiles === false;
       if (
         providerThread === undefined ||
@@ -189,7 +188,11 @@ export const layer: Layer.Layer<
               const targetTurn =
                 latestProviderTurnForAttempt(projection.providerTurns, targetAttempt?.id) ??
                 projection.providerTurns.find((turn) => turn.id === targetAttempt?.providerTurnId);
-              if (targetTurn === undefined || targetTurn.providerThreadId !== providerThread.id) {
+              if (
+                targetRun?.status === "rolled_back" ||
+                targetTurn === undefined ||
+                targetTurn.providerThreadId !== providerThread.id
+              ) {
                 return yield* new CheckpointRollbackExecutionError({
                   reason: "provider-turn-unavailable",
                   threadId: input.threadId,
