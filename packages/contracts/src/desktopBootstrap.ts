@@ -33,6 +33,8 @@ export const DesktopBackendBootstrap = Schema.Struct({
   desktopTelemetryControlFd: Schema.optionalKey(PositiveInt),
   desktopBrowserFd: Schema.optionalKey(PositiveInt),
   desktopBrowserControlFd: Schema.optionalKey(PositiveInt),
+  // A pipe the desktop never writes to or closes. EOF means the desktop exited.
+  desktopLifetimeFd: Schema.optionalKey(PositiveInt),
   resourceMonitorPath: Schema.optionalKey(TrimmedNonEmptyString),
 });
 

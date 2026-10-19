@@ -1484,6 +1484,7 @@ describe("DesktopBackendConfiguration", () => {
         assert.equal(config.bootstrap.resourceMonitorPath, monitorPath);
         assert.equal(config.bootstrap.desktopTelemetryFd, 4);
         assert.equal(config.bootstrap.desktopTelemetryControlFd, 5);
+        assert.equal(config.bootstrap.desktopLifetimeFd, 8);
       }).pipe(
         Effect.provide(
           layerBackendConfiguration().pipe(
