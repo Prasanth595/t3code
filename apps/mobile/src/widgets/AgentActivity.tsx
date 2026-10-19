@@ -158,9 +158,6 @@ export function AgentActivity(
     deepLinkRow && deepLinkRow.deepLink.startsWith("/") && !deepLinkRow.deepLink.startsWith("//")
       ? `t3code://${deepLinkRow.deepLink.slice(1)}`
       : null;
-  // iOS gives each compact / minimal island region a single tap target (no
-  // per-region Link). The activity's attributes URL can't serve it: it's fixed
-  // at start, while the target thread changes with every update.
   const linkModifiers = deepLink ? [widgetURL(deepLink)] : [];
 
   type SFName = NonNullable<ComponentProps<typeof Image>["systemName"]>;
