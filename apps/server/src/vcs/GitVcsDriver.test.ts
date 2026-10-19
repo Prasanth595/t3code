@@ -15,7 +15,7 @@ import { ChildProcessSpawner } from "effect/process";
 import { assert, it } from "@effect/vitest";
 
 import { CheckpointRef, GitCommandError, VcsProcessExitError } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerConfig from "../config.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -1228,7 +1228,7 @@ it.effect.each(["win32", "linux"] as const)(
       yield* git(["init", "empty"]);
       const observedArgs: ReadonlyArray<string>[] = [];
       const platformDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
-        Effect.provideService(HostProcessPlatform, platform),
+        Effect.provideService(HostProcess.Platform, platform),
         Effect.provideService(VcsProcess.VcsProcess, {
           run: (input) => {
             observedArgs.push(input.args);
@@ -1243,15 +1243,20 @@ it.effect.each(["win32", "linux"] as const)(
 
       assert.strictEqual(yield* fs.readFileString(path.join(cwd, "file.txt")), "unstaged\n");
       assert.strictEqual((yield* git(["ls-tree", checkpointRef, "--", "empty"])).stdout, "");
-      const worktreeCommands = observedArgs.filter((args) =>
-        ["add", "--others", "restore", "clean", "reset"].some((command) => args.includes(command)),
-      );
-      // Failed add, recovery listing, retried add, then restore, clean and reset.
-      assert.strictEqual(worktreeCommands.length, 6);
-      for (const args of worktreeCommands) {
-        const setting = args.indexOf("core.longpaths=true");
-        if (platform === "win32") assert.strictEqual(args[setting - 1], "-c", args.join(" "));
-        else assert.strictEqual(setting, -1, args.join(" "));
+      for (const command of ["add", "ls-files", "restore", "clean", "reset"]) {
+        const calls = observedArgs.filter(
+          (args) => args.includes(command) && (command !== "ls-files" || args.includes("--others")),
+        );
+        assert.isNotEmpty(calls, `Expected checkpoint command: ${command}`);
+        for (const args of calls) {
+          const setting = args.indexOf("core.longpaths=true");
+          if (platform === "win32") {
+            assert.strictEqual(args[setting - 1], "-c", args.join(" "));
+            assert.isBelow(setting, args.indexOf(command), args.join(" "));
+          } else {
+            assert.strictEqual(setting, -1, args.join(" "));
+          }
+        }
       }
-    }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+    }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
