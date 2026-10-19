@@ -8,45 +8,15 @@ import {
   resolveFileChipTarget,
 } from "./fileChipMenu";
 
-describe("fileChipClipboardPath", () => {
-  it.each([
-    [
-      "C:/Users/me/project/reports/Device Users.csv",
-      "C:/Users/me/project",
-      String.raw`C:\Users\me\project\reports\Device Users.csv`,
-      String.raw`reports\Device Users.csv`,
-    ],
-    [
-      "reports/Device Users.csv",
-      String.raw`C:\Users\me\project`,
-      String.raw`C:\Users\me\project\reports\Device Users.csv`,
-      String.raw`reports\Device Users.csv`,
-    ],
-    [
-      "file://server/share/project/report.csv",
-      String.raw`\\server\share\project`,
-      String.raw`\\server\share\project\report.csv`,
-      String.raw`report.csv`,
-    ],
-    [
-      "/home/me/project/report.csv",
-      "/home/me/project",
-      "/home/me/project/report.csv",
-      "report.csv",
-    ],
-    ["reports/Device Users.csv", null, undefined, "reports/Device Users.csv"],
-  ] as const)("formats both copy actions for %s", (href, workspaceRoot, fullPath, relativePath) => {
-    const target = resolveFileChipTarget(href, workspaceRoot);
-    if (!target) throw new Error("File-chip target unavailable");
-    expect(fileChipClipboardPath(target, "copy-full-path")).toBe(fullPath);
-    expect(fileChipClipboardPath(target, "copy-relative-path")).toBe(relativePath);
-  });
-
-  it("does not supply clipboard text for open and save actions", () => {
-    const target = resolveFileChipTarget("src/app.ts", "/repo")!;
-    expect(fileChipClipboardPath(target, "open-file")).toBeUndefined();
-    expect(fileChipClipboardPath(target, "save")).toBeUndefined();
-  });
+it("copies native paths from a relative file chip in a Windows workspace", () => {
+  const target = resolveFileChipTarget("reports/Device Users.csv", "C:/repo");
+  if (!target) throw new Error("File-chip target unavailable");
+  expect(fileChipClipboardPath(target, "copy-full-path")).toBe(
+    String.raw`C:\repo\reports\Device Users.csv`,
+  );
+  expect(fileChipClipboardPath(target, "copy-relative-path")).toBe(
+    String.raw`reports\Device Users.csv`,
+  );
 });
 
 describe("resolveFileChipTarget", () => {

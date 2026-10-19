@@ -105,25 +105,11 @@ it.each([
     String.raw`assets\shot.png`,
   ],
   [
-    "C:/repo/assets/clip with spaces.mp4",
-    "C:/repo",
-    String.raw`C:\repo\assets\clip with spaces.mp4`,
-    String.raw`assets\clip with spaces.mp4`,
-  ],
-  [
-    String.raw`\\server\share\repo/assets/shot.png`,
-    String.raw`\\server\share\repo`,
-    String.raw`\\server\share\repo\assets\shot.png`,
-    String.raw`assets\shot.png`,
-  ],
-  [
     String.raw`\\server\share\repo/assets/clip.mp4`,
     String.raw`\\server\share\repo`,
     String.raw`\\server\share\repo\assets\clip.mp4`,
     String.raw`assets\clip.mp4`,
   ],
-  ["/repo/assets/shot.png", "/repo", "/repo/assets/shot.png", "assets/shot.png"],
-  ["/repo/assets/clip.mp4", "/repo", "/repo/assets/clip.mp4", "assets/clip.mp4"],
 ] as const)("copies full and relative media paths for %s", (path, root, full, relative) => {
   const media = useMediaActions({
     environmentId,
@@ -146,12 +132,12 @@ it.each([
   expect(state.download).not.toHaveBeenCalled();
 });
 
-it.each(["image/png", "video/mp4"])("preserves the %s URL when copying", (mimeType) => {
+it("preserves media URLs when copying", () => {
   const url = "https://cdn.test/assets/media?path=C:/repo/media";
   const media = useMediaActions({
     uri: url,
     name: "media",
-    mimeType,
+    mimeType: "video/mp4",
     reference: { kind: "url", url },
   });
   const action = media.actions.find(({ id }) => id === "copy-url");

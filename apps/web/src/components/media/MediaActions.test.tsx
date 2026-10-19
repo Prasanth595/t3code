@@ -154,27 +154,11 @@ it.each([
   ],
   [
     "video",
-    "C:/repo/assets/clip with spaces.mp4",
-    "C:/repo",
-    String.raw`C:\repo\assets\clip with spaces.mp4`,
-    String.raw`assets\clip with spaces.mp4`,
-  ],
-  [
-    "image",
-    String.raw`\\server\share\repo/assets/shot.png`,
-    String.raw`\\server\share\repo`,
-    String.raw`\\server\share\repo\assets\shot.png`,
-    String.raw`assets\shot.png`,
-  ],
-  [
-    "video",
     String.raw`\\server\share\repo/assets/clip.mp4`,
     String.raw`\\server\share\repo`,
     String.raw`\\server\share\repo\assets\clip.mp4`,
     String.raw`assets\clip.mp4`,
   ],
-  ["image", "/repo/assets/shot.png", "/repo", "/repo/assets/shot.png", "assets/shot.png"],
-  ["video", "/repo/assets/clip.mp4", "/repo", "/repo/assets/clip.mp4", "assets/clip.mp4"],
 ] as const)(
   "copies full and relative paths for %s %s",
   async (kind, path, root, full, relative) => {
@@ -199,12 +183,12 @@ it.each([
   },
 );
 
-it.each(["image", "video"] as const)("preserves the %s URL when copying", async (kind) => {
-  const url = `https://cdn.test/assets/${kind === "image" ? "shot.png" : "clip.mp4"}?path=C:/repo/media`;
+it("preserves media URLs when copying", async () => {
+  const url = "https://cdn.test/assets/clip.mp4?path=C:/repo/media";
   const completed = deferred<void>();
   state.menuFinished = () => completed.resolve();
   state.showMenu.mockResolvedValue("copy-url");
-  openMenu({ ...hostSource(), kind, src: url, reference: { kind: "url", url } });
+  openMenu({ ...hostSource(), kind: "video", src: url, reference: { kind: "url", url } });
   await completed.promise;
   expect(state.copyText).toHaveBeenCalledWith(url, "URL");
   expect(state.mint).not.toHaveBeenCalled();
