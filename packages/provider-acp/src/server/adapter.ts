@@ -3,6 +3,7 @@
 import {
   type ChatAttachment,
   type ModelSelection,
+  type MessageId,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PlanArtifact,
@@ -1806,6 +1807,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
         const continuationRequested = yield* Ref.make(false);
         const continuationGeneration = yield* Ref.make(0);
+        // Native frames can arrive after a text wake is offered; its message owns their drain.
+        const textContinuationMessageId = yield* Ref.make<MessageId | null>(null);
         const continuationPermit = yield* Semaphore.make(1);
         const continuationClosed = yield* Ref.make(false);
         // Direct Stop (requestRuntimeRestart) quarantines residual events from the
@@ -3495,11 +3498,21 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       ...blocks,
                     ].join("\n\n");
               yield* Ref.set(wakeReports, { reports, offered: new Set(reports.keys()) });
-              return Option.some({ route, generation, reports, detail });
+              const messageId =
+                detail === null
+                  ? null
+                  : yield* idAllocator.allocate
+                      .message({
+                        threadId: route.threadId,
+                        ordinal: (yield* Ref.get(snapshot)).order.length + 1,
+                      })
+                      .pipe(Effect.orDie);
+              yield* Ref.set(textContinuationMessageId, messageId);
+              return Option.some({ route, generation, reports, detail, messageId });
             }),
           );
           if (Option.isNone(pending)) return false;
-          const { route, generation, reports, detail } = pending.value;
+          const { route, generation, reports, detail, messageId } = pending.value;
           const notification = backgroundWorkNotification([...reports.values()]);
           yield* Effect.logInfo("orchestration-v2.acp-wake-turn-detected", {
             driver,
@@ -3513,12 +3526,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             driver,
             detail,
             delivery: detail === null ? "adapter_buffered" : "message_text",
+            ...(messageId === null ? {} : { messageId }),
             ...(notification === null ? {} : { notification }),
             clearIfCurrent: () =>
               continuationPermit.withPermit(
                 Effect.gen(function* () {
                   if ((yield* Ref.get(continuationGeneration)) === generation) {
                     yield* Ref.set(continuationRequested, false);
+                    yield* Ref.set(textContinuationMessageId, null);
                   }
                 }),
               ),
@@ -3528,6 +3543,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const clearIfOwner = Effect.gen(function* () {
                     if ((yield* Ref.get(continuationGeneration)) === generation) {
                       yield* Ref.set(continuationRequested, false);
+                      yield* Ref.set(textContinuationMessageId, null);
                     }
                   });
                   if (yield* Ref.get(stoppedRunQuarantine)) {
@@ -3594,7 +3610,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             (yield* Ref.get(activeSessionId)) === sessionId &&
             (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
             ((yield* Ref.get(wakeBuffer)).length > 0 ||
-              (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0)
+              (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0 ||
+              (yield* Ref.get(pendingWillWakeSubagents)).size > 0)
           ) {
             yield* offerContinuationRun(sessionId);
           }
@@ -3985,6 +4002,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const wakeOutcome = { ...bufferOutcome, continuationOffered };
             if (carryoverTerminalized && !wakeOutcome.buffered) {
               if (
+                (yield* Ref.get(textContinuationMessageId)) === null &&
                 acpCarryoverTerminalShouldClearContinuation({
                   continuationOffered: wakeOutcome.continuationOffered,
                   wakeBufferLength: (yield* Ref.get(wakeBuffer)).length,
@@ -4938,7 +4956,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 candidate.childSessionId === notice.childSessionId ||
                 candidate.task.nativeTaskRef?.nativeId === notice.childSessionId,
             );
-          const modelStillInTurn = context !== null && !context.promptSettled && !context.finalized;
+          const modelStillInTurn =
+            context !== null &&
+            !context.promptSettled &&
+            !context.finalized &&
+            !(yield* Deferred.isDone(context.promptWireSettled));
           if (
             notice.willWake === true &&
             modelStillInTurn &&
@@ -6198,6 +6220,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(wakeReports, noWakeReports);
               yield* Ref.set(pendingWillWakeSubagents, new Map());
               yield* Ref.set(continuationRequested, false);
+              yield* Ref.set(textContinuationMessageId, null);
               yield* Ref.set(runningBackgroundTaskIds, new Set());
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
               yield* Ref.set(carryoverSubagents, null);
@@ -6359,7 +6382,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             !directStopQuarantine &&
             (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
             ((yield* Ref.get(wakeBuffer)).length > 0 ||
-              (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0)
+              (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0 ||
+              (yield* Ref.get(pendingWillWakeSubagents)).size > 0)
           ) {
             const sessionId = yield* Ref.get(activeSessionId);
             if (sessionId !== null) {
@@ -6565,27 +6589,40 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             if (!isAppOwnedWakeTurn) {
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
             }
-            const continuationWasRequested = yield* continuationPermit.withPermit(
-              Effect.gen(function* () {
-                const wasRequested = yield* Ref.get(continuationRequested);
-                const preserveBufferedContinuation = acpTurnStartShouldPreserveContinuation({
-                  continuationRequested: wasRequested,
-                  isContinuationTurn,
-                  wakeBufferLength: (yield* Ref.get(wakeBuffer)).length,
-                });
-                if (!isContinuationTurn && !isAppOwnedWakeTurn) {
-                  yield* Ref.set(pendingWillWakeSubagents, new Map());
-                }
-                if (!isContinuationTurn && !isAppOwnedWakeTurn && !preserveBufferedContinuation) {
-                  yield* Ref.set(wakeBuffer, []);
-                  yield* Ref.set(wakeReports, noWakeReports);
-                }
-                if (preserveBufferedContinuation) return wasRequested;
-                yield* Ref.update(continuationGeneration, (value) => value + 1);
-                yield* Ref.set(continuationRequested, false);
-                return wasRequested;
-              }),
-            );
+            const { continuationWasRequested, isTextContinuationTurn } =
+              yield* continuationPermit.withPermit(
+                Effect.gen(function* () {
+                  const wasRequested = yield* Ref.get(continuationRequested);
+                  const textMessageId = yield* Ref.get(textContinuationMessageId);
+                  const isTextContinuationTurn =
+                    isAppOwnedWakeTurn && textMessageId === turnInput.message.messageId;
+                  const isUserTurn = !isContinuationTurn && !isAppOwnedWakeTurn;
+                  const invalidatesTextContinuation = isUserTurn && textMessageId !== null;
+                  const preserveBufferedContinuation = acpTurnStartShouldPreserveContinuation({
+                    continuationRequested: wasRequested,
+                    isContinuationTurn: isContinuationTurn || isTextContinuationTurn,
+                    wakeBufferLength: (yield* Ref.get(wakeBuffer)).length,
+                  });
+                  if (isUserTurn) {
+                    yield* Ref.set(pendingWillWakeSubagents, new Map());
+                    if (!preserveBufferedContinuation) {
+                      yield* Ref.set(wakeBuffer, []);
+                      yield* Ref.set(wakeReports, noWakeReports);
+                    } else if (invalidatesTextContinuation) {
+                      yield* Ref.update(wakeReports, ({ reports, offered }) => ({
+                        reports: new Map([...reports].filter(([key]) => !offered.has(key))),
+                        offered: noWakeReports.offered,
+                      }));
+                    }
+                  }
+                  if (!preserveBufferedContinuation || invalidatesTextContinuation) {
+                    yield* Ref.update(continuationGeneration, (value) => value + 1);
+                    yield* Ref.set(continuationRequested, false);
+                    yield* Ref.set(textContinuationMessageId, null);
+                  }
+                  return { continuationWasRequested: wasRequested, isTextContinuationTurn };
+                }),
+              );
             const promptParts = isContinuationTurn
               ? null
               : yield* resolvePromptParts(turnInput, requestedSessionId);
@@ -6709,14 +6746,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               createdAt: startedAt,
               updatedAt: startedAt,
             });
-            // Every attach ends the deferred-terminal contract, but only the
-            // queued provider continuation owns wake traffic. A user turn may
-            // start before that continuation and must leave its buffer intact.
+            // A user turn can precede the queued continuation and must leave
+            // native output for the continuation that owns its drain.
             yield* projectDeferredCarryoverTerminals(rehydratedCarryoverSubagents);
             // Keep projected terminals addressable through the wake drain so
             // emitSubagent's monotonic guard can reject replayed spawn frames.
-            if (isContinuationTurn) {
-              yield* Ref.set(continuationRequested, false);
+            if (isContinuationTurn || isTextContinuationTurn) {
               yield* Ref.update(wakeReports, ({ reports, offered }) => ({
                 reports: new Map([...reports].filter(([key]) => !offered.has(key))),
                 offered: noWakeReports.offered,
@@ -6736,28 +6771,30 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 ),
                 Effect.map((drained) => drained.length),
               );
-              context.promptSettled = true;
-              context.promptSettledStatus = "completed";
-              if (drainedWakeCount === 0) {
-                if (continuationWasRequested && flavor.deferFinalizeForBackgroundWork === true) {
+              if (isContinuationTurn) {
+                context.promptSettled = true;
+                context.promptSettledStatus = "completed";
+                if (drainedWakeCount === 0) {
+                  if (continuationWasRequested && flavor.deferFinalizeForBackgroundWork === true) {
+                    if (hasDeferredBackgroundWork(context)) {
+                      yield* rearmDeferredFinalize(context);
+                    } else {
+                      yield* scheduleDeferredFinalize(context);
+                    }
+                  } else {
+                    yield* finalizeTurn(context, "completed");
+                  }
+                  return;
+                }
+                if (!context.finalized) {
                   if (hasDeferredBackgroundWork(context)) {
                     yield* rearmDeferredFinalize(context);
                   } else {
                     yield* scheduleDeferredFinalize(context);
                   }
-                } else {
-                  yield* finalizeTurn(context, "completed");
                 }
                 return;
               }
-              if (!context.finalized) {
-                if (hasDeferredBackgroundWork(context)) {
-                  yield* rearmDeferredFinalize(context);
-                } else {
-                  yield* scheduleDeferredFinalize(context);
-                }
-              }
-              return;
             }
             const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
             yield* runtime.prompt({ prompt: promptParts!.prompt }).pipe(
@@ -6786,13 +6823,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           ? "interrupted"
                           : "cancelled"
                         : "completed";
-                    if (!context.interrupted && status === "completed") {
-                      const pending = yield* Ref.get(pendingWillWakeSubagents);
-                      yield* Ref.update(
-                        midTurnUnreportedCompletedTaskIds,
-                        (current) => new Set([...current, ...pending.keys()]),
-                      );
-                    }
                     if (
                       flavor.deferFinalizeForBackgroundWork === true &&
                       !context.interrupted &&
@@ -7509,6 +7539,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                             yield* Ref.set(wakeReports, noWakeReports);
                             yield* Ref.set(pendingWillWakeSubagents, new Map());
                             yield* Ref.set(continuationRequested, false);
+                            yield* Ref.set(textContinuationMessageId, null);
                             yield* Ref.set(runningBackgroundTaskIds, new Set());
                             yield* Ref.set(endedBackgroundTaskIds, new Set());
                             yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());

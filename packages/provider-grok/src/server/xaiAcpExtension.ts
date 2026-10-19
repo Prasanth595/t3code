@@ -350,12 +350,20 @@ function xAiStatusFromTaskOutputRecord(
 ): "running" | "completed" | "failed" {
   // An outer failure can belong to a sibling; prefer this row's own outcome.
   const structuredStatus = nonEmptyString(record.status)?.toLowerCase();
-  if (structuredStatus === "completed" || structuredStatus === "success") return "completed";
+  if (
+    structuredStatus === "completed" ||
+    structuredStatus === "success" ||
+    structuredStatus === "succeeded"
+  ) {
+    return "completed";
+  }
   if (
     structuredStatus === "failed" ||
     structuredStatus === "error" ||
     structuredStatus === "cancelled" ||
-    structuredStatus === "canceled"
+    structuredStatus === "canceled" ||
+    structuredStatus === "stopped" ||
+    structuredStatus === "killed"
   ) {
     return "failed";
   }
