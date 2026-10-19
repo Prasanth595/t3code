@@ -5715,7 +5715,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           expected?: CodexRootTerminalEvent,
         ) {
           const hold = goalHolds.get(nativeThreadId);
-          if (hold === undefined || goalStops.has(nativeThreadId)) return;
+          if (
+            hold === undefined ||
+            goalStops.has(nativeThreadId) ||
+            goalActivations.has(nativeThreadId)
+          )
+            return;
           if (expected !== undefined && hold.event !== expected) return;
           goalHolds.delete(nativeThreadId);
           yield* settleGoalHold(hold, "completed");
@@ -6218,35 +6223,44 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
         });
 
+        const prepareNativeTurn = Effect.fnUntraced(function* (
+          turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+          codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>,
+        ) {
+          const threadId = yield* getNativeThreadId(turnInput.providerThread);
+          const mcpSession = yield* mcpSessions.read(turnInput.threadId);
+          const turnStartParams = yield* buildCodexTurnStartParams({
+            nativeThreadId: threadId,
+            codexInput,
+            runtimePolicy: turnInput.runtimePolicy,
+            modelSelection: turnInput.modelSelection,
+            hasT3Mcp: mcpSession !== undefined,
+            browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
+            deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
+            omitServiceTier: adapterOptions.resolveRuntime !== undefined,
+            ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
+          });
+          yield* Ref.update(additionalContextByThread, (current) => {
+            const next = new Map(current);
+            if (turnStartParams.additionalContext)
+              next.set(threadId, turnStartParams.additionalContext);
+            else next.delete(threadId);
+            return next;
+          });
+          return turnStartParams;
+        });
+
         const startNativeTurn = (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           codexInput: ReadonlyArray<CodexSchema.V2TurnStartParams__UserInput>,
         ) =>
           Effect.gen(function* () {
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
-            const mcpSession = yield* mcpSessions.read(turnInput.threadId);
-            const turnStartParams = yield* buildCodexTurnStartParams({
-              nativeThreadId: threadId,
-              codexInput,
-              runtimePolicy: turnInput.runtimePolicy,
-              modelSelection: turnInput.modelSelection,
-              hasT3Mcp: mcpSession !== undefined,
-              browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
-              deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
-              omitServiceTier: adapterOptions.resolveRuntime !== undefined,
-              ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
-            });
+            const turnStartParams = yield* prepareNativeTurn(turnInput, codexInput);
             yield* Ref.update(pendingRootTurns, (current) => {
               const updated = new Map(current);
               updated.set(threadId, turnInput);
               return updated;
-            });
-            yield* Ref.update(additionalContextByThread, (current) => {
-              const next = new Map(current);
-              if (turnStartParams.additionalContext)
-                next.set(threadId, turnStartParams.additionalContext);
-              else next.delete(threadId);
-              return next;
             });
             const started = yield* client.request("turn/start", turnStartParams);
             yield* registerRootTurn({
@@ -6268,9 +6282,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
 
         /**
-         * Codex rejects a turn/start with no input, so resuming starts no turn of
-         * its own: the run takes the turn Codex already started, or else waits
-         * for the one it starts once the goal is active.
+         * A resumed thread can already be running a goal turn, which rejects an
+         * empty turn/start. Adopt that turn or hold for native goal activation.
          */
         const claimGoalTurn = (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) =>
           turnTerminalizationPermit.withPermits(1)(
@@ -6286,9 +6299,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
 
         /**
-         * Setting a goal starts its first turn with this run's turn
-         * configuration (approvals, sandbox, model, plan mode), since a turn
-         * Codex starts on its own reuses the last turn's settings.
+         * Setting a goal sends its objective as input; resuming lets Codex
+         * continue the existing objective without another user turn.
          */
         const runGoalCommand = (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -6359,6 +6371,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 );
               } else {
                 yield* claimGoalTurn(turnInput);
+                const {
+                  input: _input,
+                  additionalContext: _context,
+                  ...settings
+                } = yield* prepareNativeTurn(turnInput, []);
+                // The generated client lacks thread/settings/update. It updates
+                // future turns; a running turn keeps its native settings.
+                yield* client.raw.request("thread/settings/update", settings);
               }
               if (activation.stopped) return;
               const { goal } = yield* client.request("thread/goal/set", {
