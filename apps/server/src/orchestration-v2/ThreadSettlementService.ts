@@ -166,10 +166,7 @@ export function isAutoSettlementCandidate(
   if (thread.activityRunStatus != null) return false;
   if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
-  // A snoozed thread that woke early (error or completed work) can settle;
-  // one still parked on its wake time keeps its stronger statement. Sharing
-  // `isSnoozed` keeps settlement from treating a thread the sidebar still
-  // shows as snoozed (say, after an interrupted run) as awake.
+  // Interrupted runs must keep the same snooze protection the sidebar shows.
   return !isSnoozed(thread, nowMs);
 }
 

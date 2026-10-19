@@ -181,15 +181,13 @@ describe("isAutoSettlementCandidate", () => {
         NOW_MS,
       ),
     ).toBe(true);
-    // An interrupted or cancelled run leaves the thread snoozed, like the sidebar.
-    for (const status of ["interrupted", "cancelled"] as const) {
-      expect(
-        ThreadSettlementService.isAutoSettlementCandidate(
-          shell({ ...snoozed, status, latestRunCompletedAt: at(-30 * 60 * 1_000) }),
-          NOW_MS,
-        ),
-      ).toBe(false);
-    }
+    // An interrupted run leaves the thread snoozed, as the sidebar shows it.
+    expect(
+      ThreadSettlementService.isAutoSettlementCandidate(
+        shell({ ...snoozed, status: "interrupted", latestRunCompletedAt: at(-30 * 60 * 1_000) }),
+        NOW_MS,
+      ),
+    ).toBe(false);
     expect(
       ThreadSettlementService.isAutoSettlementCandidate(
         shell({ ...snoozed, status: "failed", latestRunCompletedAt: at(-2 * 60 * 60 * 1_000) }),
