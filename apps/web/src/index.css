@@ -2097,6 +2097,10 @@ code {
     min-width: 0;
   }
 
+  .chat-markdown .chat-markdown-table-container[data-expanded="true"] th {
+    white-space: normal;
+  }
+
   .chat-markdown .chat-markdown-table-container[data-expanded="true"] td {
     overflow-wrap: break-word;
   }

@@ -106,9 +106,9 @@ describe("ChatMarkdown table layout", () => {
             <ChatMarkdown
               cwd={undefined}
               text={[
-                "| Change | Reason | Verification |",
-                "| --- | --- | --- |",
-                "| Keep the complete explanation readable when the table is expanded in the conversation. | Allow each column to wrap its prose within the available space in the current chat lane. | Collapse and expand the table again to check that the text still fits and remains readable. |",
+                "| Change summary | Reason details | Verification status | Release impact | Followup actions |",
+                "| --- | --- | --- | --- | --- |",
+                "| Keep the complete explanation readable when the table is expanded in the conversation. | Allow each column to wrap its prose within the available space in the current chat lane. | Collapse and expand the table again to check that the text still fits and remains readable. | Keep the existing layout for narrow chat lanes and file previews. | Check the table again after resizing the conversation lane. |",
               ].join("\n")}
             />
           </div>
