@@ -45,11 +45,6 @@ import * as ExternalLauncher from "../process/externalLauncher.ts";
 import { readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import { resolveCliCommand } from "./invocation.ts";
-import {
-  offerServiceDuringOnboarding,
-  recoverServiceOnboardingOffer,
-  type ServiceOnboardingOutcome,
-} from "./service.ts";
 import * as CliService from "./service.ts";
 
 const jsonFlag = Flag.Boolean("json").pipe(
@@ -689,9 +684,8 @@ const connectLogoutCommand = Command.make("logout", {
   ),
 );
 
-/** What `t3 connect` tells the user once background setup has settled. */
 export const reportServiceOnboarding = Effect.fn("cli.connect.report_service_onboarding")(
-  function* (outcome: ServiceOnboardingOutcome) {
+  function* (outcome: CliService.ServiceOnboardingOutcome) {
     if (outcome === "pending") {
       yield* Console.log(
         "\nBackground service restarting\n\nThe server establishes the T3 Connect link once it is back. Check the log above if it does not come back.",
@@ -731,7 +725,7 @@ export const connectCommand = Command.make("connect", {
         yield* Console.log(`✓ Authorized${connectedAs(linked.identity)}`);
 
         yield* reportServiceOnboarding(
-          yield* recoverServiceOnboardingOffer(offerServiceDuringOnboarding),
+          yield* CliService.recoverServiceOnboardingOffer(CliService.offerServiceDuringOnboarding),
         );
       }),
     ),

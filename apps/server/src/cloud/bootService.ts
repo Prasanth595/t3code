@@ -75,10 +75,7 @@ export interface BootServicePlan {
   readonly baseDir: string;
   readonly logPath: string;
   readonly unitPath: string;
-  /**
-   * Set by an install run inside the service: a transient unit carries it out
-   * after this call returns and appends its outcome to `logPath`.
-   */
+  /** The manager accepted a detached install; its outcome is written to `logPath`. */
   readonly handedOff?: boolean;
 }
 
@@ -211,11 +208,7 @@ export interface BootServiceManager {
   readonly stop: ReadonlyArray<BootServiceStep>;
   readonly activate: ReadonlyArray<BootServiceStep>;
   readonly restart: ReadonlyArray<BootServiceStep>;
-  /**
-   * Replaces stop + activate for `restart` when the caller runs inside the
-   * service, where a stop would kill it before the start. The last entry
-   * queues the restart with the service manager instead of waiting for it.
-   */
+  /** Queue a restart owned by the manager, since stopping would kill the caller. */
   readonly handoff?: ReadonlyArray<BootServiceStep>;
   readonly deactivate: ReadonlyArray<BootServiceStep>;
   readonly finalize: ReadonlyArray<BootServiceStep>;
@@ -232,6 +225,18 @@ function systemdManager(input: {
     "user",
     BOOT_SERVICE_UNIT_FILE,
   );
+  const prepareActivation = [
+    {
+      step: "reloading systemd user units",
+      command: "systemctl",
+      args: ["--user", "daemon-reload"],
+    },
+    {
+      step: "enabling the service",
+      command: "systemctl",
+      args: ["--user", "enable", BOOT_SERVICE_UNIT_FILE],
+    },
+  ];
   return {
     kind: "systemd",
     unitPath,
@@ -245,16 +250,7 @@ function systemdManager(input: {
       },
     ],
     activate: [
-      {
-        step: "reloading systemd user units",
-        command: "systemctl",
-        args: ["--user", "daemon-reload"],
-      },
-      {
-        step: "enabling the service",
-        command: "systemctl",
-        args: ["--user", "enable", BOOT_SERVICE_UNIT_FILE],
-      },
+      ...prepareActivation,
       {
         step: "starting the service",
         command: "systemctl",
@@ -269,18 +265,7 @@ function systemdManager(input: {
       },
     ],
     handoff: [
-      {
-        step: "reloading systemd user units",
-        command: "systemctl",
-        args: ["--user", "daemon-reload"],
-      },
-      {
-        step: "enabling the service",
-        command: "systemctl",
-        args: ["--user", "enable", BOOT_SERVICE_UNIT_FILE],
-      },
-      // The user manager owns the queued job and finishes it after the stop
-      // has killed this process along with the rest of the unit.
+      ...prepareActivation,
       {
         step: "restarting the service",
         command: "systemctl",
@@ -564,8 +549,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   );
   const homeDir = yield* Config.String("HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
-  // The unit exports its name to everything it runs, so this is set for agent
-  // tool calls and terminals started by the service.
   const runningInsideService =
     (yield* Config.String(BOOT_SERVICE_UNIT_ENV).pipe(Config.withDefault(""))) ===
     BOOT_SERVICE_UNIT_FILE;
@@ -825,9 +808,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         "--user",
         "--collect",
         "--quiet",
-        // Nobody waits on the transient unit; its outcome goes where
-        // `t3 triage` and the CLI already point. Property values reach
-        // systemd literally, unlike the unit file, so no specifier escaping.
+        // Transient properties reach systemd literally, unlike unit-file specifiers.
         `--property=StandardOutput=append:${logPath}`,
         `--property=StandardError=append:${logPath}`,
         `--setenv=${BOOT_SERVICE_UNIT_ENV}=`,

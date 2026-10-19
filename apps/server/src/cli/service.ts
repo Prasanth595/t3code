@@ -58,15 +58,13 @@ export const reconcileService = Effect.fn("cli.service.reconcile")(function* (op
   } satisfies ServiceReconcileResult;
 });
 
-/** What a changed reconcile did, for the commands that report it. */
-export function formatServiceChange(
+function formatServiceChange(
   result: Extract<ServiceReconcileResult, { readonly changed: true }>,
-  cliVersion: string,
 ): string {
   if (result.plan.handedOff === true) {
-    return `Handed the T3 Code service switch to t3@${cliVersion} to a separate systemd unit, since this session runs inside the service and disconnects when it restarts.\nResult: ${result.plan.logPath}`;
+    return `Handed the T3 Code service switch to t3@${packageJson.version} to a separate systemd unit, since this session runs inside the service and disconnects when it restarts.\nResult: ${result.plan.logPath}`;
   }
-  return `${result.previouslyInstalled ? "Updated" : "Installed"} T3 Code service with t3@${cliVersion}.\nLogs: ${result.plan.logPath}`;
+  return `${result.previouslyInstalled ? "Updated" : "Installed"} T3 Code service with t3@${packageJson.version}.\nLogs: ${result.plan.logPath}`;
 }
 
 export function formatServiceStatus(
@@ -137,7 +135,7 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
           );
           return;
         }
-        yield* Console.log(formatServiceChange(result, packageJson.version));
+        yield* Console.log(formatServiceChange(result));
       }),
     ),
   ),
@@ -158,7 +156,7 @@ const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
           yield* Console.log(`T3 Code service is already using t3@${packageJson.version}.`);
           return;
         }
-        yield* Console.log(formatServiceChange(result, packageJson.version));
+        yield* Console.log(formatServiceChange(result));
       }),
     ),
   ),
@@ -218,11 +216,6 @@ const serviceStatusCommand = Command.make("status", projectLocationFlags).pipe(
   ),
 );
 
-/**
- * `pending`: an install run inside the service was handed to systemd and
- * finishes after this session ends. `skipped`: the server has to be started
- * by hand.
- */
 export type ServiceOnboardingOutcome = "ready" | "pending" | "skipped";
 
 export const offerServiceDuringOnboarding = Effect.gen(function* () {
@@ -269,7 +262,7 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
   if (result.changed) {
     yield* Console.log(
       result.plan.handedOff === true
-        ? formatServiceChange(result, packageJson.version)
+        ? formatServiceChange(result)
         : `Background service ${result.previouslyInstalled ? "updated" : "installed"}. Logs: ${result.plan.logPath}`,
     );
   }
@@ -277,6 +270,11 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
     ? ("pending" as const)
     : ("ready" as const);
 });
+
+const reportServiceSetupFailure = (error: BootService.BootServiceError) =>
+  Console.warn(`Background setup did not finish: ${error.message}`).pipe(
+    Effect.as("skipped" as const),
+  );
 
 export const recoverServiceOnboardingOffer = <R>(
   offer: Effect.Effect<
@@ -292,26 +290,11 @@ export const recoverServiceOnboardingOffer = <R>(
         Console.log(`Skipping background setup: ${error.message}`).pipe(
           Effect.as("skipped" as const),
         ),
-      BootServiceCommandError: (error) =>
-        Console.warn(`Background setup did not finish: ${error.message}`).pipe(
-          Effect.as("skipped" as const),
-        ),
-      BootServiceInstallError: (error) =>
-        Console.warn(`Background setup did not finish: ${error.message}`).pipe(
-          Effect.as("skipped" as const),
-        ),
-      BootServicePrerequisiteError: (error) =>
-        Console.warn(`Background setup did not finish: ${error.message}`).pipe(
-          Effect.as("skipped" as const),
-        ),
-      BootServiceUpdatePendingError: (error) =>
-        Console.warn(`Background setup did not finish: ${error.message}`).pipe(
-          Effect.as("skipped" as const),
-        ),
-      BootServiceDowngradeRefusedError: (error) =>
-        Console.warn(`Background setup did not finish: ${error.message}`).pipe(
-          Effect.as("skipped" as const),
-        ),
+      BootServiceCommandError: reportServiceSetupFailure,
+      BootServiceInstallError: reportServiceSetupFailure,
+      BootServicePrerequisiteError: reportServiceSetupFailure,
+      BootServiceUpdatePendingError: reportServiceSetupFailure,
+      BootServiceDowngradeRefusedError: reportServiceSetupFailure,
     }),
   );
 
