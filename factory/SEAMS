@@ -28,6 +28,8 @@ apps/desktop/src/ipc/DesktopIpcHandlers.ts
 apps/desktop/src/ipc/methods/window.ts
 apps/desktop/src/preload.ts
 apps/mobile/app.config.ts
+apps/mobile/src/Stack.tsx
+apps/mobile/src/features/settings/SettingsRouteScreen.tsx
 apps/server/src/cloud/bootService.test.ts
 apps/server/src/cloud/bootService.ts
 apps/server/src/httpCors.test.ts

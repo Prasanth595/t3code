@@ -18,6 +18,7 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
+import { FactorySettingsRow } from "../../factory/FactorySettingsRow";
 
 export function SettingsRouteScreen() {
   const navigation = useNavigation();
@@ -218,6 +219,8 @@ function SettingsIndexSections() {
         <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
         <SettingsRow icon="info.circle" label="About T3 Code" target="SettingsAbout" />
       </SettingsSection>
+
+      <FactorySettingsRow />
     </>
   );
 }
