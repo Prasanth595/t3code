@@ -29,6 +29,8 @@ import { Menu, MenuTrigger, MenuPopup, MenuItem } from "../ui/menu";
 import { SettingsRow } from "./settingsLayout";
 
 import { useSettingsScope } from "./SettingsScopeContext";
+import { droppedSettingPaths } from "./scopedSettings";
+import { recordDroppedSettingKeys } from "./droppedSettingKeys";
 import { toastManager } from "../ui/toast";
 import {
   groupDeviceHosts,
@@ -50,47 +52,64 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
   const [editing, setEditing] = useState<SshDeviceHostConfig | null>(null);
   const [originalHost, setOriginalHost] = useState<SshDeviceHostConfig | null>(null);
   const [busy, setBusy] = useState(false);
-  const targets = environments.map((environment) => ({
+  const hostDestinations = environments.filter(
+    (environment) => !environment.unsupportedSettingKeys.has("deviceHosts"),
+  );
+  const targets = hostDestinations.map((environment) => ({
     environmentId: environment.environmentId,
     label: settingsScopeEnvironmentLabel(environment, environments),
     connected: environment.connection.phase === "connected",
   }));
   const { checks, testConnection } = useHostConnectionChecks(targets);
-  const hostEnvironments = connectedEnvironments.map((environment) => ({
-    environmentId: environment.environmentId,
-    label: environment.label,
-    labels: settingsScopeEnvironmentLabels(environment, connectedEnvironments),
-    hosts: environment.serverConfig?.settings.deviceHosts ?? [],
-  }));
+  const hostEnvironments = connectedEnvironments
+    .filter((environment) => !environment.unsupportedSettingKeys.has("deviceHosts"))
+    .map((environment) => ({
+      environmentId: environment.environmentId,
+      label: environment.label,
+      labels: settingsScopeEnvironmentLabels(environment, connectedEnvironments),
+      hosts: environment.serverConfig?.settings.deviceHosts ?? [],
+    }));
   const groupedHosts = groupDeviceHosts(hostEnvironments);
   const save = async (host: SshDeviceHostConfig, remove = false, original = host) => {
-    if (!props.environmentId || projectScope) return;
+    if (!props.environmentId || projectScope || hostDestinations.length === 0) return;
     setBusy(true);
     const results = await Promise.allSettled(
-      environments.map(async (environment) => {
+      hostDestinations.map(async (environment) => {
         if (environment.connection.phase !== "connected" || !environment.serverConfig) {
           throw new Error("Environment disconnected");
         }
         if (!readEnvironmentScope(environment.environmentId, AuthSettingsWriteScope)) {
           throw new Error("This connection cannot change device settings.");
         }
-        return update({
+        const previous = environment.serverConfig.settings.deviceHosts;
+        const hosts = updateDeviceHosts(previous, host, remove, original);
+        const result = await update({
           environmentId: environment.environmentId,
-          input: {
-            patch: {
-              deviceHosts: updateDeviceHosts(
-                environment.serverConfig.settings.deviceHosts,
-                host,
-                remove,
-                original,
-              ),
-            },
-          },
+          input: { patch: { deviceHosts: hosts } },
         });
+        if (result._tag === "Success") {
+          const droppedKeys = droppedSettingPaths(
+            hosts,
+            previous,
+            result.value.deviceHosts,
+            "deviceHosts",
+          );
+          if (droppedKeys.length > 0) {
+            recordDroppedSettingKeys(
+              environment.environmentId,
+              environment.serverConfig.environment.serverVersion,
+              droppedKeys,
+            );
+            throw new Error(
+              "This environment does not support device hosts. Update T3 Code on it.",
+            );
+          }
+        }
+        return result;
       }),
     );
     setBusy(false);
-    const failed = environments.filter((_, index) => {
+    const failed = hostDestinations.filter((_, index) => {
       const result = results[index];
       return result?.status !== "fulfilled" || result.value._tag === "Failure";
     });
@@ -105,7 +124,7 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
     }
   };
   const listActions = {
-    busy: !canConfigure || projectScope || busy,
+    busy: !canConfigure || projectScope || busy || hostDestinations.length === 0,
     checks,
     testConnection: async (host: SshDeviceHostConfig) => {
       const results = await testConnection(host);
@@ -140,7 +159,12 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
           size="sm"
           variant="outline"
           disabled={
-            !canConfigure || projectScope || busy || !props.environmentId || editing !== null
+            !canConfigure ||
+            projectScope ||
+            busy ||
+            !props.environmentId ||
+            editing !== null ||
+            hostDestinations.length === 0
           }
           onClick={() => {
             setOriginalHost(null);
@@ -236,7 +260,10 @@ function DeviceHostList({
   checks: ReturnType<typeof useHostConnectionChecks>["checks"];
   testConnection: ReturnType<typeof useHostConnectionChecks>["testConnection"];
 }) {
-  const { environments: scopeEnvironments } = useSettingsScope();
+  const { environments: selectedEnvironments } = useSettingsScope();
+  const scopeEnvironments = selectedEnvironments.filter(
+    (environment) => !environment.unsupportedSettingKeys.has("deviceHosts"),
+  );
   const environmentLabels = new Map(
     scopeEnvironments.map((environment) => [
       environment.environmentId,

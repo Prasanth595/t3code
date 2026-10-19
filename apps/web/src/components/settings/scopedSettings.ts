@@ -477,7 +477,7 @@ export function planProjectOverridesClear(
 }
 
 // Report dropped leaves without declaring their entire object unsupported.
-function droppedSettingPaths(
+export function droppedSettingPaths(
   value: unknown,
   before: unknown,
   saved: unknown,

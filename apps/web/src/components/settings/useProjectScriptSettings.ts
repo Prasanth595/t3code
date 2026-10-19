@@ -34,6 +34,9 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { NewProjectScriptInput } from "../projectScriptEditor";
 import { toastManager } from "../ui/toast";
+import { recordDroppedSettingKeys } from "./droppedSettingKeys";
+import { useOptionalSettingsScope } from "./SettingsScopeContext";
+import { droppedSettingPaths } from "./scopedSettings";
 
 function reportScriptFailure(result: AtomCommandResult<unknown, unknown>) {
   if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -56,6 +59,7 @@ export function useProjectScriptSettings(
   }[],
 ) {
   const projects = useProjects();
+  const scope = useOptionalSettingsScope();
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const updateSettings = useAtomCommand(serverEnvironment.updateSettings, "project actions update");
@@ -134,6 +138,29 @@ export function useProjectScriptSettings(
         },
       });
       if (result._tag === "Failure") return reportScriptFailure(result);
+      const droppedKeys = droppedSettingPaths(
+        nextScripts,
+        project
+          ? settings.projectSettingsOverrides[project.id]?.defaultProjectScripts
+          : settings.defaultProjectScripts,
+        project
+          ? result.value.projectSettingsOverrides[project.id]?.defaultProjectScripts
+          : result.value.defaultProjectScripts,
+        "defaultProjectScripts",
+      );
+      if (droppedKeys.length > 0) {
+        const serverVersion = scope?.environments.find(
+          (environment) => environment.environmentId === environmentId,
+        )?.serverConfig?.environment.serverVersion;
+        if (serverVersion) recordDroppedSettingKeys(environmentId, serverVersion, droppedKeys);
+        return reportScriptFailure(
+          AsyncResult.failure(
+            Cause.fail(
+              new Error("This environment does not support this setting. Update T3 Code on it."),
+            ),
+          ),
+        );
+      }
       const changedIds = scriptId
         ? [scriptId]
         : current
