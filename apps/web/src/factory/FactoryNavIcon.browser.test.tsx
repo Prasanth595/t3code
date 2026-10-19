@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import "~/index.css";
 
+import { SidebarUtilityMenu } from "~/components/sidebar/SidebarChrome";
 import {
   SidebarMenu,
   SidebarMenuButton,
@@ -14,11 +15,27 @@ import {
 import { render } from "./testing";
 
 const state = vi.hoisted(() => ({ count: 0 }));
-vi.mock("./useFactoryData", () => ({ useFactoryAttentionCount: () => state.count }));
+vi.mock("./useFactoryData", () => ({
+  useFactoryAttentionCount: () => state.count,
+  useFactorySupported: () => true,
+}));
+vi.mock("~/state/environments", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/environments")>()),
+  usePullRequestsSupported: () => false,
+}));
+vi.mock("@tanstack/react-router", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tanstack/react-router")>()),
+  useNavigate: () => () => {},
+  useLocation: ({ select }: { select: (location: { pathname: string }) => unknown }) =>
+    select({ pathname: "/" }),
+}));
 
 import { FactoryNavIcon } from "./FactoryNavIcon";
 
-/** The footer's shape: a Settings button beside the Factory button, both `size="icon"`. */
+/**
+ * A Settings button beside the Factory button, both `size="icon"`, with an active state the real
+ * footer never sets.
+ */
 function Footer({ active = false }: { active?: boolean }) {
   return (
     <SidebarProvider>
@@ -38,8 +55,17 @@ function Footer({ active = false }: { active?: boolean }) {
   );
 }
 
-async function renderFooter(active = false) {
-  const view = await render(createElement(Footer, { active }));
+/** The real sidebar footer, so a change to its markup that moves the badge fails here. */
+function UtilityMenu() {
+  return (
+    <SidebarProvider>
+      <SidebarUtilityMenu />
+    </SidebarProvider>
+  );
+}
+
+async function renderFooter(element = createElement(UtilityMenu)) {
+  const view = await render(element);
   const button = (label: string) => view.all(`[aria-label="${label}"]`)[0]!;
   const svg = (label: string) => button(label).querySelector("svg")!;
   return { ...view, button, svg };
@@ -74,10 +100,10 @@ describe("FactoryNavIcon", () => {
 
   it("takes the same colour as the Settings icon when active", async () => {
     state.count = 0;
-    const rest = await renderFooter();
+    const rest = await renderFooter(createElement(Footer));
     const restColor = getComputedStyle(rest.svg("Settings")).color;
     await rest.unmount();
-    const footer = await renderFooter(true);
+    const footer = await renderFooter(createElement(Footer, { active: true }));
     const settingsColor = getComputedStyle(footer.svg("Settings")).color;
     expect(settingsColor).not.toBe(restColor);
     expect(getComputedStyle(footer.svg("Factory")).color).toBe(settingsColor);
