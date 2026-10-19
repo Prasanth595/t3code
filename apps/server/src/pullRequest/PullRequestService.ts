@@ -1215,7 +1215,8 @@ export const make = Effect.gen(function* () {
                   {
                     projectId: project.project.id,
                     projectTitle: project.project.title,
-                    message: providerDetail(error),
+                    message:
+                      providerDetail(error).trim() || `${project.repository} could not be read.`,
                     host: project.host,
                     cursorKey: key,
                   },

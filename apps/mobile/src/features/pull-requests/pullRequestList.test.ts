@@ -532,12 +532,21 @@ describe("pull request list errors", () => {
       configured: false,
       detail: "Run gh auth login --hostname github.com.",
     });
+    const unrelatedProvider = provider({
+      host: "git.example.test",
+      detail: "This host cannot be browsed here yet.",
+    });
     const merged = mergeEnvironmentPullRequestPages([
       {
         environmentId,
-        pages: pullRequestListHead(null, { ...page([]), providers: [failedProvider] }),
+        pages: pullRequestListHead(null, {
+          ...page([]),
+          providers: [failedProvider, unrelatedProvider],
+        }),
       },
     ]);
+    expect(groupPullRequestListErrors([], merged.providers).providers).toEqual([]);
+    expect(pullRequestListErrorMessage([], merged.providers)).toBe("");
     const otherRepository = { ...repository(1), environmentId: otherId };
     const legacy = { ...repository(3), host: undefined };
     const errors = [repository(1), repository(2), otherRepository, legacy, offline];

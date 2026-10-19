@@ -139,16 +139,26 @@ export function groupPullRequestListErrors(
     if (provider.detail === null || failedEnvironments.has(provider.environmentId)) continue;
     hosts.set(`${provider.environmentId}:${provider.host}`, provider);
   }
+  const matchedHosts = new Map<string, EnvironmentPullRequestProviderSummary>();
   const repositories = new Map<string, EnvironmentPullRequestListError>();
   for (const error of errors) {
     if (connectedEnvironmentIds && !connectedEnvironmentIds.has(error.environmentId)) continue;
     if (!error.projectTitle) continue;
     if (failedEnvironments.has(error.environmentId)) continue;
     // A host failure already explains its repositories; older servers omit the host.
-    if (error.host && hosts.has(`${error.environmentId}:${error.host}`)) continue;
+    const hostKey = `${error.environmentId}:${error.host}`;
+    const provider = error.host ? hosts.get(hostKey) : undefined;
+    if (provider) {
+      matchedHosts.set(hostKey, provider);
+      continue;
+    }
     repositories.set(`${error.environmentId}:${error.projectId ?? error.projectTitle}`, error);
   }
-  return { environments, providers: [...hosts.values()], repositories: [...repositories.values()] };
+  return {
+    environments,
+    providers: [...matchedHosts.values()],
+    repositories: [...repositories.values()],
+  };
 }
 
 export function pullRequestListErrorMessage(
