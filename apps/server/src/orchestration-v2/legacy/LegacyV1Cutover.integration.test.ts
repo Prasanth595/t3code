@@ -413,6 +413,7 @@ interface CapturedTurn {
   readonly threadId: ThreadId;
   readonly providerThreadId: ProviderThreadId;
   readonly text: string;
+  readonly nativeThreadId: string | null;
 }
 
 const unimplemented = (detail: string) =>
@@ -420,7 +421,16 @@ const unimplemented = (detail: string) =>
 
 const makeCodexAdapter = (
   capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>,
-  cancelledRunOrdinals: ReadonlySet<number>,
+  options: {
+    readonly holdTurn?: boolean;
+    readonly failOpen?: boolean;
+    readonly failResume?: boolean;
+    readonly failInjection?: boolean;
+    readonly nativeThreadSuffix?: string;
+    readonly injectedHistory?: Ref.Ref<
+      ReadonlyArray<ProviderAdapter.ProviderAdapterV2HistoricalContext>
+    >;
+  } = {},
 ) =>
   ({
     instanceId,
@@ -429,6 +439,7 @@ const makeCodexAdapter = (
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (sessionInput) =>
       Effect.gen(function* () {
+        if (options.failOpen) return yield* unimplemented("session unavailable before delivery");
         const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
         const now = yield* DateTime.now;
         const providerSession: OrchestrationV2ProviderSession = {
@@ -452,9 +463,11 @@ const makeCodexAdapter = (
           ensureThread: (threadInput) =>
             Effect.gen(function* () {
               const createdAt = yield* DateTime.now;
-              const nativeThreadId = `${driver}:${threadInput.threadId}`;
+              const nativeThreadId = `${driver}:${threadInput.threadId}${options.nativeThreadSuffix ?? ""}`;
               return {
-                id: ProviderThreadId.make(`provider-thread:${nativeThreadId}`),
+                id:
+                  threadInput.existingProviderThread?.id ??
+                  ProviderThreadId.make(`provider-thread:${nativeThreadId}`),
                 driver,
                 providerInstanceId: instanceId,
                 providerSessionId: sessionInput.providerSessionId,
@@ -475,7 +488,21 @@ const makeCodexAdapter = (
                 updatedAt: createdAt,
               } satisfies OrchestrationV2ProviderThread;
             }),
-          resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+          resumeThread: ({ providerThread }) =>
+            options.failResume
+              ? unimplemented("native session unavailable")
+              : Effect.succeed(providerThread),
+          ...(options.injectedHistory === undefined
+            ? {}
+            : {
+                injectHistory: (history: ProviderAdapter.ProviderAdapterV2HistoricalContext) =>
+                  Effect.gen(function* () {
+                    yield* Ref.update(options.injectedHistory!, (current) => [...current, history]);
+                    if (options.failInjection)
+                      return yield* unimplemented("lost injection acknowledgement");
+                    return true;
+                  }),
+              }),
           startTurn: (turnInput) =>
             Effect.gen(function* () {
               yield* Ref.update(capturedTurns, (turns) => [
@@ -484,13 +511,14 @@ const makeCodexAdapter = (
                   threadId: turnInput.threadId,
                   providerThreadId: turnInput.providerThread.id,
                   text: turnInput.message.text,
+                  nativeThreadId: turnInput.providerThread.nativeThreadRef?.nativeId ?? null,
                 },
               ]);
               const eventTime = yield* DateTime.now;
               const providerTurnId = ProviderTurnId.make(
                 `provider-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
               );
-              yield* PubSub.publishAll(events, [
+              const providerEvents = [
                 {
                   type: "provider_turn.updated",
                   driver,
@@ -505,9 +533,9 @@ const makeCodexAdapter = (
                       strength: "strong",
                     },
                     ordinal: turnInput.runOrdinal,
-                    status: "completed",
+                    status: options.holdTurn ? "running" : "completed",
                     startedAt: eventTime,
-                    completedAt: eventTime,
+                    completedAt: options.holdTurn ? null : eventTime,
                   },
                 },
                 {
@@ -544,13 +572,14 @@ const makeCodexAdapter = (
                   providerThreadId: turnInput.providerThread.id,
                   providerTurnId,
                   runOrdinal: turnInput.runOrdinal,
-                  status: cancelledRunOrdinals.has(turnInput.runOrdinal)
-                    ? "cancelled"
-                    : "completed",
+                  status: "completed",
                   failure: null,
                   threadDisposition: "reusable",
                 },
-              ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>);
+              ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>;
+              yield* PubSub.publish(events, providerEvents[0]!);
+              if (options.holdTurn) return;
+              yield* PubSub.publishAll(events, providerEvents.slice(1));
             }),
           steerTurn: () => Effect.void,
           interruptTurn: () => Effect.void,
@@ -564,18 +593,19 @@ const makeCodexAdapter = (
 
 const waitForIdle = Effect.fn("LegacyV1Cutover.waitForIdle")(function* (threadId: ThreadId) {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
-  for (let attempt = 0; attempt < 1_000; attempt += 1) {
-    const projection = yield* orchestrator.getThreadProjection(threadId);
-    if (
-      projection.runs.every(
-        (run) => !["queued", "starting", "running", "waiting"].includes(run.status),
-      )
-    ) {
-      return projection;
-    }
-    yield* Effect.sleep("5 millis");
-  }
-  return yield* Effect.die(new Error("Cutover test timed out waiting for idle"));
+  const before = yield* orchestrator.getThreadProjection(threadId);
+  const runId = before.runs.at(-1)?.id;
+  yield* orchestrator.streamStoredEvents.pipe(
+    Stream.filter(
+      ({ event }) =>
+        event.type === "run.updated" &&
+        event.runId === runId &&
+        ["completed", "cancelled", "failed", "interrupted"].includes(event.payload.status),
+    ),
+    Stream.runHead,
+  );
+  yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+  return yield* orchestrator.getThreadProjection(threadId);
 });
 
 const layerBoot = (input: {
@@ -583,7 +613,8 @@ const layerBoot = (input: {
   readonly dbPath: string;
   readonly workspace: string;
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
-  readonly cancelledRunOrdinals?: ReadonlySet<number>;
+  readonly adapter?: ProviderAdapter.ProviderAdapterV2["Service"];
+  readonly recoverOnStartup?: boolean;
 }) => {
   const layerDatabase = SqlitePersistence.layerFromPath(input.dbPath).pipe(
     Layer.provide(NodeServices.layer),
@@ -617,10 +648,12 @@ const layerBoot = (input: {
         },
       },
     },
-    ProviderAdapterRegistry.layerSingle(
-      makeCodexAdapter(input.capturedTurns, input.cancelledRunOrdinals ?? new Set()),
-    ),
-    { databaseLayer: layerDatabase },
+    ProviderAdapterRegistry.layerSingle(input.adapter ?? makeCodexAdapter(input.capturedTurns)),
+    {
+      databaseLayer: layerDatabase,
+      recoverOnStartup: input.recoverOnStartup ?? false,
+      continueThreadsAfterServerUpdate: false,
+    },
   );
   return Layer.mergeAll(
     layerStoresProvided,
@@ -1026,78 +1059,157 @@ describe("orchestration v2 legacy v1 cutover", () => {
       ),
   );
 
-  it.live("does not resend imported context after the first continuation is cancelled", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const workspace = yield* checkpointWorkspace("legacy-v1-cancelled-continuation");
-        const stateDir = yield* fs.makeTempDirectory({ prefix: "t3-v1-cancelled-state-" });
-        const dbPath = path.join(stateDir, "userdata", "state.sqlite");
-        yield* fs.makeDirectory(path.join(stateDir, "userdata"), { recursive: true });
-        yield* seedV1Database(dbPath, workspace);
-
-        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-        const longThreadId = ThreadId.make(LONG_THREAD);
-        yield* Effect.gen(function* () {
-          const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-          const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          yield* importer.reconcileShells;
-          assert.isTrue((yield* maintenance.rebuild).valid);
-          yield* importer.ensureTranscript(longThreadId);
-
-          // A Stop or a server restart cancels the first run after its turn
-          // already carried the imported context.
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make("command:cancelled:continue"),
-            threadId: longThreadId,
-            messageId: MessageId.make("message:cancelled:long:continuation"),
-            text: CONTINUATION_PROMPT,
-            attachments: [],
-            dispatchMode: { type: "start_immediately" },
-          });
-          const cancelled = yield* waitForIdle(longThreadId);
-          assert.deepStrictEqual(
-            cancelled.runs.map((run) => run.status),
-            ["cancelled"],
+  it.live.each(["stop", "restart", "replacement", "pending", "undelivered"] as const)(
+    "delivers imported history only when the native session needs it after %s",
+    (scenario) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const workspace = yield* checkpointWorkspace(`legacy-v1-${scenario}`);
+          const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-v1-delivery-" });
+          const dbPath = path.join(stateDir, "state.sqlite");
+          yield* seedV1Database(dbPath, workspace);
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const injectedHistory = yield* Ref.make<
+            ReadonlyArray<ProviderAdapter.ProviderAdapterV2HistoricalContext>
+          >([]);
+          const nativeInjection = scenario === "restart" || scenario === "pending";
+          const failed = scenario === "pending" || scenario === "undelivered";
+          const importedThreadId = ThreadId.make(PINNED_THREAD);
+          const boot = { name: `legacy-v1-${scenario}`, dbPath, workspace, capturedTurns };
+          const send = (key: string, text: string) =>
+            Orchestrator.OrchestratorV2.use((orchestrator) =>
+              orchestrator.dispatch({
+                type: "message.dispatch",
+                createdBy: "user",
+                creationSource: "web",
+                commandId: CommandId.make(`command:delivery:${key}`),
+                threadId: importedThreadId,
+                messageId: MessageId.make(`message:delivery:${key}`),
+                text,
+                attachments: [],
+                dispatchMode: { type: "start_immediately" },
+              }),
+            );
+          const first = yield* Effect.scoped(
+            Effect.gen(function* () {
+              const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
+              const orchestrator = yield* Orchestrator.OrchestratorV2;
+              yield* importer.reconcileShells;
+              yield* importer.ensureTranscript(importedThreadId);
+              yield* send("first", CONTINUATION_PROMPT);
+              if (failed) {
+                const projection = yield* waitForIdle(importedThreadId);
+                assert.equal(projection.runs[0]?.status, "failed");
+              } else {
+                yield* orchestrator.streamStoredEvents.pipe(
+                  Stream.filter(
+                    ({ event }) =>
+                      event.type === "context-handoff.updated" &&
+                      event.threadId === importedThreadId &&
+                      event.payload.delivery?.status === (nativeInjection ? "injected" : "inline"),
+                  ),
+                  Stream.runHead,
+                );
+                yield* orchestrator.streamStoredEvents.pipe(
+                  Stream.filter(
+                    ({ event }) =>
+                      event.type === "provider-turn.updated" && event.threadId === importedThreadId,
+                  ),
+                  Stream.runHead,
+                );
+                yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+                assert.equal((yield* Ref.get(capturedTurns)).length, 1);
+                const delivered = nativeInjection
+                  ? JSON.stringify(yield* Ref.get(injectedHistory))
+                  : (yield* Ref.get(capturedTurns))[0]!.text;
+                assert.include(delivered, "Pinned question");
+                assert.include(delivered, "Pinned answer");
+                if (scenario === "stop") {
+                  yield* orchestrator.dispatch({
+                    type: "thread.stop",
+                    commandId: CommandId.make("command:delivery:stop"),
+                    threadId: importedThreadId,
+                  });
+                  yield* waitForIdle(importedThreadId);
+                }
+              }
+              const projection = yield* orchestrator.getThreadProjection(importedThreadId);
+              assert.equal(projection.contextHandoffs.length, 1);
+              assert.equal(
+                projection.contextHandoffs[0]?.delivery?.status,
+                scenario === "undelivered"
+                  ? undefined
+                  : scenario === "pending"
+                    ? "pending"
+                    : nativeInjection
+                      ? "injected"
+                      : "inline",
+              );
+              return projection;
+            }).pipe(
+              Effect.provide(
+                layerBoot({
+                  ...boot,
+                  adapter: makeCodexAdapter(capturedTurns, {
+                    holdTurn: true,
+                    failOpen: scenario === "undelivered",
+                    failInjection: scenario === "pending",
+                    ...(nativeInjection ? { injectedHistory } : {}),
+                  }),
+                }),
+              ),
+            ),
           );
-          assert.equal(cancelled.contextHandoffs.length, 1);
-          assert.equal(cancelled.contextHandoffs[0]?.delivery?.status, "inline");
 
-          yield* orchestrator.dispatch({
-            type: "message.dispatch",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make("command:cancelled:resume"),
-            threadId: longThreadId,
-            messageId: MessageId.make("message:cancelled:long:resume"),
-            text: "resume",
-            attachments: [],
-            dispatchMode: { type: "start_immediately" },
-          });
-          const resumed = yield* waitForIdle(longThreadId);
-          assert.equal(resumed.runs.at(-1)?.status, "completed");
-          assert.equal(resumed.contextHandoffs.length, 1);
-          assert.deepStrictEqual(
-            (yield* Ref.get(capturedTurns)).map((turn) => turn.text.startsWith("Context handoff")),
-            [true, false],
+          const injectionCount = (yield* Ref.get(injectedHistory)).length;
+          yield* Effect.scoped(
+            Effect.gen(function* () {
+              const orchestrator = yield* Orchestrator.OrchestratorV2;
+              const recovered = yield* orchestrator.getThreadProjection(importedThreadId);
+              assert.equal(
+                recovered.runs[0]?.status,
+                failed ? "failed" : scenario === "stop" ? "interrupted" : "cancelled",
+              );
+              yield* send("resume", "resume");
+              const resumed = yield* waitForIdle(importedThreadId);
+              assert.equal(resumed.runs.at(-1)?.status, "completed");
+              const turns = yield* Ref.get(capturedTurns);
+              const last = turns.at(-1)!;
+              if (scenario === "stop" || scenario === "restart") {
+                assert.equal(last.nativeThreadId, turns[0]?.nativeThreadId);
+                assert.equal(resumed.contextHandoffs.length, 1);
+                assert.equal(last.text, "resume");
+                assert.equal((yield* Ref.get(injectedHistory)).length, injectionCount);
+              } else {
+                const delivered = nativeInjection
+                  ? JSON.stringify((yield* Ref.get(injectedHistory)).slice(injectionCount))
+                  : last.text;
+                assert.include(delivered, "Pinned question");
+                assert.include(delivered, "Pinned answer");
+                if (scenario !== "undelivered") {
+                  assert.notEqual(
+                    last.nativeThreadId,
+                    first.contextHandoffs[0]?.delivery?.nativeThreadId,
+                  );
+                }
+              }
+            }).pipe(
+              Effect.provide(
+                layerBoot({
+                  ...boot,
+                  recoverOnStartup: true,
+                  adapter: makeCodexAdapter(capturedTurns, {
+                    failResume: scenario === "replacement",
+                    nativeThreadSuffix: ":replacement",
+                    ...(nativeInjection ? { injectedHistory } : {}),
+                  }),
+                }),
+              ),
+            ),
           );
-        }).pipe(
-          Effect.provide(
-            layerBoot({
-              name: "legacy-v1-cancelled-continuation",
-              dbPath,
-              workspace,
-              capturedTurns,
-              cancelledRunOrdinals: new Set([1]),
-            }),
-          ),
-        );
-      }).pipe(Effect.provide(NodeServices.layer)),
-    ),
+        }).pipe(Effect.provide(NodeServices.layer)),
+      ),
   );
 });
