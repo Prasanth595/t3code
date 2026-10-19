@@ -8,9 +8,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 
+import { EnvironmentAuthInvalidError, EnvironmentInternalError } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { factoryServerBearerToken, pairFactoryServer } from "./factoryServerIpc.ts";
 import { layerDesktopEnvironment, layerSafeStorageWith } from "./testing.ts";
+
+const COULD_NOT_COMPLETE =
+  "The factory server could not complete the pairing. Check its logs and try again.";
 
 const accessTokenBody = (token: string) => ({
   access_token: token,
@@ -57,6 +62,35 @@ const rejected = () =>
     status: 400,
     headers: { "content-type": "application/json" },
   });
+
+const jsonResponse = (status: number, body: unknown) => () =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+
+/** What the real token endpoint answers for a pairing credential it does not accept. */
+const serverRejected = jsonResponse(
+  401,
+  Schema.encodeSync(EnvironmentAuthInvalidError)(
+    new EnvironmentAuthInvalidError({
+      code: "auth_invalid",
+      reason: "invalid_credential",
+      traceId: "trace-1",
+    }),
+  ),
+);
+
+const serverFailed = jsonResponse(
+  500,
+  Schema.encodeSync(EnvironmentInternalError)(
+    new EnvironmentInternalError({
+      code: "internal_error",
+      reason: "access_token_issuance_failed",
+      traceId: "trace-2",
+    }),
+  ),
+);
 
 const unreachable = (request: HttpClientRequest.HttpClientRequest) =>
   new HttpClientError.HttpClientError({ reason: new HttpClientError.TransportError({ request }) });
@@ -148,6 +182,37 @@ describe("pairing the factory server", () => {
         );
         assert.equal(failureMessage(exit), "The factory server rejected this pairing link.");
         assert.equal(yield* factoryServerBearerToken, "");
+      }),
+    ),
+  );
+
+  it.effect("says the server rejected the link when it answers 401 auth_invalid", () =>
+    withLayers(
+      { respond: serverRejected },
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(pairFactoryServer.handler("abc123"));
+        assert.equal(failureMessage(exit), "The factory server rejected this pairing link.");
+      }),
+    ),
+  );
+
+  it.effect("does not call a server error a rejected link", () =>
+    withLayers(
+      { respond: serverFailed },
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(pairFactoryServer.handler("abc123"));
+        assert.equal(failureMessage(exit), COULD_NOT_COMPLETE);
+        assert.equal(yield* factoryServerBearerToken, "");
+      }),
+    ),
+  );
+
+  it.effect("does not call an unreadable answer a rejected link", () =>
+    withLayers(
+      { respond: jsonResponse(200, { unexpected: true }) },
+      Effect.gen(function* () {
+        const exit = yield* Effect.exit(pairFactoryServer.handler("abc123"));
+        assert.equal(failureMessage(exit), COULD_NOT_COMPLETE);
       }),
     ),
   );
