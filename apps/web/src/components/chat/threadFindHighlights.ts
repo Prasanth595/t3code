@@ -2,11 +2,9 @@ import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { THREAD_FIND_BLOCK_TAGS } from "@t3tools/shared/threadFindText";
 
-const THREAD_FIND_HIGHLIGHT_NAME = "t3-thread-find";
-const THREAD_FIND_ACTIVE_HIGHLIGHT_NAME = "t3-thread-find-active";
-
 const THREAD_FIND_TEXT_SELECTOR = "[data-thread-find-text]";
 const THREAD_FIND_IGNORE_SELECTOR = "[data-thread-find-ignore]";
+const highlightUsers = new WeakMap<Highlight, number>();
 
 interface ThreadFindRange {
   readonly rowId: string;
@@ -114,34 +112,46 @@ export function useThreadFindHighlights(input: {
   readonly activeRowId: string | null;
   readonly activeOccurrence: number;
   readonly onActiveRange: (range: Range | null) => void;
+  readonly highlightPrefix?: string;
+  readonly onMatchCountChange?: (count: number) => void;
 }): void {
-  const { container, query, activeRowId, activeOccurrence, onActiveRange } = input;
+  const {
+    container,
+    query,
+    activeRowId,
+    activeOccurrence,
+    onActiveRange,
+    highlightPrefix = "t3-thread-find",
+    onMatchCountChange,
+  } = input;
 
   const rangesRef = useRef<readonly ThreadFindRange[]>([]);
   const paintRef = useRef<ReturnType<typeof makeThreadFindHighlightPainter> | null>(null);
-  const selectionRef = useRef({ activeRowId, activeOccurrence, onActiveRange });
+  const selectionRef = useRef({ activeRowId, activeOccurrence, onActiveRange, onMatchCountChange });
   useLayoutEffect(() => {
-    selectionRef.current = { activeRowId, activeOccurrence, onActiveRange };
-  }, [activeRowId, activeOccurrence, onActiveRange]);
+    selectionRef.current = { activeRowId, activeOccurrence, onActiveRange, onMatchCountChange };
+  }, [activeRowId, activeOccurrence, onActiveRange, onMatchCountChange]);
 
   useEffect(() => {
     if (typeof CSS === "undefined" || !CSS.highlights || typeof Highlight === "undefined") {
       selectionRef.current.onActiveRange(null);
       return;
     }
-    const clearHighlights = () => {
-      CSS.highlights.delete(THREAD_FIND_HIGHLIGHT_NAME);
-      CSS.highlights.delete(THREAD_FIND_ACTIVE_HIGHLIGHT_NAME);
-    };
     rangesRef.current = [];
     if (!container || query.length === 0) {
       selectionRef.current.onActiveRange(null);
-      clearHighlights();
+      selectionRef.current.onMatchCountChange?.(0);
       return;
     }
 
     const cache = new Map<Element, readonly ThreadFindRange[]>();
-    const paint = makeThreadFindHighlightPainter(container);
+    const activeName = `${highlightPrefix}-active`;
+    const inactive = CSS.highlights.get(highlightPrefix) ?? new Highlight();
+    const active = CSS.highlights.get(activeName) ?? new Highlight();
+    highlightUsers.set(inactive, (highlightUsers.get(inactive) ?? 0) + 1);
+    CSS.highlights.set(highlightPrefix, inactive);
+    CSS.highlights.set(activeName, active);
+    const paint = makeThreadFindHighlightPainter(container, inactive, active);
     paintRef.current = paint;
     const repaint = () => {
       const rows = new Set(container.querySelectorAll("[data-timeline-row-id]"));
@@ -161,6 +171,7 @@ export function useThreadFindHighlights(input: {
       }
       for (const row of cache.keys()) if (!rows.has(row)) cache.delete(row);
       rangesRef.current = ranges;
+      selectionRef.current.onMatchCountChange?.(ranges.length);
       paint(ranges, selectionRef.current);
     };
     let frame: number | null = null;
@@ -203,24 +214,36 @@ export function useThreadFindHighlights(input: {
       if (frame !== null) cancelAnimationFrame(frame);
       cache.clear();
       paintRef.current = null;
+      for (const { range } of rangesRef.current) {
+        inactive.delete(range);
+        active.delete(range);
+      }
       rangesRef.current = [];
-      clearHighlights();
+      const remainingUsers = (highlightUsers.get(inactive) ?? 1) - 1;
+      if (remainingUsers > 0) {
+        highlightUsers.set(inactive, remainingUsers);
+      } else {
+        highlightUsers.delete(inactive);
+        if (CSS.highlights.get(highlightPrefix) === inactive)
+          CSS.highlights.delete(highlightPrefix);
+        if (CSS.highlights.get(activeName) === active) CSS.highlights.delete(activeName);
+      }
     };
-  }, [container, query]);
+  }, [container, query, highlightPrefix]);
 
   useEffect(() => {
     paintRef.current?.(rangesRef.current, { activeRowId, activeOccurrence, onActiveRange });
   }, [activeOccurrence, activeRowId, onActiveRange]);
 }
 
-function makeThreadFindHighlightPainter(container: HTMLElement) {
+function makeThreadFindHighlightPainter(
+  container: HTMLElement,
+  inactive: Highlight,
+  active: Highlight,
+) {
   let previousRanges: readonly ThreadFindRange[] | null = null;
   const rangesByRow = new Map<string, Range[]>();
-  const inactive = new Highlight();
-  const active = new Highlight();
   let previousActive: Range | null = null;
-  CSS.highlights.set(THREAD_FIND_HIGHLIGHT_NAME, inactive);
-  CSS.highlights.set(THREAD_FIND_ACTIVE_HIGHLIGHT_NAME, active);
   return (
     ranges: readonly ThreadFindRange[],
     selection: Pick<
@@ -229,10 +252,13 @@ function makeThreadFindHighlightPainter(container: HTMLElement) {
     >,
   ) => {
     if (previousRanges !== ranges) {
+      for (const { range } of previousRanges ?? []) {
+        inactive.delete(range);
+        active.delete(range);
+      }
       previousRanges = ranges;
       previousActive = null;
       rangesByRow.clear();
-      inactive.clear();
       for (const match of ranges) {
         const row = rangesByRow.get(match.rowId) ?? [];
         row[match.occurrence] = match.range;
@@ -246,7 +272,7 @@ function makeThreadFindHighlightPainter(container: HTMLElement) {
       selection.activeRowId === null
         ? null
         : (rangesByRow.get(selection.activeRowId)?.[selection.activeOccurrence] ?? null);
-    active.clear();
+    if (previousActive) active.delete(previousActive);
     if (selected) inactive.delete(selected);
     previousActive = selected;
     if (selected && revealFolded(selected, container)) {
