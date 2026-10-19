@@ -460,7 +460,7 @@ function DeviceHostList({
                               {result.error}
                             </p>
                           ) : null}
-                          {!result.error && result.state ? (
+                          {result.state ? (
                             <DeviceHostDiagnostics
                               hosts={[result.host]}
                               hostStatuses={result.state.hostStatuses}
