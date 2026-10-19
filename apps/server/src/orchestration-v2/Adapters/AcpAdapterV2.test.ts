@@ -613,6 +613,7 @@ describe("Grok child results", () => {
     const threadId = ThreadId.make("thread-grok-child-results");
     const promptStarted = yield* Deferred.make<void>();
     const promptGate = yield* Deferred.make<EffectAcpSchema.PromptResponse>();
+    const promptSettled = yield* Deferred.make<void>();
     const prompts: Array<Parameters<AcpSessionRuntime.AcpSessionRuntime["Service"]["prompt"]>[0]> =
       [];
     const requests: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
@@ -626,6 +627,10 @@ describe("Grok child results", () => {
       environment: {},
       hostPlatform: "linux",
       selfInvocation: yield* resolveSelfInvocation(),
+      testHooks: {
+        afterPromptSettledWithBackgroundWork: () =>
+          Deferred.succeed(promptSettled, undefined).pipe(Effect.asVoid),
+      },
       continuationRequests: {
         offer: (request) =>
           Effect.sync(() => {
@@ -703,6 +708,25 @@ describe("Grok child results", () => {
         if (matches(event)) return event;
       }
     });
+    const wake = (promptId: string, text: string) =>
+      sessionUpdate!({
+        sessionId: "mock-session-1",
+        _meta: { promptId },
+        update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+      });
+    const startFollowup = (
+      ordinal: number,
+      message: ProviderAdapter.ProviderAdapterV2TurnInput["message"],
+    ) =>
+      runtime.startTurn({
+        ...turn,
+        runId: RunId.make(`run-grok-child-results-${ordinal}`),
+        runOrdinal: ordinal,
+        providerTurnOrdinal: ordinal,
+        attemptId: RunAttemptId.make(`attempt-grok-child-results-${ordinal}`),
+        rootNodeId: NodeId.make(`node-grok-child-results-${ordinal}`),
+        message,
+      });
     const spawn = (id: string, title: string) =>
       update({
         sessionUpdate: "tool_call",
@@ -753,6 +777,11 @@ describe("Grok child results", () => {
       finish,
       waitAll,
       nextEvent,
+      wake,
+      startFollowup,
+      settleWithRunningChild: Deferred.succeed(promptGate, { stopReason: "end_turn" }).pipe(
+        Effect.andThen(Deferred.await(promptSettled)),
+      ),
       settle,
     };
   });
@@ -879,6 +908,118 @@ describe("Grok child results", () => {
         assert.notInclude(delivered, "ALREADY_READ");
         assert.lengthOf(session.requests, 1, "the continuation must not offer itself again");
         assert.isFalse(yield* session.runtime.hasPendingBackgroundWork!);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  const makeMixedWakeSession = Effect.fnUntraced(function* () {
+    const session = yield* makeSession();
+    yield* session.spawn(firstChild, "Review");
+    yield* session.spawn(secondChild, "Tests");
+    yield* session.finish(firstChild, "REVIEW_DONE");
+    yield* session.settleWithRunningChild;
+    assert.lengthOf(session.requests, 0, "the running sibling still holds the root turn");
+    yield* session.finish(secondChild, "TESTS_DONE");
+    yield* session.wake(`subagent-completed-${secondChild}`, "NATIVE_TESTS_DONE");
+    yield* session.nextEvent((event) => event.type === "turn.terminal");
+    assert.lengthOf(session.requests, 1);
+    const request = session.requests[0]!;
+    assert.equal(request.delivery, "message_text");
+    assert.include(request.detail, "REVIEW_DONE");
+    assert.notInclude(request.detail, "TESTS_DONE");
+    return { ...session, request };
+  });
+
+  it.effect("drains a native wake alongside child result text and remains wakeable", () =>
+    Effect.gen(function* () {
+      const session = yield* makeMixedWakeSession();
+      assert.isDefined(session.request.dispatchIfCurrent);
+      assert.isTrue(Option.isSome(yield* session.request.dispatchIfCurrent!(Effect.void)));
+      const messageId =
+        session.request.messageId ?? MessageId.make("message-grok-mixed-continuation");
+      yield* session.startFollowup(2, {
+        createdBy: "agent",
+        creationSource: "server",
+        messageId,
+        text: session.request.detail!,
+        attachments: [],
+      });
+      yield* session.nextEvent((event) => event.type === "turn.terminal" && event.runOrdinal === 2);
+      assert.lengthOf(session.prompts, 2);
+      const delivered = session.prompts[1]!.prompt.flatMap((part) =>
+        part.type === "text" ? [part.text] : [],
+      ).join("\n");
+      assert.include(delivered, "REVIEW_DONE");
+      assert.notInclude(delivered, "TESTS_DONE");
+
+      const offersBeforeLaterWake = session.requests.length;
+      // The handler returning is a barrier even when a stuck latch suppresses the next offer.
+      yield* session.wake("task-completed-later", "LATER_NATIVE_WAKE");
+      assert.deepEqual(
+        {
+          nativeOutputDelivered: session.observed.some(
+            (event) =>
+              event.type === "message.updated" &&
+              event.message.role === "assistant" &&
+              event.message.runId === RunId.make("run-grok-child-results-2") &&
+              event.message.text.includes("NATIVE_TESTS_DONE"),
+          ),
+          laterWakeOffered: session.requests.length > offersBeforeLaterWake,
+        },
+        { nativeOutputDelivered: true, laterWakeOffered: true },
+      );
+      assert.equal(session.requests.at(-1)?.delivery, "adapter_buffered");
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.effect(
+    "invalidates held child result text on a user turn while retaining native wake output",
+    () =>
+      Effect.gen(function* () {
+        const session = yield* makeMixedWakeSession();
+        assert.isDefined(session.request.dispatchIfCurrent);
+        assert.isTrue(Option.isSome(yield* session.request.dispatchIfCurrent!(Effect.void)));
+        yield* session.startFollowup(2, {
+          ...session.turn.message,
+          messageId: MessageId.make("message-grok-new-user-turn"),
+          text: "A new user request.",
+        });
+        let staleTextDispatched = false;
+        const staleDispatch = yield* session.request.dispatchIfCurrent!(
+          Effect.sync(() => {
+            staleTextDispatched = true;
+          }),
+        );
+        yield* session.nextEvent(
+          (event) => event.type === "turn.terminal" && event.runOrdinal === 2,
+        );
+        assert.lengthOf(session.prompts, 2);
+        assert.notInclude(JSON.stringify(session.prompts[1]!.prompt), "REVIEW_DONE");
+
+        yield* session.startFollowup(3, {
+          createdBy: "agent",
+          creationSource: "provider",
+          messageId: MessageId.make("message-grok-native-drain"),
+          text: "Background task completed.",
+          attachments: [],
+        });
+        // A following chunk lets a lost buffer fail by assertion instead of waiting for its text.
+        yield* session.update({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Drain barrier." },
+        });
+        const drained = yield* session.nextEvent(
+          (event) =>
+            event.type === "message.updated" && event.message.text.endsWith("Drain barrier."),
+        );
+        assert.include(
+          drained.type === "message.updated" ? drained.message.text : "",
+          "NATIVE_TESTS_DONE",
+        );
+        assert.lengthOf(session.prompts, 2, "native output drains without another prompt");
+        assert.deepEqual(
+          { stillCurrent: Option.isSome(staleDispatch), staleTextDispatched },
+          { stillCurrent: false, staleTextDispatched: false },
+        );
       }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 });
