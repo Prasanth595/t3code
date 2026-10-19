@@ -3120,15 +3120,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return;
     }
     if (record.kind === "image") {
-      const accepted = addComposerImage({
-        type: "image",
-        id: localId,
-        name: record.name,
-        mimeType: file.type,
-        sizeBytes: file.size,
-        previewUrl: URL.createObjectURL(file),
-        file,
-      });
+      const accepted = addComposerDraftImages(
+        attachmentDraftTarget,
+        [
+          {
+            type: "image",
+            id: localId,
+            name: record.name,
+            mimeType: file.type,
+            sizeBytes: file.size,
+            previewUrl: URL.createObjectURL(file),
+            file,
+          },
+        ],
+        {
+          allowDuplicates:
+            getComposerDraft(attachmentDraftTarget)?.previewAnnotations.some(
+              (annotation) => annotation.id === localId,
+            ) ?? false,
+        },
+      );
       if (!accepted.includes(localId))
         fail("The draft rejected this attachment (duplicate or attachment limit reached).");
     } else {
@@ -3182,10 +3193,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // re-minted under a fresh id so both survive the paste.
       const record = asKnownContextRecord(candidate);
       if (!record) continue;
-      const existing = composerContextImportLookupIds(record).flatMap((contextId) => {
-        const found = composerContextRecords.get(contextId);
-        return found ? [found] : [];
-      })[0];
+      // A reminted annotation needs its screenshot under the new annotation id.
+      const existing = dependentAttachmentLocalIds.has(record.contextId)
+        ? undefined
+        : composerContextImportLookupIds(record).flatMap((contextId) => {
+            const found = composerContextRecords.get(contextId);
+            return found ? [found] : [];
+          })[0];
       // Upload completion can change the server id since copy; the local bytes still match.
       if (
         sourceEnvironmentId !== null &&
@@ -3202,7 +3216,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           : existing?.kind === "review-comment"
             ? reviewCommentContextRecord(existing.record)
             : existing?.kind === "preview-annotation"
-              ? previewAnnotationContextRecord(existing.record)
+              ? previewAnnotationContextRecord(existing.record, {
+                  screenshotContextId: composerImages.some(
+                    (image) => image.id === existing.record.id,
+                  )
+                    ? existing.record.id
+                    : undefined,
+                })
               : existing?.kind === "thread"
                 ? existing.record
                 : existing
