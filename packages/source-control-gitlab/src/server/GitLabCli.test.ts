@@ -182,104 +182,132 @@ layer("GitLabCli.layer", (it) => {
     }),
   );
 
-  const projectJson = (host: string, path: string) =>
-    JSON.stringify({
-      path_with_namespace: path,
-      web_url: `https://${host}/${path}`,
-      http_url_to_repo: `https://${host}/${path}.git`,
-      ssh_url_to_repo: `git@${host}:${path}.git`,
-    });
+  const project = {
+    path_with_namespace: "gitlab/team/app",
+    web_url: "https://example.com:8443/gitlab/gitlab/team/app",
+    http_url_to_repo: "https://example.com:8443/gitlab/gitlab/team/app.git",
+    ssh_url_to_repo: "git@example.com:gitlab/team/app.git",
+  };
 
   it.effect.each([
     {
-      repository: "https://sourcecontrol.example.com/group/sub/project.git",
-      host: "sourcecontrol.example.com",
-      path: "group/sub/project",
-      endpoint: "projects/group%2Fsub%2Fproject",
+      repository: "http://example.com/gitlab/gitlab/team/app.git",
+      projectPath: "gitlab/team/app",
+      configuredHost: "example.com/gitlab",
+      webRoot: "http://example.com/gitlab",
     },
     {
-      repository: "git@gitlab.com:group/project.git",
-      host: "gitlab.com",
-      path: "group/project",
-      endpoint: "projects/group%2Fproject",
+      repository: "https://example.com:443/gitlab/GitLab/Team/App.git",
+      projectPath: "GitLab/Team/App",
+      configuredHost: "example.com/gitlab",
+      webRoot: "https://example.com/gitlab",
     },
     {
       repository: "git@example.com:gitlab/team/app.git",
-      host: "example.com/gitlab",
-      path: "gitlab/team/app",
-      endpoint: "projects/gitlab%2Fteam%2Fapp",
+      projectPath: "gitlab/team/app",
+      configuredHost: "example.com:8443/gitlab",
+      webRoot: "https://example.com:8443/gitlab",
     },
     {
-      repository: "ssh://git@example.com/gitlab/team/app.git",
-      host: "example.com/gitlab",
-      path: "gitlab/team/app",
-      endpoint: "projects/gitlab%2Fteam%2Fapp",
+      repository: "ssh://git@example.com:2222/gitlab/team/app.git",
+      projectPath: "gitlab/team/app",
+      configuredHost: "example.com:8443/gitlab",
+      webRoot: "https://example.com:8443/gitlab",
     },
-    {
-      repository: "ssh://git@GitLab.com/group/project.git",
-      host: "gitlab.com",
-      path: "group/project",
-      endpoint: "projects/group%2Fproject",
-    },
-  ])("looks up the pasted address $repository by its project path", (row) =>
+  ])("resolves $repository through its nested project path on the selected server", (row) =>
     Effect.gen(function* () {
+      const url = `${row.webRoot}/gitlab/team/app`;
       mockedRun.mockImplementation((input) =>
         Effect.succeed(
           processOutput(
-            input.args[0] === "config" ? `${row.host}\n` : projectJson(row.host, row.path),
+            input.args[0] === "config"
+              ? `${row.configuredHost}\n`
+              : JSON.stringify({ ...project, web_url: url, http_url_to_repo: `${url}.git` }),
           ),
         ),
       );
 
       const glab = yield* GitLabCli.GitLabCli;
-      yield* glab.getRepositoryCloneUrls({ cwd: "/repo", repository: row.repository });
+      const result = yield* glab.getRepositoryCloneUrls({
+        cwd: "/repo",
+        repository: row.repository,
+      });
 
-      expect(mockedRun).toHaveBeenLastCalledWith(
-        expect.objectContaining({ args: ["api", row.endpoint] }),
-      );
+      assert.deepStrictEqual(result, {
+        nameWithOwner: "gitlab/team/app",
+        url,
+        sshUrl: project.ssh_url_to_repo,
+      });
+      expect(mockedRun.mock.calls.filter(([input]) => input.args[0] === "api")).toEqual([
+        [
+          expect.objectContaining({
+            command: "glab",
+            args: ["api", `projects/${encodeURIComponent(row.projectPath)}`],
+          }),
+        ],
+      ]);
     }),
   );
 
-  it.effect.each(["example.com/gitlab", "https://example.com/gitlab"])(
-    "drops the install root that glab's configured host %s carries from a pasted URL",
-    (glabHost) =>
-      Effect.gen(function* () {
-        mockedRun
-          .mockReturnValueOnce(Effect.succeed(processOutput(`${glabHost}\n`)))
-          .mockReturnValueOnce(
-            Effect.succeed(processOutput(projectJson("example.com/gitlab", "group/project"))),
-          );
-
-        const glab = yield* GitLabCli.GitLabCli;
-        yield* glab.getRepositoryCloneUrls({
-          cwd: "/repo",
-          repository: "https://example.com/gitlab/group/project",
-        });
-
-        expect(mockedRun).toHaveBeenLastCalledWith(
-          expect.objectContaining({ args: ["api", "projects/group%2Fproject"] }),
-        );
-      }),
-  );
-
-  it.effect("rejects a project that glab found on a different host than the pasted URL", () =>
+  it.effect.each([
+    "https://other.example.com:8443/gitlab/team/app",
+    "https://example.com:9443/gitlab/team/app",
+  ])("rejects %s when the selected server resolves a different repository", (repository) =>
     Effect.gen(function* () {
-      mockedRun
-        .mockReturnValueOnce(Effect.succeed(processOutput("gitlab.com\n")))
-        .mockReturnValueOnce(
-          Effect.succeed(processOutput(projectJson("gitlab.com", "group/project"))),
-        );
+      mockedRun.mockImplementation((input) =>
+        Effect.succeed(
+          processOutput(
+            input.args[0] === "config" ? "example.com:8443/gitlab\n" : JSON.stringify(project),
+          ),
+        ),
+      );
 
       const glab = yield* GitLabCli.GitLabCli;
       const error = yield* glab
-        .getRepositoryCloneUrls({
-          cwd: "/repo",
-          repository: "https://sourcecontrol.example.com/group/project",
-        })
+        .getRepositoryCloneUrls({ cwd: "/repo", repository })
         .pipe(Effect.flip);
 
       assert.strictEqual(error._tag, "GitLabRepositoryHostMismatchError");
+      expect(mockedRun.mock.calls.filter(([input]) => input.args[0] === "api")).toEqual([
+        [
+          expect.objectContaining({
+            command: "glab",
+            args: ["api", "projects/gitlab%2Fteam%2Fapp"],
+          }),
+        ],
+      ]);
     }),
+  );
+
+  it.effect(
+    "rejects a pasted URL outside the configured install root when another project exists",
+    () =>
+      Effect.gen(function* () {
+        mockedRun.mockImplementation((input) =>
+          Effect.succeed(
+            processOutput(
+              input.args[0] === "config"
+                ? "example.com:8443/gitlab\n"
+                : JSON.stringify({
+                    path_with_namespace: "other/team/app",
+                    web_url: "https://example.com:8443/gitlab/other/team/app",
+                    http_url_to_repo: "https://example.com:8443/gitlab/other/team/app.git",
+                    ssh_url_to_repo: "git@example.com:other/team/app.git",
+                  }),
+            ),
+          ),
+        );
+
+        const glab = yield* GitLabCli.GitLabCli;
+        const result = yield* glab
+          .getRepositoryCloneUrls({
+            cwd: "/repo",
+            repository: "https://example.com:8443/other/team/app.git",
+          })
+          .pipe(Effect.result);
+
+        assert.strictEqual(result._tag, "Failure");
+      }),
   );
 
   it.effect("creates merge requests through the GitLab API without placing the body in argv", () =>
