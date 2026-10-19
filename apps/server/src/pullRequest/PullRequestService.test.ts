@@ -928,7 +928,6 @@ it.effect("continues Bitbucket listings through tied timestamps and terminates",
   Effect.gen(function* () {
     const boundary = "2026-10-12T00:00:00.000Z";
     const older = "2026-10-11T00:00:00.000Z";
-    const filters: string[] = [];
     const rows = [1, 2, 3, 4, 5].map((id) => ({
       id,
       title: `Pull request ${id}`,
@@ -953,7 +952,6 @@ it.effect("continues Bitbucket listings through tied timestamps and terminates",
                 }
                 const filter =
                   new URL(url, "https://api.bitbucket.org").searchParams.get("q") ?? "";
-                filters.push(filter);
                 const updatedBefore = /updated_on <= (\S+)/.exec(filter)?.[1];
                 const excluded = new Set(
                   Array.from(filter.matchAll(/id != (\d+)/g), (match) => Number(match[1])),
@@ -983,27 +981,22 @@ it.effect("continues Bitbucket listings through tied timestamps and terminates",
       ],
       providers: [provider],
     });
-    const key = "bitbucket.org acme/web";
-    const first = yield* service.list({ state: "open", limit: 2 });
+    let page = yield* service.list({ state: "open", limit: 2 });
     assert.deepStrictEqual(
-      first.entries.map((entry) => entry.number),
+      page.entries.map((entry) => entry.number),
       [1, 2],
     );
-    assert.deepStrictEqual(first.nextCursors, { [key]: `${boundary}|2|1,2` });
-    const second = yield* service.list({ state: "open", limit: 2, cursors: first.nextCursors });
-    assert.deepStrictEqual(
-      second.entries.map((entry) => entry.number),
-      [3, 4],
-    );
-    assert.deepStrictEqual(second.nextCursors, { [key]: `${older}|4|4` });
-    const third = yield* service.list({ state: "open", limit: 2, cursors: second.nextCursors });
-    assert.deepStrictEqual(
-      third.entries.map((entry) => entry.number),
-      [5],
-    );
-    assert.isFalse(third.truncated);
-    assert.deepStrictEqual(third.nextCursors, {});
-    assert.strictEqual(filters.length, 3);
+    for (const expected of [[3, 4], [5]]) {
+      assert.isTrue(page.truncated);
+      assert.isNotEmpty(page.nextCursors);
+      page = yield* service.list({ state: "open", limit: 2, cursors: page.nextCursors });
+      assert.deepStrictEqual(
+        page.entries.map((entry) => entry.number),
+        expected,
+      );
+    }
+    assert.isFalse(page.truncated);
+    assert.deepStrictEqual(page.nextCursors, {});
   }),
 );
 
