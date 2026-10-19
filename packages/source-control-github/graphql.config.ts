@@ -1,8 +1,8 @@
 import { defineConfig } from "@effect/graphql-generator/Config";
 
 // `schema/github.graphql` is github.com's public schema
-// (https://docs.github.com/public/fpt/schema.docs.graphql). Enterprise Server lacks some of its
-// fields, such as pull request stacks, so a document asks for those under `@include`.
+// (https://docs.github.com/public/fpt/schema.docs.graphql). GHES validates fields before
+// `@include`, so unsupported fields need separate github.com-only documents.
 export default defineConfig({
   schema: "./schema/github.graphql",
   documents: ["src/**/*.graphql"],
