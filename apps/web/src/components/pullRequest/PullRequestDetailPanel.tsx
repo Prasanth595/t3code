@@ -99,6 +99,7 @@ import { vcsEnvironment } from "~/state/vcs";
 import { RelativeTime } from "~/components/RelativeTime";
 import { useUiStateStore } from "~/uiStateStore";
 
+import { guideTourTakesKey } from "../chat/composerFocusRedirect";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -752,7 +753,13 @@ export function PullRequestDetailPanel({
       }),
   });
   const copyFromShortcut = useEffectEvent((event: KeyboardEvent) => {
-    if (!shortcutsEnabled || event.defaultPrevented || isCommandPaletteOpen()) return;
+    if (
+      !shortcutsEnabled ||
+      event.defaultPrevented ||
+      isCommandPaletteOpen() ||
+      guideTourTakesKey(event)
+    )
+      return;
     const command = resolveShortcutCommand(event, keybindings, {
       context: getShortcutContext(),
     });

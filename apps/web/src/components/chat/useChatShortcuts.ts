@@ -8,7 +8,7 @@ import {
   preventTerminalCloseShortcut,
 } from "../../lib/terminalCloseShortcut";
 import { getTerminalFocusOwner, type TerminalFocusOwner } from "../../lib/terminalFocus";
-import { shouldTypeToFocusComposer } from "./composerFocusRedirect";
+import { guideTourTakesKey, shouldTypeToFocusComposer } from "./composerFocusRedirect";
 
 /** Runs a command. Returning false lets the key event through untouched. */
 export type ChatShortcutHandler = (context: {
@@ -58,6 +58,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       if (!current.enabled || isCommandPaletteOpen()) return;
       const terminalFocusOwner = getTerminalFocusOwner();
       if (event.defaultPrevented && terminalFocusOwner === null) return;
+      if (guideTourTakesKey(event)) return;
       const shortcutContext = current.getShortcutContext(event.target);
 
       if (

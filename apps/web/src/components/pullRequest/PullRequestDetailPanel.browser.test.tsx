@@ -1,17 +1,24 @@
 import {
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProjectId,
+  ProviderInstanceId,
+  type PullRequestReviewGuideResult,
   SourceControlProviderKind,
   ThreadId,
   type PullRequestDetailView,
   type ScopedThreadRef,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { act, type ComponentProps } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { act, useRef, type ComponentProps } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 import { DraftId, useComposerDraftStore } from "~/composerDraftStore";
+import { primaryServerKeybindingsAtom } from "~/state/server";
+import { useChatShortcuts } from "../chat/useChatShortcuts";
+import { useGuideRunStore } from "./guide/guideRunStore";
 
 import "~/index.css";
 
@@ -28,7 +35,13 @@ vi.mock(import("~/state/session"), async (original) => ({
 }));
 vi.mock(import("~/hooks/useSettings"), async (original) => ({
   ...(await original()),
-  useEnvironmentSettings: (() => undefined) as never,
+  useEnvironmentSettings: ((
+    _environmentId: EnvironmentId,
+    selector?: (settings: typeof DEFAULT_SERVER_SETTINGS) => unknown,
+  ) => {
+    const settings = { ...DEFAULT_SERVER_SETTINGS, reviewGuidesEnabled: true };
+    return selector ? selector(settings) : settings;
+  }) as never,
 }));
 vi.mock(import("~/hooks/useHandleNewThread"), async (original) => ({
   ...(await original()),
@@ -64,10 +77,23 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
     },
   };
 });
+vi.mock(import("~/state/server"), async (original) => {
+  const { Atom } = await import("effect/reactivity");
+  const { compileResolvedKeybindingsConfig } = await import("@t3tools/shared/keybindings");
+  return {
+    ...(await original()),
+    primaryServerKeybindingsAtom: Atom.make(
+      compileResolvedKeybindingsConfig([
+        { key: "j", command: "pullRequest.copyNumber" },
+        { key: "k", command: "script.test.run" },
+      ]),
+    ),
+  };
+});
 vi.mock(import("~/state/query"), async (original) => ({
   ...(await original()),
   useEnvironmentQuery: ((query: unknown) => ({
-    data: query === "detail" ? detail : null,
+    data: query === "detail" ? detail : query === "review-guide" ? guideResult : null,
     dataUpdatedAt: 0,
     failure: null,
     isPending: false,
@@ -201,6 +227,8 @@ const detail: PullRequestDetailView = {
   },
 };
 
+let guideResult: PullRequestReviewGuideResult | null = null;
+
 const threadRef: ScopedThreadRef = {
   environmentId: EnvironmentId.make("env-1"),
   threadId: ThreadId.make("thread-1"),
@@ -241,6 +269,8 @@ function render(props: Partial<ComponentProps<typeof PullRequestDetailPanel>> = 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   useComposerDraftStore.setState({ draftsByThreadKey: {} });
+  guideResult = null;
+  useGuideRunStore.setState({ progress: {}, shownKey: null, openRequestKey: null, watches: {} });
   newThread
     .mockReset()
     .mockResolvedValue({ draftId: newDraftId, threadId: ThreadId.make("new-thread") });
@@ -253,6 +283,7 @@ afterEach(async () => {
   for (const root of roots.splice(0)) await act(async () => root.unmount());
   document.body.replaceChildren();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 const surface = { projectId: detail.projectId, repository: detail.repository, number: 1 };
@@ -385,4 +416,158 @@ it("folds the title only for the active tab's own scroller", async () => {
   await vi.waitFor(() => expect(titleFold()).toBe(false));
   await tab("Code").click();
   await vi.waitFor(() => expect(titleFold()).toBe(true));
+});
+
+describe("review guide keyboard ownership beside chat", () => {
+  const runProjectAction = vi.fn();
+
+  function BesideChat({
+    enabled = true,
+    focusableHost = false,
+  }: {
+    enabled?: boolean;
+    focusableHost?: boolean;
+  }) {
+    const composer = useRef<HTMLTextAreaElement>(null);
+    const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+    useChatShortcuts({
+      enabled: true,
+      keybindings,
+      scriptKeybindings: keybindings,
+      getShortcutContext: () => ({ ...shortcutContext(), modelPickerOpen: false }),
+      threadFindActive: false,
+      closeThreadFind: () => {},
+      typeIntoComposer: (key) => {
+        if (!composer.current) return false;
+        composer.current.value += key;
+        composer.current.focus();
+        return true;
+      },
+      commands: {},
+      fallback: (command) => (command === "script.test.run" ? runProjectAction : undefined),
+    });
+    return (
+      <>
+        <div data-testid="chat-transcript">Chat transcript</div>
+        <textarea ref={composer} aria-label="Test composer" />
+        {/* A narrow-layout sheet can take focus outside the panel content boundary. */}
+        <div data-testid="panel-host" tabIndex={focusableHost ? -1 : undefined}>
+          <div data-right-panel-surface-content className="flex h-[700px] w-[900px]">
+            <PullRequestDetailPanel
+              environmentId={threadRef.environmentId}
+              reference={detail}
+              context="page"
+              shortcutsEnabled={enabled}
+              getShortcutContext={shortcutContext}
+              composerDraftTarget={draftId}
+              threadRef={threadRef}
+            />
+          </div>
+        </div>
+      </>
+    );
+  }
+
+  async function mountGuide(focusableHost = false) {
+    guideResult = {
+      currentHeadSha: "head",
+      run: null,
+      guide: {
+        headSha: "head",
+        generatedAt: "2026-09-01T00:00:00Z",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        stops: ["First change", "Second change"].map((title) => ({
+          title,
+          summary: "",
+          attention: null,
+          excerpts: [],
+          files: [],
+          notes: [],
+          questions: [],
+        })),
+      },
+    };
+    runProjectAction.mockReset();
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    roots.push(root);
+    await act(async () => root.render(<BesideChat focusableHost={focusableHost} />));
+    await tab("Guide").click();
+    await expect.element(page.getByRole("heading", { name: "First change" })).toBeVisible();
+    return root;
+  }
+
+  async function press(key: string, shiftKey = false) {
+    await act(async () => {
+      (document.activeElement ?? document.body).dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key,
+          shiftKey,
+          bubbles: true,
+          composed: true,
+          cancelable: true,
+        }),
+      );
+    });
+  }
+
+  it("keeps J/K with the guide after focus or clicks, ahead of copy and project shortcuts", async () => {
+    const copy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
+    const root = await mountGuide();
+    const composer = page.getByRole("textbox", { name: "Test composer" });
+    const first = page.getByRole("heading", { name: "First change" });
+    const second = page.getByRole("heading", { name: "Second change" });
+
+    await page.getByTestId("chat-transcript").click();
+    await act(async () => {
+      (
+        page.getByRole("button", { name: "Next stop", exact: true }).element() as HTMLElement
+      ).focus();
+    });
+    await press("j");
+    await expect.element(second).toBeVisible();
+    // Stepping replaces the focused stop, so the next key arrives at the body.
+    expect(document.activeElement).toBe(document.body);
+    await press("k");
+    await expect.element(first).toBeVisible();
+
+    await act(async () => root.render(<BesideChat focusableHost />));
+    await tab("Guide").click();
+    expect(document.activeElement).toBe(tab("Guide").element());
+    await first.click();
+    expect(document.activeElement).toBe(page.getByTestId("panel-host").element());
+    await press("j");
+    await expect.element(second).toBeVisible();
+    await expect.element(composer).toHaveValue("");
+    expect(copy).not.toHaveBeenCalled();
+    expect(runProjectAction).not.toHaveBeenCalled();
+
+    await page.getByTestId("chat-transcript").click();
+    await press("k");
+    await expect.element(composer).toHaveValue("k");
+    await expect.element(second).toBeVisible();
+    await second.click();
+    await press("J", true);
+    await expect.element(composer).toHaveValue("kJ");
+    await expect.element(second).toBeVisible();
+  });
+
+  it("returns J/K to typing when the guide tab is inactive or its panel is closing", async () => {
+    const root = await mountGuide(true);
+    const composer = page.getByRole("textbox", { name: "Test composer" });
+    await tab("Summary").click();
+    await page.getByTestId("summary-scroller").click();
+    await press("k");
+    await expect.element(composer).toHaveValue("k");
+
+    await tab("Guide").click();
+    await page.getByRole("heading", { name: "First change" }).click();
+    expect(document.activeElement).toBe(page.getByTestId("panel-host").element());
+    await act(async () => root.render(<BesideChat enabled={false} focusableHost />));
+    await press("k");
+    await expect.element(composer).toHaveValue("kk");
+    await expect.element(page.getByRole("heading", { name: "First change" })).toBeVisible();
+    expect(runProjectAction).not.toHaveBeenCalled();
+  });
 });

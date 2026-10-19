@@ -130,6 +130,7 @@ import {
 } from "../components/WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../components/WorkspacePageContainer";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
+import { guideTourTakesKey } from "../components/chat/composerFocusRedirect";
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { isElectron } from "../env";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
@@ -1623,7 +1624,7 @@ function PullRequestsRouteView() {
   });
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || isCommandPaletteOpen()) return;
+      if (event.defaultPrevented || isCommandPaletteOpen() || guideTourTakesKey(event)) return;
       const command = resolveShortcutCommand(event, keybindings, {
         context: getShortcutContext(),
       });
