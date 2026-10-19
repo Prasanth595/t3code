@@ -271,7 +271,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     ),
   );
 
-  it.effect("keeps ambiguous personal-login aliases while absolute paths share an identity", () =>
+  it.effect("keeps ambiguous personal-login aliases and absolute filesystem paths", () =>
     Effect.gen(function* () {
       const alice = () => Effect.succeed(processOutput("hostname server.test\nuser alice\n"));
       const bob = () =>
@@ -290,10 +290,14 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         name: "App",
       });
       const absolute = yield* resolveRemote("alice-box:/srv/app.git", alice);
-      expect(absolute?.canonicalKey).toBe("server.test/srv/app");
-      expect((yield* resolveRemote("ssh://bob@server.test/srv/app.git", bob))?.canonicalKey).toBe(
-        absolute?.canonicalKey,
+      const shared = () => Effect.succeed(processOutput("hostname server.test\nuser git\n"));
+      expect((yield* resolveRemote("git-box:srv/app.git", shared))?.canonicalKey).not.toBe(
+        (yield* resolveRemote("git-box:/srv/app.git", shared))?.canonicalKey,
       );
+      expect(absolute?.canonicalKey).toBe("alice-box:/srv/app");
+      expect(
+        (yield* resolveRemote("ssh://bob@server.test/srv/app.git", bob))?.canonicalKey,
+      ).not.toBe(absolute?.canonicalKey);
     }),
   );
 
@@ -331,6 +335,22 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         canonicalKey: "gitlab.corp.example/team/app",
         provider: "gitlab",
       });
+      const ip = yield* resolveRemote("git@code.example.org:Team/App.git", () =>
+        Effect.succeed(processOutput("hostname 203.0.113.7\nuser git\n")),
+      );
+      expect(ip?.canonicalKey).toBe("code.example.org/team/app");
+      const proxied = yield* resolveRemote("client-a:Team/App.git", () =>
+        Effect.succeed(processOutput("hostname internal.test\nuser git\nproxyjump bastion-a\n")),
+      );
+      const commanded = yield* resolveRemote("client-b:Team/App.git", () =>
+        Effect.succeed(
+          processOutput("hostname internal.test\nuser git\nproxycommand ssh -W %h:%p bastion-b\n"),
+        ),
+      );
+      expect([proxied?.canonicalKey, commanded?.canonicalKey]).toEqual([
+        "client-a/team/app",
+        "client-b/team/app",
+      ]);
       const dev1 = yield* resolveRemote("git@dev1:Team/App.git", () =>
         Effect.succeed(processOutput("hostname server.test\nuser git\nport 2222\n")),
       );

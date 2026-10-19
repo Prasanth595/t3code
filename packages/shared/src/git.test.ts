@@ -86,10 +86,13 @@ describe("normalizeGitRemoteUrl", () => {
     );
   });
 
-  it("normalizes userless SCP remotes and single-segment absolute paths", () => {
+  it("keeps absolute SSH paths distinct from relative SCP paths", () => {
     expect(normalizeGitRemoteUrl("forge:App.git")).toBe("forge/app");
-    expect(normalizeGitRemoteUrl("deploy@forge:/App.git")).toBe("forge/app");
+    expect(normalizeGitRemoteUrl("deploy@forge:/App.git")).toBe("deploy@forge:/app");
     expect(normalizeGitRemoteUrl("ssh://deploy@forge/App.git")).toBe("forge/app");
+    expect(normalizeGitRemoteUrl("git@server.test:srv/app.git")).not.toBe(
+      normalizeGitRemoteUrl("git@server.test:/srv/app.git"),
+    );
   });
 
   it("accepts a one-letter SSH host without reinterpreting local drive paths", () => {

@@ -1,4 +1,5 @@
 import { detectSourceControlProviderFromGitRemoteUrl } from "@t3tools/shared/git";
+import * as NodeNet from "node:net";
 import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -104,12 +105,17 @@ export const expandSshHostAlias = Effect.fn("sshHostAlias.expandSshHostAlias")(f
     login !== undefined &&
     login !== "git" &&
     (!remote.path.startsWith("/") || remote.path.startsWith("/~"));
-  // Known forges keep their existing SSH/HTTPS identity. Other non-default
-  // ports may serve distinct repositories, so their aliases stay distinct.
+  const viaProxy = ["proxyjump", "proxycommand"].some(
+    (key) => (config.get(key) ?? "none") !== "none",
+  );
+  // Ambiguous endpoints and filesystem paths keep their literal identity.
+  // Known forges retain their existing SSH/HTTPS identity.
   const host =
+    NodeNet.isIP(hostName) !== 0 ||
     isLocalLoopbackHost(hostName) ||
     (aliasIsForge && !isForge) ||
-    (!isForge && port !== undefined && port !== "22") ||
+    (!isForge && remote.path.startsWith("/")) ||
+    (!isForge && ((port !== undefined && port !== "22") || viaProxy)) ||
     personalPath
       ? alias
       : resolvedHost;
