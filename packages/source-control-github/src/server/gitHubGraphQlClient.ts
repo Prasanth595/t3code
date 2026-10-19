@@ -22,7 +22,6 @@ export class GitHubGraphQlTarget extends Context.Service<
   GitHubGraphQlTarget,
   {
     readonly host: string;
-    /** The checkout the call acts for; its `gh` login supplies the token. */
     readonly cwd?: string | undefined;
     readonly operation: string;
     /** Overrides `SourceControlRateLimit.Interactive` for this one call. */
@@ -231,18 +230,13 @@ export const batchKey = (context: Context.Context<GitHubGraphQlTarget>) =>
     Context.getOrElse(context, SourceControlRateLimit.CredentialScope, () => ""),
   ]);
 
-/**
- * Pins the token for checkout `cwd` before a lookup joins a batch, so `batchKey` keeps checkouts on
- * different logins apart while checkouts on one login still share requests. An already pinned
- * credential is kept.
- */
+/** Pin before joining a resolver: its batch key must reflect the token that will send it. */
 export const withCheckoutCredential = <A, E, R>(
   credential: GitHubRequestPolicy.GitHubRequestPolicy["Service"]["credential"],
   input: { readonly cwd: string; readonly host: string },
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E | GitHubRequestPolicy.GitHubApiError, R> =>
   Effect.gen(function* () {
-    if ((yield* GitHubRequestPolicy.PinnedGitHubCredential) !== null) return yield* effect;
     const host = GitHubRequestPolicy.normalizeHost(input.host);
     const { token, fingerprint } = yield* credential(host, input.cwd);
     return yield* effect.pipe(

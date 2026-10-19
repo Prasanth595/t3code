@@ -243,7 +243,7 @@ export const makeDiscovery = Effect.gen(function* () {
       const tokenSource = savedToken ? "the token saved in Settings" : variable;
       if (tokenSource === null || settings.hosts["github.com"]?.enabled === false) return cli;
       const viewer = yield* api
-        .rest({ host: "github.com", operation: "discovery", path: "user" })
+        .rest({ host: "github.com", cwd, operation: "discovery", path: "user" })
         .pipe(Effect.result);
       const login = Result.isSuccess(viewer)
         ? Option.getOrUndefined(decodeViewer(viewer.success.body))?.login
@@ -283,11 +283,11 @@ export const makeDiscovery = Effect.gen(function* () {
      * A host turned off in Settings is claimed too, so its error says so
      * instead of "unsupported host".
      */
-    refineUnknownRemote: ({ context }) => {
+    refineUnknownRemote: ({ cwd, context }) => {
       const url = URL.parse(context.provider.baseUrl);
       if (!url?.host) return Effect.succeed(null);
       // A timeout or keyring failure propagates: the registry does not keep that answer.
-      return api.credential(url.host).pipe(
+      return api.credential(url.host, cwd).pipe(
         Effect.as(true),
         Effect.catchTags({
           GitHubCliMissingError: () => Effect.succeed(false),

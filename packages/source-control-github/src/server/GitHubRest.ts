@@ -28,7 +28,6 @@ export interface GitHubRestResponse {
 
 export interface GitHubRestInput {
   readonly host: string;
-  /** The checkout the request acts for; its `gh` login supplies the token. */
   readonly cwd?: string | undefined;
   readonly operation: string;
   readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";

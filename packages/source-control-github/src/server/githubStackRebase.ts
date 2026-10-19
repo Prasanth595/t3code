@@ -36,7 +36,6 @@ function remoteUrl(host: string, repository: string): string {
 }
 
 export const cascadeRebaseStack = Effect.fn("cascadeRebaseStack")(function* (input: {
-  /** The checkout the stack belongs to; its `gh` login pushes the layers. */
   readonly cwd: string;
   readonly host: string;
   readonly repository: string;

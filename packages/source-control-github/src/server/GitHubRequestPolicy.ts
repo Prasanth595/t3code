@@ -200,7 +200,6 @@ export type GitHubAnswer<A> = {
 
 export interface GitHubRequest {
   readonly host: string;
-  /** The checkout the request acts for; its `gh` login supplies the token. */
   readonly cwd?: string | undefined;
   readonly operation: string;
   /** The quota the request spends: `core` for REST, `graphql` for GraphQL. */

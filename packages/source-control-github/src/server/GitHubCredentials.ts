@@ -76,10 +76,7 @@ export type GitHubCredentialUnavailableError =
   | GitHubHostDisabledError
   | GitHubCliFailedError;
 
-/**
- * `cwd` is the checkout a token is for: `gh` runs there, so a per-directory `GH_CONFIG_DIR` that a
- * `gh` shim applies (mise) picks the account it does in a terminal.
- */
+/** Directory-aware `gh` shims choose their login from the checkout's `cwd`. */
 export class GitHubCredentials extends Context.Service<
   GitHubCredentials,
   {
@@ -188,7 +185,6 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => null),
     );
 
-  /** `gh` may hold a different login in each checkout. */
   const cacheKey = (host: string, account: string | undefined, cwd: string | undefined) =>
     [host, account ?? "", cwd ?? workingDirectory].join("\u0000");
 

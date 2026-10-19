@@ -1002,12 +1002,11 @@ export const make = Effect.gen(function* () {
     ): Effect.Effect<
       A,
       | Exclude<E, GraphQLClientError.GraphQLClientError>
-      | GitHubRequestPolicy.GitHubApiNotFoundError
-      | GitHubRequestPolicy.GitHubApiResponseError
+      | GitHubRequestPolicy.GitHubApiError
       | GitHubPullRequestReadError,
       Exclude<R, GitHubGraphQlClient.GitHubGraphQlTarget>
     > =>
-      effect.pipe(
+      GitHubGraphQlClient.withCheckoutCredential(api.credential, input, effect).pipe(
         GitHubGraphQlClient.call({
           host: input.host,
           cwd: input.cwd,
@@ -1834,11 +1833,8 @@ export const make = Effect.gen(function* () {
             },
             { concurrency: "unbounded" },
           ).pipe(
-            Effect.provideService(GitHubGraphQlClient.GitHubGraphQlTarget, {
-              host: input.host,
-              cwd: input.cwd,
-              operation: "listPullRequestStackMemberships",
-            }),
+            (effect) =>
+              batchedRead({ ...input, operation: "listPullRequestStackMemberships" }, effect),
             Effect.map((items) => ({ ...batch, items })),
           );
         }),

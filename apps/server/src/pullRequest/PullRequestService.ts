@@ -419,11 +419,7 @@ function toPullRequestError(
         });
 }
 
-/**
- * The credential a project's reads go out on, or its account where the provider cannot tell the
- * token. A read batched across projects carries one credential, so projects on different ones
- * are batched apart. A project whose credential cannot be told is kept apart from every other.
- */
+/** Shared reads must use the same credential, including its repository permissions. */
 const accountOf = (project: SupportedProject): Effect.Effect<string> =>
   project.api.getRoutingIdentity === undefined
     ? Effect.succeed("")
@@ -433,6 +429,30 @@ const accountOf = (project: SupportedProject): Effect.Effect<string> =>
           Effect.map((identity) => identity.credentialFingerprint ?? identity.accountId),
           Effect.orElseSucceed(() => project.project.workspaceRoot),
         );
+
+const withBatchCredential = <A, E, R>(
+  project: SupportedProject,
+  account: string,
+  read: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E | PullRequestProviderError, R> =>
+  project.api.withVerifiedCredential === undefined || project.api.getRoutingIdentity === undefined
+    ? read
+    : project.api.withVerifiedCredential(
+        { cwd: project.project.workspaceRoot, host: project.host },
+        (identity): Effect.Effect<A, E | PullRequestProviderError, R> =>
+          // A checkout may switch tokens after grouping. Pin the matching token until dispatch ends.
+          identity.credentialFingerprint === account
+            ? read
+            : Effect.fail(
+                new PullRequestProviderError({
+                  provider: project.api.kind,
+                  operation: "batchCredential",
+                  reason: "failed",
+                  detail:
+                    "The checkout credential changed before the grouped read. Retry the read.",
+                }),
+              ),
+      );
 
 function withRateLimitBackoff(
   api: PullRequestProviderApi,
@@ -1262,6 +1282,7 @@ export const make = Effect.gen(function* () {
             ? {}
             : { cursor: { updatedBefore: cursor.updatedBefore, delivered: cursor.delivered } }),
         }).pipe(
+          (read) => withBatchCredential(first, accounts.get(first)!, read),
           observeRead,
           Effect.flatMap(({ value: page, observedAt }) =>
             Effect.flatMap(Clock.currentTimeMillis, (now) => {
@@ -2429,6 +2450,7 @@ export const make = Effect.gen(function* () {
               number: entry.number,
             })),
           }).pipe(
+            (read) => withBatchCredential(first.project, accounts.get(first.project)!, read),
             Effect.map((read) =>
               read.flatMap((stat): ReadonlyArray<PullRequestDiffStat> => {
                 const project = projectsByRepository.get(
