@@ -186,7 +186,27 @@ export default function FileBrowserPanel({
   const previousTreePathsRef = useRef<readonly string[] | null>(null);
   const syncingSelectionRef = useRef(false);
   const treeSelectionPathRef = useRef<string | null>(null);
-  const handledRevealRef = useRef<{ path: string; revealId: number } | null>(null);
+  const handledRevealRef = useRef<{
+    path: string;
+    revealId: number;
+    selectionMissing?: boolean;
+  } | null>(null);
+  // Preserve a collapse across remounts, but still reveal later active-file changes.
+  const initialHandledRevealRef = useRef(
+    selectedPathRevealHandled ? { path: selectedPath, revealId: selectedPathRevealId } : null,
+  );
+  const shouldSkipInitialReveal = useStableCallback((path: string | null, revealId: number) => {
+    const initialReveal = initialHandledRevealRef.current;
+    if (
+      selectedPathRevealHandled &&
+      initialReveal?.path === path &&
+      initialReveal?.revealId === revealId
+    ) {
+      return true;
+    }
+    initialHandledRevealRef.current = null;
+    return false;
+  });
 
   // The tree renders rows in shadow DOM and its anchor rect is unreliable, so
   // capture the right-click position ourselves; contextmenu is a composed
@@ -426,13 +446,13 @@ export default function FileBrowserPanel({
     );
   }, [entries, model]);
   useEffect(() => {
-    if (!selectedPath || selectedPathRevealHandled) return;
+    if (shouldSkipInitialReveal(selectedPath, selectedPathRevealId) || !selectedPath) return;
     const controller = new AbortController();
     void loadFileAncestors(selectedPath, load, { signal: controller.signal });
     return () => {
       controller.abort();
     };
-  }, [load, selectedPath, selectedPathRevealHandled]);
+  }, [load, selectedPath, selectedPathRevealId, shouldSkipInitialReveal]);
   const handleSearchValueChange = (value: string) => {
     setQuery(value);
     if (value.trim().length === 0) {
@@ -474,28 +494,37 @@ export default function FileBrowserPanel({
   }, [directoryPaths, expandAll, model, query]);
 
   useEffect(() => {
-    if (!selectedPath || selectedPathRevealHandled) {
-      handledRevealRef.current = null;
-      return;
-    }
-    const selectedKind = entryKinds.get(selectedPath);
-    if (selectedKind === undefined) {
+    if (shouldSkipInitialReveal(selectedPath, selectedPathRevealId) || !selectedPath) {
       handledRevealRef.current = null;
       return;
     }
     const revealRequest = { path: selectedPath, revealId: selectedPathRevealId };
     const handledReveal = handledRevealRef.current;
-    // Entry refreshes rebuild treePaths while the same preview stays open.
-    // Replaying a handled reveal would close an active tree search and steal focus.
-    if (
+    const sameReveal =
       handledReveal?.path === revealRequest.path &&
-      handledReveal.revealId === revealRequest.revealId
-    ) {
+      handledReveal.revealId === revealRequest.revealId;
+    const selectedKind = entryKinds.get(selectedPath);
+    if (selectedKind === undefined) {
+      // Closing search can remove a provisional result before its listing arrives.
+      if (sameReveal) handledReveal.selectionMissing = true;
+      else handledRevealRef.current = null;
       return;
     }
+    // Entry refreshes rebuild treePaths while the same preview stays open.
+    // Replaying a handled reveal would close an active tree search and steal focus.
+    if (sameReveal && !handledReveal.selectionMissing) return;
     const selectedTreePath = selectedKind === "directory" ? `${selectedPath}/` : selectedPath;
     const selectedItem = model.getItem(selectedTreePath);
     if (!selectedItem) return;
+    if (sameReveal && model.isSearchOpen()) {
+      handledRevealRef.current = revealRequest;
+      syncingSelectionRef.current = true;
+      selectedItem.select();
+      queueMicrotask(() => {
+        syncingSelectionRef.current = false;
+      });
+      return;
+    }
 
     // A selection that originated inside the tree (clicking a row, possibly
     // in an active tree search) is already visible; re-revealing it would
@@ -545,7 +574,7 @@ export default function FileBrowserPanel({
     model,
     selectedPath,
     selectedPathRevealId,
-    selectedPathRevealHandled,
+    shouldSkipInitialReveal,
     onSelectedPathRevealHandled,
   ]);
 
