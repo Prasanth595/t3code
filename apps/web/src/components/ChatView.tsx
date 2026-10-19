@@ -7772,6 +7772,7 @@ export default function ChatView(props: ChatViewProps) {
         availableEditors,
         pendingSurfaceIds: pendingFileSurfaceIds,
         onOpenFile: openFileSurfaceStable,
+        onSendRenderMessage: sendAppMessageStable,
         onPendingChange: handleFilePendingChangeStable,
       }}
     />
