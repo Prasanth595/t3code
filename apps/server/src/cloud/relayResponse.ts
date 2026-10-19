@@ -61,11 +61,13 @@ function recoveryHint(error: RelayProtectedError): string {
 export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(function* (
   response: HttpClientResponse.HttpClientResponse,
   requestDurationMillis = 0,
+  requestStartedAtMillis?: number,
 ) {
   if (response.status >= 200 && response.status < 300) return response;
+  const nowMillis = yield* Clock.currentTimeMillis;
   const clockSkewSeconds = clockSkewFromDateHeader(
     response.headers.date,
-    yield* Clock.currentTimeMillis,
+    nowMillis,
     requestDurationMillis,
   );
   const decoded = yield* HttpClientResponse.schemaBodyJson(RelayProtectedError)(response).pipe(
@@ -76,6 +78,27 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
   const description = Option.isSome(decoded)
     ? `T3 Connect: ${decoded.value.message}. ${recoveryHint(decoded.value)} Trace ID: ${decoded.value.traceId}.`
     : `T3 Connect relay returned HTTP ${response.status} without a recognized error response. Check relay access and any proxy or firewall restrictions, then restart T3 Code.${requestId}`;
+  // The proof predates any in-flight clock correction. Project the starting
+  // wall clock forward with monotonic time to check the clock that signed it.
+  if (
+    (response.status === 400 || response.status === 401) &&
+    clockSkewSeconds === null &&
+    requestStartedAtMillis !== undefined &&
+    clockSkewFromDateHeader(
+      response.headers.date,
+      requestStartedAtMillis + requestDurationMillis,
+      requestDurationMillis,
+    ) !== null
+  ) {
+    return yield* new RelayRequestError({
+      rejection: "unavailable",
+      description: `The host computer's clock changed during the T3 Connect relay request. T3 Connect will retry with a fresh proof. Relay response: ${
+        Option.isSome(decoded)
+          ? `${decoded.value.message}. Trace ID: ${decoded.value.traceId}.`
+          : `HTTP ${response.status}.${requestId}`
+      }`,
+    });
+  }
   // Timestamp rejections can clear after clock sync; unrelated HTTP statuses stay permanent.
   const clockSuspected =
     clockSkewSeconds !== null && (response.status === 400 || response.status === 401);
@@ -122,10 +145,9 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
 
 export const filterRelayClient = (client: HttpClient.HttpClient) =>
   HttpClient.transformResponse(client, (response) =>
-    response.pipe(
-      Effect.timed,
-      Effect.flatMap(([duration, result]) =>
-        filterRelayResponse(result, Duration.toMillis(duration)),
-      ),
-    ),
+    Effect.gen(function* () {
+      const startedAtMillis = yield* Clock.currentTimeMillis;
+      const [duration, result] = yield* response.pipe(Effect.timed);
+      return yield* filterRelayResponse(result, Duration.toMillis(duration), startedAtMillis);
+    }),
   );
