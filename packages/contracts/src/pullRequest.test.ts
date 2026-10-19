@@ -10,7 +10,6 @@ import {
   PullRequestListResult,
   PullRequestReviewerRequestInput,
   PullRequestSetFilesViewedInput,
-  gitHubApiHostOf,
   pullRequestHostOf,
   resolvePullRequestAuthorFilter,
 } from "./pullRequest.ts";
@@ -90,26 +89,19 @@ describe("PullRequestListResult", () => {
       ),
     ).toBe("forge.example");
   });
-  it("names a GitHub checkout behind a github.com subdomain by github.com", () => {
-    const identity = {
-      canonicalKey: "work.github.com/acme/web",
-      locator: { remoteUrl: "git@work.github.com:acme/web.git" },
-    };
-    expect(pullRequestHostOf(identity, SourceControlProviderKind.make("github"))).toBe(
-      "github.com",
-    );
-    expect(
-      pullRequestHostOf(
-        { canonicalKey: "github.example.com/acme/web" },
-        SourceControlProviderKind.make("github"),
-      ),
-    ).toBe("github.example.com");
+
+  it("names GitHub subdomain checkouts by their API host and preserves enterprise ports", () => {
+    for (const [host, expected] of [
+      ["ssh.github.com", "github.com"],
+      ["work.github.com:8443", "github.com"],
+      ["github.example.com:8443", "github.example.com:8443"],
+    ]) {
+      const identity = { canonicalKey: `${host}/acme/web` };
+      expect(pullRequestHostOf(identity, SourceControlProviderKind.make("github"))).toBe(expected);
+      expect(pullRequestHostOf(identity, SourceControlProviderKind.make("gitlab"))).toBe(host);
+    }
   });
 
-  it("reads a github.com subdomain with a port through github.com", () => {
-    expect(gitHubApiHostOf("work.github.com:8443")).toBe("github.com");
-    expect(gitHubApiHostOf("github.example.com:8443")).toBe("github.example.com:8443");
-  });
   /**
    * The RPC builds this codec at call time, so a shape it cannot lower — an open-keyed record
    * with an optional value, for one — fails as an interrupted request rather than as a schema

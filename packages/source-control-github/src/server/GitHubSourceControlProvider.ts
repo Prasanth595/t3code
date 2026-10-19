@@ -454,6 +454,7 @@ export const make = Effect.gen(function* () {
   const sourceControlHost = yield* SourceControlHost.SourceControlHost;
   const process = sourceControlHost.process;
   const environment = yield* HostProcess.Environment;
+  const environmentHost = apiHostForHint(environment.GH_HOST?.trim() || "github.com");
   const git = sourceControlHost.git;
   const fileSystem = yield* FileSystem.FileSystem;
 
@@ -475,7 +476,7 @@ export const make = Effect.gen(function* () {
     }) {
       const envRepository = environment.GH_REPO?.trim();
       const hostHint = input.host ?? contextHost(input.context);
-      const defaultHost = apiHostForHint(hostHint ?? environment.GH_HOST ?? "github.com");
+      const defaultHost = apiHostForHint(hostHint ?? environmentHost);
       if (envRepository) {
         const locator = parseGitHubRepositorySelector(envRepository, defaultHost);
         if (locator !== null) return locator;
@@ -961,10 +962,10 @@ export const make = Effect.gen(function* () {
       ),
     getRepositoryCloneUrls: (input) =>
       Effect.gen(function* () {
-        const fallbackHost = (yield* resolveRepository(input).pipe(
+        const fallbackHost = yield* resolveRepository(input).pipe(
           Effect.map((locator) => locator.host),
-          Effect.orElseSucceed(() => environment.GH_HOST ?? "github.com"),
-        )).toLowerCase();
+          Effect.orElseSucceed(() => environmentHost),
+        );
         const bareName = input.repository.trim().replace(/\.git$/i, "");
         const locator =
           parseGitHubRepositorySelector(input.repository, fallbackHost) ??
@@ -980,14 +981,11 @@ export const make = Effect.gen(function* () {
       ),
     createRepository: (input) =>
       Effect.gen(function* () {
-        const locator = parseGitHubRepositorySelector(
-          input.repository,
-          (environment.GH_HOST ?? "github.com").toLowerCase(),
-        );
+        const locator = parseGitHubRepositorySelector(input.repository, environmentHost);
         const viewer = locator === null ? null : yield* readViewerLogin(locator.host);
         const owner = locator?.owner ?? viewer;
         const name = locator?.name ?? input.repository.trim();
-        const host = locator?.host ?? (environment.GH_HOST?.trim().toLowerCase() || "github.com");
+        const host = locator?.host ?? environmentHost;
         const isViewer = viewer !== null && owner?.toLowerCase() === viewer.toLowerCase();
         const response = yield* rest(
           {

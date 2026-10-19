@@ -912,11 +912,7 @@ export function pullRequestHostOf(
   return kind === "github" ? gitHubApiHostOf(host) : host.toLowerCase();
 }
 
-/**
- * The host a GitHub checkout is read through. github.com serves no API under its subdomains, so
- * a remote there (`ssh.github.com`, or an SSH alias like `work.github.com`) is read through
- * github.com; a self-hosted GitHub lives on its own domain.
- */
+/** SSH remotes under github.com share github.com's API host and credentials. */
 export function gitHubApiHostOf(host: string): string {
   const normalized = host.toLowerCase();
   return normalized.replace(/:\d+$/, "").endsWith(".github.com") ? "github.com" : normalized;

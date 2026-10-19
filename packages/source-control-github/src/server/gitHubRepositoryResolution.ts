@@ -157,12 +157,7 @@ export function parsePullRequestReference(
   return { kind: "branch", headSelector: trimmed };
 }
 
-/**
- * The GitHub host a remote URL is served from, or null for a remote that is not GitHub. An SSH
- * alias (`git@github-work:owner/repo`) names no API host of its own; it is read through
- * `github.com`, which is what such an alias almost always stands for (issue #6198). So is a
- * subdomain of github.com, such as `ssh.github.com` or an alias like `work.github.com`.
- */
+/** Dotless GitHub SSH aliases and github.com subdomains use github.com for API requests. */
 export function gitHubApiHostForRemote(remoteUrl: string): string | null {
   const provider = detectSourceControlProviderFromRemoteUrl(remoteUrl);
   if (provider === null) return null;
@@ -175,7 +170,6 @@ export function gitHubApiHostForRemote(remoteUrl: string): string | null {
   return provider.kind === "github" ? host : null;
 }
 
-/** A caller's host hint, read the way a remote's host is: an alias is not an API host. */
 export function apiHostForHint(host: string): string {
   const normalized = host.toLowerCase();
   return !normalized.includes(".") && normalized.includes("github")
