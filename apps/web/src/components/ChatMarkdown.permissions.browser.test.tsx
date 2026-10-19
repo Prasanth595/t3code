@@ -2,11 +2,13 @@ import {
   AuthOrchestrationOperateScope,
   EnvironmentId,
   ProjectId,
+  ProjectReadFileError,
   ThreadId,
   type AuthEnvironmentScope,
   type EditorId,
   type ThreadLinkedPullRequest,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -20,6 +22,8 @@ const state = vi.hoisted(() => ({
   openEditor: vi.fn(),
   updateMetadata: vi.fn(),
   search: vi.fn(),
+  readFile: vi.fn(),
+  openBrowser: vi.fn(),
   choose: vi.fn(),
   openFile: vi.fn(),
   openExternal: vi.fn(),
@@ -27,9 +31,21 @@ const state = vi.hoisted(() => ({
   linkedPullRequest: null as ThreadLinkedPullRequest | null,
 }));
 
-vi.mock(import("../state/use-atom-query-runner"), async (original) => ({
+vi.mock(import("../state/use-atom-query-runner"), async (original) => {
+  const { projectEnvironment } = await import("../state/projects");
+  return {
+    ...(await original()),
+    useAtomQueryRunner: ((query: unknown) =>
+      query === projectEnvironment.readFile ? state.readFile : state.search) as never,
+  };
+});
+vi.mock(import("../browser/previewRuntime"), async (original) => ({
   ...(await original()),
-  useAtomQueryRunner: (() => state.search) as never,
+  isPreviewAvailableFor: () => true,
+}));
+vi.mock(import("../browser/openFileInPreview"), async (original) => ({
+  ...(await original()),
+  openFileInPreview: state.openBrowser,
 }));
 vi.mock(import("../state/use-atom-command"), async (original) => {
   const { threadEnvironment } = await import("../state/threads");
@@ -49,6 +65,7 @@ vi.mock(import("../state/session"), async (original) => {
   return {
     ...(await original()),
     readEnvironmentScope,
+    readPreparedConnection: (() => ({ httpBaseUrl: "https://host.test" })) as never,
     useEnvironmentScope: (id: EnvironmentId | null, scope: AuthEnvironmentScope) =>
       useSyncExternalStore(
         (listener) => {
@@ -140,6 +157,20 @@ beforeEach(() => {
   state.openEditor.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.updateMetadata.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.search.mockReset().mockResolvedValue(AsyncResult.success({ entries: [] }));
+  state.readFile.mockReset().mockResolvedValue(
+    AsyncResult.failure(
+      Cause.fail(
+        new ProjectReadFileError({
+          cwd: "/work",
+          relativePath: "docs/GROUPS_PLAN.html",
+          failure: "operation_failed",
+          operation: "open",
+          cause: "ENOENT",
+        }),
+      ),
+    ),
+  );
+  state.openBrowser.mockReset().mockResolvedValue(AsyncResult.success(undefined));
   state.choose.mockReset().mockResolvedValue(null);
   state.openFile.mockReset();
   state.openExternal.mockReset().mockResolvedValue(undefined);
@@ -156,13 +187,11 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function renderMarkdown(text: string) {
+async function renderMarkdown(text: string, ref = threadRef) {
   container = document.body.appendChild(document.createElement("div"));
   const root = createRoot(container);
   roots.push(root);
-  await act(async () =>
-    root.render(<ChatMarkdown cwd="/work" threadRef={threadRef} text={text} />),
-  );
+  await act(async () => root.render(<ChatMarkdown cwd="/work" threadRef={ref} text={text} />));
 }
 
 function anchor() {
@@ -293,3 +322,143 @@ it.each(["link-to-thread", "unlink-from-thread"])(
     );
   },
 );
+
+const indexedPath = "BudgetLens/docs/GROUPS_PLAN.html";
+const fileChip = "`docs/GROUPS_PLAN.html:12:3`";
+
+function searchResult(paths: string[]) {
+  return AsyncResult.success({ entries: paths.map((path) => ({ path, kind: "file" as const })) });
+}
+
+function deferSearch() {
+  let finish: (result: ReturnType<typeof searchResult>) => void = () => {
+    throw new Error("Lookup not started");
+  };
+  state.search.mockReturnValueOnce(
+    new Promise<ReturnType<typeof searchResult>>((resolve) => {
+      finish = resolve;
+    }),
+  );
+  return (paths: string[]) => act(async () => finish(searchResult(paths)));
+}
+
+async function activateFile(action: string) {
+  if (action === "panel") {
+    await act(async () => anchor().click());
+  } else {
+    state.choose.mockResolvedValue(action);
+    await openContextMenu();
+    expect(offeredActions()).toContain(action);
+  }
+}
+
+it.each(["panel", "open", "open-in-browser", "reveal"])(
+  "resolves the unique segment suffix for the %s file action",
+  async (action) => {
+    state.search.mockResolvedValue(
+      searchResult(["other/GROUPS_PLAN.html", "BudgetLens/mydocs/GROUPS_PLAN.html", indexedPath]),
+    );
+    await renderMarkdown(fileChip);
+    await activateFile(action);
+    if (action === "panel") {
+      expect(state.openFile).toHaveBeenCalledExactlyOnceWith(threadRef, indexedPath, 12);
+    } else if (action === "open-in-browser") {
+      expect(state.openBrowser).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          threadRef,
+          filePath: `/work/${indexedPath}`,
+          workspaceRoot: "/work",
+        }),
+      );
+    } else {
+      expect(state.openEditor).toHaveBeenCalledExactlyOnceWith({
+        environmentId: threadRef.environmentId,
+        input:
+          action === "reveal"
+            ? { cwd: `/work/${indexedPath}`, editor: "file-manager", reveal: true }
+            : { cwd: `/work/${indexedPath}:12:3`, editor: "vscode" },
+      });
+    }
+  },
+);
+
+it("keeps a real literal file when the workspace index only returns a nested twin", async () => {
+  state.search.mockResolvedValue(searchResult([indexedPath]));
+  state.readFile.mockResolvedValue(
+    AsyncResult.success({
+      relativePath: "docs/GROUPS_PLAN.html",
+      contents: "ignored local file",
+      byteLength: 18,
+      truncated: false,
+    }),
+  );
+  await renderMarkdown(fileChip);
+  await activateFile("panel");
+  expect(state.openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "docs/GROUPS_PLAN.html", 12);
+  expect(state.readFile).toHaveBeenCalledWith({
+    environmentId: threadRef.environmentId,
+    input: { cwd: "/work", relativePath: "docs/GROUPS_PLAN.html" },
+  });
+  await activateFile("open");
+  expect(state.openEditor).toHaveBeenCalledExactlyOnceWith({
+    environmentId: threadRef.environmentId,
+    input: { cwd: "/work/docs/GROUPS_PLAN.html:12:3", editor: "vscode" },
+  });
+});
+
+it.each([
+  { name: "no match", paths: [] },
+  {
+    name: "basename and partial segment matches",
+    paths: ["other/GROUPS_PLAN.html", "BudgetLens/mydocs/GROUPS_PLAN.html"],
+  },
+  { name: "ambiguous suffixes", paths: [indexedPath, "Other/docs/GROUPS_PLAN.html"] },
+])("keeps the authored path and position for $name", async ({ paths }) => {
+  state.search.mockResolvedValue(searchResult(paths));
+  await renderMarkdown(fileChip);
+  await activateFile("panel");
+  expect(state.openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "docs/GROUPS_PLAN.html", 12);
+  await activateFile("open");
+  expect(state.openEditor).toHaveBeenCalledExactlyOnceWith({
+    environmentId: threadRef.environmentId,
+    input: { cwd: "/work/docs/GROUPS_PLAN.html:12:3", editor: "vscode" },
+  });
+});
+
+it.each(["open", "open-in-browser"])(
+  "discards a pending %s lookup after a newer panel action in the same thread",
+  async (action) => {
+    const finishLookup = deferSearch();
+    await renderMarkdown(fileChip);
+    await activateFile(action);
+    expect(state.search).toHaveBeenCalledOnce();
+    expect(state.openEditor).not.toHaveBeenCalled();
+    expect(state.openBrowser).not.toHaveBeenCalled();
+
+    await renderMarkdown("`/outside/newer.ts:8`");
+    await act(async () => anchor().click());
+    expect(state.openFile).toHaveBeenCalledExactlyOnceWith(threadRef, "/outside/newer.ts", 8);
+    await finishLookup([indexedPath]);
+    expect(state.openEditor).not.toHaveBeenCalled();
+    expect(state.openBrowser).not.toHaveBeenCalled();
+    expect(state.openFile).toHaveBeenCalledOnce();
+  },
+);
+
+it.each([
+  { environmentId: threadRef.environmentId, threadId: ThreadId.make("other-thread") },
+  { environmentId: EnvironmentId.make("other-environment"), threadId: threadRef.threadId },
+])("keeps pending file actions isolated from $environmentId/$threadId", async (otherRef) => {
+  const finishLookup = deferSearch();
+  await renderMarkdown(fileChip);
+  await activateFile("panel");
+  expect(state.search).toHaveBeenCalledOnce();
+  expect(state.openFile).not.toHaveBeenCalled();
+
+  await renderMarkdown("`/outside/other.ts:8`", otherRef);
+  await act(async () => anchor().click());
+  expect(state.openFile).toHaveBeenCalledExactlyOnceWith(otherRef, "/outside/other.ts", 8);
+  await finishLookup([indexedPath]);
+  expect(state.openFile).toHaveBeenNthCalledWith(2, threadRef, indexedPath, 12);
+  expect(state.openFile).toHaveBeenCalledTimes(2);
+});

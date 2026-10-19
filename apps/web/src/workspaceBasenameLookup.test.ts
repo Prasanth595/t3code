@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  claimWorkspaceBasenameLookup,
-  needsLiteralWorkspaceFileCheck,
-  pickWorkspaceBasenameMatch,
-} from "./workspaceBasenameLookup";
+import { pickWorkspaceBasenameMatch } from "./workspaceBasenameLookup";
 
 describe("pickWorkspaceBasenameMatch", () => {
   const entries = [
@@ -21,33 +17,6 @@ describe("pickWorkspaceBasenameMatch", () => {
     ).toBe("apps/web/src/components/ChatView.tsx");
   });
 
-  it("matches a slashed path as a suffix wherever it actually lives", () => {
-    expect(
-      pickWorkspaceBasenameMatch("docs/GROUPS_PLAN.md", [
-        { path: "BudgetLens/docs/GROUPS_PLAN.md", kind: "file" },
-        { path: "docs/other.md", kind: "file" },
-      ]),
-    ).toBe("BudgetLens/docs/GROUPS_PLAN.md");
-  });
-
-  it("does not let a suffix match straddle a segment boundary", () => {
-    expect(
-      pickWorkspaceBasenameMatch("docs/plan.md", [{ path: "src/mydocs/plan.md", kind: "file" }]),
-    ).toBeNull();
-    expect(
-      pickWorkspaceBasenameMatch("plan.md", [{ path: "src/plan.md.bak", kind: "file" }]),
-    ).toBeNull();
-  });
-
-  it("prefers the exact suffix over a basename-only twin", () => {
-    expect(
-      pickWorkspaceBasenameMatch("docs/plan.md", [
-        { path: "other/plan.md", kind: "file" },
-        { path: "BudgetLens/docs/plan.md", kind: "file" },
-      ]),
-    ).toBe("BudgetLens/docs/plan.md");
-  });
-
   it("ignores directories", () => {
     expect(
       pickWorkspaceBasenameMatch("components", [
@@ -57,34 +26,22 @@ describe("pickWorkspaceBasenameMatch", () => {
     ).toBe("apps/web/src/components/components");
   });
 
-  it("prefers the exactly-cased file over a case-only twin", () => {
+  it("prefers exact casing, otherwise requires a unique case-insensitive match", () => {
     expect(
       pickWorkspaceBasenameMatch("foo.ts", [
         { path: "src/Foo.ts", kind: "file" },
         { path: "src/foo.ts", kind: "file" },
       ]),
     ).toBe("src/foo.ts");
-  });
-
-  it("falls back to case-insensitive when only the casing differs", () => {
     expect(pickWorkspaceBasenameMatch("chatview.tsx", entries)).toBe(
       "apps/web/src/components/ChatView.tsx",
     );
-  });
-
-  it("returns null when the case-insensitive fallback is ambiguous", () => {
     expect(
       pickWorkspaceBasenameMatch("FOO.ts", [
         { path: "src/Foo.ts", kind: "file" },
         { path: "src/foo.ts", kind: "file" },
       ]),
     ).toBeNull();
-  });
-
-  it("leaves workspace-root links alone", () => {
-    expect(pickWorkspaceBasenameMatch(".", entries)).toBeNull();
-    expect(pickWorkspaceBasenameMatch("..", entries)).toBeNull();
-    expect(pickWorkspaceBasenameMatch("   ", entries)).toBeNull();
   });
 
   it("returns null when nothing matches the name", () => {
@@ -94,51 +51,5 @@ describe("pickWorkspaceBasenameMatch", () => {
         { path: "apps/web/src/components/ChatHeader.tsx", kind: "file" },
       ]),
     ).toBeNull();
-  });
-});
-
-describe("needsLiteralWorkspaceFileCheck", () => {
-  it("checks the disk when a slashed hit names a different file than the chip", () => {
-    expect(
-      needsLiteralWorkspaceFileCheck("docs/GROUPS_PLAN.md", "BudgetLens/docs/GROUPS_PLAN.md"),
-    ).toBe(true);
-  });
-
-  it("skips the disk when the hit is the literal path", () => {
-    expect(
-      needsLiteralWorkspaceFileCheck(
-        "apps/web/src/components/ChatView.tsx",
-        "apps/web/src/components/ChatView.tsx",
-      ),
-    ).toBe(false);
-  });
-
-  it("skips the disk when there is no hit", () => {
-    expect(needsLiteralWorkspaceFileCheck("docs/plan.md", null)).toBe(false);
-  });
-
-  it("skips the disk for bare names, which keep the ranked-first hit", () => {
-    expect(needsLiteralWorkspaceFileCheck("ChatView.tsx", "apps/web/src/ChatView.tsx")).toBe(false);
-  });
-});
-
-describe("claimWorkspaceBasenameLookup", () => {
-  it("keeps only the newest claim, whatever order the lookups settle in", () => {
-    const first = claimWorkspaceBasenameLookup("thread-a");
-    const second = claimWorkspaceBasenameLookup("thread-a");
-
-    expect(second()).toBe(true);
-    expect(first()).toBe(false);
-  });
-
-  it("stays valid while it is the only claim", () => {
-    const only = claimWorkspaceBasenameLookup("thread-a");
-    expect(only()).toBe(true);
-  });
-
-  it("keeps another thread's in-flight claim valid", () => {
-    const threadA = claimWorkspaceBasenameLookup("thread-a");
-    claimWorkspaceBasenameLookup("thread-b");
-    expect(threadA()).toBe(true);
   });
 });
