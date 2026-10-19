@@ -202,25 +202,33 @@ describe("right panel new-tab shortcut", () => {
     expect(document.querySelector('[role="menu"]')).toBeNull();
   });
 
-  it("opens past a closed popup that stays mounted", async () => {
+  it("blocks panel shortcuts until a mounted popup finishes closing", async () => {
     await renderPanel();
     const popover = document.createElement("div");
     popover.dataset.slot = "popover-popup";
-    popover.dataset.closed = "";
-    popover.hidden = true;
+    popover.dataset.open = "";
     container.append(popover);
-    expect((await press("t", { metaKey: true })).defaultPrevented).toBe(true);
-    expect(document.querySelector('[role="menu"]')).not.toBeNull();
-  });
 
-  it("does not open over a popup while it is closing", async () => {
-    await renderPanel();
-    const popover = document.createElement("div");
-    popover.dataset.slot = "popover-popup";
-    popover.dataset.endingStyle = "";
-    container.append(popover);
     expect((await press("t", { metaKey: true })).defaultPrevented).toBe(false);
+    expect((await press("f")).defaultPrevented).toBe(false);
     expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(addFiles).not.toHaveBeenCalled();
+
+    delete popover.dataset.open;
+    popover.dataset.closed = "";
+    popover.dataset.endingStyle = "";
+    expect((await press("t", { metaKey: true })).defaultPrevented).toBe(false);
+    expect((await press("f")).defaultPrevented).toBe(false);
+    expect(document.querySelector('[role="menu"]')).toBeNull();
+    expect(addFiles).not.toHaveBeenCalled();
+
+    delete popover.dataset.endingStyle;
+    popover.hidden = true;
+    expect((await press("f")).defaultPrevented).toBe(true);
+    expect(addFiles).toHaveBeenCalledOnce();
+    expect((await press("t", { metaKey: true })).defaultPrevented).toBe(true);
+    expect(document.querySelector('[role="menu"]')?.textContent).toContain("Files");
+    expect(document.activeElement?.closest('[role="menu"]')).not.toBeNull();
   });
 
   it("supports arrow keys with an existing tab in sheet mode and clears the menu on close", async () => {
