@@ -58,7 +58,7 @@ const emptyShellSnapshot = {
   archivedThreads: [],
 } as OrchestrationV2ShellSnapshot;
 
-it.effect("buffers the latest shell state in sequence order across deletion and recreation", () =>
+it.effect("coalesces a slow shell subscriber by identity and location in sequence order", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const input = yield* Queue.unbounded<
@@ -66,51 +66,52 @@ it.effect("buffers the latest shell state in sequence order across deletion and 
         Cause.Done
       >();
       const drained = yield* Deferred.make<void>();
+      const shell = shellFixture({ id: ThreadId.make("same"), title: "Before" });
+      const project = {
+        id: ProjectId.make("same"),
+        title: "Before",
+        workspaceRoot: "/workspace/same",
+        repositoryIdentity: null,
+        defaultModelSelection: null,
+        scripts: [],
+        createdAt: "2026-09-01T00:00:00Z",
+        updatedAt: "2026-09-01T00:00:00Z",
+      };
+      const initial = {
+        kind: "thread.updated" as const,
+        sequence: 1,
+        location: "active" as const,
+        thread: shell,
+      };
+      const updates = [
+        { kind: "project.updated", sequence: 2, project },
+        { ...initial, sequence: 3 },
+        { ...initial, sequence: 4, location: "archive" },
+        { ...initial, sequence: 5, thread: { ...shell, id: ThreadId.make("other") } },
+        {
+          kind: "project.updated",
+          sequence: 6,
+          project: { ...project, id: ProjectId.make("other") },
+        },
+        { kind: "project.removed", sequence: 7, projectId: project.id },
+        { kind: "thread.removed", sequence: 8, location: "active", threadId: shell.id },
+        { kind: "project.updated", sequence: 9, project: { ...project, title: "Recreated" } },
+        { ...initial, sequence: 10, thread: { ...shell, title: "Recreated" } },
+        { kind: "thread.removed", sequence: 11, location: "archive", threadId: shell.id },
+      ] satisfies Array<Extract<OrchestrationV2ShellStreamItem, { readonly sequence: number }>>;
       const pull = yield* Stream.toPull(
         bufferShellLiveStream(
           Stream.fromQueue(input).pipe(Stream.ensuring(Deferred.succeed(drained, undefined))),
-          { maxItems: 5 },
+          { maxItems: 6, maxSerializedBytes: 1_500 },
         ),
       );
-      const initial = {
-        kind: "project.removed" as const,
-        sequence: 1,
-        projectId: ProjectId.make("initial"),
-      };
       yield* Queue.offer(input, initial);
       expect(yield* pull).toEqual([initial]);
-      const shell = shellFixture({ id: ThreadId.make("same") });
-      const updates = [
-        {
-          kind: "thread.updated" as const,
-          sequence: 2,
-          location: "active" as const,
-          thread: shell,
-        },
-        {
-          kind: "thread.removed" as const,
-          sequence: 3,
-          location: "active" as const,
-          threadId: shell.id,
-        },
-        { kind: "project.removed" as const, sequence: 4, projectId: ProjectId.make("same") },
-        {
-          kind: "thread.updated" as const,
-          sequence: 5,
-          location: "active" as const,
-          thread: shell,
-        },
-        {
-          kind: "thread.removed" as const,
-          sequence: 6,
-          location: "archive" as const,
-          threadId: shell.id,
-        },
-      ];
       yield* Queue.offerAll(input, updates);
       yield* Queue.end(input);
+      // Finish producing the burst while the first batch is still awaiting its ACK.
       yield* Deferred.await(drained);
-      expect(yield* pull).toEqual(updates.slice(2));
+      expect(yield* pull).toEqual([updates[3], updates[4], updates[7], updates[8], updates[9]]);
     }),
   ),
 );
