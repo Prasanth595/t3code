@@ -1,12 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { CodexSettings } from "@t3tools/contracts";
+import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
+import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
+import { buildCodexTurnStartParams } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import { checkCodexProviderStatus } from "./CodexProvider.ts";
 
 /**
@@ -53,7 +55,10 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
-const solServiceTiers = Effect.fn("solServiceTiers")(function* (ultrafastEntitled: boolean) {
+const codexProviderSnapshot = Effect.fn("codexProviderSnapshot")(function* (
+  ultrafastEntitled: boolean,
+  customModels: CodexSettings["customModels"] = [],
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-codex-catalog-" });
@@ -84,11 +89,15 @@ const solServiceTiers = Effect.fn("solServiceTiers")(function* (ultrafastEntitle
   );
 
   const { CODEX_INTERNAL_ORIGINATOR_OVERRIDE: _ambient, ...environment } = process.env;
-  const provider = yield* checkCodexProviderStatus(
-    decodeCodexSettings({ binaryPath, homePath: dir }),
+  return yield* checkCodexProviderStatus(
+    decodeCodexSettings({ binaryPath, homePath: dir, customModels }),
     undefined,
     { ...environment, FAKE_ULTRAFAST_ENTITLED: ultrafastEntitled ? "1" : "0" },
   );
+});
+
+const solServiceTiers = Effect.fn("solServiceTiers")(function* (ultrafastEntitled: boolean) {
+  const provider = yield* codexProviderSnapshot(ultrafastEntitled);
   const serviceTier = provider.models
     .find((model) => model.slug === "gpt-6.1-sol")
     ?.capabilities?.optionDescriptors?.find((descriptor) => descriptor.id === "serviceTier");
@@ -100,6 +109,85 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("Codex catalog disco
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* solServiceTiers(true), ["default", "priority", "ultrafast"]);
     }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "keeps bare custom model effort unknown while preserving selectable and authored effort",
+    () =>
+      Effect.gen(function* () {
+        const authoredCapabilities = {
+          optionDescriptors: [
+            {
+              id: "reasoningEffort",
+              label: "Reasoning",
+              type: "select",
+              currentValue: "low",
+              options: [{ id: "low", label: "Low", isDefault: true }],
+            },
+          ],
+        } as const;
+        const provider = yield* codexProviderSnapshot(false, [
+          "custom-bare",
+          { slug: "custom-authored", name: "Authored", capabilities: authoredCapabilities },
+        ]);
+        const builtin = provider.models.find((model) => model.slug === "gpt-6.1-sol");
+        const bare = provider.models.find((model) => model.slug === "custom-bare");
+        const authored = provider.models.find((model) => model.slug === "custom-authored");
+        const builtinEffort = builtin?.capabilities?.optionDescriptors?.find(
+          (option) => option.id === "reasoningEffort",
+        );
+        const bareEffort = bare?.capabilities?.optionDescriptors?.find(
+          (option) => option.id === "reasoningEffort",
+        );
+        assert.equal(getProviderOptionCurrentValue(builtinEffort), "high");
+        assert.isTrue(bare?.isCustom);
+        assert.equal(bareEffort?.type, "select");
+        assert.deepStrictEqual(
+          bareEffort?.type === "select" ? bareEffort.options.map((option) => option.id) : [],
+          ["high"],
+        );
+        assert.deepStrictEqual(authored?.capabilities, authoredCapabilities);
+
+        const input = {
+          nativeThreadId: "custom-model-thread",
+          codexInput: [{ type: "text", text: "work" }],
+          runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: null },
+          models: provider.models,
+          hasT3Mcp: true,
+        } as const;
+        const selection = {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "custom-bare",
+        };
+        const explicit = yield* buildCodexTurnStartParams({
+          ...input,
+          modelSelection: {
+            ...selection,
+            options: [{ id: "reasoningEffort", value: "high" }],
+          },
+        });
+        assert.equal(explicit.effort, "high");
+        assert.equal(explicit.collaborationMode?.settings.reasoning_effort, "high");
+        const authoredDefault = yield* buildCodexTurnStartParams({
+          ...input,
+          modelSelection: { ...selection, model: "custom-authored" },
+        });
+        assert.equal(authoredDefault.effort, "low");
+        assert.equal(authoredDefault.collaborationMode?.settings.reasoning_effort, "low");
+
+        const omitted = yield* buildCodexTurnStartParams({
+          ...input,
+          modelSelection: selection,
+        });
+        assert.isUndefined(omitted.effort);
+        assert.isNull(omitted.collaborationMode?.settings.reasoning_effort);
+        assert.notInclude(
+          omitted.additionalContext?.t3_code_runtime?.value ?? "",
+          "reasoning effort",
+        );
+        assert.isUndefined(bareEffort?.currentValue);
+        assert.isUndefined(getProviderOptionCurrentValue(bareEffort));
+      }).pipe(Effect.scoped),
   );
 
   it.effect("drops Ultrafast once the account is no longer entitled to it", () =>

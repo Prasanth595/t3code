@@ -534,7 +534,7 @@ describe("CodexAdapterV2 runtime policy", () => {
 
       assert.equal(params.collaborationMode?.mode, "default");
       assert.isUndefined(params.effort);
-      assert.oneOf(params.collaborationMode?.settings.reasoning_effort, [undefined, null]);
+      assert.isNull(params.collaborationMode?.settings.reasoning_effort);
       assert.notInclude(params.additionalContext?.t3_code_runtime?.value ?? "", "reasoning effort");
       assert.include(
         params.additionalContext?.t3_code_orchestration_01?.value ?? "",
