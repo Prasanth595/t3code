@@ -484,6 +484,9 @@ export function App() {
           >
             Add machine
           </button>
+          <button type="button" className="btn" onClick={() => setDialog({ _tag: "addPhone" })}>
+            Add phone
+          </button>
           <button type="button" className="btn" aria-pressed={draft !== null} onClick={toggleHold}>
             {draft === null ? "Hold changes" : "Stop holding"}
           </button>

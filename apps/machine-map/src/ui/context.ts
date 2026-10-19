@@ -39,6 +39,7 @@ export interface CommandOptions {
 export type Dialog =
   /** MM-1110: `position` is the place picked on the map. Without it the portal picks a free spot. */
   | { readonly _tag: "addMachine"; readonly position?: MapPosition }
+  | { readonly _tag: "addPhone"; readonly position?: MapPosition }
   | {
       readonly _tag: "joinCode";
       readonly machineId: MachineId;

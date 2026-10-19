@@ -181,6 +181,8 @@ export function DialogHost({ dialog, close }: { dialog: Dialog; close: () => voi
           {...(dialog.clientId ? { clientId: dialog.clientId } : {})}
         />
       );
+    case "addPhone":
+      return <InviteAppDialog phone position={dialog.position} close={close} />;
     case "importSettings":
       return <ImportSettingsDialog close={close} />;
     case "emergency":
@@ -606,11 +608,21 @@ function NewJoinCodeDialog(props: {
  * MM-913: an invite for a native app. Making it needs the passkey check of MM-1207, because the
  * app gets the access of its client. The QR holds the only copy of the code.
  */
-function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () => void }) {
+function InviteAppDialog({
+  clientId,
+  phone = false,
+  position,
+  close,
+}: {
+  clientId?: ClientId;
+  phone?: boolean;
+  position?: MapPosition | undefined;
+  close: () => void;
+}) {
   const portal = usePortalContext();
   const { map, now } = portal;
   const existing = clientId === undefined ? undefined : map.clients.find((c) => c.id === clientId);
-  const [name, setName] = useState("");
+  const [name, setName] = useState(phone ? "Phone" : "");
   const [arrows, setArrows] = useState<Record<string, MachineLevel>>({});
   const [needsPasskey, setNeedsPasskey] = useState(false);
   const [invite, setInvite] = useState<InviteResponse | null>(null);
@@ -640,9 +652,9 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
       const request: InviteRequest = existing
         ? { client: { _tag: "existing", clientId: existing.id }, arrows: [] }
         : {
-            client: { _tag: "new", name: name.trim() },
+            client: { _tag: "new", name: name.trim(), ...(position ? { position } : {}) },
             arrows: map.machines.flatMap((machine) => {
-              const level = arrows[machine.id] ?? "none";
+              const level = arrows[machine.id] ?? (phone ? "standard" : "none");
               return level === "none" ? [] : [{ to: machine.id, level }];
             }),
           };
@@ -656,7 +668,9 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
 
   return (
     <Modal
-      title={existing ? `Invite an app into ${existing.name}` : "Invite an app"}
+      title={
+        existing ? `Invite an app into ${existing.name}` : phone ? "Add phone" : "Invite an app"
+      }
       onClose={close}
     >
       {invite ? (
@@ -664,6 +678,11 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
           <div className="qr-box">
             <QrCodeSvg value={invite.url} />
           </div>
+          <p className="small">
+            <a href={OBTAINIUM_ADD_URL} target="_blank" rel="noreferrer">
+              Add with Obtainium
+            </a>
+          </p>
           <p className="small">
             Scan this with the T3 app on the phone. It works once and expires{" "}
             {timeUntil(invite.expiresAt, now)}. Close this dialog when the phone joined.
@@ -744,7 +763,7 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
                 <label className="field inline" key={machine.id}>
                   {machine.name}
                   <select
-                    value={arrows[machine.id] ?? "none"}
+                    value={arrows[machine.id] ?? (phone ? "standard" : "none")}
                     onChange={(e) => {
                       const level = LEVELS.find((l) => l === e.target.value) ?? "none";
                       setArrows({ ...arrows, [machine.id]: level });
@@ -918,6 +937,11 @@ export function Palette({ close, toggleHold }: { close: () => void; toggleHold: 
       label: "Add machine",
       kind: "action",
       run: () => portal.open({ _tag: "addMachine" }),
+    });
+    out.push({
+      label: "Add phone",
+      kind: "action",
+      run: () => portal.open({ _tag: "addPhone" }),
     });
     out.push({
       label: portal.draft ? "Stop holding changes" : "Hold changes",

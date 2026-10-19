@@ -283,7 +283,10 @@ export type ApproveClientRequest = typeof ApproveClientRequest.Type;
  * arrows or into an existing client with its own arrows. A new invite ends the older ones.
  */
 export const InviteRequest = Schema.Struct({
-  client: ApproveClientRequest.fields.client,
+  client: Schema.Union([
+    Schema.TaggedStruct("new", { name: Text, position: Schema.optionalKey(MapPosition) }),
+    Schema.TaggedStruct("existing", { clientId: ClientId }),
+  ]),
   arrows: ApproveClientRequest.fields.arrows,
 });
 export type InviteRequest = typeof InviteRequest.Type;
