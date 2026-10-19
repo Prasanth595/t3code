@@ -251,8 +251,9 @@ export const make = Effect.gen(function* () {
       detail: "Your cloud sign-in changed. Sign in again to authorize the environment.",
     });
 
-  // No identity before an attempt captures one is the cloud session still
-  // loading, not a sign-out; only a captured identity that changes is.
+  // A missing identity before the attempt captures one means the cloud session
+  // is still loading, not a sign-out. Only a captured identity that goes away
+  // or changes is evidence of one.
   const sessionPending = () =>
     new ConnectionTransientError({
       reason: "session-pending",
@@ -526,6 +527,7 @@ export const make = Effect.gen(function* () {
       if (endpoint !== undefined && cachedSocket.failure._tag !== "EnvironmentAuthInvalidError") {
         return yield* mapDpopSocketError(cachedSocket.failure);
       }
+      yield* assertSession(selected.identity);
       selected = yield* getDpopToken({
         ...input,
         rejectedAccessToken: selected.token.accessToken,
