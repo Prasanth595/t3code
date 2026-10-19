@@ -991,7 +991,7 @@ export class BoundedTerminalHistory {
 const INHERITED_INPUT_RESET =
   "\u001b[?1049h\u001b[<100u\u001b[=0;1u\u001b[?1049l" +
   "\u001b[?1;9;66;67;1000;1002;1003;1004;1005;1006;1015;2004l" +
-  "\u001b[?25;1035;1036h\u001b[<100u\u001b[=0;1u";
+  "\u001b[?25;1035;1036h\u001b[<100u\u001b[=0;1u\u001b[>4m";
 
 function neutralizeInheritedHistory(history: string): string {
   if (!history.includes("\u001b")) return history;
@@ -1004,7 +1004,7 @@ function neutralizeInheritedHistory(history: string): string {
     for (const parameter of (match[1] ?? "").split(";")) {
       const mode = Number(parameter);
       if (mode === 47 || mode === 1047 || mode === 1049) {
-        alternateScreen = match[2] === "h" ? mode : undefined;
+        alternateScreen = match[2] === "h" ? (alternateScreen ?? mode) : undefined;
       }
     }
   }

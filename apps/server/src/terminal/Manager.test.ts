@@ -1736,9 +1736,10 @@ it.layer(
       expect(call("ghostty_key_event_new", 0, buffer + 16)).toBe(0);
       const encoder = view().getUint32(buffer + 12, true);
       const key = view().getUint32(buffer + 16, true);
-      call("ghostty_key_event_set_action", key, 0);
       call("ghostty_key_event_set_key", key, 22); // GhosttyKey C in the vendored ABI.
       call("ghostty_key_event_set_unshifted_codepoint", key, 99);
+      new Uint8Array(memory.buffer, buffer + 96, 1).set([99]);
+      call("ghostty_key_event_set_utf8", key, buffer + 96, 1);
       yield* Effect.addFinalizer(() =>
         Effect.sync(() => {
           call("ghostty_key_event_free", key);
@@ -1771,10 +1772,20 @@ it.layer(
           ),
         };
         call("ghostty_key_encoder_setopt_from_terminal", encoder, terminal);
+        call("ghostty_key_event_set_action", key, 0);
+        call("ghostty_key_event_set_mods", key, 0);
         expect(
           call("ghostty_key_encoder_encode", encoder, key, buffer + 128, 16256, buffer + 80),
         ).toBe(0);
         const release = new TextDecoder().decode(
+          new Uint8Array(memory.buffer, buffer + 128, view().getUint32(buffer + 80, true)),
+        );
+        call("ghostty_key_event_set_action", key, 1);
+        call("ghostty_key_event_set_mods", key, 4);
+        expect(
+          call("ghostty_key_encoder_encode", encoder, key, buffer + 128, 16256, buffer + 80),
+        ).toBe(0);
+        const modifiedPress = new TextDecoder().decode(
           new Uint8Array(memory.buffer, buffer + 128, view().getUint32(buffer + 80, true)),
         );
         view().setUint32(buffer + 32, 32, true);
@@ -1796,13 +1807,13 @@ it.layer(
         const text = new TextDecoder().decode(
           new Uint8Array(memory.buffer, buffer + 128, view().getUint32(buffer + 80, true)),
         );
-        return { ...state, release, text };
+        return { ...state, release, modifiedPress, text };
       };
 
       const { manager, ptyAdapter, logsDir } = yield* createManager(100);
       const logPath = yield* historyLogPath(logsDir);
       const text = `${Array.from({ length: 30 }, (_, i) => `history ${i}\r\n`).join("")}prompt % `;
-      const dirty = `${text}\u001b[>7u\u001b[>0u\u001b[>7u\u001b[?1049h\u001b[>7u\u001b[>0u\u001b[>7u\u001b[?25l\u001b[?1;66;67;1003;1004;1006;2004h\u001b[?1035;1036ldead app`;
+      const dirty = `${text}\u001b[>7u\u001b[>0u\u001b[>7u\u001b[?1049h\u001b[7;18H\u001b[?47h\u001b[>4;2m\u001b[>7u\u001b[>0u\u001b[>7u\u001b[?25l\u001b[?1;66;67;1003;1004;1006;2004h\u001b[?1035;1036ldead app`;
       const clean = replay(text);
       expect(clean).toMatchObject({ screen: 0, visible: 1, kitty: 0, mouse: 0, release: "" });
       expect(clean.text).toContain("history 0");
@@ -1820,6 +1831,7 @@ it.layer(
       );
       yield* Effect.addFinalizer(() => Effect.sync(unsubscribe));
       const first = yield* manager.open(openInput());
+      expect(replay(first.history).cursor).toEqual(replay(dirty + "\u001b[?1049l").cursor);
       expect(replay(first.history)).toEqual(clean);
       expect(replay(first.history + "\u001b[<u\u001b[<u")).toEqual(clean);
       expect(replay(first.history + "\u001b[?1049h\u001b[<u\u001b[<unext app")).toEqual(
