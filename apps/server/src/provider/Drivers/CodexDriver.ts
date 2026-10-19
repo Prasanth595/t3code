@@ -166,28 +166,6 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
         ),
       );
 
-      const orchestrationAdapter = yield* createCodexAdapterV2(
-        {
-          instanceId,
-          displayName,
-          accentColor,
-          environment,
-          enabled,
-          config,
-        },
-        { onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
-      ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new ProviderDriverError({
-              driver: DRIVER_KIND,
-              instanceId,
-              detail: "Failed to build Codex orchestration adapter.",
-              cause,
-            }),
-        ),
-      );
-
       // Kick the TTL-gated manifest refresh in the background and classify with the in-memory
       // manifest, so a slow or hung fetch never delays the provider check.
       const checkProvider = modelCatalog.refreshInBackground.pipe(
@@ -238,6 +216,31 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv, Path.Pat
             }),
         ),
       );
+      const orchestrationAdapter = yield* createCodexAdapterV2(
+        {
+          instanceId,
+          displayName,
+          accentColor,
+          environment,
+          enabled,
+          config,
+        },
+        {
+          onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+          getModels: snapshot.getSnapshot.pipe(Effect.map((value) => value.models)),
+        },
+      ).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ProviderDriverError({
+              driver: DRIVER_KIND,
+              instanceId,
+              detail: "Failed to build Codex orchestration adapter.",
+              cause,
+            }),
+        ),
+      );
+
       const textGeneration = yield* makeCodexTextGeneration(
         effectiveConfig,
         processEnv,

@@ -13,6 +13,7 @@ import {
   EnvironmentId,
   MessageId,
   type ModelSelection,
+  type ServerProviderModel,
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProviderThread,
@@ -72,6 +73,30 @@ const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerRep
 const encodeReplayTranscriptJson = Schema.encodeEffect(replayTranscriptJson);
 const decodeReplayTranscriptJson = Schema.decodeUnknownEffect(replayTranscriptJson);
 const encodeStringJson = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+
+function codexTestEffortModels(currentValue?: string): ReadonlyArray<ServerProviderModel> {
+  return [
+    {
+      slug: "gpt-5.4",
+      name: "GPT",
+      isCustom: false,
+      capabilities: {
+        optionDescriptors: [
+          {
+            id: "reasoningEffort",
+            label: "Reasoning",
+            type: "select",
+            currentValue,
+            options: [
+              { id: "high", label: "High", isDefault: true },
+              { id: "low", label: "Low" },
+            ],
+          },
+        ],
+      },
+    },
+  ];
+}
 
 describe("Codex context usage compatibility", () => {
   const previous: ModelSelection = {
@@ -489,9 +514,9 @@ describe("CodexAdapterV2 runtime policy", () => {
     }),
   );
 
-  it.effect("adds T3 MCP instructions without overriding the model default effort", () =>
+  it.effect("adds T3 MCP instructions using the selected model's default effort", () =>
     Effect.gen(function* () {
-      const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
+      const input = {
         nativeThreadId: "native-orchestration-instructions",
         codexInput: [{ type: "text", text: "delegate this task" }],
         runtimePolicy: {
@@ -504,11 +529,13 @@ describe("CodexAdapterV2 runtime policy", () => {
           model: "gpt-5.4",
         },
         hasT3Mcp: true,
-      });
+      } as const;
+      const params = yield* CodexAdapterV2.buildCodexTurnStartParams(input);
 
       assert.equal(params.collaborationMode?.mode, "default");
       assert.isUndefined(params.effort);
       assert.oneOf(params.collaborationMode?.settings.reasoning_effort, [undefined, null]);
+      assert.notInclude(params.additionalContext?.t3_code_runtime?.value ?? "", "reasoning effort");
       assert.include(
         params.additionalContext?.t3_code_orchestration_01?.value ?? "",
         "Use `delegate_task`",
@@ -517,6 +544,19 @@ describe("CodexAdapterV2 runtime policy", () => {
         params.additionalContext?.t3_code_orchestration_02?.value ?? "",
         "structured object, never as JSON text",
       );
+      for (const currentValue of [undefined, "low"]) {
+        const resolved = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          ...input,
+          models: codexTestEffortModels(currentValue),
+        });
+        const expected = currentValue ?? "high";
+        assert.equal(resolved.effort, expected);
+        assert.equal(resolved.collaborationMode?.settings.reasoning_effort, expected);
+        assert.include(
+          resolved.additionalContext?.t3_code_runtime?.value ?? "",
+          `with ${expected} reasoning effort`,
+        );
+      }
     }),
   );
 
@@ -600,6 +640,8 @@ describe("CodexAdapterV2 runtime policy", () => {
           cwd: "/workspace/model-options",
           reasoningEffort: "low",
         },
+        hasT3Mcp: true,
+        models: codexTestEffortModels("low"),
         modelSelection: {
           instanceId: ProviderInstanceId.make("codex"),
           model: "gpt-5.4",
@@ -616,6 +658,10 @@ describe("CodexAdapterV2 runtime policy", () => {
       assert.equal(params.cwd, "/workspace/model-options");
       assert.equal(params.collaborationMode?.settings.model, "gpt-5.4");
       assert.equal(params.collaborationMode?.settings.reasoning_effort, "xhigh");
+      assert.include(
+        params.additionalContext?.t3_code_runtime?.value ?? "",
+        "with xhigh reasoning effort",
+      );
 
       const managed = yield* CodexAdapterV2.buildCodexTurnStartParams({
         nativeThreadId: "native-model-options",
@@ -1963,6 +2009,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.void,
     onRequest: (method: string, params: unknown) => Effect.Effect<void> = () => Effect.void,
     readChildMetadata?: Parameters<typeof withCodexReplayChildMetadata>[2],
+    models: ReadonlyArray<ServerProviderModel> = [],
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2006,6 +2053,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
         clientFactory,
+        getModels: Effect.succeed(models),
         crypto: yield* Crypto.Crypto,
         fileSystem,
         idAllocator,
@@ -2990,13 +3038,21 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.gen(function* () {
         const nativeThreadId = "context-thread";
         const nativeTurnId = "context-turn";
+        const models = codexTestEffortModels("low");
         const params = yield* CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId,
           codexInput: [{ type: "text", text: "work" }],
           runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
           modelSelection: CODEX_TEST_MODEL_SELECTION,
           hasT3Mcp: true,
+          models,
         });
+        assert.equal(params.effort, "low");
+        assert.equal(params.collaborationMode?.settings.reasoning_effort, "low");
+        assert.include(
+          params.additionalContext?.t3_code_runtime?.value ?? "",
+          "with low reasoning effort",
+        );
         assert.include(
           params.additionalContext?.t3_code_orchestration_01?.value ?? "",
           "delegate_task",
@@ -3054,7 +3110,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             },
           ],
         });
-        const harness = yield* makeCodexReplayHarness(transcript);
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          undefined,
+          undefined,
+          undefined,
+          models,
+        );
         yield* (yield* McpProviderSessions.McpProviderSessions).set({
           environmentId: EnvironmentId.make("test"),
           threadId: harness.threadId,
