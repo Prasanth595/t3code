@@ -100,7 +100,6 @@ const seedOwner = Effect.fn(function* (
   const providerThread: OrchestrationV2ProviderThread = {
     id: ids.derive.providerThread({
       driver,
-      providerInstanceId,
       nativeThreadId: providerSessionId,
     }),
     driver,
@@ -347,7 +346,7 @@ it.effect("rechecks ownership after the import reaches the commit transaction", 
 );
 
 it.effect(
-  "retries failed publication and runtime persistence without replaying committed history",
+  "retries failed commits and runtime persistence without replaying committed history",
   () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
