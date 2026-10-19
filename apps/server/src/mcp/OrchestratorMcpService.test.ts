@@ -6,45 +6,40 @@ import {
   MessageId,
   NodeId,
   type OrchestrationV2ThreadShell,
-  type OrchestrationV2ProviderSession,
-  type OrchestrationV2ProviderThread,
   type ScheduledTask,
   ScheduledTaskId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  ProviderThreadId,
-  ProviderTurnId,
   RunId,
   ThreadId,
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
-import * as Stream from "effect/Stream";
-import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 
 import { CodexProviderCapabilitiesV2 } from "../orchestration-v2/Adapters/CodexAdapterV2.ts";
 import * as CommandReceiptStore from "../orchestration-v2/CommandReceiptStore.ts";
+import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
+import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import {
   DispatchModeLimit,
   type DispatchModeRefusal,
 } from "../orchestration-v2/DispatchModeLimit.ts";
-import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import {
   OrchestratorProjectionError,
   OrchestratorThreadAboveModeLimitError,
 } from "../orchestration-v2/Orchestrator.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
-import * as ProviderReplayHarness from "../orchestration-v2/testkit/ProviderReplayHarness.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
-import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { buildUnavailableProviderSnapshot } from "../provider/unavailableProviderSnapshot.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -881,10 +876,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     }) as unknown as OrchestrationV2ThreadProjection;
 
   const childProjection = {
-    thread: {
-      id: childThreadId,
-      modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
-    },
+    thread: { id: childThreadId },
     runs: [],
     contextTransfers: [],
     messages: [],
@@ -893,123 +885,6 @@ describe("OrchestratorMcpService provider resolution", () => {
     runtimeRequests: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
-
-  /**
-   * A real provider adapter whose turn starts and stays running, so a real
-   * orchestrator keeps the parent's run active without ever completing it.
-   */
-  const makeKeepAliveAdapter = (input: {
-    readonly instanceId: ProviderInstanceId;
-    readonly driver: ProviderDriverKind;
-  }): ProviderAdapter.ProviderAdapterV2["Service"] => ({
-    instanceId: input.instanceId,
-    driver: input.driver,
-    getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
-    planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
-    openSession: (sessionInput) =>
-      Effect.gen(function* () {
-        const events = yield* PubSub.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-        const now = yield* DateTime.now;
-        const providerSession: OrchestrationV2ProviderSession = {
-          id: sessionInput.providerSessionId,
-          driver: input.driver,
-          providerInstanceId: input.instanceId,
-          status: "ready",
-          cwd: sessionInput.runtimePolicy.cwd ?? process.cwd(),
-          model: sessionInput.modelSelection.model,
-          capabilities: CodexProviderCapabilitiesV2,
-          createdAt: now,
-          updatedAt: now,
-          lastError: null,
-        };
-        return {
-          instanceId: input.instanceId,
-          driver: input.driver,
-          providerSessionId: sessionInput.providerSessionId,
-          providerSession,
-          events: Stream.fromPubSub(events),
-          ensureThread: (threadInput) =>
-            Effect.gen(function* () {
-              const createdAt = yield* DateTime.now;
-              const nativeThreadId = `${input.driver}:${threadInput.threadId}`;
-              return {
-                id: ProviderThreadId.make(`provider-thread:${nativeThreadId}`),
-                driver: input.driver,
-                providerInstanceId: input.instanceId,
-                providerSessionId: sessionInput.providerSessionId,
-                appThreadId: threadInput.threadId,
-                ownerNodeId: null,
-                nativeThreadRef: {
-                  driver: input.driver,
-                  nativeId: nativeThreadId,
-                  strength: "strong",
-                },
-                nativeConversationHeadRef: null,
-                status: "idle",
-                firstRunOrdinal: null,
-                lastRunOrdinal: null,
-                handoffIds: [],
-                forkedFrom: null,
-                createdAt,
-                updatedAt: createdAt,
-              } satisfies OrchestrationV2ProviderThread;
-            }),
-          resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
-          startTurn: (turnInput) =>
-            Effect.gen(function* () {
-              const eventTime = yield* DateTime.now;
-              const providerTurnId = ProviderTurnId.make(
-                `provider-turn:${input.instanceId}:${turnInput.threadId}:${turnInput.runOrdinal}`,
-              );
-              yield* PubSub.publish(events, {
-                type: "provider_turn.updated",
-                driver: input.driver,
-                providerTurn: {
-                  id: providerTurnId,
-                  providerThreadId: turnInput.providerThread.id,
-                  nodeId: turnInput.rootNodeId,
-                  runAttemptId: turnInput.attemptId,
-                  nativeTurnRef: {
-                    driver: input.driver,
-                    nativeId: `native-turn:${turnInput.threadId}:${turnInput.runOrdinal}`,
-                    strength: "strong",
-                  },
-                  ordinal: turnInput.providerTurnOrdinal,
-                  status: "running",
-                  startedAt: eventTime,
-                  completedAt: null,
-                },
-              });
-              // Stays running for the test's lifetime: createThreads only
-              // needs an active parent run, never a completed turn.
-            }),
-          steerTurn: () => Effect.void,
-          interruptTurn: () => Effect.void,
-          respondToRuntimeRequest: () => Effect.void,
-          readThreadSnapshot: () => Effect.die("readThreadSnapshot is unused in this test"),
-          rollbackThread: () => Effect.die("rollbackThread is unused in this test"),
-          forkThread: () => Effect.die("forkThread is unused in this test"),
-        };
-      }),
-  });
-
-  const waitForProjection = (
-    orchestrator: Orchestrator.OrchestratorV2Shape,
-    threadId: ThreadId,
-    predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
-  ) =>
-    Effect.gen(function* () {
-      for (let attempt = 0; attempt < 1_000; attempt += 1) {
-        const projection = yield* orchestrator.getThreadProjection(threadId);
-        if (predicate(projection)) {
-          return projection;
-        }
-        yield* Effect.sleep("5 millis");
-      }
-      return yield* Effect.die(
-        new Error(`Timed out waiting for orchestration projection ${threadId}.`),
-      );
-    });
 
   it.effect(
     "advertises orchestration capability from registered adapters rather than a driver allowlist",
@@ -1810,181 +1685,80 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
-  it.effect(
-    "retrying an accepted thread creation replays even after the project disables every candidate",
-    () =>
-      Effect.gen(function* () {
-        const altInstanceId = ProviderInstanceId.make("codex-alt");
-        const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
-        const accepted = yield* Ref.make(false);
-        const everyCandidateDisabled = yield* Ref.make(false);
-        const layerDependencies = Layer.mergeAll(
-          NodeServices.layer,
-          Layer.mock(ThreadManagementService.ThreadManagementService)({
-            getThreadRecords: (threadId) =>
-              Effect.succeed(threadId === parentThreadId ? parentProjection([]) : childProjection),
-            // A command id already accepted once, even if the project later
-            // disables every candidate: its retry must replay, not re-resolve.
-            hasReceipt: () => Ref.get(accepted),
-            // Effective settings once the project turns every instance off,
-            // ignoring the already-accepted command's replay exemption.
-            isProviderInstanceEnabledForProject: () =>
-              Ref.get(everyCandidateDisabled).pipe(Effect.map((disabled) => !disabled)),
-            assertProviderInstanceEnabled: ({ projectId, instanceId }) =>
-              Effect.all([Ref.get(accepted), Ref.get(everyCandidateDisabled)]).pipe(
-                Effect.flatMap(([isAccepted, disabled]) =>
-                  isAccepted || !disabled
-                    ? Effect.void
-                    : Effect.fail(
-                        new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
-                          projectId,
-                          instanceId,
-                        }),
-                      ),
-                ),
-              ),
-            dispatch: (command) =>
-              Ref.update(dispatched, (commands) => [...commands, command]).pipe(
-                Effect.andThen(
-                  command.type === "thread.create" ? Ref.set(accepted, true) : Effect.void,
-                ),
-                Effect.as({ sequence: 1, storedEvents: [] } as never),
-              ),
-          }),
-          providerRegistryLayer([
-            providerSnapshot({
-              instanceId: codexInstanceId,
-              driver: ProviderDriverKind.make("codex"),
-              model: "gpt-5.4",
-            }),
-            providerSnapshot({
-              instanceId: altInstanceId,
-              driver: ProviderDriverKind.make("codex"),
-              model: "gpt-5.4",
-            }),
-          ]),
-          adapterRegistryLayer([codexInstanceId, altInstanceId]),
-          Layer.mock(ProjectService.ProjectService)({}),
-          Layer.mock(SecretRequests.SecretRequests)({}),
-          Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-          ServerSettings.layerTest(),
-        );
-
-        yield* Effect.gen(function* () {
-          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-          const first = yield* service.createThreads(scope, {
-            threads: [{ target: { driverKind: ProviderDriverKind.make("codex") } }],
-            clientRequestId: "create-thread-retry-after-disable-1",
-          });
-          assert.equal(first.threads.length, 1);
-
-          // The project turns off every instance of this driver only after
-          // the thread creation above was already accepted.
-          yield* Ref.set(everyCandidateDisabled, true);
-
-          const retry = yield* service.createThreads(scope, {
-            threads: [{ target: { driverKind: ProviderDriverKind.make("codex") } }],
-            clientRequestId: "create-thread-retry-after-disable-1",
-          });
-          assert.equal(retry.threads.length, 1);
-
-          const commands = yield* Ref.get(dispatched);
-          const createCommands = commands.filter(
-            (command): command is { type: string; modelSelection: { instanceId: string } } =>
-              (command as { type: string }).type === "thread.create",
-          );
-          assert.equal(createCommands.length, 2);
-          assert.equal(createCommands[1]?.modelSelection.instanceId, codexInstanceId);
-        }).pipe(
-          Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))),
-        );
-      }),
-  );
-
-  it.live(
-    "a retried driver-only thread creation reports the instance that was actually created",
-    () =>
+  it.live.each([
+    { name: "parent instance", parentEnabled: true },
+    { name: "alternate instance", parentEnabled: false },
+  ])(
+    "replays accepted creation on the $name without authorizing new disabled work",
+    ({ parentEnabled }) =>
       Effect.scoped(
         Effect.gen(function* () {
           const altInstanceId = ProviderInstanceId.make("codex-alt");
-          const codexDriver = ProviderDriverKind.make("codex");
-          const cwd = yield* checkpointWorkspace("mcp-create-threads-driver-retry");
-
-          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
-            makeKeepAliveAdapter({ instanceId: codexInstanceId, driver: codexDriver }),
-            makeKeepAliveAdapter({ instanceId: altInstanceId, driver: codexDriver }),
-          ]);
-          const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
-            {
-              name: "mcp-create-threads-driver-retry",
-              runtimePolicyOverride: {
-                cwd,
-                approvalPolicy: "never",
-                sandboxPolicy: {
-                  type: "readOnly",
-                  access: { type: "fullAccess" },
-                  networkAccess: false,
-                },
-              },
-            },
-            layerRegistry,
+          const driver = ProviderDriverKind.make("codex");
+          const cwd = yield* checkpointWorkspace("mcp-create-retry");
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters(
+            [codexInstanceId, altInstanceId].map((instanceId) => ({
+              instanceId,
+              driver,
+              getCapabilities: () => Effect.succeed(CodexProviderCapabilitiesV2),
+              planSelectionTransition: () =>
+                Effect.succeed({ type: "apply_on_next_turn" as const }),
+              openSession: () =>
+                Effect.die("These tests exercise committed commands before provider execution."),
+            })),
           );
-          // The project disables the parent's own instance for new work, so
-          // the first creation picks the alternate instance of the same
-          // driver. A retry must keep reporting that alternate, never the
-          // parent's own instance, even though it is first in resolution
-          // order once the retry's replay exemption skips the project check.
+          const layerDatabase = SqlitePersistence.layerMemory;
+          const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
+            { name: "mcp-create-retry", runtimePolicyOverride: { cwd } },
+            layerRegistry,
+            { databaseLayer: layerDatabase, runEffectWorker: false },
+          );
           const layerSettings = ServerSettings.layerTest({
             providerInstances: {
               [codexInstanceId]: { driver: "codex", enabled: true },
               [altInstanceId]: { driver: "codex", enabled: true },
             },
             projectSettingsOverrides: {
-              [projectId]: { providerInstances: { [codexInstanceId]: { enabled: false } } },
+              [projectId]: { providerInstances: { [codexInstanceId]: { enabled: parentEnabled } } },
             },
           });
-          const layerThreadManagement = ThreadManagementService.layer.pipe(
-            Layer.provide(layerOrchestrator),
-            Layer.provide(layerSettings),
+          const layerThreads = ThreadManagementService.layer.pipe(
+            Layer.provideMerge(layerOrchestrator),
             Layer.provide(
-              CommandReceiptStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory)),
+              LegacyV1ThreadImporter.layer.pipe(
+                Layer.provide(layerOrchestrator),
+                Layer.provide(layerDatabase),
+              ),
+            ),
+            Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
+            Layer.provideMerge(layerSettings),
+          );
+          const layerTest = layerOrchestratorService.pipe(
+            Layer.provideMerge(layerThreads),
+            Layer.provide(
+              Layer.mergeAll(
+                NodeServices.layer,
+                layerRegistry,
+                layerSettings,
+                providerRegistryLayer([
+                  providerSnapshot({ instanceId: codexInstanceId, driver, model: "gpt-5.4" }),
+                  providerSnapshot({ instanceId: altInstanceId, driver, model: "gpt-5.5" }),
+                ]),
+                Layer.mock(ProjectService.ProjectService)({}),
+                Layer.mock(SecretRequests.SecretRequests)({}),
+                Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+              ),
             ),
           );
-          const layerOrchestration = Layer.merge(layerOrchestrator, layerThreadManagement);
-          const layerDependencies = Layer.mergeAll(
-            NodeServices.layer,
-            providerRegistryLayer([
-              providerSnapshot({
-                instanceId: codexInstanceId,
-                driver: codexDriver,
-                model: "gpt-5.4",
-              }),
-              providerSnapshot({
-                instanceId: altInstanceId,
-                driver: codexDriver,
-                model: "gpt-5.4",
-              }),
-            ]),
-            layerRegistry,
-            Layer.mock(ProjectService.ProjectService)({}),
-            Layer.mock(SecretRequests.SecretRequests)({}),
-            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-            layerSettings,
-          );
-          const layerTest = OrchestratorMcpService.layer.pipe(
-            Layer.provideMerge(layerOrchestration),
-            Layer.provide(layerDependencies),
-          );
-
           yield* Effect.gen(function* () {
             const orchestrator = yield* Orchestrator.OrchestratorV2;
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-
+            const settings = yield* ServerSettings.ServerSettingsService;
             yield* orchestrator.dispatch({
               type: "thread.create",
               createdBy: "user",
               creationSource: "web",
-              commandId: CommandId.make("command:mcp-create-retry-parent:create"),
+              commandId: CommandId.make("parent:create"),
               threadId: parentThreadId,
               projectId,
               title: "MCP parent",
@@ -1998,44 +1772,78 @@ describe("OrchestratorMcpService provider resolution", () => {
               type: "message.dispatch",
               createdBy: "user",
               creationSource: "web",
-              commandId: CommandId.make("command:mcp-create-retry-parent:start"),
+              commandId: CommandId.make("parent:start"),
               threadId: parentThreadId,
-              messageId: MessageId.make("message:mcp-create-retry-parent:start"),
-              text: "Keep this parent turn active while the create retry is tested.",
+              messageId: MessageId.make("parent:message"),
+              text: "Create a thread.",
               attachments: [],
-              modelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
               dispatchMode: { type: "start_immediately" },
             });
-            yield* waitForProjection(
-              orchestrator,
-              parentThreadId,
-              (projection) =>
-                projection.runs.some((run) => run.status === "running") &&
-                projection.providerTurns.some((turn) => turn.status === "running"),
-            );
-
-            const first = yield* service.createThreads(scope, {
-              threads: [{ target: { driverKind: codexDriver } }],
-              clientRequestId: "create-thread-driver-retry-1",
-            });
+            const request = {
+              threads: [{ target: { driverKind: driver } }],
+              clientRequestId: "create-retry",
+            };
+            const first = yield* service.createThreads(scope, request);
+            const child = first.threads[0]!;
+            const selection = parentEnabled
+              ? { instanceId: codexInstanceId, model: "gpt-5.4" }
+              : { instanceId: altInstanceId, model: "gpt-5.5" };
             assert.equal(first.threads.length, 1);
-            assert.equal(first.threads[0]?.providerInstanceId, altInstanceId);
+            assert.equal(child.providerInstanceId, selection.instanceId);
+            assert.equal(child.model, selection.model);
+            assert.deepEqual(yield* service.createThreads(scope, request), first);
 
-            const retry = yield* service.createThreads(scope, {
-              threads: [{ target: { driverKind: codexDriver } }],
-              clientRequestId: "create-thread-driver-retry-1",
+            // The creation receipt exists, but this prompt has not been accepted yet.
+            const withPrompt = {
+              ...request,
+              threads: [{ ...request.threads[0]!, prompt: "Start work." }],
+            };
+            const started = yield* service.createThreads(scope, withPrompt);
+            assert.equal(started.threads[0]?.threadId, child.threadId);
+            const before = yield* orchestrator.getThreadProjection(child.threadId);
+            assert.deepEqual(before.runs[0]?.modelSelection, selection);
+            assert.equal(before.messages.length, 1);
+            const empty = yield* service.createThreads(scope, {
+              ...request,
+              clientRequestId: "empty",
             });
-            assert.equal(retry.threads.length, 1);
-            assert.equal(retry.threads[0]?.threadId, first.threads[0]?.threadId);
-            assert.equal(retry.threads[0]?.providerInstanceId, altInstanceId);
-            assert.equal(retry.threads[0]?.model, first.threads[0]?.model);
 
-            const createdProjection = yield* orchestrator.getThreadProjection(
-              first.threads[0]!.threadId,
-            );
-            assert.equal(createdProjection.thread.modelSelection.instanceId, altInstanceId);
+            yield* settings.updateSettings({
+              projectSettingsOverrides: {
+                [projectId]: {
+                  providerInstances: {
+                    [codexInstanceId]: { enabled: false },
+                    [altInstanceId]: { enabled: false },
+                  },
+                },
+              },
+            });
+            assert.deepEqual(yield* service.createThreads(scope, withPrompt), started);
+            const after = yield* orchestrator.getThreadProjection(child.threadId);
+            assert.deepEqual(after.thread.modelSelection, selection);
+            assert.deepEqual(after.runs, before.runs);
+            assert.deepEqual(after.messages, before.messages);
+
+            const freshError = yield* service
+              .createThreads(scope, {
+                ...request,
+                clientRequestId: "fresh",
+              })
+              .pipe(Effect.flip);
+            assert.equal(freshError.code, "provider_unavailable");
+            const promptError = yield* service
+              .createThreads(scope, {
+                ...withPrompt,
+                clientRequestId: "empty",
+              })
+              .pipe(Effect.flip);
+            assert.equal(promptError.code, "orchestration_error");
+            assert.include(promptError.message, "disabled");
+            const untouched = yield* orchestrator.getThreadProjection(empty.threads[0]!.threadId);
+            assert.equal(untouched.messages.length, 0);
+            assert.equal(untouched.runs.length, 0);
           }).pipe(Effect.provide(layerTest));
-        }),
+        }).pipe(Effect.provide(NodeServices.layer)),
       ),
   );
 
