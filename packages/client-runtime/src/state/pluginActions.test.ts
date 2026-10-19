@@ -285,6 +285,31 @@ describe("pluginActionsAt", () => {
 });
 
 describe("pluginActionLabels", () => {
+  it("distinguishes identical plugin names and colliding generated titles", () => {
+    const deploy = { ...action("deploy", "environment", ["thread-menu"]), title: "Deploy" };
+    const other = { ...deploy, pluginId: "test.other", id: PluginActionId.make("other:1:deploy") };
+    const labels = pluginActionLabels([
+      deploy,
+      other,
+      {
+        ...deploy,
+        name: "generated",
+        title: "Deploy (Actions)",
+        id: PluginActionId.make("installation-1:1:generated"),
+      },
+      { ...deploy, name: "another", id: PluginActionId.make("installation-1:1:another") },
+      ACTIONS[0]!,
+    ]);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels).toEqual([
+      "Deploy (Actions) [test.actions/deploy]",
+      "Deploy (Actions) [test.other/deploy]",
+      "Deploy (Actions) [test.actions/generated]",
+      "Deploy (Actions) [test.actions/another]",
+      "everywhere",
+    ]);
+  });
+
   it("names the plugin only when two actions share a title", () => {
     const deploy = { ...action("deploy", "environment", ["thread-menu"]), title: "Deploy" };
     expect(
