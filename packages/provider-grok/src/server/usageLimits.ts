@@ -31,7 +31,7 @@ const GrokUsageResponse = Schema.Struct({
       currentPeriod: Schema.optional(
         Schema.Struct({
           type: Schema.optional(Schema.String),
-          start: Schema.optional(Schema.String),
+          start: Schema.optional(Schema.Unknown),
           end: Schema.optional(Schema.String),
         }),
       ),
@@ -71,6 +71,7 @@ export function grokUsageResponseToLimits(
   if (
     usedPercent === undefined &&
     (kind === "weekly" || kind === "monthly") &&
+    typeof period?.start === "string" &&
     parsePeriodBoundary(period?.start) < parsePeriodBoundary(period?.end)
   ) {
     // Grok omits a zero percentage while retaining the complete subscription period.
