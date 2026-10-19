@@ -53,6 +53,7 @@ const profileFields = (profile: Profile): Fields => ({
     ? {
         "Entitlements:aps-environment": "production",
         "Entitlements:com.apple.developer.associated-domains": "*",
+        "Entitlements:com.apple.developer.applesignin": ["Default"],
       }
     : {}),
 });
@@ -257,6 +258,7 @@ describe("mobile-preflight.sh", () => {
   it.each([
     ["aps-environment", "Push Notifications (aps-environment)"],
     ["com.apple.developer.associated-domains", "Associated Domains"],
+    ["com.apple.developer.applesignin", "Sign in with Apple"],
   ])("requires %s in the app profile", (entitlement, label) => {
     expectFailure(
       stubbed(withProfile("IOS_APP_PROFILE", { [`Entitlements:${entitlement}`]: undefined })),
