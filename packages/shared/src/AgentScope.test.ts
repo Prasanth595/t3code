@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
+import * as NodeEvents from "node:events";
 import * as NodeReadline from "node:readline";
 
 import { describe, expect, it } from "@effect/vitest";
@@ -28,23 +29,20 @@ const setpriv = (() => {
   return probe.status === 0 ? found : undefined;
 })();
 
-// Stands in for the server: it spawns the launch it reads from stdin.
-const FAKE_SERVER = `process.stdin.once("data", (data) => {
-  const [command, ...args] = JSON.parse(data);
-  require("node:child_process").spawn(command, args, { stdio: ["ignore", "inherit", "inherit"] });
+const hasSystemd =
+  isLinux &&
+  NodeChildProcess.spawnSync("systemd-run", ["--user", "--scope", "--quiet", "--", "/bin/true"], {
+    timeout: 5_000,
+  }).status === 0;
+
+const FAKE_SERVER = `process.once("message", ([command, ...args]) => {
+  const child = require("node:child_process").spawn(command, args, { stdio: "inherit" });
+  process.send(child.pid);
 });`;
 
-/** Kills processes this test started, whether or not they are still running. */
-const killOnFinish = (pids: Array<number>) =>
-  onTestFinished(() => {
-    for (const pid of pids) {
-      try {
-        process.kill(pid, "SIGKILL");
-      } catch {
-        // Already gone.
-      }
-    }
-  });
+const AGENT = `process.stdin.resume();
+process.on("SIGTERM", () => process.stdout.write("stopped\\n", () => process.exit(0)));
+console.log("ready " + JSON.stringify({ pid: process.pid, ppid: process.ppid, args: process.argv.slice(1) }));`;
 
 describe.skipIf(!isLinux)("agentScopeCommand", () => {
   it("raises the OOM score and execs the command with its arguments in the same process", () => {
@@ -67,35 +65,67 @@ describe.skipIf(!isLinux)("agentScopeCommand", () => {
     expect(args).toEqual(["a b", "$HOME"]);
   });
 
-  it.skipIf(setpriv === undefined)("stops the command when its server is killed", async () => {
-    const server = NodeChildProcess.spawn(process.execPath, ["-e", FAKE_SERVER], {
-      stdio: ["pipe", "pipe", "inherit"],
-    });
-    const started = [server.pid!];
-    killOnFinish(started);
-    const launch = agentScopeCommand({
-      command: "/bin/sh",
-      // Like an agent, it stops its own child on SIGTERM.
-      args: [
-        "-c",
-        'sleep 600 & trap "kill $!; echo stopped; exit 0" TERM; echo "ready $$ $!"; wait',
-      ],
-      server: { setpriv: setpriv!, serverPid: server.pid! },
-    });
-    server.stdin.end(JSON.stringify([launch.command, ...launch.args]));
-
-    // The command and its child hold the pipe, so it ends once both are gone.
-    const lines: Array<string> = [];
-    for await (const line of NodeReadline.createInterface({ input: server.stdout })) {
-      const [event, ...pids] = line.split(" ");
-      lines.push(event!);
-      if (event === "ready") {
-        started.push(...pids.map(Number));
+  it.skipIf(setpriv === undefined).for([false, true])(
+    "preserves PID, parent and arguments and receives TERM on server death (systemd=%s)",
+    async (useSystemd, { skip }) => {
+      if (useSystemd && !hasSystemd) skip();
+      const server = NodeChildProcess.spawn(process.execPath, ["-e", FAKE_SERVER], {
+        stdio: ["pipe", "pipe", "inherit", "ipc"],
+      });
+      const exited = NodeEvents.EventEmitter.once(server, "exit");
+      let agentPid: number | undefined;
+      const spawned = NodeEvents.EventEmitter.once(server, "message").then(([pid]) => {
+        agentPid = Number(pid);
+        return agentPid;
+      });
+      onTestFinished(async () => {
         server.kill("SIGKILL");
+        if (agentPid !== undefined) {
+          try {
+            process.kill(agentPid, "SIGKILL");
+          } catch {
+            // The agent may already have exited.
+          }
+        }
+        server.stdin!.end();
+        await exited;
+      });
+      const args = ["a b", "$HOME", "", "quote'\\\"", "line\nfeed"];
+      const launch = agentScopeCommand({
+        command: process.execPath,
+        args: ["-e", AGENT, "--", ...args],
+        server: { setpriv: setpriv!, serverPid: server.pid! },
+        scope: useSystemd
+          ? {
+              systemdRun: "systemd-run",
+              slice: "app.slice",
+              unit: `t3-agent-scope-test-${server.pid}.scope`,
+              runtimeDir: process.env.XDG_RUNTIME_DIR!,
+              options: ["--collect"],
+            }
+          : undefined,
+      });
+      const lines = NodeReadline.createInterface({ input: server.stdout! });
+      server.send([launch.command, ...launch.args]);
+      const events: Array<string> = [];
+      for await (const line of lines) {
+        const separator = line.indexOf(" ");
+        const event = separator === -1 ? line : line.slice(0, separator);
+        events.push(event);
+        if (event === "ready") {
+          expect(JSON.parse(line.slice(separator + 1))).toEqual({
+            pid: await spawned,
+            ppid: server.pid,
+            args,
+          });
+          server.kill("SIGKILL");
+        }
       }
-    }
-    expect(lines).toEqual(["ready", "stopped"]);
-  });
+      expect(events).toEqual(["ready", "stopped"]);
+      expect(await exited).toEqual([null, "SIGKILL"]);
+      agentPid = undefined;
+    },
+  );
 
   it.skipIf(setpriv === undefined)("does not start the command once its server is gone", () => {
     // The launch's parent is not the server it was built for, as when the

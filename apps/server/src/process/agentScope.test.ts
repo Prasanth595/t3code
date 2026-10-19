@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- fake systemd binaries live in a temp dir.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -68,12 +69,29 @@ const withFakeSystemd = <A, E>(
     readonly calls: ReadonlyArray<ReadonlyArray<string>>;
     readonly stateDir: string;
   }) => Effect.Effect<A, E>,
-  setprivExitCode = 0,
+  {
+    systemd = true,
+    setprivExitCode = 0,
+  }: {
+    systemd?: boolean;
+    setprivExitCode?: number | null;
+  } = {},
 ) =>
   Effect.gen(function* () {
     const bin = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-agent-scope-"));
-    for (const name of ["systemd-run", "systemctl", "setpriv", "agent"]) {
-      NodeFS.writeFileSync(NodePath.join(bin, name), "", { mode: 0o755 });
+    for (const name of ["agent", ...(systemd ? ["systemd-run", "systemctl"] : [])]) {
+      NodeFS.writeFileSync(
+        NodePath.join(bin, name),
+        '#!/bin/sh\nwhile [ "$1" != "--" ]; do shift; done\nshift\nexec "$@"\n',
+        { mode: 0o755 },
+      );
+    }
+    if (setprivExitCode !== null) {
+      NodeFS.writeFileSync(
+        NodePath.join(bin, "setpriv"),
+        '#!/bin/sh\nexport T3_TEST_PDEATHSIG="$2"\nshift 3\nexec "$@"\n',
+        { mode: 0o755 },
+      );
     }
     const units = new Map<string, { activeState: string; result: string }>();
     const calls: Array<ReadonlyArray<string>> = [];
@@ -91,7 +109,7 @@ const withFakeSystemd = <A, E>(
       run: ({ command, args }) =>
         Effect.sync(() => {
           calls.push(args);
-          if (command.endsWith("/setpriv")) return output("", setprivExitCode);
+          if (command.endsWith("/setpriv")) return output("", setprivExitCode ?? 1);
           const [, verb, unit = ""] = args;
           if (verb === "reset-failed") units.delete(unit);
           if (verb !== "show") return output("");
@@ -192,24 +210,47 @@ describe("AgentScope service", () => {
     ),
   );
 
-  it.effect("launches agents tied to the server only when setpriv supports it", () =>
-    Effect.gen(function* () {
-      const [linked, terminal] = yield* withFakeSystemd(({ scope }) =>
-        Effect.all([
-          scope.wrap({ command: "agent", args: [], name: "t" }),
-          scope.wrap({ command: "agent", args: [], name: "terminal", survivesRestart: true }),
-        ]),
-      );
-      expect(linked.command).toMatch(/\/setpriv$/);
-      expect(linked.args.slice(0, 3)).toEqual(["--pdeathsig", "TERM", "--"]);
-      expect(terminal.command).toBe("/bin/sh");
-
-      // BusyBox's setpriv has no --pdeathsig. Agents still launch, as before.
-      const unlinked = yield* withFakeSystemd(
-        ({ scope }) => scope.wrap({ command: "agent", args: [], name: "t" }),
-        1,
-      );
-      expect(unlinked.command).toBe("/bin/sh");
-    }),
+  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "links eligible agents with or without systemd, excluding terminals and unsupported hosts",
+    () =>
+      Effect.gen(function* () {
+        for (const options of [
+          { systemd: true, setprivExitCode: 0 },
+          { systemd: false, setprivExitCode: 0 },
+          { systemd: false, setprivExitCode: 1 },
+          { systemd: false, setprivExitCode: null },
+        ]) {
+          yield* withFakeSystemd(
+            ({ scope }) =>
+              Effect.gen(function* () {
+                for (const survivesRestart of [false, true]) {
+                  const launch = yield* scope.wrap({
+                    command: process.execPath,
+                    args: [
+                      "-e",
+                      "console.log(JSON.stringify({ signal: process.env.T3_TEST_PDEATHSIG ?? null, args: process.argv.slice(1) }))",
+                      "--",
+                      "a b",
+                      "$HOME",
+                    ],
+                    name: "test",
+                    survivesRestart,
+                  });
+                  const child = NodeChildProcess.spawnSync(launch.command, [...launch.args], {
+                    encoding: "utf8",
+                    env: { T3_TEST_PDEATHSIG: undefined },
+                    timeout: 5_000,
+                  });
+                  expect(child.status).toBe(0);
+                  expect(JSON.parse(child.stdout)).toEqual({
+                    signal: !survivesRestart && options.setprivExitCode === 0 ? "TERM" : null,
+                    args: ["a b", "$HOME"],
+                  });
+                }
+              }),
+            options,
+          );
+        }
+      }),
   );
 });

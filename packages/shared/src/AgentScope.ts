@@ -9,10 +9,8 @@ export interface AgentScopeShape {
     readonly threadId?: string | undefined;
     readonly env?: NodeJS.ProcessEnv | undefined;
     /**
-     * Set for terminals, so a job the user detached (tmux, nohup) outlives a
-     * server restart. Agents leave it unset: they get SIGTERM when the server
-     * exits, and the next server stops any a killed server left running before
-     * it resumes their sessions.
+     * Terminals opt out of parent-death signals and leftover-agent cleanup so
+     * detached jobs (tmux, nohup) can survive a server restart.
      */
     readonly survivesRestart?: boolean | undefined;
   }) => Effect.Effect<AgentScopeCommand>;
@@ -72,11 +70,8 @@ export interface AgentSystemdScope {
 }
 
 /**
- * Ties an agent to the server that launched it. `setpriv --pdeathsig` asks the
- * kernel to send the agent SIGTERM when the server exits, even when the server
- * is SIGKILLed or crashes and runs no cleanup of its own. Only the agent itself
- * gets the signal; stopping its tools is up to its SIGTERM handling, which the
- * Claude CLI does.
+ * Sends SIGTERM when the launching server dies, including on SIGKILL or a crash.
+ * Only the agent receives it; descendant cleanup relies on its signal handler.
  */
 export interface AgentServerLink {
   readonly setpriv: string;

@@ -209,8 +209,7 @@ export const make = Effect.gen(function* () {
     }),
   );
 
-  // Runs once, on the first agent launch. Without util-linux setpriv (BusyBox's
-  // has no --pdeathsig), agents launch as before and outlive a crashed server.
+  // Some setpriv implementations lack --pdeathsig, so probe support once.
   const serverLink = yield* Effect.cached(
     Effect.gen(function* () {
       const setpriv = yield* resolve("setpriv", hostEnvironment);
