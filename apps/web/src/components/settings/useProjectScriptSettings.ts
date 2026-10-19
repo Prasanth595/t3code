@@ -50,6 +50,18 @@ function reportScriptFailure(result: AtomCommandResult<unknown, unknown>) {
   return mapAtomCommandResult(result, () => undefined);
 }
 
+function normalizedProjectScript(script: ProjectScript) {
+  return {
+    ...script,
+    name: script.name.trim(),
+    command: script.command.trim(),
+    async: script.async ?? true,
+    runOnSettle: script.runOnSettle ?? false,
+    previewUrl: script.previewUrl?.trim(),
+    autoOpenPreview: script.autoOpenPreview ?? false,
+  };
+}
+
 export function useProjectScriptSettings(
   targets: readonly {
     environmentId: EnvironmentId;
@@ -138,16 +150,35 @@ export function useProjectScriptSettings(
         },
       });
       if (result._tag === "Failure") return reportScriptFailure(result);
+      const savedScripts = project
+        ? result.value.projectSettingsOverrides[project.id]?.defaultProjectScripts
+        : result.value.defaultProjectScripts;
+      const settingPath = project
+        ? "projectSettingsOverrides.defaultProjectScripts"
+        : "defaultProjectScripts";
       const droppedKeys = droppedSettingPaths(
         nextScripts,
         project
           ? settings.projectSettingsOverrides[project.id]?.defaultProjectScripts
           : settings.defaultProjectScripts,
-        project
-          ? result.value.projectSettingsOverrides[project.id]?.defaultProjectScripts
-          : result.value.defaultProjectScripts,
-        project ? "projectSettingsOverrides.defaultProjectScripts" : "defaultProjectScripts",
+        savedScripts,
+        settingPath,
       );
+      if (droppedKeys.length === 0 && nextScripts !== null) {
+        for (const script of nextScripts) {
+          const saved = savedScripts?.find((entry) => entry.id === script.id);
+          const scriptPath = `${settingPath}.${script.id}`;
+          if (!saved) {
+            droppedKeys.push(scriptPath);
+            continue;
+          }
+          const expected = normalizedProjectScript(script);
+          const actual = normalizedProjectScript(saved);
+          for (const key of Object.keys(expected) as (keyof ProjectScript)[]) {
+            if (expected[key] !== actual[key]) droppedKeys.push(`${scriptPath}.${key}`);
+          }
+        }
+      }
       if (droppedKeys.length > 0) {
         const serverVersion = scope?.environments.find(
           (environment) => environment.environmentId === environmentId,
