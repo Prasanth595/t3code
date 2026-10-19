@@ -2542,6 +2542,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         const originRemote = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "origin", originRemote]);
         yield* runGit(repoDir, ["push", "-u", "origin", "feature/pr-retarget"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "origin",
+          "https://github.com/pingdotgg/codething-mvp.git",
+          originRemote,
+        );
 
         const existingPr = {
           number: 214,
@@ -2561,10 +2567,17 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
         const first = yield* manager.status({ cwd: repoDir });
         expect(first.pr?.number).toBe(214);
+        expect(first.repositoryKey).toBe("github.com/pingdotgg/codething-mvp");
 
         const forkRemote = yield* createBareRemote();
         yield* runGit(repoDir, ["remote", "add", "fork", forkRemote]);
         yield* runGit(repoDir, ["push", "fork", "feature/pr-retarget"]);
+        yield* configureVisibleRemoteUrlWithLocalRewrite(
+          repoDir,
+          "fork",
+          "https://github.com/contributor/codething-mvp.git",
+          forkRemote,
+        );
         yield* runGit(repoDir, [
           "branch",
           "--set-upstream-to=fork/feature/pr-retarget",
@@ -2574,6 +2587,11 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* manager.invalidateStatus(repoDir);
         const second = yield* manager.status({ cwd: repoDir });
         expect(second.pr).toBeNull();
+        // Push targets fork/feature/pr-retarget, so origin's linked PR must not match.
+        expect.soft(second.repositoryKey).not.toBe(first.repositoryKey);
+        expect
+          .soft((yield* manager.localStatus({ cwd: repoDir })).repositoryKey)
+          .not.toBe(first.repositoryKey);
       }),
   );
 
