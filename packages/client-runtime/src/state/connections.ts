@@ -25,11 +25,6 @@ export interface EnvironmentCatalogState {
   readonly entries: ReadonlyMap<EnvironmentIdType, ConnectionCatalogEntry>;
 }
 
-/**
- * Environments that take part in the workspace: projects, threads, and shell
- * summaries only come from these. Disabled environments, and ones whose host
- * this client cannot talk to, stay in `entries` so Settings can list them.
- */
 export function* enabledEnvironmentIds(
   catalog: EnvironmentCatalogState,
 ): Generator<EnvironmentIdType> {

@@ -18,7 +18,6 @@ import * as PullRequestReadCache from "./PullRequestReadCache.ts";
 const cacheLayer = (directory: string) =>
   PullRequestReadCache.make.pipe(Effect.provide(KeyValueStore.layerFileSystem(directory)));
 
-/** Sets every file's mtime to `age` before the current test clock time. */
 const ageFiles = (directory: string, names: ReadonlyArray<string>, age: Duration.Duration) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
@@ -44,18 +43,20 @@ it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
       );
       const unrelated = "unrelated.json";
       yield* fs.writeFileString(`${directory}/${unrelated}`, "{}");
+      const prefixed = "pr-v2-backup.json";
+      yield* fs.writeFileString(`${directory}/${prefixed}`, "{}");
       const justExpired = Duration.sum(
         PullRequestReadCache.ENTRY_FILE_MAX_AGE,
         Duration.seconds(1),
       );
-      yield* ageFiles(directory, [stale!, revisions!, unrelated], justExpired);
+      yield* ageFiles(directory, [stale!, revisions!, unrelated, prefixed], justExpired);
       yield* ageFiles(directory, [fresh!], PullRequestReadCache.ENTRY_FILE_MAX_AGE);
 
       yield* PullRequestReadCache.pruneExpiredEntryFiles(directory);
 
       assert.deepStrictEqual(
         (yield* fs.readDirectory(directory)).toSorted(),
-        [fresh!, revisions!, unrelated].toSorted(),
+        [fresh!, revisions!, unrelated, prefixed].toSorted(),
       );
     }),
   );
@@ -68,15 +69,11 @@ it.layer(NodeServices.layer)("PR filesystem cache", (it) => {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-01T00:00:00Z")));
       yield* (yield* cacheLayer(directory)).get("summary", Effect.succeed("cached"));
       const [entry] = yield* fs.readDirectory(directory);
-      // Within the max age at the first two sweeps, past it at the third.
       yield* ageFiles(
         directory,
         [entry!],
         Duration.subtract(PullRequestReadCache.ENTRY_FILE_MAX_AGE, Duration.minutes(90)),
       );
-      // A sweep's last file operation is the entry's stat when it keeps the
-      // entry, and its removal otherwise. Waiting for it means the sweep has
-      // finished before the clock moves.
       const operations = yield* Queue.unbounded<string>();
       const observedFs = FileSystem.FileSystem.of({
         ...fs,

@@ -2,7 +2,9 @@ import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Sink from "effect/Sink";
@@ -38,12 +40,13 @@ const tailnetNetworkInterfaces: DesktopNetworkInterfaces.NetworkInterfaces = {
   ],
 };
 
-function layerMockSpawner(statusJson = "{}") {
+function layerMockSpawner(statusJson = "{}", onSpawn?: () => void) {
   return Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
     ChildProcessSpawner.make(() =>
-      Effect.succeed(
-        ChildProcessSpawner.makeHandle({
+      Effect.sync(() => {
+        onSpawn?.();
+        return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(1),
           exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
           isRunning: Effect.succeed(false),
@@ -55,8 +58,8 @@ function layerMockSpawner(statusJson = "{}") {
           all: Stream.empty,
           getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
-        }),
-      ),
+        });
+      }),
     ),
   );
 }
@@ -144,6 +147,34 @@ const withHarness = <A, E, R>(
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
 describe("DesktopServerExposure", () => {
+  it.effect("uses cached Tailscale identity to exclude another VPN's pairing address", () => {
+    let statusReads = 0;
+    return withHarness(
+      {
+        ...lanNetworkInterfaces,
+        pvpnksintrf1: [{ address: "100.85.0.1", family: "IPv4", internal: false }],
+        vpn0: [{ address: "100.74.126.34", family: "IPv4", internal: false }],
+      },
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+        yield* serverExposure.setMode("network-accessible");
+
+        const endpoints = yield* serverExposure.getAdvertisedEndpoints;
+        assert.deepEqual(
+          endpoints.map((endpoint) => endpoint.httpBaseUrl),
+          ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/", "http://100.74.126.34:4173/"],
+        );
+        assert.deepEqual(yield* serverExposure.getAdvertisedEndpoints, endpoints);
+        assert.equal(statusReads, 1);
+      }),
+      {},
+      layerMockSpawner(`{"Self":{"TailscaleIPs":["100.74.126.34"]}}`, () => {
+        statusReads += 1;
+      }),
+    );
+  });
+
   it.effect("falls back to local-only without losing the requested network preference", () =>
     withHarness(
       emptyNetworkInterfaces,
@@ -205,6 +236,39 @@ describe("DesktopServerExposure", () => {
 
         const persisted = yield* settings.get;
         assert.equal(persisted.serverExposureMode, "network-accessible");
+      }),
+    ),
+  );
+
+  it.effect("advertises the Wi-Fi or Ethernet address ahead of bridges and tunnels", () =>
+    withHarness(
+      {
+        bridge0: [{ address: "192.168.2.1", family: "IPv4", internal: false }],
+        utun4: [{ address: "10.8.0.2", family: "IPv4", internal: false }],
+        en0: [{ address: "192.168.1.20", family: "IPv4", internal: false }],
+      },
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const change = yield* serverExposure.setMode("network-accessible");
+        assert.equal(change.state.advertisedHost, "192.168.1.20");
+      }),
+    ),
+  );
+
+  it.effect("keeps a host bridge's LAN address ahead of later adapters", () =>
+    withHarness(
+      {
+        vmbr0: [{ address: "192.168.1.30", family: "IPv4", internal: false }],
+        enx00e04c680001: [{ address: "192.168.42.10", family: "IPv4", internal: false }],
+      },
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const change = yield* serverExposure.setMode("network-accessible");
+        assert.equal(change.state.advertisedHost, "192.168.1.30");
       }),
     ),
   );
@@ -305,6 +369,54 @@ describe("DesktopServerExposure", () => {
     );
   });
 
+  it.effect("keeps a Tailscale Serve change made while a mode change is saving", () =>
+    Effect.gen(function* () {
+      const modeWriteStarted = yield* Deferred.make<void>();
+      const releaseModeWrite = yield* Deferred.make<void>();
+      const settingsLayer = Layer.effect(
+        DesktopAppSettings.DesktopAppSettings,
+        Effect.gen(function* () {
+          const settings = yield* DesktopAppSettings.DesktopAppSettings;
+          return DesktopAppSettings.DesktopAppSettings.of({
+            ...settings,
+            setServerExposureMode: (mode) =>
+              Deferred.succeed(modeWriteStarted, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseModeWrite)),
+                Effect.andThen(settings.setServerExposureMode(mode)),
+              ),
+          });
+        }),
+      ).pipe(Layer.provide(DesktopAppSettings.layerTest()));
+
+      return yield* withHarness(
+        lanNetworkInterfaces,
+        Effect.gen(function* () {
+          const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+          yield* serverExposure.configureFromSettings({ port: 4173 });
+
+          const modeChange = yield* serverExposure
+            .setMode("network-accessible")
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.await(modeWriteStarted);
+          const tailscaleChange = yield* serverExposure
+            .setTailscaleServeEnabled({ enabled: true, port: 8443 })
+            .pipe(Effect.forkChild({ startImmediately: true }));
+          yield* Deferred.succeed(releaseModeWrite, undefined);
+          yield* Fiber.join(modeChange);
+          yield* Fiber.join(tailscaleChange);
+
+          const state = yield* serverExposure.getState;
+          assert.equal(state.mode, "network-accessible");
+          assert.equal(state.tailscaleServeEnabled, true);
+          assert.equal(state.tailscaleServePort, 8443);
+        }),
+        {},
+        undefined,
+        settingsLayer,
+      );
+    }),
+  );
+
   it.effect("keeps LAN and Tailscale endpoints distinct when Tailscale is enumerated first", () =>
     withHarness(
       { ...tailnetNetworkInterfaces, ...lanNetworkInterfaces },
@@ -354,11 +466,8 @@ describe("DesktopServerExposure", () => {
       Effect.gen(function* () {
         const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
         yield* serverExposure.configureFromSettings({ port: 4173 });
-        // mode stays at default "local-only", tailscaleServeEnabled stays false.
 
         const endpoints = yield* serverExposure.getAdvertisedEndpoints;
-        // Only the loopback endpoint; no tailscale spawn means the dieOnSpawnLayer
-        // would have crashed the test if the gate was missing.
         assert.deepEqual(
           endpoints.map((endpoint) => endpoint.httpBaseUrl),
           ["http://127.0.0.1:4173/"],
