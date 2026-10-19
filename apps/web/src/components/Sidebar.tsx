@@ -1554,9 +1554,9 @@ type SidebarThreadRowProps = {
   sweepAction: SidebarSweepAction | null;
   snoozeWakeLabelText: string | null;
   wokeAt: string | null;
-  // Highlighted as the open thread. Also true for the parent of an open
-  // subagent, which has no row of its own; isRouteThread is the exact match.
   isActive: boolean;
+  // Unlike isActive, never true for the ancestor standing in for an open
+  // subagent: drafts and PR clicks care about which composer is on screen.
   isRouteThread: boolean;
   openPullRequestsInRightPanel: boolean;
   jumpLabel: string | null;
