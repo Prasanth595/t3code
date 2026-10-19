@@ -317,6 +317,27 @@ describe("V2 session presentation", () => {
     expect(countFilesChangedAfterTurnCount(checkpoints, 0)).toBe(3);
   });
 
+  it("a rewind to before the first turn counts the latest first turn's scope", () => {
+    const checkpoint = (turnCount: number, scope: string, paths: string[]) => ({
+      scopeId: scope as never,
+      runId: RunId.make(`run-${scope}-${turnCount}`),
+      checkpointTurnCount: turnCount,
+      checkpointRef: `checkpoint-${scope}-${turnCount}` as never,
+      status: "ready" as const,
+      files: paths.map((path) => ({ path, kind: "modified", additions: 1, deletions: 0 })),
+      assistantMessageId: null,
+      completedAt: "2026-06-20T00:00:00.000Z",
+    });
+    // The rewind restores the latest baseline, so the older scope's turn 1 must not win.
+    const checkpoints = [
+      checkpoint(1, "old", ["a.ts"]),
+      checkpoint(1, "new", ["x.ts", "y.ts"]),
+      checkpoint(2, "new", ["z.ts"]),
+    ];
+
+    expect(countFilesChangedAfterTurnCount(checkpoints, 0)).toBe(3);
+  });
+
   it("counts each file changed after the rewind point once", () => {
     const checkpoint = (
       turnCount: number,
