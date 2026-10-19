@@ -273,6 +273,8 @@ Sets how far back recent Claude Code and Codex sessions are offered for import, 
 
 A scheduled task runs on any provider instance, or on the project default model. Pick it in the scheduled task editor.
 
+The model applies to runs that launch a new thread. A run that posts into a bound thread uses the current model of that thread.
+
 - **Works on:** web, desktop, mobile.
 
 ## Threads
