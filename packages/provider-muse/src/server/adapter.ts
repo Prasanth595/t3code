@@ -761,8 +761,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           return;
         const time = yield* DateTime.now;
         const status = terminal ?? itemStatus(item);
+        const wasRunning = observedChildren.has(item.itemId);
         if (isBackgroundItem(item)) {
-          const wasRunning = observedChildren.has(item.itemId);
           if (status === "running") observedChildren.set(item.itemId, turn);
           else if (observedChildren.delete(item.itemId) && active !== turn)
             finishedBackground.push({
@@ -775,7 +775,8 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                     ? "cancelled"
                     : "failed",
             });
-          if (wasRunning !== observedChildren.has(item.itemId)) yield* syncBackground();
+          // A clearing roster can end run ingestion, so publish it after the terminal items.
+          if (!wasRunning && status === "running") yield* syncBackground();
         }
         const streaming = status === "running";
         const base = {
@@ -786,6 +787,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         };
         if (item.kind === "subagent") {
           yield* publishNativeSubagent(turn, item, base, status, time);
+          if (wasRunning && status !== "running") yield* syncBackground();
           return;
         }
         const text = item.text ?? item.summary?.join("\n") ?? item.fallbackText ?? "";
@@ -851,6 +853,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         });
         yield* emit({ type: "turn_item.updated", driver: MUSE_PROVIDER, turnItem });
         if (item.kind === "workflow") yield* publishWorkflowAgents(turn, item, base, status);
+        if (wasRunning && status !== "running") yield* syncBackground();
       });
       const publishWorkflowAgents = Effect.fnUntraced(function* (
         turn: ActiveTurn,

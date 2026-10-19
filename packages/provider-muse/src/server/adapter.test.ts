@@ -1696,6 +1696,57 @@ describe("MuseAdapterV2", () => {
           event.turnItem.status === "completed",
       );
       assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+
+      const completionOrders = yield* Effect.forEach(scenarios, ({ fake, harness, observed }) =>
+        Effect.gen(function* () {
+          const { nativeId } = yield* startConversation(harness, fake, 2);
+          yield* fake.emit("item/started", {
+            turnId: nativeId,
+            item: toolCall(nativeId, "last-tool", 1, "inProgress", { background: true }),
+          });
+          fake.queueResponse("task/list", {
+            tasks: [{ ...running.tasks[0]!, taskId: "last-tool" }],
+          } satisfies TaskListResult);
+          yield* fake.emit("turn/completed", { turnId: nativeId, terminal: observed.terminal });
+          const ended = yield* harness.takeEvent("turn.terminal");
+          const pending = harness.allEvents.findLast(
+            (event) => event.type === "provider_thread.updated",
+          );
+          assert.deepStrictEqual(
+            pending?.providerThread.pendingBackgroundTasks?.map((task) => task.taskId),
+            ["last-tool"],
+          );
+          yield* fake.emit("item/completed", {
+            turnId: nativeId,
+            item: toolCall(nativeId, "last-tool", 2, "completed"),
+          });
+          // Non-success ingestion can close as soon as it consumes this empty roster.
+          const cleared = yield* harness.takeEvent(
+            "provider_thread.updated",
+            (event) => event.providerThread.pendingBackgroundTasks?.length === 0,
+          );
+          return {
+            terminal: ended.status,
+            events: harness.allEvents
+              .slice(harness.allEvents.indexOf(ended) + 1, harness.allEvents.indexOf(cleared) + 1)
+              .filter(
+                (event) =>
+                  event === cleared ||
+                  (event.type === "turn_item.updated" &&
+                    event.turnItem.nativeItemRef?.nativeId === "last-tool" &&
+                    event.turnItem.status === "completed"),
+              )
+              .map((event) => event.type),
+          };
+        }),
+      );
+      assert.deepStrictEqual(
+        Array.from(completionOrders),
+        terminals.map((terminal) => ({
+          terminal,
+          events: ["turn_item.updated" as const, "provider_thread.updated" as const],
+        })),
+      );
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
