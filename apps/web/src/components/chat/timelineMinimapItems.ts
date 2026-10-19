@@ -66,7 +66,17 @@ const INLINE_PARENT_TYPES = new Set<Nodes["type"]>([
 ]);
 
 function markdownNodeText(node: Nodes): string {
-  if (node.type === "html") return "";
+  if (node.type === "html") {
+    return node.value
+      .replace(/<!--[\s\S]*?(?:-->|$)/g, "")
+      .replace(/<\/?([a-z][\w-]*)(?:[^"'<>]|"[^"]*"|'[^']*')*>/gi, (_, tag: string) =>
+        /^(?:address|article|aside|blockquote|br|dd|details|div|dl|dt|figcaption|figure|footer|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|summary|table|tbody|td|th|thead|tr|ul)$/i.test(
+          tag,
+        )
+          ? " "
+          : "",
+      );
+  }
   if (node.type === "break") return " ";
   if ("value" in node) return node.value;
   if (node.type === "image" || node.type === "imageReference") return node.alt ?? "";
@@ -88,10 +98,11 @@ export function resolveTimelineMinimapPreview(
     : {
         ...item,
         userText: compactMinimapPreview(item.userText),
+        // The tooltip shows three lines; bound parsing work while long responses stream.
         assistantText: compactMinimapPreview(
           item.assistantText === null
             ? null
-            : markdownNodeText(markdownPreviewParser.parse(item.assistantText)),
+            : markdownNodeText(markdownPreviewParser.parse(item.assistantText.slice(0, 1_500))),
         ),
       };
 }

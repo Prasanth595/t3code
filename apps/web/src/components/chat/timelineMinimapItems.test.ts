@@ -86,6 +86,10 @@ describe("timeline minimap previews", () => {
       "- **not bold**",
       "const snake_case = a * b;",
       "```",
+      "",
+      "foo<br>bar",
+      "",
+      "<div>Critical <em>answer</em></div>",
     ].join("\n");
     const [item] = deriveTimelineMinimapItems(
       rows([
@@ -99,7 +103,7 @@ describe("timeline minimap previews", () => {
       ...item,
       userText,
       assistantText:
-        "Operators Use either option from the docs. Operator Meaning a | b either Match **/*.ts files [x] deployment complete Note: old new Next line # install deps - **not bold** const snake_case = a * b;",
+        "Operators Use either option from the docs. Operator Meaning a | b either Match **/*.ts files [x] deployment complete Note: old new Next line # install deps - **not bold** const snake_case = a * b; foo bar Critical answer",
     });
     expect(item).toMatchObject({ userText, assistantText });
   });
