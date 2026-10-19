@@ -42,7 +42,11 @@ Check what the running job has with `launchctl print gui/$(id -u)/io.github.rawp
 
 ## Follow main
 
-Once it is on, the server follows `main` on its own. Every 10 minutes the autodeploy job fetches a clone kept for it, and when `origin/main` is not the installed commit it builds and installs that commit with `deploy.sh`, health check and rollback included. It waits while a factory run has a session or gate at work, or a pass is running, and tries again on the next tick. A commit whose build or health check fails is not tried again until `main` moves.
+Once it is on, the server follows `main` on its own. Every 10 minutes the autodeploy job fetches a clone kept for it, and when `origin/main` is not the installed commit it builds and installs that commit with `deploy.sh`, health check and rollback included. It waits while a factory run has a session or gate at work, or a pass is running, and tries again on the next tick. A commit whose build or health check fails is not tried again until `main` moves; a build still going after an hour is stopped and tried again on the next tick.
+
+It waits only for the factory. Each deploy restarts the server, which cuts off any chat or agent session you have open on it, so expect that within 10 minutes of a merge to `main`.
+
+The job builds with its plist's `PATH`, which covers Homebrew, `vp` and `~/.cargo/bin` from rustup, plus anything `~/.config/t3fac/env` adds to it.
 
 To turn it on, make a clone used for nothing else, and mint a token that can read the factory's status:
 
@@ -61,7 +65,9 @@ T3FAC_AUTODEPLOY_TOKEN=<token>
 
 When the token expires, the log says it cannot read the status and nothing deploys until you mint a new one.
 
-To turn it off, remove `T3FAC_AUTODEPLOY_CLONE` from `~/.config/t3fac/env`. To stop the job until the next install, run `launchctl bootout gui/$(id -u)/io.github.rawphp.t3fac.autodeploy`.
+A deploy or rollback you run by hand stays until `main` moves: the next tick leaves it in place and logs that it is doing so.
+
+To turn it off, remove `T3FAC_AUTODEPLOY_CLONE` from `~/.config/t3fac/env`. To stop the job until the next install or rollback, run `launchctl bootout gui/$(id -u)/io.github.rawphp.t3fac.autodeploy`. To remove it, run that, then delete `~/Library/LaunchAgents/io.github.rawphp.t3fac.autodeploy.plist` and `~/.local/share/t3fac/autodeploy.sh`; a later install puts them back.
 
 ## Install the desktop app
 
@@ -106,6 +112,8 @@ factory/scripts/rollback.sh
 ```
 
 It points `current` back at the previous version, restarts the server and runs the same health check. With no previous version it exits 1; install an older archive from `release/` with `factory/scripts/install.sh <archive>` instead.
+
+While [autodeploy](#follow-main) is on, the rollback lasts until `main` moves; then the new `main` is deployed. To stay on the older version past that, turn autodeploy off first.
 
 ## Restart without installing
 
