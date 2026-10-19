@@ -87,7 +87,6 @@ export const CursorDriver: ProviderDriver<
       const host = yield* ProviderHost.ProviderHost;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const crypto = yield* Crypto.Crypto;
       const httpClient = yield* HttpClient.HttpClient;
       const keychain = yield* CursorKeychain.CursorKeychain;
       const sdkRunner = yield* CursorAgentSdk.CursorAgentSdkRunner;
@@ -207,19 +206,17 @@ export const CursorDriver: ProviderDriver<
       );
 
       const checkProvider = Effect.gen(function* () {
-        const credential = auth.usesApiKey
-          ? ({ status: "absent" } as const)
-          : yield* auth.readCredentialState.pipe(
-              Effect.orElseSucceed(() => ({ status: "absent" }) as const),
-            );
+        const storedLogin = auth.usesApiKey
+          ? undefined
+          : yield* auth.readStoredLogin.pipe(Effect.orElseSucceed(() => undefined));
         const apiKey = auth.usesApiKey
           ? yield* auth.readApiKey.pipe(Effect.orElseSucceed(() => undefined))
-          : credential.status === "valid"
-            ? credential.apiKey
+          : storedLogin?.status === "valid"
+            ? storedLogin.apiKey
             : undefined;
-        return { credential, apiKey };
+        return { storedLogin, apiKey };
       }).pipe(
-        Effect.flatMap(({ credential, apiKey }) =>
+        Effect.flatMap(({ storedLogin, apiKey }) =>
           checkCursorProviderStatus(
             effectiveConfig,
             {
@@ -231,15 +228,15 @@ export const CursorDriver: ProviderDriver<
             Effect.flatMap((snapshot) =>
               effectiveConfig.enabled &&
               snapshot.installed &&
-              (snapshot.auth.status === "authenticated" ||
-                (!auth.usesApiKey && credential.status === "expired"))
+              // An expired login still probes so the "sign in again" message reaches Usage.
+              (snapshot.auth.status === "authenticated" || storedLogin?.status === "expired")
                 ? host.settings.get.pipe(
                     Effect.flatMap((settings) =>
                       readCursorUsageLimits(
                         effectiveConfig,
-                        auth.usesApiKey ? { ...processEnv, CURSOR_API_KEY: apiKey } : processEnv,
+                        { ...processEnv, CURSOR_API_KEY: apiKey },
                         settings.cursorKeychainUsageEnabled,
-                        auth.usesApiKey ? undefined : { instanceId, credential },
+                        storedLogin,
                       ),
                     ),
                     Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
@@ -248,7 +245,6 @@ export const CursorDriver: ProviderDriver<
             ),
           ),
         ),
-        Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),

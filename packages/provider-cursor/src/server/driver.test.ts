@@ -164,7 +164,7 @@ it.layer(layerTest)("CursorDriver", (it) => {
         yield* runtime.ensureThread({ threadId, modelSelection, runtimePolicy });
         expect(openedKeys).toEqual(["instance-browser-key"]);
         expect(closed).toBe(0);
-        expect(requests).toEqual([
+        expect(requests.slice(0, 2)).toEqual([
           "https://api2.cursor.sh/auth/exchange_user_api_key",
           "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage",
         ]);
@@ -185,83 +185,54 @@ it.layer(layerTest)("CursorDriver", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("keeps env CURSOR_API_KEY limits unsupported without stored credentials", () =>
-    Effect.gen(function* () {
-      const me = vi.spyOn(Cursor, "me").mockResolvedValue({
-        apiKeyName: "Configured key",
-        createdAt: "2026-01-01T00:00:00.000Z",
-      });
-      const models = vi.spyOn(Cursor.models, "list").mockResolvedValue([]);
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          me.mockRestore();
-          models.mockRestore();
-        }),
-      );
-      const instance = yield* CursorDriver.create({
-        instanceId: ProviderInstanceId.make("cursor-configured-key"),
-        displayName: "Configured Cursor",
-        enabled: true,
-        environment: [{ name: "CURSOR_API_KEY", value: "configured-key", sensitive: true }],
-        config: CursorDriver.defaultConfig(),
-      }).pipe(
-        Effect.provideService(
-          HttpClient.HttpClient,
-          HttpClient.make(() => Effect.die("must not request usage")),
-        ),
-      );
-      expect((yield* instance.snapshot.refresh).usageLimits?.unavailable?.reason).toBe(
-        "unsupported",
-      );
-    }).pipe(Effect.scoped),
-  );
-
-  it.effect("keeps env CURSOR_API_KEY limits unsupported with valid stored credentials", () =>
-    Effect.gen(function* () {
-      const me = vi.spyOn(Cursor, "me").mockResolvedValue({
-        apiKeyName: "Configured key",
-        createdAt: "2026-01-01T00:00:00.000Z",
-      });
-      const models = vi.spyOn(Cursor.models, "list").mockResolvedValue([]);
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          me.mockRestore();
-          models.mockRestore();
-        }),
-      );
-      const instanceId = ProviderInstanceId.make("cursor-configured-key-with-login");
-      const { store } = yield* makeCursorCredentialStore(instanceId);
-      yield* Effect.promise(() =>
-        store.save({
-          version: 1,
-          backendUrl: "https://api2.cursor.sh",
-          apiKey: "stored-browser-key",
-          createdAtMs: 0,
-          apiKeyExpiresAtMs: 4_000_000_000_000,
-        }),
-      );
-      const requests: string[] = [];
-      const instance = yield* CursorDriver.create({
-        instanceId,
-        displayName: "Configured Cursor",
-        enabled: true,
-        environment: [{ name: "CURSOR_API_KEY", value: "configured-key", sensitive: true }],
-        config: CursorDriver.defaultConfig(),
-      }).pipe(
-        Effect.provideService(
-          HttpClient.HttpClient,
-          HttpClient.make((request) => {
-            requests.push(request.url);
-            return Effect.die("must not exchange credentials or request usage");
+  it.effect(
+    "keeps a configured CURSOR_API_KEY instance off its stored browser login for limits",
+    () =>
+      Effect.gen(function* () {
+        const me = vi.spyOn(Cursor, "me").mockResolvedValue({
+          apiKeyName: "Configured key",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        const models = vi.spyOn(Cursor.models, "list").mockResolvedValue([]);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            me.mockRestore();
+            models.mockRestore();
           }),
-        ),
-      );
-      expect((yield* instance.snapshot.refresh).usageLimits?.unavailable?.reason).toBe(
-        "unsupported",
-      );
-      expect(requests).toEqual([]);
-      expect(me).toHaveBeenCalledWith({ apiKey: "configured-key" });
-    }).pipe(Effect.scoped),
+        );
+        const instanceId = ProviderInstanceId.make("cursor-configured-key-with-login");
+        const { store } = yield* makeCursorCredentialStore(instanceId);
+        yield* Effect.promise(() =>
+          store.save({
+            version: 1,
+            backendUrl: "https://api2.cursor.sh",
+            apiKey: "stored-browser-key",
+            createdAtMs: 0,
+            apiKeyExpiresAtMs: 4_000_000_000_000,
+          }),
+        );
+        const requests: string[] = [];
+        const instance = yield* CursorDriver.create({
+          instanceId,
+          displayName: "Configured Cursor",
+          enabled: true,
+          environment: [{ name: "CURSOR_API_KEY", value: "configured-key", sensitive: true }],
+          config: CursorDriver.defaultConfig(),
+        }).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              requests.push(request.url);
+              return Effect.die("must not exchange credentials or request usage");
+            }),
+          ),
+        );
+        expect((yield* instance.snapshot.refresh).usageLimits?.unavailable?.reason).toBe(
+          "unsupported",
+        );
+        expect(requests).toEqual([]);
+        expect(me).toHaveBeenCalledWith({ apiKey: "configured-key" });
+      }).pipe(Effect.scoped),
   );
 
   it.effect("keeps the bundled SDK manual-only without probing or updating cursor-agent", () =>

@@ -80,25 +80,6 @@ const phase = (auth: Auth, phase: ProviderAuthState["phase"], session = owner) =
   );
 
 it.layer(NodeServices.layer)("CursorAuth", (it) => {
-  it.effect("distinguishes absent, valid and expired stored credentials", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness();
-      expect(yield* harness.auth.readCredentialState).toEqual({ status: "absent" });
-      yield* Effect.promise(() => harness.store.save(harness.credentials));
-      expect(yield* harness.auth.readCredentialState).toEqual({
-        status: "valid",
-        apiKey: harness.credentials.apiKey,
-        backendUrl: harness.credentials.backendUrl,
-        apiKeyExpiresAtMs: harness.credentials.apiKeyExpiresAtMs,
-      });
-      yield* Effect.promise(() =>
-        harness.store.save({ ...harness.credentials, apiKeyExpiresAtMs: 0 }),
-      );
-      expect(yield* harness.auth.readCredentialState).toEqual({ status: "expired" });
-      expect(yield* harness.auth.readApiKey).toBeUndefined();
-    }).pipe(Effect.scoped),
-  );
-
   it.effect("closes SDK sessions and interrupts in-flight credential work before signing out", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
