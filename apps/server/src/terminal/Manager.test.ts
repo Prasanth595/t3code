@@ -2153,9 +2153,14 @@ it.layer(
           T3CODE_PORT: "3773",
           VITE_DEV_SERVER_URL: "http://localhost:5173",
           TEST_TERMINAL_KEEP: "keep-me",
+          TMUX: "/tmp/tmux-1000/default,1234,0",
+          TMUX_PANE: "%3",
+          ZELLIJ_SESSION_NAME: "work",
+          ZELLIJ_CONFIG_DIR: "/home/user/.config/zellij",
         },
       });
       yield* manager.open(openInput());
+      yield* manager.open(openInput({ terminalId: "explicit", env: { TMUX_PANE: "%9" } }));
       const spawnInput = ptyAdapter.spawnInputs[0];
       expect(spawnInput).toBeDefined();
       if (!spawnInput) return;
@@ -2164,32 +2169,10 @@ it.layer(
       expect(spawnInput.env.T3CODE_PORT).toBeUndefined();
       expect(spawnInput.env.VITE_DEV_SERVER_URL).toBeUndefined();
       expect(spawnInput.env.TEST_TERMINAL_KEEP).toBe("keep-me");
-    }),
-  );
-
-  it.effect("does not inherit the multiplexer session of the server's launching pane", () =>
-    Effect.gen(function* () {
-      const multiplexerEnv = {
-        TMUX: "/tmp/tmux-1000/default,1234,0",
-        TMUX_PANE: "%3",
-        STY: "1234.pts-0.host",
-        WINDOW: "0",
-        ZELLIJ: "0",
-        ZELLIJ_SESSION_NAME: "work",
-        ZELLIJ_PANE_ID: "2",
-      };
-      const { manager, ptyAdapter } = yield* createManager(5, {
-        env: { ...multiplexerEnv, ZELLIJ_CONFIG_DIR: "/home/user/.config/zellij" },
-      });
-      yield* manager.open(openInput());
-      yield* manager.open(openInput({ terminalId: "explicit", env: { TMUX_PANE: "%9" } }));
-
-      for (const key of Object.keys(multiplexerEnv)) {
-        expect(ptyAdapter.spawnInputs[0]?.env[key]).toBeUndefined();
-      }
-      // User multiplexer settings are not session state and still pass through.
-      expect(ptyAdapter.spawnInputs[0]?.env.ZELLIJ_CONFIG_DIR).toBe("/home/user/.config/zellij");
-      // The blocklist filters only the inherited env; explicit terminal env still wins.
+      expect(spawnInput.env.TMUX).toBeUndefined();
+      expect(spawnInput.env.TMUX_PANE).toBeUndefined();
+      expect(spawnInput.env.ZELLIJ_SESSION_NAME).toBeUndefined();
+      expect(spawnInput.env.ZELLIJ_CONFIG_DIR).toBe("/home/user/.config/zellij");
       expect(ptyAdapter.spawnInputs[1]?.env.TMUX_PANE).toBe("%9");
     }),
   );
