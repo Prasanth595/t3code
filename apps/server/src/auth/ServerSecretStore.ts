@@ -170,6 +170,24 @@ export const make = Effect.gen(function* () {
 
   const resolveSecretPath = (name: string) => path.join(serverConfig.secretsDir, `${name}.bin`);
 
+  const removeTemporaryFiles = Effect.fnUntraced(function* (name?: string) {
+    for (const file of yield* fileSystem.readDirectory(serverConfig.secretsDir)) {
+      const match =
+        /^(.*\.bin)\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.tmp$/i.exec(
+          file,
+        );
+      if (match !== null && (name === undefined || match[1] === `${name}.bin`))
+        yield* fileSystem.remove(path.join(serverConfig.secretsDir, file), { force: true });
+    }
+  });
+
+  // A crash may leave a replacement's temporary bytes beside a still-valid final secret.
+  yield* removeTemporaryFiles().pipe(
+    Effect.mapError(
+      (cause) => new SecretStoreRemoveError({ resource: "temporary secret files", cause }),
+    ),
+  );
+
   const get: ServerSecretStore["Service"]["get"] = (name) =>
     fileSystem.readFile(resolveSecretPath(name)).pipe(
       Effect.map((bytes) => Option.some(Uint8Array.from(bytes))),
@@ -289,7 +307,8 @@ export const make = Effect.gen(function* () {
     );
 
   const remove: ServerSecretStore["Service"]["remove"] = (name) =>
-    fileSystem.remove(resolveSecretPath(name)).pipe(
+    removeTemporaryFiles(name).pipe(
+      Effect.andThen(fileSystem.remove(resolveSecretPath(name))),
       Effect.catch((cause) =>
         cause.reason._tag === "NotFound"
           ? Effect.void
