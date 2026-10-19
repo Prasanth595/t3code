@@ -578,13 +578,7 @@ export class GhosttyTerminalSurface {
   private resizeNotified = false;
   private canvasConfigured = false;
   private theme: GhosttyTheme;
-  /**
-   * Codes whose latest press this surface encoded to the PTY. Only those get
-   * a release: a press consumed anywhere else — beforeKey, copy/paste, or a
-   * host dispatcher that stopped the keydown before it reached the input —
-   * must not leak a Kitty report-event-types release the shell never saw
-   * pressed.
-   */
+  // App capture can hide keydowns, so only encoded presses qualify for Kitty releases.
   private readonly encodedKeyCodes = new Set<string>();
   private pasteShortcutToken = 0;
   private copyShortcutToken = 0;
@@ -1044,9 +1038,7 @@ export class GhosttyTerminalSurface {
   }
 
   private readonly onKeyDown = (event: KeyboardEvent) => {
-    // Every path that does not encode a new press also drops its release (see
-    // encodedKeyCodes). A repeat still owes the original press its release;
-    // beforeKey runs side effects, so keyup cannot re-ask it.
+    // A consumed repeat still owes the original encoded press a release.
     if (!event.repeat) this.encodedKeyCodes.delete(event.code);
     if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) return;
     // IME candidates belong to the textarea, even if the key also resembles
@@ -1178,20 +1170,13 @@ export class GhosttyTerminalSurface {
     this.options.onData(data);
   };
 
-  // A release delivered outside the textarea means the shell will never get
-  // one from here; forget the press so a later host-consumed chord on the same
-  // code cannot inherit it. Capture phase sees the keyup even if the focused
-  // element stops it.
+  // A release elsewhere must not leave a press for a later app shortcut to inherit.
   private readonly onWindowKeyUp = (event: KeyboardEvent) => {
     if (event.composedPath().includes(this.input)) return;
     this.encodedKeyCodes.delete(event.code);
   };
 
-  // A release while another app has focus never reaches the page, but a later
-  // non-repeated keydown of the same code proves it happened. Retire the press
-  // here, in capture phase before any host dispatcher can stop the event; onKeyDown
-  // re-adds the code when this surface encodes the new press itself. A key
-  // held across a window focus round trip keeps its press and its release.
+  // A fresh press proves a release was missed; repeats can span a focus round trip.
   private readonly onWindowKeyDown = (event: KeyboardEvent) => {
     if (!event.repeat) this.encodedKeyCodes.delete(event.code);
   };
@@ -1751,6 +1736,7 @@ export class GhosttyTerminalSurface {
   private installEvents(): void {
     this.input.addEventListener("keydown", this.onKeyDown);
     this.input.addEventListener("keyup", this.onKeyUp);
+    // App shortcuts stop propagation at window, so observe the same capture target.
     window.addEventListener("keyup", this.onWindowKeyUp, { capture: true });
     window.addEventListener("keydown", this.onWindowKeyDown, { capture: true });
     this.input.addEventListener("focus", this.onFocus);

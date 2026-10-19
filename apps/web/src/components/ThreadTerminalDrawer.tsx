@@ -1828,24 +1828,24 @@ export default function ThreadTerminalDrawer({
           )}
         >
           <div className="min-w-0 flex-1">
-              <TerminalSplitPanes
-                terminalIds={visibleTerminalIds}
-                splitDirection={splitDirection}
-                activeTerminalId={resolvedActiveTerminalId}
-                terminalLabelById={terminalLabelById}
-                resolveLaunchLocation={resolveTerminalLaunchLocation}
-                onActiveTerminalChange={onActiveTerminalChange}
-                onCloseTerminal={onCloseTerminal}
-                advancedTypography={advancedTypography}
-                threadRef={threadRef}
-                threadId={threadId}
-                onAddTerminalContext={onAddTerminalContext}
-                focusRequestId={focusRequestId}
-                visible={visible}
-                resizeEpoch={resizeEpoch}
-                drawerHeight={drawerHeight}
-                keybindings={keybindings}
-              />
+            <TerminalSplitPanes
+              terminalIds={visibleTerminalIds}
+              splitDirection={splitDirection}
+              activeTerminalId={resolvedActiveTerminalId}
+              terminalLabelById={terminalLabelById}
+              resolveLaunchLocation={resolveTerminalLaunchLocation}
+              onActiveTerminalChange={onActiveTerminalChange}
+              onCloseTerminal={onCloseTerminal}
+              advancedTypography={advancedTypography}
+              threadRef={threadRef}
+              threadId={threadId}
+              onAddTerminalContext={onAddTerminalContext}
+              focusRequestId={focusRequestId}
+              visible={visible}
+              resizeEpoch={resizeEpoch}
+              drawerHeight={drawerHeight}
+              keybindings={keybindings}
+            />
           </div>
 
           {hasTerminalSidebar && (
