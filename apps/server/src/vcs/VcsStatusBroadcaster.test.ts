@@ -618,32 +618,55 @@ describe("VcsStatusBroadcaster", () => {
     },
   );
 
-  it.effect.each(["cold subscription", "post-fetch refresh"] as const)(
+  it.effect.each(["cold subscription", "post-fetch refresh", "auto-pull recovery"] as const)(
     "a delayed %s local read cannot overwrite a later checkout",
     (source) => {
       const slowReadStarted = Deferred.makeUnsafe<void>();
       const releaseSlowRead = Deferred.makeUnsafe<void>();
-      let currentLocalStatus = baseLocalStatus;
+      let currentLocalStatus =
+        source === "auto-pull recovery"
+          ? { ...baseLocalStatus, isDefaultRef: true, refName: "main" }
+          : baseLocalStatus;
+      const remoteStatus = {
+        ...baseRemoteStatus,
+        behindCount: source === "auto-pull recovery" ? 2 : 0,
+      };
+      const delayedRead =
+        source === "cold subscription" ? 1 : source === "post-fetch refresh" ? 2 : 3;
       let localReads = 0;
       const layer = VcsStatusBroadcaster.layer.pipe(
         Layer.provide(FileSystem.layerNoop({ realPath: (path) => Effect.succeed(path) })),
         Layer.provideMerge(NodeServices.layer),
         Layer.provide(layerBackgroundPolicy(() => true)),
         Layer.provide(
+          Layer.succeed(VcsStatusBroadcaster.VcsAutoPullPolicy, {
+            isEnabled: () => Effect.succeed(source === "auto-pull recovery"),
+          }),
+        ),
+        Layer.provide(
           Layer.mock(GitWorkflowService.GitWorkflowService)({
             localStatus: () =>
               Effect.gen(function* () {
                 const snapshot = currentLocalStatus;
                 localReads += 1;
-                if (localReads === (source === "cold subscription" ? 1 : 2)) {
+                if (localReads === delayedRead) {
                   yield* Deferred.succeed(slowReadStarted, undefined);
                   yield* Deferred.await(releaseSlowRead);
                 }
                 return snapshot;
               }),
-            remoteStatus: () => Effect.succeed(baseRemoteStatus),
+            remoteStatus: () => Effect.succeed(remoteStatus),
             invalidateLocalStatus: () => Effect.void,
             invalidateStatus: () => Effect.void,
+            pullCurrentBranch: () =>
+              Effect.fail(
+                new GitCommandError({
+                  operation: "test",
+                  command: "pull",
+                  cwd: "/repo",
+                  detail: "pull failed",
+                }),
+              ),
           }),
         ),
       );
@@ -669,7 +692,7 @@ describe("VcsStatusBroadcaster", () => {
         assert.deepStrictEqual(yield* Fiber.join(checkout), currentLocalStatus);
         assert.deepStrictEqual(yield* broadcaster.getStatus({ cwd: "/repo" }), {
           ...currentLocalStatus,
-          ...baseRemoteStatus,
+          ...remoteStatus,
         });
       }).pipe(Effect.provide(layer), Effect.scoped);
     },

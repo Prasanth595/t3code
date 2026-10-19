@@ -233,10 +233,8 @@ export const make = Effect.gen(function* () {
   const remoteWriteLocks = yield* KeyedLock.make<string>();
   const withRemoteWriteLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
     remoteWriteLocks.withLock(cwd, effect);
-  // Every local read that writes the cache is read-then-write. Serialize them
-  // per cwd so two that overlap cannot commit in the reverse order of their
-  // reads. Taken after the remote lock, never before it, and never around a
-  // remote fetch, so a slow network never delays a local publish.
+  // Hold through each local read and cache write so an older read cannot commit last.
+  // Nest remote → local, and keep network work outside the local lock.
   const localWriteLocks = yield* KeyedLock.make<string>();
   const withLocalWriteLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
     localWriteLocks.withLock(cwd, effect);
@@ -353,8 +351,13 @@ export const make = Effect.gen(function* () {
   const loadLocalStatus = Effect.fn("VcsStatusBroadcaster.loadLocalStatus")(function* (
     cwd: string,
   ) {
-    const local = yield* workflow.localStatus({ cwd });
-    return yield* updateCachedLocalStatus(cwd, local);
+    return yield* withLocalWriteLock(
+      cwd,
+      Effect.gen(function* () {
+        const local = yield* workflow.localStatus({ cwd });
+        return yield* updateCachedLocalStatus(cwd, local);
+      }),
+    );
   });
 
   const getOrLoadLocalStatus = Effect.fn("VcsStatusBroadcaster.getOrLoadLocalStatus")(function* (
@@ -460,10 +463,15 @@ export const make = Effect.gen(function* () {
           if (!pullAttempted) return null;
           // A pull or its follow-up reads can fail after local state has changed.
           // Let a failed reconciliation reach the caller instead of publishing old status.
-          yield* workflow.invalidateLocalStatus(cwd);
-          const local = yield* workflow.localStatus({ cwd });
-          yield* updateCachedStatus(cwd, local, remote, { publish: true });
-          return { local, remote };
+          return yield* withLocalWriteLock(
+            cwd,
+            Effect.gen(function* () {
+              yield* workflow.invalidateLocalStatus(cwd);
+              const local = yield* workflow.localStatus({ cwd });
+              yield* updateCachedStatus(cwd, local, remote, { publish: true });
+              return { local, remote };
+            }),
+          );
         }),
       ),
     );
@@ -504,9 +512,7 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-    // Publish the local half before the remote fetch and PR lookup, and
-    // before waiting on the remote lock, so a checkout is visible to clients
-    // right away instead of after the network round trip.
+    // A checkout must reach clients before waiting on any remote work.
     yield* refreshLocalStatusCore(cwd);
     return yield* withRemoteWriteLock(
       cwd,
