@@ -7,6 +7,7 @@ import {
 import { isDevProxiedPath } from "@t3tools/shared/devProxy";
 import { injectMcpAppCookieBootstrap, injectMcpAppThemeBootstrap } from "@t3tools/shared/mcpApp";
 import { decodeOtlpTraceRecords } from "@t3tools/shared/observability";
+import * as ByteSize from "effect/ByteSize";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -529,8 +530,6 @@ const loadImmutableBuildAssets = Effect.gen(function* () {
   );
 });
 
-// Electron's asar-patched `fs` can stat and read packed files but not open them, so a failed
-// open falls back to reading the whole file lazily. HEAD and 304 responses never pull the stream.
 const openStaticFile = Effect.fn("openStaticFile")(function* (filePath: string) {
   const fileSystem = yield* FileSystem.FileSystem;
   const pathInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
@@ -541,11 +540,10 @@ const openStaticFile = Effect.fn("openStaticFile")(function* (filePath: string) 
         error.reason._tag === "NotFound" ? Effect.succeed(null) : Effect.fail(error),
     }),
   );
-  if (file === null) {
-    return { info: pathInfo, body: Stream.fromEffect(fileSystem.readFile(filePath)) };
-  }
-  const info = yield* file.stat;
-  return info.type === "File" ? { info, body: streamStaticFile(file, info.size) } : null;
+  // Electron asar can stat and read files even when opening a handle returns NotFound.
+  // Refresh path metadata because the file may have been replaced since the first stat.
+  const info = yield* file === null ? fileSystem.stat(filePath) : file.stat;
+  return info.type === "File" ? { file, info } : null;
 });
 
 const streamStaticFile = (file: FileSystem.File, size: bigint) =>
@@ -639,18 +637,23 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
       !isHtml &&
       /^assets\/.+-[\w-]{8}\.[^/]+$/.test(relativePath) &&
       immutableBuildAssets.has(relativePath);
-    const headers: Record<string, string> = {
-      "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "no-cache",
+    const cacheControl = immutable ? "public, max-age=31536000, immutable" : "no-cache";
+    const validators = (info: FileSystem.File.Info) => {
+      // Deployments can preserve HTML size and mtime while changing its bundle URLs.
+      const modifiedAt = isHtml ? undefined : Option.getOrUndefined(info.mtime);
+      return modifiedAt
+        ? {
+            ETag: `W/"${info.size.toString(16)}-${modifiedAt.getTime().toString(16)}"`,
+            "Last-Modified": modifiedAt.toUTCString(),
+          }
+        : {};
     };
-    // Deployments can preserve HTML size and mtime while changing its bundle URLs.
-    const modifiedAt = isHtml ? undefined : Option.getOrUndefined(fileInfo.mtime);
-    const etag = modifiedAt
-      ? `W/"${fileInfo.size.toString(16)}-${modifiedAt.getTime().toString(16)}"`
-      : undefined;
-    if (etag !== undefined && modifiedAt !== undefined) {
-      headers.ETag = etag;
-      headers["Last-Modified"] = modifiedAt.toUTCString();
-    }
+    const headers: Record<string, string> = {
+      "Cache-Control": cacheControl,
+      ...validators(fileInfo),
+    };
+    const etag = headers.ETag;
+    const lastModified = headers["Last-Modified"];
 
     // If-None-Match takes precedence over dates and uses weak comparison for
     // GET/HEAD, including when compression changes the transferred bytes.
@@ -666,8 +669,8 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
             );
           })
         : ifModifiedSince !== undefined &&
-          modifiedAt !== undefined &&
-          Date.parse(modifiedAt.toUTCString()) <= Date.parse(ifModifiedSince);
+          lastModified !== undefined &&
+          Date.parse(lastModified) <= Date.parse(ifModifiedSince);
     if (!isHtml && unchanged) {
       return HttpServerResponse.empty({
         status: 304,
@@ -676,13 +679,29 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
     }
 
     const contentType = isHtml ? "text/html; charset=utf-8" : mimeType;
+    if (opened.file === null && request.method !== "HEAD") {
+      const fileSystem = yield* FileSystem.FileSystem;
+      // Complete fallback reads before success headers; stream errors arrive too late for a 500.
+      const bytes = yield* fileSystem.readFile(filePath);
+      const info = yield* fileSystem.stat(filePath);
+      return HttpServerResponse.uint8Array(bytes, {
+        headers: {
+          "Cache-Control": cacheControl,
+          ...validators({ ...info, size: ByteSize.bytes(bytes.byteLength) }),
+        },
+        contentType,
+      });
+    }
     // The request scope closes the handle for GET, HEAD, 304, errors, and cancellation.
     // HEAD still passes through compression, which selects headers without reading the stream.
-    return HttpServerResponse.stream(opened.body, {
-      headers,
-      contentType,
-      contentLength: Number(fileInfo.size),
-    });
+    return HttpServerResponse.stream(
+      opened.file === null ? Stream.empty : streamStaticFile(opened.file, fileInfo.size),
+      {
+        headers,
+        contentType,
+        contentLength: Number(fileInfo.size),
+      },
+    );
   },
   Effect.catchTags({
     PlatformError: () =>
