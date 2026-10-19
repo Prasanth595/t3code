@@ -86,37 +86,22 @@ describe("normalizeGitRemoteUrl", () => {
     );
   });
 
-  it.each([
-    [
-      "github.com:T3Tools/T3Code.git",
-      "ssh://github.com/T3Tools/T3Code",
-      "github.com/t3tools/t3code",
-    ],
-    ["git@g:T3Tools/T3Code", "ssh://git@g/T3Tools/T3Code", "g/t3tools/t3code"],
-    [
-      "deploy@192.0.2.10:/srv/git/App.git",
-      "ssh://deploy@192.0.2.10/srv/git/App.git",
-      "192.0.2.10/srv/git/app",
-    ],
-    ["deploy@192.0.2.10:/App.git", "ssh://deploy@192.0.2.10/App.git", "192.0.2.10/app"],
-    [
-      "git@github.com:T3Tools/T3Code",
-      "git+ssh://git@github.com/T3Tools/T3Code",
-      "github.com/t3tools/t3code",
-    ],
-    [
-      "git@github.com:T3Tools/T3Code",
-      "ssh+git://git@github.com/T3Tools/T3Code",
-      "github.com/t3tools/t3code",
-    ],
-  ])("keys the SCP remote %s like %s", (scpRemote, urlRemote, key) => {
-    expect(normalizeGitRemoteUrl(scpRemote)).toBe(key);
-    expect(normalizeGitRemoteUrl(urlRemote)).toBe(key);
+  it("normalizes userless SCP remotes and single-segment absolute paths", () => {
+    expect(normalizeGitRemoteUrl("forge:App.git")).toBe("forge/app");
+    expect(normalizeGitRemoteUrl("deploy@forge:/App.git")).toBe("forge/app");
+    expect(normalizeGitRemoteUrl("ssh://deploy@forge/App.git")).toBe("forge/app");
   });
 
-  it("leaves local paths as they are", () => {
+  it("accepts a one-letter SSH host without reinterpreting local drive paths", () => {
+    expect(normalizeGitRemoteUrl("git@g:Owner/Repo.git")).toBe("g/owner/repo");
+    expect(normalizeGitRemoteUrl("ssh://git@g/Owner/Repo.git")).toBe("g/owner/repo");
     expect(normalizeGitRemoteUrl("C:/repos/T3Code")).toBe("c:/repos/t3code");
     expect(normalizeGitRemoteUrl("file:///srv/git/App.git")).toBe("file:///srv/git/app");
+  });
+
+  it("normalizes Git's compound SSH schemes to the same repository key", () => {
+    expect(normalizeGitRemoteUrl("git+ssh://git@forge/Team/App.git")).toBe("forge/team/app");
+    expect(normalizeGitRemoteUrl("ssh+git://git@forge/Team/App.git")).toBe("forge/team/app");
   });
 });
 
