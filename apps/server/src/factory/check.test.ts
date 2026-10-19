@@ -12,6 +12,7 @@ const SEAMS = "seams";
 const TEST = "vp test run apps/server/src/factory";
 const SERVER_TYPECHECK = "vp run --filter t3 typecheck";
 const WEB_TYPECHECK = "vp run --filter @t3tools/web typecheck";
+const MOBILE_TYPECHECK = "vp run --filter @t3tools/mobile typecheck";
 
 // Both stubs append their invocation to $CHECK_TEST_LOG, then exit with the code
 // from $CHECK_TEST_FAIL ("<invocation>=<code>") when it names this invocation.
@@ -77,19 +78,23 @@ exit 0
   it("runs every step in order and exits 0", () => {
     const { status, stdout, calls } = run();
     expect(status).toBe(0);
-    expect(calls).toEqual([SEAMS, TEST, SERVER_TYPECHECK, WEB_TYPECHECK]);
-    const at = ["factory/scripts/check-seams.sh", TEST, SERVER_TYPECHECK, WEB_TYPECHECK].map(
-      (name) => stdout.indexOf(name),
-    );
+    expect(calls).toEqual([SEAMS, TEST, SERVER_TYPECHECK, WEB_TYPECHECK, MOBILE_TYPECHECK]);
+    const at = [
+      "factory/scripts/check-seams.sh",
+      TEST,
+      SERVER_TYPECHECK,
+      WEB_TYPECHECK,
+      MOBILE_TYPECHECK,
+    ].map((name) => stdout.indexOf(name));
     expect(at[0]).toBeGreaterThanOrEqual(0);
     expect(at).toEqual([...at].sort((a, b) => a - b));
-    expect(new Set(at).size).toBe(4);
+    expect(new Set(at).size).toBe(5);
   });
 
   it("runs from a subdirectory of the repo", () => {
     const { status, calls } = run(undefined, NodePath.join(root, "bin"));
     expect(status).toBe(0);
-    expect(calls).toEqual([SEAMS, TEST, SERVER_TYPECHECK, WEB_TYPECHECK]);
+    expect(calls).toEqual([SEAMS, TEST, SERVER_TYPECHECK, WEB_TYPECHECK, MOBILE_TYPECHECK]);
   });
 
   it("stops at the first failure with that command's exit code", () => {

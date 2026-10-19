@@ -58,6 +58,7 @@ describe("check-seams.sh", () => {
     write("apps/server/src/factory/index.ts", "x\n");
     write("apps/web/src/factory/page.tsx", "x\n");
     write("apps/desktop/src/factory/factoryServer.ts", "x\n");
+    write("apps/mobile/src/factory/mobileIdentity.ts", "x\n");
     write(".dw/config.yml", "x: 1\n");
     write("apps/web/src/routes/factory.tsx", "x\n");
     write("apps/web/src/routes/settings.factory.tsx", "x\n");
