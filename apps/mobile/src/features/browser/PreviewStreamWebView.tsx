@@ -38,7 +38,6 @@ import {
 
 export interface PreviewStreamRef {
   readonly command: (input: PreviewStreamInput) => void;
-  /** Types this device's clipboard into the page's focused field. */
   readonly paste: () => void;
   readonly togglePictureInPicture: () => void;
 }
@@ -270,12 +269,15 @@ function PreviewStreamDocumentView({
     webView.current?.injectJavaScript(
       `window.T3PreviewStream?.command(${JSON.stringify(input)}); true;`,
     );
-  // The page's own paste would read the environment's clipboard, so the phone's text
-  // arrives as typing. A tab switch while iOS asks to allow the paste unmounts this view.
-  const paste = async () => {
-    const text = await Clipboard.getStringAsync();
-    if (active.current && text) command({ type: "text", text });
-  };
+  // Reads here rather than in the screen: a tab switch during the iOS paste prompt unmounts
+  // this view and nulls its WebView ref, so the text can never type into another tab.
+  const paste = () =>
+    void Clipboard.getStringAsync().then(
+      (text) => {
+        if (text) command({ type: "text", text });
+      },
+      () => Dialog.alert("Could not read the clipboard"),
+    );
   const fail = (message: string) => {
     if (!active.current || failed.current) return;
     failed.current = true;
@@ -304,7 +306,7 @@ function PreviewStreamDocumentView({
   );
   useImperativeHandle(ref, () => ({
     command,
-    paste: () => void paste().catch(() => Dialog.alert("Could not read the clipboard")),
+    paste,
     togglePictureInPicture: () =>
       webView.current?.injectJavaScript("window.T3PreviewStream?.pictureInPicture(); true;"),
   }));

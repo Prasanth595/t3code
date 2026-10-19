@@ -46,7 +46,7 @@ export function BrowserTabMenu({
   readonly environmentId: EnvironmentId;
   readonly tab: PreviewSessionSnapshot;
   readonly disabled: boolean;
-  readonly onPaste: (() => void) | undefined;
+  readonly onPaste?: () => void;
 }) {
   const adjust = useAtomCommand(previewEnvironment.adjust, "browser tab change");
   const resize = useAtomCommand(previewEnvironment.resize, "browser viewport change");

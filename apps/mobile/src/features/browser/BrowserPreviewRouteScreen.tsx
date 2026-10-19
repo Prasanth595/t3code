@@ -217,7 +217,7 @@ function BrowserAddressBar({
   readonly ready: boolean;
   readonly streaming: boolean;
   readonly onCommand: PreviewStreamRef["command"];
-  readonly onPaste: PreviewStreamRef["paste"];
+  readonly onPaste: () => void;
 }) {
   const url = browserTabUrl(tab);
   const [draft, setDraft] = useState<string | null>(null);
