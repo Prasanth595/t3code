@@ -95,6 +95,7 @@ export async function checkoutNewTaskBranch<E>(input: {
     current: true,
     isRemote: false,
     name: value.refName ?? input.branch.name,
+    worktreePath: null,
   }));
 }
 

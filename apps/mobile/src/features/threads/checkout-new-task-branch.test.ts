@@ -135,12 +135,22 @@ async function addRemote(remoteName: string, sourceRef = branch.name) {
 }
 
 describe("new-task branch checkout", () => {
-  it("switches main to the older thread's feature branch before returning a selection", async () => {
-    const result = await selectBranch(switchRef);
+  it("switches to a free branch and clears its historical worktree path", async () => {
+    const previousWorktree = NodePath.join(directory, "previous-worktree");
+    await git("worktree", "add", previousWorktree, branch.name);
+    await exec("git", ["-C", previousWorktree, "checkout", "-b", "other-branch"]);
+    const result = await checkoutNewTaskBranch({
+      branch: { ...branch, worktreePath: previousWorktree },
+      project: { environmentId, workspaceRoot: cwd },
+      workspaceMode: "local",
+      readRefs,
+      switchRef,
+    });
     expect(result._tag).toBe("Success");
     if (result._tag !== "Success") throw new Error("Checkout failed");
     expect(result.value.name).toBe("feature/a");
     expect(result.value.current).toBe(true);
+    expect(result.value.worktreePath).toBeNull();
     expect((await git("branch", "--show-current")).stdout.trim()).toBe("feature/a");
     expect(await NodeFSP.readFile(NodePath.join(cwd, "file.txt"), "utf8")).toBe("feature\n");
   });
