@@ -63,5 +63,5 @@ Keys the server does not read are ignored.
 | Commands    | Each `provision` command, then each `gate` command, through the shell, at the checkout root.                                                                          |
 | Timeout     | 30 minutes per command.                                                                                                                                               |
 | Pass        | Every command exits 0. Then `required_checks`, if any, must pass on the gated commit.                                                                                 |
-| Source      | The commands come from the default branch, never from the PR.                                                                                                         |
+| Source      | The commands come from the default branch on GitHub or, when the file is not there, from the checkout's working tree. Never from the PR.                              |
 | Environment | Only `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `TMPDIR`, `TERM` and `LC_*` from the server. `PATH` is the LaunchAgent's, extended by `~/.config/t3fac/env`. |

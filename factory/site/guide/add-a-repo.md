@@ -21,7 +21,7 @@ factory:
   autonomy: pr
 ```
 
-The factory reads this file from the tip of the default branch on GitHub, so a change takes effect once it is pushed there. Only when the file is not on that branch does it read the copy in your checkout instead, which lets you keep a gate with machine-specific commands off GitHub; a change to that copy takes effect on the next pass, with no push. A pull request can't change the gate it is checked with.
+The factory reads this file from the tip of the default branch on GitHub, so a change takes effect once it is pushed there. Only when the file is not on that branch does it read the copy in your checkout instead, which lets you keep a gate with machine-specific commands off GitHub; a change to that copy takes effect on the next pass, with no push. A pull request can't change the gate it is checked with: the factory reads the copy on the default branch or in your checkout, and its sessions work in their own worktrees.
 
 | Key                           | Required | Default | What it does                                                                                                                                      |
 | ----------------------------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
