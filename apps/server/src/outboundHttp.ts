@@ -77,7 +77,7 @@ type GlobalDispatchers = Record<
  * safely through its own classes. `process.env` is left alone, so provider
  * and terminal children keep the user's `NO_PROXY`.
  */
-export function keepLoopbackOffEnvProxy(): void {
+function keepLoopbackOffEnvProxy(): void {
   const globals = globalThis as unknown as GlobalDispatchers;
   const current = globals[GLOBAL_DISPATCHER_SYMBOLS[0]];
   if (!isEnvHttpProxyAgent(current)) return;
