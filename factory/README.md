@@ -6,7 +6,7 @@ This is `original-solutions/t3code-factory`, a fork of `pingdotgg/t3code` that r
 
 [AGENTS.md](AGENTS.md) is how to write a seam edit that survives the next sync; the repo's `CLAUDE.md` loads it beside upstream's `AGENTS.md`.
 
-The only upstream files this fork edits are the ones listed in [SEAMS](SEAMS). [UPSTREAM](UPSTREAM) names the upstream ref and commit the fork is based on. `scripts/check-seams.sh` diffs the committed HEAD against that commit (commit first; staged, unstaged and untracked changes are not checked) and fails on any changed path that is not factory-owned (`apps/server/src/factory/`, `apps/web/src/factory/`, `apps/desktop/src/factory/`, `factory/`, `.dw/`, `apps/web/src/routes/factory*`, `.github/workflows/factory-*`) and not listed in `SEAMS`.
+The only upstream files this fork edits are the ones listed in [SEAMS](SEAMS). [UPSTREAM](UPSTREAM) names the upstream ref and commit the fork is based on. `scripts/check-seams.sh` diffs the committed HEAD against that commit (commit first; staged, unstaged and untracked changes are not checked) and fails on any changed path that is not factory-owned (`apps/server/src/factory/`, `apps/web/src/factory/`, `apps/desktop/src/factory/`, `apps/mobile/src/factory/`, `factory/`, `.dw/`, `apps/web/src/routes/factory*`, `.github/workflows/factory-*`) and not listed in `SEAMS`.
 
 ## Boundary rule
 
@@ -20,6 +20,7 @@ Only `apps/server/src/factory/t3/` may import T3 internals. Other files under `a
 2. `vp test run apps/server/src/factory`
 3. `vp run --filter t3 typecheck`
 4. `vp run --filter @t3tools/web typecheck`
+5. `vp run --filter @t3tools/mobile typecheck`
 
 The same script is the factory gate (`gate` in `.dw/config.yml`) and the `Check` job of the `factory-ci` GitHub workflow. The workflow has a second job, `Lint`, which runs `vp check` (upstream's lint and format check, the command upstream's `ci.yml` Lint job runs) beside `check.sh`. The gate does not run it. To run `check.sh` locally from the repo root:
 
