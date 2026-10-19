@@ -1,13 +1,14 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  EnvironmentAuthorizationError,
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
-  type ProjectSettingsOverrides,
   type ServerSettings,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+import * as Cause from "effect/Cause";
 import { resolveWorktreeCleanup } from "@t3tools/shared/projectSettings";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
@@ -20,7 +21,6 @@ import {
   resolveScopedSettingsTargets,
   scopedSettingsAreMixed,
   scopedSettingsSource,
-  type ScopedSettingsPatch,
   selectScopedSettingsEnvironments,
 } from "./scopedSettings";
 import { resolveSettingsScope } from "./settingsScope";
@@ -158,9 +158,11 @@ describe("scoped settings writes", () => {
           mode: "custom",
           rules: {
             worktreeAfterDays: 12,
+            worktreeSettledAfterDays: null,
             worktreeOnDelete: true,
             worktreeOnMerge: true,
             worktreeUnchanged: false,
+            worktreeKeepWhen: "uncommitted-changes",
           },
         },
       },
@@ -181,15 +183,19 @@ describe("scoped settings writes", () => {
     expect(policies).toEqual([
       {
         worktreeAfterDays: 12,
+        worktreeSettledAfterDays: null,
         worktreeOnDelete: false,
         worktreeOnMerge: true,
         worktreeUnchanged: false,
+        worktreeKeepWhen: "uncommitted-changes",
       },
       {
         worktreeAfterDays: null,
+        worktreeSettledAfterDays: null,
         worktreeOnDelete: false,
         worktreeOnMerge: false,
         worktreeUnchanged: false,
+        worktreeKeepWhen: "uncommitted-changes",
       },
     ]);
   });
@@ -227,6 +233,88 @@ describe("scoped settings writes", () => {
     expect(persistClient).not.toHaveBeenCalled();
   });
 
+  describe("an environment that saves but drops keys it does not know", () => {
+    const upgradedLaptop = (saved: Partial<ServerSettings>) =>
+      vi.fn(async ({ environmentId }: { environmentId: EnvironmentId }) => ({
+        _tag: "Success" as const,
+        value: {
+          ...DEFAULT_SERVER_SETTINGS,
+          ...(environmentId === laptop.environmentId ? saved : {}),
+        },
+      }));
+    const outcome = async (
+      plan: ReturnType<typeof planScopedSettingsPatch>,
+      persistServer: ReturnType<typeof upgradedLaptop>,
+    ) => {
+      const result = await persistScopedSettingsPatch(plan, persistServer, vi.fn());
+      return {
+        saved: result.savedEnvironments.map(({ label }) => label),
+        failed: result.failedEnvironments.map(({ label, message }) => ({ label, message })),
+      };
+    };
+    const unsupported = [
+      {
+        label: server.label,
+        message: "This environment does not support this setting. Update T3 Code on it.",
+      },
+    ];
+
+    it("reports a dropped toggle", async () => {
+      expect(
+        await outcome(
+          planScopedSettingsPatch(all, environments, { reviewGuidesEnabled: true }),
+          upgradedLaptop({ reviewGuidesEnabled: true }),
+        ),
+      ).toEqual({ saved: [laptop.label], failed: unsupported });
+    });
+
+    it("reports dropped text but accepts the server trimming it", async () => {
+      expect(
+        await outcome(
+          planScopedSettingsPatch(all, environments, { reviewGuideInstructions: " Read tests " }),
+          upgradedLaptop({ reviewGuideInstructions: "Read tests" }),
+        ),
+      ).toEqual({ saved: [laptop.label], failed: unsupported });
+    });
+
+    it("reports a dropped key inside a project override", async () => {
+      expect(
+        await outcome(
+          planScopedSettingsPatch(project, environments, { defaultAutoPull: true }),
+          upgradedLaptop({
+            projectSettingsOverrides: { [laptopProjectId]: { defaultAutoPull: true } },
+          }),
+        ),
+      ).toEqual({ saved: [laptop.label], failed: unsupported });
+    });
+
+    it("reports a nested key dropped beside one that saved", async () => {
+      const patch = { defaultAutoPull: true, enableAgentBrowserAccess: false };
+      const persistServer = vi.fn(async ({ environmentId }: { environmentId: EnvironmentId }) => ({
+        _tag: "Success" as const,
+        value: {
+          ...DEFAULT_SERVER_SETTINGS,
+          projectSettingsOverrides:
+            environmentId === laptop.environmentId
+              ? { [laptopProjectId]: patch }
+              : { [projectId]: { defaultAutoPull: true } },
+        },
+      }));
+      expect(
+        await outcome(planScopedSettingsPatch(project, environments, patch), persistServer),
+      ).toEqual({ saved: [laptop.label], failed: unsupported });
+    });
+
+    it("accepts a write that matches what the environment already had", async () => {
+      expect(
+        await outcome(
+          planScopedSettingsPatch(all, environments, { reviewGuidesEnabled: false }),
+          upgradedLaptop({}),
+        ),
+      ).toEqual({ saved: [laptop.label, server.label], failed: [] });
+    });
+  });
+
   it("persists client keys locally at any scope alongside server keys", async () => {
     const persistServer = vi.fn().mockResolvedValue({ _tag: "Success" });
     const persistClient = vi.fn();
@@ -259,6 +347,7 @@ describe("scoped settings writes", () => {
       {
         environmentId: server.environmentId,
         label: server.label,
+        previous: expect.anything(),
         patch: {
           projectSettingsOverrides: {
             [projectId]: { enableAgentBrowserAccess: false, defaultAutoPull: true },
@@ -268,6 +357,7 @@ describe("scoped settings writes", () => {
       {
         environmentId: laptop.environmentId,
         label: laptop.label,
+        previous: expect.anything(),
         patch: { projectSettingsOverrides: { [laptopProjectId]: { defaultAutoPull: true } } },
       },
     ]);
@@ -293,9 +383,11 @@ describe("scoped settings writes", () => {
               mode: "custom",
               rules: {
                 worktreeAfterDays: 8,
+                worktreeSettledAfterDays: null,
                 worktreeOnDelete: false,
                 worktreeOnMerge: true,
                 worktreeUnchanged: false,
+                worktreeKeepWhen: "uncommitted-changes",
               },
             },
           },
@@ -305,6 +397,15 @@ describe("scoped settings writes", () => {
     const plan = planScopedSettingsPatch(project, [machine, customized], {
       worktreeCleanup: { mode: "custom", rules: { worktreeOnDelete: true } },
     });
+    const settledPlan = planScopedSettingsPatch(project, [machine, customized], {
+      worktreeCleanup: { mode: "custom", rules: { worktreeSettledAfterDays: 0 } },
+    });
+    expect(
+      settledPlan.serverWrites.map((write) => write.patch.projectSettingsOverrides),
+    ).toMatchObject([
+      { [projectId]: { worktreeCleanup: { rules: { worktreeSettledAfterDays: 0 } } } },
+      { [laptopProjectId]: { worktreeCleanup: { rules: { worktreeSettledAfterDays: 0 } } } },
+    ]);
     expect(plan.serverWrites.map((write) => write.patch.projectSettingsOverrides)).toEqual([
       {
         [projectId]: {
@@ -313,9 +414,11 @@ describe("scoped settings writes", () => {
             mode: "custom",
             rules: {
               worktreeAfterDays: 8,
+              worktreeSettledAfterDays: null,
               worktreeOnDelete: true,
               worktreeOnMerge: true,
               worktreeUnchanged: false,
+              worktreeKeepWhen: "uncommitted-changes",
             },
           },
         },
@@ -326,9 +429,11 @@ describe("scoped settings writes", () => {
             mode: "custom",
             rules: {
               worktreeAfterDays: 30,
+              worktreeSettledAfterDays: null,
               worktreeOnDelete: true,
               worktreeOnMerge: false,
               worktreeUnchanged: false,
+              worktreeKeepWhen: "uncommitted-changes",
             },
           },
         },
@@ -385,6 +490,7 @@ describe("scoped settings writes", () => {
       {
         environmentId: server.environmentId,
         label: server.label,
+        previous: expect.anything(),
         patch: { projectSettingsOverrides: { [projectId]: { enableAgentBrowserAccess: false } } },
       },
     ]);
@@ -413,7 +519,15 @@ describe("scoped settings writes", () => {
     const persistServer = vi
       .fn()
       .mockResolvedValueOnce({ _tag: "Success" })
-      .mockResolvedValueOnce({ _tag: "Failure" })
+      .mockResolvedValueOnce({
+        _tag: "Failure",
+        cause: Cause.fail(
+          new EnvironmentAuthorizationError({
+            requiredScope: "settings:write",
+            message: "This connection lacks permission to change settings.",
+          }),
+        ),
+      })
       .mockRejectedValueOnce(new Error("Disconnected during save"))
       .mockResolvedValueOnce({ _tag: "Success" });
     const result = await persistScopedSettingsPatch(
@@ -422,6 +536,14 @@ describe("scoped settings writes", () => {
       vi.fn(),
     );
     expect(result.savedEnvironmentCount).toBe(2);
+    expect(result.savedEnvironments.map(({ label }) => label)).toEqual([
+      laptop.label,
+      fourth.label,
+    ]);
+    expect(result.failedEnvironments.map(({ message }) => message)).toEqual([
+      "This connection lacks permission to change settings.",
+      "Disconnected during save",
+    ]);
     expect(result.failedEnvironments.map(({ label }) => label)).toEqual([
       server.label,
       third.label,
@@ -505,6 +627,7 @@ describe("project overrides at environment scope", () => {
       {
         environmentId: laptop,
         label: laptop,
+        previous: expect.anything(),
         patch: {
           projectSettingsOverrides: { [fleet]: { defaultThreadEnvMode: "local" }, [t3]: null },
         },
@@ -624,84 +747,68 @@ describe("partial object patches at project scope", () => {
   });
 });
 
+it("routes legacy model preference keys exclusively to the selected environment", () => {
+  const patch = {
+    favorites: [{ provider: ProviderInstanceId.make("codex"), model: "sol" }],
+    providerModelPreferences: {},
+  };
+  const plan = planScopedSettingsPatch(named, environments, patch);
+  expect(plan.clientPatch).toEqual({});
+  expect(plan.hasClientWrite).toBe(false);
+  expect(plan.serverWrites).toEqual([
+    {
+      environmentId: server.environmentId,
+      label: server.label,
+      previous: expect.anything(),
+      patch,
+    },
+  ]);
+});
+
 describe("model selection patches at project scope", () => {
-  const environmentId = EnvironmentId.make("laptop");
-  const projectId = ProjectId.make("fleet");
   const codex = ProviderInstanceId.make("codex");
   const claude = ProviderInstanceId.make("claudeAgent");
-  const planWith = (override: ProjectSettingsOverrides, patch: ScopedSettingsPatch) =>
-    planScopedSettingsPatch(
-      {
-        kind: "project",
-        group: {} as never,
-        environmentId: null,
-        label: "fleet",
-        members: [{ id: projectId, environmentId } as never],
-        environmentIds: [environmentId],
-      },
-      [
-        {
-          environmentId,
-          label: "Laptop",
-          connection: { phase: "connected" },
-          serverConfig: {
-            settings: {
-              ...DEFAULT_SERVER_SETTINGS,
-              projectSettingsOverrides: { [projectId]: override },
-            },
-            environment: { capabilities: { projectSettingsOverrides: true } },
-          },
-        },
-      ],
-      patch,
-    ).serverWrites[0]?.patch.projectSettingsOverrides?.[projectId];
-
-  it("drops the previous model's options when the model changes", () => {
-    const entry = planWith(
-      {
-        defaultModelSelection: {
-          instanceId: codex,
-          model: "gpt-5.6",
-          options: [{ id: "reasoningEffort", value: "xhigh" }],
+  const saved = {
+    instanceId: codex,
+    model: "gpt-5.6",
+    options: [{ id: "reasoningEffort", value: "high" }],
+  };
+  const customized = environment("Server", {
+    settings: {
+      projectSettingsOverrides: {
+        [projectId]: {
+          defaultModelSelection: saved,
+          sourceControlWriterModelSelection: saved,
+          textGenerationModelSelection: saved,
         },
       },
-      { defaultModelSelection: { instanceId: claude, model: "claude-opus-4-8" } },
-    );
-    expect(entry?.defaultModelSelection).toEqual({ instanceId: claude, model: "claude-opus-4-8" });
+    },
   });
 
-  it("keeps the saved instance when a patch names only the model", () => {
-    const entry = planWith(
-      {
-        textGenerationModelSelection: {
-          instanceId: codex,
-          model: "gpt-5.6",
-          options: [{ id: "reasoningEffort", value: "high" }],
-        },
-      },
-      { textGenerationModelSelection: { model: "gpt-5.6-mini" } },
-    );
-    expect(entry?.textGenerationModelSelection).toEqual({
-      instanceId: codex,
-      model: "gpt-5.6-mini",
+  it("replaces old options when switching models and keeps an omitted provider", () => {
+    const plan = planScopedSettingsPatch(checkout, [customized], {
+      defaultModelSelection: { instanceId: claude, model: "claude-opus-4-8" },
+      sourceControlWriterModelSelection: { model: "gpt-5.6-mini" },
+      textGenerationModelSelection: { instanceId: claude, model: "claude-sonnet-4-6" },
+    });
+    expect(plan.serverWrites[0]?.patch.projectSettingsOverrides?.[projectId]).toEqual({
+      defaultModelSelection: { instanceId: claude, model: "claude-opus-4-8" },
+      sourceControlWriterModelSelection: { instanceId: codex, model: "gpt-5.6-mini" },
+      textGenerationModelSelection: { instanceId: claude, model: "claude-sonnet-4-6" },
     });
   });
 
-  it("still completes an options-only patch from the saved selection", () => {
-    const entry = planWith(
-      {
-        textGenerationModelSelection: {
-          instanceId: codex,
-          model: "gpt-5.6",
-          options: [{ id: "reasoningEffort", value: "high" }],
-        },
-      },
-      { textGenerationModelSelection: { options: [{ id: "reasoningEffort", value: "low" }] } },
-    );
-    expect(entry?.textGenerationModelSelection).toEqual({
-      instanceId: codex,
-      model: "gpt-5.6",
-      options: [{ id: "reasoningEffort", value: "low" }],
+  it("keeps saved model identities when changing only options", () => {
+    const options = [{ id: "reasoningEffort", value: "low" }];
+    const plan = planScopedSettingsPatch(checkout, [customized], {
+      defaultModelSelection: { options },
+      sourceControlWriterModelSelection: { options },
+      textGenerationModelSelection: { options },
+    });
+    expect(plan.serverWrites[0]?.patch.projectSettingsOverrides?.[projectId]).toEqual({
+      defaultModelSelection: { instanceId: codex, model: "gpt-5.6", options },
+      sourceControlWriterModelSelection: { instanceId: codex, model: "gpt-5.6", options },
+      textGenerationModelSelection: { instanceId: codex, model: "gpt-5.6", options },
     });
   });
 });
