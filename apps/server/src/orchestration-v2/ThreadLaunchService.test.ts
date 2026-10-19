@@ -118,6 +118,7 @@ const claudeAdapter = {
 } as ProviderAdapter.ProviderAdapterV2["Service"];
 
 interface HarnessOptions {
+  readonly existingPaths?: ReadonlyArray<string>;
   readonly closeTerminal?: TerminalManager.TerminalManager["Service"]["close"];
   readonly adapters?: ReadonlyArray<ProviderAdapter.ProviderAdapterV2["Service"]>;
   readonly managedFolders?: Layer.Layer<ManagedProjectFolders.ManagedProjectFolders>;
@@ -232,7 +233,9 @@ function makeHarness(options: HarnessOptions = {}) {
         layerThreadManagement,
         layerReceipts,
         IdAllocator.layer,
-        FileSystem.layerNoop({ exists: () => Effect.succeed(false) }),
+        FileSystem.layerNoop({
+          exists: (path) => Effect.succeed(options.existingPaths?.includes(path) === true),
+        }),
         Path.layer,
       ),
     ),
@@ -3085,11 +3088,32 @@ it.effect.each([
   { name: "the previous checkout", baseRef: "-", commits: ["@{-1}", "HEAD"] },
   { name: "a commit search", baseRef: ":/fix", commits: ["HEAD"] },
   { name: "a Git that cannot answer", baseRef: "main", commits: null },
+  { name: "a failing repository probe", baseRef: "main", commits: ["HEAD"], probeFails: true },
+  {
+    name: "a repository Git refuses to read",
+    baseRef: "main",
+    commits: ["HEAD"],
+    existingPaths: ["/.git"],
+  },
 ])("leaves $name to the launch", (testCase) =>
   Effect.gen(function* () {
     const { commits } = testCase;
     const harness = makeHarness({
-      git: { hasRefNamed: () => Effect.succeed(testCase.remoteBranch === true) },
+      existingPaths: testCase.existingPaths ?? [],
+      git: {
+        isRepository: () =>
+          testCase.probeFails === true
+            ? Effect.fail(
+                new GitCommandError({
+                  operation: "GitWorkflowService.isRepository",
+                  command: "git rev-parse",
+                  cwd: "/repo",
+                  detail: "Repository probe failed.",
+                }),
+              )
+            : Effect.succeed(testCase.existingPaths === undefined),
+        hasRefNamed: () => Effect.succeed(testCase.remoteBranch === true),
+      },
       hasCommit: ({ refName }) =>
         commits === null
           ? Effect.fail(
