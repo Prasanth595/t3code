@@ -6742,16 +6742,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   promptGeneration,
                   Effect.gen(function* () {
                     if (context.finalized) return;
-                    // A session-scoped consumer can hold a successful result past runtime exit.
-                    const termination = yield* Ref.get(runtimeTermination);
-                    if (termination?.generation === promptGeneration) {
-                      yield* failTurnAfterRuntimeTermination(
-                        context,
-                        promptGeneration,
-                        termination.error,
-                      );
-                      return;
-                    }
                     const status =
                       result.stopReason === "cancelled"
                         ? context.interrupted
@@ -6763,6 +6753,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       !context.interrupted &&
                       hasDeferredBackgroundWork(context)
                     ) {
+                      // A session-scoped consumer can hold a successful result past runtime exit.
+                      const termination = yield* Ref.get(runtimeTermination);
+                      if (termination?.generation === promptGeneration) {
+                        yield* failTurnAfterRuntimeTermination(
+                          context,
+                          promptGeneration,
+                          termination.error,
+                        );
+                        return;
+                      }
                       context.promptSettled = true;
                       context.promptSettledStatus = status;
                       yield* closeTextStreams(context);
