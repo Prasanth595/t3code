@@ -832,7 +832,13 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
 
       yield* TestClock.adjust("1 second");
       assert.strictEqual(yield* Deferred.await(termination), exitError);
-      assert.strictEqual(yield* Fiber.join(unanswered).pipe(Effect.flip), exitError);
+      const failure = yield* Fiber.join(unanswered).pipe(
+        Effect.match({
+          onFailure: (error) => error,
+          onSuccess: () => assert.fail("Expected the request to fail"),
+        }),
+      );
+      assert.strictEqual(failure, exitError);
     }),
   );
 
@@ -848,10 +854,13 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
 
       yield* Scope.close(clientScope, Exit.void);
 
-      assert.instanceOf(
-        yield* Fiber.join(response).pipe(Effect.flip),
-        CodexError.CodexAppServerInputStreamEndedError,
+      const failure = yield* Fiber.join(response).pipe(
+        Effect.match({
+          onFailure: (error) => error,
+          onSuccess: () => assert.fail("Expected the request to fail"),
+        }),
       );
+      assert.instanceOf(failure, CodexError.CodexAppServerInputStreamEndedError);
     }),
   );
 });

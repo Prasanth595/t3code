@@ -463,8 +463,7 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
       );
     }
 
-    // Closing the client fails the requests still waiting on a reply, which
-    // would otherwise wait forever.
+    // Deliberate closure fails pending requests without reporting a runtime failure.
     yield* Effect.addFinalizer(() =>
       Effect.gen(function* () {
         const closed = new CodexError.CodexAppServerInputStreamEndedError({});

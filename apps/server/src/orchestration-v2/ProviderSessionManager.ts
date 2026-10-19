@@ -840,38 +840,27 @@ export const layerWithOptions = (
         readonly detail?: string;
         readonly releasedBackgroundTasks: ReadonlyArray<ReleasedBackgroundTasks>;
         readonly releasedAt: DateTime.Utc;
-        readonly replaced: boolean;
       }) =>
-        Effect.all(
-          [
-            input.replaced
-              ? Effect.succeed(Exit.void)
-              : Effect.exit(writeReleasedSessionEvents(input)),
-            Effect.exit(
-              writeReleasedRuntimeRequestEvents(input).pipe(
-                input.entry.requestEventPermit.withPermits(1),
-              ),
-            ),
-            Effect.exit(writeReleasedBackgroundWorkEvents(input.releasedBackgroundTasks)),
-          ],
-          { concurrency: 1 },
-        ).pipe(Effect.flatMap(Exit.asVoidAll));
-
-      // A replacement under the same id, like the next thread of a shared
-      // runtime, owns the session's status from its open on, even after it
-      // closes. Only the latest session opened under an id writes its release
-      // status; the entry is dropped once that is written. Callers hold the
-      // open lock, so no replacement opens mid-write.
-      const writeOwnReleaseRecords = (
-        input: Omit<Parameters<typeof writeReleaseRecords>[0], "replaced">,
-      ) =>
         Effect.gen(function* () {
+          // The open lock protects status ownership, including after a replacement closes.
           const key = sessionKey(input.entry.runtime.providerSessionId);
-          const replaced = (yield* Ref.get(latestOpened)).get(key) !== input.entry.runtime;
-          yield* writeReleaseRecords({ ...input, replaced });
-          if (replaced) return;
+          const ownsStatus = (yield* Ref.get(latestOpened)).get(key) === input.entry.runtime;
+          yield* Effect.all(
+            [
+              ownsStatus
+                ? Effect.exit(writeReleasedSessionEvents(input))
+                : Effect.succeed(Exit.void),
+              Effect.exit(
+                writeReleasedRuntimeRequestEvents(input).pipe(
+                  input.entry.requestEventPermit.withPermits(1),
+                ),
+              ),
+              Effect.exit(writeReleasedBackgroundWorkEvents(input.releasedBackgroundTasks)),
+            ],
+            { concurrency: 1 },
+          ).pipe(Effect.flatMap(Exit.asVoidAll));
+          if (!ownsStatus) return;
           yield* Ref.update(latestOpened, (current) => {
-            if (current.get(key) !== input.entry.runtime) return current;
             const updated = new Map(current);
             updated.delete(key);
             return updated;
@@ -881,13 +870,11 @@ export const layerWithOptions = (
       // The session already left the live map, so a later release finds nothing
       // to do. Without a retry the UI would keep a ready session and answerable
       // approvals until a server restart.
-      const retryReleaseRecords = (
-        input: Omit<Parameters<typeof writeReleaseRecords>[0], "replaced">,
-      ) => {
+      const retryReleaseRecords = (input: Parameters<typeof writeReleaseRecords>[0]) => {
         const providerSessionId = input.entry.runtime.providerSessionId;
         const attempt = Effect.gen(function* () {
           const exit = yield* Effect.exit(
-            sessionOpen.withLock(providerSessionId, writeOwnReleaseRecords(input)),
+            sessionOpen.withLock(providerSessionId, writeReleaseRecords(input)),
           );
           if (Exit.isSuccess(exit) || Cause.hasInterruptsOnly(exit.cause)) return yield* exit;
           yield* Effect.logWarning("orchestration-v2.provider-session-release-records-failed", {
@@ -1049,16 +1036,10 @@ export const layerWithOptions = (
                     releasedBackgroundTasks,
                     releasedAt,
                   };
-                  // A thread of a shared runtime can reopen it under the same
-                  // id while this closes; the open lock orders that against
-                  // this write.
                   const recorded = yield* Effect.exit(
                     input.openLockHeld === true
-                      ? writeOwnReleaseRecords(records)
-                      : sessionOpen.withLock(
-                          input.providerSessionId,
-                          writeOwnReleaseRecords(records),
-                        ),
+                      ? writeReleaseRecords(records)
+                      : sessionOpen.withLock(input.providerSessionId, writeReleaseRecords(records)),
                   );
                   if (Exit.isFailure(recorded)) {
                     yield* retryReleaseRecords(records);

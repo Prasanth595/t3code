@@ -76,7 +76,7 @@ export class CodexAppServerClient extends Context.Service<
         params: unknown,
       ) => Effect.Effect<void, CodexError.CodexAppServerError>,
     ) => Effect.Effect<void>;
-    /** Resolves with the reason once the app-server connection ends, such as the process exiting. */
+    /** Reports unexpected termination; deliberate scope closure interrupts its waiters. */
     readonly terminated: Effect.Effect<CodexError.CodexAppServerError>;
   }
 >()("effect-codex-app-server/client/CodexAppServerClient") {}
