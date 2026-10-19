@@ -15,6 +15,7 @@ import {
   type OrchestrationV2DomainEvent,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -29,10 +30,12 @@ import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ClaudeAdapterV2 from "./Adapters/ClaudeAdapterV2.ts";
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
+import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as Orchestrator from "./Orchestrator.ts";
@@ -469,6 +472,627 @@ it.effect.each(deliveries)(
               ProviderAdapterRegistry.layerSingle(adapter),
               { runEffectWorker: false },
             ),
+          ),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
+      ),
+    ),
+);
+
+it.effect("persists root assistant text before the Agent card it introduces", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("claude-transcript-order");
+      const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+      const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+        instanceId: modelSelection.instanceId,
+        settings,
+        environment: {},
+        attachmentsDir: cwd,
+        fileSystem: yield* FileSystem.FileSystem,
+        path: yield* Path.Path,
+        crypto: yield* Crypto.Crypto,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        queryRunner: {
+          allocateSessionId: Effect.succeed(sessionId),
+          open: () =>
+            Effect.succeed({
+              messages: Stream.fromQueue(sdkMessages),
+              offer: () => Effect.void,
+              setModel: () => Effect.void,
+              applyFlagSettings: () => Effect.void,
+              setPermissionMode: () => Effect.void,
+              backgroundTasks: () => Effect.succeed(false),
+              stopTask: () => Effect.void,
+              interrupt: Effect.void,
+              close: Effect.void,
+            }),
+          forkSession: () => Effect.die("unused"),
+          subagentLaunchToolUseId: () => Effect.succeed(null),
+          assertComplete: Effect.void,
+        },
+      });
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = ThreadId.make("thread:transcript-order");
+        const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+          orchestrator.streamDomainEvents.pipe(
+            Stream.filter(predicate),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create-transcript-order"),
+          threadId,
+          projectId: ProjectId.make("project:transcript-order"),
+          title: "Transcript order",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const running = yield* watch(
+          (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+        );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("start-transcript-order"),
+          threadId,
+          messageId: MessageId.make("start-transcript-order"),
+          text: "Start background research.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+        yield* Fiber.join(running);
+        const settled = yield* watch(
+          (event) => event.type === "run.updated" && event.payload.status === "waiting",
+        );
+        const introduction = "I will start a research agent.";
+        yield* Queue.offerAll(sdkMessages, [
+          frame({
+            type: "assistant",
+            uuid: "research-introduction",
+            session_id: sessionId,
+            parent_tool_use_id: null,
+            message: {
+              id: "research-introduction",
+              role: "assistant",
+              type: "message",
+              model: modelSelection.model,
+              content: [
+                { type: "text", text: introduction },
+                {
+                  type: "tool_use",
+                  id: "research-launch",
+                  name: "Agent",
+                  input: {
+                    description: "Research",
+                    prompt: "Research the task.",
+                    subagent_type: "general-purpose",
+                    run_in_background: true,
+                  },
+                },
+              ],
+              stop_reason: "tool_use",
+              stop_sequence: null,
+              usage: { input_tokens: 1, output_tokens: 1 },
+            },
+          }),
+          frame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "research",
+            tool_use_id: "research-launch",
+            description: "Research",
+            task_type: "local_agent",
+            subagent_type: "general-purpose",
+            is_backgrounded: true,
+            uuid: "research-started",
+            session_id: sessionId,
+          }),
+          result("research-root-finished", false),
+        ]);
+        yield* Fiber.join(settled);
+        yield* worker.drain();
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const text = projection.turnItems.find(
+          (item) => item.type === "assistant_message" && item.text === introduction,
+        );
+        const card = projection.turnItems.find((item) => item.type === "subagent");
+        assert.ok(text, "the root introduction is persisted");
+        assert.ok(card, "the Agent card is persisted");
+        assert.isBelow(text.ordinal, card.ordinal, "the introduction precedes its Agent card");
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "claude-transcript-order" },
+            ProviderAdapterRegistry.layerSingle(adapter),
+            { runEffectWorker: false },
+          ),
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
+it.effect("persists a resumed subagent outcome when its buffered wake is dropped", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace("claude-dropped-wake");
+      const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+      const wakes =
+        yield* Queue.unbounded<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const processed = new WeakMap<SDKMessage, Deferred.Deferred<void>>();
+      const lastOutcomeConsumed = yield* Deferred.make<void>();
+      const offer = Effect.fnUntraced(function* (message: SDKMessage) {
+        const done = yield* Deferred.make<void>();
+        processed.set(message, done);
+        yield* Queue.offer(sdkMessages, message);
+        yield* Deferred.await(done);
+      });
+      const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+        instanceId: modelSelection.instanceId,
+        settings,
+        environment: {},
+        attachmentsDir: cwd,
+        fileSystem: yield* FileSystem.FileSystem,
+        path: yield* Path.Path,
+        crypto: yield* Crypto.Crypto,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        continuationRequests: {
+          offer: (request) => Queue.offer(wakes, request).pipe(Effect.asVoid),
+        },
+        queryRunner: {
+          allocateSessionId: Effect.succeed(sessionId),
+          open: () =>
+            Effect.succeed({
+              messages: Stream.fromQueue(sdkMessages).pipe(
+                Stream.flatMap((message) =>
+                  Stream.make(message).pipe(
+                    Stream.concat(
+                      Stream.fromEffect(
+                        Effect.suspend(() => {
+                          const done = processed.get(message);
+                          return done === undefined
+                            ? Effect.void
+                            : Deferred.succeed(done, undefined);
+                        }),
+                      ).pipe(Stream.drain),
+                    ),
+                  ),
+                ),
+              ),
+              offer: () => Effect.void,
+              setModel: () => Effect.void,
+              applyFlagSettings: () => Effect.void,
+              setPermissionMode: () => Effect.void,
+              backgroundTasks: () => Effect.succeed(false),
+              stopTask: () => Effect.void,
+              interrupt: Effect.void,
+              close: Effect.void,
+            }),
+          forkSession: () => Effect.die("unused"),
+          subagentLaunchToolUseId: () => Effect.succeed(null),
+          assertComplete: Effect.void,
+        },
+      });
+      // Acknowledge after the session manager consumes the actual adapter event,
+      // so a missing projection fails an assertion rather than a timeout.
+      let pendingWork = Effect.succeed(false);
+      const observedAdapter = {
+        ...adapter,
+        openSession: (input: Parameters<typeof adapter.openSession>[0]) =>
+          adapter.openSession(input).pipe(
+            Effect.map((runtime) => {
+              pendingWork = runtime.hasPendingBackgroundWork ?? Effect.succeed(false);
+              return {
+                ...runtime,
+                events: runtime.events.pipe(
+                  Stream.flatMap((event) =>
+                    Stream.make(event).pipe(
+                      Stream.concat(
+                        Stream.fromEffect(
+                          event.type === "subagent.updated" &&
+                            event.subagent.result === "Resumed work finished."
+                            ? Deferred.succeed(lastOutcomeConsumed, undefined)
+                            : Effect.void,
+                        ).pipe(Stream.drain),
+                      ),
+                    ),
+                  ),
+                ),
+              };
+            }),
+          ),
+      };
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const threadId = ThreadId.make("thread:dropped-wake");
+        const watch = (predicate: (event: OrchestrationV2DomainEvent) => boolean) =>
+          orchestrator.streamDomainEvents.pipe(
+            Stream.filter(predicate),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("create-dropped-wake"),
+          threadId,
+          projectId: ProjectId.make("project:dropped-wake"),
+          title: "Dropped wake",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const running = yield* watch(
+          (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+        );
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make("start-dropped-wake"),
+          threadId,
+          messageId: MessageId.make("start-dropped-wake"),
+          text: "Start background research.",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* worker.drain();
+        yield* Fiber.join(running);
+        const start = (toolUseId: string) =>
+          frame({
+            type: "system",
+            subtype: "task_started",
+            task_id: "research",
+            tool_use_id: toolUseId,
+            description: "Research",
+            task_type: "local_agent",
+            subagent_type: "general-purpose",
+            is_backgrounded: true,
+            uuid: toolUseId,
+            session_id: sessionId,
+          });
+        const complete = (toolUseId: string, summary: string) =>
+          frame({
+            type: "system",
+            subtype: "task_notification",
+            task_id: "research",
+            tool_use_id: toolUseId,
+            status: "completed",
+            summary,
+            output_file: "/tmp/research.output",
+            uuid: `end-${toolUseId}`,
+            session_id: sessionId,
+          });
+        const started = yield* watch(
+          (event) => event.type === "subagent.updated" && event.payload.status === "running",
+        );
+        yield* offer(start("original"));
+        yield* Fiber.join(started);
+        const settled = yield* watch(
+          (event) => event.type === "run.updated" && event.payload.status === "waiting",
+        );
+        yield* offer(result("root-finished", false));
+        yield* Fiber.join(settled);
+        yield* worker.drain();
+        const completed = yield* watch(
+          (event) =>
+            event.type === "subagent.updated" && event.payload.result === "Original work finished.",
+        );
+        yield* offer(complete("original", "Original work finished."));
+        yield* Fiber.join(completed);
+        yield* worker.drain();
+        const oldWake = yield* Queue.take(wakes);
+        assert.isDefined(oldWake.clearIfCurrent);
+
+        // The first subagent completion lets the old run stop ingesting.
+        // Its next native generation must survive cleanup of the earlier wake.
+        yield* offer(start("resumed"));
+        yield* oldWake.clearIfCurrent!();
+        assert.isTrue(yield* pendingWork, "dropping the old wake preserves the resumed generation");
+        yield* offer(complete("resumed", "Resumed work finished."));
+        const newWake = yield* Queue.take(wakes);
+        assert.isDefined(newWake.clearIfCurrent);
+        yield* newWake.clearIfCurrent!();
+        yield* Deferred.await(lastOutcomeConsumed);
+        yield* worker.drain();
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const subagent = projection.subagents.find(
+          (task) => task.nativeTaskRef?.nativeId === "research",
+        );
+        assert.equal(subagent?.status, "completed");
+        assert.equal(subagent?.result, "Resumed work finished.");
+        assert.lengthOf(projection.runs, 1);
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            { name: "claude-dropped-wake" },
+            ProviderAdapterRegistry.layerSingle(observedAdapter),
+            { runEffectWorker: false },
+          ),
+        ),
+      );
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
+it.effect.each(["provider switch", "cancel", "start failure"] as const)(
+  "releases a queued buffered wake after %s and permits a later Claude completion",
+  (action) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("claude-queued-wake");
+        const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+        const dropped = yield* Queue.unbounded<void>();
+        const offered = yield* Queue.unbounded<void>();
+        let turnStarts = 0;
+        let failQueuedStart = false;
+        const registry = Layer.unwrap(
+          Effect.gen(function* () {
+            const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+            const adapter = yield* ClaudeAdapterV2.makeClaudeAdapterV2({
+              instanceId: modelSelection.instanceId,
+              settings,
+              environment: {},
+              attachmentsDir: cwd,
+              fileSystem: yield* FileSystem.FileSystem,
+              path: yield* Path.Path,
+              crypto: yield* Crypto.Crypto,
+              idAllocator: yield* IdAllocator.IdAllocatorV2,
+              continuationRequests: {
+                offer: (request) =>
+                  Effect.gen(function* () {
+                    yield* Queue.offer(offered, undefined);
+                    yield* requests.offer({
+                      ...request,
+                      clearIfCurrent: () =>
+                        (request.clearIfCurrent?.() ?? Effect.void).pipe(
+                          Effect.andThen(Queue.offer(dropped, undefined)),
+                          Effect.asVoid,
+                        ),
+                    });
+                  }),
+              },
+              queryRunner: {
+                allocateSessionId: Effect.succeed(sessionId),
+                open: () =>
+                  Effect.succeed({
+                    messages: Stream.fromQueue(sdkMessages),
+                    offer: () => Effect.void,
+                    setModel: () => Effect.void,
+                    applyFlagSettings: () => Effect.void,
+                    setPermissionMode: () => Effect.void,
+                    backgroundTasks: () => Effect.succeed(false),
+                    stopTask: () => Effect.void,
+                    interrupt: Effect.void,
+                    close: Effect.void,
+                  }),
+                forkSession: () => Effect.die("unused"),
+                subagentLaunchToolUseId: () => Effect.succeed(null),
+                assertComplete: Effect.void,
+              },
+            });
+            const other = {
+              ...adapter,
+              instanceId: ProviderInstanceId.make("claude-other"),
+              openSession: () => Effect.die("the wake must never start the other provider"),
+            };
+            return ProviderAdapterRegistry.layerFromAdapters([
+              {
+                ...adapter,
+                getCapabilities: () =>
+                  failQueuedStart
+                    ? Effect.fail(
+                        new ProviderAdapter.ProviderAdapterCapabilitiesError({
+                          driver: adapter.driver,
+                          cause: "Injected queued start failure.",
+                        }),
+                      )
+                    : adapter.getCapabilities(),
+                openSession: (input) =>
+                  adapter.openSession(input).pipe(
+                    Effect.map((runtime) => ({
+                      ...runtime,
+                      startTurn: (input) =>
+                        Effect.suspend(() => {
+                          turnStarts += 1;
+                          return runtime.startTurn(input);
+                        }),
+                    })),
+                  ),
+              },
+              other,
+            ]);
+          }),
+        ).pipe(
+          Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, IdAllocator.layer)),
+        );
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const sink = yield* EventSink.EventSinkV2;
+          const threadId = ThreadId.make(`thread:queued-wake:${action}`);
+          const watch = Effect.fnUntraced(function* (
+            predicate: (event: OrchestrationV2DomainEvent) => boolean,
+          ) {
+            const afterSequence = yield* sink.latestSequence({ threadId });
+            return yield* sink.stream({ threadId, afterSequence }).pipe(
+              Stream.map((stored) => stored.event),
+              Stream.filter(predicate),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkScoped,
+            );
+          });
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("create-queued-wake"),
+            threadId,
+            projectId: ProjectId.make("project:queued-wake"),
+            title: "Queued wake",
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const running = yield* watch(
+            (event) => event.type === "provider-turn.updated" && event.payload.status === "running",
+          );
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make("start-queued-wake"),
+            threadId,
+            messageId: MessageId.make("start-queued-wake"),
+            text: "Start two background tasks.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* worker.drain();
+          yield* Fiber.join(running);
+          for (const taskId of ["first", "later"]) {
+            const started = yield* watch(
+              (event) =>
+                event.type === "subagent.updated" &&
+                event.payload.nativeTaskRef?.nativeId === taskId,
+            );
+            yield* Queue.offer(
+              sdkMessages,
+              frame({
+                type: "system",
+                subtype: "task_started",
+                task_id: taskId,
+                tool_use_id: taskId,
+                description: taskId,
+                task_type: "local_agent",
+                subagent_type: "general-purpose",
+                is_backgrounded: true,
+                uuid: `start-${taskId}`,
+                session_id: sessionId,
+              }),
+            );
+            yield* Fiber.join(started);
+          }
+          const waiting = yield* watch(
+            (event) => event.type === "run.updated" && event.payload.status === "waiting",
+          );
+          yield* Queue.offer(sdkMessages, result("queued-root-finished", false));
+          yield* Fiber.join(waiting);
+          // Leave checkpoint work pending so the real post-terminal root blocks the queue.
+          const parent = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+          assert.equal(parent.status, "waiting");
+          const queued = yield* watch(
+            (event) =>
+              (event.type === "run.created" || event.type === "run.updated") &&
+              event.payload.status === "queued",
+          );
+          const complete = (taskId: string) =>
+            Queue.offer(
+              sdkMessages,
+              frame({
+                type: "system",
+                subtype: "task_notification",
+                task_id: taskId,
+                tool_use_id: taskId,
+                status: "completed",
+                summary: `${taskId} finished`,
+                output_file: `/tmp/${taskId}.output`,
+                uuid: `done-${taskId}`,
+                session_id: sessionId,
+              }),
+            );
+          yield* complete("first");
+          yield* Queue.take(offered);
+          yield* Fiber.join(queued);
+          const wake = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.status === "queued",
+          )!;
+          assert.ok(wake);
+          assert.equal(turnStarts, 1);
+          if (action === "cancel") {
+            yield* orchestrator.dispatch({
+              type: "queued-run.cancel",
+              commandId: CommandId.make("cancel-wake"),
+              threadId,
+              runId: wake.id,
+            });
+          } else {
+            failQueuedStart = action === "start failure";
+            if (action === "provider switch")
+              yield* orchestrator.dispatch({
+                type: "thread.model-selection.set",
+                commandId: CommandId.make("switch-before-wake"),
+                threadId,
+                modelSelection: {
+                  ...modelSelection,
+                  instanceId: ProviderInstanceId.make("claude-other"),
+                },
+              });
+            yield* sink.write({
+              events: [
+                {
+                  id: EventId.make("finish-waiting-root"),
+                  type: "run.updated",
+                  threadId,
+                  runId: parent.id,
+                  occurredAt: yield* DateTime.now,
+                  payload: { ...parent, status: "completed", completedAt: yield* DateTime.now },
+                },
+              ],
+            });
+            yield* orchestrator.resumeQueuedRuns;
+            yield* worker.drain();
+          }
+          const after = yield* orchestrator.getThreadProjection(threadId);
+          assert.equal(
+            after.runs.find((run) => run.id === wake.id)?.status,
+            action === "start failure" ? "failed" : "cancelled",
+          );
+          assert.equal(
+            after.thread.modelSelection.instanceId,
+            action === "provider switch" ? "claude-other" : modelSelection.instanceId,
+          );
+          assert.equal(turnStarts, 1);
+          yield* Queue.take(dropped);
+          yield* complete("later");
+          yield* Queue.take(offered);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry({ name: "claude-queued-wake" }, registry, {
+              runEffectWorker: false,
+              runContinuationWorker: true,
+            }),
           ),
         );
       }).pipe(

@@ -1,7 +1,12 @@
-import { CommandId, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+import {
+  CommandId,
+  type MessageId,
+  type OrchestrationV2ThreadProjection,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -55,6 +60,37 @@ export const layer = Layer.effectDiscard(
     const ids = yield* IdAllocator.IdAllocatorV2;
     const requests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const threads = yield* ThreadManagementService.ThreadManagementService;
+    // Dispatch can commit a queued run before the adapter consumes its buffer.
+    // A cancellation or failed start must release that same offer.
+    const pendingBufferedWakes = yield* Ref.make(
+      new Map<MessageId, ProviderContinuationRequests.ProviderContinuationRequest>(),
+    );
+    yield* threads.streamDomainEvents.pipe(
+      Stream.runForEach((event) =>
+        Effect.gen(function* () {
+          if (
+            event.type !== "run.updated" ||
+            !["completed", "failed", "cancelled", "interrupted", "rolled_back"].includes(
+              event.payload.status,
+            )
+          )
+            return;
+          const request = yield* Ref.modify(pendingBufferedWakes, (current) => {
+            const request = current.get(event.payload.userMessageId);
+            if (request === undefined) return [undefined, current] as const;
+            const next = new Map(current);
+            next.delete(event.payload.userMessageId);
+            return [request, next] as const;
+          });
+          yield* request?.clearIfCurrent?.() ?? Effect.void;
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("orchestration-v2.provider-continuation.cleanup-failed", { cause }),
+          ),
+        ),
+      ),
+      Effect.forkScoped,
+    );
     const retryAttempts = yield* Ref.make(new Map<string, number>());
 
     const clearRetryAttempt = (key: string) =>
@@ -77,7 +113,7 @@ export const layer = Layer.effectDiscard(
       function* (request: ProviderContinuationRequests.ProviderContinuationRequest) {
         const projection = yield* threads.getThreadRecords(
           request.threadId,
-          ["messages", "runs", "providerTurns"],
+          ["messages", "runs", "providerTurns", "providerThreads"],
           {
             messageIds:
               request.delegatedCompletion === undefined
@@ -85,11 +121,28 @@ export const layer = Layer.effectDiscard(
                 : [request.delegatedCompletion.messageId],
           },
         );
-        if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
-          yield* Effect.logInfo("orchestration-v2.provider-continuation.thread-archived", {
-            threadId: request.threadId,
-            providerThreadId: request.providerThreadId,
-          });
+        const archived =
+          projection.thread.archivedAt !== null || projection.thread.deletedAt !== null;
+        // A buffered wake holds output only the provider that buffered it can
+        // replay. Another provider would get the notification text as a prompt.
+        const bufferedBy =
+          request.delegatedCompletion === undefined && request.delivery !== "message_text"
+            ? projection.providerThreads.find(
+                (providerThread) => providerThread.id === request.providerThreadId,
+              )?.providerInstanceId
+            : undefined;
+        const providerChanged =
+          bufferedBy !== undefined && bufferedBy !== projection.thread.modelSelection.instanceId;
+        if (archived || providerChanged) {
+          yield* Effect.logInfo(
+            archived
+              ? "orchestration-v2.provider-continuation.thread-archived"
+              : "orchestration-v2.provider-continuation.provider-changed",
+            {
+              threadId: request.threadId,
+              providerThreadId: request.providerThreadId,
+            },
+          );
           if (request.delegatedCompletion !== undefined) {
             yield* clearRetryAttempt(
               delegatedCompletionRetryKey(request, request.delegatedCompletion),
@@ -187,26 +240,33 @@ export const layer = Layer.effectDiscard(
             ordinal: projection.messages.length + 1,
           }));
         const commandId = CommandId.make(`provider-continuation:${messageId}`);
-        const dispatch = threads.dispatch({
-          type: "message.dispatch",
-          commandId,
-          threadId: request.threadId,
-          messageId,
-          text: request.detail ?? CONTINUATION_MESSAGE_TEXT,
-          notification: request.notification ?? {
-            source: { kind: "background_task" },
-            outcome: "updated",
-            summary: "Background activity updated",
+        const dispatch = threads.dispatch(
+          {
+            type: "message.dispatch",
+            commandId,
+            threadId: request.threadId,
+            messageId,
+            text: request.detail ?? CONTINUATION_MESSAGE_TEXT,
+            notification: request.notification ?? {
+              source: { kind: "background_task" },
+              outcome: "updated",
+              summary: "Background activity updated",
+            },
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+            createdBy: "agent",
+            // "provider" marks an adapter-buffered wake, which ClaudeAdapterV2
+            // detects to attach the buffered CLI output and drop this text. A
+            // message_text wake has no buffered output, so it must not carry that
+            // marker or the turn settles immediately having prompted nothing.
+            creationSource: request.delivery === "message_text" ? "server" : "provider",
           },
-          attachments: [],
-          dispatchMode: { type: "queue_after_active" },
-          createdBy: "agent",
-          // "provider" marks an adapter-buffered wake, which ClaudeAdapterV2
-          // detects to attach the buffered CLI output and drop this text. A
-          // message_text wake has no buffered output, so it must not carry that
-          // marker or the turn settles immediately having prompted nothing.
-          creationSource: request.delivery === "message_text" ? "server" : "provider",
-        });
+          request.delivery === "message_text"
+            ? undefined
+            : {
+                providerContinuationOfThreadId: request.providerThreadId,
+              },
+        );
         // This catch sits outside dispatchIfCurrent so an adapter that clears
         // its own sticky offer flag on dispatch failure (inside
         // dispatchIfCurrent) observes the raw failure first. Not every adapter
@@ -221,22 +281,38 @@ export const layer = Layer.effectDiscard(
             providerThreadId: request.providerThreadId,
             projectId: error.projectId,
             instanceId: error.instanceId,
-          }).pipe(
-            Effect.andThen(
-              request.clearIfCurrent !== undefined ? request.clearIfCurrent() : Effect.void,
-            ),
+          });
+        if (request.delivery !== "message_text" && request.clearIfCurrent !== undefined) {
+          yield* Ref.update(pendingBufferedWakes, (current) =>
+            new Map(current).set(messageId, request),
           );
-        if (request.dispatchIfCurrent === undefined) {
-          yield* dispatch.pipe(
-            Effect.catchTags({
-              ThreadManagementProviderInstanceDisabledError: logInstanceDisabled,
-            }),
-          );
-          return;
         }
-        yield* request.dispatchIfCurrent(dispatch).pipe(
+        const forgetFailedWake = Effect.fnUntraced(function* () {
+          yield* Ref.update(pendingBufferedWakes, (current) => {
+            const next = new Map(current);
+            next.delete(messageId);
+            return next;
+          });
+          yield* request.clearIfCurrent?.() ?? Effect.void;
+        });
+        const delivery =
+          request.dispatchIfCurrent === undefined
+            ? dispatch.pipe(Effect.asSome)
+            : request.dispatchIfCurrent(dispatch);
+        yield* delivery.pipe(
+          Effect.tap((result) =>
+            result._tag === "None"
+              ? Ref.update(pendingBufferedWakes, (current) => {
+                  const next = new Map(current);
+                  next.delete(messageId);
+                  return next;
+                })
+              : Effect.void,
+          ),
+          Effect.tapCause(forgetFailedWake),
           Effect.catchTags({
             ThreadManagementProviderInstanceDisabledError: logInstanceDisabled,
+            OrchestratorProviderContinuationStaleError: () => Effect.void,
           }),
         );
       },

@@ -4578,3 +4578,25 @@ it.effect("releases ingestion after idle subagent rows and items settle", () =>
     ]);
   }),
 );
+
+it.effect(
+  "closes the root subscription when session-owned child artifacts settle without ingesting them twice",
+  () =>
+    Effect.gen(function* () {
+      const observed = yield* runBackgroundItemScenario(
+        "session-owned-child",
+        (ids) => [
+          subagentEvent(ids, "running"),
+          backgroundTurnItemEvent(ids, "subagent", "running", 1),
+          rootTerminalEvent(ids, "completed"),
+          { ...subagentEvent(ids, "completed"), sessionThreadId: ids.threadId },
+          {
+            ...backgroundTurnItemEvent(ids, "subagent", "completed", 2),
+            sessionThreadId: ids.threadId,
+          },
+        ],
+        { keepEventStreamOpen: true },
+      );
+      assert.deepEqual(observed, ["subagent:running", "turn_item:running", "root-finalized"]);
+    }),
+);

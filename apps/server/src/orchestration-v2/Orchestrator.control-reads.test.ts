@@ -1038,3 +1038,74 @@ it.effect("replays a thread.create receipt without changing the thread", () =>
     assert.equal(yield* orchestrator.getThreadEventSequence(threadId), original.sequence);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("rejects a buffered continuation at command admission after its provider changes", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:stale-provider-continuation");
+    const providerThreadId = ProviderThreadId.make("provider-thread:stale-provider-continuation");
+    const now = yield* DateTime.now;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-stale-provider-continuation"),
+      threadId,
+      projectId: ProjectId.make("project:stale-provider-continuation"),
+      title: "Provider continuation",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    yield* projections.apply({
+      id: EventId.make("stale-provider-continuation:provider-thread"),
+      type: "provider-thread.updated",
+      threadId,
+      occurredAt: now,
+      payload: {
+        id: providerThreadId,
+        driver: adapter.driver,
+        providerInstanceId: ProviderInstanceId.make("other-account"),
+        providerSessionId: null,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "idle",
+        firstRunOrdinal: 1,
+        lastRunOrdinal: 1,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    const command = {
+      type: "message.dispatch",
+      commandId: CommandId.make("dispatch-stale-provider-continuation"),
+      threadId,
+      messageId: MessageId.make("message:stale-provider-continuation"),
+      text: "Background task completed.",
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "agent",
+      creationSource: "provider",
+    } as const;
+    const rejected = yield* orchestrator
+      .dispatch(command, {
+        providerContinuationOfThreadId: providerThreadId,
+      })
+      .pipe(Effect.result);
+    assert.isTrue(Result.isFailure(rejected));
+    if (Result.isFailure(rejected)) {
+      assert.equal(rejected.failure._tag, "OrchestratorProviderContinuationStaleError");
+    }
+    assert.lengthOf((yield* orchestrator.getThreadRecords(threadId, ["messages"])).messages, 0);
+    // A text delivery has no provider-owned buffer and can use the current instance.
+    yield* orchestrator.dispatch({ ...command, creationSource: "server" });
+    assert.lengthOf((yield* orchestrator.getThreadRecords(threadId, ["messages"])).messages, 1);
+  }).pipe(Effect.provide(layerTest)),
+);

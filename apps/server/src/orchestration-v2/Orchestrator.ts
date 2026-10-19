@@ -53,6 +53,7 @@ import {
   latestProviderTurnForAttempt,
   orchestrationV2RunWorkStartedAt,
   ProviderInstanceId,
+  ProviderThreadId,
   ProviderInteractionMode,
   resolveProviderInstanceEnabled,
   type ProviderSessionId,
@@ -237,6 +238,20 @@ export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<Or
   }
 }
 
+export class OrchestratorProviderContinuationStaleError extends Schema.TaggedError<OrchestratorProviderContinuationStaleError>()(
+  "OrchestratorProviderContinuationStaleError",
+  {
+    commandId: CommandId,
+    commandType: Schema.String,
+    threadId: ThreadId,
+    providerThreadId: ProviderThreadId,
+  },
+) {
+  override get message(): string {
+    return "The thread can no longer receive this provider continuation.";
+  }
+}
+
 export class OrchestratorCommandPreviouslyRejectedError extends Schema.TaggedError<OrchestratorCommandPreviouslyRejectedError>()(
   "OrchestratorCommandPreviouslyRejectedError",
   {
@@ -288,6 +303,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorCommandIdConflictError,
   OrchestratorSubagentThreadReadOnlyError,
   OrchestratorThreadAboveModeLimitError,
+  OrchestratorProviderContinuationStaleError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
 
@@ -311,6 +327,7 @@ export interface OrchestratorV2Shape {
   readonly awaitRestartContinuation: (run: OrchestrationV2Run) => Effect.Effect<void>;
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
+    options?: { readonly providerContinuationOfThreadId?: ProviderThreadId },
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
@@ -1416,6 +1433,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandType: "message.dispatch",
           cause: `Queued run ${queuedRun.id} is missing projection state.`,
         });
+      }
+
+      if (
+        isBufferedProviderNotification(queuedMessage) &&
+        queuedRun.providerInstanceId !== projection.thread.modelSelection.instanceId
+      ) {
+        const events = yield* Ref.make<Array<OrchestrationV2DomainEvent>>([]);
+        yield* emitQueuedRunCancellation({
+          command: {
+            type: "queued-run.cancel",
+            commandId: CommandId.make(`command:system:drop-buffered-wake:${queuedRun.id}`),
+            threadId,
+            runId: queuedRun.id,
+          },
+          events,
+          projection,
+          run: queuedRun,
+          now: yield* DateTime.now,
+        });
+        yield* writeSystemEvents(yield* Ref.get(events));
+        return;
       }
 
       const commandId = CommandId.make(`command:system:start-queued:${queuedRun.id}`);
@@ -11229,6 +11267,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
   const dispatchWithReceiptEffect = Effect.fn("orchestrationV2.dispatch.withReceipt")(function* (
     command: OrchestrationV2ServerCommand,
+    options?: { readonly providerContinuationOfThreadId?: ProviderThreadId },
   ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.command_id": command.commandId,
@@ -11297,6 +11336,37 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         .getThreadShell(threadId)
         .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
       if (shell !== null) yield* refuseAboveDispatchModeLimit(command, threadId, shell);
+    }
+
+    // Admission and model changes share this thread lock. A buffered wake
+    // cannot be replayed by a different provider instance.
+    if (
+      command.type === "message.dispatch" &&
+      options?.providerContinuationOfThreadId !== undefined
+    ) {
+      const projection = yield* projectionStore
+        .getThreadRecords(command.threadId, ["providerThreads"])
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const owner = projection.providerThreads.find(
+        (thread) => thread.id === options.providerContinuationOfThreadId,
+      );
+      if (
+        projection.thread.archivedAt !== null ||
+        projection.thread.deletedAt !== null ||
+        (owner !== undefined &&
+          owner.providerInstanceId !== projection.thread.modelSelection.instanceId)
+      ) {
+        return yield* new OrchestratorProviderContinuationStaleError({
+          commandId: command.commandId,
+          commandType: command.type,
+          threadId: command.threadId,
+          providerThreadId: options.providerContinuationOfThreadId,
+        });
+      }
     }
 
     const plan = yield* dispatchOnce(command).pipe(
@@ -11426,11 +11496,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     } satisfies OrchestratorV2DispatchResult;
   });
 
-  const dispatchWithReceipt = (command: OrchestrationV2ServerCommand) =>
+  const dispatchWithReceipt: OrchestratorV2Shape["dispatch"] = (command, options) =>
     Effect.gen(function* () {
       const dispatch = threadDispatch.withLock(
         commandThreadId(command),
-        dispatchWithReceiptEffect(command),
+        dispatchWithReceiptEffect(command, options),
       );
       if (
         command.type !== "message.dispatch" ||

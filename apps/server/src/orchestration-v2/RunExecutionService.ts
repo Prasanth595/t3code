@@ -1220,11 +1220,11 @@ export const layer: Layer.Layer<
             ),
             Stream.tap((event) =>
               Effect.gen(function* () {
+                const sessionOwned = event.sessionThreadId !== undefined;
                 let storedEventCount = 0;
-                const deliveredEvent = filterAssistantEvent(
-                  event,
-                  DateTime.toEpochMillis(yield* DateTime.now),
-                );
+                const deliveredEvent = sessionOwned
+                  ? null
+                  : filterAssistantEvent(event, DateTime.toEpochMillis(yield* DateTime.now));
                 if (deliveredEvent) {
                   const rootTerminalAlreadySeen = yield* Ref.get(rootTerminalSeen);
                   const isRootProviderThreadUpdate =
@@ -1270,6 +1270,7 @@ export const layer: Layer.Layer<
                     yield* Ref.set(providerThreadOwnerLost, true);
                   }
                 } else if (
+                  !sessionOwned &&
                   event.type === "turn_item.updated" &&
                   (event.turnItem.type === "assistant_message" ||
                     event.turnItem.type === "reasoning") &&
@@ -1302,7 +1303,7 @@ export const layer: Layer.Layer<
                   yield* Ref.set(rootTerminalSeen, true);
                   yield* finalizeRootRun(event);
                 }
-                yield* trackChildLifecycle(event, deliveredEvent !== null);
+                yield* trackChildLifecycle(event, sessionOwned || deliveredEvent !== null);
               }),
             ),
             Stream.takeUntilEffect(() => shouldStopProviderEventIngestion),

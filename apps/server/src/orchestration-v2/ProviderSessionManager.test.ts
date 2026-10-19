@@ -16,6 +16,7 @@ import {
   ProviderInstanceId,
   type ProviderSessionId,
   ThreadId,
+  TurnItemId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
@@ -470,6 +471,7 @@ function layerTest(input: {
     readonly providerSessionId: ProviderSessionId;
     readonly initialProviderItemIdentityVersion?: 2;
   }) => Effect.Effect<void>;
+  readonly eventSinkLayer?: typeof layerTestEventSink;
   readonly failReleaseEventWrites?: boolean;
   readonly flakyReleaseWrites?: FlakyReleaseWrites;
   readonly pauseAttachWrite?: Parameters<typeof layerPausingAttachEventSink>[0];
@@ -490,7 +492,8 @@ function layerTest(input: {
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
 }) {
   const layerConfiguredEventSink =
-    input.flakyReleaseWrites !== undefined
+    input.eventSinkLayer ??
+    (input.flakyReleaseWrites !== undefined
       ? layerFlakyReleaseEventSink(input.flakyReleaseWrites)
       : input.pauseAttachWrite !== undefined
         ? layerPausingAttachEventSink(input.pauseAttachWrite)
@@ -498,7 +501,7 @@ function layerTest(input: {
           ? layerBeforeUnchangedWriteEventSink(input.beforeUnchangedWrite)
           : input.failReleaseEventWrites
             ? layerFailingReleaseEventSink
-            : layerTestEventSink;
+            : layerTestEventSink);
   const layerRegistry = Layer.unwrap(
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
@@ -542,7 +545,11 @@ function layerTest(input: {
       ),
     ),
   );
+  const layerCommandOutput = CommandOutputHub.layer.pipe(
+    Layer.provide(Layer.merge(layerConfiguredEventSink, layerTestStores)),
+  );
   return Layer.mergeAll(
+    layerCommandOutput,
     layerTestStores,
     layerConfiguredEventSink,
     IdAllocator.layer,
@@ -555,9 +562,7 @@ function layerTest(input: {
       Layer.provide(
         Layer.mergeAll(
           layerRegistry.pipe(Layer.provideMerge(McpProviderSessions.layer)),
-          CommandOutputHub.layer.pipe(
-            Layer.provide(Layer.merge(layerConfiguredEventSink, layerTestStores)),
-          ),
+          layerCommandOutput,
           layerConfiguredEventSink,
           IdAllocator.layer,
           layerProviderEventIngestorTest,
@@ -4906,5 +4911,285 @@ it.effect(
         projectExists: false,
       });
       assert.isFalse(denied?.capabilities?.has("device"));
+    }),
+);
+
+it.effect(
+  "persists session-owned command settlement and keeps processing after an artifact write fails",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const failNextArtifact = yield* Ref.make(false);
+      const eventSinkLayer = Layer.effect(
+        EventSink.EventSinkV2,
+        Effect.gen(function* () {
+          const delegate = yield* EventSink.EventSinkV2;
+          return EventSink.EventSinkV2.of({
+            ...delegate,
+            write: (input) =>
+              Effect.gen(function* () {
+                if (
+                  input.events.some((event) => event.type === "turn-item.updated") &&
+                  (yield* Ref.getAndSet(failNextArtifact, false))
+                ) {
+                  return yield* new EventSink.EventSinkWriteError({
+                    eventCount: input.events.length,
+                  });
+                }
+                return yield* delegate.write(input);
+              }),
+          });
+        }),
+      ).pipe(Layer.provide(layerTestEventSink));
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const sink = yield* EventSink.EventSinkV2;
+          const store = yield* EventStore.EventStoreV2;
+          const output = yield* CommandOutputHub.CommandOutputHub;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const now = yield* DateTime.now;
+          const threadId = ThreadId.make("thread:session-owned-command");
+          yield* sink.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+          });
+          const providerSessionId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          const runtime = yield* manager.open({
+            threadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy,
+          });
+          const subscription = yield* runtime.subscribeEvents!;
+          const forwarded = yield* subscription.events.pipe(
+            Stream.take(2),
+            Stream.runCollect,
+            Effect.forkScoped,
+          );
+          const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+          const itemId = TurnItemId.make("command:session-owned");
+          yield* Queue.offer(queue, {
+            type: "command_output.delta",
+            driver: CODEX_DRIVER,
+            threadId,
+            itemId,
+            chunk: "Child output before settlement.",
+          });
+          const settlement = {
+            type: "turn_item.updated",
+            driver: CODEX_DRIVER,
+            sessionThreadId: threadId,
+            turnItem: {
+              id: itemId,
+              threadId,
+              runId: null,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal: 1,
+              status: "failed",
+              title: null,
+              startedAt: now,
+              completedAt: now,
+              updatedAt: now,
+              type: "command_execution",
+              input: "run child work",
+            },
+          } satisfies ProviderAdapter.ProviderAdapterV2Event;
+          yield* Queue.offer(queue, settlement);
+          yield* Queue.offer(queue, {
+            type: "provider_session.updated",
+            driver: CODEX_DRIVER,
+            providerSession: runtime.providerSession,
+          });
+          const events = Array.from(yield* Fiber.join(forwarded));
+          assert.equal(events[0]?.sessionThreadId, threadId);
+          const persisted = yield* store
+            .read({ threadId, eventType: "turn-item.updated" })
+            .pipe(Stream.runCollect);
+          assert.lengthOf(persisted, 1);
+          for (let index = 0; index < 65; index++)
+            yield* output.append({
+              threadId,
+              itemId: TurnItemId.make(`other-command:${index}`),
+              chunk: "Other output",
+            });
+          const final = yield* output.subscribe({ threadId, itemId }).pipe(Stream.runHead);
+          assert.isTrue(Option.isSome(final));
+          if (Option.isSome(final)) {
+            assert.equal(final.value.text, "Child output before settlement.");
+            assert.isFalse(final.value.running);
+          }
+
+          const laterItemId = TurnItemId.make("command:later-session-owned");
+          const recoverySubscription = yield* runtime.subscribeEvents!;
+          const continued = yield* recoverySubscription.events.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "provider_session.updated" ||
+                (event.type === "turn_item.updated" && event.turnItem.id === laterItemId),
+            ),
+            Stream.take(2),
+            Stream.runCollect,
+            Effect.exit,
+            Effect.forkScoped,
+          );
+          yield* Ref.set(failNextArtifact, true);
+          yield* Queue.offerAll(queue, [
+            {
+              ...settlement,
+              turnItem: {
+                ...settlement.turnItem,
+                id: TurnItemId.make("command:failed-session-owned"),
+              },
+            },
+            {
+              type: "provider_session.updated",
+              driver: CODEX_DRIVER,
+              providerSession: runtime.providerSession,
+            },
+            { ...settlement, turnItem: { ...settlement.turnItem, id: laterItemId } },
+          ]);
+          const continuedExit = yield* Fiber.join(continued);
+          assert.isFalse(yield* Ref.get(failNextArtifact));
+          assert.isTrue(
+            Exit.isSuccess(continuedExit),
+            Exit.isFailure(continuedExit) ? Cause.pretty(continuedExit.cause) : undefined,
+          );
+          if (Exit.isSuccess(continuedExit)) {
+            assert.deepEqual(
+              continuedExit.value.map((event) => event.type),
+              ["provider_session.updated", "turn_item.updated"],
+            );
+          }
+          assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+          assert.equal((yield* Ref.get(state)).closeCount, 0);
+          const artifacts = yield* store
+            .read({ threadId, eventType: "turn-item.updated" })
+            .pipe(Stream.runCollect);
+          assert.deepEqual(
+            artifacts.map((stored) =>
+              stored.event.type === "turn-item.updated" ? stored.event.payload.id : null,
+            ),
+            [itemId, laterItemId],
+          );
+        }),
+      ).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, eventSinkLayer })));
+    }),
+);
+
+it.effect.each(["runless request", "session-tagged request", "session artifact defect"] as const)(
+  "ProviderSessionManagerV2 releases the session on fatal persistence failures (%s)",
+  (scenario) =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const eventSinkLayer = Layer.effect(
+        EventSink.EventSinkV2,
+        Effect.gen(function* () {
+          const delegate = yield* EventSink.EventSinkV2;
+          return EventSink.EventSinkV2.of({
+            ...delegate,
+            write: (input) =>
+              input.events.some(
+                (event) =>
+                  event.type === "runtime-request.updated" || event.type === "node.updated",
+              )
+                ? scenario === "session artifact defect"
+                  ? Effect.die(new Error("Unexpected artifact persistence defect"))
+                  : Effect.fail(
+                      new EventSink.EventSinkWriteError({ eventCount: input.events.length }),
+                    )
+                : delegate.write(input),
+          });
+        }),
+      ).pipe(Layer.provide(layerTestEventSink));
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread:request-persistence-failure");
+        yield* sink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const pendingRequest = yield* makePendingRuntimeRequestEvents({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+          now,
+        });
+        const subscription = yield* runtime.subscribeEvents!;
+        const forwarded = yield* subscription.events.pipe(
+          Stream.runHead,
+          Effect.exit,
+          Effect.forkScoped,
+        );
+        const released = yield* sink
+          .stream({
+            threadId,
+            afterSequence: yield* sink.latestSequence({ threadId }),
+          })
+          .pipe(
+            Stream.filter(
+              (stored) =>
+                stored.event.type === "provider-session.updated" &&
+                stored.event.payload.status === "error",
+            ),
+            Stream.runHead,
+            Effect.forkScoped,
+          );
+        const queue = (yield* Ref.get(state)).eventQueues.get(String(providerSessionId))!;
+        const requestNodeEvent = pendingRequest.providerEvents.find(
+          (event) => event.type === "node.updated",
+        )!;
+        yield* Queue.offerAll(queue, [
+          scenario === "runless request"
+            ? pendingRequest.providerEvents[0]!
+            : {
+                ...requestNodeEvent,
+                sessionThreadId: threadId,
+                node: {
+                  ...requestNodeEvent.node,
+                  ...(scenario === "session artifact defect"
+                    ? { kind: "subagent" as const, runtimeRequestId: null }
+                    : {}),
+                },
+              },
+          {
+            type: "provider_session.updated",
+            driver: CODEX_DRIVER,
+            providerSession: runtime.providerSession,
+          },
+        ]);
+        const forwardedExit = yield* Fiber.join(forwarded);
+        assert.isTrue(Exit.isFailure(forwardedExit));
+        if (Exit.isFailure(forwardedExit)) {
+          assert.include(
+            Cause.pretty(forwardedExit.cause),
+            scenario === "session artifact defect"
+              ? "Unexpected artifact persistence defect"
+              : "ProviderEventPublishError",
+          );
+        }
+        yield* Fiber.join(released);
+        assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000, eventSinkLayer })));
     }),
 );
