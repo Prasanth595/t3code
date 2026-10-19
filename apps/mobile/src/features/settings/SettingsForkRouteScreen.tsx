@@ -16,6 +16,7 @@ import {
   SettingsEnvironmentFilterHeader,
 } from "./components/SettingsEnvironmentFilterHeader";
 import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
+import { AppTokenSettingsSection } from "./forkAppTokenSettings";
 import { SidebarGroupSettingsSection } from "./forkSidebarGroupEditor";
 import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
@@ -137,6 +138,7 @@ export function SettingsForkRouteScreen() {
                 />
               </SettingsSection>
               <SidebarGroupSettingsSection />
+              <AppTokenSettingsSection />
               <SettingsSection title="New thread opens">
                 {NEW_THREAD_CHOICES.map((choice, index) => (
                   <SettingsChoiceRow
