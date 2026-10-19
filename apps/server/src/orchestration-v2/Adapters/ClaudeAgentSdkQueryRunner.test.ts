@@ -1,12 +1,15 @@
+// @effect-diagnostics nodeBuiltinImport:off -- the fake CLI and its leftover child are real processes.
 import * as ClaudeSdk from "@anthropic-ai/claude-agent-sdk";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, it } from "@effect/vitest";
+import { assert, describe, it } from "@effect/vitest";
 import { ProviderSessionId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Path from "effect/Path";
 import { vi } from "vite-plus/test";
 
 import { ProviderEventLoggers } from "@t3tools/provider-core/server/ProviderEventLoggers";
@@ -82,78 +85,72 @@ it.effect("logs successful task stops for replay and omits failed stops", () =>
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-// The SDK only looks up session ids shaped like the UUIDs the CLI allocates.
-const PERSISTED = "11111111-1111-4111-8111-111111111111";
-const DEAD = "22222222-2222-4222-8222-222222222222";
-const MISSING = "33333333-3333-4333-8333-333333333333";
-
-it.effect("reads an instance's own Claude home through a session store", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-claude-home-" });
-    const transcript = (sessionId: string, lines: ReadonlyArray<object>) =>
-      Effect.gen(function* () {
-        const project = path.join(home, "projects", `-project-${sessionId}`);
-        yield* fileSystem.makeDirectory(project, { recursive: true });
-        yield* fileSystem.writeFileString(
-          path.join(project, `${sessionId}.jsonl`),
-          lines.map((line) => JSON.stringify(line)).join("\n"),
-        );
-      });
-    // A CLI stopped after `system/init` leaves only its title row; one stopped
-    // after the first stream event has persisted the prompt.
-    yield* transcript(DEAD, [{ type: "ai-title", aiTitle: "Title", sessionId: DEAD }]);
-    yield* transcript(PERSISTED, [
-      { type: "ai-title", aiTitle: "Title", sessionId: PERSISTED },
-      {
-        parentUuid: null,
-        isSidechain: false,
-        type: "user",
-        message: { role: "user", content: "hello" },
-        uuid: "c773e36a-1f9d-4427-92c8-f69d4da17b40",
-        timestamp: "2026-10-11T05:22:37.940Z",
-        sessionId: PERSISTED,
-      },
-    ]);
-    // The server's own home is never read here; the SDK's default lookup
-    // answers for it.
-    const getSessionMessages = vi.spyOn(ClaudeSdk, "getSessionMessages");
-    getSessionMessages.mockImplementation(async (sessionId, options) =>
-      options?.sessionStore === undefined
-        ? []
-        : (
-            await vi.importActual<typeof ClaudeSdk>("@anthropic-ai/claude-agent-sdk")
-          ).getSessionMessages(sessionId, options),
-    );
-    yield* Effect.addFinalizer(() => Effect.sync(() => getSessionMessages.mockRestore()));
-    const lookup = (configDir: string, sessionId: string) =>
-      Effect.gen(function* () {
-        const runner = yield* ClaudeAgentSdkQueryRunner;
-        return yield* runner.sessionHasMessages({
-          sessionId,
-          configDir,
-          threadId: ThreadId.make("thread-lookup"),
-          providerSessionId: ProviderSessionId.make("session-lookup"),
-        });
-      });
-    yield* Effect.gen(function* () {
-      assert.isTrue(yield* lookup(home, PERSISTED));
-      assert.isFalse(yield* lookup(home, DEAD));
-      assert.isFalse(yield* lookup(home, MISSING));
-      assert.isFalse(yield* lookup("/server-home", PERSISTED));
-      assert.deepEqual(getSessionMessages.mock.lastCall, [PERSISTED, { limit: 1 }]);
-    }).pipe(
-      Effect.provide(
-        layerQueryRunner.pipe(
-          Layer.provide(
-            Layer.succeed(ProviderEventLoggers, { native: undefined, canonical: undefined }),
-          ),
-          Layer.provide(
-            Layer.succeed(HostProcess.Environment, { CLAUDE_CONFIG_DIR: "/server-home" }),
-          ),
-        ),
-      ),
-    );
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+const realQueryRunner = layerQueryRunner.pipe(
+  Layer.provide(
+    Layer.succeed(ProviderEventLoggers, {
+      native: undefined,
+      canonical: undefined,
+    }),
+  ),
+  Layer.provide(NodeServices.layer),
 );
+
+function fakeClaudeCli(script: string): string {
+  const dir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-claude-cli-"));
+  const cli = NodePath.join(dir, "claude");
+  NodeFS.writeFileSync(cli, `#!/bin/sh\n${script}\n`, { mode: 0o755 });
+  return cli;
+}
+
+const openFakeCli = (cli: string) =>
+  Effect.gen(function* () {
+    const runner = yield* ClaudeAgentSdkQueryRunner;
+    return yield* runner.open({
+      threadId: ThreadId.make("thread-fake-cli"),
+      providerSessionId: ProviderSessionId.make("session-fake-cli"),
+      options: {
+        sessionId: "native-session-fake-cli",
+        model: "claude-sonnet-4-6",
+        tools: [],
+        permissionMode: "default",
+        pathToClaudeCodeExecutable: cli,
+      },
+    });
+  });
+
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI process", () => {
+  // The CLI stops the MCP servers it started, but not their children: a
+  // plugin's `bun server.ts` outlives its `bun run` wrapper (#3089). The child
+  // holds a FIFO open, so its death reads as end-of-file here, with no polling.
+  it.effect("stops what the CLI left running when the session closes", () =>
+    Effect.gen(function* () {
+      const cli = fakeClaudeCli(
+        [
+          'dir=$(dirname "$0")',
+          'sleep 600 > "$dir/alive" &',
+          'echo $! > "$dir/leftover.pid"',
+          "cat > /dev/null",
+        ].join("\n"),
+      );
+      const dir = NodePath.dirname(cli);
+      NodeChildProcess.execFileSync("mkfifo", [NodePath.join(dir, "alive")]);
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          try {
+            process.kill(Number(NodeFS.readFileSync(NodePath.join(dir, "leftover.pid"), "utf8")));
+          } catch {}
+          NodeFS.rmSync(dir, { recursive: true, force: true });
+        }),
+      );
+      const alive = NodeFS.createReadStream(NodePath.join(dir, "alive"));
+      const leftoverStarted = new Promise<void>((resolve) => alive.once("open", () => resolve()));
+      const leftoverStopped = new Promise<void>((resolve) => alive.once("close", () => resolve()));
+      alive.resume();
+
+      const session = yield* openFakeCli(cli);
+      yield* Effect.promise(() => leftoverStarted);
+      yield* session.close;
+      yield* Effect.promise(() => leftoverStopped);
+    }).pipe(Effect.provide(realQueryRunner)),
+  );
+});
