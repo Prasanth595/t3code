@@ -3428,7 +3428,7 @@ export interface ClaudeAdapterV2Options {
   readonly queryRunner: ClaudeAgentSdkQueryRunnerShape;
   readonly scopedLimitNames?: Ref.Ref<ClaudeScopedLimitNames>;
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
-  // Runs after SessionStart hooks; the CLI repeats `init` every turn, so callers get it once per process.
+  // Reports the requested cwd once per process, after synchronous SessionStart hooks.
   readonly onSessionInit?: (cwd: string) => Effect.Effect<void>;
   readonly continuationRequests?: {
     readonly offer: (
@@ -8596,8 +8596,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ),
           };
           yield* Ref.set(queryContext, context);
-          // SessionStart hooks have run by this process's first `init` and may
-          // have added project skills. Later turns repeat `init`.
+          // The CLI repeats init each turn; startup hooks run once per process.
           let sessionInitReported = false;
           const cwd = turnInput.runtimePolicy.cwd;
           yield* querySession.messages.pipe(

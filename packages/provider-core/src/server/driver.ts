@@ -52,9 +52,8 @@ export interface ProviderInstance {
     cwd: string,
   ) => Effect.Effect<ProviderWorkspaceSnapshot, ProviderDriverError>;
   /**
-   * Cwds whose skills may have changed since the registry scanned them, such
-   * as a session whose startup hooks just ran. The registry rescans each one
-   * a client asked about. Ends with the instance.
+   * Reports changed workspace skills; the registry rescans only requested cwds.
+   * The stream must end when the instance is torn down.
    */
   readonly workspaceRescans?: Stream.Stream<string>;
   readonly refreshModels?: () => Effect.Effect<void, ProviderDriverError>;

@@ -170,9 +170,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
       });
 
       const scopedLimitNames = yield* makeClaudeScopedLimitNames;
-      // Sessions report their cwd here once SessionStart hooks have run. The
-      // queue keeps a report made before the registry listens, and ending it
-      // with the instance ends the registry's listener.
+      // Retain reports until the registry subscribes; end its listener on teardown.
       const workspaceRescans = yield* Queue.unbounded<string, Cause.Done>();
       yield* Effect.addFinalizer(() => Queue.end(workspaceRescans));
       const orchestrationAdapter = yield* createClaudeAdapterV2(
