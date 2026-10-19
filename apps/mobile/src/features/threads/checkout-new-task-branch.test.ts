@@ -46,6 +46,12 @@ const readRefs: CheckoutInput["readRefs"] = (request) =>
   settlePromise(async () => {
     expect(request.environmentId).toBe(environmentId);
     const input = decodeListRefsInput(request.input);
+    const { stdout: rootPath } = await exec("git", [
+      "-C",
+      input.cwd,
+      "rev-parse",
+      "--show-toplevel",
+    ]);
     const { stdout: head } = await exec("git", [
       "-C",
       input.cwd,
@@ -78,6 +84,7 @@ const readRefs: CheckoutInput["readRefs"] = (request) =>
       .filter((ref) => ref.name.includes(input.query ?? ""));
     const cursor = input.cursor ?? 0;
     return {
+      rootPath: rootPath.trim(),
       refs: refs.slice(cursor, cursor + REF_PAGE_SIZE),
       isRepo: true,
       hasPrimaryRemote: false,
@@ -293,6 +300,61 @@ describe("new-task branch checkout", () => {
       "feature\n",
     );
   });
+
+  it.each([
+    { source: "historical", nested: true },
+    { source: "picker", nested: true },
+    { source: "historical", nested: false },
+    { source: "picker", nested: false },
+  ])(
+    "rejects $source worktree reuse when project root is unsafe (nested: $nested)",
+    async ({ source, nested }) => {
+      const projectRoot = cwd;
+      const worktreePath = NodePath.join(directory, "worktree");
+      await git("worktree", "add", worktreePath, branch.name);
+      if (nested) {
+        cwd = NodePath.join(projectRoot, "packages", "app");
+        await NodeFSP.mkdir(cwd, { recursive: true });
+      }
+      let checkoutAttempted = false;
+
+      const result = await checkoutNewTaskBranch({
+        branch: { ...branch, worktreePath: source === "picker" ? worktreePath : null },
+        project: { environmentId, workspaceRoot: cwd },
+        workspaceMode: "local",
+        readRefs: async (request) => {
+          const result = await readRefs(request);
+          if (!nested && result._tag === "Success") {
+            // Older servers cannot prove whether this project is at the repository root.
+            const { rootPath: _rootPath, ...value } = result.value as typeof result.value & {
+              rootPath?: string;
+            };
+            return { ...result, value };
+          }
+          return result;
+        },
+        switchRef: (request) => {
+          checkoutAttempted = true;
+          return refuseSwitch(request);
+        },
+      });
+
+      expect(checkoutAttempted).toBe(false);
+      expect((await git("branch", "--show-current")).stdout.trim()).toBe("main");
+      expect(await NodeFSP.readFile(NodePath.join(projectRoot, "file.txt"), "utf8")).toBe("main\n");
+      expect(
+        (await exec("git", ["-C", worktreePath, "branch", "--show-current"])).stdout.trim(),
+      ).toBe(branch.name);
+      expect(await NodeFSP.readFile(NodePath.join(worktreePath, "file.txt"), "utf8")).toBe(
+        "feature\n",
+      );
+      expect(result._tag).toBe("Failure");
+      if (result._tag !== "Failure") throw new Error("Expected unsafe worktree reuse to fail");
+      if (nested) {
+        expect(String(squashAtomCommandFailure(result))).toMatch(/subdirectory/i);
+      }
+    },
+  );
 
   it("keeps a nested project's cwd when historical metadata names the already-current branch", async () => {
     await git("checkout", branch.name);

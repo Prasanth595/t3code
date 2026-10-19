@@ -26,6 +26,7 @@ import {
   GitCommandError,
   ReviewDiffPreviewInput,
   VcsRef,
+  VcsListRefsResult,
   type ReviewDiffFileContentsInput,
   type ReviewDiffPreviewResult,
   type WorktreeSubmodules,
@@ -43,6 +44,7 @@ import { gitConfigEnv } from "./VcsProcess.ts";
 
 const encodeGitCommandError = Schema.encodeEffect(Schema.fromJsonString(GitCommandError));
 const decodeVcsRef = Schema.decodeUnknownSync(VcsRef);
+const decodeVcsListRefsResult = Schema.decodeUnknownSync(VcsListRefsResult);
 
 const layerServerConfig = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-git-vcs-driver-test-",
@@ -3210,7 +3212,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
   });
 
   describe("refName operations", () => {
-    it.effect("lists upstream metadata and optionally includes matching remote refs", () =>
+    it.effect("lists root and upstream metadata and optionally includes matching remote refs", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const remote = yield* makeTmpDir("git-vcs-driver-remote-");
@@ -3230,7 +3232,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           false,
         );
 
-        const complete = yield* driver.listRefs({ cwd, includeMatchingRemoteRefs: true });
+        const worktreePath = yield* makeTmpDir("git-vcs-driver-worktree-");
+        yield* git(cwd, ["worktree", "add", worktreePath, "feature/a"]);
+        yield* writeTextFile(worktreePath, "packages/app/file.txt", "nested project\n");
+        const pathService = yield* Path.Path;
+        const nestedCwd = pathService.join(worktreePath, "packages", "app");
+        const complete = yield* driver.listRefs({
+          cwd: nestedCwd,
+          includeMatchingRemoteRefs: true,
+        });
         const untracked = complete.refs.find((ref) => ref.name === "local-only");
         assert.ok(untracked);
         assert.equal("upstreamRef" in untracked, false);
@@ -3260,6 +3270,11 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           ...tracked,
           upstreamRef: "refs/remotes/team/upstream/feature/a",
         });
+        const expected = {
+          ...complete,
+          rootPath: yield* git(nestedCwd, ["rev-parse", "--show-toplevel"]),
+        };
+        assert.deepEqual(decodeVcsListRefsResult(complete), expected);
       }),
     );
 
