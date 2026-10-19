@@ -75,7 +75,10 @@ export const discoverMuseSkills = Effect.fn("discoverMuseSkills")(function* (
     const rawName = row.name.trim();
     const name = scope === "plugin" ? rawName.replace(/^plugin:/, "") : rawName;
     let skillPath = row.path.trim();
-    if (!name || !skillPath || skills.has(name)) continue;
+    const existing = skills.get(name);
+    // Muse lists bundled skills alongside their active overrides.
+    if (!name || !skillPath || (existing && (existing.scope !== "bundled" || scope === "bundled")))
+      continue;
     if (skillPath.startsWith("$HOME/")) skillPath = path.join(home, skillPath.slice(6));
     else if (
       cwd &&

@@ -170,6 +170,15 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
               name: "git",
               path: "bundled://muse-core/skills/git/SKILL.md",
               scope: "bundled",
+              description: "Bundled Git workflow",
+              activation: "off",
+            },
+            {
+              name: "git",
+              path: "$HOME/.agents/skills/git/SKILL.md",
+              scope: "user",
+              description: "My Git workflow",
+              activation: "on",
             },
             {
               name: "off",
@@ -200,8 +209,9 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
           },
           {
             name: "git",
-            path: "bundled://muse-core/skills/git/SKILL.md",
-            scope: "bundled",
+            path: "/home/muse-test/.agents/skills/git/SKILL.md",
+            scope: "user",
+            description: "My Git workflow",
             enabled: true,
           },
           {
@@ -276,6 +286,8 @@ it.layer(NodeServices.layer)("Muse status", (it) => {
       expect(driver.snapshotForCwd).toBeDefined();
       for (const cwd of [first, second]) {
         const snapshot = yield* driver.snapshotForCwd!(cwd);
+        expect(snapshot.slashCommands).toEqual([COMPACT_SLASH_COMMAND]);
+        expect(snapshot.slashCommandsPending).toBe(false);
         expect(snapshot.skills).toEqual([
           {
             name: "local",

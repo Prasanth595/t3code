@@ -188,7 +188,13 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
                     }),
                 ),
               ),
-            ]).pipe(Effect.map(([machineSnapshot, skills]) => ({ ...machineSnapshot, skills })));
+            ]).pipe(
+              Effect.map(([machineSnapshot, skills]) => ({
+                ...machineSnapshot,
+                skills,
+                slashCommandsPending: false,
+              })),
+            );
 
       return {
         instanceId,
