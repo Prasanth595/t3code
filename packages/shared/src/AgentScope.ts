@@ -15,11 +15,8 @@ export interface AgentScopeShape {
      */
     readonly survivesRestart?: boolean | undefined;
     /**
-     * Several threads use this process, as with the Codex app-server. On
-     * systemd 253 or newer its scope runs with OOMPolicy=continue: it keeps
-     * running when the kernel kills one of its processes for memory, and
-     * `oomKilled` answers false for it at once. Older systemd treats it like
-     * any other scope.
+     * Keep a shared process running after a tool OOM when supported.
+     * Falls back to ordinary scope behavior on older systemd.
      */
     readonly shared?: boolean | undefined;
   }) => Effect.Effect<AgentScopeCommand>;
