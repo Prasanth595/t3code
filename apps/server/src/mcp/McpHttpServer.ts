@@ -927,10 +927,13 @@ const withToolAnalytics = <A, E, R>(registration: Effect.Effect<A, E, R>) =>
                   const result = exit._tag === "Success" ? exit.value : undefined;
                   // A call that asks for input is retried with it, and that call is the one counted.
                   if (result instanceof McpSchema.InputRequired) return Effect.void;
+                  // Handoff tools look up threads to record; the response must not wait on them.
                   return Clock.currentTimeMillis.pipe(
                     Effect.flatMap((endedAt) =>
                       record(options.tool.name, payload, result, endedAt - startedAt),
                     ),
+                    Effect.forkDetach,
+                    Effect.asVoid,
                   );
                 }),
               );

@@ -18,6 +18,7 @@ import {
   type OrchestrationV2ProjectedTurnItem,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
@@ -364,7 +365,12 @@ it.effect("keeps unexpected handler defects private through the production regis
 );
 
 it.effect("records the calling agent and the agent a tool acted on", () => {
-  const recorded: Array<{ event: string; properties: unknown }> = [];
+  // Recording runs detached from the tool response, so each expected event is awaited.
+  const recorded = [
+    Deferred.makeUnsafe<{ event: string; properties: object }>(),
+    Deferred.makeUnsafe<{ event: string; properties: object }>(),
+  ];
+  let recordedCount = 0;
   const shell = (id: ThreadId, instanceId: string, model: string) =>
     ({
       id,
@@ -392,8 +398,7 @@ it.effect("records the calling agent and the agent a tool acted on", () => {
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
         Effect.provideService(McpSchema.McpServerClient, client),
       );
-    expect(recorded).toHaveLength(1);
-    const [{ event, properties }] = recorded as [{ event: string; properties: object }];
+    const { event, properties } = yield* Deferred.await(recorded[0]!);
     expect(event).toBe("mcp.tool.invoked");
     expect(properties).toMatchObject({
       tool: "t3_thread_fork",
@@ -423,7 +428,8 @@ it.effect("records the calling agent and the agent a tool acted on", () => {
         Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
         Effect.provideService(McpSchema.McpServerClient, client),
       );
-    expect(recorded[1]?.properties).toMatchObject({
+    // The fork recorded a single event, so the next one is the queue edit.
+    expect((yield* Deferred.await(recorded[1]!)).properties).toMatchObject({
       tool: "t3_queue_edit",
       outcome: "ok",
       callerProvider: "codex",
@@ -470,7 +476,10 @@ it.effect("records the calling agent and the agent a tool acted on", () => {
             AnalyticsService.AnalyticsService,
             AnalyticsService.AnalyticsService.of({
               record: (event, properties) =>
-                Effect.sync(() => void recorded.push({ event, properties })),
+                Deferred.succeed(recorded[recordedCount++]!, {
+                  event,
+                  properties: properties ?? {},
+                }).pipe(Effect.asVoid),
               flush: Effect.void,
             }),
           ),
