@@ -158,6 +158,7 @@ async function setup(h264 = false) {
     primes++;
     return Promise.resolve(new Response("prime"));
   });
+  const packets: Uint8Array[] = [];
   const sockets: Array<{ onmessage?: (event: { data: ArrayBuffer }) => void }> = [];
   vi.stubGlobal(
     "WebSocket",
@@ -168,7 +169,9 @@ async function setup(h264 = false) {
         sockets.push(this);
       }
       onmessage?: (event: { data: ArrayBuffer }) => void;
-      send() {}
+      send(packet: Uint8Array) {
+        packets.push(packet);
+      }
       close() {}
     },
   );
@@ -186,6 +189,18 @@ async function setup(h264 = false) {
   return {
     images,
     view,
+    touches() {
+      return packets
+        .filter((packet) => packet[0] === 0x03)
+        .map(
+          (packet) =>
+            JSON.parse(new TextDecoder().decode(packet.subarray(1))) as {
+              type: string;
+              x: number;
+              y: number;
+            },
+        );
+    },
     configure() {
       const json = new TextEncoder().encode(
         JSON.stringify({ width: 400, height: 800, orientation: "portrait" }),
@@ -271,3 +286,70 @@ it("keeps the 3D viewer mounted across iOS video recovery and releases it when h
   expect(viewerUnmounts).toBe(1);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+function flatPointer() {
+  const surface = container.querySelector("canvas")!.parentElement!;
+  // Synthetic IDs exercise concurrent touches independently of the browser's capture state.
+  const capture = vi.spyOn(surface, "setPointerCapture").mockImplementation(() => {});
+  const rect = new DOMRect(0, 0, 400, 800);
+  vi.spyOn(surface, "getBoundingClientRect").mockReturnValue(rect);
+  return {
+    capture,
+    send(type: string, pointerId: number, x = 0.25, y = 0.25) {
+      surface.dispatchEvent(
+        new PointerEvent(type, {
+          bubbles: true,
+          pointerId,
+          pointerType: "touch",
+          clientX: rect.left + rect.width * x,
+          clientY: rect.top + rect.height * y,
+        }),
+      );
+    },
+  };
+}
+
+it("keeps the first flat pointer active when a second finger moves and lifts", async () => {
+  const { configure, touches } = await setup();
+  await act(async () => configure());
+  const { send, capture } = flatPointer();
+  send("pointerdown", 1);
+  send("pointerdown", 2, 0.75, 0.75);
+  send("pointermove", 2, 0.875, 0.875);
+  send("pointerup", 2);
+  send("pointercancel", 2);
+  send("pointermove", 1, 0.5, 0.5);
+  send("pointerup", 1, 0.75, 0.75);
+  send("pointermove", 1);
+  expect(capture.mock.calls).toEqual([[1]]);
+  expect(touches()).toEqual([
+    { type: "begin", x: 0.25, y: 0.25 },
+    { type: "move", x: 0.5, y: 0.5 },
+    { type: "end", x: 0.75, y: 0.75 },
+  ]);
+});
+
+it.each(["pointerup", "pointercancel", "lostpointercapture"])(
+  "ends the owned flat pointer exactly once on %s, then accepts a new pointer",
+  async (ending) => {
+    const { configure, touches } = await setup();
+    await act(async () => configure());
+    const { send } = flatPointer();
+    send("pointerdown", 7);
+    send("pointermove", 7, 0.5, 0.5);
+    send("lostpointercapture", 8, 0, 0);
+    send(ending, 7, 0.5, 0.5);
+    send("lostpointercapture", 7, 0, 0);
+    send("pointerup", 7);
+    send("pointermove", 7);
+    send("pointerdown", 9);
+    send("pointerup", 9);
+    expect(touches()).toEqual([
+      { type: "begin", x: 0.25, y: 0.25 },
+      { type: "move", x: 0.5, y: 0.5 },
+      { type: "end", x: 0.5, y: 0.5 },
+      { type: "begin", x: 0.25, y: 0.25 },
+      { type: "end", x: 0.25, y: 0.25 },
+    ]);
+  },
+);

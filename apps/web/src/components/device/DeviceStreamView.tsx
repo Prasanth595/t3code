@@ -117,6 +117,7 @@ export function DeviceStreamView(props: {
   const access = useDeviceHubAccess(props.environmentId, props.hostId);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const clientRef = useRef<DeviceStreamClient | null>(null);
+  const activePointer = useRef<{ id: number; x: number; y: number } | null>(null);
   const [status, setStatus] = useState<DeviceStreamStatus>("connecting");
   const [hasFrame, setHasFrame] = useState(false);
   const [detail, setDetail] = useState<string | undefined>(undefined);
@@ -184,6 +185,7 @@ export function DeviceStreamView(props: {
     onHandle?.({ pressButton: client.pressButton, rotate: client.rotate, inputConnected: false });
     return () => {
       cancelPhoneInput();
+      activePointer.current = null;
       client.stop();
       clientRef.current = null;
       onHandle?.(null);
@@ -285,7 +287,6 @@ export function DeviceStreamView(props: {
     };
   }, [access, props.axOverlay, props.deviceId, props.platform, props.visible]);
 
-  const pointerActive = useRef(false);
   const normalizedPoint = (event: React.PointerEvent<HTMLElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const x = (event.clientX - rect.left) / rect.width;
@@ -398,28 +399,36 @@ export function DeviceStreamView(props: {
           className={cn("relative select-none", showPhone && "invisible pointer-events-none")}
           style={{ width: frame.width, height: frame.height }}
           onPointerDown={(event) => {
+            if (activePointer.current !== null) return;
             event.currentTarget.setPointerCapture(event.pointerId);
             (event.currentTarget.parentElement as HTMLElement | null)?.focus();
-            pointerActive.current = true;
             const { x, y } = normalizedPoint(event);
+            activePointer.current = { id: event.pointerId, x, y };
             clientRef.current?.sendTouch("begin", x, y);
           }}
           onPointerMove={(event) => {
-            if (!pointerActive.current) return;
+            if (activePointer.current?.id !== event.pointerId) return;
             const { x, y } = normalizedPoint(event);
+            activePointer.current = { id: event.pointerId, x, y };
             clientRef.current?.sendTouch("move", x, y);
           }}
           onPointerUp={(event) => {
-            if (!pointerActive.current) return;
-            pointerActive.current = false;
+            if (activePointer.current?.id !== event.pointerId) return;
+            activePointer.current = null;
             const { x, y } = normalizedPoint(event);
             clientRef.current?.sendTouch("end", x, y);
           }}
           onPointerCancel={(event) => {
-            if (!pointerActive.current) return;
-            pointerActive.current = false;
+            if (activePointer.current?.id !== event.pointerId) return;
+            activePointer.current = null;
             const { x, y } = normalizedPoint(event);
             clientRef.current?.sendTouch("end", x, y);
+          }}
+          onLostPointerCapture={(event) => {
+            const pointer = activePointer.current;
+            if (pointer?.id !== event.pointerId) return;
+            activePointer.current = null;
+            clientRef.current?.sendTouch("end", pointer.x, pointer.y);
           }}
         >
           <canvas
