@@ -527,12 +527,9 @@ const layerConfigSources = Layer.mergeAll(
   Layer.provideMerge(NodeServices.layer),
 );
 
-it.effect.each([
-  { source: "settings", interval: "discovery" },
-  { source: "keybindings", interval: "snapshot ACK" },
-] as const)(
-  "preserves $source changes during $interval at the config RPC boundary",
-  ({ source, interval }) =>
+it.effect(
+  "preserves settings during discovery and keybindings during snapshot ACK at the config RPC boundary",
+  () =>
     Effect.gen(function* () {
       const keybindings = yield* Keybindings.Keybindings;
       const settings = yield* ServerSettings.ServerSettingsService;
@@ -548,18 +545,14 @@ it.effect.each([
       const discoveryStarted = yield* Deferred.make<void>();
       const finishDiscovery = yield* Deferred.make<void>();
       const responses = yield* Queue.unbounded<ServerConfigStreamEvent>();
-      let discoveryCalls = 0;
       const configRpcServices = Layer.mergeAll(
         layerUnusedConfigRpcServices,
         Layer.mock(ExternalLauncher.ExternalLauncher)({
-          // The snapshot's scan parks; the late rescan finds nothing new.
           resolveAvailableEditors: () =>
-            ++discoveryCalls === 1
-              ? Deferred.succeed(discoveryStarted, undefined).pipe(
-                  Effect.andThen(Deferred.await(finishDiscovery)),
-                  Effect.as([]),
-                )
-              : Effect.succeed([]),
+            Deferred.succeed(discoveryStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(finishDiscovery)),
+              Effect.as([]),
+            ),
           resolveFileManagerRevealKind: () => Effect.succeed(undefined),
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
@@ -644,48 +637,47 @@ it.effect.each([
       });
       yield* Deferred.await(discoveryStarted);
 
-      const change = (round: 1 | 2) =>
-        source === "settings"
-          ? settings
-              .updateSettings(
-                round === 1 ? { defaultAutoPull: true } : { enableProviderUpdateChecks: false },
-              )
-              .pipe(
-                Effect.map((next) =>
-                  settingsUpdated(ServerSettings.redactServerSettingsForClient(next)),
-                ),
-              )
-          : keybindings
-              .upsertKeybindingRule(
-                round === 1
-                  ? { key: "mod+alt+y", command: "terminal.toggle" }
-                  : { key: "mod+alt+z", command: "terminal.split" },
-              )
-              .pipe(
-                Effect.map((next): ServerConfigStreamEvent => ({
-                  version: 1,
-                  type: "keybindingsUpdated",
-                  payload: { keybindings: next, issues: [] },
-                })),
-              );
-      const duringDiscovery = interval === "discovery" ? yield* change(1) : undefined;
+      const duringDiscovery = yield* settings.updateSettings({ defaultAutoPull: true });
       yield* Deferred.succeed(finishDiscovery, undefined);
       const snapshot = yield* Queue.take(responses);
       assert.equal(snapshot.type, "snapshot");
       if (snapshot.type !== "snapshot") return yield* Effect.die("Missing initial snapshot");
       assert.isFalse(snapshot.config.settings.defaultAutoPull);
       assert.deepEqual(snapshot.config.keybindings, initialKeybindings);
-      const missed = duringDiscovery ?? (yield* change(1));
+      const duringAck = yield* keybindings.upsertKeybindingRule({
+        key: "mod+alt+y",
+        command: "terminal.toggle",
+      });
       yield* acknowledge;
       yield* Deferred.await(keybindingsSubscribed);
       yield* Deferred.await(settingsSubscribed);
 
-      // A later change reaches either implementation, so a handler that dropped
-      // the first change fails here instead of waiting for a timeout.
-      const latest = yield* change(2);
-      assert.deepEqual(yield* Queue.take(responses), missed);
-      yield* acknowledge;
-      assert.deepEqual(yield* Queue.take(responses), latest);
+      // Later updates expose a dropped buffered event as a value mismatch, not a timeout.
+      const latestSettings = yield* settings.updateSettings({ enableProviderUpdateChecks: false });
+      const latestKeybindings = yield* keybindings.upsertKeybindingRule({
+        key: "mod+alt+z",
+        command: "terminal.split",
+      });
+      const expectedSettings = [duringDiscovery, latestSettings].map(
+        ServerSettings.redactServerSettingsForClient,
+      );
+      const expectedKeybindings = [duringAck, latestKeybindings];
+      // The two sources can interleave, but each must retain its own publication order.
+      for (let i = 0; i < 4; i++) {
+        const event = yield* Queue.take(responses);
+        if (event.type === "settingsUpdated") {
+          assert.deepEqual(event.payload.settings, expectedSettings.shift());
+        } else {
+          assert.equal(event.type, "keybindingsUpdated");
+          if (event.type !== "keybindingsUpdated")
+            return yield* Effect.die("Unexpected config event");
+          assert.deepEqual(event.payload.keybindings, expectedKeybindings.shift());
+          assert.deepEqual(event.payload.issues, []);
+        }
+        yield* acknowledge;
+      }
+      assert.isEmpty(expectedSettings);
+      assert.isEmpty(expectedKeybindings);
       yield* server.write(0, { _tag: "Interrupt", requestId, interruptors: [] });
     }).pipe(
       Effect.provide(
