@@ -73,6 +73,7 @@ const coreResponse = (pullRequest: Readonly<Record<string, unknown>> = {}) => ({
 type ApiCall =
   | {
       readonly kind: "graphql";
+      readonly authorization?: string | undefined;
       readonly partial?: boolean;
       /** The generated operation's name, which the routes below match on. */
       readonly operationName?: string;
@@ -122,6 +123,7 @@ const mockHttp = Layer.succeed(
           : { query: "", operationName: "", variables: {} };
       const call: ApiCall = {
         kind: "graphql",
+        authorization: request.headers.authorization,
         host,
         operation: "batch",
         operationName: sent.operationName,
@@ -620,6 +622,78 @@ afterEach(() => {
   mockedCredential.mockImplementation(defaultCredential);
 });
 
+it.effect("uses and caches each checkout login for GitHub reads and writes", () =>
+  Effect.gen(function* () {
+    const directories: Array<string | undefined> = [];
+    const requests: Array<{ method: string; authorization: string | undefined }> = [];
+    const host = TestSourceControlHost.layer({
+      process: {
+        run: (input) =>
+          Effect.sync(() => {
+            directories.push(input.cwd);
+            return TestSourceControlHost.processOutput(
+              (input.cwd === "/work" ? "work" : "personal") + "-token",
+            );
+          }),
+      },
+    });
+    const http = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.sync(() => {
+          requests.push({ method: request.method, authorization: request.headers.authorization });
+          const work = request.headers.authorization === "Bearer work-token";
+          return HttpClientResponse.fromWeb(
+            request,
+            new Response(encodeJson({ id: work ? 1 : 2, login: work ? "work" : "personal" }), {
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }),
+      ),
+    );
+    const cli = yield* GitHubPullRequestApi.make.pipe(
+      Effect.provide(
+        GitHubRest.layer.pipe(
+          Layer.provideMerge(GitHubCredentials.layer),
+          Layer.provideMerge(http),
+          Layer.provideMerge(GitHubQuota.layer),
+          Layer.provideMerge(SourceControlRateLimit.layer),
+          Layer.provideMerge(host),
+          Layer.provide(NodeCrypto.layer),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    );
+    const work = { host: "git.test.internal", cwd: "/work" };
+    const personal = { host: "git.test.internal", cwd: "/personal" };
+    expect(yield* cli.getViewerLogin(work)).toBe("work");
+    expect(yield* cli.getViewerLogin(personal)).toBe("personal");
+    yield* cli.setLabels({
+      ...work,
+      repository: "acme/web",
+      number: 7,
+      labels: ["bug"],
+      applied: true,
+    });
+    yield* cli.setLabels({
+      ...personal,
+      repository: "octo/site",
+      number: 8,
+      labels: ["bug"],
+      applied: false,
+    });
+
+    expect(requests).toEqual([
+      { method: "GET", authorization: "Bearer work-token" },
+      { method: "GET", authorization: "Bearer personal-token" },
+      { method: "POST", authorization: "Bearer work-token" },
+      { method: "DELETE", authorization: "Bearer personal-token" },
+    ]);
+    expect(directories).toEqual(["/work", "/personal"]);
+  }),
+);
+
 it.effect(
   "keeps a verified credential through an auth switch and separates token fingerprints",
   () =>
@@ -950,54 +1024,34 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("batches linked pull requests per account, not per host", () =>
+  it.effect("batches linked pull requests with their checkout credentials", () =>
     Effect.gen(function* () {
-      // Two checkouts whose gh logins differ, as a per-directory GH_CONFIG_DIR gives them.
       mockedCredential.mockImplementation((host, cwd) =>
-        Effect.succeed({ token: Redacted.make(`token${cwd}`), fingerprint: `${host}:${cwd}` }),
+        Effect.succeed({ token: Redacted.make("token" + cwd), fingerprint: host + ":" + cwd }),
       );
-      const node = (number: number) => ({
-        number,
-        title: `Pull request ${number}`,
-        url: `https://github.com/acme/web/pull/${number}`,
-        author: {
-          __typename: "User",
-          login: "octocat",
-          name: "Octo Cat",
-          avatarUrl: "https://avatars.githubusercontent.com/u/1",
-        },
-        baseRefName: "main",
-        headRefName: `feat/${number}`,
-        state: "OPEN",
-        isDraft: false,
-        mergeable: "MERGEABLE",
-        reviewDecision: null,
-        latestReviews: {
-          nodes: [{ state: "APPROVED", author: { __typename: "User", login: "reviewer" } }],
-        },
-        additions: 12,
-        deletions: 3,
-        changedFiles: 2,
-        updatedAt: "2026-08-24T12:34:56.000Z",
-        mergedAt: null,
-        closedAt: null,
-        commits: { nodes: [{ commit: { statusCheckRollup: { state: "SUCCESS" } } }] },
-      });
-      mockedExecute.mockImplementation((call) =>
-        Effect.succeed(
+      mockedExecute.mockImplementation((call) => {
+        if (call.kind !== "graphql") return Effect.die("Expected a GraphQL read");
+        const number = Number(call.variables?._0_number);
+        expect(call.authorization).toBe(
+          number === 7 ? "Bearer token/work" : "Bearer token/personal",
+        );
+        return Effect.succeed(
           output(
             encodeJson({
               data: {
                 _0_repository: {
-                  pullRequest: node(Number(call.kind === "graphql" && call.variables?._0_number)),
+                  pullRequest: coreResponse({
+                    number,
+                    headRefName: "feat/" + number,
+                    latestReviews: { nodes: [] },
+                  }).data.repository.pullRequest,
                 },
               },
             }),
           ),
-        ),
-      );
+        );
+      });
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-
       const reads = yield* Effect.forEach(
         [
           { cwd: "/work", repository: "acme/web", number: 7 },
@@ -1011,7 +1065,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
       expect(summaries.map((summary) => summary.headBranch)).toEqual(["feat/7", "feat/8"]);
       expect(mockedExecute).toHaveBeenCalledTimes(2);
-      expect([varsAt(0)._0_owner, varsAt(1)._0_owner].toSorted()).toEqual(["acme", "octo"]);
     }),
   );
 
@@ -3711,13 +3764,7 @@ layer("GitHubPullRequestApi.layer", (it) => {
 
       expect(login).toBe("enterprise-user");
       expect(mockedCredential).toHaveBeenCalledWith("github.acme.com", "/w");
-      // From the checkout, so a refusal clears that checkout's token rather than another's.
-      expect(callAt(0)).toMatchObject({
-        kind: "rest",
-        host: "github.acme.com",
-        cwd: "/w",
-        path: "user",
-      });
+      expect(callAt(0)).toMatchObject({ kind: "rest", host: "github.acme.com", path: "user" });
     }),
   );
 
