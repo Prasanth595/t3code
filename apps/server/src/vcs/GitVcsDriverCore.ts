@@ -1542,6 +1542,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       gitCommonDir: yield* resolveGitCommonDir(cwd),
       remoteName: upstream.remoteName,
     });
+    // Cache.set leaves a pending lookup running; let it record its outcome before resetting.
+    yield* Cache.getOption(statusRemoteRefreshCache, cacheKey).pipe(Effect.ignore);
     clearStatusRemoteRefreshFailures(cacheKey);
     yield* Cache.set(statusRemoteRefreshCache, cacheKey, true as const);
   });
