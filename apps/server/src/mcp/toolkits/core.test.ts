@@ -239,6 +239,10 @@ it("bounds public command rejections and redacts internal dispatch causes", () =
       .message,
   ).toBe("🙂".repeat(1000));
   expect(
+    dispatchFailure(new OrchestratorCommandRejectedError({ ...command, cause: "🙂".repeat(1001) }))
+      .message,
+  ).toBe("🙂".repeat(1000));
+  expect(
     dispatchFailure(
       new OrchestratorCommandRejectedError({ ...command, cause: "Run is not queued." }),
     ).message,

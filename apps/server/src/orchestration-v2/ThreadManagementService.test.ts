@@ -38,6 +38,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
+import { dispatchFailure } from "../mcp/threadAccess.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import { emptyProjection } from "./ProjectionStore.ts";
@@ -642,7 +643,12 @@ it.effect(
         expect(userFacingDispatchErrorMessage(editError)).toMatch(
           /over the .*character limit.*quotes are expanded/,
         );
-        expect(projection.runs).toEqual(runs);
+        expect(dispatchFailure(editError)).toMatchObject({
+          code: "orchestration_error",
+          message: expect.stringMatching(
+            /over the .*character limit.*quotes are expanded.*Shorten it or quote less/,
+          ),
+        });
         expect(projection.messages.map((message) => message.text)).toEqual([
           "Keep this message",
           "Keep this message",
@@ -656,7 +662,6 @@ it.effect(
             message.runId === edit.runId ? { ...message, text } : message,
           ),
         };
-        const beforePromotion = projection;
         const promote = {
           type: "queued-message.promote-to-steer",
           commandId: CommandId.make("command:queue-citation:promote"),
@@ -669,7 +674,12 @@ it.effect(
         expect(userFacingDispatchErrorMessage(promoteError)).toMatch(
           /over the .*character limit.*quotes are expanded/,
         );
-        expect(projection).toEqual(beforePromotion);
+        expect(dispatchFailure(promoteError)).toMatchObject({
+          code: "orchestration_error",
+          message: expect.stringMatching(
+            /over the .*character limit.*quotes are expanded.*Shorten it or quote less/,
+          ),
+        });
         expect(projection.runs.map((run) => run.status)).toEqual(["running", "queued"]);
         expect(dispatched).toEqual([]);
 

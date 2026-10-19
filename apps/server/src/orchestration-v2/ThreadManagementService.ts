@@ -724,7 +724,7 @@ const make = Effect.gen(function* () {
                 new Orchestrator.OrchestratorCommandRejectedError({
                   commandId: command.commandId,
                   commandType: command.type,
-                  cause,
+                  cause: cause.message,
                 }),
             ),
           );
