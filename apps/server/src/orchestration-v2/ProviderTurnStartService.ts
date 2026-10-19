@@ -715,7 +715,7 @@ export const layer: Layer.Layer<
         if (!repaired.committed) return;
       }
       const sessionResult = yield* Effect.result(
-        providerSessions.open({
+        providerSessions.openForTurn({
           threadId: projection.thread.id,
           providerSessionId,
           modelSelection: run.modelSelection,
@@ -1540,6 +1540,7 @@ export const layer: Layer.Layer<
         },
         (effect, input) =>
           effect.pipe(
+            Effect.scoped,
             Effect.mapError((cause) =>
               isProviderTurnStartError(cause)
                 ? cause
