@@ -57,47 +57,33 @@ describe("timelineContentOverflowsViewport", () => {
         inset,
       ),
     ).toBe(false);
-  });
-
-  it("counts an unmeasured last row past the viewport as overflowing", () => {
-    // A thread reopened above its end: the tail has an estimated position but no size yet.
-    const unmeasuredTail = [200, Number.NaN];
     expect(
       timelineContentOverflowsViewport(
-        buildState({ positions: [0, 900], sizes: unmeasuredTail }),
-        inset,
-      ),
-    ).toBe(true);
-    expect(
-      timelineContentOverflowsViewport(buildState({ positions: [0, 900], sizes: [200] }), inset),
-    ).toBe(true);
-    // A short thread keeps fitting until its last row is measured.
-    expect(
-      timelineContentOverflowsViewport(
-        buildState({ positions: [0, 200], sizes: unmeasuredTail }),
-        inset,
-      ),
-    ).toBe(false);
-    expect(
-      timelineContentOverflowsViewport(
-        buildState({ positions: [0, Number.NaN], sizes: unmeasuredTail }),
+        buildState({ positions: [0, Number.NaN], sizes: [200] }),
         inset,
       ),
     ).toBe(false);
   });
 
-  it("keeps anchored-turn metrics unknown until the last row is measured", () => {
-    const state = buildState({ positions: [0, 900], sizes: [200] });
-    expect(timelineContentOverflowsViewport(state, inset)).toBe(true);
-    expect(
-      getAnchoredTurnMetrics({
-        state,
-        anchorIndex: 0,
-        composerOverlayHeight: 100,
-        anchorOffset: 24,
-      }),
-    ).toBeNull();
-  });
+  it.each([
+    { measurement: "missing", sizes: [200] },
+    { measurement: "NaN", sizes: [200, Number.NaN] },
+  ])(
+    "reports overflow with a $measurement tail size without inventing anchor metrics",
+    ({ sizes }) => {
+      const state = buildState({ positions: [0, 900], sizes });
+      expect(timelineContentOverflowsViewport(state, inset)).toBe(true);
+      expect(getRowBottom(state, 1)).toBeNull();
+      expect(
+        getAnchoredTurnMetrics({
+          state,
+          anchorIndex: 0,
+          composerOverlayHeight: 100,
+          anchorOffset: 24,
+        }),
+      ).toBeNull();
+    },
+  );
 });
 
 describe("timeline scroll anchoring", () => {
