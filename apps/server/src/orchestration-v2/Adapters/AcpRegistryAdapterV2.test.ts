@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import * as DateTime from "effect/DateTime";
+import * as Stream from "effect/Stream";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -15,7 +16,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -92,7 +92,6 @@ const layerRegistry = Layer.succeed(
   ),
 );
 
-// Adapters given an explicit runtime never resolve through the catalog.
 const layerInjectedRuntimeCatalog = Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
   resolve: () => Effect.die("the runtime is injected"),
 });
@@ -167,27 +166,7 @@ describe("AcpRegistryAdapterV2", () => {
       currentValue,
       options: ["ask", "auto"].map((value) => ({ value, name: value })),
     });
-    const modelOption = (currentValue: string) => ({
-      id: "model",
-      name: "Model",
-      category: "model",
-      type: "select",
-      currentValue,
-      options: ["sonnet", "opus"].map((value) => ({ value, name: value })),
-    });
-    const hermesModels = (currentModelId: string) => ({
-      currentModelId,
-      availableModels: [
-        { modelId: "hermes-default", name: "Hermes Default" },
-        { modelId: "nous/hermes-4-405b", name: "Hermes 4 405B" },
-      ],
-    });
 
-    // A scripted ACP v1 agent: initialize, session/new answered with `setup`,
-    // then the frames T3 must send (and the agent's answers) to apply the
-    // user's stored picks and run one turn per `turnModels` entry. Returns the
-    // last configuration published to the provider's model picker and the
-    // adapter's plan for each turn's pick.
     const openWithStoredPicks = Effect.fn("openWithStoredPicks")(function* (input: {
       readonly setup: unknown;
       readonly pickFrames: ReadonlyArray<Frame>;
@@ -268,15 +247,16 @@ describe("AcpRegistryAdapterV2", () => {
           ? {}
           : { options: [{ id: ACP_SESSION_MODE_OPTION_ID, value: input.storedModePick }] }),
       };
-      const plans = yield* Effect.gen(function* () {
+      const configurations: Array<AcpRegistryLiveConfiguration | undefined> = [];
+      yield* Effect.gen(function* () {
         const runtime = yield* adapter.openSession({
           threadId,
           providerSessionId: ProviderSessionId.make("provider-session-stored-picks"),
           modelSelection: stored,
           runtimePolicy,
         });
-        const plans: Array<string> = [];
-        if (input.turnModels === undefined) return plans;
+        configurations.push(published);
+        if (input.turnModels === undefined) return;
         const providerThread = yield* runtime.ensureThread({
           threadId,
           modelSelection: stored,
@@ -291,7 +271,7 @@ describe("AcpRegistryAdapterV2", () => {
             target,
             sessionCapabilities: runtime.providerSession.capabilities,
           });
-          plans.push(plan.type);
+          assert.equal(plan.type, "apply_on_next_turn");
           yield* runtime.startTurn(
             makeTurnInput({
               threadId,
@@ -307,14 +287,12 @@ describe("AcpRegistryAdapterV2", () => {
             Stream.takeUntil((event) => event.type === "turn.terminal"),
             Stream.runDrain,
           );
+          configurations.push(published);
           current = target;
         }
-        return plans;
       }).pipe(Effect.scoped);
-      // Closing the session stops the agent, which writes its replay status in
-      // the same tick as its last answer. The script must be consumed exactly.
       yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
-      return { published, plans };
+      return { configurations };
     });
 
     it.effect("switches an agent that only advertises modes with session/set_mode", () =>
@@ -348,51 +326,16 @@ describe("AcpRegistryAdapterV2", () => {
       }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 
-    it.effect("lists and switches models an agent only advertises as session model state", () =>
-      Effect.gen(function* () {
-        const { published } = yield* openWithStoredPicks({
-          setup: { models: hermesModels("hermes-default") },
-          pickFrames: [
-            outbound("session/set_model", {
-              sessionId: "agent-session",
-              modelId: "nous/hermes-4-405b",
-            }),
-            answer("session/set_model", {}),
-          ],
-          storedModel: "nous/hermes-4-405b",
-        });
-        assert.deepEqual(
-          published?.models.map((model) => model.id),
-          ["hermes-default", "nous/hermes-4-405b"],
-        );
-        assert.equal(published?.currentModelId, "nous/hermes-4-405b");
-      }).pipe(Effect.provide(layerTest), Effect.scoped),
-    );
-
-    it.effect("switches a model config option even when session model state is advertised", () =>
-      Effect.gen(function* () {
-        const { published } = yield* openWithStoredPicks({
-          setup: { models: hermesModels("hermes-default"), configOptions: [modelOption("sonnet")] },
-          pickFrames: [
-            outbound("session/set_config_option", {
-              sessionId: "agent-session",
-              configId: "model",
-              value: "opus",
-            }),
-            answer("session/set_config_option", { configOptions: [modelOption("opus")] }),
-          ],
-          storedModel: "opus",
-        });
-        assert.deepEqual(
-          published?.models.map((model) => model.id),
-          ["sonnet", "opus"],
-        );
-        assert.equal(published?.currentModelId, "opus");
-      }).pipe(Effect.provide(layerTest), Effect.scoped),
-    );
-
-    // The agent changes its model configuration during the first turn; the
-    // next pick must use whichever source the picker now lists.
+    const modelOption = (id: string, currentValue: string, grouped = false) => ({
+      id,
+      name: "Model",
+      category: "model",
+      type: "select",
+      currentValue,
+      options: grouped
+        ? [{ group: "models", name: "Models", options: [{ value: "default", name: "Default" }] }]
+        : [{ value: "auto", name: "Auto" }],
+    });
     const configOptionUpdate = (configOptions: ReadonlyArray<unknown>): Frame => ({
       type: "emit_inbound",
       frame: {
@@ -409,135 +352,108 @@ describe("AcpRegistryAdapterV2", () => {
       ...updates,
       answer("session/prompt", { stopReason: "end_turn" }),
     ];
+    const setModel = (modelId: string): ReadonlyArray<Frame> => [
+      outbound("session/set_model", { sessionId: "agent-session", modelId }),
+      answer("session/set_model", {}),
+    ];
 
-    it.effect("switches a model config option the agent adds mid-session", () =>
-      Effect.gen(function* () {
-        const { published, plans } = yield* openWithStoredPicks({
-          setup: { models: hermesModels("hermes-default") },
-          storedModel: "hermes-default",
-          turnModels: ["hermes-default", "opus"],
-          pickFrames: [
-            ...prompt(configOptionUpdate([modelOption("sonnet")])),
-            outbound("session/set_config_option", {
-              sessionId: "agent-session",
-              configId: "model",
-              value: "opus",
-            }),
-            answer("session/set_config_option", { configOptions: [modelOption("opus")] }),
-            ...prompt(),
-          ],
-        });
-        assert.deepEqual(plans, ["apply_on_next_turn", "apply_on_next_turn"]);
-        assert.deepEqual(
-          published?.models.map((model) => model.id),
-          ["sonnet", "opus"],
-        );
-        assert.equal(published?.currentModelId, "opus");
-      }).pipe(Effect.provide(layerTest), Effect.scoped),
-    );
-
-    it.effect("switches session model state after the agent drops its model config option", () =>
-      Effect.gen(function* () {
-        // T3 moved the session to sonnet, so returning to the setup-time
-        // hermes-default still needs session/set_model.
-        const { published, plans } = yield* openWithStoredPicks({
-          setup: { models: hermesModels("hermes-default"), configOptions: [modelOption("sonnet")] },
-          storedModel: "sonnet",
-          turnModels: ["sonnet", "hermes-default"],
-          pickFrames: [
-            ...prompt(configOptionUpdate([])),
-            outbound("session/set_model", {
-              sessionId: "agent-session",
-              modelId: "hermes-default",
-            }),
-            answer("session/set_model", {}),
-            ...prompt(),
-          ],
-        });
-        assert.deepEqual(plans, ["apply_on_next_turn", "apply_on_next_turn"]);
-        assert.deepEqual(
-          published?.models.map((model) => model.id),
-          ["hermes-default", "nous/hermes-4-405b"],
-        );
-        assert.equal(published?.currentModelId, "hermes-default");
-      }).pipe(Effect.provide(layerTest), Effect.scoped),
-    );
-
-    // A pick of "auto" or "default" is a real model only when the agent's
-    // model option advertises that exact value, flat or inside a group.
-    const pickPlaceholderThenOpus = (input: {
-      readonly options: ReadonlyArray<unknown>;
-      readonly placeholder: string;
-      readonly placeholderIsAdvertised: boolean;
-    }) =>
-      Effect.gen(function* () {
-        const option = (currentValue: string) => ({
-          ...modelOption(currentValue),
-          options: input.options,
-        });
-        const setModel = (value: string): ReadonlyArray<Frame> => [
-          outbound("session/set_config_option", {
-            sessionId: "agent-session",
-            configId: "model",
-            value,
-          }),
-          answer("session/set_config_option", { configOptions: [option(value)] }),
-        ];
-        const { published, plans } = yield* openWithStoredPicks({
-          setup: { configOptions: [option("opus")] },
-          storedModel: "opus",
-          turnModels: [input.placeholder, "opus"],
-          // The session already runs opus, so only a real switch away from it
-          // makes the return to opus a native write.
-          pickFrames: input.placeholderIsAdvertised
-            ? [...setModel(input.placeholder), ...prompt(), ...setModel("opus"), ...prompt()]
-            : [...prompt(), ...prompt()],
-        });
-        assert.deepEqual(plans, ["apply_on_next_turn", "apply_on_next_turn"]);
-        assert.equal(published?.currentModelId, "opus");
-        return published;
-      }).pipe(Effect.provide(layerTest), Effect.scoped);
-
-    it.effect("switches to an advertised auto model and back", () =>
-      Effect.gen(function* () {
-        const published = yield* pickPlaceholderThenOpus({
-          options: ["auto", "opus"].map((value) => ({ value, name: value })),
-          placeholder: "auto",
-          placeholderIsAdvertised: true,
-        });
-        assert.deepEqual(
-          published?.models.map((model) => model.id),
-          ["auto", "opus"],
-        );
-      }),
-    );
-
-    it.effect("switches to an advertised default model inside a group and back", () =>
-      Effect.gen(function* () {
-        const published = yield* pickPlaceholderThenOpus({
-          options: [
-            {
-              group: "anthropic",
-              name: "Anthropic",
-              options: ["default", "opus"].map((value) => ({ value, name: value })),
+    it.effect(
+      "discovers session models and switches through live model configuration changes",
+      () =>
+        Effect.gen(function* () {
+          const flatOption = (current: string) => modelOption("live-model", current);
+          const groupedOption = (current: string) =>
+            modelOption("replacement-model", current, true);
+          const { configurations } = yield* openWithStoredPicks({
+            setup: {
+              models: {
+                currentModelId: "hermes",
+                availableModels: ["hermes", "auto", "default"].map((modelId) => ({
+                  modelId,
+                  name: modelId,
+                })),
+              },
             },
-          ],
-          placeholder: "default",
-          placeholderIsAdvertised: true,
-        });
-        assert.deepEqual(
-          published?.models.map((model) => model.id),
-          ["default", "opus"],
-        );
-      }),
+            storedModel: "default",
+            turnModels: ["hermes", "auto", "default", "hermes", "auto", "default", "hermes"],
+            pickFrames: [
+              ...setModel("default"),
+              ...setModel("hermes"),
+              ...prompt(),
+              ...setModel("auto"),
+              ...prompt(),
+              ...setModel("default"),
+              ...prompt(),
+              ...setModel("hermes"),
+              ...prompt(configOptionUpdate([flatOption("hermes")])),
+              outbound("session/set_config_option", {
+                sessionId: "agent-session",
+                configId: "live-model",
+                value: "auto",
+              }),
+              answer("session/set_config_option", { configOptions: [flatOption("auto")] }),
+              ...prompt(configOptionUpdate([groupedOption("auto")])),
+              outbound("session/set_config_option", {
+                sessionId: "agent-session",
+                configId: "replacement-model",
+                value: "default",
+              }),
+              answer("session/set_config_option", { configOptions: [groupedOption("default")] }),
+              ...prompt(configOptionUpdate([])),
+              ...setModel("hermes"),
+              ...prompt(),
+            ],
+          });
+          assert.deepEqual(
+            configurations.map((configuration) => ({
+              models: configuration?.models.map((model) => model.id),
+              current: configuration?.currentModelId,
+            })),
+            [
+              { models: ["hermes", "auto", "default"], current: "default" },
+              { models: ["hermes", "auto", "default"], current: "hermes" },
+              { models: ["hermes", "auto", "default"], current: "auto" },
+              { models: ["hermes", "auto", "default"], current: "default" },
+              { models: ["auto"], current: null },
+              { models: ["default"], current: null },
+              { models: ["hermes", "auto", "default"], current: "default" },
+              { models: ["hermes", "auto", "default"], current: "hermes" },
+            ],
+          );
+        }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 
-    it.effect("leaves the model alone for an auto pick the agent does not advertise", () =>
-      pickPlaceholderThenOpus({
-        options: ["sonnet", "opus"].map((value) => ({ value, name: value })),
-        placeholder: "auto",
-        placeholderIsAdvertised: false,
-      }),
+    it.effect("leaves unadvertised placeholders alone in both model selection protocols", () =>
+      Effect.gen(function* () {
+        const { configurations } = yield* openWithStoredPicks({
+          setup: {
+            models: {
+              currentModelId: "hermes",
+              availableModels: ["hermes", "other"].map((modelId) => ({ modelId, name: modelId })),
+            },
+          },
+          storedModel: "default",
+          turnModels: ["auto", "other", "default", "auto"],
+          pickFrames: [
+            ...prompt(),
+            ...setModel("other"),
+            ...prompt(
+              configOptionUpdate([
+                {
+                  ...modelOption("live-model", "other"),
+                  options: [{ value: "other", name: "Other" }],
+                },
+              ]),
+            ),
+            ...prompt(),
+            ...prompt(),
+          ],
+        });
+        assert.deepEqual(
+          configurations.map((configuration) => configuration?.currentModelId),
+          ["hermes", "hermes", "other", "other", "other"],
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
   });
 

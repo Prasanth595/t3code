@@ -3,16 +3,17 @@ import {
   type ModelSelection,
   NodeId,
   ProjectId,
-  ProviderDriverKind,
   type ProviderInstanceId,
-  ProviderReplayEntry,
   RunAttemptId,
   RunId,
   type OrchestrationV2ProviderThread,
-  type ProviderReplayTranscript,
   type ThreadId,
+  ProviderDriverKind,
+  ProviderReplayEntry,
+  type ProviderReplayTranscript,
 } from "@t3tools/contracts";
 import type * as DateTime from "effect/DateTime";
+import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
@@ -24,7 +25,6 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type { ProviderReplayGate } from "@t3tools/provider-testing/replayGate";
 import { ACP_PROTOCOL, type AcpAdapterV2RuntimeInput } from "@t3tools/provider-acp/server/adapter";
 
@@ -164,12 +164,6 @@ function acpReplayAgentArgs(scriptPath: string): ReadonlyArray<string> {
   return ["--experimental-strip-types", scriptPath];
 }
 
-/**
- * Holds the replay agent's inbound lines at a gate the scenario releases.
- * The agent writes one line per `emit_inbound` entry in transcript order, so
- * the Nth line it writes belongs to the Nth inbound entry and carries its
- * label. Lines after a held one wait with it, which keeps wire order.
- */
 function holdGatedReplayLines(
   transcript: AcpReplayTranscript,
   replayGate: ProviderReplayGate,
@@ -256,7 +250,6 @@ export function makeAcpReplayRuntime(input: {
     });
 }
 
-/** A user turn on `providerThread`; `ordinal` keeps run and message ids unique. */
 export function makeTurnInput(input: {
   readonly threadId: ThreadId;
   readonly providerThread: OrchestrationV2ProviderThread;
@@ -265,7 +258,6 @@ export function makeTurnInput(input: {
   readonly now: DateTime.Utc;
   readonly ordinal?: number;
   readonly modelSelection?: ModelSelection;
-  /** agent+provider marks a post-settle continuation attach (drains wakeBuffer). */
   readonly messageCreatedBy?: "user" | "agent";
   readonly messageCreationSource?: "web" | "mobile" | "mcp" | "provider" | "server";
   readonly messageText?: string;

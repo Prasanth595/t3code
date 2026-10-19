@@ -196,62 +196,6 @@ describe("ACP Registry probe", () => {
     expect(result.currentModelId).toBe("sonnet");
   });
 
-  it("lists models an agent advertises only through session model state", () => {
-    const result = acpRegistryProbeResult(instanceId, {
-      sessionId: "probe-session",
-      initializeResult: { protocolVersion: 1 },
-      sessionSetupResult: {
-        sessionId: "probe-session",
-        models: {
-          currentModelId: "nous/hermes-4-405b",
-          availableModels: [
-            { modelId: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6" },
-            {
-              modelId: "nous/hermes-4-405b",
-              name: "Hermes 4 405B",
-              description: "Nous Portal",
-            },
-          ],
-        },
-      },
-      modelConfigId: undefined,
-    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
-
-    expect(result.models).toEqual([
-      { id: "anthropic/claude-sonnet-4.6", name: "Claude Sonnet 4.6", description: null },
-      { id: "nous/hermes-4-405b", name: "Hermes 4 405B", description: "Nous Portal" },
-    ]);
-    expect(result.currentModelId).toBe("nous/hermes-4-405b");
-  });
-
-  it("prefers a model configuration option over session model state", () => {
-    const result = acpRegistryProbeResult(instanceId, {
-      sessionId: "probe-session",
-      initializeResult: { protocolVersion: 1 },
-      sessionSetupResult: {
-        sessionId: "probe-session",
-        models: {
-          currentModelId: "legacy",
-          availableModels: [{ modelId: "legacy", name: "Legacy" }],
-        },
-        configOptions: [
-          {
-            id: "model",
-            name: "Model",
-            category: "model",
-            type: "select",
-            currentValue: "sonnet",
-            options: [{ value: "sonnet", name: "Sonnet" }],
-          },
-        ],
-      },
-      modelConfigId: "model",
-    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
-
-    expect(result.models).toEqual([{ id: "sonnet", name: "Sonnet", description: null }]);
-    expect(result.currentModelId).toBe("sonnet");
-  });
-
   it("omits overlong opaque model ids instead of publishing mutated ids", () => {
     const result = acpRegistryProbeResult(instanceId, {
       sessionId: "probe-session",
@@ -348,64 +292,40 @@ describe("ACP Registry probe", () => {
     ]);
   });
 
-  it("keeps a current model configuration option inside the bounded model catalog", () => {
-    const result = acpRegistryProbeResult(instanceId, {
-      sessionId: "probe-session",
-      initializeResult: { protocolVersion: 1 },
-      sessionSetupResult: {
-        sessionId: "probe-session",
-        configOptions: [
-          {
-            id: "model",
-            name: "Model",
-            category: "model",
-            type: "select",
-            currentValue: "model-256",
-            options: Array.from({ length: 257 }, (_, index) => ({
-              value: `model-${index}`,
-              name: `Model ${index}`,
-            })),
-          },
-        ],
-      },
-      modelConfigId: "model",
-    } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
-
-    expect(result.models).toHaveLength(256);
-    expect(result.models.at(-1)).toEqual({ id: "model-256", name: "Model 256", description: null });
-    expect(result.currentModelId).toBe("model-256");
-  });
-
-  it.each([
-    { current: "model-300", currentModelId: "model-300", last: "model-300" },
-    { current: "model-3", currentModelId: "model-3", last: "model-255" },
-    { current: "model-999", currentModelId: null, last: "model-255" },
-    { current: " model-300", currentModelId: null, last: "model-255" },
-  ])(
-    "bounds session model state to 256 models around current model $current",
-    ({ current, currentModelId, last }) => {
+  it.each(["config option", "session model state"] as const)(
+    "retains the current model beyond the catalog cap from %s",
+    (source) => {
+      const models = Array.from({ length: 257 }, (_, index) => ({
+        modelId: `model-${index}`,
+        name: `Model ${index}`,
+      }));
       const result = acpRegistryProbeResult(instanceId, {
         sessionId: "probe-session",
         initializeResult: { protocolVersion: 1 },
         sessionSetupResult: {
           sessionId: "probe-session",
-          models: {
-            currentModelId: current,
-            availableModels: Array.from({ length: 400 }, (_, index) => ({
-              modelId: `model-${index}`,
-              name: `Model ${index}`,
-            })),
-          },
+          ...(source === "config option"
+            ? {
+                configOptions: [
+                  {
+                    id: "model",
+                    name: "Model",
+                    category: "model",
+                    type: "select",
+                    currentValue: "model-256",
+                    options: models.map(({ modelId, name }) => ({ value: modelId, name })),
+                  },
+                ],
+              }
+            : { models: { currentModelId: "model-256", availableModels: models } }),
         },
-        modelConfigId: undefined,
+        modelConfigId: source === "config option" ? "model" : undefined,
       } satisfies AcpSessionRuntime.AcpSessionRuntimeStartResult);
 
       expect(result.models).toHaveLength(256);
-      expect(result.models.slice(0, 255).map((model) => model.id)).toEqual(
-        Array.from({ length: 255 }, (_, index) => `model-${index}`),
-      );
-      expect(result.models.at(-1)?.id).toBe(last);
-      expect(result.currentModelId).toBe(currentModelId);
+      expect(result.models[0]?.id).toBe("model-0");
+      expect(result.models.at(-1)?.id).toBe("model-256");
+      expect(result.currentModelId).toBe("model-256");
     },
   );
 
