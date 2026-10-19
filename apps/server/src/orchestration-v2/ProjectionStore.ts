@@ -5648,6 +5648,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT 1 FROM orchestration_v2_projection_runtime_requests request
                 WHERE request.thread_id = t.thread_id AND request.status = 'pending'
               )
+              AND NOT EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_turn_items notice
+                  INDEXED BY orchestration_v2_projection_turn_items_attention_notice_idx
+                WHERE notice.thread_id = t.thread_id
+                  AND notice.run_id = (
+                    SELECT started.run_id FROM orchestration_v2_projection_runs started
+                    WHERE started.thread_id = t.thread_id
+                      AND json_extract(started.payload_json, '$.startedAt') IS NOT NULL
+                    ORDER BY json_extract(started.payload_json, '$.startedAt') DESC,
+                      started.ordinal DESC
+                    LIMIT 1
+                  )
+                  AND notice.type = 'system_notice'
+                  AND json_extract(notice.payload_json, '$.needsAttention') = 1
+              )
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
             if (rows.length === 0) return [];
@@ -6226,6 +6241,29 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 !runs.some(isActivityRunForShell) &&
                 !runtimeRequests.some((request) => request.status === "pending"),
             )
+            .filter(({ runs, turnItems }) => {
+              // Queue order can differ from the order runs actually start.
+              let latestStartedRun: OrchestrationV2Run | undefined;
+              let latestStartedAt = -Infinity;
+              for (const run of runs) {
+                if (run.startedAt === null) continue;
+                const startedAt = DateTime.toEpochMillis(run.startedAt);
+                if (
+                  latestStartedRun === undefined ||
+                  startedAt > latestStartedAt ||
+                  (startedAt === latestStartedAt && run.ordinal > latestStartedRun.ordinal)
+                ) {
+                  latestStartedRun = run;
+                  latestStartedAt = startedAt;
+                }
+              }
+              return !turnItems.some(
+                (item) =>
+                  item.runId === latestStartedRun?.id &&
+                  item.type === "system_notice" &&
+                  item.needsAttention === true,
+              );
+            })
             .map((projection) => {
               const shell = threadShellFromProjection(projection);
               return {

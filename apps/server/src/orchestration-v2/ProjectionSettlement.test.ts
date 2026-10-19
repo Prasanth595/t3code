@@ -76,6 +76,7 @@ const createRun = Effect.fn(function* (
   threadId: ThreadId,
   status: OrchestrationV2Run["status"] = "completed",
   ordinal = 1,
+  overrides: Partial<OrchestrationV2Run> = {},
 ) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const runId = RunId.make(`run:${threadId}:${ordinal}`);
@@ -100,6 +101,7 @@ const createRun = Effect.fn(function* (
       completedAt: ["completed", "rolled_back", "failed"].includes(status) ? old : null,
       checkpointId: null,
       contextHandoffId: null,
+      ...overrides,
     },
   });
   return runId;
@@ -353,6 +355,69 @@ it.effect.each([
   }).pipe(Effect.provide(testLayer)),
 );
 
+it.effect.each([
+  ["sql", layerSql],
+  ["memory", ProjectionStore.layerMemory],
+] as const)(
+  "%s: attention notices hold settlement until another run actually starts",
+  ([, testLayer]) =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const later = DateTime.add(old, { hours: 1 });
+      for (const [name, needsAttention, nextRun, eligible] of [
+        ["attention", true, null, false],
+        ["ordinary-notice", undefined, null, true],
+        ["queued", true, { status: "queued", startedAt: null }, false],
+        ["canceled-before-start", true, { status: "cancelled", startedAt: null }, false],
+        ["later-start", true, { startedAt: later }, true],
+      ] satisfies ReadonlyArray<
+        readonly [string, boolean | undefined, Partial<OrchestrationV2Run> | null, boolean]
+      >) {
+        const threadId = yield* createThread(name);
+        const runId = yield* createRun(threadId, "completed", 2);
+        yield* store.apply({
+          id: EventId.make(`event:notice:${runId}`),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: old,
+          payload: {
+            id: TurnItemId.make(`notice:${runId}`),
+            threadId,
+            runId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            type: "system_notice",
+            status: "completed",
+            title: null,
+            startedAt: old,
+            completedAt: old,
+            updatedAt: old,
+            message: "Needs attention",
+            ...(needsAttention === undefined ? {} : { needsAttention }),
+          },
+        });
+        if (nextRun !== null) {
+          yield* createRun(threadId, "completed", 3, nextRun);
+        }
+        const notice = (yield* store.getThreadProjection(threadId)).turnItems.find(
+          (item) => item.id === TurnItemId.make(`notice:${runId}`),
+        );
+        assert.equal(notice?.type, "system_notice");
+        if (notice?.type !== "system_notice") return;
+        assert.equal(notice.needsAttention, needsAttention, name);
+        assert.deepEqual(
+          (yield* store.getSettlementCandidates(threadId)).map((candidate) => candidate.id),
+          eligible ? [threadId] : [],
+          name,
+        );
+      }
+    }).pipe(Effect.provide(testLayer)),
+);
+
 const pullRequestLink = (number: number) => ({
   host: "github.com",
   repository: "owner/repository",
@@ -458,7 +523,7 @@ it.effect(
       );
       assert.isTrue(queries.every(([query]) => !query.includes("COUNT(")));
       const pendingQuery = queries.find(([query]) =>
-        query.includes("FROM orchestration_v2_projection_turn_items"),
+        query.includes("FROM orchestration_v2_projection_turn_items i"),
       );
       assert.isDefined(pendingQuery);
       const metadata = yield* store.getThread(threadId);
@@ -469,6 +534,19 @@ it.effect(
         pendingQuery![1],
       );
       assert.isTrue(plan.some((row) => row.detail.includes("turn_items_shell_pending_idx")));
+      const candidateQuery = queries.find(([query]) => query.includes("AS latest_run_id"));
+      assert.isDefined(candidateQuery);
+      const candidatePlan = yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${candidateQuery![0]}`,
+        candidateQuery![1],
+      );
+      assert.isTrue(
+        candidatePlan.some((row) =>
+          row.detail.startsWith(
+            "SEARCH notice USING INDEX orchestration_v2_projection_turn_items_attention_notice_idx (thread_id=? AND run_id=?)",
+          ),
+        ),
+      );
       const countsPlan = yield* sql<{ readonly detail: string }>`EXPLAIN QUERY PLAN
       SELECT thread_id, run_id, COUNT(*) FROM orchestration_v2_projection_turn_items
       WHERE thread_id = ${threadId} AND run_id IS NOT NULL GROUP BY thread_id, run_id`;
