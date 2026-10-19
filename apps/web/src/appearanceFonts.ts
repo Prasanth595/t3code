@@ -14,9 +14,9 @@ import type { ThemeDefinition } from "@t3tools/shared/themePalettes";
 export const DEFAULT_SANS_FONT_STACK =
   '-apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif';
 
-export const ABSOLUTELY_REPLY_FONT_STACK = '"Absolutely Serif", Georgia, serif';
-export const ABSOLUTELY_SANS_FONT_STACK = '"Absolutely Sans"';
-export const ABSOLUTELY_CODE_FONT_STACK = '"Absolutely Mono"';
+const ABSOLUTELY_REPLY_FONT_STACK = '"Absolutely Serif", Georgia, serif';
+const ABSOLUTELY_SANS_FONT_STACK = '"Absolutely Sans"';
+const ABSOLUTELY_CODE_FONT_STACK = '"Absolutely Mono"';
 
 // Some engines map `ui-monospace` to a proportional font, so prefer concrete names.
 export const DEFAULT_CODE_FONT_STACK =
