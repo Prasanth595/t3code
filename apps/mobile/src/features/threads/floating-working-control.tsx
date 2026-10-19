@@ -78,6 +78,7 @@ export function FloatingWorkingControl(props: {
   readonly agents: SubagentPillSegment | null;
   readonly onOpenAgents: () => void;
   readonly queuedCount: number;
+  readonly queueHeld: boolean;
   readonly onOpenQueue: () => void;
   readonly lift?: SharedValue<number>;
 }) {
@@ -85,7 +86,7 @@ export function FloatingWorkingControl(props: {
   const [overlayWidth, setOverlayWidth] = useState(windowWidth);
   const [queueWidth, setQueueWidth] = useState(0);
   const [agentsWidth, setAgentsWidth] = useState(0);
-  const hasQueue = props.queuedCount > 0;
+  const hasQueue = props.queuedCount > 0 || props.queueHeld;
   const hasPreview = props.devicePreview !== null || props.browserPreview !== null;
   const [previewWidth, setPreviewWidth] = useState(0);
   const agents = props.agents;
@@ -219,8 +220,18 @@ export function FloatingWorkingControl(props: {
       {hasQueue ? (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Open queue, ${props.queuedCount} messages`}
-          accessibilityHint="Opens queued messages for reordering, steering, or removal"
+          accessibilityLabel={
+            props.queueHeld
+              ? props.queuedCount > 0
+                ? `Open held queue, ${props.queuedCount} messages`
+                : "Open held queue"
+              : `Open queue, ${props.queuedCount} messages`
+          }
+          accessibilityHint={
+            props.queueHeld
+              ? "Opens the held queue to resume it"
+              : "Opens queued messages for reordering, steering, or removal"
+          }
           onPress={props.onOpenQueue}
           onLayout={(event) => setQueueWidth(settleWidth(event.nativeEvent.layout.width))}
           style={{ maxWidth: Math.min(overlayWidth, windowWidth) * 0.45 }}
@@ -231,7 +242,7 @@ export function FloatingWorkingControl(props: {
           ) : null}
           <SymbolView name="list.number" size={13} tintColorClassName="accent-foreground-muted" />
           <Text className="shrink font-t3-medium text-xs tabular-nums" numberOfLines={1}>
-            {props.queuedCount} queued
+            {props.queuedCount > 0 ? `${props.queuedCount} queued` : "Queue held"}
           </Text>
         </Pressable>
       ) : null}

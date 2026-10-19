@@ -156,7 +156,7 @@ describe("thread workflows", () => {
   });
 
   it("hides automatic completion delivery from the visible queue", () => {
-    const state = deriveThreadQueueWorkflowState({
+    const projection = {
       thread: { id: "thread", activeProviderThreadId: null },
       runs: [
         {
@@ -205,11 +205,20 @@ describe("thread workflows", () => {
       providerTurns: [],
       providerThreads: [],
       providerSessions: [],
-    } as never);
+    } as unknown as OrchestrationV2ThreadProjection;
+    const state = deriveThreadQueueWorkflowState(projection);
 
     expect(state.queuedRuns.map(({ run, text }) => [run.id, text])).toEqual([
       ["visible", "Visible queued message"],
     ]);
+    const held = deriveThreadQueueWorkflowState({
+      ...projection,
+      runs: projection.runs
+        .filter((run) => run.id !== "visible")
+        .map((run) => ({ ...run, queueHeld: true })),
+    });
+    expect(held.isHeld).toBe(true);
+    expect(held.queuedRuns).toEqual([]);
   });
 
   it("removes only the promoted head from the visible queue", () => {

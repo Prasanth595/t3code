@@ -1,12 +1,13 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { deriveThreadQueueWorkflowState } from "@t3tools/client-runtime/state/thread-workflows";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
-import type {
-  ChatAttachment as ContractChatAttachment,
-  EnvironmentId,
-  MessageId,
-  RunId,
-  ThreadId,
+import {
+  AuthOrchestrationOperateScope,
+  type ChatAttachment as ContractChatAttachment,
+  type EnvironmentId,
+  type MessageId,
+  type RunId,
+  type ThreadId,
 } from "@t3tools/contracts";
 import {
   Clock3Icon,
@@ -21,6 +22,7 @@ import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
 import { useThreadProjection } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { isImageAttachment, type ChatMessage } from "../../types";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
@@ -82,6 +84,10 @@ export function QueuedRunsControl({
   const reorder = useAtomCommand(threadEnvironment.reorderQueuedRun);
   const promote = useAtomCommand(threadEnvironment.promoteQueuedRun);
   const cancel = useAtomCommand(threadEnvironment.cancelQueuedRun);
+  const resumeQueue = useAtomCommand(threadEnvironment.resumeThreadQueue, "resume queue");
+  const canOperate = useEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope);
+  const [resuming, setResuming] = useState(false);
+  const resumeInFlightRef = useRef(false);
   const [expanded, setExpanded] = useState(true);
   const queueListId = useId();
   const [busyRunId, setBusyRunId] = useState<RunId | null>(null);
@@ -104,6 +110,7 @@ export function QueuedRunsControl({
   );
   const workflow = projection ? deriveThreadQueueWorkflowState(projection) : null;
   const queued = workflow?.queuedRuns ?? [];
+  const isHeld = workflow?.isHeld === true;
   const activeRun = workflow?.activeRun ?? null;
   const canReorder = workflow?.canReorder === true;
   const queuedImageUrlById = new Map(
@@ -206,7 +213,56 @@ export function QueuedRunsControl({
     },
   }));
 
-  if (items.length === 0) return null;
+  if (items.length === 0 && !isHeld) return null;
+
+  const resume = async () => {
+    if (
+      resumeInFlightRef.current ||
+      !readEnvironmentScope(props.environmentId, AuthOrchestrationOperateScope)
+    )
+      return;
+    resumeInFlightRef.current = true;
+    setResuming(true);
+    await resumeQueue({
+      environmentId: props.environmentId,
+      input: { threadId: props.threadId },
+    }).finally(() => {
+      resumeInFlightRef.current = false;
+      setResuming(false);
+    });
+  };
+
+  const heldRow = isHeld ? (
+    <ComposerBanner.Row>
+      <ComposerBanner.Content className="text-muted-foreground">Queue held</ComposerBanner.Content>
+      <ComposerBanner.Actions>
+        <Button
+          size="xs"
+          variant="ghost-muted"
+          disabled={!canOperate || resuming || busyRunId !== null}
+          onClick={() => void resume()}
+        >
+          Resume queue
+        </Button>
+      </ComposerBanner.Actions>
+    </ComposerBanner.Row>
+  ) : null;
+
+  if (items.length === 0) {
+    return (
+      <ComposerBanner.Attachment>
+        <ComposerBanner.Root
+          role="region"
+          aria-label="Queue held"
+          aria-live="polite"
+          data-chat-composer-collapsed-controls="true"
+          className="relative z-0"
+        >
+          {heldRow}
+        </ComposerBanner.Root>
+      </ComposerBanner.Attachment>
+    );
+  }
 
   const remove = async (runId: RunId) => {
     setBusyRunId(runId);
@@ -226,6 +282,7 @@ export function QueuedRunsControl({
         data-chat-composer-collapsed-controls="true"
         className="relative z-0"
       >
+        {heldRow}
         <ComposerBanner.Row
           render={<button type="button" />}
           aria-label={expanded ? "Collapse queued messages" : "Expand queued messages"}
