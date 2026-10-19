@@ -43,12 +43,6 @@ import {
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { type CliAuthLocationFlags, projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 
-type ProjectMutationTarget = {
-  readonly id: ProjectId;
-  readonly title: string;
-  readonly workspaceRoot: string;
-};
-
 type ProjectCommandExecutionMode = "live" | "offline";
 type ProjectCliDispatchCommand = ProjectMutation;
 
@@ -278,11 +272,7 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
   const activeProjects = input.snapshot.projects.filter((project) => project.deletedAt === null);
   const exactIdMatch = activeProjects.find((project) => project.id === trimmedIdentifier);
   if (exactIdMatch) {
-    return {
-      id: exactIdMatch.id,
-      title: exactIdMatch.title,
-      workspaceRoot: exactIdMatch.workspaceRoot,
-    } satisfies ProjectMutationTarget;
+    return exactIdMatch;
   }
 
   const normalizedWorkspaceRootResult = yield* Effect.result(
@@ -309,11 +299,7 @@ const findActiveProjectTarget = Effect.fn("findActiveProjectTarget")(function* (
     });
   }
 
-  return {
-    id: resolved.id,
-    title: resolved.title,
-    workspaceRoot: resolved.workspaceRoot,
-  } satisfies ProjectMutationTarget;
+  return resolved;
 });
 
 const fetchLiveOrchestrationSnapshot = (origin: string, bearerToken: string) =>
@@ -563,7 +549,7 @@ const projectRenameCommand = Command.make("rename", {
           identifier: flags.project,
         });
         const nextTitle = yield* resolveProjectTitle(project.workspaceRoot, flags.title);
-        if (nextTitle === project.title) {
+        if (nextTitle === project.title && project.titleIsExplicit) {
           return `Project ${project.id} is already named ${nextTitle}.`;
         }
 

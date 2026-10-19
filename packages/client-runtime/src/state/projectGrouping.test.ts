@@ -275,41 +275,48 @@ describe("buildProjectGroups", () => {
     );
   });
 
-  it("keeps the shared title when it matches the repository name across machines", () => {
+  it("preserves an explicit repository-name rename across grouped environments", () => {
     const projects = [
-      makeProject("first", "/work/t3code", { title: "t3code" }),
-      makeProject("second", "/work/t3code-2", {
-        title: "t3code",
+      makeProject("first", "/local/t3code"),
+      makeProject("second", "/remote/t3code", {
         environmentId: EnvironmentId.make("remote"),
       }),
-    ];
+    ].map((project) => ({
+      ...project,
+      title: "t3code",
+      titleIsExplicit: true,
+      repositoryIdentity: {
+        ...repositoryIdentity,
+        displayName: "t3tools/t3code",
+        rootPath: project.workspaceRoot,
+      },
+    }));
 
-    expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
-      "t3code",
-    );
+    for (const mode of ["repository", "repository_path"] as const) {
+      const groups = buildProjectGroups({ projects, settings: settings(mode) });
+      expect(groups).toHaveLength(1);
+      expect(groups[0]?.label).toBe("t3code");
+      expect(groups[0]?.memberProjectRefs).toHaveLength(2);
+    }
   });
 
-  it("falls back to the repository label until grouped project titles agree", () => {
+  it("keeps the owner-qualified automatic label when stored titles match the repository name", () => {
+    const identity = { ...repositoryIdentity, displayName: "t3tools/t3code" };
     const projects = [
-      makeProject("first", "/work/t3code", { title: "local-checkout" }),
-      makeProject("second", "/work/t3code-2", {
-        title: "remote-checkout",
+      makeProject("first", "/local/t3code", {
+        title: "t3code",
+        repositoryIdentity: identity,
+      }),
+      makeProject("second", "/remote/t3code", {
+        title: "t3code",
+        repositoryIdentity: identity,
         environmentId: EnvironmentId.make("remote"),
       }),
     ];
 
     expect(buildProjectGroups({ projects, settings: settings("repository") })[0]?.label).toBe(
-      "T3 Code",
+      "t3tools/t3code",
     );
-
-    const renamedProjects = projects.map((project) => ({ ...project, title: "t3code" }));
-    for (const mode of ["repository", "repository_path"] as const) {
-      const input = { projects: renamedProjects, settings: settings(mode) };
-      expect(buildProjectGroups(input)[0]?.label).toBe("t3code");
-      expect(
-        buildProjectGroups({ ...input, projects: renamedProjects.toReversed() })[0]?.label,
-      ).toBe("t3code");
-    }
   });
 
   it("keeps a fork apart from its upstream checkout and labels it by its own remote", () => {

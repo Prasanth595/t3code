@@ -2078,7 +2078,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       return;
     }
 
-    if (trimmed === projectRenameTarget.title) {
+    if (trimmed === projectRenameTarget.title && projectRenameTarget.titleIsExplicit) {
       closeProjectRenameDialog();
       return;
     }

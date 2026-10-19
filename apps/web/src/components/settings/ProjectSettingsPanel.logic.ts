@@ -2,6 +2,11 @@ export function projectGroupTitleNeedsUpdate(
   memberTitles: ReadonlyArray<string>,
   nextTitle: string,
   wasEdited: boolean,
+  currentGroupTitle?: string,
 ): boolean {
-  return wasEdited && memberTitles.some((title) => title !== nextTitle);
+  return (
+    wasEdited &&
+    ((currentGroupTitle !== undefined && currentGroupTitle !== nextTitle) ||
+      memberTitles.some((title) => title !== nextTitle))
+  );
 }

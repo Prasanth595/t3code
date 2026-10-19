@@ -15,6 +15,12 @@ describe("projectGroupTitleNeedsUpdate", () => {
     );
   });
 
+  it("saves an edited repository name even when every stored title already matches", () => {
+    expect(
+      projectGroupTitleNeedsUpdate(["t3code", "t3code"], "t3code", true, "t3tools/t3code"),
+    ).toBe(true);
+  });
+
   it("skips an update when every member already has the next title", () => {
     expect(projectGroupTitleNeedsUpdate(["Shared name", "Shared name"], "Shared name", true)).toBe(
       false,

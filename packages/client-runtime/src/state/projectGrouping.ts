@@ -200,7 +200,9 @@ export function resolveScratchProjectScopeKey(
 
 export function deriveProjectGroupLabel(input: {
   readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
-  readonly members: ReadonlyArray<Pick<EnvironmentProject, "title" | "repositoryIdentity">>;
+  readonly members: ReadonlyArray<
+    Pick<EnvironmentProject, "title" | "titleIsExplicit" | "repositoryIdentity">
+  >;
 }): string {
   const sharedTitles = uniqueNonEmptyValues(input.members.map((member) => member.title));
   const sharedDisplayNames = uniqueNonEmptyValues(
@@ -212,7 +214,12 @@ export function deriveProjectGroupLabel(input: {
     input.members.map((member) => member.repositoryIdentity?.name),
   );
   const sharedTitle = sharedTitles[0];
-  if (sharedTitles.length === 1 && sharedTitle !== undefined) {
+  if (
+    sharedTitles.length === 1 &&
+    sharedTitle !== undefined &&
+    (input.members.some((member) => member.titleIsExplicit === true) ||
+      (!sharedDisplayNames.includes(sharedTitle) && !sharedRepositoryNames.includes(sharedTitle)))
+  ) {
     return sharedTitle;
   }
   if (sharedDisplayNames.length === 1) {

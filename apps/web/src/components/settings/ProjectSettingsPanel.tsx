@@ -285,6 +285,7 @@ function ProjectDetail({
         group.memberProjects.map((member) => member.title),
         title,
         wasEdited,
+        group.displayName,
       )
     ) {
       return;
