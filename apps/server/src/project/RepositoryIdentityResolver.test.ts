@@ -299,11 +299,14 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       });
       expect(identity?.canonicalKey).toBe("gitlab.com/team/app");
       expect(identity?.provider).toBe("gitlab");
+      expect(identity?.displayName).toBe("Team/App");
+      expect(identity?.owner).toBe("Team");
+      expect(identity?.name).toBe("App");
       expect(identity?.locator.remoteUrl).toBe("git+ssh://git@review:2222/Team/App.git");
     }),
   );
 
-  it.effect("keeps tunnel aliases distinct when their configured hosts are loopback", () =>
+  it.effect("keeps aliases distinct for loopback tunnels and ambiguous server ports", () =>
     Effect.gen(function* () {
       const tunnel = () => Effect.succeed(processOutput("hostname 127.0.0.1\nuser git\n"));
       expect((yield* resolveRemote("git@tunnel-a:Team/App.git", tunnel))?.canonicalKey).toBe(
@@ -312,6 +315,14 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
       expect((yield* resolveRemote("git@tunnel-b:Team/App.git", tunnel))?.canonicalKey).toBe(
         "tunnel-b/team/app",
       );
+
+      const dev1 = yield* resolveRemote("git@dev1:Team/App.git", () =>
+        Effect.succeed(processOutput("hostname server.test\nuser git\nport 2222\n")),
+      );
+      const dev2 = yield* resolveRemote("git@dev2:Team/App.git", () =>
+        Effect.succeed(processOutput("hostname server.test\nuser git\nport 2223\n")),
+      );
+      expect([dev1?.canonicalKey, dev2?.canonicalKey]).toEqual(["dev1/team/app", "dev2/team/app"]);
     }),
   );
 

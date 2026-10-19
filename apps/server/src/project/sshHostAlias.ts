@@ -1,30 +1,25 @@
 import { detectSourceControlProviderFromGitRemoteUrl } from "@t3tools/shared/git";
+import { isLocalLoopbackHost } from "@t3tools/shared/hostClassification";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 
 import * as ProcessRunner from "../processRunner.ts";
 
-// The SSH-over-443 endpoints providers document serve the same repositories as
-// the main host, so they key the same.
-const SSH_ENDPOINT_HOSTS: Readonly<Record<string, string>> = {
-  "ssh.github.com": "github.com",
-  "altssh.gitlab.com": "gitlab.com",
-  "altssh.bitbucket.org": "bitbucket.org",
-};
-// Public forges key as themselves whatever ssh routes them through, so they
-// skip the lookup.
+// These documented SSH-over-443 endpoints share their public forge's identity.
+const SSH_ENDPOINT_HOSTS = new Map([
+  ["ssh.github.com", "github.com"],
+  ["altssh.gitlab.com", "gitlab.com"],
+  ["altssh.bitbucket.org", "bitbucket.org"],
+]);
 const PUBLIC_SSH_HOSTS = new Set([
   "github.com",
   "gitlab.com",
   "bitbucket.org",
   "ssh.dev.azure.com",
-  ...Object.keys(SSH_ENDPOINT_HOSTS),
+  ...SSH_ENDPOINT_HOSTS.keys(),
 ]);
-// Only plain names reach ssh, so a remote can neither pass it an option
-// (`-oProxyCommand=…`) nor put shell syntax in the `%h` / `%r` tokens a
-// `Match exec` line expands. OpenSSH before 9.6 does not reject those itself.
+// Remote names can reach shell-expanded %h/%r tokens in local Match exec rules.
 const SSH_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]*$/i;
-const LOOPBACK_HOST_PATTERN = /^(?:localhost|127(?:\.\d+){3})$/;
 
 const isSshName = (name: string | undefined) => name !== undefined && SSH_NAME_PATTERN.test(name);
 
@@ -35,13 +30,6 @@ interface SshRemote {
   readonly path: string;
 }
 
-/**
- * An SSH remote in either spelling git accepts, `[user@]host:path` or
- * `ssh://[user@]host[:port]/path`, when its names are safe to hand to ssh. A URL
- * keeps its path absolute, so the SCP spelling built from it names the same
- * repository. A one-letter host without a user is a Windows drive, which git
- * reads as a path.
- */
 function parseSshRemote(remoteUrl: string): SshRemote | null {
   const trimmed = remoteUrl.trim();
   let remote: SshRemote | null = null;
@@ -57,6 +45,7 @@ function parseSshRemote(remoteUrl: string): SshRemote | null {
     }
   } else if (!trimmed.includes("://")) {
     const [, user, host = "", path] = /^(?:([^@/\s]+)@)?([^:/\s@]+):(\S+)$/.exec(trimmed) ?? [];
+    // A userless one-letter host is a Windows drive path.
     if (path && (user || host.length > 1)) remote = { user, host, port: undefined, path };
   }
   return remote && isSshName(remote.host) && (remote.user === undefined || isSshName(remote.user))
@@ -64,7 +53,6 @@ function parseSshRemote(remoteUrl: string): SshRemote | null {
     : null;
 }
 
-/** `ssh -G` output, one `key value` per line, by lowercase key. */
 function parseSshConfig(stdout: string): ReadonlyMap<string, string> {
   return new Map(
     stdout.split("\n").flatMap((line) => {
@@ -74,7 +62,6 @@ function parseSshConfig(stdout: string): ReadonlyMap<string, string> {
   );
 }
 
-/** What `ssh -G` prints for the remote's host, user and port, or "" when it fails. */
 const readSshConfig = Effect.fn("sshHostAlias.readSshConfig")(function* (remote: SshRemote) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const result = yield* processRunner
@@ -93,34 +80,13 @@ const readSshConfig = Effect.fn("sshHostAlias.readSshConfig")(function* (remote:
   return result._tag === "Some" && result.value.code === 0 ? result.value.stdout : "";
 });
 
-/**
- * The path with a relative one spelled under its login's home (`~user/app.git`).
- *
- * On a plain server `alice@host:app.git` and `bob@host:app.git` are two
- * repositories, one in each home. Forges serve every repository to one shared
- * `git` login and read the path as the repository's name, so theirs stay as
- * is, as do absolute paths and paths already in a named home (`~other/app`).
- */
-function homeQualifiedPath(path: string, user: string | undefined, host: string): string {
-  const isForge = detectSourceControlProviderFromGitRemoteUrl(`git@${host}:`)?.kind !== "unknown";
-  if (!user || user === "git" || isForge) return path;
+function homeQualifiedPath(path: string, user: string | undefined): string {
+  if (!user || user === "git") return path;
   const inOwnHome = path.replace(/^\/?~\//, "");
   if (inOwnHome === path && /^[/~]/.test(path)) return path;
   return `~${user}/${inOwnHome}`;
 }
 
-/**
- * The remote spelled by the host and path that key its repository.
- *
- * `gh:owner/repo` with `Host gh` / `HostName github.com` is the same repository
- * as `https://github.com/owner/repo`, but only ssh knows that. `ssh -G` reads
- * the config the way ssh does (`Include`, `Match`, wildcards) without
- * connecting, given the remote's user and port since `Match` rules can depend
- * on them. A trailing dot spells the same DNS name. A loopback `HostName` is a
- * tunnel, which names no repository, so the alias stays. Git keeps using the
- * raw remote; a remote that is not SSH, or that ssh cannot read, stays as is,
- * and so does an IPv6 host, which has no SCP spelling git would read back.
- */
 export const expandSshHostAlias = Effect.fn("sshHostAlias.expandSshHostAlias")(function* (
   remoteUrl: string,
 ) {
@@ -130,13 +96,24 @@ export const expandSshHostAlias = Effect.fn("sshHostAlias.expandSshHostAlias")(f
   const alias = remote.host.toLowerCase();
   const config = parseSshConfig(PUBLIC_SSH_HOSTS.has(alias) ? "" : yield* readSshConfig(remote));
   const hostName = (config.get("hostname") ?? alias).toLowerCase().replace(/\.$/, "");
-  const host = LOOPBACK_HOST_PATTERN.test(hostName)
-    ? alias
-    : ((Object.hasOwn(SSH_ENDPOINT_HOSTS, hostName) ? SSH_ENDPOINT_HOSTS[hostName] : undefined) ??
-      hostName);
+  if (hostName.includes(":")) return remoteUrl;
+  const resolvedHost = SSH_ENDPOINT_HOSTS.get(hostName) ?? hostName;
+  const provider = detectSourceControlProviderFromGitRemoteUrl(`git@${resolvedHost}:`);
+  const isForge = provider !== null && provider.kind !== "unknown";
+  const port = config.get("port") ?? remote.port;
+  // Known forges keep their existing SSH/HTTPS identity. Other non-default
+  // ports may serve distinct repositories, so their aliases stay distinct.
+  const host =
+    isLocalLoopbackHost(hostName) || (!isForge && port !== undefined && port !== "22")
+      ? alias
+      : resolvedHost;
   const configUser = config.get("user");
   const user = remote.user ?? (isSshName(configUser) ? configUser : undefined);
-  const path = homeQualifiedPath(remote.path, user, host);
-  if (host.includes(":") || (host === alias && path === remote.path)) return remoteUrl;
-  return `${user ?? "git"}@${host}:${path}`;
+  // Relative paths on plain servers belong to the effective login's home;
+  // forges and the shared git login interpret them as repository names.
+  const path = isForge ? remote.path : homeQualifiedPath(remote.path, user);
+  if (host === alias && path === remote.path) return remoteUrl;
+  return path.startsWith("/")
+    ? `ssh://${user ?? "git"}@${host}${path}`
+    : `${user ?? "git"}@${host}:${path}`;
 });

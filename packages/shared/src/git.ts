@@ -146,11 +146,6 @@ const SCP_REMOTE_PATTERN = /^(?:([a-z0-9._-]+)@)?([^:/\s@]+):\/?([^/\s]+(?:\/[^/
 
 /**
  * Normalize a git remote URL into a stable comparison key.
- *
- * An SCP-like remote keys like its URL spelling: the user is optional, as git
- * allows (`host:owner/repo`), and an absolute path (`host:/srv/repo`) keys like
- * `ssh://host/srv/repo`. A one-letter host without a user is a Windows drive
- * (`c:/repos/app`), which git reads as a path.
  */
 export function normalizeGitRemoteUrl(value: string): string {
   const normalized = value
@@ -175,6 +170,7 @@ export function normalizeGitRemoteUrl(value: string): string {
   }
 
   const [, scpUser, scpHost, scpPath] = SCP_REMOTE_PATTERN.exec(normalized) ?? [];
+  // A userless one-letter host is a Windows drive path.
   if (scpHost && scpPath && (scpUser || scpHost.length > 1)) {
     return azureDevOpsRepositoryKey(scpHost, scpPath.split("/")) ?? `${scpHost}/${scpPath}`;
   }

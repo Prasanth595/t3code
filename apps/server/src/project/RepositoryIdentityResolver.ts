@@ -110,7 +110,6 @@ function buildRepositoryOrigin(
 function buildRepositoryIdentity(input: {
   readonly remoteName: string;
   readonly remoteUrl: string;
-  /** The remote with SSH host aliases expanded, which keys the repository. */
   readonly resolvedRemoteUrl: string;
   readonly originUrl: string | undefined;
   readonly rootPath: string;
@@ -182,8 +181,6 @@ const resolveRepositoryIdentityFromCacheKey = Effect.fn(
     return null;
   }
 
-  // `git remote -v` already applies `url.<base>.insteadOf`; SSH host aliases
-  // live outside git, so they are expanded here.
   const remotes = parseRemoteFetchUrls(remoteResult.value.stdout);
   const remote = pickPrimaryRemote(remotes);
   if (!remote) return null;
