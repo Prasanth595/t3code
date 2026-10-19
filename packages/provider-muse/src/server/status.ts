@@ -124,7 +124,6 @@ export const checkMuseProviderStatus = Effect.fn("checkMuseProviderStatus")(func
   }
 
   const skills = yield* discoverMuseSkills(settings, museEnvironment).pipe(
-    Effect.tapError((cause) => Effect.logDebug("Muse skill discovery failed.", { cause })),
     Effect.orElseSucceed(() => []),
   );
 

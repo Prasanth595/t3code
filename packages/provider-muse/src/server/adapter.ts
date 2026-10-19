@@ -92,7 +92,6 @@ import {
   subagentThreadTitle,
 } from "@t3tools/provider-core/server/subagentProjection";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
-import { museSkillSelectorsInPrompt } from "./skills.ts";
 import { museItemStatus, museToolPresentation } from "./itemPresentation.ts";
 
 const MUSE_PROVIDER = ProviderDriverKind.make("muse");
@@ -1857,10 +1856,26 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           ),
         );
       });
+      const resolveSkillSelector = Effect.fnUntraced(function* (text: string) {
+        const mentions = [...text.matchAll(SKILL_MENTION_PATTERN)];
+        if (!mentions.length) return undefined;
+        // An optional catalog timeout must not close the host needed for the text fallback.
+        return yield* Effect.tryPromise(() =>
+          host.connection.request("skill/list", { sessionId: nativeSessionId }),
+        ).pipe(
+          Effect.flatMap((value) => decode(MuseSkillList, value)),
+          Effect.map(({ skills }) => {
+            const selectors = new Set(skills.map((skill) => skill.selector));
+            return mentions.find((match) => match[2] !== undefined && selectors.has(match[2]))?.[2];
+          }),
+          Effect.timeout(5_000),
+          Effect.orElseSucceed(() => undefined),
+        );
+      });
       const prompt = Effect.fnUntraced(function* (
         message: ProviderAdapter.ProviderAdapterV2TurnMessage,
         runtimeInstructions?: string,
-        dispatchSkill = true,
+        selector?: string,
       ) {
         const parts: SendUserTurnOptions<unknown>["input"] = [];
         const text = providerMessageTextWithAttachmentPaths({
@@ -1870,16 +1885,6 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         });
         if (!text && !message.attachments.some(isProviderNativeImageAttachment))
           return yield* protocolError("Muse needs text or an image");
-        const selectors =
-          dispatchSkill && !message.text.matchAll(SKILL_MENTION_PATTERN).next().done
-            ? yield* request("skill/list", {}, false).pipe(
-                Effect.flatMap((value) => decode(MuseSkillList, value)),
-                Effect.map((value) => new Set(value.skills.map((skill) => skill.selector))),
-                Effect.timeout(5_000),
-                Effect.orElseSucceed(() => new Set<string>()),
-              )
-            : new Set<string>();
-        const [selector] = museSkillSelectorsInPrompt(message.text, selectors);
         if (selector) {
           // MSP permits one skill plus images, but rejects skill/text mixtures.
           parts.push({
@@ -1961,6 +1966,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                   model: session.model ?? undefined,
                   reasoningEffort: effort,
                 }),
+                yield* resolveSkillSelector(turnInput.message.text),
               );
         const nativeId = adopted?.nativeId ?? host.connection.mintCommandId();
         const startedAt = yield* DateTime.now;
@@ -2175,7 +2181,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               turn.compact
             )
               return yield* protocolError("This Muse turn cannot be steered");
-            const parts = yield* prompt(args.message, undefined, false);
+            const parts = yield* prompt(args.message);
             const result = yield* request("turn/steer", {
               expectedTurnId: turn.nativeId,
               input: parts,

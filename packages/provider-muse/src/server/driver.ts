@@ -177,6 +177,7 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
               snapshot.getSnapshot,
               discoverMuseSkills(effectiveConfig, processEnvironment, workspaceCwd).pipe(
                 Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                Effect.provideService(Path.Path, path),
                 Effect.mapError(
                   (cause) =>
                     new ProviderDriverError({

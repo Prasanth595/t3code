@@ -1,81 +1,43 @@
-// @effect-diagnostics-next-line nodeBuiltinImport:off -- The synchronous parser only uses pure path operations, with no filesystem access.
-import * as NodePath from "node:path";
 import type { ServerProviderSkill } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 
 import type { MuseSettings } from "../settings.ts";
-import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
+import {
+  DEFAULT_TIMEOUT_MS,
+  nonEmptyTrimmed,
+  spawnAndCollect,
+} from "@t3tools/provider-core/server/snapshotProbe";
 import { makeMuseEnvironment } from "./sdk.ts";
 
-class MuseSkillsProbeError extends Schema.TaggedError<MuseSkillsProbeError>()(
-  "MuseSkillsProbeError",
-  {
-    stage: Schema.Literals(["spawn", "timeout", "exit", "decode"]),
-    cwd: Schema.optional(Schema.String),
-    exitCode: Schema.optional(Schema.Number),
-    cause: Schema.optional(Schema.Defect()),
-  },
-) {
+const decodeSkills = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      skills: Schema.Array(
+        Schema.Struct({
+          name: Schema.String,
+          path: Schema.String,
+          scope: Schema.optional(Schema.String),
+          activation: Schema.optional(Schema.String),
+          description: Schema.optional(Schema.NullOr(Schema.String)),
+          short_description: Schema.optional(Schema.NullOr(Schema.String)),
+          display_name: Schema.optional(Schema.NullOr(Schema.String)),
+        }),
+      ),
+    }),
+  ),
+);
+
+class MuseSkillsExitError extends Schema.TaggedError<MuseSkillsExitError>()("MuseSkillsExitError", {
+  exitCode: Schema.Number,
+}) {
   override get message(): string {
-    const location = this.cwd === undefined ? "" : ` for '${this.cwd}'`;
-    const exitCode = this.exitCode === undefined ? "" : ` with exit code ${this.exitCode}`;
-    return `\`muse skills list --json\` failed during ${this.stage}${location}${exitCode}.`;
+    return `Muse skill discovery exited with code ${this.exitCode}.`;
   }
-}
-
-export function parseMuseSkillsList(
-  stdout: string,
-  { cwd, home }: { readonly cwd?: string; readonly home: string },
-): ServerProviderSkill[] | undefined {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(stdout);
-  } catch {
-    return undefined;
-  }
-  if (typeof parsed !== "object" || parsed === null) return undefined;
-  const entries = (parsed as Record<string, unknown>).skills;
-  if (!Array.isArray(entries)) return undefined;
-
-  const skillsByName = new Map<string, ServerProviderSkill>();
-  for (const entry of entries) {
-    if (typeof entry !== "object" || entry === null) continue;
-    const row = entry as Record<string, unknown>;
-    const scope = typeof row.scope === "string" ? row.scope.trim() : "";
-    const rawName = typeof row.name === "string" ? row.name.trim() : "";
-    const name = scope === "plugin" ? rawName.replace(/^plugin:/, "") : rawName;
-    let path = typeof row.path === "string" ? row.path.trim() : "";
-    if (!name || !path || skillsByName.has(name)) continue;
-    if (path.startsWith("$HOME/")) path = NodePath.join(home, path.slice(6));
-    else if (
-      cwd &&
-      !path.startsWith("plugin://") &&
-      !path.startsWith("bundled://") &&
-      !NodePath.isAbsolute(path)
-    )
-      path = NodePath.join(cwd, path);
-    const description = typeof row.description === "string" ? row.description.trim() : "";
-    const shortDescription =
-      typeof row.short_description === "string" ? row.short_description.trim() : "";
-    const displayName = typeof row.display_name === "string" ? row.display_name.trim() : "";
-    skillsByName.set(name, {
-      name,
-      path,
-      enabled: row.activation !== "off",
-      ...(scope ? { scope } : {}),
-      ...(description ? { description } : {}),
-      ...(shortDescription ? { shortDescription } : {}),
-      ...(displayName && displayName !== name ? { displayName } : {}),
-      ...(row.activation === "user-invocable-only" ? { userInvocationOnly: true } : {}),
-    });
-  }
-  return [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export const discoverMuseSkills = Effect.fn("discoverMuseSkills")(function* (
@@ -83,9 +45,10 @@ export const discoverMuseSkills = Effect.fn("discoverMuseSkills")(function* (
   environment: NodeJS.ProcessEnv = process.env,
   cwd?: string,
 ) {
+  const path = yield* Path.Path;
   const command = settings.binaryPath || "muse";
   const probeEnvironment = makeMuseEnvironment(environment);
-  const result = yield* Effect.gen(function* () {
+  const output = yield* Effect.gen(function* () {
     const spawnCommand = yield* resolveSpawnCommand(
       command,
       ["skills", "list", "--json", ...(cwd ? ["--workspace", cwd, "--trust-workspace"] : [])],
@@ -99,37 +62,41 @@ export const discoverMuseSkills = Effect.fn("discoverMuseSkills")(function* (
         shell: spawnCommand.shell,
       }),
     );
-  }).pipe(
-    Effect.mapError(
-      (cause) => new MuseSkillsProbeError({ stage: "spawn", ...(cwd ? { cwd } : {}), cause }),
-    ),
-    Effect.timeoutOption(4_000),
-  );
-  if (Option.isNone(result))
-    return yield* new MuseSkillsProbeError({ stage: "timeout", ...(cwd ? { cwd } : {}) });
-  const output = result.value;
-  if (output.code !== 0)
-    return yield* new MuseSkillsProbeError({
-      stage: "exit",
-      ...(cwd ? { cwd } : {}),
-      exitCode: output.code,
-    });
+  }).pipe(Effect.timeout(DEFAULT_TIMEOUT_MS));
+  if (output.code !== 0) return yield* new MuseSkillsExitError({ exitCode: output.code });
+  const catalog = yield* decodeSkills(output.stdout);
   const home =
-    environment.HOME?.trim() ||
-    environment.USERPROFILE?.trim() ||
+    nonEmptyTrimmed(environment.HOME) ??
+    nonEmptyTrimmed(environment.USERPROFILE) ??
     (yield* HostProcess.HomeDirectory);
-  const skills = parseMuseSkillsList(output.stdout, { ...(cwd ? { cwd } : {}), home });
-  if (!skills) return yield* new MuseSkillsProbeError({ stage: "decode", ...(cwd ? { cwd } : {}) });
-  return skills;
+  const skills = new Map<string, ServerProviderSkill>();
+  for (const row of catalog.skills) {
+    const scope = nonEmptyTrimmed(row.scope);
+    const rawName = row.name.trim();
+    const name = scope === "plugin" ? rawName.replace(/^plugin:/, "") : rawName;
+    let skillPath = row.path.trim();
+    if (!name || !skillPath || skills.has(name)) continue;
+    if (skillPath.startsWith("$HOME/")) skillPath = path.join(home, skillPath.slice(6));
+    else if (
+      cwd &&
+      !skillPath.startsWith("plugin://") &&
+      !skillPath.startsWith("bundled://") &&
+      !path.isAbsolute(skillPath)
+    )
+      skillPath = path.join(cwd, skillPath);
+    const description = nonEmptyTrimmed(row.description ?? undefined);
+    const shortDescription = nonEmptyTrimmed(row.short_description ?? undefined);
+    const displayName = nonEmptyTrimmed(row.display_name ?? undefined);
+    skills.set(name, {
+      name,
+      path: skillPath,
+      enabled: row.activation !== "off",
+      ...(scope ? { scope } : {}),
+      ...(description ? { description } : {}),
+      ...(shortDescription ? { shortDescription } : {}),
+      ...(displayName && displayName !== name ? { displayName } : {}),
+      ...(row.activation === "user-invocable-only" ? { userInvocationOnly: true } : {}),
+    });
+  }
+  return [...skills.values()].sort((left, right) => left.name.localeCompare(right.name));
 });
-
-export function museSkillSelectorsInPrompt(text: string, selectors: ReadonlySet<string>): string[] {
-  return [
-    ...new Set(
-      [...text.matchAll(SKILL_MENTION_PATTERN)].flatMap((match) => {
-        const selector = match[2];
-        return selector && selectors.has(selector) ? [selector] : [];
-      }),
-    ),
-  ];
-}

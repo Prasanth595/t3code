@@ -53,8 +53,11 @@ does not offer a separate Plan mode in T3 Code.
 Muse can use T3 Code's tools. If Muse cannot reach them, the turn continues
 without them. Switching providers can pass conversation context as a handoff.
 
-Muse skills do not appear in the composer's `$` menu. Muse still loads them
-itself. Manage them with `muse skills` on the host.
+Muse skills from the host and current workspace appear in the composer's `$`
+menu. Manage them with `muse skills` on the host, then refresh provider status.
+When a message mentions several skills, T3 Code invokes the first one available
+in the Muse session with the full message. Follow-up steering messages stay as
+text.
 
 Forking a Muse conversation starts a new session with a copy of the conversation
 context. Conversation rewind is unavailable.
