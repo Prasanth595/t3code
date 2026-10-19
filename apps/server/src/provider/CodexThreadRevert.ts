@@ -9,8 +9,12 @@ export const revertCodexThread = Effect.fn("revertCodexThread")(function* (
   target:
     | number
     | { readonly type: "after_turn"; readonly nativeTurnId: string }
-    | { readonly type: "thread_start" },
+    | { readonly type: "before_first_owned_turn"; readonly nativeTurnIds: ReadonlyArray<string> },
 ) {
+  const ownedNativeTurnIds =
+    typeof target !== "number" && target.type === "before_first_owned_turn"
+      ? new Set(target.nativeTurnIds)
+      : undefined;
   let remaining = typeof target === "number" ? target : undefined;
   let boundaryFound = false;
   let beforeTurnId: string | undefined;
@@ -42,7 +46,11 @@ export const revertCodexThread = Effect.fn("revertCodexThread")(function* (
         remaining = 0;
         break;
       }
-      beforeTurnId = turn.id;
+      // Forks and imports can have an inherited prefix with no T3-owned turns.
+      // If no owned turn remains, a previous revert may already have succeeded.
+      if (ownedNativeTurnIds === undefined || ownedNativeTurnIds.has(turn.id)) {
+        beforeTurnId = turn.id;
+      }
       if (remaining !== undefined && --remaining === 0) break;
     }
     cursor = page.nextCursor ?? null;

@@ -1049,8 +1049,15 @@ const readCodexThreadHistoryMetadata = Effect.fn("CodexAdapterV2.readThreadHisto
 
 export const resolveCodexRollbackBoundary = Effect.fn("CodexAdapterV2.resolveRollbackBoundary")(
   function* (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) {
+    const threadTurns = providerTurnsForThread(input.providerThreadTurns, input.providerThread);
+    const beforeFirstOwnedTurn = {
+      type: "before_first_owned_turn" as const,
+      nativeTurnIds: threadTurns.flatMap((turn) =>
+        turn.nativeTurnRef?.nativeId == null ? [] : [turn.nativeTurnRef.nativeId],
+      ),
+    };
     if (input.target.type === "thread_start") {
-      return { type: "thread_start" as const };
+      return beforeFirstOwnedTurn;
     }
 
     const targetTurn = input.target.providerTurn;
@@ -1062,7 +1069,6 @@ export const resolveCodexRollbackBoundary = Effect.fn("CodexAdapterV2.resolveRol
       });
     }
 
-    const threadTurns = providerTurnsForThread(input.providerThreadTurns, input.providerThread);
     const boundaryTurn = threadTurns.find((turn) => turn.id === targetTurn.id);
     if (boundaryTurn === undefined) {
       return yield* new ProviderAdapter.ProviderAdapterRollbackThreadError({
@@ -1081,7 +1087,7 @@ export const resolveCodexRollbackBoundary = Effect.fn("CodexAdapterV2.resolveRol
     }
     const nativeTurnId = nativeBoundary?.nativeTurnRef?.nativeId;
     return nativeTurnId == null
-      ? { type: "thread_start" as const }
+      ? beforeFirstOwnedTurn
       : { type: "after_turn" as const, nativeTurnId };
   },
 );

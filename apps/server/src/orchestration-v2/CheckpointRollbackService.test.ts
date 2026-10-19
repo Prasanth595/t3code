@@ -819,14 +819,16 @@ it.effect.each([
     })),
   } as unknown as OrchestrationV2ThreadProjection;
   // Native turns can exist with no durable provider turn.
-  const retainedTurns = firstGoalControl ? [] : ["native-1-initial", "native-1"];
+  const retainedTurns =
+    threadStart || firstGoalControl ? ["native-1-initial"] : ["native-1-initial", "native-1"];
   const initialTurns = [
-    ...retainedTurns.filter((id) => !missingBoundary || id !== "native-1"),
+    "native-1-initial",
+    ...(!firstGoalControl && runOrdinals.includes(1) && !missingBoundary ? ["native-1"] : []),
     ...(continuations && !noLaterRuns ? ["native-2-initial"] : []),
     ...runOrdinals
       .filter((ordinal) => ordinal > 1 && !(goalControl && ordinal === targetOrdinal))
       .map((ordinal) => `native-${ordinal}`),
-    ...(continuations || threadStart ? ["native-untracked-goal"] : []),
+    ...(continuations || (threadStart && !noLaterRuns) ? ["native-untracked-goal"] : []),
   ];
   let nativeTurns = [...initialTurns];
   const codex = {
@@ -965,7 +967,7 @@ it.effect.each([
 
     for (let attempt = 1; attempt <= 3; attempt++) {
       yield* worker.drain();
-      assert.deepEqual(nativeTurns, targetOrdinal === 0 ? [] : retainedTurns);
+      assert.deepEqual(nativeTurns, retainedTurns);
       assert.equal(restores, attempt);
       assert.equal(writes.length, attempt === 3 ? 1 : 0);
       const queued = Option.getOrThrow(yield* outbox.get(effectId));
