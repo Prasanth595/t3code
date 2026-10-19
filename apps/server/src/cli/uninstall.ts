@@ -17,7 +17,12 @@ import * as BootService from "../cloud/bootService.ts";
 import { pinnedRuntimeVersionsDir } from "../cloud/pinnedRuntime.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as CliService from "./service.ts";
-import { findWindowsShim, launcherOwnsVersionsDir, resolveLauncherPath } from "./update.ts";
+import {
+  findPosixLauncher,
+  findWindowsShim,
+  launcherOwnsVersionsDir,
+  resolveLauncherPath,
+} from "./update.ts";
 
 export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
   "CliUninstallError",
@@ -30,6 +35,7 @@ export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
 
 export interface UninstallPlan {
   readonly service: boolean;
+  /** The `t3` launcher (script, symlink, or `.cmd` shim) that points into this home's runtime tree. */
   readonly launcher: string | undefined;
   readonly runtimeDir: string | undefined;
   readonly userdataDir: string;
@@ -56,10 +62,7 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
       ? shimPath
       : undefined;
   }
-  const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
-  if (Option.isNone(linkTarget)) return undefined;
-  const resolved = path.resolve(path.dirname(input.launchedAs), linkTarget.value);
-  return launcherOwnsVersionsDir(path, input.versionsDir, resolved) ? input.launchedAs : undefined;
+  return yield* findPosixLauncher({ launchedAs: input.launchedAs, versionsDir: input.versionsDir });
 });
 
 const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {

@@ -35,6 +35,7 @@ import * as CliService from "./service.ts";
 
 export class CliUpdateError extends Schema.TaggedError<CliUpdateError>()("CliUpdateError", {
   reason: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
     return this.reason;
@@ -94,10 +95,11 @@ export function launcherOwnsVersionsDir(
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
-/**
- * Only a launcher that already points into this home's `runtime/versions` tree is touched; a
- * plain copy of the executable, or a launcher for some other install, is left alone.
- */
+// Absolute exec keeps the Cursor SDK's helper lookup out of the working directory.
+function posixLauncherScript(executablePath: string): string {
+  return `#!/bin/sh\nexec '${executablePath.replaceAll("'", "'\\''")}' "$@"\n`;
+}
+
 export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function* (input: {
   readonly launchedAs: string | undefined;
   readonly versionsDir: string;
@@ -126,19 +128,31 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     return Option.some(shimPath);
   }
 
-  const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
-  if (Option.isNone(linkTarget)) return Option.none<string>();
-  const resolvedTarget = path.resolve(path.dirname(input.launchedAs), linkTarget.value);
-  if (!ownsTarget(resolvedTarget)) return Option.none<string>();
-  const tempLink = `${input.launchedAs}.${process.pid}.tmp`;
-  yield* fs.symlink(input.targetEntryPath, tempLink).pipe(
-    Effect.andThen(fs.rename(tempLink, input.launchedAs)),
+  const launcherPath = yield* findPosixLauncher({
+    launchedAs: input.launchedAs,
+    versionsDir: input.versionsDir,
+  });
+  if (launcherPath === undefined) return Option.none<string>();
+  // Rename replaces a legacy symlink without writing through it.
+  yield* Effect.gen(function* () {
+    const tempPath = yield* fs.makeTempFileScoped({
+      directory: path.dirname(launcherPath),
+      prefix: ".t3-",
+    });
+    yield* fs.writeFileString(tempPath, posixLauncherScript(input.targetEntryPath));
+    yield* fs.chmod(tempPath, 0o755);
+    yield* fs.rename(tempPath, launcherPath);
+  }).pipe(
+    Effect.scoped,
     Effect.mapError(
-      () =>
-        new CliUpdateError({ reason: `Could not repoint the t3 launcher at ${input.launchedAs}.` }),
+      (cause) =>
+        new CliUpdateError({
+          reason: `Could not repoint the t3 launcher at ${launcherPath}.`,
+          cause,
+        }),
     ),
   );
-  return Option.some(input.launchedAs);
+  return Option.some(launcherPath);
 });
 
 /**
@@ -193,6 +207,47 @@ export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(functio
     ) {
       return shimPath;
     }
+  }
+  return undefined;
+});
+
+export const findPosixLauncher = Effect.fn("cli.update.find_posix_launcher")(function* (input: {
+  readonly launchedAs: string;
+  readonly versionsDir: string;
+}) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const environment = yield* HostProcess.Environment;
+  const versionsDir = yield* fs.realPath(input.versionsDir).pipe(Effect.option);
+  const executable = yield* fs.realPath(input.launchedAs).pipe(Effect.option);
+  if (
+    Option.isNone(versionsDir) ||
+    Option.isNone(executable) ||
+    !launcherOwnsVersionsDir(path, versionsDir.value, executable.value)
+  ) {
+    return undefined;
+  }
+  const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
+  if (Option.isSome(linkTarget)) return input.launchedAs;
+
+  const expected = posixLauncherScript(input.launchedAs);
+  const expectedSize = BigInt(Buffer.byteLength(expected));
+  const candidates = [
+    environment["T3CODE_INSTALL_BIN_DIR"] ?? "",
+    ...(environment["PATH"] ?? "").split(":"),
+    environment["HOME"] ? path.join(environment["HOME"], ".local", "bin") : "",
+  ].filter((entry) => entry.trim().length > 0);
+  for (const directory of candidates) {
+    // Rewrite the real script, preserving aliases that link to it.
+    const launcherPath = yield* fs.realPath(path.join(directory, "t3")).pipe(Effect.option);
+    if (Option.isNone(launcherPath)) continue;
+    // Avoid reading a runtime executable found on PATH.
+    const info = yield* fs.stat(launcherPath.value).pipe(Effect.option);
+    if (Option.isNone(info) || info.value.type !== "File" || info.value.size !== expectedSize) {
+      continue;
+    }
+    const contents = yield* fs.readFileString(launcherPath.value).pipe(Effect.option);
+    if (Option.isSome(contents) && contents.value === expected) return launcherPath.value;
   }
   return undefined;
 });

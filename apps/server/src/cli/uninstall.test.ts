@@ -34,4 +34,42 @@ it.layer(NodeServices.layer)("t3 uninstall launcher", (it) => {
       assert.isUndefined(yield* findOwnedLauncher({ launchedAs: undefined, versionsDir }));
     }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
   );
+
+  it.effect(
+    "recognizes the installed script without claiming a foreign or customized wrapper",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.realPath(
+          yield* fs.makeTempDirectoryScoped({ prefix: "t3-uninstall-" }),
+        );
+        const versionsDir = path.join(root, "it's home/runtime/versions");
+        const exe = path.join(versionsDir, "1.0.0/t3");
+        const otherExe = path.join(root, "other/runtime/versions/1.0.0/t3");
+        const bin = path.join(root, "bin");
+        for (const file of [exe, otherExe]) {
+          yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+          yield* fs.writeFileString(file, "");
+        }
+        yield* fs.makeDirectory(bin, { recursive: true });
+        const launcher = path.join(bin, "t3");
+        const contents = `#!/bin/sh\nexec '${exe.replaceAll("'", "'\\''")}' "$@"\n`;
+        yield* fs.writeFileString(launcher, contents);
+
+        // The script execs the executable by absolute path, so argv0 is the executable.
+        const find = (launchedAs: string) =>
+          findOwnedLauncher({ launchedAs, versionsDir }).pipe(
+            Effect.provideService(HostProcess.Environment, { PATH: bin }),
+          );
+        assert.equal(yield* find(exe), launcher);
+        assert.isUndefined(yield* find(otherExe));
+
+        yield* fs.writeFileString(launcher, `#!/bin/sh\nexec '${otherExe}' "$@"\n`);
+        assert.isUndefined(yield* find(exe));
+
+        yield* fs.writeFileString(launcher, `${contents}# user customization\n`);
+        assert.isUndefined(yield* find(exe));
+      }).pipe(Effect.scoped, Effect.provideService(HostProcess.Platform, "linux")),
+  );
 });
