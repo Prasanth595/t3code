@@ -62,9 +62,7 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
         yield* connection
           .request({ type: "set_model", provider: parsed.provider, modelId: parsed.modelId })
           .pipe(
-            // Model discovery loads extensions and this launch does not, so the
-            // picker can offer a model Pi cannot load here. Pi reports a typo
-            // the same way, so the extension hint stays conditional.
+            // Model discovery loads extensions that this background helper disables.
             Effect.mapError((error) =>
               error._tag === "PiRpcError" && error.operation === "set_model"
                 ? new TextGenerationError({
