@@ -3429,8 +3429,7 @@ const readClaudeTaskList = Effect.fnUntraced(
     const configDir = configDirOverride
       ? path.resolve(input.cwd ?? ".", configDirOverride)
       : yield* resolveClaudeHomePath({ homePath: "" });
-    // Claude sanitizes the raw override, including whitespace, before selecting its store.
-    const listId = input.environment.CLAUDE_CODE_TASK_LIST_ID || input.nativeThreadId;
+    const listId = input.environment.CLAUDE_CODE_TASK_LIST_ID?.trim() || input.nativeThreadId;
     const directory = path.join(configDir, "tasks", listId.replace(/[^a-zA-Z0-9_-]/g, "-"));
     const tasks = new Map<string, Omit<OrchestrationV2PlanStep, "id">>();
     const names = (yield* fileSystem.readDirectory(directory))

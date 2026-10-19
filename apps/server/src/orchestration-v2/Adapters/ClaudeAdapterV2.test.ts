@@ -5037,8 +5037,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     {
       tool: createTask("2", "Implement"),
       listId: " list/ID ",
-      // Claude Code 2.1.303 sanitizes the raw override, including its surrounding spaces.
-      directory: "-list-ID-",
+      directory: "list-ID",
       status: "pending",
     },
   ] as const)(
