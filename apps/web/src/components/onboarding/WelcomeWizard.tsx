@@ -107,6 +107,12 @@ const AGENT_ONBOARDING_THREAD_ID = ThreadId.make("onboarding-agent-setup");
 const ONBOARDING_STAGES = ["Connect", "Agents", "Projects"] as const;
 const SCAN_LIMIT_MESSAGE = "Scan limit reached. Some projects or conversations may be missing.";
 
+function isConnectable(environment: {
+  readonly entry: { readonly enabled: boolean; readonly unsupportedReason?: string | undefined };
+}): boolean {
+  return environment.entry.enabled && environment.entry.unsupportedReason === undefined;
+}
+
 export function WelcomeWizard({
   localAvailable,
   onDone,
@@ -139,10 +145,7 @@ export function WelcomeWizard({
     }
     // A computer the user switched off, or one this app cannot talk to yet,
     // stays unselected until they pick it.
-    const enabledComputers = newComputers.filter(
-      (environment) =>
-        environment.entry.enabled && environment.entry.unsupportedReason === undefined,
-    );
+    const enabledComputers = newComputers.filter(isConnectable);
     if (enabledComputers.length === 0) return;
     // oxlint-disable-next-line react/set-state-in-effect -- The registry marks each computer once, and only after commit; render must not mutate it.
     setSelection(
@@ -154,7 +157,12 @@ export function WelcomeWizard({
     );
   }, [autoSelectedComputers, environments]);
   const selectedIds =
-    selection ?? new Set(primaryEnvironment ? [primaryEnvironment.environmentId] : []);
+    selection ??
+    new Set(
+      primaryEnvironment && isConnectable(primaryEnvironment)
+        ? [primaryEnvironment.environmentId]
+        : [],
+    );
   const scans = useProjectScans(step === "import" ? setupIds : NO_ENVIRONMENTS);
   const isLoadingProjects =
     step === "import" &&
