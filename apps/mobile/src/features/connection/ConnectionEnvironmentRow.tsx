@@ -1,6 +1,6 @@
-import * as Dialog from "../../components/Dialog";
+import * as Dialog from "../../components/ui/Dialog";
 import { ConnectionTraceId } from "./ConnectionTraceId";
-import { SymbolView } from "../../components/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
 import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -10,11 +10,11 @@ import { useCallback, useState } from "react";
 import { Platform, Pressable, View } from "react-native";
 import Animated, { FadeIn, FadeOut, LinearTransition } from "react-native-reanimated";
 
-import { AppText as Text } from "../../components/AppText";
+import { AppText as Text } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
-import { Button } from "../../components/Button";
-import { IconButton } from "../../components/IconButton";
-import { ThemedSwitch } from "../../components/ThemedSwitch";
+import { Button } from "../../components/ui/Button";
+import { IconButton } from "../../components/ui/IconButton";
+import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
 import type { ConnectedEnvironmentSummary } from "../../state/remote-runtime-types";
 import { serverEnvironment } from "../../state/server";
@@ -55,7 +55,6 @@ export function ConnectionEnvironmentRow(props: {
   const enabled = props.environment.isEnabled && !unsupported;
   const statusLabel = connectionStatusLabel(props.environment);
   const statusTraceId = enabled ? props.environment.connectionErrorTraceId : null;
-  // Unsupported is a compatibility note, not a failure, so it stays muted.
   const hasConnectionFailure = enabled && props.environment.connectionError !== null;
   const isRetrying =
     enabled &&
@@ -79,15 +78,17 @@ export function ConnectionEnvironmentRow(props: {
 
   return (
     <Animated.View layout={LinearTransition.duration(250)} className="bg-grouped-card">
-      <Pressable
-        className="flex-row items-center gap-3 px-4 py-3.5 active:opacity-70"
-        accessibilityRole="button"
-        accessibilityLabel={
-          props.opensDetails ? `Manage ${props.environment.environmentLabel}` : undefined
-        }
-        onPress={props.onToggle}
-      >
-        <View className="flex-1 gap-0.5">
+      <View className="flex-row items-center gap-3 px-4 py-3.5">
+        <Pressable
+          className="min-w-0 flex-1 gap-0.5 active:opacity-70"
+          accessibilityRole="button"
+          accessibilityLabel={
+            props.opensDetails
+              ? `Manage ${props.environment.environmentLabel}`
+              : `${props.expanded ? "Collapse" : "Expand"} details for ${props.environment.environmentLabel}`
+          }
+          onPress={props.onToggle}
+        >
           <View className="flex-row items-center gap-1.5">
             <ConnectionStatusDot
               state={enabled || unsupported ? props.environment.connectionState : "available"}
@@ -130,24 +131,39 @@ export function ConnectionEnvironmentRow(props: {
               ) : null}
             </Text>
           ) : null}
-        </View>
+        </Pressable>
 
         <ThemedSwitch
+          accessibilityLabel={`Enable ${props.environment.environmentLabel}`}
           style={{ alignSelf: "center" }}
           disabled={unsupported}
           onValueChange={(next) => props.onSetEnabled(props.environment.environmentId, next)}
           value={enabled}
         />
-        <SymbolView
-          name={props.opensDetails ? "chevron.right" : "chevron.down"}
-          size={12}
-          tintColorClassName="accent-icon-subtle"
-          type="monochrome"
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={
+            props.opensDetails
+              ? `Manage ${props.environment.environmentLabel}`
+              : `${props.expanded ? "Collapse" : "Expand"} details for ${props.environment.environmentLabel}`
+          }
+          onPress={props.onToggle}
           style={{
-            transform: [{ rotate: props.expanded ? "180deg" : "0deg" }],
+            minWidth: 44,
+            minHeight: 44,
+            alignItems: "center",
+            justifyContent: "center",
           }}
-        />
-      </Pressable>
+        >
+          <SymbolView
+            name={props.opensDetails ? "chevron.right" : "chevron.down"}
+            size={12}
+            tintColorClassName="accent-icon-subtle"
+            type="monochrome"
+            style={{ transform: [{ rotate: props.expanded ? "180deg" : "0deg" }] }}
+          />
+        </Pressable>
+      </View>
 
       {props.expanded ? (
         <Animated.View
