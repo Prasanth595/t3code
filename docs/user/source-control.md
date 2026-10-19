@@ -54,7 +54,9 @@ See [GitHub's repository creation requirements](https://docs.github.com/en/rest/
 The bot is the acting identity, not a repository owner. For clone or publish destinations,
 use `owner/repo`. A bare name uses the installation's repository owner when it can be determined;
 if the installation has no repositories or exposes multiple owners, specify the owner explicitly.
-GitHub still enforces repository permissions and restrictions such as reviewing your own PR.
+Automatic publishing when adding a new project is unavailable for App identities; publish it
+manually with an explicit destination. GitHub still enforces repository permissions and
+restrictions such as reviewing your own PR.
 
 Publishing requires the token to access the newly created repository. A token restricted to
 existing repository IDs can create a repository without being able to return its details or

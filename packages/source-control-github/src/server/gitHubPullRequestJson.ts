@@ -110,6 +110,7 @@ interface LabelFields {
 }
 
 interface ReviewRequestFields {
+  readonly __typename?: string | undefined;
   readonly login?: string | null | undefined;
   readonly slug?: string | null | undefined;
   readonly name?: string | null | undefined;
@@ -584,7 +585,7 @@ function toReviewRequestLogins(
 ): ReadonlyArray<string> {
   return (raw ?? []).flatMap((request) => {
     const login = trimmed(request.login);
-    return login === null ? [] : [login];
+    return login === null ? [] : [gitHubActorLogin(login, request.__typename === "Bot")];
   });
 }
 
@@ -920,7 +921,7 @@ function toRow(
       const reviewer = request.requestedReviewer;
       if (reviewer === null) return [];
       const login = "login" in reviewer ? trimmed(reviewer.login) : null;
-      if (login !== null) return [{ login }];
+      if (login !== null) return [{ __typename: reviewer.__typename, login }];
       const slug = "slug" in reviewer ? trimmed(reviewer.slug) : null;
       return slug === null ? [] : [{ slug }];
     },
@@ -1121,6 +1122,7 @@ export function toPullRequestCore(result: PullRequestCore.Result): GitHubPullReq
             ? []
             : [
                 {
+                  __typename: requestedReviewer.__typename,
                   login: "login" in requestedReviewer ? requestedReviewer.login : null,
                   slug: "slug" in requestedReviewer ? requestedReviewer.slug : null,
                   name:
@@ -1563,7 +1565,7 @@ export function toReviewerCandidates(
   for (const { requestedReviewer: raw } of nodesOf(pullRequest?.reviewRequests)) {
     if (raw === null) continue;
     const slug = "slug" in raw ? trimmed(raw.slug) : null;
-    const id = slug ?? ("login" in raw ? trimmed(raw.login) : null);
+    const id = slug ?? toActor(raw)?.login ?? null;
     if (id === null) continue;
     candidates.set(`${slug === null ? "user" : "team"} ${id}`, {
       id,

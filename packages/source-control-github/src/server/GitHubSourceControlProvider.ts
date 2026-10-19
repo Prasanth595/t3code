@@ -122,11 +122,15 @@ function authAccounts(accounts: ReadonlyArray<GitHubAuthStatusAccount>) {
 export function parseGitHubAuth(
   input: SourceControlAuthProbeInput,
   settings: GitHubClient.GitHubSettings = readSourceControlHostSettings(GitHubClient.settings, {}),
+  defaultHost = "github.com",
 ) {
   const output = combinedAuthOutput(input);
   const authStatus = parseGitHubAuthStatus(input.stdout);
   const hosts = [...new Set(authStatus.accounts.map((entry) => entry.host))];
-  const fallback = findAuthenticatedGitHubAccount(authStatus.accounts);
+  const fallback =
+    findAuthenticatedGitHubAccount(
+      authStatus.accounts.filter((account) => account.host === defaultHost),
+    ) ?? findAuthenticatedGitHubAccount(authStatus.accounts);
   const orderedHosts = fallback
     ? [fallback.host, ...hosts.filter((host) => host !== fallback.host)]
     : hosts;
@@ -236,10 +240,11 @@ export const makeDiscovery = Effect.gen(function* () {
           Effect.orElseSucceed(() => undefined),
         ),
       );
+      const defaultHost = environment.GH_HOST?.trim().toLowerCase() || "github.com";
       const cli = yield* probeSourceControlProvider({
         cwd,
         process,
-        spec: { ...discovery, parseAuth: (input) => parseGitHubAuth(input, settings) },
+        spec: { ...discovery, parseAuth: (input) => parseGitHubAuth(input, settings, defaultHost) },
       });
       const hosts = [
         ...new Set([
@@ -255,7 +260,6 @@ export const makeDiscovery = Effect.gen(function* () {
           ((settings.tokens[host] ?? "").trim() !== "" ||
             environmentTokenVariable(host, environment) !== null),
       );
-      if (hosts.length === 0) return cli;
       const checked: SourceControlProviderAuth[] = [];
       let accounts = [...(cli.auth.accounts ?? [])];
       for (const host of hosts) {
@@ -321,17 +325,22 @@ export const makeDiscovery = Effect.gen(function* () {
       const checkedHosts = new Set(hosts);
       const fallback =
         cli.auth.status === "authenticated" &&
-        !checkedHosts.has(Option.getOrElse(cli.auth.host, () => ""))
+        Option.contains(cli.auth.host, defaultHost) &&
+        !checkedHosts.has(defaultHost)
           ? cli.auth
           : undefined;
       const selected =
-        checked.find((auth) => auth.status === "authenticated") ??
+        checked.find((auth) => Option.contains(auth.host, defaultHost)) ??
         fallback ??
-        checked[0] ??
-        cli.auth;
+        (cli.auth.status !== "authenticated" ? cli.auth : undefined) ??
+        providerAuth({
+          status: "unauthenticated",
+          host: defaultHost,
+          detail: `Sign in to ${defaultHost} to create repositories, or set GH_HOST to the intended GitHub host.`,
+        });
       return {
         ...cli,
-        status: "available",
+        status: hosts.length > 0 ? "available" : cli.status,
         auth: { ...selected, accounts },
       } satisfies SourceControlProviderDiscoveryItem;
     }),
@@ -1159,14 +1168,19 @@ export const make = Effect.gen(function* () {
                 })
                 .pipe(
                   GitHubGraphQlClient.call(target),
-                  Effect.mapError((error) =>
-                    GraphQLClientError.isGraphQLClientError(error) ||
-                    error._tag === "GitHubApiRequestError" ||
-                    error._tag === "GitHubApiNotFoundError" ||
-                    (error._tag === "GitHubApiResponseError" && error.status === 200)
+                  Effect.mapError((error) => {
+                    if (
+                      error._tag === "GitHubApiResponseError" &&
+                      (error.status === 200 || error.status >= 500)
+                    ) {
+                      return failure(`${incomplete} ${error.message}`, error);
+                    }
+                    return GraphQLClientError.isGraphQLClientError(error) ||
+                      error._tag === "GitHubApiRequestError" ||
+                      error._tag === "GitHubApiNotFoundError"
                       ? failure(incomplete, error)
-                      : fromGitHubApiError(error),
-                  ),
+                      : fromGitHubApiError(error);
+                  }),
                 );
               const repository = created.createRepository?.repository;
               if (repository == null) return yield* failure(incomplete);
