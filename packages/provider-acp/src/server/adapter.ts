@@ -6062,15 +6062,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         const terminalizeOpenRunOwnedItems = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
-          options: {
-            readonly toolStatus: "interrupted" | "failed";
-            readonly terminalizeSubagents: boolean;
-          },
+          options: { readonly terminalizeSubagents: boolean },
         ) {
           for (const tool of context.tools.values()) {
             const status = toolStatus(tool.status);
             if (status === "pending" || status === "running" || status === "waiting") {
-              yield* emitTool(context, tool, options.toolStatus);
+              yield* emitTool(context, tool, "interrupted");
             }
           }
           if (!options.terminalizeSubagents) return;
@@ -6093,10 +6090,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         const terminalizeOpenForegroundTools = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
+          status: "completed" | "failed",
         ) {
-          for (const tool of context.tools.values()) {
+          for (const [key, tool] of context.tools) {
+            // Child-session tools live under a `${nativeTaskId}:tool:` key and
+            // belong to a subagent that outlives this turn; emitTool would
+            // reproject them as new root tools.
+            if (key !== tool.toolCallId) continue;
             if (!acpCompletedTurnShouldTerminalizeTool(tool, flavor)) continue;
-            yield* emitTool(context, tool, "completed");
+            yield* emitTool(context, tool, status);
           }
         });
 
@@ -6140,17 +6142,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               });
             }
           }
-          if (settledStatus === "completed") {
-            yield* terminalizeOpenForegroundTools(context);
+          if (settledStatus === "completed" || settledStatus === "failed") {
+            yield* terminalizeOpenForegroundTools(context, settledStatus);
           } else if (settledStatus === "interrupted") {
             yield* terminalizeOpenRunOwnedItems(context, {
-              toolStatus: "interrupted",
               terminalizeSubagents: directStopQuarantine,
-            });
-          } else if (settledStatus === "failed") {
-            yield* terminalizeOpenRunOwnedItems(context, {
-              toolStatus: "failed",
-              terminalizeSubagents: false,
             });
           }
           yield* closeTextStreams(context);
@@ -6695,7 +6691,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     if (result.stopReason === "error") {
                       yield* finalizeTurn(
                         context,
-                        context.interrupted ? "interrupted" : "failed",
+                        "failed",
                         makeProviderFailure({
                           class: "provider_error",
                           message: result.error?.message,

@@ -611,12 +611,30 @@ describe("AcpAdapterV2", () => {
         const path = yield* Path.Path;
         const instanceId = ProviderInstanceId.make(`idle-error-${details}`);
         const threadId = ThreadId.make(`thread-idle-error-${details}`);
+        const childSessionId = "mock-child-session-idle-error";
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
           selfInvocation: yield* resolveSelfInvocation(),
           flavor: {
             driver: ACP_TEST_DRIVER,
             capabilities: AcpProviderCapabilitiesV2,
+            extractBackgroundTaskId: (toolCall) =>
+              toolCall.toolCallId === "tool-call-idle-error-monitor"
+                ? "idle-error-monitor"
+                : undefined,
+            extractSubagentUpdate: (toolCall) =>
+              toolCall.toolCallId === "tool-call-idle-error-subagent"
+                ? {
+                    nativeTaskId: "task-idle-error",
+                    prompt: "child work",
+                    title: "child work",
+                    model: null,
+                    status: "running",
+                    childSessionId,
+                    result: null,
+                    suppressNormalTool: true,
+                  }
+                : undefined,
             makeRuntime: makeMockRuntime({
               childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
               mockAgentPath: yield* path.fromFileUrl(
@@ -682,14 +700,32 @@ describe("AcpAdapterV2", () => {
                 retryable: null,
               },
         );
-        const toolStatuses = failedEvents.flatMap((event) =>
-          event.type === "turn_item.updated" &&
-          event.turnItem.nativeItemRef?.nativeId === "tool-call-idle-error-1"
-            ? [event.turnItem.status]
-            : [],
-        );
+        const toolItems = (nativeId: string) =>
+          failedEvents.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.nativeItemRef?.nativeId === nativeId
+              ? [event.turnItem]
+              : [],
+          );
+        const toolStatuses = toolItems("tool-call-idle-error-1").map((item) => item.status);
         assert.include(toolStatuses, "running");
-        assert.notInclude(["pending", "running", "waiting"], toolStatuses.at(-1));
+        assert.equal(toolStatuses.at(-1), "failed");
+        assert.deepEqual(
+          toolItems("tool-call-idle-error-monitor").map((item) => item.status),
+          ["running"],
+          "a background monitor outlives the failed turn and keeps its running row",
+        );
+        const childItems = toolItems("task-idle-error:tool:tool-call-idle-error-child");
+        assert.deepEqual(
+          childItems.map((item) => item.status),
+          ["running"],
+          "a child-session tool keeps running in its own thread",
+        );
+        assert.isTrue(childItems.every((item) => item.threadId !== threadId));
+        assert.isEmpty(
+          toolItems("tool-call-idle-error-child"),
+          "the failed turn must not reproject the child tool as a root tool",
+        );
 
         const nextEvents = yield* runTurn(2);
         const next = nextEvents.at(-1);
