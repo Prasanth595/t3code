@@ -5,6 +5,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import FileBrowserPanel from "./FileBrowserPanel";
+import { useDirectoryEntries } from "./useDirectoryEntries";
 import {
   selectActiveRightPanelSurface,
   selectThreadRightPanelState,
@@ -65,10 +66,16 @@ const files = vi.hoisted(() => ({
   loadingDirectories: new Set<string>() as ReadonlySet<string>,
   load: vi.fn(async (_path: string) => {}),
   refresh: vi.fn(),
+  listEntries: vi.fn<
+    (directory: string) => Promise<{
+      _tag: "Success";
+      value: { entries: ProjectEntry[] };
+    }>
+  >(),
 }));
 
 vi.mock("./useDirectoryEntries", () => ({
-  useDirectoryEntries: () => ({
+  useDirectoryEntries: vi.fn(() => ({
     entries: files.directoryEntries,
     loadingDirectories: files.loadingDirectories,
     loadedDirectories: files.loadedDirectories,
@@ -77,7 +84,17 @@ vi.mock("./useDirectoryEntries", () => ({
     ready: true,
     error: null,
     isPending: false,
-  }),
+  })),
+}));
+vi.mock("@t3tools/client-runtime/state/runtime", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/client-runtime/state/runtime")>()),
+  executeAtomQuery: (_registry: unknown, directory: string) => files.listEntries(directory),
+}));
+vi.mock("~/rpc/atomRegistry", () => ({ appAtomRegistry: {} }));
+vi.mock("~/state/projects", () => ({
+  projectEnvironment: {
+    listEntries: ({ input }: { input: { directoryPath: string } }) => input.directoryPath,
+  },
 }));
 vi.mock("~/state/queries", () => ({
   useProjectPathSearch: () => ({
@@ -194,6 +211,8 @@ describe("Files panel", () => {
     localStorage.clear();
     useRightPanelStore.setState({ byThreadKey: {} });
     vi.clearAllMocks();
+    vi.mocked(useDirectoryEntries).mockReset();
+    files.listEntries.mockReset();
     files.load.mockReset().mockResolvedValue(undefined);
     files.loadedDirectories = new Set(["", "src"]);
     files.loadingDirectories = new Set();
@@ -449,33 +468,32 @@ describe("Files panel", () => {
         ...directories.map((path) => ({ path: `${path}/sibling.txt`, kind: "file" as const })),
         { path, kind: "file" },
       ];
-      files.directoryEntries = [{ path: "src", kind: "directory" }];
-      files.loadedDirectories = new Set([""]);
-      const pending = new Map<string, { promise: Promise<void>; finish: () => void }>();
-      files.load.mockImplementation((directory) => {
-        if (files.loadedDirectories.has(directory)) return Promise.resolve();
-        const existing = pending.get(directory);
-        if (existing) return existing.promise;
-        let resolveListing!: () => void;
-        const promise = new Promise<void>((resolve) => {
-          resolveListing = resolve;
-        });
-        pending.set(directory, {
-          promise,
-          finish: () => {
-            files.directoryEntries = [
-              ...files.directoryEntries,
-              ...entries.filter(
-                (entry) => entry.path.slice(0, entry.path.lastIndexOf("/")) === directory,
-              ),
-            ];
-            files.loadedDirectories = new Set([...files.loadedDirectories, directory]);
-            pending.delete(directory);
-            resolveListing();
-          },
-        });
-        return promise;
-      });
+      const actual =
+        await vi.importActual<typeof import("./useDirectoryEntries")>("./useDirectoryEntries");
+      vi.mocked(useDirectoryEntries).mockImplementation(actual.useDirectoryEntries);
+      const pending = new Map<string, () => void>();
+      files.listEntries.mockImplementation(
+        (directory) =>
+          new Promise((resolve) => {
+            pending.set(directory, () => {
+              pending.delete(directory);
+              resolve({
+                _tag: "Success",
+                value: {
+                  entries: entries.filter(
+                    (entry) =>
+                      entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))) === directory,
+                  ),
+                },
+              });
+            });
+          }),
+      );
+      async function finishListing(directory: string) {
+        const finish = pending.get(directory);
+        expect(finish, `requested listing for ${directory || "root"}`).toBeDefined();
+        await act(async () => finish!());
+      }
       const panelProps = {
         followActiveSurface: true,
         onOpenFile: vi.fn((path: string) =>
@@ -483,6 +501,7 @@ describe("Files panel", () => {
         ),
       };
       await render(panelProps);
+      await finishListing("");
       files.searchEntries = [{ path, kind: "file" }];
       await search("target.ts");
       expect(visiblePaths()).toContain(path);
@@ -498,18 +517,29 @@ describe("Files panel", () => {
       expect(searchInput().value).toBe("target.ts");
 
       if (lifecycle === "remounted") {
-        // Search-only ancestors disappear on remount before the real listings arrive.
-        files.searchEntries = [];
-        await remount(panelProps);
+        await search("");
+        expect(searchInput().value).toBe("");
+        // Let a real parent row replace its provisional search row before hiding the explorer.
+        await finishListing("src");
+        expect(visiblePaths()).toContain("src/one/");
+        expect(visiblePaths()).not.toContain(path);
+        // Finish old requests while unmounted: only the new hook's listings may restore rows.
+        await act(async () => root!.unmount());
+        await act(async () => {
+          for (const finish of pending.values()) finish();
+        });
+        expect(pending.size).toBe(0);
+        root = createRoot(container!);
+        await render(panelProps);
+        await finishListing("");
         expect(visiblePaths()).not.toContain(path);
       }
 
-      // Only requested listings can contribute entries; a search hit is not a loaded directory.
+      // Only requested listings contribute entries; a search hit is not a loaded directory.
       for (let batch = 0; pending.size > 0 && batch < directories.length; batch++) {
         await act(async () => {
-          for (const request of pending.values()) request.finish();
+          for (const finish of pending.values()) finish();
         });
-        await render(panelProps);
       }
       expect(pending.size).toBe(0);
       await act(async () =>
