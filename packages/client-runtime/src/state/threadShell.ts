@@ -46,9 +46,11 @@ const isChildRunLive = (
       thread.status === "running" ||
       thread.status === "waiting";
 
-// An async question asked before the activity run's work started belongs to a
-// run the subagent already finished, so the parent is no longer waiting on it.
-const isStaleQuestion = (thread: OrchestrationV2ThreadShell) =>
+// Compare against the work start: wakes and restarts may continue a pending
+// question, whereas a fresh run must not revive one from an earlier run.
+const isStaleQuestion = (
+  thread: Pick<OrchestrationV2ThreadShell, "pendingRuntimeRequest" | "activityRunStartedAt">,
+) =>
   thread.pendingRuntimeRequest?.kind === "user_input" &&
   thread.activityRunStartedAt != null &&
   DateTime.toEpochMillis(thread.pendingRuntimeRequest.createdAt) <
