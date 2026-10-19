@@ -2,6 +2,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import { HttpClient, HttpClientResponse } from "effect/http";
 import * as Scope from "effect/Scope";
 
 import * as DesktopAppActivation from "../app/DesktopAppActivation.ts";
@@ -46,6 +47,29 @@ export const layerSafeStorage = Layer.succeed(ElectronSafeStorage.ElectronSafeSt
   },
   selectedStorageBackend: Effect.succeedNone,
 } satisfies ElectronSafeStorage.ElectronSafeStorage["Service"]);
+
+/** An HTTP client that answers every request with a successful pairing exchange. */
+export const layerHttpPairing = (accessToken: string) =>
+  Layer.succeed(
+    HttpClient.HttpClient,
+    HttpClient.make((request) =>
+      Effect.sync(() =>
+        HttpClientResponse.fromWeb(
+          request,
+          new Response(
+            JSON.stringify({
+              access_token: accessToken,
+              issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+              token_type: "Bearer",
+              expires_in: 3600,
+              scope: "environment:connect",
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+        ),
+      ),
+    ),
+  );
 
 /** A window that records the URL it was told the backend is ready at. */
 export const layerWindow = (readyUrls: Array<string>) =>
