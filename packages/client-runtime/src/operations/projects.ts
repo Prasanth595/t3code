@@ -207,6 +207,8 @@ export function getNewProjectPublishTargets(
     const provider = discovery?.sourceControlProviders.find(
       (candidate) => candidate.kind === definition.kind,
     );
+    const host = provider ? Option.getOrNull(provider.auth.host) : null;
+    if (host !== null && host !== definition.publishHost(host)) return [];
     const placement = definition.newRepositoryOwner(
       provider ? Option.getOrNull(provider.auth.account) : null,
     );

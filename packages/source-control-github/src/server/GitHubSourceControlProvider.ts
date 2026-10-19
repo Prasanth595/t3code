@@ -323,21 +323,18 @@ export const makeDiscovery = Effect.gen(function* () {
         }
       }
       const checkedHosts = new Set(hosts);
-      const fallback =
-        cli.auth.status === "authenticated" &&
-        Option.contains(cli.auth.host, defaultHost) &&
-        !checkedHosts.has(defaultHost)
+      const cliHost = Option.getOrNull(cli.auth.host);
+      const uncheckedCliAuth =
+        cli.auth.status === "authenticated" && cliHost !== null && !checkedHosts.has(cliHost)
           ? cli.auth
           : undefined;
       const selected =
         checked.find((auth) => Option.contains(auth.host, defaultHost)) ??
-        fallback ??
-        (cli.auth.status !== "authenticated" ? cli.auth : undefined) ??
-        providerAuth({
-          status: "unauthenticated",
-          host: defaultHost,
-          detail: `Sign in to ${defaultHost} to create repositories, or set GH_HOST to the intended GitHub host.`,
-        });
+        (cliHost === defaultHost ? uncheckedCliAuth : undefined) ??
+        checked.find((auth) => auth.status === "authenticated") ??
+        uncheckedCliAuth ??
+        checked[0] ??
+        cli.auth;
       return {
         ...cli,
         status: hosts.length > 0 ? "available" : cli.status,
