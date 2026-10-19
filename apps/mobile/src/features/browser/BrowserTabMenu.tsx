@@ -1,4 +1,5 @@
 import * as Dialog from "../../components/ui/Dialog";
+import { useAtomValue } from "@effect/atom-react";
 import type { MenuAction } from "@react-native-menu/menu";
 import {
   DEFAULT_PREVIEW_ZOOM_FACTOR,
@@ -49,6 +50,7 @@ export function BrowserTabMenu({
   const adjust = useAtomCommand(previewEnvironment.adjust, "browser tab change");
   const resize = useAtomCommand(previewEnvironment.resize, "browser viewport change");
   const close = useAtomCommand(previewEnvironment.close, "browser tab close");
+  const canClose = useAtomValue(previewEnvironment.close.permissionAtom(environmentId));
   const target = { threadId: tab.threadId as PreviewAdjustInput["threadId"], tabId: tab.tabId };
   const colorScheme = tab.colorScheme ?? "system";
   const zoomFactor = tab.zoomFactor ?? DEFAULT_PREVIEW_ZOOM_FACTOR;
@@ -68,7 +70,7 @@ export function BrowserTabMenu({
     id: "close",
     title: "Close tab",
     image: "xmark",
-    attributes: { destructive: true },
+    attributes: { destructive: true, disabled: !canClose },
   };
   const actions: MenuAction[] = [
     { id: "hard-reload", title: "Hard reload", image: "arrow.clockwise.circle" },
