@@ -66,6 +66,44 @@ type CodexRateLimitsProbe =
     }
   | { readonly failure: string };
 
+const CodexRoutingConfig = Schema.Struct({
+  model_provider: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  openai_base_url: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  model_providers: Schema.optionalKey(
+    Schema.Record(
+      Schema.String,
+      Schema.Struct({ base_url: Schema.optionalKey(Schema.NullOr(Schema.String)) }),
+    ),
+  ),
+});
+const decodeCodexRoutingConfig = Schema.decodeUnknownOption(CodexRoutingConfig);
+
+function hasNativeOpenaiEndpoint(config: unknown): boolean {
+  const decoded = decodeCodexRoutingConfig(config);
+  if (Option.isNone(decoded)) return false;
+  const routing = decoded.value;
+  const providerId = routing.model_provider ?? "openai";
+  const provider = routing.model_providers?.[providerId];
+  if (providerId !== "openai" && !provider) return false;
+  const baseUrl =
+    providerId === "openai" ? routing.openai_base_url || undefined : provider?.base_url;
+  // A successfully read provider without an override uses Codex's auth-dependent OpenAI default.
+  if (baseUrl == null) return true;
+  if (!URL.canParse(baseUrl)) return false;
+  const url = new URL(baseUrl);
+  return (
+    url.protocol === "https:" &&
+    (url.hostname === "api.openai.com" || url.hostname === "chatgpt.com")
+  );
+}
+
+// A stored login does not establish that this provider's traffic spends its quota.
+const reportsNativeUsage = (
+  account: CodexSchema.V2GetAccountResponse,
+  nativeOpenaiEndpoint: boolean | undefined,
+): boolean =>
+  account.requiresOpenaiAuth && account.account?.type !== "apiKey" && nativeOpenaiEndpoint === true;
+
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 const CODEX_CATALOG_REFRESH_TIMEOUT = "3 seconds" as const;
 const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
@@ -84,6 +122,7 @@ const CODEX_PRESENTATION = {
 
 export interface CodexAppServerProviderSnapshot {
   readonly account: CodexSchema.V2GetAccountResponse;
+  readonly nativeOpenaiEndpoint?: boolean;
   readonly rateLimits?: CodexRateLimitsProbe;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel>;
@@ -484,6 +523,14 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
+  const nativeOpenaiEndpoint =
+    input.skipNativeUsage || !reportsNativeUsage(accountResponse, true)
+      ? false
+      : yield* client.request("config/read", {}).pipe(
+          Effect.map((response) => hasNativeOpenaiEndpoint(response.config)),
+          Effect.orElseSucceed(() => false),
+        );
+
   const [skillsResponse, models, rateLimits] = yield* Effect.all(
     [
       client.request("skills/list", {
@@ -492,7 +539,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       accountResponse.account?.type === "chatgpt"
         ? requestCodexChatGptModels({ client, codexHome: initialize.codexHome, spawnedAtMs })
         : requestAllCodexModels(client),
-      input.skipNativeUsage
+      input.skipNativeUsage || !reportsNativeUsage(accountResponse, nativeOpenaiEndpoint)
         ? Effect.succeed(undefined)
         : client.request("account/rateLimits/read", null).pipe(
             Effect.map((response): CodexRateLimitsProbe => ({
@@ -519,6 +566,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
 
   return {
     account: accountResponse,
+    nativeOpenaiEndpoint,
     ...(rateLimits ? { rateLimits } : {}),
     version,
     models: applyPreferredCodexDefaultModel(
@@ -583,7 +631,11 @@ const makePendingCodexProvider = (
     });
   });
 
-function accountProbeStatus({ account, rateLimits }: CodexAppServerProviderSnapshot): {
+function accountProbeStatus({
+  account,
+  nativeOpenaiEndpoint,
+  rateLimits,
+}: CodexAppServerProviderSnapshot): {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: ServerProvider["auth"];
   readonly message?: string;
@@ -591,7 +643,9 @@ function accountProbeStatus({ account, rateLimits }: CodexAppServerProviderSnaps
   const authLabel = codexAccountAuthLabel(account.account);
   const authEmail = codexAccountEmail(account.account);
   const workspaceId =
-    rateLimits && "accountId" in rateLimits ? rateLimits.accountId?.trim() : undefined;
+    reportsNativeUsage(account, nativeOpenaiEndpoint) && rateLimits && "accountId" in rateLimits
+      ? rateLimits.accountId?.trim()
+      : undefined;
   const auth = {
     status: account.account ? ("authenticated" as const) : ("unknown" as const),
     ...(account.account?.type ? { type: account.account?.type } : {}),
@@ -717,21 +771,20 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
   const accountStatus = managedAuth
     ? { status: "ready" as const, auth: managedAuth, message: undefined }
     : accountProbeStatus(snapshot);
-  const usageLimits =
-    snapshot.account.account?.type === "apiKey"
-      ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
-      : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
-        ? makeUnavailableUsageLimits({
-            checkedAt,
-            reason: "probeFailed",
-            ...(snapshot.rateLimits ? { message: snapshot.rateLimits.failure } : {}),
-          })
-        : codexRateLimitsToLimits({
-            snapshot: snapshot.rateLimits.snapshot,
-            rateLimitsByLimitId: snapshot.rateLimits.rateLimitsByLimitId,
-            resetCredits: snapshot.rateLimits.resetCredits,
-            checkedAt,
-          });
+  const usageLimits = !reportsNativeUsage(snapshot.account, snapshot.nativeOpenaiEndpoint)
+    ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
+    : snapshot.rateLimits === undefined || "failure" in snapshot.rateLimits
+      ? makeUnavailableUsageLimits({
+          checkedAt,
+          reason: "probeFailed",
+          ...(snapshot.rateLimits ? { message: snapshot.rateLimits.failure } : {}),
+        })
+      : codexRateLimitsToLimits({
+          snapshot: snapshot.rateLimits.snapshot,
+          rateLimitsByLimitId: snapshot.rateLimits.rateLimitsByLimitId,
+          resetCredits: snapshot.rateLimits.resetCredits,
+          checkedAt,
+        });
 
   return buildServerProvider({
     presentation: CODEX_PRESENTATION,
