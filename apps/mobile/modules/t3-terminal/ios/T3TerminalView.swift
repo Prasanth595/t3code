@@ -432,14 +432,23 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
 
   @objc
   private func handleSelectText(_ gesture: UILongPressGestureRecognizer) {
-    guard gesture.state == .began,
-      let presenter = appContext?.utilities?.currentViewController(),
+    guard gesture.state == .began, let window else { return }
+
+    var responder: UIResponder? = self
+    while let current = responder, !(current is UIViewController) {
+      responder = current.next
+    }
+    guard let presenter = responder as? UIViewController,
+      presenter.viewIfLoaded?.window === window,
+      presenter.presentedViewController == nil,
+      !presenter.isBeingPresented,
+      !presenter.isBeingDismissed,
+      presenter.transitionCoordinator == nil,
       let text = readViewportText(),
       !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else { return }
 
     // Capture before dismissing the keyboard: doing so can resize the remote PTY.
-    // UIKit owns selection in this snapshot, so live output cannot move its endpoints.
     inputField.resignFirstResponder()
     let controller = TerminalTextSelectionViewController(text: text, fontSize: fontSize)
     let navigation = UINavigationController(rootViewController: controller)

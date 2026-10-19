@@ -1,7 +1,5 @@
 import UIKit
 
-/// A frozen viewport lets UIKit provide selection handles without competing with
-/// terminal scrolling or changing the remote shell's input.
 final class TerminalTextSelectionViewController: UIViewController {
   private let text: String
   private let fontSize: CGFloat
