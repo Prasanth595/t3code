@@ -137,7 +137,6 @@ export function sessionGrantsScope(
   return parent !== undefined && session.scopes?.includes(parent) === true;
 }
 
-/** A request in only the old vocabulary still asks for the permissions split out of it. */
 export function expandLegacyScopeRequest(
   scopes: ReadonlyArray<AuthEnvironmentScope>,
 ): ReadonlyArray<AuthEnvironmentScope> {

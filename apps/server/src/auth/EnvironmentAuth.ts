@@ -959,7 +959,6 @@ export const make = Effect.gen(function* () {
 
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
     (credential, requestedScopesInput, requestMetadata, input) => {
-      // Released clients still request the pre-split vocabulary.
       const requestedScopes =
         requestedScopesInput === undefined
           ? undefined
