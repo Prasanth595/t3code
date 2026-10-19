@@ -42,9 +42,11 @@ describe("diff tree file activation", () => {
   function Panel({
     files = entries,
     selectedPath = null,
+    revealRequestId = 0,
   }: {
     files?: DiffFileTreeEntry[];
     selectedPath?: string | null;
+    revealRequestId?: number;
   }) {
     const reveal = useCodeViewFileReveal(viewer, "working-tree");
     return (
@@ -52,6 +54,7 @@ describe("diff tree file activation", () => {
         entries={files}
         ariaLabel="Working tree files"
         selectedPath={selectedPath}
+        revealRequestId={revealRequestId}
         onSelectFile={(path) => reveal(`${path}\0${path}`)}
       />
     );
@@ -108,6 +111,7 @@ describe("diff tree file activation", () => {
     await act(async () => root?.unmount());
     root = undefined;
     container.remove();
+    vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
 
@@ -288,16 +292,49 @@ describe("diff tree file activation", () => {
     expect(rootFileIcons()).toEqual(icons);
   });
 
-  it("does not echo controlled selection, but lets the reader activate it", async () => {
-    await mount({ selectedPath: "02-short.ts" });
-    expect(model().getSelectedPaths()).toEqual(["02-short.ts"]);
+  it("preserves a collapsed controlled selection through paging until explicitly revealed", async () => {
+    const files: DiffFileTreeEntry[] = [
+      { path: "src/office", status: "deleted" },
+      { path: "src/route.ts", status: "modified" },
+    ];
+    await mount({ files, selectedPath: "src/office" });
+    expect(model().getSelectedPaths()).toEqual(["src/office"]);
     expect(targets).toEqual([]);
-    await activate("02-short.ts");
+    await activate("src/office");
+    expect(targets).toEqual([{ type: "item", id: "src/office\0src/office", align: "start" }]);
+
+    const folder = model().getItem("src/")!;
+    if (!("collapse" in folder)) throw new Error("Expected the directory handle");
+    await act(async () => folder.collapse());
+    expect(row("src/").getAttribute("aria-expanded")).toBe("false");
+    const scroll = vi.spyOn(model(), "scrollToPath");
+    const appended: DiffFileTreeEntry[] = [...files, { path: "src/office/x.ts", status: "added" }];
+    await mount({ files: appended, selectedPath: "src/office" });
+    expect.soft(row("src/").getAttribute("aria-expanded")).toBe("false");
+    expect.soft(scroll).not.toHaveBeenCalled();
+    const selected = model().getSelectedPaths();
+    expect(selected).toHaveLength(1);
+    expect(model().getItem(selected[0]!)?.isDirectory()).toBe(false);
     expect(targets).toHaveLength(1);
-    await act(async () => {
-      root!.render(<Panel selectedPath="03-medium.ts" />);
-    });
-    expect(model().getSelectedPaths()).toEqual(["03-medium.ts"]);
+
+    await act(async () => folder.collapse());
+    scroll.mockClear();
+    await mount({ files: appended, selectedPath: "src/office", revealRequestId: 1 });
+    expect(row("src/").getAttribute("aria-expanded")).toBe("true");
+    expect(model().getSelectedPaths()).toEqual(selected);
+    expect(row(selected[0]!).getAttribute("aria-selected")).toBe("true");
+    expect(scroll).toHaveBeenCalledOnce();
     expect(targets).toHaveLength(1);
+    await activate(selected[0]!);
+    expect(targets).toEqual([
+      { type: "item", id: "src/office\0src/office", align: "start" },
+      { type: "item", id: "src/office\0src/office", align: "start" },
+    ]);
+
+    await act(async () => folder.collapse());
+    await mount({ files: appended, selectedPath: "src/route.ts", revealRequestId: 1 });
+    expect(row("src/").getAttribute("aria-expanded")).toBe("true");
+    expect(model().getSelectedPaths()).toEqual(["src/route.ts"]);
+    expect(targets).toHaveLength(2);
   });
 });
