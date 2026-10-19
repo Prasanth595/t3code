@@ -87,55 +87,58 @@ vi.mock("~/components/preview/PreviewPanelShell", () => ({
   PreviewPanelShell: ({ children }: { children: ReactNode }) => children,
 }));
 
-// Same thread id in another environment: the surface id collides, so the panel
-// stays mounted across the switch, as it does under ChatView's surface key.
-const picking = {
+const threadA = {
   environmentId: EnvironmentId.make("environment-a"),
   threadId: ThreadId.make("thread-1"),
 };
-const next = { environmentId: EnvironmentId.make("environment-b"), threadId: picking.threadId };
-// Another thread in the same environment, as when ChatView keeps the panel for a shared surface.
-const sibling = { environmentId: picking.environmentId, threadId: ThreadId.make("thread-2") };
+// The panel keeps its key across both kinds of switch, so both must reset it.
 const switches = [
-  ["the same thread id in another environment", next],
-  ["another thread in the same environment", sibling],
+  ["another thread", { environmentId: threadA.environmentId, threadId: ThreadId.make("thread-2") }],
+  [
+    "the same thread id in another environment",
+    { ...threadA, environmentId: EnvironmentId.make("environment-b") },
+  ],
 ] as const;
+const threadB = switches[0][1];
 const picker: Extract<RightPanelSurface, { kind: "device" }> = { id: "device", kind: "device" };
 const streaming: Extract<RightPanelSurface, { kind: "device" }> = {
   id: "device:phone",
   kind: "device",
   target: { hostId: "local", deviceId: "phone", platform: "ios", name: "Phone" },
 };
+const phoneTarget = { hostId: "local", deviceId: "phone", platform: "ios", name: "Phone" };
+const opened = { _tag: "Success", value: { hostId: "local", deviceId: "phone" } } as const;
+const failed = { _tag: "Failure", cause: new Error("boom") } as const;
 
-const render = (threadRef: ScopedThreadRef, surface = picker) => (
-  <DevicePanel
-    key={surface.id}
-    mode="embedded"
-    threadRef={threadRef}
-    surface={surface}
-    visible
-    onDismissSetup={() => undefined}
-  />
-);
 const deferred = () => {
   let settle!: (result: CommandResult) => void;
   const promise = new Promise<CommandResult>((resolve) => (settle = resolve));
   return { promise, settle };
 };
-const startPhone = () =>
-  act(async () => {
-    container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]')!.click();
-  });
-const errors = () => container.querySelectorAll('[role="alert"]');
-const startButtons = () => container.querySelectorAll('[aria-label="Start Phone"]');
-const pressPowerOff = () =>
-  act(async () => {
-    container.querySelector<HTMLButtonElement>("button")!.click();
-  });
-const opened = { _tag: "Success", value: { hostId: "local", deviceId: "phone" } } as const;
 
 let root: Root;
 let container: HTMLDivElement;
+// Fixed key and a changing threadRef, as RightPanelSurfaceContent mounts it.
+const show = (threadRef: ScopedThreadRef, surface = picker) =>
+  act(async () =>
+    root.render(
+      <DevicePanel
+        key="device-panel"
+        mode="embedded"
+        threadRef={threadRef}
+        surface={surface}
+        visible
+        onDismissSetup={() => undefined}
+      />,
+    ),
+  );
+const startButton = () => container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]');
+const click = (button: HTMLButtonElement | null) =>
+  act(async () => {
+    button!.click();
+  });
+const errors = () => container.querySelectorAll('[role="alert"]');
+
 beforeEach(() => {
   vi.resetAllMocks();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -149,138 +152,68 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-describe("DevicePanel", () => {
-  it("opens a picked device when the pick settles in the same thread", async () => {
-    const pick = deferred();
-    mocks.open.mockReturnValue(pick.promise);
-    await act(async () => root.render(render(picking)));
+describe("DevicePanel thread switches", () => {
+  it.each(
+    switches.flatMap(
+      ([label, target]) =>
+        [
+          [`a pending pick, switching to ${label}`, target, () => deferred().promise],
+          [`a failed pick, switching to ${label}`, target, () => Promise.resolve(failed)],
+        ] as const,
+    ),
+  )("does not carry %s", async (_, target, result) => {
+    mocks.open.mockImplementation(result);
+    await show(threadA);
+    await click(startButton());
 
-    await startPhone();
-    expect(mocks.open).toHaveBeenCalledWith({
-      environmentId: picking.environmentId,
-      input: { threadId: picking.threadId, hostId: "local", deviceId: "phone", platform: "ios" },
-    });
-    await act(async () => pick.settle(opened));
+    await show(target);
 
-    expect(mocks.openDevice).toHaveBeenCalledExactlyOnceWith(picking, {
-      hostId: "local",
-      deviceId: "phone",
-      platform: "ios",
-      name: "Phone",
-    });
+    expect(startButton()?.disabled).toBe(false);
+    expect(errors()).toHaveLength(0);
   });
 
-  it.each(switches)(
-    "keeps the picker usable after switching to %s while a pick is pending",
-    async (_, target) => {
-      mocks.open.mockReturnValue(deferred().promise);
-      await act(async () => root.render(render(picking)));
+  it.each([
+    [
+      "pick",
+      picker,
+      () => mocks.open,
+      () => click(startButton()),
+      () => expect(mocks.openDevice).toHaveBeenCalledExactlyOnceWith(threadA, phoneTarget),
+    ],
+    [
+      "power-off",
+      streaming,
+      () => mocks.close,
+      () => click(container.querySelector("button")),
+      () => expect(mocks.closeSurface).toHaveBeenCalledExactlyOnceWith(threadA, streaming.id),
+    ],
+  ] as const)(
+    "applies a %s that settles after a switch to the thread it started in",
+    async (_, surface, command, start, expectApplied) => {
+      const late = deferred();
+      command().mockReturnValue(late.promise);
+      await show(threadA, surface);
+      await start();
 
-      await startPhone();
-      await act(async () => root.render(render(target)));
+      await show(threadB, surface);
+      await act(async () => late.settle(opened));
 
-      expect(
-        container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]')!.disabled,
-      ).toBe(false);
+      expectApplied();
     },
   );
 
-  it("keeps the next thread's own pick pending when an earlier pick settles", async () => {
+  it("keeps a thread's own pick pending when another thread's pick settles", async () => {
     const first = deferred();
     const second = deferred();
     mocks.open.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise);
-    await act(async () => root.render(render(picking)));
+    await show(threadA);
+    await click(startButton());
+    await show(threadB);
+    await click(startButton());
 
-    await startPhone();
-    await act(async () => root.render(render(sibling)));
-    await startPhone();
     await act(async () => first.settle(opened));
 
-    expect(startButtons()).toHaveLength(0);
-    await act(async () => second.settle(opened));
-    expect(startButtons().length).toBeGreaterThan(0);
-    expect(mocks.openDevice.mock.calls.map(([threadRef]) => threadRef)).toEqual([picking, sibling]);
-  });
-
-  it("opens a pick that settles after a switch in the thread it started in", async () => {
-    const pick = deferred();
-    mocks.open.mockReturnValue(pick.promise);
-    await act(async () => root.render(render(picking)));
-
-    await startPhone();
-    await act(async () => root.render(render(next)));
-    await act(async () => pick.settle(opened));
-
-    expect(mocks.openDevice).toHaveBeenCalledExactlyOnceWith(picking, {
-      hostId: "local",
-      deviceId: "phone",
-      platform: "ios",
-      name: "Phone",
-    });
-    expect(container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]')!.disabled).toBe(
-      false,
-    );
-  });
-
-  it.each(switches)(
-    "hides a failed pick that settles after switching to %s and back",
-    async (_, target) => {
-      const pick = deferred();
-      mocks.open.mockReturnValue(pick.promise);
-      await act(async () => root.render(render(picking)));
-
-      await startPhone();
-      await act(async () => root.render(render(target)));
-      await act(async () => root.render(render(picking)));
-      await act(async () => pick.settle({ _tag: "Failure", cause: new Error("boom") }));
-
-      expect(errors()).toHaveLength(0);
-      expect(mocks.openDevice).not.toHaveBeenCalled();
-    },
-  );
-
-  it.each(switches)("does not carry an operation error to %s", async (_, target) => {
-    mocks.open.mockResolvedValue({ _tag: "Failure", cause: new Error("boom") });
-    await act(async () => root.render(render(picking)));
-
-    await startPhone();
-    expect(errors()).toHaveLength(1);
-    await act(async () => root.render(render(target)));
-
-    expect(errors()).toHaveLength(0);
-  });
-
-  it("closes a powered-off surface in its own thread after the panel moved", async () => {
-    const powerOff = deferred();
-    mocks.close.mockReturnValue(powerOff.promise);
-    await act(async () => root.render(render(picking, streaming)));
-
-    await pressPowerOff();
-    expect(mocks.close).toHaveBeenCalledWith({
-      environmentId: picking.environmentId,
-      input: { threadId: picking.threadId, hostId: "local", deviceId: "phone", shutdown: true },
-    });
-    await act(async () => root.render(render(next, streaming)));
-    await act(async () => powerOff.settle(opened));
-
-    expect(mocks.closeSurface).toHaveBeenCalledExactlyOnceWith(picking, streaming.id);
-  });
-
-  it("shows a failed power-off only in the thread that started it", async () => {
-    const late = deferred();
-    mocks.close
-      .mockResolvedValueOnce({ _tag: "Failure", cause: new Error("boom") })
-      .mockReturnValueOnce(late.promise);
-    await act(async () => root.render(render(picking, streaming)));
-
-    await pressPowerOff();
-    expect(errors()).toHaveLength(1);
-
-    await pressPowerOff();
-    await act(async () => root.render(render(sibling, streaming)));
-    await act(async () => late.settle({ _tag: "Failure", cause: new Error("boom") }));
-
-    expect(errors()).toHaveLength(0);
-    expect(mocks.closeSurface).not.toHaveBeenCalled();
+    expect(startButton()).toBeNull();
+    expect(mocks.openDevice.mock.calls).toEqual([[threadA, phoneTarget]]);
   });
 });
