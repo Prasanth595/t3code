@@ -1,6 +1,7 @@
 import { PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
+import { submitServerAuthCredential } from "../environments/primary/auth";
 import { isFactoryServerPrimary, submitFactoryServerPairing } from "./desktopFactoryServer";
 
 const primaryAt = (httpBaseUrl: string) => [
@@ -77,5 +78,14 @@ describe("desktop factory server pairing", () => {
 
     expect(pairFactoryServer).not.toHaveBeenCalled();
     expect(reload).not.toHaveBeenCalled();
+  });
+
+  it("is what the upstream pairing page submit calls first", async () => {
+    const { pairFactoryServer, reload } = stubWindow(primaryAt("http://127.0.0.1:3876/"));
+
+    await submitServerAuthCredential("link");
+
+    expect(pairFactoryServer).toHaveBeenCalledWith("link");
+    expect(reload).toHaveBeenCalledOnce();
   });
 });
