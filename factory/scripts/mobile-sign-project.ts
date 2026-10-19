@@ -68,7 +68,6 @@ for (const { buildSettings } of configurations) {
   buildSettings.CODE_SIGN_STYLE = "Manual";
   buildSettings.DEVELOPMENT_TEAM = team!;
   buildSettings.CODE_SIGN_IDENTITY = quote("Apple Distribution");
-  delete buildSettings['"CODE_SIGN_IDENTITY[sdk=iphoneos*]"'];
   buildSettings.PROVISIONING_PROFILE_SPECIFIER = quote(profile);
 }
 
