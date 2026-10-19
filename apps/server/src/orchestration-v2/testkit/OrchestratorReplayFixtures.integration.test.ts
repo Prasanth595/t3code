@@ -615,7 +615,7 @@ describe("orchestrator replay fixtures", () => {
             ...fixture.buildInput().steps,
             { type: "answer_next_user_input_request", answers },
             { type: "answer_next_user_input_request", answers },
-            { type: "approve_next_runtime_request", decision: "accept" },
+            { type: "approve_next_runtime_request", decision: "acceptForSession" },
           ],
         }),
         driver: {
@@ -634,7 +634,7 @@ describe("orchestrator replay fixtures", () => {
               const card = projection.turnItems.find((item) => item.nodeId === request.nodeId);
               const node = projection.nodes.find((candidate) => candidate.id === request.nodeId);
               const isQuestion = request.kind === "user_input";
-              const response = isQuestion ? { answers } : { decision: "accept" as const };
+              const response = isQuestion ? { answers } : { decision: "acceptForSession" as const };
               const submitted = result.domainEvents.find(
                 (event) =>
                   event.type === "runtime-request.updated" &&
@@ -643,6 +643,35 @@ describe("orchestrator replay fixtures", () => {
               );
               assert.isDefined(submitted, `${nativeId} was persisted before native delivery`);
               assert.deepInclude(submitted.payload, response);
+              if (!isQuestion) {
+                const assistantItemIndex = result.domainEvents.findIndex(
+                  (event) =>
+                    event.type === "turn-item.updated" &&
+                    event.payload.type === "assistant_message",
+                );
+                const submittedIndex = result.domainEvents.indexOf(submitted);
+                assert.isAbove(assistantItemIndex, submittedIndex);
+                // The next assistant item is persisted after stageResolved, before turn cleanup.
+                const beforeAssistant = result.domainEvents.slice(0, assistantItemIndex);
+                const requestAtUpdate = beforeAssistant.findLast(
+                  (event) =>
+                    event.type === "runtime-request.updated" && event.payload.id === request.id,
+                );
+                const nodeAtUpdate = beforeAssistant.findLast(
+                  (event) => event.type === "node.updated" && event.payload.id === request.nodeId,
+                );
+                const cardAtUpdate = beforeAssistant.findLast(
+                  (event) =>
+                    event.type === "turn-item.updated" && event.payload.nodeId === request.nodeId,
+                );
+                assert.deepInclude(
+                  requestAtUpdate?.payload,
+                  { status: "resolved", decision: "acceptForSession" },
+                  "stageResolved must preserve the persisted T3 decision before turn cleanup",
+                );
+                assert.deepInclude(nodeAtUpdate?.payload, { status: "completed" });
+                assert.deepInclude(cardAtUpdate?.payload, { status: "completed" });
+              }
               observed.push({
                 nativeId,
                 status: request.status,
@@ -657,7 +686,7 @@ describe("orchestrator replay fixtures", () => {
                 nativeId,
                 status: "resolved",
                 answers: isQuestion ? answers : undefined,
-                decision: isQuestion ? undefined : "accept",
+                decision: isQuestion ? undefined : "acceptForSession",
                 nodeStatus: "completed",
                 cardStatus: "completed",
                 questionAnswer: isQuestion
@@ -768,10 +797,10 @@ describe("orchestrator replay fixtures", () => {
                     currentRequirementId: { approvalId: "approval-no-ack", sourceIndex: 0 },
                     availableChoices: [
                       {
-                        choiceId: "once",
-                        label: "Allow once",
-                        decision: "approved",
-                        scope: "once",
+                        choiceId: "session",
+                        label: "Allow for session",
+                        decision: "approvedForSession",
+                        scope: "session",
                       },
                     ],
                     subject: { kind: "shell", command: "touch result.txt" },
@@ -789,11 +818,39 @@ describe("orchestrator replay fixtures", () => {
                     approvalId: "approval-no-ack",
                     commandId: "approve-no-ack",
                     requirementId: { approvalId: "approval-no-ack", sourceIndex: 0 },
-                    choiceId: "once",
+                    choiceId: "session",
                   },
                 },
               },
               { type: "emit_inbound", frame: { jsonrpc: "2.0", id: 6, result: {} } },
+              {
+                type: "emit_inbound",
+                frame: {
+                  jsonrpc: "2.0",
+                  method: "approval/updated",
+                  params: {
+                    sessionId,
+                    turnId,
+                    approvalId: "approval-no-ack",
+                    currentRequirementId: { approvalId: "approval-no-ack", sourceIndex: 0 },
+                    availableChoices: [
+                      {
+                        choiceId: "session",
+                        label: "Allow for session",
+                        decision: "approvedForSession",
+                        scope: "session",
+                      },
+                    ],
+                    subject: { kind: "shell", command: "touch result.txt" },
+                    change: {
+                      kind: "stageResolved",
+                      requirementId: { approvalId: "approval-no-ack", sourceIndex: 0 },
+                      choiceId: "session",
+                      decision: "approvedForSession",
+                    },
+                  },
+                },
+              },
               ...transcript.entries.slice(at + 1),
             ],
           };
