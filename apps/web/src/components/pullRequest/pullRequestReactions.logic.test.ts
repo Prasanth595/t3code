@@ -1,13 +1,59 @@
-import type { PullRequestReaction, PullRequestReactionContent } from "@t3tools/contracts";
+import {
+  SourceControlProviderKind,
+  type PullRequestDetail,
+  type PullRequestReaction,
+  type PullRequestReactionContent,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   applyPendingPullRequestReactions,
+  canReactPullRequestComment,
   PULL_REQUEST_REACTION_ORDER,
   pullRequestReactionEmoji,
   pullRequestReactionName,
   pullRequestReactionTooltip,
 } from "./pullRequestReactions.logic";
+
+describe("comment reaction permissions", () => {
+  it("excludes GitLab review system notes while preserving supported comment reactions", () => {
+    const detail = {
+      provider: SourceControlProviderKind.make("gitlab"),
+      capabilities: {
+        diff: true,
+        comment: true,
+        actions: [],
+        mergeMethods: [],
+        search: true,
+        reactions: true,
+        review: { inlineComment: true, reply: true, resolve: true, verdicts: [] },
+        reviewers: { request: true, listCandidates: true },
+      },
+    } satisfies Pick<PullRequestDetail, "provider" | "capabilities">;
+
+    expect(canReactPullRequestComment(detail, { kind: "issue-comment" })).toBe(true);
+    expect(canReactPullRequestComment(detail, { kind: "review-comment" })).toBe(true);
+    expect(
+      canReactPullRequestComment(
+        { ...detail, provider: SourceControlProviderKind.make("github") },
+        { kind: "review" },
+      ),
+    ).toBe(true);
+    expect(
+      canReactPullRequestComment(
+        { ...detail, capabilities: { ...detail.capabilities, reactions: false } },
+        { kind: "issue-comment" },
+      ),
+    ).toBe(false);
+    expect(
+      canReactPullRequestComment(
+        { ...detail, capabilities: { ...detail.capabilities, reactions: undefined } },
+        { kind: "issue-comment" },
+      ),
+    ).toBe(false);
+    expect(canReactPullRequestComment(detail, { kind: "review" })).toBe(false);
+  });
+});
 
 function reaction(overrides: Partial<PullRequestReaction> = {}): PullRequestReaction {
   return {
