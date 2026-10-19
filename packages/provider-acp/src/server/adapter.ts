@@ -204,10 +204,6 @@ export interface AcpAdapterV2Flavor {
   readonly onAvailableCommandsUpdate?: (
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
   ) => Effect.Effect<void>;
-  /**
-   * Receives the session's configuration after setup and each native change.
-   * `modelState` is the ACP v1 model list of agents without a model config option.
-   */
   readonly onSessionConfigurationUpdate?: (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     modeState: AcpSessionModeState | undefined,
@@ -511,8 +507,6 @@ function negotiatedCapabilities(
   const agent = started.initializeResult.agentCapabilities ?? {};
   const session = agent.sessionCapabilities;
   const setup = started.sessionSetupResult;
-  // Mirrors configureSession: a model select config option, or ACP v1 session
-  // model state switched with session/set_model.
   const canSwitchModel =
     setup.configOptions?.some(
       (option) => option.category === "model" && option.type === "select",
@@ -5858,15 +5852,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             // Route by the live options, which the picker lists: agents can
             // add or drop their model config option after setup.
             const modelOption = (yield* runtime.getConfigOptions).find(
-              (
-                option,
-              ): option is Extract<
-                EffectAcpSchema.SessionConfigOption,
-                { readonly type: "select" }
-              > => option.category === "model" && option.type === "select",
+              (option) => option.category === "model" && option.type === "select",
             );
             const modelState = startResult.sessionSetupResult.models;
-            if (modelOption !== undefined) {
+            if (modelOption?.type === "select") {
               if (
                 !isPlaceholder ||
                 modelOption.options.some((entry) =>
@@ -5883,9 +5872,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               (!isPlaceholder ||
                 modelState.availableModels.some((model) => model.modelId === requestedModel))
             ) {
-              // ACP v1 agents without a model config option (Hermes) advertise
-              // their models as session model state and switch with
-              // session/set_model.
               if (modelState.currentModelId !== requestedModel) {
                 yield* runtime.setSessionModel(requestedModel);
               }

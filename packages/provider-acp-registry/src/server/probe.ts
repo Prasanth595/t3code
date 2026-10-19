@@ -64,13 +64,7 @@ function modelConfigOptions(
   });
 }
 
-interface AdvertisedModel {
-  readonly id: string;
-  readonly name: string;
-  readonly description: string | null;
-}
-
-function normalizedModel(id: string, candidate: AdvertisedModel): AcpRegistryProbeModel {
+function normalizedModel(id: string, candidate: AcpRegistryProbeModel): AcpRegistryProbeModel {
   return {
     id,
     name: boundedText(candidate.name, MAX_NAME_LENGTH) || id,
@@ -81,29 +75,22 @@ function normalizedModel(id: string, candidate: AdvertisedModel): AcpRegistryPro
   };
 }
 
-/**
- * Bounds an advertised catalog to MAX_MODELS. A valid current model listed past
- * the cap takes the last slot, so the catalog still shows what the session runs on.
- */
 function normalizeModels(
-  candidates: ReadonlyArray<AdvertisedModel>,
+  candidates: ReadonlyArray<AcpRegistryProbeModel>,
   currentModelId: string | null,
 ): ReadonlyArray<AcpRegistryProbeModel> {
   const seen = new Set<string>();
   const models: Array<AcpRegistryProbeModel> = [];
-  let scanned = 0;
   for (const candidate of candidates) {
     if (models.length === MAX_MODELS) break;
-    scanned += 1;
     const id = boundedOpaqueValue(candidate.id, MAX_ID_LENGTH);
     if (id === undefined || seen.has(id)) continue;
     seen.add(id);
     models.push(normalizedModel(id, candidate));
   }
+  // Keep the running model visible even when its advertised position exceeds the cap.
   if (currentModelId !== null && models.length === MAX_MODELS && !seen.has(currentModelId)) {
-    const current = candidates.find(
-      (candidate, index) => index >= scanned && candidate.id === currentModelId,
-    );
+    const current = candidates.find((candidate) => candidate.id === currentModelId);
     if (current !== undefined) {
       models[MAX_MODELS - 1] = normalizedModel(currentModelId, current);
     }
@@ -196,29 +183,25 @@ export function normalizeAcpRegistryLiveConfiguration(
   const modelOption = configOptions.find(
     (option) => option.category === "model" && option.type === "select",
   );
-  const advertised =
-    modelOption?.type === "select" || modelState == null
-      ? {
-          currentModelId: modelOption?.type === "select" ? modelOption.currentValue : null,
-          candidates: modelConfigOptions(configOptions).map((model) => ({
-            id: model.value,
-            name: model.name,
-            description: model.description ?? null,
-          })),
-        }
-      : {
-          currentModelId: modelState.currentModelId,
-          candidates: modelState.availableModels.map((model) => ({
-            id: model.modelId,
-            name: model.name,
-            description: model.description ?? null,
-          })),
-        };
+  const currentModelId =
+    modelOption?.type === "select" ? modelOption.currentValue : modelState?.currentModelId;
+  const candidates =
+    modelOption === undefined
+      ? (modelState?.availableModels ?? []).map((model) => ({
+          id: model.modelId,
+          name: model.name,
+          description: model.description ?? null,
+        }))
+      : modelConfigOptions(configOptions).map((model) => ({
+          id: model.value,
+          name: model.name,
+          description: model.description ?? null,
+        }));
   const boundedCurrentModelId =
-    advertised.currentModelId === null
+    currentModelId === undefined
       ? null
-      : (boundedOpaqueValue(advertised.currentModelId, MAX_ID_LENGTH) ?? null);
-  const models = normalizeModels(advertised.candidates, boundedCurrentModelId);
+      : (boundedOpaqueValue(currentModelId, MAX_ID_LENGTH) ?? null);
+  const models = normalizeModels(candidates, boundedCurrentModelId);
   return {
     models,
     currentModelId: models.some((model) => model.id === boundedCurrentModelId)
