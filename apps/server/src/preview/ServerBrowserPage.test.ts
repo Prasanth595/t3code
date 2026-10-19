@@ -370,13 +370,14 @@ describe("server browser drag", () => {
   });
 });
 
-it("reads real snapshot metrics after page script reassigns the globals", async () => {
-  const browser = await chromium.launch({ headless: true });
+it("captures the native display viewport after page script reassigns the globals", async () => {
+  // Context deviceScaleFactor changes DPR but does not scale raw CDP captures.
+  const browser = await chromium.launch({
+    headless: true,
+    args: ["--force-device-scale-factor=1.5", "--window-size=1280,800"],
+  });
   try {
-    const context = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
-      deviceScaleFactor: 1.5,
-    });
+    const context = await browser.newContext({ viewport: null });
     const page = await context.newPage();
     const cdp = await context.newCDPSession(page);
     await page.setContent(
@@ -385,12 +386,33 @@ it("reads real snapshot metrics after page script reassigns the globals", async 
     expect(await page.evaluate("[devicePixelRatio, innerWidth, innerHeight]")).toEqual([
       -1.5, 99999, 1e7,
     ]);
+    const snapshotSize = async () => {
+      const { screenshot } = await ServerBrowserPage.snapshot({
+        page,
+        cdp,
+        renderScale: "display",
+        consoleEntries: [],
+        networkEntries: [],
+        actionTimeline: [],
+      });
+      const png = Buffer.from(screenshot.data, "base64");
+      const size = { width: png.readUInt32BE(16), height: png.readUInt32BE(20) };
+      expect(screenshot).toMatchObject(size);
+      return size;
+    };
+    expect(await snapshotSize()).toEqual({ width: 1280, height: 800 });
     expect(await ServerBrowserPage.readPageMetrics(cdp)).toEqual({
       ratio: 1.5,
       width: 1280,
       height: 800,
       zoom: 1,
     });
+    const { windowId } = await cdp.send("Browser.getWindowForTarget");
+    await cdp.send("Browser.setWindowBounds", {
+      windowId,
+      bounds: { width: 390, height: 844 },
+    });
+    expect(await snapshotSize()).toEqual({ width: 585, height: 1266 });
   } finally {
     await browser.close();
   }
