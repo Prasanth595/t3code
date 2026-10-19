@@ -177,21 +177,23 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 
 ### Environment variables
 
-At startup, T3 Code reads `PATH` from your login shell (`$SHELL -ilc`) and adds
-its entries ahead of the `PATH` it was started with. The desktop app also reads
-`SSH_AUTH_SOCK` and display, locale, and certificate variables such as
-`SSL_CERT_FILE`. The shell must start within 5 seconds without waiting for
-input; otherwise T3 Code keeps the `PATH` it was started with.
+On macOS and Linux, T3 Code reads `PATH` from your login shell (`$SHELL -ilc`)
+at startup and adds its entries ahead of the `PATH` it was started with. The
+desktop app also reads a fixed set of session and configuration variables, such
+as `SSH_AUTH_SOCK` and `T3CODE_TELEMETRY_ENABLED`, but never secrets. Each login
+shell gets 5 seconds and must not wait for input; if yours does not answer, T3
+Code tries other shells, then falls back to the `PATH` it was started with.
 
-Other variables, such as API keys exported in `~/.zshrc`, are not read from the
-shell. Set them where T3 Code starts, or as provider instance environment
-variables. For the Linux background service, run
-`systemctl --user edit t3code.service`, add the variables, then run
+API keys exported only in `~/.zshrc` therefore reach agents only when T3 Code
+starts from that shell. Add them to a provider instance as environment variables
+marked sensitive, or set them where T3 Code starts. For the Linux background service, put them in a file only you
+can read, such as `~/.config/t3code/service.env` with mode `600`. Then run
+`systemctl --user edit t3code.service`, add the lines below, and run
 `t3 service restart`:
 
 ```ini
 [Service]
-Environment=ANTHROPIC_API_KEY=...
+EnvironmentFile=%h/.config/t3code/service.env
 ```
 
 To check what T3 Code will find on a host, run:
