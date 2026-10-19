@@ -49,9 +49,9 @@ export function ElectronBrowserHost() {
       : [];
   });
   // Electron destroys a moved webview's guest, so the render order must not follow the server's
-  // updatedAt order.
+  // updatedAt order. Any fixed order works; this one is not a display order.
   const sessions = activeSessions.toSorted((left, right) =>
-    left.runtimeTabId.localeCompare(right.runtimeTabId),
+    left.runtimeTabId < right.runtimeTabId ? -1 : left.runtimeTabId > right.runtimeTabId ? 1 : 0,
   );
 
   useEffect(() => {
