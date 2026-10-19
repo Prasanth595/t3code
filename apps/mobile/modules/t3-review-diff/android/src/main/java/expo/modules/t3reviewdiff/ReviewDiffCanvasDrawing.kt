@@ -313,7 +313,6 @@ internal class ReviewDiffCanvasDrawing(context: Context) {
         val end = min(run.content.length, lines.end(line, Int.MAX_VALUE) - column)
         val lineBaseline = baseline + line * lines.height
         val metrics = textPaint.fontMetrics
-        // Keep Unicode's per-run visibility checks when fallback font metrics differ.
         if (row.isAscii && lineBaseline + metrics.ascent > clip.bottom) return
         if (lineBaseline + metrics.descent >= clip.top &&
           lineBaseline + metrics.ascent <= clip.bottom
