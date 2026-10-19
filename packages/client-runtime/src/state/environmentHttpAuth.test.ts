@@ -41,6 +41,7 @@ import {
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
+import { setManagedRelaySession } from "../relay/managedRelayState.ts";
 import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
@@ -190,6 +191,7 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
 const makeSessionHarness = Effect.fn(function* (
   http: ReturnType<typeof makeHarness>,
   connection = PREPARED,
+  registry: AtomRegistry.AtomRegistry = AtomRegistry.make(),
 ) {
   const prepared = yield* SubscriptionRef.make(Option.some(connection));
   const supervisor = { target: connection.target, prepared } as EnvironmentSupervisor["Service"];
@@ -225,7 +227,6 @@ const makeSessionHarness = Effect.fn(function* (
       Layer.succeed(ManagedRelay.ManagedRelayDpopSigner, Option.getOrThrow(http.input.signer)),
     ),
   );
-  const registry = AtomRegistry.make();
   yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
   const atom = createEnvironmentSessionAtoms(runtime).sessionStateAtom(TARGET.environmentId);
   const permissions = createCommandPermissions(runtime, WS_METHODS.scheduledTasksDelete);
@@ -912,13 +913,86 @@ describe("session refresh permissions", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect(
+    "keeps same-account DPoP rotation grants but clears them on a direct-route account switch",
+    () =>
+      Effect.gen(function* () {
+        const registry = AtomRegistry.make();
+        const signIn = (accountId: string) =>
+          setManagedRelaySession(registry, {
+            accountId,
+            readClerkToken: () => Promise.resolve("clerk-token"),
+          });
+        signIn("account-a");
+        const replacementRequested = Promise.withResolvers<void>();
+        const replacementResponse = Promise.withResolvers<Response>();
+        const http = makeHarness((requestNumber) => {
+          if (requestNumber === 2) return Promise.reject(new TypeError("Failed to fetch"));
+          if (requestNumber === 4) {
+            replacementRequested.resolve();
+            return replacementResponse.promise;
+          }
+          return Response.json(SESSION);
+        });
+        const connection: PreparedConnection = {
+          ...PREPARED,
+          target: new BearerConnectionTarget({
+            environmentId: TARGET.environmentId,
+            label: TARGET.label,
+            connectionId: "saved-t3-connect-direct",
+          }),
+        };
+        const { atom, permissions, prepared, read, nextCheck } = yield* makeSessionHarness(
+          http,
+          connection,
+          registry,
+        );
+        yield* read;
+        expect(registry.get(permissions.permissionAtom(TARGET.environmentId))).toBe(true);
+
+        const rotated = nextCheck();
+        signIn("account-a");
+        yield* SubscriptionRef.set(
+          prepared,
+          Option.some({
+            ...connection,
+            httpAuthorization: {
+              _tag: "Dpop",
+              accessToken: "rotated-token",
+              expiresAtEpochMs: 3_600_000,
+            },
+          }),
+        );
+        yield* rotated;
+        expect(registry.get(permissions.permissionAtom(TARGET.environmentId))).toBe(true);
+        yield* permissions.authorize(registry, TARGET.environmentId);
+        yield* TestClock.adjust("1 second");
+        expect(yield* read).toEqual(SESSION);
+
+        const replaced = nextCheck();
+        signIn("account-b");
+        expect(registry.get(permissions.permissionAtom(TARGET.environmentId))).toBe(false);
+        yield* Effect.promise(() => replacementRequested.promise);
+        replacementResponse.reject(new TypeError("Failed to fetch"));
+        yield* replaced;
+        expect(registry.get(permissions.permissionAtom(TARGET.environmentId))).toBe(false);
+        expect(registry.get(atom).waiting).toBe(false);
+        expect(
+          (yield* permissions.authorize(registry, TARGET.environmentId).pipe(Effect.flip))._tag,
+        ).toBe("EnvironmentAuthorizationError");
+        yield* TestClock.adjust("1 minute");
+        expect(http.calls).toHaveLength(4);
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("does not reuse a previous credential's grant when its replacement fails", () =>
     Effect.gen(function* () {
       const replacementRequested = Promise.withResolvers<void>();
+      const replacementResponse = Promise.withResolvers<Response>();
       const http = makeHarness((requestNumber) => {
         if (requestNumber === 1) return Response.json(SESSION);
         replacementRequested.resolve();
-        return Promise.reject(new TypeError("Failed to fetch"));
+        return replacementResponse.promise;
       });
       const connection: PreparedConnection = {
         ...PREPARED,
@@ -946,6 +1020,8 @@ describe("session refresh permissions", () => {
         }),
       );
       yield* Effect.promise(() => replacementRequested.promise);
+      expect(registry.get(permissions.permissionAtom(TARGET.environmentId))).toBe(false);
+      replacementResponse.reject(new TypeError("Failed to fetch"));
       yield* checked;
 
       expect(new Headers(http.calls[1]!.init.headers).get("authorization")).toBe(

@@ -35,7 +35,7 @@ const state = vi.hoisted(() => ({
   confirm: vi.fn<(message: string) => Promise<boolean>>(),
   toasts: [] as string[],
   afterRequest: undefined as ((action: string) => void) | undefined,
-  sessionLookupFails: false,
+  sessionRefreshPending: false,
 }));
 
 vi.mock("react", () => ({
@@ -67,8 +67,8 @@ vi.mock("../state/use-atom-command", () => ({
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
   useAtomQueryRunner: () => async (environmentId: string) =>
-    state.sessionLookupFails
-      ? AsyncResult.failure(Cause.fail(new Error("Session lookup failed")))
+    state.sessionRefreshPending
+      ? new Promise<never>(() => {})
       : AsyncResult.success({
           authenticated: true,
           scopes: [...(state.scopes.get(environmentId) ?? [])],
@@ -229,7 +229,7 @@ beforeEach(() => {
   state.confirm.mockReset().mockResolvedValue(true);
   state.toasts = [];
   state.afterRequest = undefined;
-  state.sessionLookupFails = false;
+  state.sessionRefreshPending = false;
 });
 
 describe("thread action permissions", () => {
@@ -319,17 +319,32 @@ describe("thread action permissions", () => {
     expect(state.localEffects).toEqual([]);
   });
 
-  it.each([
-    { reason: "without source-control permission", sessionLookupFails: false },
-    { reason: "when the permission lookup fails", sessionLookupFails: true },
-  ])("deletes a worktree thread and keeps its worktree $reason", async ({ sessionLookupFails }) => {
+  it("deletes a worktree thread and keeps its worktree without source-control permission", async () => {
     state.scopes.get(secondary)!.add(AuthOrchestrationOperateScope);
     state.threads[0]!.worktreePath = "/worktrees/thread";
-    state.sessionLookupFails = sessionLookupFails;
     expect((await useThreadActions().deleteThread(target))._tag).toBe("Success");
     expect(state.confirm).not.toHaveBeenCalled();
     expect(state.requests.map((request) => request.action)).toEqual(["stopSession", "delete"]);
     expect(state.localEffects).toContain("clear-terminal-ui");
+  });
+
+  it("offers worktree cleanup with a confirmed grant while a session refresh waits", async () => {
+    state.scopes
+      .get(secondary)!
+      .add(AuthOrchestrationOperateScope)
+      .add(AuthSourceControlWriteScope);
+    state.threads[0]!.worktreePath = "/worktrees/thread";
+    state.sessionRefreshPending = true;
+
+    const deleting = useThreadActions().deleteThread(target);
+    expect(state.confirm).toHaveBeenCalledOnce();
+    expect((await deleting)._tag).toBe("Success");
+    expect(state.requests.map((request) => request.action)).toEqual([
+      "stopSession",
+      "delete",
+      "removeWorktree",
+      "refreshStatus",
+    ]);
   });
 
   it("does not request worktree removal after its grant is revoked during delete", async () => {

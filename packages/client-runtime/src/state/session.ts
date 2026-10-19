@@ -16,6 +16,7 @@ import type { PreparedConnection } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import { connectionRouteId } from "../connection/routes.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
+import { managedRelaySessionAtom, type ManagedRelaySession } from "../relay/managedRelayState.ts";
 import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
@@ -81,18 +82,20 @@ export const fetchEnvironmentSessionState = Effect.fn(
 interface SessionOwner {
   readonly supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"];
   readonly prepared: PreparedConnection;
+  readonly cloudSession: ManagedRelaySession | null;
 }
 
 interface SessionSnapshot extends SessionOwner {
   readonly session: AuthSessionState;
 }
 
-// DPoP tokens rotate within a supervisor; bearer tokens define the grant.
+// Cloud-session identity survives token rotation and changes on sign-out or account replacement.
 function sameSessionOwner(previous: SessionOwner, current: SessionOwner): boolean {
   const before = previous.prepared;
   const after = current.prepared;
   return (
     previous.supervisor === current.supervisor &&
+    previous.cloudSession === current.cloudSession &&
     before.target._tag === after.target._tag &&
     connectionRouteId(before.target) === connectionRouteId(after.target) &&
     before.httpAuthorization?._tag === after.httpAuthorization?._tag &&
@@ -185,7 +188,12 @@ function makeEnvironmentSessionAtoms<R, E>(
         if (connection === null || prepared === null) {
           return Effect.never;
         }
-        const owner = { supervisor: connection.supervisor, prepared };
+        const owner = {
+          supervisor: connection.supervisor,
+          prepared,
+          cloudSession:
+            prepared.httpAuthorization?._tag === "Dpop" ? get(managedRelaySessionAtom) : null,
+        };
         const previous = Option.getOrNull(
           get.self<AsyncResult.AsyncResult<SessionSnapshot, unknown>>(),
         );
@@ -229,12 +237,21 @@ function makeEnvironmentSessionAtoms<R, E>(
         // A replacement must not expose the previous credential while its check waits.
         return AsyncResult.flatMap(result, (confirmed, previous) => {
           const prepared = connection === null ? null : Option.getOrNull(connection.prepared);
+          const cloudSession =
+            confirmed.prepared.httpAuthorization?._tag === "Dpop"
+              ? get(managedRelaySessionAtom)
+              : null;
           const belongsToConnection =
             result._tag !== "Failure" &&
             connection !== null &&
             confirmed.supervisor === connection.supervisor &&
+            confirmed.cloudSession === cloudSession &&
             (prepared === null ||
-              sameSessionOwner(confirmed, { supervisor: connection.supervisor, prepared }));
+              sameSessionOwner(confirmed, {
+                supervisor: connection.supervisor,
+                prepared,
+                cloudSession,
+              }));
           return belongsToConnection
             ? AsyncResult.success(confirmed.session, previous)
             : AsyncResult.initial<AuthSessionState>(result.waiting);
