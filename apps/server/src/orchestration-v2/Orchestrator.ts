@@ -622,28 +622,28 @@ function queuedRunModelSelection(
   run: OrchestrationV2Run,
 ): ModelSelection {
   const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
-  // A PR update belongs to the thread's current agent. One queued before a
-  // provider handoff must not switch the thread back to the old provider.
+  // Monitor updates follow the agent currently handling the thread.
   return message?.notification?.source.kind === "monitor"
     ? projection.thread.modelSelection
     : run.modelSelection;
 }
 
-// The limit already stopped this provider. Starting the queue on it would send
-// every waiting message and drop it from the queue as each one fails.
 function usageLimitHoldsQueue(
   projection: Pick<OrchestrationV2ThreadProjection, "runs" | "turnItems" | "providerSessions">,
   providerInstanceId: ModelSelection["instanceId"],
 ): boolean {
-  const sessionError =
-    projection.providerSessions
-      .filter((session) => session.providerInstanceId === providerInstanceId)
-      .toSorted(
-        (left, right) =>
-          DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
-      )[0]?.lastError ?? null;
+  let latestSession: OrchestrationV2ThreadProjection["providerSessions"][number] | undefined;
+  for (const session of projection.providerSessions) {
+    if (
+      session.providerInstanceId === providerInstanceId &&
+      (latestSession === undefined ||
+        DateTime.isGreaterThan(session.updatedAt, latestSession.updatedAt))
+    ) {
+      latestSession = session;
+    }
+  }
   return (
-    usageLimitBlockedRun(projection.runs, projection.turnItems, sessionError)
+    usageLimitBlockedRun(projection.runs, projection.turnItems, latestSession?.lastError ?? null)
       ?.providerInstanceId === providerInstanceId
   );
 }
@@ -1461,31 +1461,32 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const activeProviderThread = projection.providerThreads.find(
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       );
-      const queuedProviderThread: OrchestrationV2ProviderThread =
-        storedProviderThread.providerInstanceId === queuedRun.providerInstanceId
-          ? storedProviderThread
-          : ((activeProviderThread?.providerInstanceId === queuedRun.providerInstanceId
-              ? activeProviderThread
-              : rootProviderThreadsForProvider(projection, queuedRun.providerInstanceId)[0]) ?? {
-              id: idAllocator.derive.providerThread({
-                driver: targetAdapter.driver,
-                nativeThreadId: `pending:${queuedRun.id}`,
-              }),
-              driver: targetAdapter.driver,
-              providerInstanceId: queuedRun.providerInstanceId,
-              providerSessionId: null,
-              appThreadId: threadId,
-              ownerNodeId: null,
-              nativeThreadRef: null,
-              nativeConversationHeadRef: null,
-              status: "not_loaded",
-              firstRunOrdinal: null,
-              lastRunOrdinal: null,
-              handoffIds: [],
-              forkedFrom: null,
-              createdAt: now,
-              updatedAt: now,
-            });
+      const targetProviderThread =
+        queuedMessage.notification?.source.kind === "monitor"
+          ? activeProviderThread?.providerInstanceId === queuedRun.providerInstanceId
+            ? activeProviderThread
+            : rootProviderThreadsForProvider(projection, queuedRun.providerInstanceId)[0]
+          : storedProviderThread;
+      const queuedProviderThread: OrchestrationV2ProviderThread = targetProviderThread ?? {
+        id: idAllocator.derive.providerThread({
+          driver: targetAdapter.driver,
+          nativeThreadId: `pending:${queuedRun.id}`,
+        }),
+        driver: targetAdapter.driver,
+        providerInstanceId: queuedRun.providerInstanceId,
+        providerSessionId: null,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "not_loaded",
+        firstRunOrdinal: null,
+        lastRunOrdinal: null,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+      };
       const selectionChanged = !modelSelectionsEqual(
         projection.thread.modelSelection,
         queuedRun.modelSelection,
@@ -1650,10 +1651,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           : null;
       const activeHandoff = handoff ?? legacyImportRecoveryHandoff;
       const checkpointScope =
-        (storedCheckpointScope && {
-          ...storedCheckpointScope,
-          providerThreadId: queuedProviderThread.id,
-        }) ??
+        storedCheckpointScope ??
         (yield* runtimePolicy
           .resolve({ thread: projection.thread, modelSelection: queuedRun.modelSelection })
           .pipe(
@@ -1752,6 +1750,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             ? {}
             : { senderThreadId: queuedMessage.senderThreadId }),
         }),
+        providerThreadId: queuedProviderThread.id,
         inputIntent: "queued_turn",
         startedAt: now,
         completedAt: now,
@@ -1798,31 +1797,42 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               strategy: activeHandoff.strategy,
               summary: activeHandoff.summaryText,
             };
-      const checkpointEvents: ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">> =
-        storedCheckpointScope === undefined ||
-        storedCheckpointScope.providerThreadId !== queuedProviderThread.id ||
-        rootNode.providerThreadId !== queuedProviderThread.id
+      const executionIdentityEvents: ReadonlyArray<Omit<OrchestrationV2DomainEvent, "id">> =
+        storedCheckpointScope === undefined || storedProviderThread.id !== queuedProviderThread.id
           ? [
               {
                 type: "checkpoint-scope.created",
                 threadId,
                 runId: queuedRun.id,
-                nodeId: rootNode.id,
+                nodeId: rootNodeId,
                 providerInstanceId: queuedRun.providerInstanceId,
                 occurredAt: now,
-                payload: checkpointScope,
+                payload: { ...checkpointScope, providerThreadId: queuedProviderThread.id },
               },
               {
                 type: "node.updated",
                 threadId,
                 runId: queuedRun.id,
-                nodeId: rootNode.id,
+                nodeId: rootNodeId,
                 providerInstanceId: queuedRun.providerInstanceId,
                 occurredAt: now,
                 payload: {
                   ...rootNode,
                   providerThreadId: queuedProviderThread.id,
                   checkpointScopeId: checkpointScope.id,
+                },
+              },
+              {
+                type: "run-attempt.updated",
+                threadId,
+                runId: queuedRun.id,
+                nodeId: rootNodeId,
+                providerInstanceId: queuedRun.providerInstanceId,
+                occurredAt: now,
+                payload: {
+                  ...attempt,
+                  providerInstanceId: queuedRun.providerInstanceId,
+                  providerThreadId: queuedProviderThread.id,
                 },
               },
             ]
@@ -1936,24 +1946,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               reason: "Provider or model selection changed.",
             },
           })),
-          ...checkpointEvents,
-          ...(attempt.providerThreadId === queuedProviderThread.id
-            ? []
-            : [
-                {
-                  type: "run-attempt.updated" as const,
-                  threadId,
-                  runId: queuedRun.id,
-                  nodeId: rootNodeId,
-                  providerInstanceId: queuedRun.providerInstanceId,
-                  occurredAt: now,
-                  payload: {
-                    ...attempt,
-                    providerInstanceId: queuedRun.providerInstanceId,
-                    providerThreadId: queuedProviderThread.id,
-                  },
-                },
-              ]),
+          ...executionIdentityEvents,
           {
             type: "provider-thread.updated",
             threadId,

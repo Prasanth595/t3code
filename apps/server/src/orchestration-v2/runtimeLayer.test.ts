@@ -4670,6 +4670,99 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect(
+    "delivers a queued monitor update in the current conversation on the same provider",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const eventSink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make("runtime-layer-queue-current-conversation");
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`${threadId}:create`),
+          threadId,
+          projectId: ProjectId.make(`${threadId}:project`),
+          createdBy: "user",
+          creationSource: "web",
+          title: "Current conversation",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        for (const type of ["start_immediately", "queue_after_active"] as const) {
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`${threadId}:${type}`),
+            messageId: MessageId.make(`${threadId}:${type}`),
+            threadId,
+            text: type,
+            attachments: [],
+            createdBy: "agent",
+            creationSource: "server",
+            dispatchMode: { type },
+            ...(type === "queue_after_active"
+              ? {
+                  notification: {
+                    source: { kind: "monitor" as const },
+                    outcome: "updated" as const,
+                    summary: "PR update",
+                  },
+                }
+              : {}),
+          });
+        }
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const [active, queued] = before.runs;
+        assert.isDefined(active);
+        assert.isDefined(queued);
+        const now = yield* DateTime.now;
+        const current = {
+          ...before.providerThreads[0]!,
+          id: ProviderThreadId.make(`${threadId}:current`),
+          updatedAt: now,
+        };
+        yield* eventSink.write({
+          events: [
+            {
+              id: EventId.make(`${threadId}:completed`),
+              type: "run.updated",
+              threadId,
+              runId: active.id,
+              occurredAt: now,
+              payload: { ...active, status: "completed", completedAt: now },
+            },
+            {
+              id: EventId.make(`${threadId}:conversation`),
+              type: "provider-thread.updated",
+              threadId,
+              occurredAt: now,
+              payload: current,
+            },
+          ],
+        });
+        yield* orchestrator.resumeQueuedRuns;
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        const delivered = after.runs.find((run) => run.id === queued.id)!;
+        assert.equal(delivered.status, "starting");
+        assert.equal(delivered.providerThreadId, current.id);
+        assert.equal(after.thread.activeProviderThreadId, current.id);
+        assert.equal(
+          after.attempts.find((attempt) => attempt.id === delivered.activeAttemptId)
+            ?.providerThreadId,
+          current.id,
+        );
+        const root = after.nodes.find((node) => node.id === delivered.rootNodeId)!;
+        assert.equal(root.providerThreadId, current.id);
+        assert.equal(
+          after.checkpointScopes.find((scope) => scope.id === root.checkpointScopeId)
+            ?.providerThreadId,
+          current.id,
+        );
+      }),
+  );
+
   it.effect("keeps the queue after a user interrupts the active run", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;
