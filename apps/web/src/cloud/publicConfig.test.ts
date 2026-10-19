@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   CloudPublicConfigMissingError,
@@ -36,64 +36,78 @@ describe("hasCloudPublicConfig", () => {
     expect(hasCloudPublicConfig()).toBe(false);
   });
 
-  it.each([
-    ["https://t3.codes", true],
-    ["https://app.t3.codes", true],
-    ["https://app.t3.codes:443", true],
-    ["https://nightly.app.t3.codes", true],
-    ["http://app.t3.codes", false],
-    ["http://app.t3.codes:443", false],
-    ["https://app.t3.codes:3773", false],
-    ["http://localhost:3773", false],
-    ["http://127.0.0.1:3773", false],
-    ["http://[::1]:3773", false],
-    ["http://192.168.1.10:3773", false],
-    ["https://machine.example.ts.net", false],
-    ["https://nott3.codes", false],
-    ["https://t3.codes.example.com", false],
-  ])("checks production Clerk availability at %s", (origin, expected) => {
-    vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", `pk_live_${btoa("clerk.t3.codes$")}`);
-    vi.stubEnv("VITE_CLERK_JWT_TEMPLATE", "t3-relay");
-    vi.stubEnv("VITE_T3CODE_RELAY_URL", "https://relay.example.test");
-    vi.stubGlobal("window", { location: new URL(origin) });
+  describe("browser origins", () => {
+    beforeEach(() => {
+      vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", `pk_live_${btoa("clerk.example.com$")}`);
+      vi.stubEnv("VITE_CLERK_JWT_TEMPLATE", "t3-relay");
+      vi.stubEnv("VITE_T3CODE_RELAY_URL", "https://relay.example.test");
+    });
 
-    expect(hasCloudPublicConfig()).toBe(expected);
-  });
+    it.each(["https://example.com", "https://nightly.app.example.com:443"])(
+      "enables production auth on the configured root and subdomains: %s",
+      (origin) => {
+        vi.stubGlobal("window", { location: new URL(origin) });
 
-  it("uses the configured production domain for custom deployments", () => {
-    vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", `pk_live_${btoa("clerk.example.com$")}`);
-    vi.stubEnv("VITE_CLERK_JWT_TEMPLATE", "t3-relay");
-    vi.stubEnv("VITE_T3CODE_RELAY_URL", "https://relay.example.test");
-    vi.stubGlobal("window", { location: new URL("https://app.example.com") });
+        expect(hasCloudPublicConfig()).toBe(true);
+      },
+    );
 
-    expect(hasCloudPublicConfig()).toBe(true);
-  });
+    it.each(["http://localhost:3773", "https://machine.example.ts.net"])(
+      "disables production auth on private browser origins: %s",
+      (origin) => {
+        vi.stubGlobal("window", { location: new URL(origin) });
 
-  it("keeps development keys available on private browser origins", () => {
-    vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", "pk_test_example");
-    vi.stubEnv("VITE_CLERK_JWT_TEMPLATE", "t3-relay");
-    vi.stubEnv("VITE_T3CODE_RELAY_URL", "https://relay.example.test");
-    vi.stubGlobal("window", { location: new URL("http://localhost:3773") });
+        expect(hasCloudPublicConfig()).toBe(false);
+      },
+    );
 
-    expect(hasCloudPublicConfig()).toBe(true);
-  });
+    it.each(["http://app.example.com:443", "https://app.example.com:3773"])(
+      "rejects unsupported schemes and ports even on the configured domain: %s",
+      (origin) => {
+        vi.stubGlobal("window", { location: new URL(origin) });
 
-  it("keeps production keys available in the Electron auth shell", () => {
-    vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", `pk_live_${btoa("clerk.t3.codes$")}`);
-    vi.stubEnv("VITE_CLERK_JWT_TEMPLATE", "t3-relay");
-    vi.stubEnv("VITE_T3CODE_RELAY_URL", "https://relay.example.test");
-    vi.stubGlobal("window", { location: new URL("file:///app/index.html"), desktopBridge: {} });
+        expect(hasCloudPublicConfig()).toBe(false);
+      },
+    );
 
-    expect(hasCloudPublicConfig()).toBe(true);
-  });
+    it.each(["https://notexample.com", "https://example.com.evil.test"])(
+      "rejects domain lookalikes: %s",
+      (origin) => {
+        vi.stubGlobal("window", { location: new URL(origin) });
 
-  it("disables cloud auth for an invalid production key without blocking startup", () => {
-    vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", "pk_live_!");
-    vi.stubEnv("VITE_CLERK_JWT_TEMPLATE", "t3-relay");
-    vi.stubEnv("VITE_T3CODE_RELAY_URL", "https://relay.example.test");
-    vi.stubGlobal("window", { location: new URL("https://app.t3.codes") });
+        expect(hasCloudPublicConfig()).toBe(false);
+      },
+    );
 
-    expect(hasCloudPublicConfig()).toBe(false);
+    it.each([
+      ["https://tenant.clerk.accounts.dev", true],
+      ["https://other.clerk.accounts.dev", false],
+    ])("keeps a provider hostname scoped to its own instance: %s", (origin, expected) => {
+      vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", `pk_live_${btoa("tenant.clerk.accounts.dev$")}`);
+      vi.stubGlobal("window", { location: new URL(origin) });
+
+      expect(hasCloudPublicConfig()).toBe(expected);
+    });
+
+    it("keeps development keys available on private browser origins", () => {
+      vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", `pk_test_${btoa("tenant.clerk.accounts.dev$")}`);
+      vi.stubGlobal("window", { location: new URL("http://localhost:3773") });
+
+      expect(hasCloudPublicConfig()).toBe(true);
+    });
+
+    it("keeps production keys available in the Electron auth shell", () => {
+      vi.stubGlobal("window", { location: new URL("file:///app/index.html"), desktopBridge: {} });
+
+      expect(hasCloudPublicConfig()).toBe(true);
+    });
+
+    it("disables cloud auth for an invalid production key without throwing", () => {
+      vi.stubEnv("VITE_CLERK_PUBLISHABLE_KEY", "pk_live_!");
+      vi.stubGlobal("window", { location: new URL("https://app.example.com") });
+
+      expect(hasCloudPublicConfig()).toBe(false);
+    });
   });
 
   it("reports the missing Clerk JWT template as structured configuration", () => {
