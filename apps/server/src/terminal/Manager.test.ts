@@ -2869,8 +2869,8 @@ it.layer(
       const input = openInput();
       const pull = yield* Stream.toPull(
         terminalOutputStream(
-          (listener) => manager.attachStream(input, listener),
-          (listener) => manager.resyncStream(input, listener),
+          (listener, registerCleanup) => manager.attachStream(input, listener, registerCleanup),
+          (listener, registerCleanup) => manager.resyncStream(input, listener, registerCleanup),
         ),
       );
       expect(yield* pull).toMatchObject([{ type: "snapshot", snapshot: { history: "" } }]);

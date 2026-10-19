@@ -114,12 +114,17 @@ const makePublisher = () => {
   const listeners = new Set<(event: TerminalAttachStreamEvent) => Effect.Effect<void>>();
   return {
     listeners,
-    subscribe: (listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>) =>
+    subscribe: (
+      listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
+      registerCleanup?: (stop: () => void) => void,
+    ) =>
       Effect.sync(() => {
         listeners.add(listener);
-        return () => {
+        const stop = () => {
           listeners.delete(listener);
         };
+        registerCleanup?.(stop);
+        return stop;
       }),
     publish: (event: TerminalAttachStreamEvent) =>
       Effect.forEach(listeners, (listener) => listener(event), { discard: true }),
@@ -129,8 +134,13 @@ const makePublisher = () => {
 // Like TerminalManager.attachStream: a snapshot, then live events.
 const attach =
   (publisher: ReturnType<typeof makePublisher>, history: string) =>
-  (listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>) =>
-    publisher.subscribe(listener).pipe(Effect.tap(() => listener(snapshot(history))));
+  (
+    listener: (event: TerminalAttachStreamEvent) => Effect.Effect<void>,
+    registerCleanup: (stop: () => void) => void,
+  ) =>
+    publisher
+      .subscribe(listener, registerCleanup)
+      .pipe(Effect.tap(() => listener(snapshot(history))));
 
 const chunkBytes = (message: RpcMessage.FromServerEncoded) =>
   Buffer.byteLength(JSON.stringify(message));
@@ -176,7 +186,10 @@ describe("terminal output stream", () => {
         Effect.provide(
           group.toLayerHandler(tag, () =>
             terminalOutputStream(
-              (listener) => publisher.subscribe(listener).pipe(Effect.tap(() => listener(initial))),
+              (listener, registerCleanup) =>
+                publisher
+                  .subscribe(listener, registerCleanup)
+                  .pipe(Effect.tap(() => listener(initial))),
               legacy ? undefined : attach(publisher, "fresh history"),
               256 * 1024,
             ),
@@ -266,6 +279,40 @@ describe("terminal output stream", () => {
       yield* Fiber.interrupt(recovery);
       yield* Deferred.await(interrupted);
       assert.equal(publisher.listeners.size, 0);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("cleans listeners when cancelled during a successful acquisition handoff", () =>
+    Effect.gen(function* () {
+      const publisher = makePublisher();
+      for (const recovering of [false, true, false, true]) {
+        const handoff = yield* Deferred.make<void>();
+        const complete = yield* Deferred.make<void>();
+        const acquire: ReturnType<typeof attach> = (listener, registerCleanup) =>
+          attach(publisher, "")(listener, registerCleanup).pipe(
+            // Hold the successful exit before its cleanup handle reaches the caller.
+            Effect.onExit(() =>
+              Deferred.succeed(handoff, undefined).pipe(Effect.andThen(Deferred.await(complete))),
+            ),
+          );
+        const consumer = yield* Effect.gen(function* () {
+          const pull = yield* Stream.toPull(
+            terminalOutputStream(recovering ? attach(publisher, "") : acquire, acquire, 1024),
+          );
+          yield* pull;
+          yield* publisher.publish(output("x".repeat(1024)));
+          yield* publisher.publish(output("x".repeat(1024)));
+          yield* pull;
+        }).pipe(Effect.scoped, Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(handoff);
+        assert.equal(publisher.listeners.size, 1);
+        const cancellation = yield* Fiber.interrupt(consumer).pipe(
+          Effect.forkChild({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(complete, undefined);
+        yield* Fiber.join(cancellation);
+        assert.equal(publisher.listeners.size, 0);
+      }
     }).pipe(Effect.scoped),
   );
 

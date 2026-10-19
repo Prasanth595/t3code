@@ -76,7 +76,11 @@ const MAX_QUEUED_OUTPUT = 8 * 1024 * 1024;
 const EVENT_OVERHEAD = 128;
 
 type Listener<A> = (event: A) => Effect.Effect<void>;
-type Subscribe<A, E> = (listener: Listener<A>) => Effect.Effect<() => void, E>;
+// Acquisition must register cleanup synchronously with installing the listener.
+type Subscribe<A, E> = (
+  listener: Listener<A>,
+  registerCleanup: (stop: () => void) => void,
+) => Effect.Effect<() => void, E>;
 
 const queuedSize = (event: TerminalEvent | TerminalAttachStreamEvent) =>
   EVENT_OVERHEAD +
@@ -113,35 +117,33 @@ export function terminalOutputStream<A extends TerminalEvent | TerminalAttachStr
       yield* Effect.addFinalizer(() => Effect.sync(release));
 
       const listen = (from: Subscribe<A, E>) =>
-        Effect.uninterruptibleMask((restore) =>
-          Effect.suspend(() => {
-            const id = ++subscription;
-            // Waiting for the thread lock stays interruptible; installing its cleanup does not.
-            return restore(
-              from((event) =>
-                Effect.sync(() => {
-                  if (id !== subscription) return;
-                  const size = queuedSize(event);
-                  pending.push(event);
-                  sizes.push(size);
-                  queued += size;
-                  // A single snapshot must fit even when history fills the budget.
-                  if (queued - sizes[head]! > maxQueued) {
-                    release();
-                    overflowed = true;
-                  }
-                  ready.openUnsafe();
-                }),
-              ),
-            ).pipe(
-              Effect.map((stop) => {
-                // The subscription overflowed before it returned.
-                if (id === subscription) unsubscribe = stop;
-                else stop();
+        Effect.suspend(() => {
+          const id = ++subscription;
+          return from(
+            (event) =>
+              Effect.sync(() => {
+                if (id !== subscription) return;
+                const size = queuedSize(event);
+                pending.push(event);
+                sizes.push(size);
+                queued += size;
+                // A single snapshot must fit even when history fills the budget.
+                if (queued - sizes[head]! > maxQueued) {
+                  release();
+                  overflowed = true;
+                }
+                ready.openUnsafe();
               }),
-            );
-          }),
-        );
+            (stop) => {
+              // Overflow or cancellation may invalidate acquisition before registration.
+              if (id === subscription) unsubscribe = stop;
+              else stop();
+            },
+          ).pipe(
+            Effect.asVoid,
+            Effect.onError(() => Effect.sync(release)),
+          );
+        });
 
       const take = () => {
         const event = pending[head]!;

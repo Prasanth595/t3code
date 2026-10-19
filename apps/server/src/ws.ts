@@ -2821,8 +2821,10 @@ const layerWsRpc = (
         [WS_METHODS.terminalOpen]: (input) => terminalManager.open(input),
         [WS_METHODS.terminalAttach]: (input) =>
           terminalOutputStream(
-            (listener) => terminalManager.attachStream(input, listener),
-            (listener) => terminalManager.resyncStream(input, listener),
+            (listener, registerCleanup) =>
+              terminalManager.attachStream(input, listener, registerCleanup),
+            (listener, registerCleanup) =>
+              terminalManager.resyncStream(input, listener, registerCleanup),
           ),
         [WS_METHODS.terminalWrite]: (input) => terminalManager.write(input),
         [WS_METHODS.terminalResize]: (input) => terminalManager.resize(input),
@@ -2831,8 +2833,10 @@ const layerWsRpc = (
         [WS_METHODS.terminalClose]: (input) => terminalManager.close(input),
         [WS_METHODS.terminalObserve]: (input) =>
           terminalOutputStream(
-            (listener) => terminalManager.observeStream(input, listener),
-            (listener) => terminalManager.resyncStream(input, listener),
+            (listener, registerCleanup) =>
+              terminalManager.observeStream(input, listener, registerCleanup),
+            (listener, registerCleanup) =>
+              terminalManager.resyncStream(input, listener, registerCleanup),
           ),
         [WS_METHODS.subscribeTerminalEvents]: (_input) =>
           terminalOutputStream(terminalManager.subscribe),
