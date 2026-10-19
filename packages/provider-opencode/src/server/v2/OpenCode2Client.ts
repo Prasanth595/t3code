@@ -91,34 +91,33 @@ const decodeEnvelope = Schema.decodeUnknownOption(
   ),
 );
 
-const undecodable = (data: string) =>
-  Effect.gen(function* () {
-    const envelope = decodeEnvelope(data);
-    const type = envelope._tag === "Some" ? envelope.value.type.slice(0, 80) : "<unreadable>";
-    const sessionID = envelope._tag === "Some" ? envelope.value.data?.sessionID : undefined;
-    if (isExecutionEnd(type) && sessionID !== undefined) {
-      yield* Effect.logWarning(
-        "Ended an OpenCode execution from an event this build cannot decode.",
-        {
-          type,
-        },
-      );
-      return Result.succeed<OpenCode2StreamEvent>({
-        type: "unreadable.execution.ended",
-        executionType: type,
-        sessionID,
-      });
-    }
-    if (type === "session.execution.started" && sessionID !== undefined) {
-      yield* Effect.logDebug("Read an OpenCode execution start this build cannot decode.");
-      return Result.succeed<OpenCode2StreamEvent>({
-        type: "unreadable.execution.started",
-        sessionID,
-      });
-    }
-    yield* Effect.logDebug("Skipped an OpenCode event this build cannot decode.", { type });
-    return Result.failVoid;
-  });
+const undecodable = Effect.fn("OpenCode2Client.undecodable")(function* (data: string) {
+  const envelope = decodeEnvelope(data);
+  const type = envelope._tag === "Some" ? envelope.value.type.slice(0, 80) : "<unreadable>";
+  const sessionID = envelope._tag === "Some" ? envelope.value.data?.sessionID : undefined;
+  if (isExecutionEnd(type) && sessionID !== undefined) {
+    yield* Effect.logWarning(
+      "Ended an OpenCode execution from an event this build cannot decode.",
+      {
+        type,
+      },
+    );
+    return Result.succeed<OpenCode2StreamEvent>({
+      type: "unreadable.execution.ended",
+      executionType: type,
+      sessionID,
+    });
+  }
+  if (type === "session.execution.started" && sessionID !== undefined) {
+    yield* Effect.logDebug("Read an OpenCode execution start this build cannot decode.");
+    return Result.succeed<OpenCode2StreamEvent>({
+      type: "unreadable.execution.started",
+      sessionID,
+    });
+  }
+  yield* Effect.logDebug("Skipped an OpenCode event this build cannot decode.", { type });
+  return Result.failVoid;
+});
 
 const readEvents = HttpClient.get("/api/event", {
   headers: { accept: "text/event-stream" },
