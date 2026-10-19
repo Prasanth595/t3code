@@ -3,7 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
   EnvironmentId,
-  GitManagerError,
+  GitCommandError,
   type OrchestratorMcpFailure,
   NodeId,
   type OrchestrationV2ThreadShell,
@@ -21,6 +21,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import { ChildProcessSpawner } from "effect/process";
 
 import {
   DispatchModeLimit,
@@ -36,7 +37,6 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { buildUnavailableProviderSnapshot } from "../provider/unavailableProviderSnapshot.ts";
-import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -146,7 +146,6 @@ describe("OrchestratorMcpService", () => {
           list: () => Effect.succeed([]),
         }),
         Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -247,7 +246,6 @@ describe("OrchestratorMcpService", () => {
           list: () => Effect.succeed([]),
         }),
         Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -332,7 +330,6 @@ describe("OrchestratorMcpService", () => {
           list: () => Effect.succeed([]),
         }),
         Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -410,7 +407,6 @@ describe("OrchestratorMcpService", () => {
           list: () => Effect.succeed([]),
         }),
         Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -496,7 +492,6 @@ describe("OrchestratorMcpService", () => {
           list: () => Effect.succeed([]),
         }),
         Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -583,7 +578,6 @@ describe("OrchestratorMcpService", () => {
           list: () => Effect.succeed([]),
         }),
         Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -717,7 +711,6 @@ describe("OrchestratorMcpService", () => {
           list: () => Effect.succeed([]),
         }),
         Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -959,7 +952,6 @@ describe("OrchestratorMcpService provider resolution", () => {
             disabledAntigravityInstanceId,
           ]),
           Layer.mock(ProjectService.ProjectService)({}),
-          Layer.mock(GitWorkflow.GitWorkflowService)({}),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         );
@@ -1073,7 +1065,6 @@ describe("OrchestratorMcpService provider resolution", () => {
         ]),
         adapterRegistryLayer([codexInstanceId]),
         Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -1241,7 +1232,6 @@ describe("OrchestratorMcpService provider resolution", () => {
           }),
           adapterRegistryLayer([codexInstanceId, antigravityInstanceId]),
           Layer.mock(ProjectService.ProjectService)({}),
-          Layer.mock(GitWorkflow.GitWorkflowService)({}),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         );
@@ -1341,7 +1331,6 @@ describe("OrchestratorMcpService provider resolution", () => {
         }),
         adapterRegistryLayer([codexInstanceId, antigravityInstanceId]),
         Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -1392,7 +1381,6 @@ describe("OrchestratorMcpService provider resolution", () => {
         ]),
         adapterRegistryLayer([codexInstanceId]),
         Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -1450,7 +1438,6 @@ describe("OrchestratorMcpService provider resolution", () => {
         ]),
         adapterRegistryLayer([codexInstanceId]),
         Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         ServerSettings.layerTest(),
@@ -1550,7 +1537,6 @@ describe("OrchestratorMcpService provider resolution", () => {
         ]),
         adapterRegistryLayer([codexInstanceId, altInstanceId]),
         Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         ServerSettings.layerTest(),
@@ -1659,7 +1645,6 @@ describe("OrchestratorMcpService provider resolution", () => {
           ]),
           adapterRegistryLayer([codexInstanceId, altInstanceId]),
           Layer.mock(ProjectService.ProjectService)({}),
-          Layer.mock(GitWorkflow.GitWorkflowService)({}),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
           ServerSettings.layerTest(),
@@ -1772,7 +1757,6 @@ describe("OrchestratorMcpService provider resolution", () => {
         adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         Layer.mock(ProjectService.ProjectService)({}),
-        Layer.mock(GitWorkflow.GitWorkflowService)({}),
         Layer.mock(SecretRequests.SecretRequests)({}),
       );
 
@@ -1954,7 +1938,6 @@ describe("OrchestratorMcpService provider resolution", () => {
                 : [codexInstanceId, codexAltInstanceId],
             ),
             Layer.mock(ProjectService.ProjectService)({}),
-            Layer.mock(GitWorkflow.GitWorkflowService)({}),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
           );
@@ -2119,7 +2102,6 @@ describe("OrchestratorMcpService provider resolution", () => {
               list: () => Effect.succeed([]),
             }),
             Layer.mock(ProjectService.ProjectService)({}),
-            Layer.mock(GitWorkflow.GitWorkflowService)({}),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({
               list: () => Effect.succeed({ tasks }),
@@ -2190,7 +2172,6 @@ describe("OrchestratorMcpService provider resolution", () => {
                     list: () => Effect.succeed([]),
                   }),
                   Layer.mock(ProjectService.ProjectService)({}),
-                  Layer.mock(GitWorkflow.GitWorkflowService)({}),
                   Layer.mock(SecretRequests.SecretRequests)({}),
                   Layer.mock(ScheduledTaskService.ScheduledTaskService)({
                     list: () => Effect.succeed({ tasks: [task({})] }),
@@ -2279,7 +2260,6 @@ describe("OrchestratorMcpService provider resolution", () => {
                     list: () => Effect.succeed([]),
                   }),
                   Layer.mock(ProjectService.ProjectService)({}),
-                  Layer.mock(GitWorkflow.GitWorkflowService)({}),
                   Layer.mock(SecretRequests.SecretRequests)({}),
                   Layer.mock(ScheduledTaskService.ScheduledTaskService)({
                     list: () => Effect.succeed({ tasks: [bound] }),
@@ -2336,8 +2316,6 @@ describe("OrchestratorMcpService provider resolution", () => {
       lastRunError: null,
       runCount: 0,
     });
-    // Runs one call against a project rooted at `workspaceRoot` and returns the
-    // workspace strategies it saved. Only `/work/repo` is a Git repository.
     const savedStrategies = (
       workspaceRoot: "/work/plain" | "/work/repo" | "/work/unreadable",
       call: (
@@ -2354,6 +2332,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               Layer.provide(
                 Layer.mergeAll(
                   NodeServices.layer,
+                  Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
                   Layer.mock(ThreadManagementService.ThreadManagementService)({}),
                   ServerSettings.layerTest(),
                   Layer.mock(ProviderRegistry.ProviderRegistry)({
@@ -2366,21 +2345,43 @@ describe("OrchestratorMcpService provider resolution", () => {
                     getById: (id) =>
                       Effect.succeedSome({
                         id,
+                        title: "Weekly reviews",
                         workspaceRoot,
                         defaultModelSelection: modelSelection,
-                      }) as never,
+                        scripts: [],
+                        createdAt: "2026-10-12T00:00:00.000Z",
+                        updatedAt: "2026-10-12T00:00:00.000Z",
+                        deletedAt: null,
+                      }),
                   }),
-                  Layer.mock(GitWorkflow.GitWorkflowService)({
-                    isRepository: (cwd) =>
+                  Layer.mock(GitVcsDriver.GitVcsDriver)({
+                    execute: ({ cwd }) =>
                       cwd === "/work/unreadable"
                         ? Effect.fail(
-                            new GitManagerError({
-                              operation: "GitWorkflowService.isRepository",
+                            new GitCommandError({
+                              operation: "OrchestratorMcpService.scheduledTaskWorkspaceStrategy",
+                              command: "git",
                               cwd,
                               detail: "Permission denied.",
                             }),
                           )
-                        : Effect.succeed(cwd === "/work/repo"),
+                        : cwd === "/work/plain"
+                          ? Effect.fail(
+                              new GitCommandError({
+                                operation: "OrchestratorMcpService.scheduledTaskWorkspaceStrategy",
+                                command: "git",
+                                cwd,
+                                reason: "not_a_repository",
+                                detail: "Not a Git repository.",
+                              }),
+                            )
+                          : Effect.succeed({
+                              exitCode: ChildProcessSpawner.ExitCode(0),
+                              stdout: ".git\n",
+                              stderr: "",
+                              stdoutTruncated: false,
+                              stderrTruncated: false,
+                            }),
                   }),
                   Layer.mock(SecretRequests.SecretRequests)({}),
                   Layer.mock(ScheduledTaskService.ScheduledTaskService)({
@@ -2405,37 +2406,33 @@ describe("OrchestratorMcpService provider resolution", () => {
         schedule: { type: "interval", everyMs: 604_800_000 },
       });
 
-    it.effect("starts runs in the project folder when it is not a Git repository", () =>
+    it.effect("uses the project folder only when the Git check confirms a non-repository", () =>
       Effect.gen(function* () {
         assert.deepEqual(yield* savedStrategies("/work/plain", scheduleWeekly), [{ type: "root" }]);
-      }),
-    );
-
-    it.effect("keeps a fresh worktree per run in a Git repository", () =>
-      Effect.gen(function* () {
         assert.deepEqual(yield* savedStrategies("/work/repo", scheduleWeekly), [worktree]);
-      }),
-    );
-
-    it.effect("keeps the worktree when the Git check fails", () =>
-      Effect.gen(function* () {
         assert.deepEqual(yield* savedStrategies("/work/unreadable", scheduleWeekly), [worktree]);
       }),
     );
 
-    it.effect("unbinding again moves a task saved with a worktree into a non-Git folder", () =>
+    it.effect("preserves the saved strategy until explicit unbinding repairs a non-Git task", () =>
       Effect.gen(function* () {
         const existing = savedTask(worktree);
         const saved = yield* savedStrategies(
           "/work/plain",
           (mcp) =>
-            mcp.updateScheduledTask(client, {
-              scheduledTaskId: existing.id,
-              bindToCurrentThread: false,
+            Effect.gen(function* () {
+              yield* mcp.updateScheduledTask(client, {
+                scheduledTaskId: existing.id,
+                prompt: "Review this week instead.",
+              });
+              yield* mcp.updateScheduledTask(client, {
+                scheduledTaskId: existing.id,
+                bindToCurrentThread: false,
+              });
             }),
           existing,
         );
-        assert.deepEqual(saved, [{ type: "root" }]);
+        assert.deepEqual(saved, [worktree, { type: "root" }]);
       }),
     );
   });

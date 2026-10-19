@@ -74,7 +74,6 @@ import {
   materializeReplayTranscriptWorkspace,
 } from "@t3tools/provider-testing/replayTranscript";
 import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
-import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
@@ -709,7 +708,6 @@ describe("orchestrator MCP toolkit", () => {
                   ),
               }),
             ),
-            Layer.provide(Layer.mock(GitWorkflow.GitWorkflowService)({})),
             Layer.provideMerge(
               SecretRequests.layer.pipe(
                 Layer.provide(layerMemorySecretStore),
@@ -1507,6 +1505,7 @@ describe("orchestrator MCP toolkit", () => {
             expect(storedAfterCreate).toHaveLength(1);
             expect(storedAfterCreate[0]).toMatchObject({
               threadId: parentThreadId,
+              workspaceStrategy: { type: "root" },
               projectId,
               createdBy: "agent",
               creationSource: "mcp",
@@ -4038,7 +4037,6 @@ describe("orchestrator MCP toolkit", () => {
           Layer.provide(ServerSettings.layerTest()),
           Layer.provide(layerUnusedScheduledTaskStub),
           Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
-          Layer.provide(Layer.mock(GitWorkflow.GitWorkflowService)({})),
           Layer.provideMerge(
             SecretRequests.layer.pipe(
               Layer.provide(layerMemorySecretStore),
