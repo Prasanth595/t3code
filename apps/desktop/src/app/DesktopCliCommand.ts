@@ -122,10 +122,17 @@ export const make = Effect.gen(function* () {
       Effect.mapError(() => fail("Could not update your PATH.")),
     );
 
+  // The shell skips directories and files without an execute bit.
+  const isExecutableFile = (target: string) =>
+    fs.stat(target).pipe(
+      Effect.map((info) => info.type === "File" && (info.mode & 0o111) !== 0),
+      Effect.orElseSucceed(() => false),
+    );
+
   const firstOnPath = Effect.gen(function* () {
     for (const directory of pathEntries(process.env.PATH, ":")) {
       const candidate = path.join(directory, "t3");
-      if (yield* exists(candidate)) return Option.some(candidate);
+      if (yield* isExecutableFile(candidate)) return Option.some(candidate);
     }
     return Option.none<string>();
   });

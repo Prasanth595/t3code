@@ -194,6 +194,32 @@ it.layer(NodeServices.layer)("DesktopCliCommand", (it) => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("skips a t3 directory or non-executable file the shell would not run", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped();
+      const folder = path.join(home, "folder");
+      const plain = path.join(home, "plain");
+      const shadow = path.join(home, "shadow");
+      yield* fs.makeDirectory(path.join(folder, "t3"), { recursive: true });
+      yield* fs.makeDirectory(plain);
+      yield* fs.writeFileString(path.join(plain, "t3"), "notes\n", { mode: 0o644 });
+      yield* fs.makeDirectory(shadow);
+      yield* fs.writeFileString(path.join(shadow, "t3"), "#!/bin/sh\n", { mode: 0o755 });
+      process.env.PATH = [folder, plain, shadow, path.join(home, ".local", "bin")].join(":");
+
+      const command = yield* commandIn({ home });
+      expect((yield* command.state).shadowedBy).toBe(path.join(shadow, "t3"));
+
+      yield* fs.remove(shadow, { recursive: true });
+      expect(yield* command.install).toMatchObject({
+        onPath: true,
+        installedPath: path.join(home, ".local", "bin", "t3"),
+      });
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("leaves the Windows PATH alone when it cannot be read", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
