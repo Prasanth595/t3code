@@ -35,6 +35,7 @@ import { describe } from "vite-plus/test";
 
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
@@ -3243,9 +3244,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }).pipe(Effect.scoped),
   );
 
-  it.effect("adds T3's MCP server again on every turn, in case OpenCode dropped it", () =>
+  it.effect("re-registers T3 MCP each turn and drops its instructions when adding fails", () =>
     Effect.gen(function* () {
-      McpProviderSession.setMcpProviderSession({
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* mcpSessions.set({
         environmentId: EnvironmentId.make("environment:opencode2-adapter"),
         threadId,
         providerSessionId: "mcp:opencode2-adapter",
@@ -3254,36 +3256,37 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         authorizationHeader: "Bearer thread-credential",
         browserToolsAvailable: false,
       });
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-      );
+      yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
       const server = "t3-code-thread_opencode2-adapter";
-      const add = [
-        out("mcp.add", {
-          server,
-          "location[directory]": WORK,
-          config: {
-            type: "remote",
-            url: "http://127.0.0.1:3773/mcp",
-            headers: { Authorization: "Bearer thread-credential" },
-            oauth: false,
-          },
-        }),
-        reply("mcp.add", null),
-      ];
+      const add = out("mcp.add", {
+        server,
+        "location[directory]": WORK,
+        config: {
+          type: "remote",
+          url: "http://127.0.0.1:3773/mcp",
+          headers: { Authorization: "Bearer thread-credential" },
+          oauth: false,
+        },
+      });
       const turn = [
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
         promptAccepted,
         event("session.execution.succeeded", { sessionID: SESSION }),
       ];
-      // OpenCode keeps runtime-added servers with the Location and forgets them
-      // when it evicts an idle one, without a reconnect T3 could notice.
+      // Idle Location eviction drops OpenCode's runtime MCP servers without a reconnect.
       const { runtime, thread } = yield* resumed([
-        ...add,
+        add,
+        reply("mcp.add", null),
         ...turn,
-        ...add,
+        add,
+        reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
+        out("session.instructions.entry.put", {
+          sessionID: SESSION,
+          key: "t3-code",
+          value: buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
+        }),
+        reply("session.instructions.entry.put", null),
         ...turn,
-        // Removed when the session closes.
         out("mcp.remove", { server, "location[directory]": WORK }),
         reply("mcp.remove", null),
       ]);

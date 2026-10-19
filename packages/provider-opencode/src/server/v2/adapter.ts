@@ -2955,9 +2955,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         yield* removeMcp(state.mcp);
         state.mcp = undefined;
       }
-      // Added on every turn: OpenCode drops runtime-added servers when it evicts
-      // an idle Location, and leaves an unchanged one connected. T3's tools are
-      // an addition: a server that cannot add them still runs the turn.
+      // Idle Location eviction drops runtime MCP servers without clearing T3's cache.
+      // Re-adding an unchanged config keeps its existing connection.
       let mcpAvailable = false;
       if (wanted !== undefined) {
         mcpAvailable = yield* client.mcp
