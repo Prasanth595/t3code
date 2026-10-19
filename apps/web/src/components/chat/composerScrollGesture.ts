@@ -160,52 +160,58 @@ export function listenForComposerScrollGestures({
     });
   };
 
-  // Scrollbar drags, middle-click autoscroll and touch send no wheel
-  // events, so their direction comes from scroll offsets. Only scrolls
-  // during the gesture or a short fixed tail after release count, so
-  // programmatic scrolls (live follow, turn anchoring) can't collapse the
-  // composer. Scrolls don't extend the tail: streaming follow scrolls would
-  // keep it open.
-  let pointerScrollUntil = 0;
+  let activeInput: "scrollbar" | "touch" | "middle-click" | null = null;
+  let hasScrolled = false;
+  let touchScrollUntil = 0;
   let lastScrollTop = getTimelineScrollableNode()?.scrollTop ?? null;
-  // Middle-click autoscroll keeps going after the button is released, until
-  // the next click, key press, or wheel, so its hold ends on those instead.
-  let middleClickAutoscroll = false;
-  const holdPointerScroll = () => {
-    pointerScrollUntil = Number.POSITIVE_INFINITY;
+  const beginPointerScroll = (input: NonNullable<typeof activeInput>, scrollNode: HTMLElement) => {
+    activeInput = input;
+    hasScrolled = false;
+    touchScrollUntil = 0;
+    lastScrollTop = scrollNode.scrollTop;
+  };
+  const cancelPointerScroll = () => {
+    activeInput = null;
+    touchScrollUntil = 0;
+    hasScrolled = false;
   };
   const releasePointerScroll = (event: Event) => {
-    if (middleClickAutoscroll) {
-      if (event.type !== "blur") return;
-      middleClickAutoscroll = false;
+    if (event.type === "pointercancel" || event.type === "touchcancel" || event.type === "blur") {
+      cancelPointerScroll();
+      return;
     }
-    if (pointerScrollUntil === Number.POSITIVE_INFINITY) {
-      pointerScrollUntil = window.performance.now() + POINTER_SCROLL_TAIL_MS;
+    // Toggle-mode autoscroll continues after release until another input stops it.
+    if (activeInput === "middle-click") return;
+    if (activeInput === "touch" && event.type === "touchend") {
+      // Follow scrolls must not extend the fling window or open it after a motionless release.
+      touchScrollUntil = hasScrolled ? window.performance.now() + POINTER_SCROLL_TAIL_MS : 0;
+      activeInput = null;
+    } else if (activeInput === "scrollbar" && event.type === "pointerup") {
+      cancelPointerScroll();
     }
   };
   const endMiddleClickAutoscroll = () => {
-    if (!middleClickAutoscroll) return false;
-    middleClickAutoscroll = false;
-    pointerScrollUntil = 0;
+    if (activeInput !== "middle-click") return false;
+    cancelPointerScroll();
     return true;
   };
+  const targetsTimeline = (target: EventTarget | null, scrollNode: HTMLElement) =>
+    isTimelineScrollTarget(target, scrollNode, -1) && isTimelineScrollTarget(target, scrollNode, 1);
   const handleTimelinePointerDown = (event: PointerEvent) => {
-    // The click that stops autoscroll doesn't start a new gesture.
+    // The click that stops autoscroll must not start a new gesture.
     if (endMiddleClickAutoscroll()) return;
     const scrollNode = getTimelineScrollableNode();
-    if (!scrollNode || !(event.target instanceof Node)) return;
-    if (event.button === 1 && scrollNode.contains(event.target)) {
-      middleClickAutoscroll = true;
-      holdPointerScroll();
-    } else if (event.target === scrollNode) {
-      // Only scrollbar presses target the scroll node itself.
-      holdPointerScroll();
+    if (!scrollNode) return;
+    if (event.button === 1 && targetsTimeline(event.target, scrollNode)) {
+      beginPointerScroll("middle-click", scrollNode);
+    } else if (event.button === 0 && event.target === scrollNode && event.pointerType !== "touch") {
+      beginPointerScroll("scrollbar", scrollNode);
     }
   };
   const handleTimelineTouchMove = (event: TouchEvent) => {
     const scrollNode = getTimelineScrollableNode();
-    if (scrollNode && event.target instanceof Node && scrollNode.contains(event.target)) {
-      holdPointerScroll();
+    if (scrollNode && targetsTimeline(event.target, scrollNode) && activeInput !== "touch") {
+      beginPointerScroll("touch", scrollNode);
     }
   };
   const handleTimelineScroll = (event: Event) => {
@@ -215,7 +221,8 @@ export function listenForComposerScrollGestures({
     const deltaY = lastScrollTop === null ? 0 : scrollTop - lastScrollTop;
     lastScrollTop = scrollTop;
     const now = window.performance.now();
-    if (deltaY === 0 || now >= pointerScrollUntil) return;
+    if (deltaY === 0 || (activeInput === null && now >= touchScrollUntil)) return;
+    hasScrolled = true;
 
     // This capture listener runs before the list records the new offset,
     // so the list's end state can lag by one scroll step.
@@ -237,8 +244,6 @@ export function listenForComposerScrollGestures({
   };
 
   document.addEventListener("wheel", handleTimelineWheel, { capture: true, passive: true });
-  // Scroll events don't bubble, so a capture listener is the only document-
-  // level way to hear the timeline's.
   document.addEventListener("scroll", handleTimelineScroll, { capture: true, passive: true });
   document.addEventListener("pointerdown", handleTimelinePointerDown, {
     capture: true,
@@ -249,11 +254,9 @@ export function listenForComposerScrollGestures({
     passive: true,
   });
   document.addEventListener("keydown", endMiddleClickAutoscroll, { capture: true });
-  // Capture so a handler that stops propagation can't leave the hold stuck.
   for (const type of POINTER_SCROLL_RELEASE_EVENTS) {
     window.addEventListener(type, releasePointerScroll, { capture: true, passive: true });
   }
-  // A drag interrupted by switching windows may never deliver its pointerup.
   window.addEventListener("blur", releasePointerScroll);
   return () => {
     document.removeEventListener("wheel", handleTimelineWheel, true);
