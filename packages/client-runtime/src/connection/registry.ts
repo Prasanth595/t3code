@@ -164,9 +164,14 @@ export class EnvironmentRegistry extends Context.Service<
       | Persistence.ConnectionPersistenceError
       | ConnectionBlockedError
     >;
+    /**
+     * Pauses or resumes an environment for protocol compatibility. With
+     * `keepLiveSession`, a block is ignored while a session is connected.
+     */
     readonly setCompatibility: (
       environmentId: EnvironmentId,
       error: ConnectionBlockedError | null,
+      options?: { readonly keepLiveSession?: boolean },
     ) => Effect.Effect<void, Persistence.ConnectionPersistenceError>;
     readonly state: (
       environmentId: EnvironmentId,
@@ -1100,14 +1105,11 @@ export const make = Effect.gen(function* () {
       ),
     ),
   );
-  yield* connectivity.changes.pipe(
-    Stream.runForEach((status) => SubscriptionRef.set(networkStatus, status)),
-    Effect.forkScoped,
-  );
 
   const setCompatibility = Effect.fn("EnvironmentRegistry.setCompatibility")(function* (
     environmentId: EnvironmentId,
     error: ConnectionBlockedError | null,
+    options?: { readonly keepLiveSession?: boolean },
   ) {
     yield* withLeaseLock(
       environmentId,
@@ -1136,6 +1138,13 @@ export const make = Effect.gen(function* () {
                 ...(error.serverUpdateRequired === true ? { serverUpdateRequired: true } : {}),
               };
         const lease = (yield* SubscriptionRef.get(serviceScopes)).get(environmentId);
+        if (
+          error !== null &&
+          options?.keepLiveSession === true &&
+          lease !== undefined &&
+          (yield* SubscriptionRef.get(lease.supervisor.state)).phase === "connected"
+        )
+          return;
         if (lease !== undefined) {
           yield* SubscriptionRef.update(serviceScopes, (current) =>
             new Map(current).set(environmentId, { ...lease, entry: next }),
@@ -1150,21 +1159,28 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  // Nothing else re-checks an incompatible host, so coming back to the app or
-  // changing networks retries the ones the user left on, in case the host
-  // has updated meanwhile.
+  // Nothing else re-checks an incompatible host, so coming back to the app,
+  // changing networks, or coming back online retries the ones the user left
+  // on, in case the host has updated meanwhile.
+  const retryPaused = SubscriptionRef.get(entries).pipe(
+    Effect.flatMap((current) =>
+      Effect.forEach(
+        [...current].filter(([, entry]) => entry.enabled && entry.unsupportedReason !== undefined),
+        ([environmentId]) => retryNow(environmentId),
+        { concurrency: "unbounded", discard: true },
+      ),
+    ),
+  );
   yield* wakeups.changes.pipe(
     Stream.filter(ConnectionWakeups.resetsRetryBackoff),
-    Stream.runForEach(() =>
-      SubscriptionRef.get(entries).pipe(
-        Effect.flatMap((current) =>
-          Effect.forEach(
-            [...current].filter(
-              ([, entry]) => entry.enabled && entry.unsupportedReason !== undefined,
-            ),
-            ([environmentId]) => retryNow(environmentId),
-            { concurrency: "unbounded", discard: true },
-          ),
+    Stream.runForEach(() => retryPaused),
+    Effect.forkScoped,
+  );
+  yield* connectivity.changes.pipe(
+    Stream.runForEach((status) =>
+      SubscriptionRef.getAndSet(networkStatus, status).pipe(
+        Effect.flatMap((previous) =>
+          status === "online" && previous !== "online" ? retryPaused : Effect.void,
         ),
       ),
     ),

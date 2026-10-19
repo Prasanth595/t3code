@@ -58,10 +58,13 @@ export const watchDiscoveredCompatibility = Effect.fn("connection.watchDiscovere
               previous.descriptor?.serverVersion !== descriptor.serverVersion;
             // Only a new health result applies: a replayed one must neither clear
             // a newer socket rejection nor re-block a host a retry found compatible.
+            // A live session already passed the protocol check, so even a new
+            // result that disagrees with it is stale; the next connect checks again.
             if (fresh) {
               yield* registry.setCompatibility(
                 environmentId,
                 orchestrationProtocolCompatibilityError(descriptor),
+                { keepLiveSession: true },
               );
             }
             seenChecks.set(environmentId, status);
