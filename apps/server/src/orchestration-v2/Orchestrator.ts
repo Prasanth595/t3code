@@ -7511,6 +7511,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: "The provider for this project is disabled.",
           });
         }
+        if (!Object.values(command.answers ?? {}).every(isMessageQuestionAnswer)) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "Answer each question before sending.",
+          });
+        }
         for (const question of approvalTurnItem.questions) {
           const answer = command.answers?.[question.id];
           if (answer === undefined && question.required === false) continue;
