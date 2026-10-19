@@ -8,6 +8,7 @@ import {
   type ServerProvider,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
+  type UsageLimitSourceSnapshot,
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 
@@ -654,10 +655,32 @@ export function withUsageLimitsCommands(
   });
 }
 
+/** A hub snapshot from another environment, which is where its reset credits are redeemed. */
+export type ComposerUsageLimitSource = UsageLimitSourceSnapshot & {
+  readonly environmentId?: EnvironmentId;
+};
+
+/**
+ * Hubs for a composer on `environmentId`: its own, then every other connected
+ * environment's. A hub reports subscription accounts rather than anything about
+ * the environment that polls it, so the composer shows the same hub accounts
+ * the Usage page does without each environment holding the hub's management key.
+ */
+export function composerUsageLimitSources(
+  environmentId: EnvironmentId,
+  local: UsageLimitSourceSnapshots,
+  byEnvironment: ReadonlyMap<EnvironmentId, UsageLimitSourceSnapshots>,
+): readonly ComposerUsageLimitSource[] {
+  const remote = [...byEnvironment].flatMap(([id, sources]) =>
+    id === environmentId ? [] : sources.map((source) => ({ ...source, environmentId: id })),
+  );
+  return remote.length === 0 ? local : [...local, ...remote];
+}
+
 export function collectProviderUsageLimits(
   instanceId: ProviderInstanceId,
   providers: readonly ServerProvider[],
-  sources: UsageLimitSourceSnapshots,
+  sources: readonly ComposerUsageLimitSource[],
   now: number,
 ): UsageLimitsReport | null {
   const selected = providers.find((provider) => provider.instanceId === instanceId);
@@ -715,6 +738,9 @@ export function collectProviderUsageLimits(
               creditId: hubCreditId,
             }
           : { instanceId: provider.instanceId },
+      ...(hubCreditId && hubCredits?.source.environmentId
+        ? { resetCreditEnvironmentId: hubCredits.source.environmentId }
+        : {}),
       ...(provider.displayName ? { displayName: provider.displayName } : {}),
       ...(provider.accentColor ? { accentColor: provider.accentColor } : {}),
       ...(provider.auth.email ? { email: provider.auth.email } : {}),
@@ -723,11 +749,14 @@ export function collectProviderUsageLimits(
         : provider.usageLimits,
     });
   }
+  // The same subscription can sit in hubs on several environments; the first one listed wins.
+  const hubAccounts = new Set<string>();
   for (const source of sources) {
     const matching = source.accounts.filter((account) => account.driver === selected.driver);
     for (const account of matching) {
       const key = resolveKey(account);
-      if (key && nativeAccounts.has(key)) continue;
+      if (key && (nativeAccounts.has(key) || hubAccounts.has(key))) continue;
+      if (key) hubAccounts.add(key);
       accounts.push({
         id: `${source.id}:${account.id}`,
         driver: account.driver,
@@ -740,6 +769,7 @@ export function collectProviderUsageLimits(
                 accountId: account.id,
                 creditId: account.usageLimits.resetCredits.nextCreditId,
               },
+              ...(source.environmentId ? { resetCreditEnvironmentId: source.environmentId } : {}),
             }
           : {}),
         ...(account.plan ? { plan: account.plan } : {}),

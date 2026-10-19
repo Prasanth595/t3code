@@ -72,6 +72,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import { COMPOSER_LAYOUT_TRANSITION, ComposerSurface } from "./ThreadComposer";
 import { ComposerCommandPopover } from "./ComposerCommandPopover";
+import { useComposerUsageLimitSources } from "./ComposerUsageLimits";
 import { useComposerCommandMenu } from "./use-composer-command-menu";
 import {
   ComposerDictationCancelAction,
@@ -456,12 +457,16 @@ export function NewTaskDraftScreen(props: {
   };
   const cycleEnvironmentCommands = environments.length > 1 ? (["cycleHost"] as const) : [];
   useHardwareKeyboardCommand(cycleEnvironmentCommands, cycleEnvironment);
+  const usageLimitSources = useComposerUsageLimitSources(
+    selectedProject?.environmentId ?? null,
+    selectedEnvironmentServerConfig?.usageLimitSources,
+  );
   const offersUsageLimits =
     flow.selectedProviderStatus !== null &&
     hasProviderUsageLimits(
       flow.selectedProviderStatus.driver,
       selectedEnvironmentServerConfig?.providers ?? [],
-      selectedEnvironmentServerConfig?.usageLimitSources ?? [],
+      usageLimitSources,
     );
   const composerWorkspaceCwd =
     (flow.workspaceMode === "worktree"
