@@ -88,7 +88,6 @@ import { detachStackFrame } from "./detachStackFrame.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import type { GitManagerServiceError } from "@t3tools/contracts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import type { ChangeRequest } from "@t3tools/contracts";
@@ -2663,11 +2662,7 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  // Brings a local checkout onto the head commit the provider reported and says whether it got
-  // there. Unforced, some hosts' checkout only switches to an existing branch (Bitbucket,
-  // Forgejo, GitCafe), leaving it behind the pull request, so a clean fast-forward is taken here;
-  // nothing is ever reset. A provider that reports no head commit, or one this checkout does not
-  // have, cannot confirm it.
+  // Some hosts only switch branches on checkout; use the existing lossless refresh to advance them.
   const moveToPullRequestHead = (cwd: string, headSha: string | undefined) =>
     headSha === undefined || !/^[0-9a-f]{7,64}$/i.test(headSha)
       ? Effect.succeed(false)
@@ -2712,52 +2707,27 @@ export const make = Effect.gen(function* () {
       const pullRequest = toResolvedPullRequest(pullRequestSummary);
 
       if (input.mode === "local") {
-        const root = yield* gitCore.execute({
-          operation: "GitManager.preparePullRequestThread.root",
+        yield* ensureNoTrackedChanges(input.cwd, pullRequest.number);
+        yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
           cwd: input.cwd,
-          args: ["rev-parse", "--show-toplevel"],
+          reference: normalizedReference,
         });
-        // All projects in this checkout share the lease, including ones rooted in a subdirectory.
-        return yield* withWorkspaceLease(
-          yield* canonicalizeExistingPath(root.stdout.trim()),
-          Effect.gen(function* () {
-            yield* ensureNoTrackedChanges(input.cwd, pullRequest.number);
-            yield* (yield* sourceControlProvider(input.cwd)).checkoutChangeRequest({
-              cwd: input.cwd,
-              reference: normalizedReference,
-            });
-            const details = yield* gitCore.statusDetails(input.cwd);
-            yield* configurePullRequestHeadUpstream(
-              input.cwd,
-              {
-                ...pullRequest,
-                ...toPullRequestHeadRemoteInfo(pullRequestSummary),
-              },
-              details.branch ?? pullRequest.headBranch,
-            );
-            return {
-              pullRequest,
-              branch: details.branch ?? pullRequest.headBranch,
-              worktreePath: null,
-              // Unforced checkout leaves a branch that is ahead of, or could not be advanced to, the
-              // pull request where it is, so only the resulting HEAD says whether this is its head.
-              isOnPullRequestHead: yield* gitCore
-                .execute({
-                  operation: "GitManager.preparePullRequestThread.currentBranch",
-                  cwd: input.cwd,
-                  args: ["symbolic-ref", "--quiet", "--short", "HEAD"],
-                  allowNonZeroExit: true,
-                })
-                .pipe(
-                  Effect.flatMap((current) =>
-                    current.stdout.trim() === details.branch
-                      ? moveToPullRequestHead(input.cwd, pullRequestSummary.headSha)
-                      : Effect.succeed(false),
-                  ),
-                ),
-            };
-          }),
+        const details = yield* gitCore.statusDetails(input.cwd);
+        const branch = details.branch ?? pullRequest.headBranch;
+        yield* configurePullRequestHeadUpstream(
+          input.cwd,
+          {
+            ...pullRequest,
+            ...toPullRequestHeadRemoteInfo(pullRequestSummary),
+          },
+          branch,
         );
+        return {
+          pullRequest,
+          branch,
+          worktreePath: null,
+          isOnPullRequestHead: yield* moveToPullRequestHead(input.cwd, pullRequestSummary.headSha),
+        };
       }
 
       const ensureExistingWorktreeUpstream = Effect.fn("ensureExistingWorktreeUpstream")(function* (

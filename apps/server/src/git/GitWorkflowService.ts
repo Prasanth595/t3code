@@ -167,6 +167,7 @@ export const make = Effect.gen(function* () {
   const gitManager = yield* GitManager.GitManager;
   const fileSystem = yield* FileSystem.FileSystem;
 
+  // Nested projects and path aliases must share the checkout's branch-mutation lease.
   const withCheckoutLease = <A, E, R>(rootPath: string, effect: Effect.Effect<A, E, R>) =>
     fileSystem.realPath(rootPath).pipe(
       Effect.orElseSucceed(() => rootPath),
@@ -376,10 +377,17 @@ export const make = Effect.gen(function* () {
       "GitWorkflowService.resolvePullRequest",
       gitManager.resolvePullRequest,
     ),
-    preparePullRequestThread: routeGitManager(
-      "GitWorkflowService.preparePullRequestThread",
-      gitManager.preparePullRequestThread,
-    ),
+    preparePullRequestThread: (input) =>
+      ensureGit("GitWorkflowService.preparePullRequestThread", input.cwd).pipe(
+        Effect.flatMap((handle) =>
+          input.mode === "local"
+            ? withCheckoutLease(
+                handle.repository.rootPath,
+                gitManager.preparePullRequestThread(input),
+              )
+            : gitManager.preparePullRequestThread(input),
+        ),
+      ),
     listRefs: (input) =>
       detectGitRepositoryForCommand("GitWorkflowService.listRefs", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>

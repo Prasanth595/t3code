@@ -5864,7 +5864,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
             }),
             Effect.provideService(VcsDriverRegistry.VcsDriverRegistry, {
               ...Context.get(registry, VcsDriverRegistry.VcsDriverRegistry),
-              resolve: () => Effect.succeed(resolvedHandle),
+              resolve: ({ cwd }) => Effect.succeed(cwd === repoDir ? handle : resolvedHandle),
             }),
             Effect.provideService(GitVcsDriver.GitVcsDriver, {
               ...git,

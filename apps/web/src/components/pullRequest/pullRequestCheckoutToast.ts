@@ -1,7 +1,3 @@
-/**
- * Shown in place of success when a checkout is not confirmed on the pull request's head, by both
- * the pull request panel and the branch picker's checkout dialog.
- */
 export const OFF_HEAD_PULL_REQUEST_CHECKOUT_TOAST = {
   type: "warning",
   title: "Checked out, but not confirmed on the latest commit",
