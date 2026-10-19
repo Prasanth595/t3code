@@ -549,7 +549,6 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       },
     ).pipe(
       Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"),
-      // A git that is not installed reads as "not a repository", as a missing hosting CLI does in discovery.
       Effect.catchIf(isMissingExecutable, () => Effect.succeed(false)),
     );
 

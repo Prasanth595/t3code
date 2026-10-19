@@ -1161,11 +1161,16 @@ const vcsProcessSpawning = (command: string) =>
 
 it.effect("GitVcsDriver treats a missing git executable as outside any repository", () =>
   Effect.gen(function* () {
-    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-missing-git-" });
+    const driver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provide(vcsProcessSpawning(path.join(cwd, "git"))),
+    );
 
-    assert.equal(yield* driver.isInsideWorkTree(process.cwd()), false);
-    assert.equal(yield* driver.detectRepository(process.cwd()), null);
-  }).pipe(Effect.provide(vcsProcessSpawning("t3-missing-git-executable"))),
+    assert.strictEqual(yield* driver.isInsideWorkTree(cwd), false);
+    assert.strictEqual(yield* driver.detectRepository(cwd), null);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
@@ -1181,6 +1186,8 @@ it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
 
       const error = yield* driver.isInsideWorkTree(process.cwd()).pipe(Effect.flip);
       assert.strictEqual(error._tag, "VcsProcessSpawnError");
+      const detectionError = yield* driver.detectRepository(process.cwd()).pipe(Effect.flip);
+      assert.strictEqual(detectionError._tag, "VcsProcessSpawnError");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
