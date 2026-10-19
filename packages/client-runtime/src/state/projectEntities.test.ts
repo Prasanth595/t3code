@@ -4,6 +4,7 @@ import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
+import type { EnvironmentCatalogState } from "./connections.ts";
 import { createEnvironmentProjectAtoms } from "./projectEntities.ts";
 import { v2Project, v2ShellSnapshot } from "./orchestrationV2TestFixtures.ts";
 
@@ -28,7 +29,7 @@ function makeHarness(withConfig = true) {
   const configAtom = Atom.family((_environmentId: EnvironmentId) =>
     Atom.make<(Pick<ServerConfig, "scratchWorkspaceRoot"> & { revision?: number }) | null>(null),
   );
-  const catalogValueAtom = Atom.make({
+  const catalogValueAtom = Atom.make<EnvironmentCatalogState>({
     isReady: true,
     entries: new Map(
       [environmentId, remoteEnvironmentId].map((id) => [
@@ -132,4 +133,31 @@ describe("project scratch identity", () => {
       registry.dispose();
     }
   });
+});
+
+it("hides paused projects without discarding them and restores them when compatibility returns", () => {
+  const { registry, projects, catalogValueAtom } = makeHarness(false);
+  try {
+    const catalog = registry.get(catalogValueAtom);
+    const initial = registry.get(projects.projectsAtom);
+    expect(initial.filter((project) => project.environmentId === remoteEnvironmentId)).toHaveLength(
+      2,
+    );
+    registry.set(catalogValueAtom, {
+      ...catalog,
+      entries: new Map(
+        [...catalog.entries].map(([id, entry]) => [
+          id,
+          id === remoteEnvironmentId ? { ...entry, unsupportedReason: "Update the host" } : entry,
+        ]),
+      ),
+    });
+    expect(registry.get(projects.projectsAtom)).toEqual(
+      initial.filter((project) => project.environmentId === environmentId),
+    );
+    registry.set(catalogValueAtom, catalog);
+    expect(registry.get(projects.projectsAtom)).toEqual(initial);
+  } finally {
+    registry.dispose();
+  }
 });

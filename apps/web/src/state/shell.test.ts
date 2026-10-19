@@ -127,6 +127,7 @@ describe("project snapshot readiness", () => {
   it("waits while an environment is paused by a version mismatch", () => {
     const { catalog, shells, ready, registry } = makeHarness();
     const paused = catalogState([LOCAL, REMOTE]);
+    registry.set(shells(REMOTE), shellState("live"));
     registry.set(catalog, {
       ...paused,
       entries: new Map(
@@ -140,7 +141,6 @@ describe("project snapshot readiness", () => {
     expect(registry.get(ready)).toBe(false);
 
     registry.set(catalog, paused);
-    registry.set(shells(REMOTE), shellState("live"));
     expect(registry.get(ready)).toBe(true);
     registry.dispose();
   });
