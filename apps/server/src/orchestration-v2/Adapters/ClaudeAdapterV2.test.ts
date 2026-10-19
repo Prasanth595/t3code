@@ -2596,7 +2596,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               };
             }),
           forkSession: () => Effect.die("unused forkSession"),
-          subagentLaunchToolUseId: () => Effect.succeed(options?.subagentLaunchToolUseId ?? null),
+          subagentLaunchToolUseId: (input) =>
+            Effect.succeed(
+              input.environment?.CLAUDE_CONFIG_DIR === options?.environment?.CLAUDE_CONFIG_DIR
+                ? (options?.subagentLaunchToolUseId ?? null)
+                : null,
+            ),
           assertComplete: Effect.void,
         },
       });
@@ -13492,7 +13497,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("projects workflow member threads after resuming a restarted session", () =>
+  it.effect("recovers workflow member output from the instance home after restart", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const harness = yield* makeWorkflowHarnessWithOptions({
