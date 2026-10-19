@@ -138,7 +138,6 @@ export type TimelineEntry = (
       readonly proposedPlan: ProposedPlan;
     }
   | {
-      /** A page a completed `html_render` call published, shown where the call happened. */
       readonly id: string;
       readonly kind: "html-render";
       readonly createdAt: string;
@@ -146,12 +145,10 @@ export type TimelineEntry = (
       readonly htmlRender: HtmlRenderReference;
     }
   | {
-      /** An MCP App a completed tool call captured, hosted where the call happened. */
       readonly id: string;
       readonly kind: "mcp-app";
       readonly createdAt: string;
       readonly runId: RunId | null;
-      /** The thread and item that own the app; a fork's inherited app is its source's. */
       readonly sourceThreadId: ThreadId;
       readonly itemId: TurnItemId;
       readonly revision: string;
@@ -170,7 +167,6 @@ export type TimelineEntry = (
       readonly projectedItem: OrchestrationV2ProjectedTurnItem;
     }
 ) & {
-  /** V2 identity resolved from the item's execution node, when locally available. */
   readonly attempt?: TimelineAttempt;
 };
 
@@ -184,9 +180,6 @@ export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
   );
 }
 
-/** Severe failures keep the red treatment ordinary tool failures lost: provider
- *  runtime errors mean the turn or a core side effect broke, not that a
- *  command exited nonzero. */
 export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
   return entry.itemType === "error";
 }
@@ -209,7 +202,6 @@ export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
   );
 }
 
-/** Tool-like row with neither clear success nor failure (empty, incomplete, in progress, etc.). */
 export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolean {
   return (
     workLogEntryIsToolLike(entry) &&
@@ -243,7 +235,6 @@ export function deriveActiveWorkStartedAt(
   sendStartedAt: string | null,
 ): string | null {
   const startedAt = resolveThreadWorkingStartedAt({ latestRun, runtime });
-  // Local dispatch has a clock only until the server supplies the owning run.
   return startedAt ?? (runtime?.activeRunId == null ? sendStartedAt : null);
 }
 
@@ -569,11 +560,8 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
 }
 
 /**
- * Builds the web timeline in the exact order committed by `visibleTurnItems`.
- * Committed rows are presented directly from their projected item. Queued
- * input is absent by construction until dispatch creates its user turn item.
- * Persistent client-owned messages are inserted by timestamp without sorting
- * the canonical sequence. True optimistic sends remain appended afterward.
+ * Builds the web timeline in the exact order committed by `visibleTurnItems`. Persistent
+ * client-owned messages are inserted by timestamp without sorting the canonical sequence.
  */
 export interface TimelineEntriesInput {
   readonly visibleTurnItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>;
@@ -628,7 +616,6 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
   for (const row of input.visibleTurnItems) {
     const { item } = row;
     if (turnItemIsWorkspacePreparation(item)) continue;
-    // Task progress belongs in the composer, not between conversation entries.
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
     const createdAt = projectedItemCreatedAt(row);
@@ -808,7 +795,6 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
 type AttachmentResource = Extract<AssetResource, { readonly _tag: "attachment" }>;
 const EMPTY_IMAGE_RESOURCES = Object.freeze<ReadonlyArray<AttachmentResource>>([]);
 
-/** A mounted row requests its stored images. Local previews keep their existing URLs. */
 export function selectMessageImageResources(
   attachments: ChatMessage["attachments"],
 ): ReadonlyArray<AttachmentResource> {
@@ -824,7 +810,6 @@ export function selectMessageImageResources(
     : Array.from(attachmentIds, (attachmentId) => ({ _tag: "attachment", attachmentId }));
 }
 
-/** Handoffs need server URLs even while their message rows are unmounted. */
 export function selectHandoffImageResources(
   messages: ReadonlyArray<Pick<ChatMessage, "id" | "role" | "attachments">> | undefined,
   handoffs: Readonly<Record<string, ReadonlyArray<string>>>,
@@ -842,7 +827,6 @@ export function selectHandoffImageResources(
     : Array.from(attachmentIds, (attachmentId) => ({ _tag: "attachment", attachmentId }));
 }
 
-/** Own one mapper per preview stage. Immutable messages retain unchanged preview objects. */
 export function createMessageAttachmentPreviewProjector() {
   const attachmentsBySource = new WeakMap<
     ReadonlyArray<ChatAttachment>,
@@ -890,7 +874,6 @@ export function createMessageAttachmentPreviewProjector() {
   };
 }
 
-/** Text and update time do not change a streaming assistant message's row structure. */
 export function isStreamingMessageTextUpdate(previous: ChatMessage, next: ChatMessage): boolean {
   if (
     previous.role !== "assistant" ||
@@ -905,7 +888,6 @@ export function isStreamingMessageTextUpdate(previous: ChatMessage, next: ChatMe
   return shallow(previousMetadata, nextMetadata);
 }
 
-/** Keep provenance and execution metadata in the rebuild boundary, including inspector data. */
 export function isStreamingTurnItemTextUpdate(
   previous: OrchestrationV2ProjectedTurnItem,
   next: OrchestrationV2ProjectedTurnItem,
@@ -1004,7 +986,6 @@ function reuseTimelineEntries(
   return entries;
 }
 
-/** Reuse immutable entries during streaming without reordering the canonical v2 sequence. */
 export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
   input: TimelineEntriesInput,
   previous: TimelineEntriesProjection | null = null,
@@ -1015,8 +996,6 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
   if (previous === null || !shallow(input.attachmentUrlById, previous.input.attachmentUrlById)) {
     return { input, entries };
   }
-  // Tool output and lifecycle changes rebuild grouping, but unchanged message
-  // objects and previews still let memoized history rows stay mounted.
   const previousMessages = new Map(
     previous.entries.flatMap((entry) =>
       entry.kind === "message" ? [[entry.id, entry] as const] : [],
@@ -1033,24 +1012,7 @@ export function deriveTimelineEntriesFromVisibleTurnItemsWithState(
   };
 }
 
-export function inferCheckpointTurnCountByRunId(
-  summaries: ReadonlyArray<ThreadCheckpointSummary>,
-): Record<string, number> {
-  return Object.fromEntries(
-    summaries.flatMap((summary) =>
-      summary.runId === null ? [] : [[summary.runId, summary.checkpointTurnCount] as const],
-    ),
-  );
-}
-
-/**
- * Maps each editable user message to the run ordinal "Edit from here" rolls
- * back to: the checkpoint of the previous visible run, or 0 for the thread
- * start. Run ordinals keep counting after a rewind, so the previous run is not
- * necessarily `ordinal - 1`, and a run stopped before its own checkpoint was
- * captured stays editable. A previous run without a ready checkpoint hides the
- * action instead of silently rewinding past that run too.
- */
+// Run ordinals keep increasing after a rewind; only visible local runs define predecessors.
 export function deriveRevertTurnCountByUserMessageId(input: {
   readonly timelineEntries: ReadonlyArray<TimelineEntry>;
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
@@ -1063,37 +1025,33 @@ export function deriveRevertTurnCountByUserMessageId(input: {
       readyTurnCountByRunId.set(checkpoint.runId, checkpoint.checkpointTurnCount);
     }
   }
-  // Inherited fork history belongs to the source thread's checkpoints.
-  const localMessages = input.timelineEntries.flatMap((entry) =>
-    entry.kind === "message" && entry.projectedItem?.visibility !== "inherited"
-      ? [entry.message]
-      : [],
-  );
-  const previousRunIdByRunId = new Map<RunId, RunId | null>();
-  let lastRunId: RunId | null = null;
-  for (const message of localMessages) {
-    if (message.runId === null || previousRunIdByRunId.has(message.runId)) continue;
-    previousRunIdByRunId.set(message.runId, lastRunId);
-    lastRunId = message.runId;
-  }
+  const targetByRunId = new Map<RunId, number | undefined>();
   const byUserMessageId = new Map<ChatMessage["id"], number>();
-  for (const message of localMessages) {
-    if (message.role !== "user" || message.runId === null) continue;
+  let previousRunId: RunId | null = null;
+  for (const entry of input.timelineEntries) {
+    // Inherited history belongs to the source thread, not our checkpoint scope.
+    if (entry.kind !== "message" || entry.projectedItem?.visibility === "inherited") continue;
+    const { message } = entry;
+    if (message.runId === null) continue;
+    if (!targetByRunId.has(message.runId)) {
+      targetByRunId.set(
+        message.runId,
+        previousRunId === null
+          ? input.threadStartCheckpointReady
+            ? 0
+            : undefined
+          : readyTurnCountByRunId.get(previousRunId),
+      );
+      previousRunId = message.runId;
+    }
+    if (message.role !== "user" || message.runId === input.unsettledRunId) continue;
     if (message.inputIntent !== "turn_start" && message.inputIntent !== "queued_turn") continue;
-    if (message.runId === input.unsettledRunId) continue;
-    const previousRunId = previousRunIdByRunId.get(message.runId) ?? null;
-    const target =
-      previousRunId === null
-        ? input.threadStartCheckpointReady
-          ? 0
-          : undefined
-        : readyTurnCountByRunId.get(previousRunId);
+    const target = targetByRunId.get(message.runId);
     if (target !== undefined) byUserMessageId.set(message.id, target);
   }
   return byUserMessageId;
 }
 
-/** The ready checkpoint "Edit from here" restores for a target run ordinal; 0 is the thread start. */
 export function findRevertCheckpoint(
   checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>,
   turnCount: number,
@@ -1120,10 +1078,8 @@ export function derivePhase(runtime: ThreadRuntimeSummary | null): SessionPhase 
 }
 
 /**
- * Whether web and desktop offer Stop for the active thread. The server settles
- * a preparing or starting run on `run.interrupt` (Orchestrator.dispatchRunInterrupt),
- * so Stop must not wait for the phase to reach "running". A queued thread offers
- * Stop only while an earlier run is still interruptible; Stop targets that run.
+ * The server settles a preparing or starting run on `run.interrupt`
+ * (Orchestrator.dispatchRunInterrupt), so Stop must not wait for the phase to reach "running".
  */
 export function deriveCanInterruptRunningThread(
   hasActiveThread: boolean,
