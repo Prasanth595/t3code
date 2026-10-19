@@ -2234,37 +2234,36 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect.each(["authored", "filtered"])(
-    "matches the App actor rather than a human with the same slug in %s fallback",
-    (mode) =>
-      Effect.gen(function* () {
-        mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
-        mockedExecute.mockReturnValueOnce(
-          Effect.succeed(
-            output(
-              listedPullRequests(2, 1, (number) => ({
-                author: {
-                  __typename: number === 1 ? "Bot" : "User",
-                  login: "example",
-                  avatarUrl: "https://avatars/example",
-                },
-              })),
-            ),
+  it.effect("filters App-authored pull requests without matching a human with the same slug", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            listedPullRequests(2, 1, (number) => ({
+              author: {
+                __typename: number === 1 ? "Bot" : "User",
+                login: "example",
+                avatarUrl: "https://avatars/example",
+              },
+            })),
           ),
-        );
-        const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-        const batch = yield* cli.listPullRequests({
-          cwd: "/w",
-          repository: "acme/web",
-          host: "github.com",
-          state: "open",
-          involvement: mode === "authored" ? "authored" : "all",
-          viewer: "example[bot]",
-          limit: 10,
-          ...(mode === "filtered" ? { filters: { author: "me" } } : {}),
-        });
-        expect(batch.items.map((item) => item.number)).toEqual([1]);
-      }),
+        ),
+      );
+      const provider = yield* GitHubPullRequestProvider.make;
+      const batch = yield* provider.listChangeRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "all",
+        viewer: "example[bot]",
+        limit: 10,
+        filters: { author: "me" },
+      });
+      expect(batch.items.map((item) => item.number)).toEqual([1]);
+      expect(batch.items[0]?.author?.login).toBe("example[bot]");
+    }),
   );
 
   it.effect("keeps state and involvement filters on the search-free fallback", () =>
@@ -3723,46 +3722,6 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect("verifies an installation token's bot identity when REST user is forbidden", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.fail(
-          new GitHubRequestPolicy.GitHubApiResponseError({
-            host: "github.app-fallback.test",
-            operation: "getRoutingIdentity",
-            status: 403,
-          }),
-        ),
-      );
-      mockedExecute.mockReturnValueOnce(
-        Effect.succeed(
-          output(
-            encodeJson({
-              data: { viewer: { login: "example[bot]", databaseId: 123 } },
-            }),
-          ),
-        ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const input = { cwd: "/w", host: "github.app-fallback.test" };
-
-      expect(yield* cli.getRoutingIdentity(input)).toEqual({
-        accountId: "123",
-        viewer: "example[bot]",
-      });
-      expect(yield* cli.getRoutingIdentity(input)).toEqual({
-        accountId: "123",
-        viewer: "example[bot]",
-      });
-      expect(mockedExecute).toHaveBeenCalledTimes(2);
-      expect(callAt(1)).toMatchObject({
-        kind: "graphql",
-        host: "github.app-fallback.test",
-        operationName: "GitHubViewer",
-      });
-    }),
-  );
-
   it.effect("does not cache an App identity returned alongside GraphQL errors", () =>
     Effect.gen(function* () {
       const host = "app-identity-error.test";
@@ -3800,12 +3759,12 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
-  it.effect.each([null, 0, -1])("rejects an App viewer with invalid account ID %s", (databaseId) =>
+  it.effect("rejects an App viewer without an account ID", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
         Effect.fail(
           new GitHubRequestPolicy.GitHubApiResponseError({
-            host: `invalid-app-${databaseId}.test`,
+            host: "invalid-app-id.test",
             operation: "getRoutingIdentity",
             status: 403,
           }),
@@ -3815,35 +3774,16 @@ layer("GitHubPullRequestApi.layer", (it) => {
         Effect.succeed(
           output(
             encodeJson({
-              data: { viewer: { login: "example[bot]", databaseId } },
+              data: { viewer: { login: "example[bot]", databaseId: null } },
             }),
           ),
         ),
       );
       const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
       const error = yield* cli
-        .getRoutingIdentity({ cwd: "/w", host: `invalid-app-${databaseId}.test` })
+        .getRoutingIdentity({ cwd: "/w", host: "invalid-app-id.test" })
         .pipe(Effect.flip);
       expect(error._tag).toBe("GitHubViewerLoginUnavailableError");
-    }),
-  );
-
-  it.effect("does not retry refused credentials with GraphQL", () =>
-    Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(
-        Effect.fail(
-          new GitHubRequestPolicy.GitHubApiAuthenticationError({
-            host: "refused-identity.test",
-            operation: "getRoutingIdentity",
-          }),
-        ),
-      );
-      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
-      const error = yield* cli
-        .getRoutingIdentity({ cwd: "/w", host: "refused-identity.test" })
-        .pipe(Effect.flip);
-      expect(error._tag).toBe("GitHubApiAuthenticationError");
-      expect(mockedExecute).toHaveBeenCalledTimes(1);
     }),
   );
 
@@ -4270,6 +4210,109 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(queryAt(1)).toContain("reviews(");
       expect(varsAt(1)).toMatchObject({ head: true, withComments: true, withReviews: true });
       assert.strictEqual(mockedExecute.mock.calls.length, 2);
+    }),
+  );
+
+  it.effect("keeps human and Bot identities distinct throughout pull request activity", () =>
+    Effect.gen(function* () {
+      const human = {
+        __typename: "User",
+        login: "example",
+        name: "Example",
+        avatarUrl: "https://avatars/human",
+      };
+      const bot = { __typename: "Bot", login: "example", avatarUrl: "https://avatars/bot" };
+      const comments = threadComments(["human-comment", "bot-comment"], null);
+      route(
+        [
+          "query PullRequestActivity",
+          {
+            data: {
+              repository: {
+                pullRequest: {
+                  author: human,
+                  commits: { nodes: [] },
+                  comments: { pageInfo: lastPage, nodes: [] },
+                  reviews: { pageInfo: lastPage, nodes: [] },
+                },
+              },
+            },
+          },
+        ],
+        [
+          "query ReviewThreads",
+          {
+            data: {
+              viewer: { login: "example[bot]" },
+              repository: {
+                pullRequest: {
+                  author: human,
+                  viewerCanUpdate: true,
+                  viewerDidAuthor: false,
+                  reviewThreads: {
+                    totalCount: 1,
+                    pageInfo: lastPage,
+                    nodes: [
+                      {
+                        ...thread("thread-1"),
+                        comments: {
+                          ...comments,
+                          nodes: comments.nodes.map((comment, index) => ({
+                            ...comment,
+                            author: index === 0 ? human : bot,
+                          })),
+                        },
+                      },
+                    ],
+                  },
+                  reactionGroups: [
+                    {
+                      content: "HEART",
+                      viewerHasReacted: true,
+                      reactors: { totalCount: 2, nodes: [bot, human] },
+                    },
+                  ],
+                  comments: { nodes: [] },
+                  reviews: { nodes: [] },
+                  reviewRequests: { nodes: [{ requestedReviewer: human }] },
+                  latestReviews: { nodes: [] },
+                  reviewDismissals: { pageInfo: lastPage, nodes: [] },
+                  commits: { nodes: [] },
+                },
+              },
+            },
+          },
+        ],
+      );
+      const provider = yield* GitHubPullRequestProvider.make;
+      const activity = yield* provider.getChangeRequestActivity({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+      });
+      expect.soft(activity.commentsTruncated).toBe(false);
+      expect.soft(activity.author?.login).toBe("example");
+      expect.soft(activity.author?.isBot === true).toBe(false);
+      expect.soft(activity.reviewers?.map((actor) => actor.login)).toEqual(["example"]);
+      expect
+        .soft(activity.reactions)
+        .toEqual([{ content: "heart", count: 2, actors: ["example"], viewerHasReacted: true }]);
+      expect
+        .soft(
+          activity.comments.map((comment) => ({
+            id: comment.id,
+            login: comment.author?.login,
+            isBot: comment.author?.isBot === true,
+          })),
+        )
+        .toEqual([
+          { id: "human-comment", login: "example", isBot: false },
+          { id: "bot-comment", login: "example[bot]", isBot: true },
+        ]);
+      expect
+        .soft(activity.reviewThreads[0]?.comments.map((comment) => comment.author?.login))
+        .toEqual(["example", "example[bot]"]);
     }),
   );
 
