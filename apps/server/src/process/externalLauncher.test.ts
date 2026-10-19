@@ -1886,6 +1886,8 @@ for (const [name, platform, env] of [
   ["missing terminal", "linux", { EDITOR: "nvim", DISPLAY: ":42" }],
   ["unclassified installed terminal editor", "linux", { EDITOR: "hx", DISPLAY: ":42" }],
   ["headless host", "linux", { EDITOR: "nvim" }],
+  ["blank X11 display", "linux", { EDITOR: "code", DISPLAY: " \t " }],
+  ["blank Wayland display", "linux", { EDITOR: "code", WAYLAND_DISPLAY: " \t " }],
   ["unsupported platform", "darwin", { EDITOR: "nvim", DISPLAY: ":42" }],
 ] satisfies Array<[string, NodeJS.Platform, Record<string, string>]>) {
   it.effect.skipIf(windowsHost)(`does not offer or launch the default editor with ${name}`, () =>
@@ -1893,7 +1895,7 @@ for (const [name, platform, env] of [
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-default-editor-" });
-      for (const command of ["nvim", "hx"]) {
+      for (const command of ["nvim", "hx", "code"]) {
         yield* fs.writeFileString(path.join(binDir, command), "#!/bin/sh\nexit 0\n");
         yield* fs.chmod(path.join(binDir, command), 0o755);
       }

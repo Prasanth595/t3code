@@ -427,7 +427,7 @@ function buildBrowserLaunch(
 const resolveDefaultEditorLaunch = Effect.fn("externalLauncher.resolveDefaultEditorLaunch")(
   function* (target: string, platform: NodeJS.Platform, env: NodeJS.ProcessEnv) {
     const command = env.VISUAL?.trim() || env.EDITOR?.trim();
-    if (platform !== "linux" || !command || (!env.DISPLAY && !env.WAYLAND_DISPLAY)) {
+    if (platform !== "linux" || !command || !hasGraphicalLinuxSession(env)) {
       return Option.none();
     }
     if (!(yield* isCommandAvailable(command, { env }))) return Option.none();
