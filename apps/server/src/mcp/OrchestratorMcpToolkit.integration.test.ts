@@ -2382,13 +2382,18 @@ describe("orchestrator MCP toolkit", () => {
               reason: "user",
             });
 
-            expect(metadataRead.thread).toMatchObject({ snoozed: false, snoozedUntil: null });
-            yield* orchestrator.dispatch({
-              type: "thread.snooze",
-              commandId: CommandId.make("command:mcp-empty:snooze"),
+            expect(metadataRead.thread).toMatchObject({
+              snoozed: false,
+              snoozedUntil: null,
+              snoozeQuiet: false,
+            });
+            const snoozeResult = yield* invoke("t3_thread_organize", {
+              action: "snooze",
               threadId: emptyThread.threadId,
               snoozedUntil: "2099-01-01T00:00:00.000Z",
+              quiet: true,
             });
+            expect(snoozeResult.isError).not.toBe(true);
             const snoozedListCall = yield* invoke("t3_thread_list", { snoozed: true, limit: 100 });
             const snoozedList = yield* decodeThreadListResult(
               snoozedListCall.structuredContent,
@@ -2398,6 +2403,7 @@ describe("orchestrator MCP toolkit", () => {
             ]);
             expect(snoozedList.threads[0]).toMatchObject({
               snoozed: true,
+              snoozeQuiet: true,
               snoozedUntil: "2099-01-01T00:00:00.000Z",
             });
             const snoozedReadCall = yield* invoke("t3_thread_read", {
@@ -2408,6 +2414,7 @@ describe("orchestrator MCP toolkit", () => {
             ).pipe(Effect.orDie);
             expect(snoozedRead.thread).toMatchObject({
               snoozed: true,
+              snoozeQuiet: true,
               snoozedUntil: "2099-01-01T00:00:00.000Z",
             });
             yield* orchestrator.dispatch({
@@ -2416,6 +2423,17 @@ describe("orchestrator MCP toolkit", () => {
               threadId: emptyThread.threadId,
               reason: "user",
             });
+
+            const awakeRead = yield* invoke("t3_thread_read", { threadId: emptyThread.threadId });
+            expect(
+              (yield* decodeThreadReadResult(awakeRead.structuredContent)).thread,
+            ).toMatchObject({ snoozed: false, snoozeQuiet: false });
+            const invalidQuiet = yield* invoke("t3_thread_organize", {
+              threadId: emptyThread.threadId,
+              action: "unsnooze",
+              quiet: true,
+            });
+            expect(invalidQuiet.isError).toBe(true);
 
             const unlinkedCall = yield* invoke("t3_thread_update", {
               threadId: emptyThread.threadId,

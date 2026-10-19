@@ -2107,7 +2107,12 @@ layer("ProviderEventIngestorV2", (it) => {
           ["thread.metadata-updated"],
         );
         const thread = yield* projectionStore.getThread(childThreadId);
-        assert.deepEqual(thread, { ...saved, ...metadata, updatedAt: thread.updatedAt });
+        assert.deepEqual(thread, {
+          ...saved,
+          ...metadata,
+          snoozeQuiet: false,
+          updatedAt: thread.updatedAt,
+        });
       }
       assert.deepEqual(
         yield* ingest({

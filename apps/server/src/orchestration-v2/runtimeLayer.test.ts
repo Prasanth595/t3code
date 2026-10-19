@@ -5187,9 +5187,11 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         commandId: CommandId.make("runtime-layer-snoozed-thread-snooze"),
         threadId,
         snoozedUntil,
+        quiet: true,
       });
 
       const firstProjection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(firstProjection.thread.snoozeQuiet, true);
       const firstSnoozedAt = firstProjection.thread.snoozedAt;
       assert.isNotNull(firstSnoozedAt);
 
@@ -5201,11 +5203,15 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         commandId: CommandId.make("runtime-layer-snoozed-thread-snooze-again"),
         threadId,
         snoozedUntil,
+        quiet: true,
       });
 
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      yield* maintenance.rebuild;
       const shell = yield* orchestrator.getShellSnapshot();
       const thread = shell.threads.find((candidate) => candidate.id === threadId);
       assert.isDefined(thread);
+      assert.equal(thread.snoozeQuiet, true);
       assert.equal(DateTime.formatIso(thread.snoozedUntil!), snoozedUntil);
       assert.equal(
         DateTime.toEpochMillis(thread.snoozedAt!),
@@ -5223,12 +5229,14 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
         Effect.provide(ProjectionStore.layer),
       );
       const [candidate] = yield* projections.getSettlementCandidates(threadId);
+      assert.equal(candidate?.snoozeQuiet, false);
       assert.deepEqual(candidate?.lastSnoozeWakeAt, yield* DateTime.now);
       yield* orchestrator.dispatch({
         type: "thread.snooze",
         commandId: CommandId.make("runtime-layer-snoozed-thread-snooze-after-wake"),
         threadId,
         snoozedUntil,
+        quiet: true,
       });
 
       yield* orchestrator.dispatch({
@@ -5247,6 +5255,7 @@ it.layer(layerSharedApplicationDataPlaneTest)("snooze projection", (it) => {
       const awakened = yield* orchestrator.getThreadProjection(threadId);
       assert.isNull(awakened.thread.snoozedUntil);
       assert.isNull(awakened.thread.snoozedAt);
+      assert.equal(awakened.thread.snoozeQuiet, false);
     }),
   );
 });

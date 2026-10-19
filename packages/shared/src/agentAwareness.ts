@@ -28,6 +28,7 @@ export interface AgentAwarenessState {
   readonly modelTitle: string;
   readonly updatedAt: string;
   readonly deepLink: string;
+  readonly completionQuietUntil?: string;
 }
 
 function buildAgentAwarenessDeepLink(input: {
@@ -48,6 +49,8 @@ export interface ProjectThreadAwarenessV2Input {
     | "modelSelection"
     | "pendingBackgroundTasks"
     | "pendingRuntimeRequest"
+    | "snoozeQuiet"
+    | "snoozedUntil"
     | "status"
     | "title"
     | "updatedAt"
@@ -75,6 +78,9 @@ export function projectThreadAwarenessV2(
     projectTitle: project.title,
     threadTitle: thread.title,
     phase,
+    ...(thread.snoozeQuiet === true && thread.snoozedUntil != null
+      ? { completionQuietUntil: DateTime.formatIso(thread.snoozedUntil) }
+      : {}),
     headline: headlineForPhase(phase),
     ...(detail === undefined ? {} : { detail }),
     modelTitle: thread.modelSelection.model,

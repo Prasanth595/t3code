@@ -304,6 +304,8 @@ describe("AgentAwarenessRelay", () => {
       "subagent.updated",
       "provider-thread.updated",
       "thread.metadata-updated",
+      "thread.snoozed",
+      "thread.unsnoozed",
       "thread.model-selection-updated",
       "thread.provider-switched",
       "thread.archived",
@@ -370,6 +372,20 @@ describe("AgentAwarenessRelay", () => {
         { threadId: SECOND_THREAD_ID, revision: 2 },
         { threadId: THREAD_ID, revision: 2 },
       ]);
+    }),
+  );
+
+  it.effect("publishes quiet snooze through the signed relay transport and clears it on wake", () =>
+    Effect.gen(function* () {
+      const { relay, currentShell, publications } = yield* makeTestRelay();
+      const snoozedUntil = DateTime.makeUnsafe("2099-01-01T18:00:00Z");
+      yield* Ref.set(currentShell, shell({ snoozeQuiet: true, snoozedUntil }));
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications[0]?.state?.completionQuietUntil, DateTime.formatIso(snoozedUntil));
+      yield* Ref.set(currentShell, shell({ snoozeQuiet: false, snoozedUntil: null }));
+      yield* relay.publishThread(THREAD_ID);
+      assert.equal(publications.length, 2);
+      assert.equal(publications[1]?.state?.completionQuietUntil, undefined);
     }),
   );
 

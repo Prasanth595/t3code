@@ -13,6 +13,8 @@ const state = vi.hoisted(() => ({
   visible: "visible",
   live: true,
   completedAt: null as string | null,
+  snoozeQuiet: false,
+  snoozedUntil: null as string | null,
   archivedAt: null as string | null,
   input: false,
   approval: false,
@@ -83,6 +85,8 @@ function mockThreadShell() {
     archivedAt: state.archivedAt ? DateTime.makeUnsafe(state.archivedAt) : null,
     settledOverride: null,
     settledAt: null,
+    snoozeQuiet: state.snoozeQuiet,
+    snoozedUntil: state.snoozedUntil ? DateTime.makeUnsafe(state.snoozedUntil) : null,
     lastVisitedAt: null,
     deletedAt: null,
   };
@@ -171,6 +175,8 @@ beforeEach(() => {
     visible: "visible",
     live: true,
     completedAt: null,
+    snoozeQuiet: false,
+    snoozedUntil: null,
     archivedAt: null,
     input: false,
     approval: false,
@@ -223,6 +229,42 @@ describe("thread notifications", () => {
       expect.objectContaining({ title: "Approval needed", description: "Fix the login form" }),
     );
   });
+
+  it("silences quiet completions across toast, sound and system notifications, but surfaces approval", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-13T10:00:00.000Z"));
+    state.snoozeQuiet = true;
+    state.snoozedUntil = "2026-09-13T18:00:00.000Z";
+    state.mode = "notifications-and-sound";
+    state.focused = false;
+    await render();
+    await complete();
+    expect(state.add).not.toHaveBeenCalled();
+    expect(state.notification).not.toHaveBeenCalled();
+    expect(state.sound).not.toHaveBeenCalled();
+    vi.mocked(Date.now).mockReturnValue(Date.parse(state.snoozedUntil));
+    await render();
+    expect(state.add).not.toHaveBeenCalled();
+    expect(state.notification).not.toHaveBeenCalled();
+    expect(state.sound).not.toHaveBeenCalled();
+    vi.mocked(Date.now).mockReturnValue(Date.parse("2026-09-13T10:00:00.000Z"));
+    state.approval = true;
+    await render();
+    expect(state.notification).toHaveBeenCalledWith("Approval needed", expect.anything());
+  });
+
+  it.each([false, true])(
+    "allows ordinary or expired quiet snooze completion (quiet=%s)",
+    async (quiet) => {
+      vi.spyOn(Date, "now").mockReturnValue(Date.parse("2026-09-13T18:00:00.000Z"));
+      state.snoozeQuiet = quiet;
+      state.snoozedUntil = quiet ? "2026-09-13T18:00:00.000Z" : "2026-09-14T18:00:00.000Z";
+      await render();
+      await complete();
+      expect(state.add).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Thread completed" }),
+      );
+    },
+  );
 
   it("alerts once with system alerts off and opens the completed thread", async () => {
     await render();

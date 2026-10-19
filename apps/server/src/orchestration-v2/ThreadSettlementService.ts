@@ -174,7 +174,10 @@ export function isAutoSettlementCandidate(
     thread.status === "failed" &&
     (snoozedAtMs === null || (completedAtMs !== null && completedAtMs > snoozedAtMs));
   const wokeOnCompletion =
-    snoozedAtMs !== null && completedAtMs !== null && completedAtMs > snoozedAtMs;
+    thread.snoozeQuiet !== true &&
+    snoozedAtMs !== null &&
+    completedAtMs !== null &&
+    completedAtMs > snoozedAtMs;
   return wokeOnError || wokeOnCompletion;
 }
 
@@ -185,7 +188,12 @@ export function isAutoSettlementCandidate(
 export function isSnoozed(
   thread: Pick<
     ProjectionStore.ProjectionSettlementCandidate,
-    "snoozedUntil" | "snoozedAt" | "latestRunCompletedAt" | "status" | "pendingRuntimeRequest"
+    | "snoozedUntil"
+    | "snoozedAt"
+    | "snoozeQuiet"
+    | "latestRunCompletedAt"
+    | "status"
+    | "pendingRuntimeRequest"
   >,
   nowMs: number,
 ): boolean {
@@ -198,6 +206,7 @@ export function isSnoozed(
     thread.status === "failed" &&
     (snoozedAtMs === null || (completedAtMs !== null && completedAtMs > snoozedAtMs));
   const wokeOnCompletion =
+    thread.snoozeQuiet !== true &&
     thread.status === "completed" &&
     snoozedAtMs !== null &&
     completedAtMs !== null &&

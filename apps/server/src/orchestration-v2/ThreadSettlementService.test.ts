@@ -1391,6 +1391,26 @@ describe("ThreadSettlementServiceV2 single-thread sweeps", () => {
 
 describe("isSnoozed", () => {
   const snoozed = { snoozedAt: at(-2 * DAY_MS), snoozedUntil: at(DAY_MS) };
+  it("quiet completion stays parked without auto-settling; failure and pending requests still wake", () => {
+    const completed = shell({
+      ...snoozed,
+      snoozeQuiet: true,
+      status: "completed",
+      latestRunCompletedAt: at(-DAY_MS),
+    });
+    expect(ThreadSettlementService.isSnoozed(completed, NOW_MS)).toBe(true);
+    expect(ThreadSettlementService.isAutoSettlementCandidate(completed, NOW_MS)).toBe(false);
+    expect(ThreadSettlementService.isSnoozed({ ...completed, status: "failed" }, NOW_MS)).toBe(
+      false,
+    );
+    expect(
+      ThreadSettlementService.isSnoozed(
+        { ...completed, pendingRuntimeRequest: { kind: "approval" } as never },
+        NOW_MS,
+      ),
+    ).toBe(false);
+    expect(ThreadSettlementService.isSnoozed(completed, NOW_MS + DAY_MS)).toBe(false);
+  });
   it("wakes for completed work after the snooze, but not an interrupted run", () => {
     expect(ThreadSettlementService.isSnoozed(shell(snoozed), NOW_MS)).toBe(true);
     expect(

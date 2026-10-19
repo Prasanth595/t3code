@@ -73,6 +73,7 @@ export function hasQueuedTurnStart(
 export interface ThreadSnoozeShell extends QueuedThreadShell {
   readonly snoozedUntil?: string | null;
   readonly snoozedAt?: string | null;
+  readonly snoozeQuiet?: boolean;
   readonly hasPendingApprovals: boolean;
   readonly hasPendingUserInput: boolean;
   readonly pendingSubagentRequest?: PendingSubagentRequest | null;
@@ -91,6 +92,7 @@ export function threadRaisedHandWhileSnoozed(shell: ThreadSnoozeShell): boolean 
     return true;
   }
   if (
+    shell.snoozeQuiet !== true &&
     shell.snoozedAt != null &&
     (latestRun?.state === "completed" || latestRun?.status === "completed") &&
     latestRun.completedAt != null &&
@@ -147,6 +149,7 @@ export function threadWokeAt(
     const latestRun = shell.latestRun ?? shell.latestTurn ?? null;
     const runtime = shell.runtime ?? shell.session ?? null;
     if (
+      shell.snoozeQuiet !== true &&
       shell.snoozedAt != null &&
       (latestRun?.state === "completed" || latestRun?.status === "completed") &&
       latestRun.completedAt != null &&

@@ -439,6 +439,27 @@ describe("Android delivery routing", () => {
     },
   );
 
+  it("keeps quiet completions silent on direct and aggregate Android paths", () => {
+    const completed = {
+      ...state,
+      phase: "completed" as const,
+      completionQuietUntil: "1970-01-01T00:01:00.000Z",
+    };
+    expect(FcmDeliveries.androidAlertForState(completed, preferences, 0)).toBeNull();
+    expect(
+      FcmDeliveries.androidAlertForAggregate({
+        previousAggregate: aggregateFor([state]),
+        nextAggregate: aggregateFor([completed]),
+        preferences,
+        nowMs: 0,
+      }),
+    ).toBeNull();
+    expect(
+      FcmDeliveries.androidAlertForState({ ...completed, phase: "failed" }, preferences, 0),
+    ).not.toBeNull();
+    expect(FcmDeliveries.androidAlertForState(completed, preferences, 60_000)).not.toBeNull();
+  });
+
   it("trims and truncates alert text like iOS", () => {
     expect(
       FcmDeliveries.androidAlertForState(

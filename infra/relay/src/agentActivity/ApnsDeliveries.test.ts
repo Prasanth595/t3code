@@ -1818,15 +1818,22 @@ describe("live activity alert decisions", () => {
       activities: [{ ...aggregate.activities[0]!, phase: "completed" as const, status: "Done" }],
     };
     expect(
-      ApnsDeliveries.alertForTerminalAggregate({ aggregate: terminalAggregate, preferences }),
+      ApnsDeliveries.alertForTerminalAggregate({
+        aggregate: terminalAggregate,
+        preferences,
+        nowMs: 0,
+      }),
     ).toEqual({ title: "Thread", body: "Done: Project" });
     expect(
       ApnsDeliveries.alertForTerminalAggregate({
         aggregate: terminalAggregate,
+        nowMs: 0,
         preferences: { ...preferences, notifyOnCompletion: false },
       }),
     ).toBeNull();
-    expect(ApnsDeliveries.alertForTerminalAggregate({ aggregate: null, preferences })).toBeNull();
+    expect(
+      ApnsDeliveries.alertForTerminalAggregate({ aggregate: null, preferences, nowMs: 0 }),
+    ).toBeNull();
   });
 
   it("alerts when a previously active thread finishes mid-flight", () => {
@@ -1884,11 +1891,15 @@ describe("live activity alert decisions", () => {
 });
 
 describe("queued iOS alert policy", () => {
-  it.effect.each(["enabled", "muted", "late"] as const)(
+  it.effect.each(["enabled", "muted", "late", "quiet"] as const)(
     "checks the current policy for a %s completion",
     (scenario) => {
       let sent = 0;
-      const completed = { ...state, phase: "completed" as const };
+      const completed = {
+        ...state,
+        phase: "completed" as const,
+        ...(scenario === "quiet" ? { completionQuietUntil: "1970-01-01T00:01:00.000Z" } : {}),
+      };
       const prefs = JSON.parse(enabledPreferences);
       if (scenario === "muted") prefs.notifyOnCompletion = false;
       const payload = makeApnsDeliveryJobPayload({
@@ -1905,6 +1916,7 @@ describe("queued iOS alert policy", () => {
           deepLink: "/",
           phase: "completed",
           updatedAt: completed.updatedAt,
+          completionQuietUntil: completed.completionQuietUntil,
         },
         createdAt: completed.updatedAt,
         expiresAt: "1970-01-01T00:10:00.000Z",

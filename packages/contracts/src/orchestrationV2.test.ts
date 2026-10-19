@@ -24,6 +24,8 @@ import {
 } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
+  OrchestrationV2AppThreadJson,
+  OrchestrationV2ThreadShellJson,
   OrchestrationV2Checkpoint,
   OrchestrationV2CheckpointScope,
   OrchestrationV2Command,
@@ -136,7 +138,33 @@ const decodeOrchestrationV2SubscribeThreadInput = Schema.decodeUnknownSync(
   OrchestrationV2SubscribeThreadInput,
 );
 
+const encodeAppThreadJson = Schema.encodeSync(OrchestrationV2AppThreadJson);
+const decodeAppThreadJson = Schema.decodeUnknownSync(OrchestrationV2AppThreadJson);
+const encodeThreadShellJson = Schema.encodeSync(OrchestrationV2ThreadShellJson);
+const decodeThreadShellJson = Schema.decodeUnknownSync(OrchestrationV2ThreadShellJson);
+const decodeQuietSnoozeEvent = Schema.decodeUnknownSync(OrchestrationV2DomainEvent);
+
 describe("orchestration V2 contracts", () => {
+  it("defaults old thread snapshots and snooze events to ordinary snooze and preserves quiet JSON", () => {
+    const oldThread = decodeOrchestrationV2ThreadProjection(emptyThreadProjection()).thread;
+    expect(oldThread.snoozeQuiet).toBe(false);
+    const quietThread = { ...oldThread, snoozeQuiet: true };
+    const encoded = encodeAppThreadJson(quietThread);
+    expect(decodeAppThreadJson(encoded).snoozeQuiet).toBe(true);
+    for (const snoozeQuiet of [undefined, true]) {
+      const event = decodeQuietSnoozeEvent({
+        id: "snooze-event",
+        type: "thread.snoozed",
+        sequence: 1,
+        threadId: oldThread.id,
+        providerInstanceId: oldThread.providerInstanceId,
+        occurredAt: now,
+        payload: { ...oldThread, snoozeQuiet },
+      });
+      expect(event.payload).toMatchObject({ snoozeQuiet: snoozeQuiet ?? false });
+    }
+  });
+
   it("carries command failure metadata through runtime and JSON schemas without output text", () => {
     const base = {
       id: "command-item",
@@ -1302,6 +1330,12 @@ describe("orchestration V2 contracts", () => {
     });
 
     expect(shell.pendingBackgroundTasks).toEqual([]);
+    expect(shell.snoozeQuiet).toBe(false);
+    const encoded = encodeThreadShellJson({
+      ...shell,
+      snoozeQuiet: true,
+    });
+    expect(decodeThreadShellJson(encoded).snoozeQuiet).toBe(true);
   });
 });
 

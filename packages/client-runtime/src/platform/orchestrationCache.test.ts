@@ -155,10 +155,48 @@ describe("orchestration cache envelopes", () => {
       expect(DateTime.formatIso(thread.snapshot.projection.thread.updatedAt)).toBe(
         "2026-06-20T00:00:00.000Z",
       );
-      expect(thread.snapshot.projection).toEqual(v2Projection);
+      expect(thread.snapshot.projection).toEqual({
+        ...v2Projection,
+        thread: { ...v2Projection.thread, snoozeQuiet: false },
+      });
       expect(thread.snapshot.snapshotSequence).toBe(4);
     }),
   );
+
+  it("normalizes legacy shell and thread cache envelopes without quiet snooze metadata", () => {
+    const omitQuietSnooze = (key: string, value: unknown) =>
+      key === "snoozeQuiet" ? undefined : value;
+    const shell = encodeStoredShellSnapshotJson({
+      schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
+      environmentId,
+      snapshot: v2ShellSnapshot,
+    });
+    const thread = encodeStoredThreadSnapshotJson({
+      schemaVersion: ORCHESTRATION_THREAD_CACHE_SCHEMA_VERSION,
+      environmentId,
+      threadId: v2ThreadId,
+      snapshot: { snapshotSequence: 4, projection: v2Projection },
+    });
+    expect(
+      decodeStoredShellSnapshotJson(JSON.stringify(JSON.parse(shell), omitQuietSnooze)).snapshot,
+    ).toEqual({
+      ...v2ShellSnapshot,
+      threads: [
+        {
+          ...v2ThreadShell,
+          pendingBackgroundTasks: [],
+          providerInstanceHistory: [],
+          snoozeQuiet: false,
+        },
+      ],
+    });
+    expect(
+      decodeStoredThreadSnapshotJson(JSON.stringify(JSON.parse(thread), omitQuietSnooze)).snapshot,
+    ).toEqual({
+      snapshotSequence: 4,
+      projection: { ...v2Projection, thread: { ...v2Projection.thread, snoozeQuiet: false } },
+    });
+  });
 
   it("rejects thread snapshots saved before queued-run items were kept, but not shells", () => {
     const staleThread = encodeStoredThreadSnapshotJson({
