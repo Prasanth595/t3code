@@ -427,11 +427,11 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.provideService(Crypto.Crypto, crypto),
       Effect.mapError((cause) => {
         if (isInstallationError(cause)) return cause;
-        const detail = isAcpProcessExitedError(cause)
-          ? /\b(?:AF_INET6|enforce_kernel_ipv6_support)\b/.test(cause.stderr ?? "")
+        const detail =
+          isAcpProcessExitedError(cause) &&
+          /\b(?:AF_INET6|enforce_kernel_ipv6_support)\b/.test(cause.stderr ?? "")
             ? "Antigravity requires IPv6 socket support. Enable IPv6 in this environment. On WSL, remove ipv6.disable=1 from .wslconfig and run wsl --shutdown."
-            : `The downloaded Antigravity runtime could not start in this environment.\n${cause.message}`
-          : "The downloaded Antigravity runtime could not start in this environment.";
+            : "The downloaded Antigravity runtime could not start in this environment.";
         return installationError("verify", detail, cause);
       }),
     );
