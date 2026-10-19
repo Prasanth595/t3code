@@ -2342,10 +2342,26 @@ const make = Effect.gen(function* () {
                 operation: "create-thread",
                 index,
               });
+              const threadId = stableThreadId({
+                scope,
+                requestKey: key,
+                index,
+              });
               const isRetryOfAcceptedCreation = yield* threadManagement.hasReceipt(commandId);
+              const committedThread = isRetryOfAcceptedCreation
+                ? yield* threadManagement
+                    .getThreadShell(threadId)
+                    .pipe(Effect.mapError(threadManagementFailure))
+                : null;
               const target = yield* resolveTargetRechecking({
                 parent,
-                target: request.target,
+                target:
+                  committedThread === null
+                    ? request.target
+                    : {
+                        ...request.target,
+                        providerInstanceId: committedThread.modelSelection.instanceId,
+                      },
                 providers,
                 skipProjectEnablementFilter: isRetryOfAcceptedCreation,
               });
@@ -2358,11 +2374,6 @@ const make = Effect.gen(function* () {
                 parent.thread.interactionMode,
                 request.interactionMode,
               );
-              const threadId = stableThreadId({
-                scope,
-                requestKey: key,
-                index,
-              });
               yield* assertTargetEnabledForProject(parent, commandId, target);
               const title = threadTitle({
                 parentTitle: parent.thread.title,
@@ -2394,8 +2405,9 @@ const make = Effect.gen(function* () {
                   ),
                 );
               // A receipt can appear after target resolution; use the committed thread's selection.
-              const resolvedModelSelection = (yield* loadProjection(threadId)).thread
-                .modelSelection;
+              const resolvedModelSelection = (yield* threadManagement
+                .getThreadRecords(threadId, [])
+                .pipe(Effect.mapError(threadManagementFailure))).thread.modelSelection;
               if (request.prompt !== undefined) {
                 yield* threadManagement
                   .dispatch({
@@ -2422,10 +2434,12 @@ const make = Effect.gen(function* () {
                   })
                   .pipe(
                     Effect.mapError((error) =>
-                      failure(
-                        "orchestration_error",
-                        `Unable to start thread ${index + 1}: ${errorMessage(error)}`,
-                      ),
+                      error._tag === "ThreadManagementProviderInstanceDisabledError"
+                        ? threadManagementFailure(error)
+                        : failure(
+                            "orchestration_error",
+                            `Unable to start thread ${index + 1}: ${errorMessage(error)}`,
+                          ),
                     ),
                   );
               }
