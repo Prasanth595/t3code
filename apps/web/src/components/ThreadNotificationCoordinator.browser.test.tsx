@@ -362,10 +362,7 @@ describe("thread notifications", () => {
 
   it("reveals the desktop window and opens the thread when a system alert is clicked", async () => {
     const revealWindow = vi.fn(() => Promise.resolve());
-    vi.stubGlobal(
-      "window",
-      Object.assign(new EventTarget(), { focus: vi.fn(), desktopBridge: { revealWindow } }),
-    );
+    vi.stubGlobal("desktopBridge", { revealWindow });
     state.mode = "notifications";
     state.focused = false;
     await render();

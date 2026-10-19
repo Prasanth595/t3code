@@ -270,7 +270,7 @@ describe("revealWindow", () => {
     }).pipe(
       Effect.provide(
         Layer.mock(ElectronWindow.ElectronWindow)({
-          main: Effect.succeed(Option.some(window)),
+          main: Effect.succeedSome(window),
           reveal,
         }),
       ),

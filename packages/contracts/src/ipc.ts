@@ -1033,9 +1033,8 @@ export interface DesktopBridge {
   onNotificationBadgeClear?: (listener: () => void) => () => void;
   onTrackpadScrollEnd?: (listener: () => void) => () => void;
   /**
-   * Restores and focuses the calling window from the main process. Renderer
-   * `window.focus()` cannot raise an Electron window, and on Wayland only the
-   * main process can spend a notification click's activation token.
+   * Renderer `window.focus()` cannot raise an Electron window, and on Wayland
+   * only the main process can spend a notification click's activation token.
    */
   revealWindow?: () => Promise<void>;
   /**
