@@ -116,7 +116,7 @@ const peerOrigin = (url: string) => {
     return Effect.fail(
       new PeerLinkError({
         reason: "unreachable",
-        message: `${url} is not an http or https address.`,
+        message: "The peer address must use http or https.",
       }),
     );
   }
@@ -128,7 +128,8 @@ const peerOrigin = (url: string) => {
     return Effect.fail(
       new PeerLinkError({
         reason: "unreachable",
-        message: `${url} is plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.`,
+        message:
+          "The peer address uses plain http, which would send the link's credentials unencrypted. Use its https address, or its Tailscale address.",
       }),
     );
   }
@@ -200,7 +201,9 @@ const make = Effect.gen(function* () {
             Effect.fail(
               new PeerLinkError({
                 reason: "pairing_rejected",
-                message: `The peer refused to register this environment: ${error.message}`,
+                message:
+                  "The peer refused to register this environment. Check its connection settings.",
+                cause: error,
               }),
             ),
           ),
@@ -230,7 +233,11 @@ const make = Effect.gen(function* () {
           Effect.catchTags({
             AuthMcpApprovalError: (error) =>
               Effect.fail(
-                new PeerLinkError({ reason: "pairing_rejected", message: error.message }),
+                new PeerLinkError({
+                  reason: "pairing_rejected",
+                  message: "The peer refused link approval. Check the pairing code and try again.",
+                  cause: error,
+                }),
               ),
           }),
         );
@@ -245,9 +252,7 @@ const make = Effect.gen(function* () {
       if (code === null || redirect.searchParams.get("state") !== state) {
         return yield* new PeerLinkError({
           reason: "pairing_rejected",
-          message:
-            redirect.searchParams.get("error_description") ??
-            "The peer did not approve the link. Check the pairing code and try again.",
+          message: "The peer did not approve the link. Check the pairing code and try again.",
         });
       }
       return yield* client.mcpOAuth
@@ -266,7 +271,9 @@ const make = Effect.gen(function* () {
             Effect.fail(
               new PeerLinkError({
                 reason: "pairing_rejected",
-                message: `The peer refused the sign-in: ${error.message}`,
+                message:
+                  "The peer refused the sign-in token. Create a new pairing code and try again.",
+                cause: error,
               }),
             ),
           ),
@@ -405,13 +412,14 @@ const make = Effect.gen(function* () {
 
   const unlink: PeerLinks["Service"]["unlink"] = Effect.fn("PeerLinks.unlink")(
     function* (environmentId) {
+      const row = yield* readRow(environmentId);
+      if (Option.isNone(row)) return false;
+      yield* secrets.remove(row.value.secret_name).pipe(Effect.catch(failStorage));
       const deleted = yield* sql<{ secret_name: string }>`
-        DELETE FROM peer_environment_links WHERE environment_id = ${environmentId}
+        DELETE FROM peer_environment_links
+        WHERE environment_id = ${environmentId} AND secret_name = ${row.value.secret_name}
         RETURNING secret_name
       `.pipe(Effect.catch(failStorage));
-      for (const row of deleted) {
-        yield* secrets.remove(row.secret_name).pipe(Effect.catch(failStorage));
-      }
       return deleted.length > 0;
     },
   );
