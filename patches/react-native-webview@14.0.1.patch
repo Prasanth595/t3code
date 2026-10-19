@@ -1,5 +1,5 @@
 diff --git a/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java b/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
-index 80c68034b193a47bedb56ca527352de9548e8ac6..b82d50c98e2bfcdc97cda5bb543ed8f8f56c0694 100644
+index 80c68034b193a47bedb56ca527352de9548e8ac6..1fac4b40c9f376a4f6d6b7fa60e4d247e8ef8550 100644
 --- a/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
 +++ b/android/src/main/java/com/reactnativecommunity/webview/RNCWebView.java
 @@ -9,6 +9,7 @@ import android.view.Menu;
@@ -10,7 +10,7 @@ index 80c68034b193a47bedb56ca527352de9548e8ac6..b82d50c98e2bfcdc97cda5bb543ed8f8
  import android.webkit.JavascriptInterface;
  import android.webkit.ValueCallback;
  import android.webkit.WebChromeClient;
-@@ -122,14 +123,57 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
+@@ -122,14 +123,55 @@ public class RNCWebView extends WebView implements LifecycleEventListener {
          cleanupCallbacksAndDestroy();
      }
  
@@ -23,16 +23,16 @@ index 80c68034b193a47bedb56ca527352de9548e8ac6..b82d50c98e2bfcdc97cda5bb543ed8f8
 +
      @Override
      public boolean onTouchEvent(MotionEvent event) {
-         if (this.nestedScrollEnabled) {
+-        if (this.nestedScrollEnabled) {
 -            requestDisallowInterceptTouchEvent(true);
-+            requestDisallowInterceptTouchEvent(!shouldYieldToParent(event));
-         }
+-        }
++        requestDisallowInterceptTouchEvent(!shouldYieldToParent(event));
          return super.onTouchEvent(event);
      }
  
-+    // Keep horizontal drags through vertical drift, but let vertical drags reach
-+    // the parent at the document's scroll edges. A document with no scroll range
-+    // keeps its gestures: an iframe may scroll where this view cannot measure it.
++    // Keep horizontal drags through vertical drift. Only nested scrolling retains
++    // vertical drags until the document's scroll edge. A nested document with no
++    // vertical range keeps its gestures: an iframe may scroll inside it.
 +    // A gesture with a second finger stays with the page until every finger lifts.
 +    private boolean shouldYieldToParent(MotionEvent event) {
 +        switch (event.getActionMasked()) {
@@ -57,9 +57,9 @@ index 80c68034b193a47bedb56ca527352de9548e8ac6..b82d50c98e2bfcdc97cda5bb543ed8f8
 +                    horizontalGesture = true;
 +                    return false;
 +                }
++                if (!this.nestedScrollEnabled) return true;
 +                if (dy == 0) return false;
-+                if (!canScrollVertically(1) && !canScrollVertically(-1)
-+                        && !canScrollHorizontally(1) && !canScrollHorizontally(-1)) return false;
++                if (!canScrollVertically(1) && !canScrollVertically(-1)) return false;
 +                return !canScrollVertically(dy > 0 ? -1 : 1);
 +            default:
 +                return false;
