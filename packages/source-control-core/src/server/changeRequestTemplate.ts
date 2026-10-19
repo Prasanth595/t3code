@@ -1,9 +1,3 @@
-/**
- * Repository change request templates: the first single template found at a known path,
- * or the only Markdown file in a template directory, read from the committed base tree.
- *
- * @module source-control-core/server/changeRequestTemplate
- */
 import type { GitCommandError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -16,13 +10,14 @@ const TRUNCATION_MARKER = "[truncated]";
 
 type ExecuteGit = SourceControlHost.SourceControlHost["Service"]["git"]["execute"];
 
-interface TemplateTreeEntry {
+interface TreeEntry {
+  readonly type: "tree" | "blob";
   readonly objectId: string;
   readonly path: string;
 }
 
-function parseTemplateTreeEntries(output: string): ReadonlyArray<TemplateTreeEntry> {
-  const entries: TemplateTreeEntry[] = [];
+function parseTreeEntries(output: string): ReadonlyArray<TreeEntry> {
+  const entries: TreeEntry[] = [];
   for (const record of output.split("\0")) {
     if (record.length === 0) {
       continue;
@@ -35,15 +30,17 @@ function parseTemplateTreeEntries(output: string): ReadonlyArray<TemplateTreeEnt
 
     const [mode, type, objectId] = record.slice(0, separator).split(" ");
     if (
-      type !== "blob" ||
-      (mode !== "100644" && mode !== "100755") ||
+      !(
+        (type === "blob" && (mode === "100644" || mode === "100755")) ||
+        (type === "tree" && mode === "040000")
+      ) ||
       !objectId ||
       !/^[0-9a-f]{40,64}$/.test(objectId)
     ) {
       continue;
     }
 
-    entries.push({ objectId, path: record.slice(separator + 1) });
+    entries.push({ type, objectId, path: record.slice(separator + 1) });
   }
   return entries;
 }
@@ -51,7 +48,7 @@ function parseTemplateTreeEntries(output: string): ReadonlyArray<TemplateTreeEnt
 function readTemplateBlob(input: {
   readonly cwd: string;
   readonly executeGit: ExecuteGit;
-  readonly entry: TemplateTreeEntry;
+  readonly entry: TreeEntry;
 }): Effect.Effect<Option.Option<string>, GitCommandError> {
   return input
     .executeGit({
@@ -84,7 +81,7 @@ type DirectoryTemplateResult =
 function readTemplateDirectory(input: {
   readonly cwd: string;
   readonly executeGit: ExecuteGit;
-  readonly entries: ReadonlyArray<TemplateTreeEntry>;
+  readonly entries: ReadonlyArray<TreeEntry>;
   readonly directory: string;
 }): Effect.Effect<DirectoryTemplateResult, GitCommandError> {
   return Effect.gen(function* () {
@@ -118,76 +115,72 @@ export const detect = Effect.fn("changeRequestTemplate.detect")(function* (
   cwd: string,
   treeish: string,
   executeGit: ExecuteGit,
-  locations: {
-    readonly paths: ReadonlyArray<string>;
-    readonly directories: ReadonlyArray<string>;
-    readonly caseInsensitive: boolean;
-  },
+  locations: { readonly paths: ReadonlyArray<string> } & (
+    | { readonly caseInsensitive: true }
+    | { readonly caseInsensitive: false; readonly directories: ReadonlyArray<string> }
+  ),
 ) {
   return yield* Effect.gen(function* () {
-    // Worktree paths can be replaced between validation and open. Read regular blobs from the
-    // committed base tree so repository-controlled symlinks and path races never reach the host filesystem.
-    let treePaths = [...locations.paths, ...locations.directories];
+    // Read committed regular blobs so worktree edits and repository symlinks cannot
+    // substitute host files for the base template.
     if (locations.caseInsensitive) {
-      // Resolve each component without recursively listing unrelated repository files.
-      const directories = new Map<string, ReadonlyArray<string>>();
-      const resolvedPaths: string[] = [];
-      for (const templatePath of treePaths) {
-        let resolved = "";
+      // ls-tree does not support case-insensitive pathspecs. Walk only candidate
+      // parents, sharing their bounded listings across template paths.
+      const trees = new Map<string, ReadonlyArray<TreeEntry>>();
+      for (const templatePath of locations.paths) {
+        let directory = "";
         const components = templatePath.split("/");
         for (const [index, component] of components.entries()) {
-          const onlyDirectories = index < components.length - 1;
-          const cacheKey = `${resolved}\0${onlyDirectories}`;
-          let names = directories.get(cacheKey);
-          if (!names) {
+          let children = trees.get(directory);
+          if (!children) {
             const listing = yield* executeGit({
               operation: "changeRequestTemplate.listDirectory",
               cwd,
-              args: [
-                "ls-tree",
-                ...(onlyDirectories ? ["-d"] : []),
-                "-z",
-                "--full-tree",
-                "--name-only",
-                resolved ? `${treeish}:${resolved}` : treeish,
-              ],
+              args: ["ls-tree", "-z", "--full-tree", `${treeish}:${directory}`],
               maxOutputBytes: TREE_LIST_MAX_BYTES,
               appendTruncationMarker: true,
             });
             if (listing.stdoutTruncated) return Option.none();
-            names = listing.stdout.split("\0");
-            directories.set(cacheKey, names);
+            children = parseTreeEntries(listing.stdout);
+            trees.set(directory, children);
           }
-          const name =
-            names.find((name) => name === component) ??
-            names.find((name) => name.toLowerCase() === component.toLowerCase());
-          if (!name) {
-            resolved = "";
-            break;
+          const type = index === components.length - 1 ? "blob" : "tree";
+          const candidates = children.filter((entry) => entry.type === type);
+          const entry =
+            candidates.find((entry) => entry.path === component) ??
+            candidates.find((entry) => entry.path.toLowerCase() === component.toLowerCase());
+          if (!entry) break;
+          if (entry.type === "blob") {
+            const template = yield* readTemplateBlob({ cwd, executeGit, entry });
+            if (Option.isSome(template)) return template;
+          } else {
+            directory = directory ? `${directory}/${entry.path}` : entry.path;
           }
-          resolved = resolved ? `${resolved}/${name}` : name;
         }
-        if (resolved) resolvedPaths.push(resolved);
       }
-      treePaths = resolvedPaths;
-      if (treePaths.length === 0) return Option.none();
+      return Option.none();
     }
     const result = yield* executeGit({
       operation: "changeRequestTemplate.listTemplates",
       cwd,
-      args: ["ls-tree", "-r", "-z", "--full-tree", treeish, "--", ...treePaths],
+      args: [
+        "ls-tree",
+        "-r",
+        "-z",
+        "--full-tree",
+        treeish,
+        "--",
+        ...locations.paths,
+        ...locations.directories,
+      ],
       maxOutputBytes: TREE_LIST_MAX_BYTES,
       appendTruncationMarker: true,
     });
-    if (result.stdoutTruncated) {
-      return Option.none();
-    }
-
-    const entries = parseTemplateTreeEntries(result.stdout);
-    const normalize = (path: string) => (locations.caseInsensitive ? path.toLowerCase() : path);
-    const entriesByPath = new Map(entries.map((entry) => [normalize(entry.path), entry]));
+    if (result.stdoutTruncated) return Option.none();
+    const entries = parseTreeEntries(result.stdout);
+    const entriesByPath = new Map(entries.map((entry) => [entry.path, entry]));
     for (const templatePath of locations.paths) {
-      const entry = entriesByPath.get(normalize(templatePath));
+      const entry = entriesByPath.get(templatePath);
       if (!entry) {
         continue;
       }

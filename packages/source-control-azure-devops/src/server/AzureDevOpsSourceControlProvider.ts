@@ -97,7 +97,6 @@ export const make = Effect.gen(function* () {
           `${directory}pull_request_template.md`,
           `${directory}pull_request_template.txt`,
         ]),
-        directories: [],
         caseInsensitive: true,
       }),
     listChangeRequests: (input) => {

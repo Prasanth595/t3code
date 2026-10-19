@@ -169,7 +169,6 @@ export const make = Effect.gen(function* () {
     readChangeRequestTemplate: ({ cwd, treeish }) =>
       ChangeRequestTemplate.detect(cwd, treeish, git.execute, {
         paths: [".gitlab/merge_request_templates/Default.md"],
-        directories: [],
         caseInsensitive: true,
       }),
     resolveLink: (input) => {
