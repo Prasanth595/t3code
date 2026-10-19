@@ -241,7 +241,7 @@ index ce1fe00001c9e5aee6c6ea8bb2d4757d4586d002..3ccf6f16067152dfcb0c143371e2ec6a
       * Number of columns to render items in.
       * @default 1
 diff --git a/react-native.js b/react-native.js
-index b3c5a306b293f797a8b338adfca3060c0f6db22b..27a9305e3ef01cce6940009f5b4cce595fb49ca9 100644
+index b3c5a306b293f797a8b338adfca3060c0f6db22b..69d56d9a4e50fb8f5f4160ee7647f606f468cdeb 100644
 --- a/react-native.js
 +++ b/react-native.js
 @@ -717,6 +717,15 @@ function hasActiveInitialScroll(state) {
@@ -717,14 +717,14 @@ index b3c5a306b293f797a8b338adfca3060c0f6db22b..27a9305e3ef01cce6940009f5b4cce59
  function handleLayout(ctx, layoutParam, setCanRender) {
    const state = ctx.state;
    const { maintainScrollAtEnd, useWindowScroll } = state.props;
-@@ -6288,6 +6514,7 @@ function handleLayout(ctx, layoutParam, setCanRender) {
-       );
+@@ -6280,6 +6506,7 @@ function handleLayout(ctx, layoutParam, setCanRender) {
+     if (state) {
+       const crossAxisPadding = state.props.horizontal ? (state.props.stylePaddingTop || 0) + (state.props.stylePaddingBottom || 0) : (state.props.stylePaddingLeft || 0) + (state.props.stylePaddingRight || 0);
+       state.needsOtherAxisSize = otherAxisSize - crossAxisPadding < 10;
++      capOtherAxisSizeToLayout(ctx);
      }
-   }
-+  capOtherAxisSizeToLayout(ctx);
-   setCanRender(true);
- }
- 
+     if (IS_DEV && measuredLength === 0) {
+       warnDevOnce(
 @@ -6751,7 +6978,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        endBuffered: state.endBuffered,
        getAverageItemSizes: () => getAverageItemSizes(state),
@@ -839,7 +839,7 @@ index b3c5a306b293f797a8b338adfca3060c0f6db22b..27a9305e3ef01cce6940009f5b4cce59
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2__namespace.cloneElement(refreshControlElement, {
 diff --git a/react-native.mjs b/react-native.mjs
-index 40e87cda8c9bc79a889e5542f29af429a24b24d4..dca2231889120560db4ccf893c010bf4cceb33ff 100644
+index 40e87cda8c9bc79a889e5542f29af429a24b24d4..c54325ba828f4c68fef0b257c0f901a88ddd3e9b 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
 @@ -696,6 +696,15 @@ function hasActiveInitialScroll(state) {
@@ -1315,14 +1315,14 @@ index 40e87cda8c9bc79a889e5542f29af429a24b24d4..dca2231889120560db4ccf893c010bf4
  function handleLayout(ctx, layoutParam, setCanRender) {
    const state = ctx.state;
    const { maintainScrollAtEnd, useWindowScroll } = state.props;
-@@ -6267,6 +6493,7 @@ function handleLayout(ctx, layoutParam, setCanRender) {
-       );
+@@ -6259,6 +6485,7 @@ function handleLayout(ctx, layoutParam, setCanRender) {
+     if (state) {
+       const crossAxisPadding = state.props.horizontal ? (state.props.stylePaddingTop || 0) + (state.props.stylePaddingBottom || 0) : (state.props.stylePaddingLeft || 0) + (state.props.stylePaddingRight || 0);
+       state.needsOtherAxisSize = otherAxisSize - crossAxisPadding < 10;
++      capOtherAxisSizeToLayout(ctx);
      }
-   }
-+  capOtherAxisSizeToLayout(ctx);
-   setCanRender(true);
- }
- 
+     if (IS_DEV && measuredLength === 0) {
+       warnDevOnce(
 @@ -6730,7 +6957,7 @@ function createImperativeHandle(ctx, scheduleImperativeScrollCommit) {
        endBuffered: state.endBuffered,
        getAverageItemSizes: () => getAverageItemSizes(state),
@@ -1437,7 +1437,7 @@ index 40e87cda8c9bc79a889e5542f29af429a24b24d4..dca2231889120560db4ccf893c010bf4
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2.cloneElement(refreshControlElement, {
 diff --git a/react-native.web.js b/react-native.web.js
-index 914d2dafaafa001c9ab6791a0a0581659295e333..efd7a9a4eef29c25028a4336cdc018eb593fb617 100644
+index 914d2dafaafa001c9ab6791a0a0581659295e333..1cf4f246610515ff73d27b772bf2b23a984316ec 100644
 --- a/react-native.web.js
 +++ b/react-native.web.js
 @@ -5651,6 +5651,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
@@ -1493,16 +1493,16 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..efd7a9a4eef29c25028a4336cdc018eb
  function handleLayout(ctx, layoutParam, setCanRender) {
    const state = ctx.state;
    const { maintainScrollAtEnd, useWindowScroll } = state.props;
-@@ -6952,6 +6979,7 @@ function handleLayout(ctx, layoutParam, setCanRender) {
-       );
+@@ -6944,6 +6971,7 @@ function handleLayout(ctx, layoutParam, setCanRender) {
+     if (state) {
+       const crossAxisPadding = state.props.horizontal ? (state.props.stylePaddingTop || 0) + (state.props.stylePaddingBottom || 0) : (state.props.stylePaddingLeft || 0) + (state.props.stylePaddingRight || 0);
+       state.needsOtherAxisSize = otherAxisSize - crossAxisPadding < 10;
++      capOtherAxisSizeToLayout(ctx);
      }
-   }
-+  capOtherAxisSizeToLayout(ctx);
-   setCanRender(true);
- }
- 
+     if (IS_DEV && measuredLength === 0) {
+       warnDevOnce(
 diff --git a/react-native.web.mjs b/react-native.web.mjs
-index 95465f2ab89ce41a10553f58af83618f7310e83c..269fa659885e8d0ded2c43d5a92d44232a6a9251 100644
+index 95465f2ab89ce41a10553f58af83618f7310e83c..540ddb439433a40d70e9f3c33da9a27b3e41fcb6 100644
 --- a/react-native.web.mjs
 +++ b/react-native.web.mjs
 @@ -5630,6 +5630,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
@@ -1558,16 +1558,16 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..269fa659885e8d0ded2c43d5a92d4423
  function handleLayout(ctx, layoutParam, setCanRender) {
    const state = ctx.state;
    const { maintainScrollAtEnd, useWindowScroll } = state.props;
-@@ -6931,6 +6958,7 @@ function handleLayout(ctx, layoutParam, setCanRender) {
-       );
+@@ -6923,6 +6950,7 @@ function handleLayout(ctx, layoutParam, setCanRender) {
+     if (state) {
+       const crossAxisPadding = state.props.horizontal ? (state.props.stylePaddingTop || 0) + (state.props.stylePaddingBottom || 0) : (state.props.stylePaddingLeft || 0) + (state.props.stylePaddingRight || 0);
+       state.needsOtherAxisSize = otherAxisSize - crossAxisPadding < 10;
++      capOtherAxisSizeToLayout(ctx);
      }
-   }
-+  capOtherAxisSizeToLayout(ctx);
-   setCanRender(true);
- }
- 
+     if (IS_DEV && measuredLength === 0) {
+       warnDevOnce(
 diff --git a/react.js b/react.js
-index 914d2dafaafa001c9ab6791a0a0581659295e333..169966bf9dee3950a53a7ac76683657646255c3f 100644
+index 914d2dafaafa001c9ab6791a0a0581659295e333..ded58312fe084abacfdee9e4033e263b0a4cc24c 100644
 --- a/react.js
 +++ b/react.js
 @@ -4702,7 +4702,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
@@ -1656,16 +1656,16 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..169966bf9dee3950a53a7ac766836576
  function handleLayout(ctx, layoutParam, setCanRender) {
    const state = ctx.state;
    const { maintainScrollAtEnd, useWindowScroll } = state.props;
-@@ -6952,6 +6986,7 @@ function handleLayout(ctx, layoutParam, setCanRender) {
-       );
+@@ -6944,6 +6978,7 @@ function handleLayout(ctx, layoutParam, setCanRender) {
+     if (state) {
+       const crossAxisPadding = state.props.horizontal ? (state.props.stylePaddingTop || 0) + (state.props.stylePaddingBottom || 0) : (state.props.stylePaddingLeft || 0) + (state.props.stylePaddingRight || 0);
+       state.needsOtherAxisSize = otherAxisSize - crossAxisPadding < 10;
++      capOtherAxisSizeToLayout(ctx);
      }
-   }
-+  capOtherAxisSizeToLayout(ctx);
-   setCanRender(true);
- }
- 
+     if (IS_DEV && measuredLength === 0) {
+       warnDevOnce(
 diff --git a/react.mjs b/react.mjs
-index 95465f2ab89ce41a10553f58af83618f7310e83c..fb8644387bd6d3bb18136d046be28da8308a4936 100644
+index 95465f2ab89ce41a10553f58af83618f7310e83c..8c23eda8104ab151353059a5c33df7f49eaa9b26 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -4681,7 +4681,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
@@ -1754,14 +1754,14 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..fb8644387bd6d3bb18136d046be28da8
  function handleLayout(ctx, layoutParam, setCanRender) {
    const state = ctx.state;
    const { maintainScrollAtEnd, useWindowScroll } = state.props;
-@@ -6931,6 +6965,7 @@ function handleLayout(ctx, layoutParam, setCanRender) {
-       );
+@@ -6923,6 +6957,7 @@ function handleLayout(ctx, layoutParam, setCanRender) {
+     if (state) {
+       const crossAxisPadding = state.props.horizontal ? (state.props.stylePaddingTop || 0) + (state.props.stylePaddingBottom || 0) : (state.props.stylePaddingLeft || 0) + (state.props.stylePaddingRight || 0);
+       state.needsOtherAxisSize = otherAxisSize - crossAxisPadding < 10;
++      capOtherAxisSizeToLayout(ctx);
      }
-   }
-+  capOtherAxisSizeToLayout(ctx);
-   setCanRender(true);
- }
- 
+     if (IS_DEV && measuredLength === 0) {
+       warnDevOnce(
 diff --git a/reanimated.d.ts b/reanimated.d.ts
 index e5043320700b12f34f4c0babbc341f85ca8135c1..2ce63830a28636b21937a0741fd0e613dae950fe 100644
 --- a/reanimated.d.ts
