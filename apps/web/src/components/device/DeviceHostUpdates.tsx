@@ -37,9 +37,11 @@ export function DeviceHostUpdates({
                 {status.detail ??
                   (failed
                     ? "Device support could not start."
-                    : status.status === "installing"
-                      ? "Installing device tools…"
-                      : "Starting device tools…")}
+                    : status.status === "ready"
+                      ? "The Android device list may be incomplete. Refresh devices to try again."
+                      : status.status === "installing"
+                        ? "Installing device tools…"
+                        : "Starting device tools…")}
               </p>
               {failed ? (
                 <p className="mt-1 text-muted-foreground">
