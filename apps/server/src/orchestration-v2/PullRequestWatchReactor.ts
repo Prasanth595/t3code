@@ -242,14 +242,14 @@ export const make = Effect.gen(function* () {
   const lastReads = new Map<string, LastRead>();
   const threadTails = new Map<
     string,
-    Map<
-      string,
-      {
-        readonly count: number;
-        readonly fetchedAt: number;
-        readonly comments: ReadonlyArray<PullRequestComment>;
-      }
-    >
+    {
+      readonly fetchedAt: number;
+      readonly visibleThrough: number;
+      readonly tails: ReadonlyMap<
+        string,
+        { readonly count: number; readonly comments: ReadonlyArray<PullRequestComment> }
+      >;
+    }
   >();
 
   const identityOf = (link: ThreadPullRequestLink) => ({
@@ -310,18 +310,34 @@ export const make = Effect.gen(function* () {
       // when the host confirms that every thread was listed.
       if (activity.commentsTruncated && activity.reviewThreadsTruncated !== false) return null;
 
-      let tails = threadTails.get(key);
-      if (tails === undefined) {
-        tails = new Map();
-        threadTails.set(key, tails);
-      }
+      const visibleThrough = activity.comments.reduce(
+        (latest, comment) => Math.max(latest, Date.parse(comment.editedAt ?? comment.createdAt)),
+        0,
+      );
+      const paginated = activity.reviewThreads.filter(
+        (thread) => thread.nextCommentsCursor != null,
+      );
+      const cached = threadTails.get(key);
+      // All tails share one watermark, so newer visible remarks or a changed thread must
+      // refresh the entire group before any remarks can advance it.
+      const reuse =
+        cached !== undefined &&
+        now - cached.fetchedAt < rereadMs &&
+        cached.visibleThrough === visibleThrough &&
+        cached.tails.size === paginated.length &&
+        paginated.every(
+          (thread) => cached.tails.get(thread.id)?.count === (thread.commentCount ?? 0),
+        );
+      const tails = new Map<
+        string,
+        { count: number; comments: ReadonlyArray<PullRequestComment> }
+      >();
       const remarks = [...activity.comments];
-      for (const thread of activity.reviewThreads) {
+      for (const thread of paginated) {
         let cursor = thread.nextCommentsCursor ?? null;
-        if (cursor === null) continue;
         const count = thread.commentCount ?? 0;
-        let tail = tails.get(thread.id);
-        if (tail?.count !== count || now - tail.fetchedAt >= rereadMs) {
+        let tail = reuse ? cached.tails.get(thread.id) : undefined;
+        if (tail === undefined) {
           const comments = new Map<string, PullRequestComment>();
           const cursors = new Set<string>();
           while (cursor !== null) {
@@ -343,11 +359,16 @@ export const make = Effect.gen(function* () {
             cursor = page.nextCursor;
           }
           if (thread.comments.length + comments.size < count) return null;
-          tail = { count, fetchedAt: now, comments: [...comments.values()] };
-          tails.set(thread.id, tail);
+          tail = { count, comments: [...comments.values()] };
         }
+        tails.set(thread.id, tail);
         remarks.push(...tail.comments);
       }
+      threadTails.set(key, {
+        fetchedAt: reuse ? cached.fetchedAt : now,
+        visibleThrough,
+        tails,
+      });
       return remarks.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
     },
     Effect.catch((error) =>
@@ -433,8 +454,12 @@ export const make = Effect.gen(function* () {
     const last = lastReads.get(group.key);
     const plan = planRead(group, last, fingerprint, now);
     if (!plan.detail) return;
-    if (fingerprint !== null && last?.remarks !== fingerprint.remarks) {
-      // Discard stale tails before reading so a pagination failure cannot reuse them on retry.
+    if (
+      last === undefined ||
+      group.targets.some((target) => !last.watches.has(watchKey(target))) ||
+      (fingerprint !== null && last.remarks !== fingerprint.remarks)
+    ) {
+      // A new watch or changed host remarks needs a fresh view of every tail.
       threadTails.delete(group.key);
     }
     const reference = referenceOf(group);
@@ -498,7 +523,10 @@ export const make = Effect.gen(function* () {
         )
       : null;
     lastReads.set(group.key, {
-      at: plan.activity || last === undefined ? now : last.at,
+      at:
+        plan.activity || last === undefined
+          ? (threadTails.get(group.key)?.fetchedAt ?? now)
+          : last.at,
       fingerprint: group.fingerprint,
       inFlight:
         detail.mergeability === "unknown" ||
