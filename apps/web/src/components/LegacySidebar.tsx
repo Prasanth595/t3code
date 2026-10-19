@@ -3410,21 +3410,18 @@ export default function LegacySidebar() {
     updateThreadJumpHintsVisibility(shouldShowThreadJumpHintsNow);
   }, [shouldShowThreadJumpHintsNow, updateThreadJumpHintsVisibility]);
 
-  const navigateToAdjacentThread = useCallback(
-    (direction: "previous" | "next") => {
-      const targetThreadKey = resolveAdjacentThreadId({
-        threadIds: orderedSidebarThreadKeys,
-        currentThreadId: routeThreadKey,
-        direction,
-      });
-      if (!targetThreadKey) return false;
-      const targetThread = sidebarThreadByKey.get(targetThreadKey);
-      if (!targetThread) return false;
-      navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
-      return true;
-    },
-    [navigateToThread, orderedSidebarThreadKeys, routeThreadKey, sidebarThreadByKey],
-  );
+  const navigateToAdjacentThread = (direction: "previous" | "next") => {
+    const targetThreadKey = resolveAdjacentThreadId({
+      threadIds: orderedSidebarThreadKeys,
+      currentThreadId: routeThreadKey,
+      direction,
+    });
+    if (!targetThreadKey) return false;
+    const targetThread = sidebarThreadByKey.get(targetThreadKey);
+    if (!targetThread) return false;
+    navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
+    return true;
+  };
   const onWindowKeyDown = useEffectEvent((event: globalThis.KeyboardEvent) => {
     const shortcutContext = {
       terminalFocus: isTerminalFocused(),

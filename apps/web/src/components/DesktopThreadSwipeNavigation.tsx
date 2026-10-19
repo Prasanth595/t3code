@@ -1,5 +1,5 @@
 import { ArrowLeftIcon, ArrowRightIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 type ThreadSwipeDirection = "previous" | "next";
 type ThreadSwipeGesture = {
@@ -12,8 +12,7 @@ const SWIPE_IDLE_MS = 180;
 
 function canScrollHorizontally(path: ReadonlyArray<EventTarget>): boolean {
   for (const target of path) {
-    if (target === document.body) break;
-    if (!(target instanceof HTMLElement)) continue;
+    if (!(target instanceof Element)) continue;
     const overflowX = window.getComputedStyle(target).overflowX;
     if (/^(auto|scroll|overlay)$/.test(overflowX) && target.scrollWidth > target.clientWidth + 1) {
       return true;
@@ -26,14 +25,9 @@ function canScrollHorizontally(path: ReadonlyArray<EventTarget>): boolean {
 export function DesktopThreadSwipeNavigation(input: {
   navigate: (direction: ThreadSwipeDirection) => boolean;
 }) {
-  const navigateRef = useRef(input.navigate);
   const [gesture, setGesture] = useState<ThreadSwipeGesture | null>(null);
+  const navigate = useEffectEvent(input.navigate);
 
-  useEffect(() => {
-    navigateRef.current = input.navigate;
-  }, [input.navigate]);
-
-  // Mounted only in Electron; the document already suppresses Chromium's overscroll navigation.
   useEffect(() => {
     let accumulatedDeltaX = 0;
     let didNavigate = false;
@@ -59,12 +53,13 @@ export function DesktopThreadSwipeNavigation(input: {
       }
 
       const deltaX = event.deltaX;
-      if (Math.abs(deltaX) < 2 || Math.abs(deltaX) <= Math.abs(event.deltaY) * 1.15) return;
+      if (Math.abs(deltaX) <= Math.abs(event.deltaY) * 1.15) return;
       if (canScrollHorizontally(event.composedPath())) return;
 
       event.preventDefault();
       if (idleTimer !== null) window.clearTimeout(idleTimer);
       idleTimer = window.setTimeout(reset, SWIPE_IDLE_MS);
+      if (didNavigate) return;
 
       if (accumulatedDeltaX !== 0 && Math.sign(accumulatedDeltaX) !== Math.sign(deltaX)) {
         accumulatedDeltaX = 0;
@@ -76,10 +71,10 @@ export function DesktopThreadSwipeNavigation(input: {
         direction,
         progress: Math.min(Math.abs(accumulatedDeltaX) / SWIPE_THRESHOLD_PX, 1),
       });
-      if (didNavigate || Math.abs(accumulatedDeltaX) < SWIPE_THRESHOLD_PX) return;
+      if (Math.abs(accumulatedDeltaX) < SWIPE_THRESHOLD_PX) return;
 
       didNavigate = true;
-      navigateRef.current(direction);
+      navigate(direction);
     };
 
     window.addEventListener("wheel", onWheel, { passive: false });
@@ -93,11 +88,9 @@ export function DesktopThreadSwipeNavigation(input: {
 
   const isPrevious = gesture.direction === "previous";
   const edgeOffset = (1 - gesture.progress) * 45;
-  const arrowScale = 0.78 + gesture.progress * 0.22;
   const ArrowIcon = isPrevious ? ArrowLeftIcon : ArrowRightIcon;
   return (
     <div
-      key={gesture.direction}
       aria-hidden="true"
       className={`pointer-events-none fixed inset-y-0 z-[5] overflow-hidden ${
         isPrevious
@@ -108,7 +101,7 @@ export function DesktopThreadSwipeNavigation(input: {
       <div
         data-desktop-thread-swipe-indicator={gesture.direction}
         data-desktop-thread-swipe-progress={gesture.progress.toFixed(2)}
-        className={`absolute top-1/2 flex h-24 w-12 items-center justify-center border-primary/20 text-primary-foreground shadow-xl backdrop-blur-sm transition-[transform,background-color] duration-75 ease-out will-change-transform ${
+        className={`absolute top-1/2 flex h-24 w-12 items-center justify-center border-primary/20 text-primary-foreground shadow-lg ${
           isPrevious
             ? "left-0 origin-left rounded-r-3xl border-y border-r"
             : "right-0 origin-right rounded-l-3xl border-y border-l"
@@ -118,11 +111,7 @@ export function DesktopThreadSwipeNavigation(input: {
           transform: `translate3d(${isPrevious ? -edgeOffset : edgeOffset}%, -50%, 0)`,
         }}
       >
-        <ArrowIcon
-          className="size-6 drop-shadow-sm transition-transform duration-75 ease-out"
-          strokeWidth={3}
-          style={{ transform: `scale(${arrowScale})` }}
-        />
+        <ArrowIcon className="size-6" strokeWidth={3} />
       </div>
     </div>
   );

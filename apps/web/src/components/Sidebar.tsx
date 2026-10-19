@@ -4442,21 +4442,18 @@ export default function Sidebar() {
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
       : false,
   );
-  const navigateToAdjacentThread = useCallback(
-    (direction: "previous" | "next") => {
-      const targetThreadKey = resolveAdjacentThreadId({
-        threadIds: orderedThreadKeys,
-        currentThreadId: routeThreadKey,
-        direction,
-      });
-      if (!targetThreadKey) return false;
-      const targetThread = threadByKey.get(targetThreadKey);
-      if (!targetThread) return false;
-      navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
-      return true;
-    },
-    [navigateToThread, orderedThreadKeys, routeThreadKey, threadByKey],
-  );
+  const navigateToAdjacentThread = (direction: "previous" | "next") => {
+    const targetThreadKey = resolveAdjacentThreadId({
+      threadIds: orderedThreadKeys,
+      currentThreadId: routeThreadKey,
+      direction,
+    });
+    if (!targetThreadKey) return false;
+    const targetThread = threadByKey.get(targetThreadKey);
+    if (!targetThread) return false;
+    navigateToThread(scopeThreadRef(targetThread.environmentId, targetThread.id));
+    return true;
+  };
   useEffect(() => {
     const onWindowKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.repeat || isCommandPaletteOpen() || isModelPickerOpen()) {
