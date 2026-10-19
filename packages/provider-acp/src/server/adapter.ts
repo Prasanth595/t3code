@@ -5846,18 +5846,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               modelSelection,
             });
           } else if (requestedModel.length > 0) {
-            // "auto" and "default" stand for the agent's own choice unless the
-            // agent advertises a model under that exact id.
-            const isPlaceholder = requestedModel === "auto" || requestedModel === "default";
-            // Route by the live options, which the picker lists: agents can
-            // add or drop their model config option after setup.
+            // Stored choices can outlive the catalog. Use the live options and
+            // keep the agent's current model when the requested id is absent.
             const modelOption = (yield* runtime.getConfigOptions).find(
               (option) => option.category === "model" && option.type === "select",
             );
             const modelState = startResult.sessionSetupResult.models;
             if (modelOption?.type === "select") {
               if (
-                !isPlaceholder ||
                 modelOption.options.some((entry) =>
                   "value" in entry
                     ? entry.value === requestedModel
@@ -5869,8 +5865,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
             } else if (
               modelState != null &&
-              (!isPlaceholder ||
-                modelState.availableModels.some((model) => model.modelId === requestedModel))
+              modelState.availableModels.some((model) => model.modelId === requestedModel)
             ) {
               if (modelState.currentModelId !== requestedModel) {
                 yield* runtime.setSessionModel(requestedModel);

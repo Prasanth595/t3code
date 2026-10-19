@@ -423,7 +423,7 @@ describe("AcpRegistryAdapterV2", () => {
         }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 
-    it.effect("leaves unadvertised placeholders alone in both model selection protocols", () =>
+    it.effect("leaves unadvertised model IDs alone in both model selection protocols", () =>
       Effect.gen(function* () {
         const { configurations } = yield* openWithStoredPicks({
           setup: {
@@ -433,8 +433,17 @@ describe("AcpRegistryAdapterV2", () => {
             },
           },
           storedModel: "default",
-          turnModels: ["auto", "other", "default", "auto"],
+          turnModels: [
+            "auto",
+            "removed-model",
+            "other",
+            "default",
+            "auto",
+            "hermes",
+            "removed-model",
+          ],
           pickFrames: [
+            ...prompt(),
             ...prompt(),
             ...setModel("other"),
             ...prompt(
@@ -447,11 +456,26 @@ describe("AcpRegistryAdapterV2", () => {
             ),
             ...prompt(),
             ...prompt(),
+            ...prompt(
+              configOptionUpdate([
+                {
+                  ...modelOption("replacement-model", "other", true),
+                  options: [
+                    {
+                      group: "models",
+                      name: "Models",
+                      options: [{ value: "other", name: "Other" }],
+                    },
+                  ],
+                },
+              ]),
+            ),
+            ...prompt(),
           ],
         });
         assert.deepEqual(
           configurations.map((configuration) => configuration?.currentModelId),
-          ["hermes", "hermes", "other", "other", "other"],
+          ["hermes", "hermes", "hermes", "other", "other", "other", "other", "other"],
         );
       }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
