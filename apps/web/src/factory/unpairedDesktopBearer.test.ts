@@ -10,13 +10,21 @@ import {
   ConnectionBlockedError,
   mapRemoteEnvironmentError,
 } from "@t3tools/client-runtime/connection";
+import { ClientCapabilities } from "@t3tools/client-runtime/platform";
 import { layerRemoteHttpClient } from "@t3tools/client-runtime/rpc";
 import { PRIMARY_LOCAL_ENVIRONMENT_ID, type DesktopBridge } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest";
+import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
+import * as ConnectionPlatform from "../connection/platform";
 import { __resetDesktopPrimaryAuthForTests } from "../environments/primary/desktopAuth";
+
+// The connection catalog lives in IndexedDB, which the bearer path never reads.
+vi.mock("../connection/storage", async () => ({ layer: (await import("effect/Layer")).empty }));
 
 const FACTORY_HTTP = "http://127.0.0.1:3876/";
 const FACTORY_WS = "ws://127.0.0.1:3876/";
@@ -110,15 +118,12 @@ describe.each([
 
   it.effect("blocks the connection on authentication instead of retrying", () =>
     Effect.gen(function* () {
-      const { readDesktopPrimaryBearerToken } = yield* Effect.promise(
-        () => import("../environments/primary/desktopAuth"),
-      );
-      // The web connection platform's PrimaryEnvironmentAuth.bearerToken, in full:
-      // readDesktopPrimaryBearerToken mapped through Option.fromNullishOr.
-      const primaryBearer = Option.fromNullishOr(
-        yield* Effect.promise(() => readDesktopPrimaryBearerToken()),
-      );
-      expect(Option.isSome(primaryBearer)).toBe(true);
+      // The web connection platform's own PrimaryEnvironmentAuth, the one the primary broker
+      // asks for the bearer before it calls authorizeBearer.
+      const platform = yield* Layer.build(ConnectionPlatform.layer);
+      const primaryBearer = yield* Context.get(platform, ClientCapabilities.PrimaryEnvironmentAuth)
+        .bearerToken;
+      expect(primaryBearer).toEqual(Option.some(bearer));
 
       // authorizeBearer's ticket request and error mapping. A ConnectionBlockedError parks the
       // supervisor in phase "blocked" with retryAt null (supervisor.ts); only a
@@ -130,7 +135,7 @@ describe.each([
 
       expect(error).toBeInstanceOf(ConnectionBlockedError);
       expect(error).toMatchObject({ _tag: "ConnectionBlockedError", reason: "authentication" });
-    }),
+    }).pipe(Effect.scoped),
   );
 });
 
