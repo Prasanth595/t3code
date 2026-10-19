@@ -109,12 +109,21 @@ describe("VcsProcess.run", () => {
     },
     { stderr: "fatal: Operation not supported", fsyncMethods: ["fsync"] },
     { stderr: "fatal: couldn't write '/Volumes/share/.git/index'", fsyncMethods: ["fsync"] },
-  ])(
-    "falls back to writeout-only only for unsupported fsync: $stderr",
-    ({ stderr, fsyncMethods }) =>
+    {
+      platform: "linux",
+      stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
+      fsyncMethods: ["fsync"],
+    },
+  ] as const)(
+    "falls back to writeout-only only for unsupported fsync on macOS: $stderr",
+    ({ stderr, fsyncMethods, ...scenario }) =>
       Effect.gen(function* () {
         const seen: Array<ReadonlyArray<string>> = [];
         const service = yield* VcsProcess.make.pipe(
+          Effect.provideService(
+            HostProcess.Platform,
+            "platform" in scenario ? scenario.platform : "darwin",
+          ),
           Effect.provideService(ProcessRunner.ProcessRunner, {
             run: (input) =>
               Effect.sync(() => {
