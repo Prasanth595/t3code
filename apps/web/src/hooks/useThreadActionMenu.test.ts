@@ -107,6 +107,9 @@ vi.mock("../components/Sidebar.snooze", () => ({
   ],
   snoozeWakeDescription: () => "later",
 }));
+vi.mock("../lib/forkContinueElsewhere", () => ({
+  useContinueThreadElsewhere: () => async () => {},
+}));
 vi.mock("./useCopyToClipboard", () => ({
   useCopyToClipboard: () => ({ copyToClipboard: () => recordEffect("copy") }),
 }));

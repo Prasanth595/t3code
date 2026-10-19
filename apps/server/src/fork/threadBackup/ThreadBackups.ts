@@ -42,7 +42,7 @@ import { isMachineSubject } from "../machineMap/machineAccess.ts";
 import * as MachinePeers from "../machineMap/MachinePeers.ts";
 
 /** A backup carries the newest items up to this size, so a push stays cheap. */
-export const THREAD_BACKUP_MAX_BYTES = 4 * 1024 * 1024;
+const THREAD_BACKUP_MAX_BYTES = 4 * 1024 * 1024;
 /** The newest backups that the receiving machine keeps per source machine. */
 const KEPT_PER_SOURCE = 300;
 const KEPT_FOR = Duration.days(30);
