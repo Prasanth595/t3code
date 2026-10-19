@@ -37,21 +37,30 @@ describe("previewPdfAssetUrl", () => {
     expect(previewPdfAssetUrl("http://localhost/api/assets/token/paper.pdf", null)).toBeNull();
   });
 
-  it("preserves matching PDF URLs on unrelated origins", () => {
-    const source = "https://another-environment.test/api/assets/token/guide.pdf?revision=2#page=3";
-    expect(previewPdfAssetUrl(source, "https://environment.test")).toBe(source);
-  });
+  it.each(["another-environment.test", "127.0.0.2.example.com", "128.0.0.1"])(
+    "preserves matching PDF URLs on unrelated host %s",
+    (host) => {
+      const source = `https://${host}/api/assets/token/guide.pdf?revision=2#page=3`;
+      expect(previewPdfAssetUrl(source, "https://environment.test")).toBe(source);
+    },
+  );
 
   it("keeps URLs from the connected environment", () => {
     const source = "https://environment.test/api/assets/token/guide.pdf#page=2";
     expect(previewPdfAssetUrl(source, "https://environment.test")).toBe(source);
   });
 
-  it("remaps IPv6 loopback assets through the client connection", () => {
-    expect(
-      previewPdfAssetUrl("http://[::1]:14537/api/assets/token/guide.pdf", "https://remote.test"),
-    ).toBe("https://remote.test/api/assets/token/guide.pdf");
-  });
+  it.each(["127.0.0.2", "127.255.255.254", "localhost.", "[::1]", "0.0.0.0"])(
+    "remaps local assets on %s through the client connection",
+    (host) => {
+      expect(
+        previewPdfAssetUrl(
+          `http://${host}:14537/api/assets/token/guide.pdf?revision=2#page=3`,
+          "https://remote.test",
+        ),
+      ).toBe("https://remote.test/api/assets/token/guide.pdf?revision=2#page=3");
+    },
+  );
 });
 
 describe("resolveAddressBarInput", () => {

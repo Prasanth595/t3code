@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
 
+import { isLocalLoopbackHost } from "./hostClassification.ts";
+
 const TAB_ID_PREFIX = "tab_";
 let nextPreviewTabSequence = 0;
 
@@ -15,7 +17,13 @@ export function previewPdfAssetUrl(rawUrl: string, httpBaseUrl: string | null): 
     ) {
       return null;
     }
-    if (url.origin !== baseUrl.origin && !isLoopbackHost(url.hostname)) return url.href;
+    if (
+      url.origin !== baseUrl.origin &&
+      !isLocalLoopbackHost(url.hostname) &&
+      url.hostname !== "0.0.0.0"
+    ) {
+      return url.href;
+    }
     // The browser may run on the host's loopback address. Fetch signed bytes
     // through this client's environment connection, including remote routes.
     return new URL(`${url.pathname}${url.search}${url.hash}`, baseUrl).href;
