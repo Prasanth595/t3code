@@ -3,6 +3,7 @@ import "../../index.css";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { ComposerBannerStack } from "./ComposerBannerStack";
 
@@ -59,20 +60,14 @@ it("only offers notice details when the description cannot fit", async () => {
   expect(hasDetails()).toBe(true);
 });
 
-const titles = (scope: ParentNode) =>
-  Array.from(
-    scope.querySelectorAll('[data-slot="composer-banner-content"] > span:first-child'),
-    (title) => title.textContent,
-  );
-
-it("keeps urgent, warning and error notices out of the collapsed stack behind activity", async () => {
+it("keeps urgent, warning and error notices visible while ordinary notices collapse behind activity", async () => {
   await act(async () =>
     root.render(
       <ComposerBannerStack
         items={[
           {
             id: "limit",
-            variant: "warning",
+            variant: "default",
             priority: "urgent",
             icon: null,
             title: "Usage limit reached",
@@ -91,16 +86,20 @@ it("keeps urgent, warning and error notices out of the collapsed stack behind ac
       />,
     ),
   );
-  // Order is unchanged: activity stays attached, with the notices above it.
-  expect(titles(container)).toEqual([
-    "Usage limit reached",
-    "Server is reconnecting",
-    "Failed to clone repo",
-    "Usage limits",
+
+  for (const title of ["Usage limit reached", "Server is reconnecting", "Failed to clone repo"]) {
+    await expect.element(page.getByText(title, { exact: true })).toBeVisible();
+  }
+  await expect.element(page.getByText("Waiting on 2 subagents", { exact: true })).toBeVisible();
+  expect(container.querySelector('[data-slot="composer-banner-attachment"]')?.textContent).toBe(
     "Waiting on 2 subagents",
-  ]);
-  // Only the ordinary notice waits behind the hover-to-expand peek.
-  expect(titles(container.querySelector('[aria-label="Other notices"]')!)).toEqual([
-    "Usage limits",
-  ]);
+  );
+
+  const ordinaryNotice = page.getByText("Usage limits", { exact: true });
+  await expect.element(ordinaryNotice).not.toBeVisible();
+  await act(async () => page.getByRole("button", { name: "Show other notices" }).click());
+  await expect.element(ordinaryNotice).toBeVisible();
+  await act(async () => userEvent.keyboard("{Escape}"));
+  await expect.element(ordinaryNotice).not.toBeVisible();
+  await expect.element(page.getByText("Usage limit reached", { exact: true })).toBeVisible();
 });

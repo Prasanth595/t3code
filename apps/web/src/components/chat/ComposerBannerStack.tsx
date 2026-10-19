@@ -68,14 +68,13 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
     };
   }, []);
 
-  const orderedItems = items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
-  const frontItem = orderedItems[0];
-  const stackedItems = orderedItems.slice(1);
-  // Urgent, warning and error notices need the user, so they keep their expanded place
-  // above the front item instead of collapsing behind it with the other notices.
+  const [frontItem, ...stackedItems] = items.toSorted(
+    (a, b) => bannerPriority(a) - bannerPriority(b),
+  );
+  // Keep notices needing attention visible while activity occupies the attached slot.
   const pinnedItems = stackedItems.filter((item) => bannerPriority(item) === 1);
-  const collapsedItems = stackedItems.filter((item) => bannerPriority(item) !== 1);
-  const hasStack = collapsedItems.length > 0;
+  const collapsibleItems = stackedItems.filter((item) => bannerPriority(item) !== 1);
+  const hasStack = collapsibleItems.length > 0;
 
   // A stack with nothing left to collapse closes, so the next stack starts collapsed.
   if (!hasStack && stackExpanded) {
@@ -105,7 +104,7 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
     );
   }
   const showCollapsedStackCap = hasStack && exitingItemId !== frontItem.id;
-  const firstCollapsedItem = collapsedItems[0];
+  const firstCollapsibleItem = collapsibleItems[0];
 
   const requestDismiss = (item: ComposerBannerStackEntry) => {
     if (!("onDismiss" in item) || !item.onDismiss || exitingItemId) {
@@ -176,10 +175,10 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
             setStackExpanded(false);
           }}
         >
-          {showCollapsedStackCap && firstCollapsedItem ? (
+          {showCollapsedStackCap && firstCollapsibleItem ? (
             <ComposerBanner.Peek
               ref={peekRef}
-              variant={firstCollapsedItem.variant}
+              variant={firstCollapsibleItem.variant}
               aria-label="Show other notices"
               aria-expanded={stackExpanded}
               aria-controls={expandedItemsId}
@@ -216,7 +215,7 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
                     : "pointer-events-none invisible translate-y-1 opacity-0",
                 )}
               >
-                {collapsedItems.map(renderStackedItem)}
+                {collapsibleItems.map(renderStackedItem)}
               </div>
             </div>
           </div>
