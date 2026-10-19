@@ -16,9 +16,8 @@ import { useScaledTextRole } from "../../features/settings/appearance/useScaledT
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { themeColorWithContrast } from "../../lib/mobileTheme";
-import { Alert, type AlertButton } from "react-native";
+import type { Alert, AlertButton } from "react-native";
 import type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
-import { resolveAlertDismissal } from "./dialog-alert";
 
 export type { ConfirmDialogRequest, TextInputDialogRequest } from "./Dialog.types";
 
@@ -37,10 +36,6 @@ type DialogRequest =
 let presentRequest: ((request: DialogRequest) => void) | null = null;
 
 export function alert(...[title, message, buttons, options]: Parameters<typeof Alert.alert>): void {
-  if (!presentRequest) {
-    Alert.alert(title, message, buttons, options);
-    return;
-  }
   const actions = buttons?.length ? buttons.slice(0, 3) : [{ text: "OK" }];
   const normalized = actions.map((action, index) =>
     index === actions.length - 1 ? { ...action, text: action.text || "OK" } : action,
@@ -61,63 +56,40 @@ export function prompt(request: TextInputDialogRequest): void {
 
 /** Android presenter for Dialog.alert, Dialog.confirm and Dialog.prompt; mounted once at the app root. */
 export function Host() {
-  const [queue, setQueue] = useState<readonly (DialogRequest & { readonly id: number })[]>([]);
+  const [presented, setPresented] = useState<(DialogRequest & { readonly id: number }) | null>(
+    null,
+  );
+  const [inputValue, setInputValue] = useState("");
   const nextPresentationId = useRef(0);
-  const closedId = useRef<number | null>(null);
-  const presented = queue[0];
   useEffect(() => {
-    const present = (request: DialogRequest) => {
-      const id = ++nextPresentationId.current;
-      setQueue((current) => [...current, { ...request, id }]);
+    presentRequest = (request) => {
+      setInputValue(request.kind === "text-input" ? request.request.initialValue : "");
+      setPresented({ ...request, id: ++nextPresentationId.current });
     };
-    presentRequest = present;
     return () => {
-      if (presentRequest === present) presentRequest = null;
+      presentRequest = null;
     };
   }, []);
 
-  // The native dialog lingers until the next render, so a double tap must not run an action twice.
-  const close = useCallback(
-    (then?: () => void) => {
-      if (!presented || closedId.current === presented.id) return;
-      closedId.current = presented.id;
-      setQueue((current) => current.filter((dialog) => dialog.id !== presented.id));
-      then?.();
-    },
-    [presented],
-  );
-
   const handleCancel = useCallback(() => {
-    if (presented?.kind === "alert") {
-      const dismissal = resolveAlertDismissal({
-        buttons: presented.request.buttons ?? [{ text: "OK" }],
-        options: presented.request.options,
-      });
-      if (dismissal.kind === "dismiss") close(presented.request.options?.onDismiss);
-      else if (dismissal.kind === "press") close(() => dismissal.button.onPress?.());
-    } else {
-      close(presented?.request.onCancel);
-    }
-  }, [close, presented]);
+    setPresented(null);
+    if (presented?.kind === "alert") presented.request.options?.onDismiss?.();
+    else presented?.request.onCancel?.();
+  }, [presented]);
 
   const handleConfirm = useCallback(
     (nativeInputValue?: string) => {
+      setPresented(null);
       if (presented?.kind === "confirm") {
-        close(presented.request.onConfirm);
+        presented.request.onConfirm();
       } else if (presented?.kind === "text-input") {
-        const request = presented.request;
-        close(() => request.onConfirm(nativeInputValue ?? request.initialValue));
+        presented.request.onConfirm(nativeInputValue ?? inputValue);
       }
     },
-    [close, presented],
+    [inputValue, presented],
   );
 
   if (presented?.kind === "alert") {
-    const actions = presented.request.buttons ?? [{ text: "OK" }];
-    const dismissal = resolveAlertDismissal({
-      buttons: actions,
-      options: presented.request.options,
-    });
     return (
       <DialogPresentation
         key={presented.id}
@@ -126,9 +98,12 @@ export function Host() {
           message: presented.request.message ?? undefined,
           confirmText: "",
         }}
-        alertActions={actions}
-        dismissable={dismissal.kind !== "ignore"}
-        onAlertAction={(action) => close(() => action.onPress?.())}
+        alertActions={presented.request.buttons ?? [{ text: "OK" }]}
+        dismissable={presented.request.options?.cancelable ?? false}
+        onAlertAction={(action) => {
+          setPresented(null);
+          action.onPress?.();
+        }}
         onCancel={handleCancel}
         onConfirm={handleConfirm}
       />
@@ -142,6 +117,8 @@ export function Host() {
       inputInitialValue={
         presented.kind === "text-input" ? presented.request.initialValue : undefined
       }
+      inputPlaceholder={presented.kind === "text-input" ? presented.request.placeholder : undefined}
+      onInputChange={setInputValue}
       onCancel={handleCancel}
       onConfirm={handleConfirm}
     />
@@ -154,13 +131,9 @@ function DialogPresentation(props: DialogPresentationProps) {
   const bodyTypography = useScaledTextRole("footnote");
   const inputTypography = useScaledTextRole("body");
   const inputState = useNativeState(props.inputInitialValue ?? "");
-  const [inputBlank, setInputBlank] = useState(
-    props.inputInitialValue !== undefined && !props.inputInitialValue.trim(),
-  );
   const inputSelection = useNativeState({ start: 0, end: props.inputInitialValue?.length ?? 0 });
   const confirm = () => {
     const value = props.inputInitialValue === undefined ? undefined : inputState.get();
-    if (value !== undefined && !value.trim()) return;
     props.onConfirm(value);
   };
   const actions = props.alertActions ?? [
@@ -182,7 +155,6 @@ function DialogPresentation(props: DialogPresentationProps) {
       <Component
         key={index}
         onClick={() => (props.alertActions ? props.onAlertAction?.(action) : action.onPress?.())}
-        enabled={!inputBlank || index !== actions.length - 1}
         colors={{
           containerColor: isDestructive
             ? destructiveFill
@@ -229,29 +201,39 @@ function DialogPresentation(props: DialogPresentationProps) {
         </AlertDialog.Title>
         {props.inputInitialValue !== undefined ? (
           <AlertDialog.Text>
-            <OutlinedTextField
-              autoFocus
-              singleLine
-              value={inputState}
-              selection={inputSelection}
-              onValueChange={(value) => setInputBlank(!value.trim())}
-              textStyle={inputTypography}
-              keyboardOptions={{ imeAction: "done" }}
-              keyboardActions={{
-                onDone: confirm,
-              }}
-              colors={{
-                focusedTextColor: colors["--color-foreground"],
-                unfocusedTextColor: colors["--color-foreground"],
-                focusedIndicatorColor: colors["--color-focus"],
-                unfocusedIndicatorColor: colors["--color-border"],
-                cursorColor: colors["--color-focus"],
-              }}
-            >
-              <OutlinedTextField.Label>
-                <Text style={bodyTypography}>{props.request.title}</Text>
-              </OutlinedTextField.Label>
-            </OutlinedTextField>
+            <Column verticalArrangement={{ spacedBy: 16 }}>
+              {props.request.message ? (
+                <Text style={bodyTypography}>{props.request.message}</Text>
+              ) : null}
+              <OutlinedTextField
+                autoFocus
+                singleLine
+                value={inputState}
+                selection={inputSelection}
+                onValueChange={props.onInputChange}
+                textStyle={inputTypography}
+                keyboardOptions={{ imeAction: "done" }}
+                keyboardActions={{
+                  onDone: confirm,
+                }}
+                colors={{
+                  focusedTextColor: colors["--color-foreground"],
+                  unfocusedTextColor: colors["--color-foreground"],
+                  focusedIndicatorColor: colors["--color-focus"],
+                  unfocusedIndicatorColor: colors["--color-border"],
+                  cursorColor: colors["--color-focus"],
+                }}
+              >
+                <OutlinedTextField.Label>
+                  <Text style={bodyTypography}>{props.request.title}</Text>
+                </OutlinedTextField.Label>
+                {props.inputPlaceholder ? (
+                  <OutlinedTextField.Placeholder>
+                    <Text style={bodyTypography}>{props.inputPlaceholder}</Text>
+                  </OutlinedTextField.Placeholder>
+                ) : null}
+              </OutlinedTextField>
+            </Column>
           </AlertDialog.Text>
         ) : props.request.message ? (
           <AlertDialog.Text>
@@ -282,6 +264,8 @@ interface DialogPresentationProps {
     "title" | "message" | "cancelText" | "confirmText" | "destructive"
   >;
   readonly inputInitialValue?: string;
+  readonly inputPlaceholder?: string;
+  readonly onInputChange?: (value: string) => void;
   readonly onCancel: () => void;
   readonly onConfirm: (inputValue?: string) => void;
 }
