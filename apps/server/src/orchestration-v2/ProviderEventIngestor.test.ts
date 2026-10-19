@@ -2185,6 +2185,7 @@ layer("ProviderEventIngestorV2", (it) => {
           ...offered,
           title: "Review checkout",
           modelSelection: { ...modelSelection, model: "gpt-6.1-sol" },
+          lineage: { ...offered.lineage, parentThreadId: childThreadId },
         }),
         [],
       );

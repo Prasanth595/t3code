@@ -519,7 +519,8 @@ export const layer: Layer.Layer<
     });
 
     const subagentParentThreadId = (thread: OrchestrationV2AppThread) =>
-      thread.lineage.relationshipToParent === "subagent"
+      thread.lineage.relationshipToParent === "subagent" &&
+      thread.lineage.parentThreadId !== thread.id
         ? (thread.lineage.parentThreadId ?? undefined)
         : undefined;
 
@@ -865,17 +866,11 @@ export const layer: Layer.Layer<
               );
             }),
           ),
-          (effect) =>
-            input.event.type === "app_thread.created"
-              ? threadCommands.withLock(input.event.appThread.id, effect)
-              : effect,
-          (write) => {
-            const parentThreadId =
-              input.event.type === "app_thread.created"
-                ? subagentParentThreadId(input.event.appThread)
-                : undefined;
-            // Serialize the lifecycle read and commit with parent commands.
-            // Parent before child matches orchestration's non-reentrant locks.
+          (effect) => {
+            if (input.event.type !== "app_thread.created") return effect;
+            const write = threadCommands.withLock(input.event.appThread.id, effect);
+            const parentThreadId = subagentParentThreadId(input.event.appThread);
+            // Parent first serializes lifecycle inheritance with archive and delete commands.
             return parentThreadId === undefined
               ? write
               : threadCommands.withLock(parentThreadId, write);
