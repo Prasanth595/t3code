@@ -119,6 +119,7 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const context = yield* Effect.context<DesktopApplicationMenuRuntimeServices>();
   const runPromise = Effect.runPromiseWith(context);
+  const runSync = Effect.runSyncWith(context);
 
   const runMenuEffect = <E>(
     action: string,
@@ -143,15 +144,19 @@ export const make = Effect.gen(function* () {
     const settingsClick = () => {
       runMenuEffect("open-settings", dispatchMenuAction("open-settings"));
     };
-    // Chromium pastes Ctrl+Shift+V itself on Windows and Linux, so only a menu
-    // click needs the renderer round trip. macOS has no native chord and uses
-    // the pasteAndMatchStyle role instead.
     const pasteAsTextClick = (
       _item: Electron.MenuItem,
       _window: Electron.BaseWindow | undefined,
       event: Electron.KeyboardEvent,
     ) => {
-      if (event.triggeredByAccelerator === true) return;
+      if (event.triggeredByAccelerator === true) {
+        // Windows/Linux already paste through Chromium. On macOS, a renderer
+        // round trip can arrive after the terminal's clipboard read and paste twice.
+        if (environment.platform === "darwin") {
+          runSync(electronMenu.pasteAndMatchStyle);
+        }
+        return;
+      }
       runMenuEffect("paste-as-text", dispatchMenuAction("paste-as-text"));
     };
     const zoomClick = (direction: DesktopWindow.MainWindowZoomDirection) => () => {
@@ -218,9 +223,7 @@ export const make = Effect.gen(function* () {
           {
             label: "Paste as Text",
             accelerator: "CmdOrCtrl+Shift+V",
-            ...(environment.platform === "darwin"
-              ? { role: "pasteAndMatchStyle" as const }
-              : { click: pasteAsTextClick }),
+            click: pasteAsTextClick,
           },
           { role: "delete" },
           { type: "separator" },
