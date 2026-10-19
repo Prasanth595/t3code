@@ -166,19 +166,31 @@ export function ThreadAutomationsPanel(props: {
               <span className="block truncate text-sm font-medium text-foreground/80">
                 {task.title}
               </span>
-              <p className="truncate text-2xs text-muted-foreground">
-                {scheduleLabel(task.schedule)}
-                {task.enabled && task.nextRunAt !== null ? (
-                  <>
-                    {" · next "}
-                    <ScheduledRelativeLabel value={task.nextRunAt} />
-                  </>
-                ) : task.enabled ? (
-                  ""
-                ) : (
-                  " · paused"
-                )}
-              </p>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <p
+                      tabIndex={0}
+                      className="truncate rounded-sm text-2xs text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                    />
+                  }
+                >
+                  {scheduleLabel(task.schedule, tasksQuery.data?.timeZone)}
+                  {task.enabled && task.nextRunAt !== null ? (
+                    <>
+                      {" · next "}
+                      <ScheduledRelativeLabel value={task.nextRunAt} />
+                    </>
+                  ) : task.enabled ? (
+                    ""
+                  ) : (
+                    " · paused"
+                  )}
+                </TooltipTrigger>
+                <TooltipPopup>
+                  {scheduleLabel(task.schedule, tasksQuery.data?.timeZone)}
+                </TooltipPopup>
+              </Tooltip>
             </div>
             <Tooltip>
               <TooltipTrigger
