@@ -8,6 +8,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
@@ -479,9 +480,12 @@ it.effect("sends a self-hosted Bitbucket remote nowhere unless an API base url i
       setup.execute.mock.calls.map(([request]) => request.url).toSorted();
 
     const selfHosted = makeLayer({ response, env: cloudEnv, remoteUrl });
-    const error = yield* defaultBranch(selfHosted, true).pipe(Effect.flip);
-    assert.strictEqual(error._tag, "BitbucketRepositoryRemoteNotFoundError");
+    const result = yield* defaultBranch(selfHosted, true).pipe(Effect.result);
     assert.deepStrictEqual(requestedUrls(selfHosted), []);
+    assert.strictEqual(
+      Result.isFailure(result) && result.failure._tag,
+      "BitbucketRepositoryRemoteNotFoundError",
+    );
 
     const cloud = makeLayer({ response, env: cloudEnv });
     yield* defaultBranch(cloud, false);
