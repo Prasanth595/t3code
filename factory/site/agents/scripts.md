@@ -150,6 +150,15 @@ Run by `.github/workflows/factory-desktop.yml` on every push to `main`. `desktop
 | `desktop-restamp-dmg.ts <dmg> <manifest>`  | Rebuilds `<dmg>.blockmap` and rewrites the dmg's `sha512` and `size` in the update manifest, after stapling changed the dmg. Run with `node`.         | The manifest does not list the dmg (nothing written).                                  |
 | `desktop-verify.sh <dmg> <zip>`            | `xcrun stapler validate` on the dmg; `codesign --verify --deep --strict` and `spctl -a -vv` on the `.app` in the zip and in the dmg.                  | Any check fails.                                                                       |
 
+## Mobile release scripts
+
+Run by `.github/workflows/factory-mobile.yml` after pushes to `main` that change mobile code. `mobile-preflight.sh` reads the signing secrets of the `mobile-release` environment from the environment and prints none of them; past the check that each one is set, it needs macOS.
+
+| Script                                                                  | Does                                                                                                                                                                                     | Non-zero when                                                                          |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `mobile-preflight.sh`                                                   | Checks the Apple Distribution certificate and the App Store profiles of the app, widgets and share extension (team, bundle id, type, expiry, entitlements), and that the API key is set. | A secret is empty or fails its check; a `::error::` line names it.                     |
+| `mobile-sign-project.ts <app dir> <team> <bundle id>=<profile name>...` | Sets manual signing with Apple Distribution and the named profile on every build configuration of the prebuilt iOS project that has a bundle id. Run with `node`.                        | A target's bundle id has no profile, or a profile matches no target (nothing written). |
+
 ## mobile-dev-client.ts
 
 Starts Metro for the fork's development dev client, in place of upstream's `vp run dev:client`, whose `--scheme t3code-dev` the fork's dev build does not register.
