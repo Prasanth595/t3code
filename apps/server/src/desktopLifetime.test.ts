@@ -1,109 +1,132 @@
-// @effect-diagnostics nodeBuiltinImport:off
+// @effect-diagnostics nodeBuiltinImport:off -- Real inherited pipes and process exits are the behavior under test.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeReadline from "node:readline";
 import * as NodeURL from "node:url";
 
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import * as Deferred from "effect/Deferred";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
-import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import { describe, expect } from "vite-plus/test";
 
-import * as DesktopLifetime from "./desktopLifetime.ts";
-
-// Stands in for the desktop: spawns a backend with the lifetime pipe on fd 6,
-// the way DesktopBackendManager does, then waits to be killed.
-const DESKTOP_SCRIPT = `
-const backend = require("node:child_process").spawn(
-  process.execPath,
-  ["--input-type=module", "-e", process.env.T3_TEST_BACKEND_SCRIPT],
-  { stdio: ["ignore", "inherit", "inherit", "ignore", "ignore", "ignore", "pipe"] },
-);
-console.log("backend " + backend.pid);
-setInterval(() => {}, 1 << 30);
-`;
-
-// Runs the real watcher on fd 6 and reports through the stdout it inherits
-// from the desktop, which outlives the desktop.
 const BACKEND_SCRIPT = `
+import * as NodeFS from "node:fs";
+import * as NodeNet from "node:net";
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as Effect from "effect/Effect";
-import * as Fiber from "effect/Fiber";
-const { watch } = await import(process.env.T3_TEST_DESKTOP_LIFETIME_MODULE);
-const onDesktopExit = Effect.sync(() => console.log("desktop exited"));
-await Effect.runPromise(Effect.scoped(Effect.flatMap(watch(6, onDesktopExit), Fiber.join)));
+import * as Layer from "effect/Layer";
+const { layer } = await import(process.env.T3_TEST_DESKTOP_LIFETIME_MODULE);
+const { ServerConfig } = await import(new URL("./config.ts", process.env.T3_TEST_DESKTOP_LIFETIME_MODULE));
+const report = (line) => NodeFS.writeSync(1, line + "\\n");
+process.stdin.on("data", () => report("alive"));
+NodeRuntime.runMain(Effect.gen(function* () {
+  yield* Effect.acquireRelease(
+    Effect.promise(() => new Promise((resolve) => {
+      const server = NodeNet.createServer();
+      server.listen(0, "127.0.0.1", () => resolve(server));
+    })),
+    (server) => Effect.promise(() => new Promise((resolve) => {
+      server.close(() => { report("finalized"); resolve(); });
+    })),
+  );
+  yield* Layer.build(layer);
+  report("ready");
+  yield* Effect.never;
+}).pipe(
+  Effect.scoped,
+  Effect.provide(Layer.mock(ServerConfig)({
+    desktopLifetimeFd: process.env.T3_TEST_LIFETIME_FD === "8" ? 8 : undefined,
+  })),
+));
 `;
 
-const takeLineMatching = (lines: Queue.Dequeue<string>, matches: (line: string) => boolean) =>
-  Queue.take(lines).pipe(Effect.repeat({ until: matches }));
-
-describe("DesktopLifetime", () => {
-  it.effect("reports the desktop exit when the desktop dies without cleanup", () =>
-    Effect.gen(function* () {
-      const lines = yield* Queue.unbounded<string>();
-      const desktop = yield* Effect.acquireRelease(
-        Effect.sync(() => {
-          const child = NodeChildProcess.spawn(process.execPath, ["-e", DESKTOP_SCRIPT], {
-            cwd: NodePath.join(import.meta.dirname, ".."),
-            env: {
-              ...process.env,
-              T3_TEST_BACKEND_SCRIPT: BACKEND_SCRIPT,
-              T3_TEST_DESKTOP_LIFETIME_MODULE: NodeURL.pathToFileURL(
-                NodePath.join(import.meta.dirname, "desktopLifetime.ts"),
-              ).href,
-            },
-            stdio: ["ignore", "pipe", "inherit"],
-          });
-          NodeReadline.createInterface({ input: child.stdout }).on("line", (line) => {
-            Queue.offerUnsafe(lines, line);
-          });
-          return child;
-        }),
-        (child) =>
-          Effect.sync(() => {
-            child.kill("SIGKILL");
-          }),
+const spawnFixture = Effect.fn(function* (script: string, options: NodeChildProcess.SpawnOptions) {
+  const lines = yield* Queue.unbounded<string>();
+  return yield* Effect.acquireRelease(
+    Effect.sync(() => {
+      const child = NodeChildProcess.spawn(
+        process.execPath,
+        ["--input-type=module", "-e", script],
+        {
+          cwd: NodePath.join(import.meta.dirname, ".."),
+          ...options,
+        },
       );
-      const backendPid = Number(
-        (yield* takeLineMatching(lines, (line) => line.startsWith("backend "))).slice(8),
+      const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+        (resolve, reject) => {
+          child.once("error", reject);
+          child.once("exit", (code, signal) => resolve({ code, signal }));
+        },
       );
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          try {
-            process.kill(backendPid, "SIGKILL");
-          } catch {
-            // Already exited.
-          }
-        }),
-      );
-
-      desktop.kill("SIGKILL");
-      expect(yield* takeLineMatching(lines, (line) => line === "desktop exited")).toBe(
-        "desktop exited",
-      );
+      if (!child.stdout) throw new Error("Fixture requires stdout");
+      const output = NodeReadline.createInterface({ input: child.stdout });
+      output.on("line", (line) => Queue.offerUnsafe(lines, line));
+      output.once("close", () => Queue.offerUnsafe(lines, "stdout closed"));
+      return { child, exited, lines, output };
     }),
+    ({ child, exited, output }) =>
+      Effect.promise(async () => {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        await exited;
+        output.close();
+      }),
+  );
+});
+
+const takeLine = (lines: Queue.Dequeue<string>, expected: string) =>
+  Queue.take(lines).pipe(
+    Effect.repeat({ until: (line) => line === expected || line === "stdout closed" }),
+    Effect.tap((line) => Effect.sync(() => expect(line).toBe(expected))),
   );
 
-  it.effect("keeps running when the descriptor cannot be watched", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const tempDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-desktop-lifetime-" });
-      const filePath = NodePath.join(tempDir, "not-a-pipe");
-      yield* fs.writeFileString(filePath, "");
-      const fd = yield* Effect.acquireRelease(
-        Effect.sync(() => NodeFS.openSync(filePath, "r")),
-        (fd) => Effect.sync(() => NodeFS.closeSync(fd)),
-      );
+// Passing the writer to another child uses inherited POSIX descriptors.
+describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("DesktopLifetime", () => {
+  it.effect.each([8, undefined])(
+    "only shuts down with the desktop when its lifetime descriptor is configured: %s",
+    (desktopLifetimeFd) =>
+      Effect.gen(function* () {
+        const backend = yield* spawnFixture(BACKEND_SCRIPT, {
+          env: {
+            ...process.env,
+            T3_TEST_LIFETIME_FD: String(desktopLifetimeFd),
+            T3_TEST_DESKTOP_LIFETIME_MODULE: NodeURL.pathToFileURL(
+              NodePath.join(import.meta.dirname, "desktopLifetime.ts"),
+            ).href,
+          },
+          stdio: ["pipe", "pipe", "inherit", "ignore", "pipe", "pipe", "pipe", "pipe", "pipe"],
+        });
+        const lifetimePipe = backend.child.stdio.at(8);
+        if (!lifetimePipe) throw new Error("Missing lifetime pipe");
 
-      const desktopExited = yield* Deferred.make<void>();
-      const watcher = yield* DesktopLifetime.watch(fd, Deferred.succeed(desktopExited, undefined));
-      yield* Fiber.join(watcher);
+        // The stand-in desktop owns the sole writer. Keeping the backend as our
+        // direct child lets us observe and reap its actual exit, including on failure.
+        const desktop = yield* spawnFixture('process.stdin.resume(); console.log("ready");', {
+          stdio: ["pipe", "pipe", "inherit", lifetimePipe],
+        });
+        lifetimePipe.destroy();
+        yield* takeLine(desktop.lines, "ready");
 
-      expect(yield* Deferred.isDone(desktopExited)).toBe(false);
-    }).pipe(Effect.provide(NodeServices.layer)),
+        // Telemetry and browser IPC can close independently of desktop lifetime.
+        for (const fd of [4, 5, 6, 7]) backend.child.stdio[fd]?.destroy();
+        yield* takeLine(backend.lines, "ready");
+        backend.child.stdin?.write("ping");
+        yield* takeLine(backend.lines, "alive");
+
+        desktop.child.kill("SIGKILL");
+        expect(yield* Effect.promise(() => desktop.exited)).toEqual({
+          code: null,
+          signal: "SIGKILL",
+        });
+        if (desktopLifetimeFd === undefined) {
+          backend.child.stdin?.write("ping");
+          yield* takeLine(backend.lines, "alive");
+          backend.child.kill("SIGTERM");
+        }
+
+        yield* takeLine(backend.lines, "finalized");
+        expect(yield* Effect.promise(() => backend.exited)).toEqual({ code: 130, signal: null });
+      }),
+    { timeout: 15_000 },
   );
 });

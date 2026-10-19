@@ -594,7 +594,6 @@ it.layer(NodeServices.layer)("cli config resolution", (it) => {
       assert.equal(join(baseDir, "userdata"), resolved.stateDir);
       assert.equal(resolved.desktopTelemetryFd, 4);
       assert.equal(resolved.desktopTelemetryControlFd, 5);
-      assert.equal(resolved.desktopLifetimeFd, 8);
     }),
   );
 
