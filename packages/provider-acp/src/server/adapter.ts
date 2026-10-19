@@ -281,11 +281,7 @@ export interface AcpAdapterV2Flavor {
   readonly extractSubagentUpdate?: (
     toolCall: AcpToolCallState,
   ) => AcpAdapterV2SubagentUpdate | undefined;
-  /**
-   * One tool call can report several children (Grok wait_all). When set, this
-   * replaces extractSubagentUpdate for projection. The singular extractor stays
-   * for callers that only need to know the tool is a subagent.
-   */
+  /** Takes precedence over extractSubagentUpdate for tools reporting multiple children. */
   readonly extractSubagentUpdates?: (
     toolCall: AcpToolCallState,
   ) => ReadonlyArray<AcpAdapterV2SubagentUpdate>;
@@ -1156,18 +1152,6 @@ export function acpIsAppOwnedWakeTurn(message: {
   return message.createdBy === "agent" && message.creationSource === "server";
 }
 
-/**
- * A `will_wake` result never arrives as a session frame. Message-text delivery
- * prompts the provider with it. Native wakes stay adapter-buffered so the
- * continuation turn drains the frames already captured instead of prompting
- * that text again.
- */
-export function acpContinuationDelivery(
-  detail: string | null,
-): "adapter_buffered" | "message_text" {
-  return detail === null ? "adapter_buffered" : "message_text";
-}
-
 function acpIsProviderContinuationMessage(message: {
   readonly createdBy: string;
   readonly creationSource: string;
@@ -1203,12 +1187,15 @@ export function acpPostSettleMonitorPromptShouldSuppress(
 
 export function acpCompletedTurnShouldTerminalizeTool(
   tool: AcpToolCallState,
-  flavor: Pick<AcpAdapterV2Flavor, "extractBackgroundTaskId" | "extractSubagentUpdate">,
+  flavor: Pick<
+    AcpAdapterV2Flavor,
+    "extractBackgroundTaskId" | "extractSubagentUpdate" | "extractSubagentUpdates"
+  >,
 ): boolean {
   const status = toolStatus(tool.status);
   if (status !== "pending" && status !== "running") return false;
   if (flavor.extractBackgroundTaskId?.(tool) !== undefined) return false;
-  return flavor.extractSubagentUpdate?.(tool) === undefined;
+  return acpSubagentUpdatesFromTool(flavor, tool).length === 0;
 }
 
 interface ActiveAcpSubagent {
@@ -1788,29 +1775,19 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           readonly reports: ReadonlyMap<string, BackgroundWorkReport>;
           readonly offered: ReadonlySet<string>;
         }>(noWakeReports);
-        const commitWakeReport = Effect.fnUntraced(function* (
-          key: string,
-          report: BackgroundWorkReport,
-        ) {
-          yield* Ref.update(wakeReports, ({ reports, offered }) => ({
-            reports: new Map(reports).set(key, report),
-            offered,
-          }));
-        });
         const recordWakeReport = Effect.fnUntraced(function* (
           key: string,
           report: BackgroundWorkReport,
         ) {
           const context = yield* Ref.get(activeTurn);
           if (context !== null && !context.promptSettled && !context.finalized) return;
-          yield* commitWakeReport(key, report);
+          yield* Ref.update(wakeReports, ({ reports, offered }) => ({
+            reports: new Map(reports).set(key, report),
+            offered,
+          }));
         });
-        // will_wake during an open parent prompt. Grok does not start
-        // subagent-completed-<id> until that prompt returns, and it skips the
-        // wake entirely when the model keeps going. Flush these into one
-        // continuation when the prompt settles, unless a tool result already
-        // delivered the child. A will_wake after the prompt has settled stays
-        // on Grok's own wake so we do not double-prompt.
+        // Grok skips its native wake when the parent prompt is still open.
+        // Keep results until the continuation offer so a later tool read can consume them.
         const pendingWillWakeSubagents = yield* Ref.make<
           ReadonlyMap<
             string,
@@ -1820,8 +1797,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
           >
         >(new Map());
-        const unobservedWillWakeDetail = yield* Ref.make<string | null>(null);
-        const midTurnUnreportedCompletedTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
         const forgetUnobservedWillWake = (taskId: string) =>
           Ref.update(pendingWillWakeSubagents, (current) => {
             if (!current.has(taskId)) return current;
@@ -1829,31 +1804,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             next.delete(taskId);
             return next;
           });
-        const flushUnobservedWillWakes = Effect.fnUntraced(function* () {
-          const pending = yield* Ref.getAndSet(pendingWillWakeSubagents, new Map());
-          if (pending.size === 0) return;
-          const blocks: string[] = [];
-          for (const [childSessionId, entry] of pending) {
-            yield* commitWakeReport(childSessionId, entry.report);
-            yield* Ref.update(midTurnUnreportedCompletedTaskIds, (current) =>
-              new Set(current).add(childSessionId),
-            );
-            const name = entry.report.label?.trim() || childSessionId;
-            const body = entry.result?.trim();
-            blocks.push(
-              body === undefined || body.length === 0
-                ? `Subagent "${name}" ${entry.report.outcome}.`
-                : `Subagent "${name}" ${entry.report.outcome}.\n${body}`,
-            );
-          }
-          yield* Ref.set(
-            unobservedWillWakeDetail,
-            [
-              "A background subagent finished while you were still in this turn, and its result was not in a tool response you received.",
-              ...blocks,
-            ].join("\n\n"),
-          );
-        });
         const continuationRequested = yield* Ref.make(false);
         const continuationGeneration = yield* Ref.make(0);
         const continuationPermit = yield* Semaphore.make(1);
@@ -1870,6 +1820,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
           new Set(),
         );
+        const midTurnUnreportedCompletedTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
         // A monitor-event can arrive after its task and the user-facing provider
         // turn already completed. Grok starts another internal prompt for that
         // stale notification; suppress its agent output until a genuine terminal
@@ -3017,10 +2968,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
           }
 
-          // Monitor TaskOutput shares the get_command tool shape with subagent
-          // hydration; do not spawn a phantom subagent for a registered monitor.
-          // A wait_all can mix monitors and subagents, so only the monitor ids
-          // are skipped.
+          // A wait_all can mix monitors and children; only children have subagent lineage.
           const subagentUpdates = acpSubagentUpdatesFromTool(flavor, toolCall).filter(
             (update) =>
               update.childSessionId === null ||
@@ -3527,16 +3475,31 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 continuationGeneration,
                 (value) => value + 1,
               );
-              const reports = yield* Ref.modify(wakeReports, ({ reports }) => [
-                reports,
-                { reports, offered: new Set(reports.keys()) },
-              ]);
-              return Option.some({ route, generation, reports });
+              const unobserved = yield* Ref.getAndSet(pendingWillWakeSubagents, new Map());
+              const reports = new Map((yield* Ref.get(wakeReports)).reports);
+              const blocks: string[] = [];
+              for (const [childSessionId, { report, result }] of unobserved) {
+                reports.set(childSessionId, report);
+                const name = report.label?.trim() || childSessionId;
+                blocks.push(
+                  [`Subagent "${name}" ${report.outcome}.`, result?.trim()]
+                    .filter(Boolean)
+                    .join("\n"),
+                );
+              }
+              const detail =
+                blocks.length === 0
+                  ? null
+                  : [
+                      "Background subagents finished during your previous turn without a tool response delivering their results.",
+                      ...blocks,
+                    ].join("\n\n");
+              yield* Ref.set(wakeReports, { reports, offered: new Set(reports.keys()) });
+              return Option.some({ route, generation, reports, detail });
             }),
           );
           if (Option.isNone(pending)) return false;
-          const { route, generation, reports } = pending.value;
-          const detail = yield* Ref.getAndSet(unobservedWillWakeDetail, null);
+          const { route, generation, reports, detail } = pending.value;
           const notification = backgroundWorkNotification([...reports.values()]);
           yield* Effect.logInfo("orchestration-v2.acp-wake-turn-detected", {
             driver,
@@ -3549,7 +3512,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             providerThreadId: route.providerThreadId,
             driver,
             detail,
-            delivery: acpContinuationDelivery(detail),
+            delivery: detail === null ? "adapter_buffered" : "message_text",
             ...(notification === null ? {} : { notification }),
             clearIfCurrent: () =>
               continuationPermit.withPermit(
@@ -4963,9 +4926,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           readonly result: string | null;
           readonly willWake?: boolean;
         }) {
-          // Tombstone before any early return. A later wait_all that still
-          // lists this child as running must not put it back in the running set
-          // and hold the parent on Working.
+          // A stale running poll must not revive a finished child's settlement blocker.
           yield* markBackgroundTaskEnded(notice.childSessionId);
           const context = yield* Ref.get(activeTurn);
           const subagent =
@@ -4981,6 +4942,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (
             notice.willWake === true &&
             modelStillInTurn &&
+            !(yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).has(notice.childSessionId) &&
             (known === undefined || acpSubagentStatusBlocksTurnSettlement(known.task.status))
           ) {
             yield* Ref.update(pendingWillWakeSubagents, (current) => {
@@ -6235,7 +6197,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               yield* Ref.set(wakeBuffer, []);
               yield* Ref.set(wakeReports, noWakeReports);
               yield* Ref.set(pendingWillWakeSubagents, new Map());
-              yield* Ref.set(unobservedWillWakeDetail, null);
               yield* Ref.set(continuationRequested, false);
               yield* Ref.set(runningBackgroundTaskIds, new Set());
               yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
@@ -6252,6 +6213,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ) {
           if (context.finalized) return;
           const settledStatus = context.interrupted ? "interrupted" : status;
+          if (settledStatus !== "completed") {
+            yield* Ref.set(pendingWillWakeSubagents, new Map());
+          }
           context.finalizedStatus = settledStatus;
           context.finalized = true;
           const directStopQuarantine = yield* Ref.get(stoppedRunQuarantine);
@@ -6609,14 +6573,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   isContinuationTurn,
                   wakeBufferLength: (yield* Ref.get(wakeBuffer)).length,
                 });
+                if (!isContinuationTurn && !isAppOwnedWakeTurn) {
+                  yield* Ref.set(pendingWillWakeSubagents, new Map());
+                }
                 if (!isContinuationTurn && !isAppOwnedWakeTurn && !preserveBufferedContinuation) {
                   yield* Ref.set(wakeBuffer, []);
                   yield* Ref.set(wakeReports, noWakeReports);
-                  // A will_wake detail that never became a continuation belongs
-                  // to the previous turn. Leaving it here lets a later offer
-                  // replay that child result.
-                  yield* Ref.set(pendingWillWakeSubagents, new Map());
-                  yield* Ref.set(unobservedWillWakeDetail, null);
                 }
                 if (preserveBufferedContinuation) return wasRequested;
                 yield* Ref.update(continuationGeneration, (value) => value + 1);
@@ -6824,11 +6786,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           ? "interrupted"
                           : "cancelled"
                         : "completed";
-                    if (context.interrupted || status !== "completed") {
-                      yield* Ref.set(pendingWillWakeSubagents, new Map());
-                      yield* Ref.set(unobservedWillWakeDetail, null);
-                    } else {
-                      yield* flushUnobservedWillWakes();
+                    if (!context.interrupted && status === "completed") {
+                      const pending = yield* Ref.get(pendingWillWakeSubagents);
+                      yield* Ref.update(
+                        midTurnUnreportedCompletedTaskIds,
+                        (current) => new Set([...current, ...pending.keys()]),
+                      );
                     }
                     if (
                       flavor.deferFinalizeForBackgroundWork === true &&
@@ -6852,8 +6815,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   promptGeneration,
                   Effect.gen(function* () {
                     if (context.finalized) return;
-                    yield* Ref.set(pendingWillWakeSubagents, new Map());
-                    yield* Ref.set(unobservedWillWakeDetail, null);
                     yield* finalizeTurn(
                       context,
                       context.interrupted ? "interrupted" : "failed",
@@ -7547,7 +7508,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                             yield* Ref.set(wakeBuffer, []);
                             yield* Ref.set(wakeReports, noWakeReports);
                             yield* Ref.set(pendingWillWakeSubagents, new Map());
-                            yield* Ref.set(unobservedWillWakeDetail, null);
                             yield* Ref.set(continuationRequested, false);
                             yield* Ref.set(runningBackgroundTaskIds, new Set());
                             yield* Ref.set(endedBackgroundTaskIds, new Set());
