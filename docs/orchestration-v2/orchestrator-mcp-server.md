@@ -287,6 +287,11 @@ type DelegateTaskResult = {
   latestTerminalSummary: string | null;
   latestTerminalResultContextTransferId: string | null;
   hasPendingQuestion: boolean;
+  pendingApproval: {
+    requestId: string;
+    kind: "command" | "file-read" | "file-change" | "mcp-elicitation" | "permission";
+    runId: string;
+  } | null;
   waitTimedOut: boolean;
 };
 ```
