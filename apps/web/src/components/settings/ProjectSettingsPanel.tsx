@@ -281,6 +281,7 @@ function ProjectDetail({
       return;
     }
     if (!projectGroupTitleNeedsUpdate(group.memberProjects, title, wasEdited)) {
+      setDraftName(null);
       return;
     }
     const result = await updateAllMembers({ title }, "Failed to rename project");
