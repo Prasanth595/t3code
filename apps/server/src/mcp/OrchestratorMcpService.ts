@@ -2336,11 +2336,6 @@ const make = Effect.gen(function* () {
           input.threads,
           (request, index) =>
             Effect.gen(function* () {
-              // Computed before resolving the target so a retry of an
-              // already accepted thread creation can be recognized:
-              // dispatching under the same command id only replays the
-              // recorded result, so candidate selection must not refuse it
-              // over the project's current settings.
               const commandId = stableCommandId({
                 scope,
                 requestKey: key,
@@ -2398,14 +2393,9 @@ const make = Effect.gen(function* () {
                     ),
                   ),
                 );
-              // A retry only replays the recorded thread.create result, so the
-              // project's current provider instance, resolved fresh above to
-              // allow the retry through, can differ from what was actually
-              // created. Read the recorded selection back before it drives
-              // anything else.
-              const resolvedModelSelection = isRetryOfAcceptedCreation
-                ? (yield* loadProjection(threadId)).thread.modelSelection
-                : target.modelSelection;
+              // A receipt can appear after target resolution; use the committed thread's selection.
+              const resolvedModelSelection = (yield* loadProjection(threadId)).thread
+                .modelSelection;
               if (request.prompt !== undefined) {
                 yield* threadManagement
                   .dispatch({
