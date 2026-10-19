@@ -235,7 +235,6 @@ function AdaptiveWorkspaceLayoutContent(
   const { width: viewportWidth, height } = nativeMetrics ?? windowDimensions;
   const pathname = props.pathname;
   const navigation = useNavigation();
-  const { openPendingTask } = usePendingTaskListActions();
   const activeRoleOwner = useRef<symbol | null>(null);
   const [primarySidebarPreferredVisible, setPrimarySidebarPreferredVisible] = useState(true);
   const [supplementaryPanePreferredVisible, setSupplementaryPanePreferredVisible] = useState(true);
@@ -419,6 +418,7 @@ function AdaptiveWorkspaceLayoutContent(
   };
 
   const handleOpenThreadPullRequests = useOpenThreadPullRequests();
+  const { openPendingTask: handleOpenPendingTask } = usePendingTaskListActions();
 
   const handleNewThreadOnBranch = (thread: EnvironmentThreadShell) => {
     navigation.navigate("NewTaskSheet", {
@@ -685,7 +685,7 @@ function AdaptiveWorkspaceLayoutContent(
                           onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
                           onNewThreadInProject={handleNewThreadInProject}
                           onNewThreadOnBranch={handleNewThreadOnBranch}
-                          onOpenPendingTask={openPendingTask}
+                          onOpenPendingTask={handleOpenPendingTask}
                           onSelectThread={handleSelectThread}
                           onOpenThreadPullRequests={handleOpenThreadPullRequests}
                           onSearchQueryChange={setPrimarySidebarSearchQuery}
