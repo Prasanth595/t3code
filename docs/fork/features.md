@@ -89,7 +89,7 @@ A setting with a shared value syncs to every machine, also to an offline or a ne
 
 The map has no edges. Cards stay where you drop them. The map zooms, pans and fits all cards, also on phones and small windows. "Auto layout" places every card so that the map reads well, as one change with Undo.
 
-Before rotating a machine token, check that it can connect within 24 hours. The old secret stops at confirmation or at that deadline. If the deadline passes without confirmation, select "Join again with a new code" on the machine and use the code there. The portal keeps that recovery notice until the machine joins again.
+Before rotating a machine token, check that it can connect within 24 hours. The old secret stops at confirmation or at that deadline. If the deadline passes without confirmation, select "Join again with a new code" on the machine and use the code there. The portal keeps that recovery notice until the machine joins again or confirms the new secret.
 
 ### Approved clients
 

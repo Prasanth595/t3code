@@ -166,7 +166,7 @@ export interface RotationResponse {
   readonly delivered: boolean;
 }
 
-/** A token rotation that waits for its machine (MM-207). The secret never leaves the portal. */
+/** A token rotation awaiting confirmation, or its expired recovery marker (MM-207). */
 export interface PendingRotation {
   readonly machineId: MachineId;
   readonly createdAt: string;
@@ -393,7 +393,7 @@ export const PushSubscribeRequest = Schema.Struct({
 });
 export type PushSubscribeRequest = typeof PushSubscribeRequest.Type;
 
-/** POST /api/push/unsubscribe and POST /api/push/test: one subscription of this device. */
+/** POST /api/push/status, /api/push/unsubscribe and /api/push/test: one device subscription. */
 export const PushEndpointRequest = Schema.Struct({
   endpoint: PushSubscribeRequest.fields.endpoint,
 });

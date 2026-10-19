@@ -180,3 +180,19 @@ it("does not mark a confirmed rotation as needing a rejoin after the deadline", 
   await object.alarm();
   expect(db.prepare("SELECT * FROM rotations").all()).toEqual([]);
 });
+
+it("supersedes a waiting rotation when the owner makes a join code", async () => {
+  const { object, db } = portal(true);
+  db.prepare("INSERT INTO machine_tokens VALUES (?, ?)").run(MAC, "token-id");
+  vi.spyOn(CloudflareApi.prototype, "rotateServiceToken").mockResolvedValue("superseded-secret");
+  await object.rotateToken(owner, MAC);
+  const join = await object.newJoinCode(owner, MAC, { tokenSecret: "recovery-secret" });
+  expect(join.ok).toBe(true);
+  if (!join.ok) throw new Error(join.error);
+  expect(db.prepare("SELECT sealed_secret, expires_at FROM rotations").get()).toEqual({
+    sealed_secret: "",
+    expires_at: new Date().toISOString(),
+  });
+  expect((await object.enroll("127.0.0.1", join.value.code)).ok).toBe(true);
+  expect(db.prepare("SELECT * FROM rotations").all()).toEqual([]);
+});
