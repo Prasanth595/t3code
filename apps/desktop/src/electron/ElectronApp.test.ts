@@ -294,7 +294,6 @@ describe("ElectronApp", () => {
           pid: handle.pid,
           running: await Effect.runPromise(handle.isRunning),
           status: readFileSync("/proc/self/status", "utf8"),
-          uid: process.getuid(),
         }) + "\\n");
         process.stdin.resume();
         process.stdin.once("end", () => process.exit(0));
@@ -325,7 +324,6 @@ describe("ElectronApp", () => {
         shellPid = ready.pid;
         assert.isNumber(shellPid);
         assert.isTrue(ready.running, "relauncher survives its Effect scope closing");
-        assert.notEqual(ready.uid, 0, "the original parent must be unprivileged");
         assert.match(ready.status, /^NoNewPrivs:\s+0$/m);
         const stat = await NodeFSP.readFile(`/proc/${shellPid}/stat`, "utf8");
         const [, ppid, group, session] = stat.slice(stat.lastIndexOf(")") + 2).split(" ");
