@@ -1166,6 +1166,7 @@ const SIDEBAR_ROW_SECONDARY_CONTROL_SELECTOR = "button:not([data-sidebar-row-pri
 
 // Visible row content covers the primary button, so presses must transfer focus.
 function focusSidebarRowPrimaryAction(event: ReactMouseEvent<HTMLElement>) {
+  if (!event.currentTarget.contains(event.target as Node)) return;
   if ((event.target as HTMLElement).closest(SIDEBAR_ROW_SECONDARY_CONTROL_SELECTOR)) return;
   const primaryAction = event.currentTarget.querySelector<HTMLButtonElement>(
     "[data-sidebar-row-primary]",
@@ -1348,6 +1349,13 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
       ? promptPreview
       : `${attachmentCount} attachment${attachmentCount === 1 ? "" : "s"}`;
   const handleActivate = () => onNavigate(draftId);
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key !== "ContextMenu" && !(event.shiftKey && event.key === "F10")) return;
+    if ((event.target as HTMLElement).closest(SIDEBAR_ROW_SECONDARY_CONTROL_SELECTOR)) return;
+    event.preventDefault();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    onContextMenu(draftId, { x: bounds.left, y: bounds.bottom });
+  };
   const handleContextMenu = (event: ReactMouseEvent) => {
     event.preventDefault();
     const bounds = event.currentTarget.getBoundingClientRect();
@@ -1373,6 +1381,7 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
         )}
         onMouseDown={focusSidebarRowPrimaryAction}
         onClick={handleActivate}
+        onKeyDown={handleKeyDown}
         onContextMenu={handleContextMenu}
       >
         <SidebarRowPrimaryAction
