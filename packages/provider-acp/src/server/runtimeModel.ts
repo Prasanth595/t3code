@@ -1065,10 +1065,13 @@ const T3_MCP_TITLE_SUFFIX_CALL =
  * names; Kimi additionally appends ": <raw args json>". Antigravity titles a
  * call "Running <tool>" with no server or MCP `_meta` once its SDK has
  * unwrapped the `call_mcp_tool` envelope, which is every call it runs without
- * a permission prompt. Safe only because the match is gated on the known T3
- * tool inventory.
+ * a permission prompt. The T3 inventory gate alone is not enough: an agent can
+ * have its own tool of the same name (Hermes has a built-in `delegate_task`)
+ * and title it "<tool>: <description>", so only a bare name or a JSON object
+ * after the colon counts. The match stops at the opening brace because Kimi
+ * retitles on every streamed args chunk, so the JSON is often still incomplete.
  */
-const T3_MCP_BARE_TITLE_CALL = /^(?:Running )?(?<tool>[A-Za-z0-9_]+)(?::\s|$)/;
+const T3_MCP_BARE_TITLE_CALL = /^(?:Running )?(?<tool>[A-Za-z0-9_]+)(?::\s*\{|$)/;
 
 /**
  * ACP has no typed MCP tool-call item, so agents surface MCP calls in agent-specific shapes:
