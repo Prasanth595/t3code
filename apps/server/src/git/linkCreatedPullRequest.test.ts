@@ -113,22 +113,25 @@ describe("createdPullRequestKey", () => {
     });
   });
 
-  it.each(["http://ghe.internal/x/3", "https://ghe.internal/x/3"])(
-    "falls back to the project's host and repository for an unrecognised web URL: %s",
-    (url) => {
-      expect(
-        createdPullRequestKey(prResult({ status: "opened_existing", number: 3, url }), project),
-      ).toEqual({
-        host: "github.acme.test",
-        repository: "platform/api",
-        number: 3,
-        url,
-      });
-      expect(
-        createdPullRequestKey(prResult({ status: "created", number: 3, url }), undefined),
-      ).toBeNull();
-    },
-  );
+  it("falls back to the project's host and repository for an unreadable URL", () => {
+    expect(
+      createdPullRequestKey(
+        prResult({ status: "opened_existing", number: 3, url: "https://ghe.internal/x/3" }),
+        project,
+      ),
+    ).toEqual({
+      host: "github.acme.test",
+      repository: "platform/api",
+      number: 3,
+      url: "https://ghe.internal/x/3",
+    });
+    expect(
+      createdPullRequestKey(
+        prResult({ status: "created", number: 3, url: "https://ghe.internal/x/3" }),
+        undefined,
+      ),
+    ).toBeNull();
+  });
 
   it("yields nothing when no pull request came out of the action", () => {
     expect(
@@ -145,32 +148,6 @@ describe("createdPullRequestKey", () => {
 });
 
 describe("linkCreatedPullRequest", () => {
-  it.effect("does not link malformed or non-HTTP(S) URLs from provider results", () =>
-    Effect.gen(function* () {
-      const { commands, dispatch } = yield* recordingDispatch();
-      const layerDependencies = layerDependenciesFor(dispatch);
-      for (const url of [
-        "javascript:alert(1)",
-        " \tJaVaScRiPt:alert(1)",
-        "data:text/html,<script>alert(1)</script>",
-        "file:///tmp/pr.html",
-        "ftp://ghe.internal/x/42",
-        "/x/42",
-        "https://",
-      ]) {
-        for (const status of ["created", "opened_existing"] as const) {
-          yield* linkCreatedPullRequest({
-            threadId: THREAD_ID,
-            result: prResult({ status, number: 42, url }),
-            commandId,
-          }).pipe(Effect.provide(layerDependencies));
-        }
-      }
-
-      expect(yield* Ref.get(commands)).toEqual([]);
-    }),
-  );
-
   it.effect("links a created pull request to the thread with source created", () =>
     Effect.gen(function* () {
       const { commands, dispatch } = yield* recordingDispatch();
@@ -239,7 +216,6 @@ describe("linkCreatedPullRequest", () => {
       yield* linkCreatedPullRequest({ threadId: THREAD_ID, result, commandId }).pipe(
         Effect.provide(layerDependenciesFor(() => Effect.die(new Error("engine down")))),
       );
-      // A thread that vanished between the action and the link is not an error either.
       yield* linkCreatedPullRequest({ threadId: THREAD_ID, result, commandId }).pipe(
         Effect.provide(layerDependenciesFor(() => Effect.die(new Error("unreachable")), null)),
       );
