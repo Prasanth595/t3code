@@ -3957,8 +3957,7 @@ export default function Sidebar() {
                     children: [
                       ...snoozePresets.map((preset) => ({
                         id: `snooze:${preset.id}`,
-                        label: preset.label,
-                        detail: preset.whenLabel,
+                        label: `${preset.label} (${preset.whenLabel})`,
                         disabled: !canOperateThreads(selectedThreads),
                       })),
                       {

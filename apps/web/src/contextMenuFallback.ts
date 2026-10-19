@@ -213,31 +213,21 @@ export function showContextMenuFallback<T extends string>(
   position?: { x: number; y: number },
 ): Promise<T | null> {
   return new Promise<T | null>((resolve) => {
-    // Only one fallback menu can be open at a time: a new show must dismiss
-    // any prior one, or its DOM and listeners leak and close() can only ever
-    // reach the newest menu. Dismissing first hands focus back to the prior
-    // menu's invoker, which this menu then restores to.
+    // Restore the old invoker before capturing focus for a replacement menu.
     activeContextMenuDismiss?.();
     const previouslyFocusedElement =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const menuStack: HTMLDivElement[] = [];
     const submenuTriggerStack: Array<HTMLButtonElement | undefined> = [];
-    // Keyboard moves can land while the window lacks focus, when browsers
-    // skip focus events, so highlights are refreshed explicitly after them.
-    // Updaters are kept per open menu and dropped when that menu closes.
+    // Unfocused windows can skip focus events, so navigation also refreshes highlights.
     const highlightUpdaters = new Map<HTMLDivElement, Array<() => void>>();
     const refreshHighlights = () => {
       for (const updates of highlightUpdaters.values()) {
         for (const update of updates) update();
       }
     };
-    // Arrow keys scroll the menu under a resting pointer, and the browser then
-    // fires mouseenter on whatever item lands beneath it. Hover is ignored
-    // after a keyboard move until the pointer really moves again.
+    // Scrolling under a stationary pointer must not override keyboard focus.
     let isKeyboardDriven = false;
-    // The first item takes focus on open so screen readers announce it, but
-    // its highlight stays hidden after a right-click until a key or hover.
-    let isFocusRevealed = false;
     let lastPointer: { x: number; y: number } | null = null;
     const onMouseMove = (event: MouseEvent) => {
       if (lastPointer?.x !== event.clientX || lastPointer?.y !== event.clientY) {
@@ -266,6 +256,7 @@ export function showContextMenuFallback<T extends string>(
       for (const menu of menuStack) {
         menu.remove();
       }
+      highlightUpdaters.clear();
       if (shouldRestoreFocus && previouslyFocusedElement?.isConnected) {
         previouslyFocusedElement.focus({ preventScroll: true });
       }
@@ -275,16 +266,11 @@ export function showContextMenuFallback<T extends string>(
     const enabledItems = (menu: HTMLDivElement) =>
       [...menu.querySelectorAll<HTMLButtonElement>("button")].filter((item) => !item.disabled);
 
-    // Keyboard model follows the WAI-ARIA menu pattern: arrows move within the
-    // focused menu level, Right/Left enter and leave submenus, Escape backs out
-    // one level, and Tab closes the whole menu like a native one.
     const onKeyDown = (event: KeyboardEvent) => {
       const level = menuStack.findIndex((menu) =>
         isNodeWithinMenuStack(document.activeElement, [menu]),
       );
       const menu = menuStack[level];
-      // Focus left the menu (for example to a devtools field): only Escape
-      // still applies, so typing elsewhere is never hijacked.
       if (!menu) {
         if (event.key === "Escape") {
           event.preventDefault();
@@ -294,18 +280,9 @@ export function showContextMenuFallback<T extends string>(
       }
       const items = enabledItems(menu);
       const focusedIndex = items.findIndex((item) => item === document.activeElement);
-      // The first ArrowDown on a quiet open reveals the focused first item
-      // rather than skipping past it.
-      if (!isFocusRevealed && event.key === "ArrowDown" && focusedIndex !== -1) {
-        event.preventDefault();
-        isKeyboardDriven = true;
-        isFocusRevealed = true;
-        refreshHighlights();
-        return;
-      }
       const focusItem = (index: number) => {
         closeMenusFromLevel(level + 1);
-        const item = items[(index + items.length) % items.length];
+        const item = items.length > 0 ? items[(index + items.length) % items.length] : undefined;
         item?.focus({ preventScroll: true });
         item?.scrollIntoView({ block: "nearest" });
       };
@@ -338,15 +315,18 @@ export function showContextMenuFallback<T extends string>(
           }
           break;
         case "Tab":
-          // Focus returns to the invoker and Tab carries on from there.
+          // Let the browser continue Tab traversal from the invoker.
           cleanup(null);
+          return;
+        case "Enter":
+        case " ":
+          isKeyboardDriven = true;
           return;
         default:
           return;
       }
       event.preventDefault();
       isKeyboardDriven = true;
-      isFocusRevealed = true;
       refreshHighlights();
     };
 
@@ -365,8 +345,6 @@ export function showContextMenuFallback<T extends string>(
       cleanup(null);
     };
 
-    // Focus inside a closing submenu moves to the item that opened it, so the
-    // arrow keys keep working whether the submenu closed by key or by hover.
     const closeMenusFromLevel = (level: number) => {
       const trigger = submenuTriggerStack[level];
       const hadFocus = isNodeWithinMenuStack(document.activeElement, menuStack.slice(level));
@@ -439,7 +417,6 @@ export function showContextMenuFallback<T extends string>(
         const button = document.createElement("button");
         button.type = "button";
         button.setAttribute("role", "menuitem");
-        // Arrow keys move between items; Tab leaves the menu instead.
         button.tabIndex = -1;
         button.dataset.label = item.label;
         const isDisabled = item.disabled === true;
@@ -487,17 +464,6 @@ export function showContextMenuFallback<T extends string>(
         label.textContent = item.label;
         button.appendChild(label);
 
-        if (item.detail) {
-          // The comma gives screen readers a pause between label and detail.
-          button.setAttribute("aria-label", `${item.label}, ${item.detail}`);
-          const detail = document.createElement("span");
-          detail.className = "ms-auto shrink-0 ps-4 text-muted-foreground text-xs";
-          detail.style.cssText =
-            "margin-inline-start:auto;flex-shrink:0;padding-inline-start:1rem;color:var(--contrast-muted-foreground);font-size:0.75rem;";
-          detail.textContent = item.detail;
-          button.appendChild(detail);
-        }
-
         if (hasChildren) {
           button.setAttribute("aria-haspopup", "menu");
           button.setAttribute("aria-expanded", "false");
@@ -514,12 +480,9 @@ export function showContextMenuFallback<T extends string>(
         }
 
         if (!isDisabled) {
-          // Hover focuses an item, so the focused item is the one highlight.
-          // An open submenu keeps its trigger highlighted, like native menus.
           const updateHighlight = () => {
             const isHighlighted =
-              (isFocusRevealed && document.activeElement === button) ||
-              button.getAttribute("aria-expanded") === "true";
+              document.activeElement === button || button.getAttribute("aria-expanded") === "true";
             button.style.background = isHighlighted
               ? isLeafDestructive
                 ? "color-mix(in srgb, var(--destructive) 10%, transparent)"
@@ -533,12 +496,13 @@ export function showContextMenuFallback<T extends string>(
                 ? "var(--destructive-foreground)"
                 : "var(--contrast-foreground)";
           };
-          button.addEventListener("mouseenter", () => {
-            if (isKeyboardDriven) return;
-            isFocusRevealed = true;
+          const focusFromPointer = () => {
+            if (isKeyboardDriven || document.activeElement === button) return;
             button.focus({ preventScroll: true });
             refreshHighlights();
-          });
+          };
+          button.addEventListener("mouseenter", focusFromPointer);
+          button.addEventListener("mousemove", focusFromPointer);
           button.addEventListener("focus", updateHighlight);
           button.addEventListener("blur", updateHighlight);
           menuHighlightUpdaters.push(updateHighlight);
@@ -561,23 +525,27 @@ export function showContextMenuFallback<T extends string>(
                 clampMenuPosition(childMenu, rect.left - childRect.width - 4, rect.top);
               }
               if (focusFirstItem) {
-                isFocusRevealed = true;
-                [...childMenu.querySelectorAll<HTMLButtonElement>("button")]
-                  .find((childButton) => !childButton.disabled)
-                  ?.focus();
+                (enabledItems(childMenu)[0] ?? childMenu).focus({ preventScroll: true });
+                refreshHighlights();
               }
             };
-            button.addEventListener("mouseenter", () => {
-              if (!isKeyboardDriven) openSubmenu();
-            });
+            const openFromPointer = () => {
+              if (!isKeyboardDriven && button.getAttribute("aria-expanded") !== "true") {
+                openSubmenu();
+              }
+            };
+            button.addEventListener("mouseenter", openFromPointer);
+            button.addEventListener("mousemove", openFromPointer);
             button.addEventListener("click", (event) => {
               event.preventDefault();
               openSubmenu(true);
             });
           } else {
-            button.addEventListener("mouseenter", () => {
+            const closeFromPointer = () => {
               if (!isKeyboardDriven) closeMenusFromLevel(level + 1);
-            });
+            };
+            button.addEventListener("mouseenter", closeFromPointer);
+            button.addEventListener("mousemove", closeFromPointer);
             button.addEventListener("click", () => {
               if (canDismissFromPointer) cleanup(item.id);
             });
@@ -597,14 +565,8 @@ export function showContextMenuFallback<T extends string>(
       menuStack[level] = menu;
       submenuTriggerStack[level] = parentTrigger;
       if (level === 0) {
-        const firstItem = enabledItems(menu)[0];
-        (firstItem ?? menu).focus({ preventScroll: true });
-        // Browsers mark focus moved during a keyboard event (Shift+F10, the
-        // Menu key) as focus-visible, but not focus moved by a right-click.
-        if (firstItem?.matches?.(":focus-visible")) {
-          isFocusRevealed = true;
-          refreshHighlights();
-        }
+        (enabledItems(menu)[0] ?? menu).focus({ preventScroll: true });
+        refreshHighlights();
       }
 
       requestAnimationFrame(() => {

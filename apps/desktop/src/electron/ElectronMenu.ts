@@ -76,10 +76,7 @@ function normalizeContextMenuItems(source: readonly ContextMenuItem[]): ContextM
 
     const normalizedItem: ContextMenuItem = {
       id: sourceItem.id,
-      label:
-        typeof sourceItem.detail === "string" && sourceItem.detail.length > 0
-          ? `${sourceItem.label} (${sourceItem.detail})`
-          : sourceItem.label,
+      label: sourceItem.label,
       destructive: sourceItem.destructive === true,
       disabled: sourceItem.disabled === true,
       ...(sourceItem.separatorBefore === true ? { separatorBefore: true } : {}),
