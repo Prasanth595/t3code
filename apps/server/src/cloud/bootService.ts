@@ -53,8 +53,11 @@ function quoteSystemdValue(value: string): string {
     : escaped;
 }
 
-export function bootServiceBaseDirOf(contents: string): string | undefined {
-  const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
+function bootServiceEnvironmentValueOf(
+  contents: string,
+  name: "T3CODE_HOME" | "T3CODE_INSTALL_BIN_DIR",
+): string | undefined {
+  const systemd = new RegExp(`^Environment=${name}=(.*)$`, "m").exec(contents)?.[1];
   if (systemd !== undefined) {
     const raw = systemd.trim();
     const unquoted =
@@ -63,11 +66,15 @@ export function bootServiceBaseDirOf(contents: string): string | undefined {
         : raw;
     return unquoted.replaceAll("%%", "%");
   }
-  const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
+  const plist = new RegExp(`<key>${name}</key>\\s*<string>([^<]*)</string>`).exec(contents)?.[1];
   if (plist !== undefined) {
     return plist.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
   }
   return undefined;
+}
+
+export function bootServiceBaseDirOf(contents: string): string | undefined {
+  return bootServiceEnvironmentValueOf(contents, "T3CODE_HOME");
 }
 
 export interface BootServicePlan {
@@ -75,6 +82,7 @@ export interface BootServicePlan {
   readonly baseDir: string;
   readonly logPath: string;
   readonly unitPath: string;
+  readonly installBinDir?: string;
 }
 
 /** Pure renderer: service units cannot rely on the user's shell or PATH. */
@@ -90,6 +98,9 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "Type=simple",
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
+    ...(plan.installBinDir === undefined
+      ? []
+      : [`Environment=T3CODE_INSTALL_BIN_DIR=${quoteSystemdValue(plan.installBinDir)}`]),
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
     `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark an explicit stop before it signals the server.
@@ -155,6 +166,12 @@ export function renderBootServicePlist(
     `    <string>${escapeXmlText(options.environmentPath)}</string>`,
     `    <key>T3CODE_HOME</key>`,
     `    <string>${escapeXmlText(plan.baseDir)}</string>`,
+    ...(plan.installBinDir === undefined
+      ? []
+      : [
+          `    <key>T3CODE_INSTALL_BIN_DIR</key>`,
+          `    <string>${escapeXmlText(plan.installBinDir)}</string>`,
+        ]),
     `    <key>${BOOT_SERVICE_UNIT_ENV}</key>`,
     `    <string>${BOOT_SERVICE_PLIST_FILE}</string>`,
     `  </dict>`,
@@ -533,6 +550,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   );
   const homeDir = yield* Config.String("HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.String("PATH").pipe(Config.withDefault(""));
+  const installBinDir = Option.getOrUndefined(
+    yield* Config.String("T3CODE_INSTALL_BIN_DIR").pipe(Config.option),
+  );
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
@@ -589,11 +609,16 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         );
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-  const plan: BootServicePlan = {
-    program: [runtimePaths.entryPath, "__service-launcher"],
-    baseDir: input.baseDir,
-    logPath,
-    unitPath,
+  const planForUnit = (unit: string): BootServicePlan => {
+    const effectiveInstallBinDir =
+      installBinDir || bootServiceEnvironmentValueOf(unit, "T3CODE_INSTALL_BIN_DIR");
+    return {
+      program: [runtimePaths.entryPath, "__service-launcher"],
+      baseDir: input.baseDir,
+      logPath,
+      unitPath,
+      ...(effectiveInstallBinDir ? { installBinDir: effectiveInstallBinDir } : {}),
+    };
   };
 
   const requireManager = Effect.suspend(() =>
@@ -785,7 +810,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* runSteps(manager.stop);
     }
 
-    yield* Effect.gen(function* () {
+    return yield* Effect.gen(function* () {
       if (installed) {
         const previousStateText = yield* fs.readFileString(statePath).pipe(Effect.option);
         if (Option.isSome(previousStateText)) {
@@ -816,6 +841,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         // leave it looking current.
         yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
       }
+      const plan = planForUnit(installed ? yield* fs.readFileString(unitPath) : "");
       yield* writeDurably(
         statePath,
         // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned document.
@@ -846,6 +872,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         yield* runSteps(manager.activate);
         yield* fs.remove(restartPendingPath, { force: true });
       }
+      return plan;
     }).pipe(
       Effect.mapError((cause) =>
         cause._tag === "PlatformError" ? new BootServiceInstallError({ cause }) : cause,
@@ -854,7 +881,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         installed && start ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
       ),
     );
-    return plan;
   });
 
   const restart: BootService["Service"]["restart"] = Effect.gen(function* () {
@@ -985,7 +1011,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       problems,
       current:
         problems.length === 0 &&
-        normalizeUnit(unit) === normalizeUnit(detectedManager.render(plan)) &&
+        normalizeUnit(unit) === normalizeUnit(detectedManager.render(planForUnit(unit))) &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&

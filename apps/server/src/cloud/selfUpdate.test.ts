@@ -97,6 +97,8 @@ const makeHarness = Effect.fn("test.make_self_update_harness")(function* (
   });
   const launcher = ServiceLauncherClient.ServiceLauncherClient.of({
     managed: options.managed ?? true,
+    trialPending: false,
+    repointLaunchers: () => Effect.void,
     requestUpdate:
       options.requestUpdate ??
       (() =>

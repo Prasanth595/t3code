@@ -1,11 +1,16 @@
 import type { ServerSelfUpdateOutcome } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Context from "effect/Context";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { pinnedRuntimePaths, pinnedRuntimeVersionsDir } from "./pinnedRuntime.ts";
 import {
   decodeServiceLauncherContext,
   decodeServiceLauncherParentMessage,
@@ -97,6 +102,11 @@ export class ServiceLauncherClient extends Context.Service<
   ServiceLauncherClient,
   {
     readonly managed: boolean;
+    readonly trialPending: boolean;
+    readonly repointLaunchers: (input: {
+      readonly baseDir: string;
+      readonly targetVersion: string;
+    }) => Effect.Effect<void>;
     readonly requestUpdate: (input: {
       readonly targetVersion: string;
       readonly dbPath: string;
@@ -143,6 +153,10 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
   readonly currentVersion?: string;
 }) {
   const { host, context, managed } = yield* resolveStartup(options);
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const environment = yield* HostProcess.Environment;
+  const platform = yield* HostProcess.Platform;
 
   const exchange = (
     message: ServiceLauncherChildMessage,
@@ -240,8 +254,83 @@ export const make = Effect.fn("cloud.service_launcher_client.make")(function* (o
         )
       : Effect.succeed(outcome);
 
+  const repointLaunchers = Effect.fn("cloud.service_launcher_client.repoint_launchers")(
+    function* (input: { readonly baseDir: string; readonly targetVersion: string }) {
+      if (platform !== "linux" && platform !== "darwin") return;
+      const installBinDir =
+        environment["T3CODE_INSTALL_BIN_DIR"] ||
+        (environment["HOME"] ? path.join(environment["HOME"], ".local", "bin") : undefined);
+      const candidates = new Set<string>();
+      if (installBinDir !== undefined) candidates.add(path.join(installBinDir, "t3"));
+      for (const directory of (environment["PATH"] ?? "").split(":")) {
+        if (directory.length === 0) continue;
+        const candidate = path.join(directory, "t3");
+        if (
+          yield* fs.exists(candidate).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not check the t3 command on PATH", {
+                launchedAs: candidate,
+                cause,
+              }).pipe(Effect.as(false)),
+            ),
+          )
+        ) {
+          candidates.add(candidate);
+          break;
+        }
+      }
+      const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
+      const target = pinnedRuntimePaths(path, input.baseDir, input.targetVersion, platform);
+      for (const launchedAs of candidates) {
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const linkTarget = yield* fs.readLink(launchedAs).pipe(
+              Effect.asSome,
+              Effect.catchIf(
+                (error) =>
+                  error.reason._tag === "NotFound" ||
+                  (error.reason.cause as NodeJS.ErrnoException | undefined)?.code === "EINVAL",
+                () => Effect.succeedNone,
+              ),
+            );
+            if (Option.isNone(linkTarget)) return;
+            const relative = path.relative(
+              versionsDir,
+              path.resolve(path.dirname(launchedAs), linkTarget.value),
+            );
+            if (
+              relative.length === 0 ||
+              relative === ".." ||
+              relative.startsWith(`..${path.sep}`) ||
+              path.isAbsolute(relative)
+            )
+              return;
+            const temporary = yield* fs.makeTempDirectoryScoped({
+              directory: path.dirname(launchedAs),
+              prefix: ".t3-launcher-",
+            });
+            const link = path.join(temporary, "t3");
+            yield* fs.symlink(target.entryPath, link);
+            yield* fs.rename(link, launchedAs);
+          }),
+        ).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterrupts(cause)
+              ? Effect.interrupt
+              : Effect.logWarning("Could not move the t3 command to the updated version", {
+                  launchedAs,
+                  cause,
+                }),
+          ),
+        );
+      }
+    },
+  );
+
   return ServiceLauncherClient.of({
     managed,
+    trialPending: pending !== undefined,
+    repointLaunchers,
     requestUpdate,
     prepareTrial,
   });

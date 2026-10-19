@@ -643,6 +643,13 @@ const make = (options?: StartupOptions) =>
       );
 
       const updateOutcome = yield* launcher.prepareTrial;
+      // Stored outcomes also appear on later starts, when user pins must stay put.
+      if (launcher.trialPending && updateOutcome?.status === "committed") {
+        yield* launcher.repointLaunchers({
+          baseDir: serverConfig.baseDir,
+          targetVersion: updateOutcome.targetVersion,
+        });
+      }
 
       yield* Effect.logDebug("startup phase: publishing welcome event", {
         environmentId: environment.environmentId,
