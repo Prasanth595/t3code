@@ -192,7 +192,14 @@ function ThreadNavigationSidebarPane(
     }
     return matches;
   }, [threadSearch.matches]);
-  const matchedThreadKeys = new Set(threadSearch.matches.map(threadSearchMatchKey));
+  // listItems and the values it derives from: the compiler can't memoize them because they stay
+  // live across later hook calls. A new listItems hands LegendList new data and re-registers every
+  // thread jump shortcut, which re-renders the app-root keyboard command provider and resends the
+  // native command list.
+  const matchedThreadKeys = useMemo(
+    () => new Set(threadSearch.matches.map(threadSearchMatchKey)),
+    [threadSearch.matches],
+  );
   const projectScopeKey = options.selectedProjectKey;
   const resolvedProjectKey = resolveScratchProjectScopeKey(projectScopeKey, projects, {
     sidebarProjectGroupingMode: options.projectGroupingMode,
@@ -231,17 +238,22 @@ function ThreadNavigationSidebarPane(
       ),
     [projectScopes],
   );
-  const selectedProjectScope =
-    projectScopes.find((scope) => scope.key === resolvedProjectKey) ?? null;
+  const selectedProjectScope = useMemo(
+    () => projectScopes.find((scope) => scope.key === resolvedProjectKey) ?? null,
+    [projectScopes, resolvedProjectKey],
+  );
   const selectedProjectKey = selectedProjectScope?.key ?? null;
-  const selectedProjectRefs =
-    selectedProjectScope === null
-      ? null
-      : new Set(
-          selectedProjectScope.projectRefs.map((projectRef) =>
-            scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+  const selectedProjectRefs = useMemo(
+    () =>
+      selectedProjectScope === null
+        ? null
+        : new Set(
+            selectedProjectScope.projectRefs.map((projectRef) =>
+              scopedProjectKey(projectRef.environmentId, projectRef.projectId),
+            ),
           ),
-        );
+    [selectedProjectScope],
+  );
   const projectByKey = useMemo(() => {
     const map = new Map<string, EnvironmentProject>();
     for (const project of projects) {
@@ -299,7 +311,7 @@ function ThreadNavigationSidebarPane(
   // Up/down menu availability for every card, computed once per section per
   // rebuild (see computeThreadMoveAvailability): per-thread planner calls made
   // list construction quadratic, and this list rebuilds on every minute tick.
-  const threadMoveAvailability = (() => {
+  const threadMoveAvailability = useMemo(() => {
     const sectionAvailability = (section: "pinned" | "active") =>
       computeThreadMoveAvailability({
         allThreads: threads,
@@ -321,8 +333,18 @@ function ThreadNavigationSidebarPane(
       ...sectionAvailability("pinned"),
       ...(workingShelfEnabled ? [] : sectionAvailability("active")),
     ]);
-  })();
-  const threadListV2Layout = (() => {
+  }, [
+    activeReorderEnvironmentIds,
+    now,
+    pendingOrder,
+    pinReorderEnvironmentIds,
+    queuedThreadKeys,
+    settlementEnvironmentIds,
+    snoozeEnvironmentIds,
+    threads,
+    workingShelfEnabled,
+  ]);
+  const threadListV2Layout = useMemo(() => {
     threadListInboxReturns.observe(workingShelfEnabled ? threads : null);
     return buildThreadListV2Items({
       pendingOrder,
@@ -343,7 +365,24 @@ function ThreadNavigationSidebarPane(
       settledShelfExpanded,
       selectedThreadKey: props.selectedThreadKey ?? null,
     });
-  })();
+  }, [
+    matchedThreadKeys,
+    now,
+    options.selectedEnvironmentId,
+    pendingOrder,
+    props.searchQuery,
+    props.selectedThreadKey,
+    queuedThreadKeys,
+    selectedProjectScope,
+    settledShelfExpanded,
+    settledVisibleCount,
+    settlementEnvironmentIds,
+    snoozeEnvironmentIds,
+    snoozedShelfExpanded,
+    threads,
+    workingShelfEnabled,
+    workingShelfExpanded,
+  ]);
   const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
   useEffect(() => {
     if (nextSnoozeWakeAt === null) return;
@@ -359,7 +398,7 @@ function ThreadNavigationSidebarPane(
     // unchanged: after a clamped fire (wake beyond the 32-bit setTimeout
     // range) the boundary string is identical and the chain would die.
   }, [nextSnoozeWakeAt, snoozeWakeTick]);
-  const listItems = ((): readonly SidebarListItem[] => {
+  const listItems = useMemo((): readonly SidebarListItem[] => {
     const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
     const v2PendingTasks = pendingTasks.filter(
       (pendingTask) =>
@@ -398,7 +437,21 @@ function ThreadNavigationSidebarPane(
       });
     }
     return items;
-  })();
+  }, [
+    nowMinute,
+    options.selectedEnvironmentId,
+    pendingTasks,
+    props.searchQuery,
+    queuedThreadKeys,
+    threadMoveAvailability,
+    selectedProjectRefs,
+    settledShelfExpanded,
+    shelfPreferencesLoaded,
+    snoozedShelfExpanded,
+    snoozeEnvironmentIds,
+    threadListV2Layout,
+    workingShelfExpanded,
+  ]);
   const listMenuActions = [
     {
       id: "environment",

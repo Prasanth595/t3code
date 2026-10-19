@@ -2,7 +2,7 @@ import * as Dialog from "../../components/ui/Dialog";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { environmentSession } from "../../state/session";
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 import type {
   EnvironmentId,
@@ -353,12 +353,18 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     isScratchProject(selectedProject, selectedEnvironmentServerConfig?.scratchWorkspaceRoot);
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
-  const scratchEnvironments = connectedEnvironments.filter(
-    (environment) =>
-      availableScratchWorkspaceRoot(
-        environment.connectionState,
-        serverConfigs.get(environment.environmentId),
-      ) !== null,
+  // The compiler can't memoize the scratch environments: they stay live across later hook
+  // calls. A new list here changes the new-task context value on every render in scratch drafts.
+  const scratchEnvironments = useMemo(
+    () =>
+      connectedEnvironments.filter(
+        (environment) =>
+          availableScratchWorkspaceRoot(
+            environment.connectionState,
+            serverConfigs.get(environment.environmentId),
+          ) !== null,
+      ),
+    [connectedEnvironments, serverConfigs],
   );
 
   const selectedRepositoryKey = selectedProject?.repositoryIdentity
@@ -368,7 +374,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // workspaceRoot, and an "" basename would reject every real host below.
   const selectedWorkspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
   const selectedProjectTitle = selectedProject?.title ?? null;
-  const environments = (() => {
+  const environments = useMemo(() => {
     if (isScratchDraft) {
       return scratchEnvironments.map((environment) => ({
         environmentId: environment.environmentId,
@@ -413,7 +419,15 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       });
     }
     return result;
-  })();
+  }, [
+    isScratchDraft,
+    projects,
+    savedConnectionsById,
+    scratchEnvironments,
+    selectedProjectTitle,
+    selectedRepositoryKey,
+    selectedWorkspaceBasename,
+  ]);
 
   const selectedProjectDraftKey = editingPendingTask
     ? pendingTaskDraftKey(editingPendingTask.messageId)

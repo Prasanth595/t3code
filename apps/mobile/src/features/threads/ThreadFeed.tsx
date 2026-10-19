@@ -2091,22 +2091,38 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     reportHeaderMaterialVisibility(false);
   }, [feedThreadKey, reportHeaderMaterialVisibility]);
 
-  const presentedFeed = appendPendingThreadMessages(
-    deriveThreadFeedPresentation(
+  // The compiler can't memoize this: it stays live across later hook calls. A new array here
+  // reruns the whole feed derivation on every render and hands LegendList new data, which
+  // re-pins the list through maintainScrollAtEnd.
+  const presentedFeed = useMemo(
+    () =>
+      appendPendingThreadMessages(
+        deriveThreadFeedPresentation(
+          props.feed,
+          props.latestRun,
+          expandedTurnIds,
+          new Set(
+            Object.entries(expandedWorkGroups)
+              .filter(([, expanded]) => expanded)
+              .map(([groupId]) => groupId),
+          ),
+          props.activeWorkStartedAt,
+          props.runlessWorkActive ?? false,
+          feedCache,
+        ),
+        props.feed,
+        props.queuedMessages,
+      ),
+    [
+      expandedTurnIds,
+      expandedWorkGroups,
+      feedCache,
+      props.activeWorkStartedAt,
       props.feed,
       props.latestRun,
-      expandedTurnIds,
-      new Set(
-        Object.entries(expandedWorkGroups)
-          .filter(([, expanded]) => expanded)
-          .map(([groupId]) => groupId),
-      ),
-      props.activeWorkStartedAt,
-      props.runlessWorkActive ?? false,
-      feedCache,
-    ),
-    props.feed,
-    props.queuedMessages,
+      props.queuedMessages,
+      props.runlessWorkActive,
+    ],
   );
   const setupAnchorIndex = presentedFeed.findIndex(
     (entry) => entry.type === "message" && entry.message.role === "user",
