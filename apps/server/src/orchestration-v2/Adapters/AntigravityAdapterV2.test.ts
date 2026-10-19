@@ -716,38 +716,40 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 
-  it.effect("lets Stop end the running command and respawns the agent for the next turn", () =>
-    Effect.gen(function* () {
-      const mock = yield* openMockSession("command-stopped", {
-        T3_ACP_EMIT_COMMAND_OUTLIVING_PROMPT: "1",
-      });
-      yield* mock.startTurn(1);
+  it.effect.each(["Stop", "fallback restart"])(
+    "lets %s end the running command and respawns the agent for the next turn",
+    (action) =>
+      Effect.gen(function* () {
+        const mock = yield* openMockSession("command-stopped", {
+          T3_ACP_EMIT_COMMAND_OUTLIVING_PROMPT: "1",
+        });
+        yield* mock.startTurn(1);
 
-      yield* mock.waitForReply;
-      const commandPid = yield* mock.readCommandPid;
-      assert.isTrue(pidIsRunning(commandPid));
-      const agentPid = yield* mock.readAgentPid;
-      assert.isTrue(pidIsRunning(agentPid));
-      const providerTurnId = mock.commandItem("command-outliving-prompt")?.providerTurnId;
-      if (providerTurnId == null) return yield* Effect.die("missing command item");
+        yield* mock.waitForReply;
+        const commandPid = yield* mock.readCommandPid;
+        assert.isTrue(pidIsRunning(commandPid));
+        const agentPid = yield* mock.readAgentPid;
+        assert.isTrue(pidIsRunning(agentPid));
+        const providerTurnId = mock.commandItem("command-outliving-prompt")?.providerTurnId;
+        if (providerTurnId == null) return yield* Effect.die("missing command item");
 
-      yield* mock.session.interruptTurn({
-        providerThread: mock.providerThread,
-        providerTurnId,
-        requestRuntimeRestart: true,
-      });
-      assert.equal(yield* mock.waitForTerminal, "interrupted");
-      assert.equal(mock.commandItem("command-outliving-prompt")?.status, "interrupted");
-      assert.isFalse(pidIsRunning(commandPid), "Stop ends the command");
-      assert.isFalse(pidIsRunning(agentPid), "Stop ends the ACP agent");
+        yield* mock.session.interruptTurn({
+          providerThread: mock.providerThread,
+          providerTurnId,
+          ...(action === "Stop" ? { requestRuntimeRestart: true } : {}),
+        });
+        assert.equal(yield* mock.waitForTerminal, "interrupted");
+        assert.equal(mock.commandItem("command-outliving-prompt")?.status, "interrupted");
+        assert.isFalse(pidIsRunning(commandPid), `${action} ends the command`);
+        assert.isFalse(pidIsRunning(agentPid), `${action} ends the ACP agent`);
 
-      yield* mock.startTurn(2);
-      yield* mock.waitForReply;
-      assert.isTrue(pidIsRunning(yield* mock.readCommandPid), "turn 2 starts a command");
-      const nextAgentPid = yield* mock.readAgentPid;
-      assert.notEqual(nextAgentPid, agentPid, "turn 2 respawns the ACP agent");
-      assert.isTrue(pidIsRunning(nextAgentPid));
-    }).pipe(Effect.provide(layerSession), Effect.scoped),
+        yield* mock.startTurn(2);
+        yield* mock.waitForReply;
+        assert.isTrue(pidIsRunning(yield* mock.readCommandPid), "turn 2 starts a command");
+        const nextAgentPid = yield* mock.readAgentPid;
+        assert.notEqual(nextAgentPid, agentPid, "turn 2 respawns the ACP agent");
+        assert.isTrue(pidIsRunning(nextAgentPid));
+      }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 
   it.effect("completes a turn whose only open work is a subagent batch", () =>
