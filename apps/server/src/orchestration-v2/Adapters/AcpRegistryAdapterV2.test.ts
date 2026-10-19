@@ -86,7 +86,6 @@ const layerRegistry = Layer.succeed(
   ),
 );
 
-// Adapters given an explicit runtime never resolve through the catalog.
 const layerInjectedRuntimeCatalog = Layer.mock(AcpRegistrySupport.AcpRegistryCatalog)({
   resolve: () => Effect.die("the runtime is injected"),
 });
