@@ -3477,6 +3477,47 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }).pipe(Effect.scoped),
   );
 
+  it.effect("keeps a foreground subagent running when a background shell reconnects", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, id: PROMPT_ID, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        ...shellLaunch("call-sh_1", "sh_1"),
+        // The child is not bound yet while its foreground tool input is streaming.
+        event("session.tool.input.started", {
+          sessionID: SESSION,
+          assistantMessageID: "msg_assistant",
+          id: "call-fg",
+          name: "subagent",
+        }),
+        ...reconnected({ [SESSION]: { type: "running" } }),
+        ...shellStatus("sh_1", "running"),
+        out("session.inbox.list", { sessionID: SESSION }),
+        replyData("session.inbox.list", []),
+        ...openRequests([]),
+        readMarker("reconnected"),
+      ]);
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil(
+          (event) =>
+            event.type === "provider_thread.updated" &&
+            event.providerThread.nativeMetadata?.modelSelection?.model === "opencode/reconnected",
+        ),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+      yield* runtime.startTurn(turnInput(thread));
+      const collected = yield* Fiber.join(events);
+      assert.deepEqual(
+        collected.flatMap((event) =>
+          event.type === "subagent.updated" ? [event.subagent.status] : [],
+        ),
+        ["running"],
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("keeps a turn still running after a reconnect open for its next events", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
