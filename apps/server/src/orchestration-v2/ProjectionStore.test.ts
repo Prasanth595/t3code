@@ -1551,6 +1551,79 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           providerThreadIds: [providerThreadId],
         },
       );
+
+      // Older versions left completed predecessors unsuperseded; IDs do not order replacements.
+      const newerPlan = {
+        ...completedPlan,
+        id: PlanId.make("plan:legacy-newer"),
+        status: "active" as const,
+        explanation: "More work remains",
+        steps: [{ id: "new", text: "Finish the new task", status: "pending" as const }],
+      };
+      yield* projectionStore.apply({
+        id: EventId.make("event:notification-turn-pages:plan:legacy-newer"),
+        type: "plan.updated",
+        threadId,
+        occurredAt: now,
+        payload: newerPlan,
+      });
+      for (const [plan, itemOrdinal] of [
+        [completedPlan, 7],
+        [newerPlan, 8],
+      ] as const) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:notification-turn-pages:legacy-item:${itemOrdinal}`),
+          type: "turn-item.updated",
+          threadId,
+          runId: plan.runId,
+          nodeId: plan.nodeId,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`turn-item:notification-turn-pages:${itemOrdinal}`),
+            threadId,
+            runId: plan.runId,
+            nodeId: plan.nodeId,
+            providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: itemOrdinal,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "todo_list",
+            planId: plan.id,
+            steps: plan.steps,
+            explanation: plan.explanation,
+          },
+        });
+      }
+      const legacySnapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 77,
+        userTurnLimit: 10,
+      });
+      assert.isTrue(legacySnapshot.projection.turnItems.every((item) => item.ordinal > 8));
+      assert.deepEqual(
+        legacySnapshot.projection.plans.findLast((plan) => plan.runId === newerPlan.runId),
+        newerPlan,
+      );
+      const legacyBounded = buildBoundedThreadProjection({
+        projection: legacySnapshot.projection,
+        snapshotSequence: 0,
+      });
+      assert.deepEqual(
+        {
+          ownerPlans: legacyBounded.projection.plans.filter(
+            (plan) => plan.runId === newerPlan.runId,
+          ),
+          oldRunIds: legacyBounded.projection.runs
+            .filter((run) => run.ordinal < 261)
+            .map((run) => run.id),
+        },
+        { ownerPlans: [newerPlan], oldRunIds: [newerPlan.runId] },
+      );
     }),
   );
 
