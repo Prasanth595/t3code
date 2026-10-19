@@ -340,33 +340,45 @@ describe("V2 session presentation", () => {
         }),
       );
 
-    it("rewinds a resent message to the thread start after its predecessor was rolled back", () => {
-      // Run 1 was rolled back and is hidden; run 2 was stopped after its checkpoint.
-      expect(targets([2], [checkpoint(2)])).toEqual({ "user-2": 0 });
-    });
-
-    it("keeps a run stopped before its own checkpoint editable", () => {
-      // Run 2 was stopped before the provider started, so it never captured one.
-      expect(targets([2], [checkpoint(1, "stale")])).toEqual({ "user-2": 0 });
-      expect(targets([1, 2], [checkpoint(1)])).toEqual({ "user-1": 0, "user-2": 1 });
-    });
-
-    it("targets the previous visible run instead of the rolled-back ordinal before it", () => {
-      expect(targets([1, 3], [checkpoint(1), checkpoint(2, "stale"), checkpoint(3)])).toEqual({
-        "user-1": 0,
-        "user-3": 1,
+    it("keeps rewound and stopped runs editable at the previous visible checkpoint", () => {
+      // Runs 1 and 3 were rewound; run 5 stopped without capturing a checkpoint.
+      expect(targets([2, 4, 5], [checkpoint(2), checkpoint(3, "stale"), checkpoint(4)])).toEqual({
+        "user-2": 0,
+        "user-4": 2,
+        "user-5": 4,
       });
+      expect(targets([2], [checkpoint(1, "stale")])).toEqual({ "user-2": 0 });
     });
 
-    it("hides the action when the previous run cannot be restored", () => {
+    it("hides edit when the predecessor is unavailable or the run is unsettled", () => {
       expect(targets([1, 2], [checkpoint(2)])).toEqual({ "user-1": 0 });
-      // Earlier history is still paged out, so the first loaded run's predecessor is unknown.
+      expect(targets([1, 2], [checkpoint(1, "stale"), checkpoint(2)])).toEqual({ "user-1": 0 });
+      // Earlier history is paged out, so the first loaded run's predecessor is unknown.
       expect(
         targets([4, 5], [checkpoint(4), checkpoint(5)], { threadStartCheckpointReady: false }),
       ).toEqual({ "user-5": 4 });
-      expect(targets([1, 2], [checkpoint(1)], { unsettledRunId: runId(2) })).toEqual({
-        "user-1": 0,
+      expect(targets([1, 2], [checkpoint(1), checkpoint(2)], { unsettledRunId: runId(2) })).toEqual(
+        { "user-1": 0 },
+      );
+    });
+
+    it("leaves inherited history uneditable and restores the first local run to thread start", () => {
+      const fixture = makeStreamingTimelineFixture();
+      const inheritedEntries = deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: fixture.visibleTurnItems
+          .filter(({ item }) => item.runId === fixture.historyRunId)
+          .map((item) => ({ ...item, visibility: "inherited" as const })),
+        optimisticMessages: [],
       });
+      expect(
+        Object.fromEntries(
+          deriveRevertTurnCountByUserMessageId({
+            timelineEntries: [...inheritedEntries, ...turn(2)],
+            checkpoints: [{ ...checkpoint(7), runId: fixture.historyRunId }, checkpoint(2)],
+            threadStartCheckpointReady: true,
+          }),
+        ),
+      ).toEqual({ "user-2": 0 });
     });
   });
 
