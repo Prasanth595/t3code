@@ -426,37 +426,53 @@ describe("runProcess", () => {
     }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
   );
 
-  it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "terminates descendants when a wrapper does not forward timeout signals",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-process-tree-" });
-        const probe = yield* makeProcessProbe;
-        const helper = writeFakeCli({
-          directory,
-          name: "wrapper",
-          source: `
+  for (const wrapperExit of ["timeout", "success"] as const) {
+    it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+      `terminates descendants after wrapper ${wrapperExit}`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-process-tree-" });
+          const probe = yield* makeProcessProbe;
+          const helper = writeFakeCli({
+            directory,
+            name: "wrapper",
+            source: `
           import { spawn } from "node:child_process";
           process.on("SIGTERM", () => {});
-          const child = spawn(process.execPath, ["--input-type=module", "-e", ${JSON.stringify(processProbeSource(probe.port))}], { stdio: "ignore" });
-          child.on("exit", () => process.exit(0));
+          const child = spawn(process.execPath, ["--input-type=module", "-e", ${JSON.stringify(`
+            ${processProbeSource(probe.port)}
+            probe.once("connect", () => process.send("ready"));
+          `)}], { stdio: ["ignore", "ignore", "ignore", "ipc"] });
+          ${wrapperExit === "success" ? 'child.once("message", () => process.exit(0));' : 'child.on("exit", () => process.exit(0));'}
         `,
-        });
-        const runner = yield* ProcessRunner.ProcessRunner;
-        const fiber = yield* runner
-          .run({ command: helper, args: [], timeout: "1 second" })
-          .pipe(Effect.flip, Effect.forkScoped);
-        yield* probe.started;
+          });
+          const runner = yield* ProcessRunner.ProcessRunner;
+          const fiber = yield* runner
+            .run({ command: helper, args: [], timeout: "1 second" })
+            .pipe(Effect.result, Effect.forkScoped);
+          yield* probe.started;
 
-        yield* TestClock.adjust("1 second");
-        yield* probe.exited;
-        expect((yield* Fiber.join(fiber))._tag).toBe("ProcessTimeoutError");
-      }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
-  );
+          if (wrapperExit === "timeout") yield* TestClock.adjust("1 second");
+          yield* probe.exited;
+          const result = yield* Fiber.join(fiber);
+          if (wrapperExit === "timeout") {
+            expect(result).toMatchObject({
+              _tag: "Failure",
+              failure: { _tag: "ProcessTimeoutError" },
+            });
+          } else {
+            expect(result).toMatchObject({
+              _tag: "Success",
+              success: { code: 0, timedOut: false },
+            });
+          }
+        }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))),
+    );
+  }
 
   it.effect.skipIf(HostProcess.Platform.defaultValue() === "win32")(
-    "terminates helpers with the backend process group without scope finalizers",
+    "exits the backend and terminates stubborn helpers on graceful group shutdown",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -465,7 +481,7 @@ describe("runProcess", () => {
         const helper = writeFakeCli({
           directory,
           name: "helper",
-          source: processProbeSource(probe.port),
+          source: `process.on("SIGTERM", () => {}); ${processProbeSource(probe.port)}`,
         });
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const path = yield* Path.Path;
@@ -480,22 +496,29 @@ describe("runProcess", () => {
           import * as Effect from "effect/Effect";
           import * as Layer from "effect/Layer";
           import * as NodeServices from "@effect/platform-node/NodeServices";
+          import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
           import * as ProcessRunner from ${JSON.stringify(new URL("./processRunner.ts", import.meta.url).href)};
-          await Effect.runPromise(Effect.gen(function* () {
+          NodeRuntime.runMain(Effect.gen(function* () {
             const runner = yield* ProcessRunner.ProcessRunner;
             yield* runner.run({ command: ${JSON.stringify(helper)}, args: [] });
           }).pipe(Effect.provide(ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer)))));
         `,
             ],
-            { detached: true, cwd: yield* path.fromFileUrl(new URL("..", import.meta.url)) },
+            {
+              detached: true,
+              forceKillAfter: "1 second",
+              cwd: yield* path.fromFileUrl(new URL("..", import.meta.url)),
+            },
           ),
         );
         yield* probe.started;
 
-        // The desktop's final escalation can kill the backend before it runs finalizers.
-        process.kill(-backend.pid, "SIGKILL");
-        yield* backend.exitCode.pipe(Effect.ignore);
-        yield* probe.exited;
+        // Desktop allows five seconds for NodeRuntime to finish scope finalizers.
+        process.kill(-backend.pid, "SIGTERM");
+        yield* Effect.all(
+          [backend.exitCode.pipe(Effect.timeout("4 seconds"), TestClock.withLive), probe.exited],
+          { concurrency: "unbounded" },
+        );
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 

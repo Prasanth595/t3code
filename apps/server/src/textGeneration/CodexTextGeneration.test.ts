@@ -33,7 +33,7 @@ const layerCodexTextGenerationTest = ServerConfig.ServerConfig.layerTest(process
 
 interface FakeCodexInput {
   output: string;
-  lifecyclePort?: number;
+  lifecycle?: { port: number; command: "exec" | "mcp list" };
   exitCode?: number;
   stderr?: string;
   requireImage?: boolean;
@@ -71,18 +71,21 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         'import * as NodeFS from "node:fs";',
         `const check = ${check};`,
         "const args = process.argv.slice(2);",
-        'if (args.includes("mcp") && args.includes("list")) {',
+        'const isMcpList = args.includes("mcp") && args.includes("list");',
+        ...(input.lifecycle === undefined
+          ? []
+          : [
+              `if (isMcpList === ${input.lifecycle.command === "mcp list"}) {`,
+              'process.on("SIGTERM", () => {});',
+              processProbeSource(input.lifecycle.port),
+              "await new Promise(() => {});",
+              "}",
+            ]),
+        "if (isMcpList) {",
         '  if (typeof check.mcpServers === "number") process.exit(check.mcpServers);',
         "  process.stdout.write(JSON.stringify(check.mcpServers));",
         "  process.exit(0);",
         "}",
-        ...(input.lifecyclePort === undefined
-          ? []
-          : [
-              'process.on("SIGTERM", () => {});',
-              processProbeSource(input.lifecyclePort),
-              "await new Promise(() => {});",
-            ]),
         'const originalArgs = ` ${args.join(" ")} `;',
         "let outputPath = null;",
         "let seenImage = false;",
@@ -184,28 +187,32 @@ function withFakeCodexEnv<A, E, R>(
 }
 
 it.layer(layerCodexTextGenerationTest)("CodexTextGeneration", (it) => {
-  it.effect("kills a stalled CLI when its request is interrupted", () =>
-    Effect.gen(function* () {
-      const probe = yield* makeProcessProbe;
-      yield* withFakeCodexEnv({ output: "", lifecyclePort: probe.port }, (textGeneration) =>
-        Effect.gen(function* () {
-          const fiber = yield* textGeneration
-            .generateThreadTitle({
-              cwd: process.cwd(),
-              message: "Name this thread",
-              modelSelection: DEFAULT_TEST_MODEL_SELECTION,
-            })
-            .pipe(Effect.forkScoped);
-          yield* probe.started;
+  it.effect.each(["exec", "mcp list"] as const)(
+    "kills a stalled %s CLI when its request is interrupted",
+    (command) =>
+      Effect.gen(function* () {
+        const probe = yield* makeProcessProbe;
+        yield* withFakeCodexEnv(
+          { output: "", lifecycle: { port: probe.port, command } },
+          (textGeneration) =>
+            Effect.gen(function* () {
+              const fiber = yield* textGeneration
+                .generateThreadTitle({
+                  cwd: process.cwd(),
+                  message: "Name this thread",
+                  modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+                })
+                .pipe(Effect.forkScoped);
+              yield* probe.started;
 
-          const interrupted = yield* Fiber.interrupt(fiber).pipe(Effect.forkScoped);
-          yield* probe.exited;
-          yield* Fiber.join(interrupted);
-          const exit = yield* Fiber.await(fiber);
-          expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
-        }),
-      );
-    }),
+              const interrupted = yield* Fiber.interrupt(fiber).pipe(Effect.forkScoped);
+              yield* probe.exited;
+              yield* Fiber.join(interrupted);
+              const exit = yield* Fiber.await(fiber);
+              expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+            }),
+        );
+      }),
   );
 
   it.effect.each(["gpt-5.6-luna", "openai.gpt-5.6-luna"])(
