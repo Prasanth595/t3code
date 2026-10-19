@@ -338,6 +338,31 @@ describe("pairing the factory server", () => {
     );
   });
 
+  it.effect("leaves no temporary file behind when the credential cannot be saved", () =>
+    withLayers(
+      {},
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        // A non-empty directory where the credential file goes makes the rename fail.
+        const credentialPath = environment.path.join(
+          environment.stateDir,
+          "factory-server-credential.json",
+        );
+        yield* fileSystem.makeDirectory(credentialPath, { recursive: true });
+        yield* fileSystem.writeFileString(environment.path.join(credentialPath, "keep"), "");
+
+        const exit = yield* Effect.exit(pairFactoryServer.handler("abc123"));
+        assert.equal(failureMessage(exit), "Could not store the factory server credential.");
+        const files = yield* fileSystem.readDirectory(environment.stateDir);
+        assert.deepEqual(
+          files.filter((name) => name.endsWith(".tmp")),
+          [],
+        );
+      }),
+    ),
+  );
+
   it.effect("asks for a link when the input is empty", () => {
     const requests: Array<{ readonly url: string; readonly body: string }> = [];
     return withLayers(
