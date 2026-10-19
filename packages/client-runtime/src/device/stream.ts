@@ -100,8 +100,10 @@ const SEMU_MAGIC = 0x53454d55;
 const SEMU_HEADER_BYTES = 16;
 const SEMU_FLAG_KEY = 1;
 const SOFT_DECODE_QUEUE = 8;
-// The scrcpy/hub inject-text limit is 300 UTF-8 bytes per packet.
+// expo-device-hub 0.15.3 serve-emu input.js MAX_TEXT_BYTES limits packets to 300 UTF-8 bytes.
 const ANDROID_MAX_TEXT_BYTES = 300;
+// The pinned hub queue depth is 128; the client does not read queue rejections.
+const ANDROID_MAX_TEXT_CHUNKS = 64;
 
 const IOS_MSG_TOUCH = 0x03;
 const IOS_MSG_BUTTON = 0x04;
@@ -1069,10 +1071,12 @@ export function createDeviceStreamClient(
       if (platform !== "android") return;
       let chunk = "";
       let chunkBytes = 0;
+      let sentChunks = 0;
       for (const character of text) {
         const characterBytes = utf8ByteLength(character.codePointAt(0)!);
         if (chunkBytes + characterBytes > ANDROID_MAX_TEXT_BYTES) {
           send(JSON.stringify({ type: "text", text: chunk }));
+          if (++sentChunks >= ANDROID_MAX_TEXT_CHUNKS) return;
           chunk = "";
           chunkBytes = 0;
         }
