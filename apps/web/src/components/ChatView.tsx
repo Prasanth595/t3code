@@ -1355,6 +1355,7 @@ export default function ChatView(props: ChatViewProps) {
   const composerTimelineInsetRef = useRef(0);
   const [composerReservedHeight, setComposerReservedHeight] = useState(0);
   const composerReservedHeightRef = useRef(0);
+  const composerExpandedHeightRef = useRef(0);
   const composerRestingRef = useRef(false);
   const composerMountedRef = useRef(true);
   const [scrollToEndClearance, setScrollToEndClearance] = useState(0);
@@ -4681,19 +4682,22 @@ export default function ChatView(props: ChatViewProps) {
     }
     // The terminal drawer and the empty placeholder lay out against the
     // expanded composer. The timeline inset already holds it through the
-    // desktop resting row; freezing it while the mobile strip is collapsed
+    // desktop resting row; remembering it while the mobile strip is collapsed
     // keeps both still when focus moves between the composer and the
     // terminal, instead of re-clamping the drawer against each intermediate
-    // composer height. A hero composer's overlay fills the pane, so only its
-    // stack counts there.
+    // composer height. A collapsed strip can still grow (approvals, tasks), so
+    // the reservation follows it up. A hero composer's overlay fills the pane,
+    // so only its stack counts there.
     const stack = composerOverlayElement?.querySelector<HTMLElement>(
       '[data-chat-composer-stack="true"]',
     );
     const expandedComposerHeight =
       isDraftHeroState && stack ? Math.ceil(stack.getBoundingClientRect().height) : nextInset;
-    const reservedHeight = stack?.querySelector('[data-chat-composer-mobile-collapsed="true"]')
-      ? composerReservedHeightRef.current || expandedComposerHeight
-      : expandedComposerHeight;
+    const mobileCollapsed = Boolean(
+      stack?.querySelector('[data-chat-composer-mobile-collapsed="true"]'),
+    );
+    if (!mobileCollapsed) composerExpandedHeightRef.current = expandedComposerHeight;
+    const reservedHeight = Math.max(composerExpandedHeightRef.current, expandedComposerHeight);
     if (composerReservedHeightRef.current !== reservedHeight) {
       composerReservedHeightRef.current = reservedHeight;
       setComposerReservedHeight(reservedHeight);
@@ -4732,6 +4736,7 @@ export default function ChatView(props: ChatViewProps) {
     if (!composerOverlayElement) return;
     composerTimelineInsetRef.current = 0;
     composerReservedHeightRef.current = 0;
+    composerExpandedHeightRef.current = 0;
     publishComposerOverlayHeightStable(composerOverlayElement.getBoundingClientRect().height);
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A thread switch must re-measure the overlay for the new timeline.
   }, [activeThreadKey, composerOverlayElement, publishComposerOverlayHeightStable]);
@@ -4765,6 +4770,7 @@ export default function ChatView(props: ChatViewProps) {
     if (!composerOverlayElement) return;
     composerTimelineInsetRef.current = 0;
     composerReservedHeightRef.current = 0;
+    composerExpandedHeightRef.current = 0;
     publishComposerOverlayHeightStable(composerOverlayElement.getBoundingClientRect().height);
   }, [composerMounted, composerOverlayElement, publishComposerOverlayHeightStable]);
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(activeThreadRef);
