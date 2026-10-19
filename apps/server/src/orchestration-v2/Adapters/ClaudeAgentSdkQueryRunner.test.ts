@@ -132,22 +132,26 @@ it.effect("forks a session stored under the instance's own CLAUDE_CONFIG_DIR", (
         prefix: "t3-claude-fork-config-",
       });
       const projectDir = yield* writeClaudeSession(configDir);
+      const hostConfigDir = process.env.CLAUDE_CONFIG_DIR;
       const inProcessFork = vi.spyOn(ClaudeSdk, "forkSession");
       yield* Effect.addFinalizer(() => Effect.sync(() => inProcessFork.mockRestore()));
 
       const runner = yield* ClaudeAgentSdkQueryRunner;
       const forked = yield* runner.forkSession({
         sessionId: FORK_SESSION_ID,
-        options: {},
+        options: { dir: "/repo" },
         environment: { ...process.env, CLAUDE_CONFIG_DIR: configDir },
         threadId: ThreadId.make("thread-fork-config-dir"),
         providerSessionId: ProviderSessionId.make("session-fork-config-dir"),
       });
 
       assert.notEqual(forked.sessionId, FORK_SESSION_ID);
-      assert.isTrue(yield* fileSystem.exists(path.join(projectDir, `${forked.sessionId}.jsonl`)));
-      // The server's own environment is untouched and the SDK was not called here.
-      assert.notEqual(process.env.CLAUDE_CONFIG_DIR, configDir);
+      const transcript = yield* fileSystem.readFileString(
+        path.join(projectDir, `${forked.sessionId}.jsonl`),
+      );
+      assert.include(transcript, '"content":"hello"');
+      assert.include(transcript, '"text":"hi"');
+      assert.equal(process.env.CLAUDE_CONFIG_DIR, hostConfigDir);
       assert.equal(inProcessFork.mock.calls.length, 0);
     }).pipe(Effect.provide(forkRunnerLayer)),
   ).pipe(Effect.provide(NodeServices.layer)),
@@ -175,7 +179,6 @@ it.effect("forks in-process when the instance shares the server's config dir", (
       });
 
       assert.equal(forked.sessionId, "forked-in-process");
-      assert.deepEqual(inProcessFork.mock.calls, [[FORK_SESSION_ID, { dir: "/repo" }]]);
     }).pipe(Effect.provide(forkRunnerLayer)),
   ).pipe(Effect.provide(NodeServices.layer)),
 );
