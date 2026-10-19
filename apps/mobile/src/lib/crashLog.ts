@@ -3,7 +3,13 @@ import type { ErrorUtils as ErrorUtilsInterface } from "react-native";
 
 const CRASH_LOG_DIRECTORY = "crash-logs";
 const MAX_PERSISTED_CRASH_LOGS = 20;
-const REPORTED_ON_LAUNCH_COUNT = 3;
+
+interface PersistedCrashRecord {
+  readonly capturedAt: string;
+  readonly message: string;
+  readonly name: string | null;
+  readonly stack: string | null;
+}
 
 let crashSequence = 0;
 
@@ -21,7 +27,7 @@ export function installCrashLogger(): void {
     return;
   }
   const previousHandler = errorUtils.getGlobalHandler();
-  errorUtils.setGlobalHandler((error: unknown, isFatal?: boolean) => {
+  errorUtils.setGlobalHandler((error: unknown, isFatal: boolean) => {
     if (isFatal === true) {
       try {
         persistCrashRecord(error);
@@ -31,11 +37,6 @@ export function installCrashLogger(): void {
     }
     previousHandler(error, isFatal);
   });
-  // Deferred so install (which runs before the app module graph) does no
-  // file IO on the startup path.
-  setTimeout(() => {
-    reportAndPrunePreviousCrashes();
-  }, 0);
 }
 
 function persistCrashRecord(error: unknown): void {
@@ -55,37 +56,63 @@ function persistCrashRecord(error: unknown): void {
   const sequence = String(crashSequence).padStart(6, "0");
   const file = new File(directory, `crash-${Date.now()}-${sequence}.json`);
   file.create({ intermediates: true, overwrite: true });
-  file.write(JSON.stringify(record, null, 2));
+  // ErrorUtils may terminate the runtime as soon as we delegate to its handler.
+  file.writeSync(JSON.stringify(record));
+  for (const oldFile of crashLogFiles().slice(MAX_PERSISTED_CRASH_LOGS)) {
+    try {
+      oldFile.delete();
+    } catch {
+      // Retention is best-effort when files cannot be deleted.
+    }
+  }
 }
 
-function reportAndPrunePreviousCrashes(): void {
+function crashLogFiles(): File[] {
   try {
     const directory = new Directory(Paths.document, CRASH_LOG_DIRECTORY);
-    if (!directory.exists) {
-      return;
-    }
-    const files = directory
+    if (!directory.exists) return [];
+    return directory
       .list()
       .filter(
         (entry): entry is File =>
           entry instanceof File && entry.name.startsWith("crash-") && entry.name.endsWith(".json"),
       )
-      .sort((a, b) => a.name.localeCompare(b.name));
-    for (const file of files.slice(-REPORTED_ON_LAUNCH_COUNT)) {
-      try {
-        console.warn(`[crash-log] previous fatal JS error (${file.name}):`, file.textSync());
-      } catch {
-        // Skip unreadable records.
-      }
-    }
-    for (const file of files.slice(0, Math.max(0, files.length - MAX_PERSISTED_CRASH_LOGS))) {
-      try {
-        file.delete();
-      } catch {
-        // Leave undeletable records for the next prune.
-      }
-    }
+      .sort((a, b) => b.name.localeCompare(a.name));
   } catch {
-    // Reporting past crashes must never affect startup.
+    return [];
   }
+}
+
+export function readPersistedCrashRecords(): ReadonlyArray<PersistedCrashRecord> {
+  const records: PersistedCrashRecord[] = [];
+  for (const file of crashLogFiles().slice(0, MAX_PERSISTED_CRASH_LOGS)) {
+    try {
+      const record: unknown = JSON.parse(file.textSync());
+      if (
+        typeof record !== "object" ||
+        record === null ||
+        !("isFatal" in record) ||
+        record.isFatal !== true ||
+        !("capturedAt" in record) ||
+        typeof record.capturedAt !== "string" ||
+        !Number.isFinite(Date.parse(record.capturedAt)) ||
+        !("message" in record) ||
+        typeof record.message !== "string" ||
+        !("name" in record) ||
+        (record.name !== null && typeof record.name !== "string") ||
+        !("stack" in record) ||
+        (record.stack !== null && typeof record.stack !== "string")
+      )
+        continue;
+      records.push({
+        capturedAt: record.capturedAt,
+        message: record.message,
+        name: record.name,
+        stack: record.stack,
+      });
+    } catch {
+      // A partial or unreadable record must not hide the remaining crashes.
+    }
+  }
+  return records;
 }

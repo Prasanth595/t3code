@@ -15,7 +15,8 @@ import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import {
   formatStartupCrashReport,
-  parseStartupCrashRecords,
+  readCrashRecords,
+  type UpdatesLogEntryLike,
   type StartupCrashRecord,
 } from "./crash-log-model";
 
@@ -25,8 +26,11 @@ const LOG_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 type CrashLogState =
   | { readonly status: "loading" }
-  | { readonly status: "unavailable" }
-  | { readonly status: "ready"; readonly records: ReadonlyArray<StartupCrashRecord> };
+  | {
+      readonly status: "ready";
+      readonly records: ReadonlyArray<StartupCrashRecord>;
+      readonly startupLogUnavailable: boolean;
+    };
 
 function appIdentity() {
   return {
@@ -39,23 +43,23 @@ function appIdentity() {
 
 export function SettingsDiagnosticsRouteScreen() {
   const insets = useSafeAreaInsets();
-  const [state, setState] = useState<CrashLogState>(() =>
-    Updates.isEnabled ? { status: "loading" } : { status: "unavailable" },
-  );
+  const [state, setState] = useState<CrashLogState>({ status: "loading" });
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
-    if (!Updates.isEnabled) return;
     let cancelled = false;
-    Updates.readLogEntriesAsync(LOG_WINDOW_MS)
-      .then((entries) => {
-        if (cancelled) return;
-        setState({ status: "ready", records: parseStartupCrashRecords(entries) });
-      })
-      .catch((error: unknown) => {
-        console.warn("[diagnostics] could not read the expo-updates log", error);
-        if (!cancelled) setState({ status: "unavailable" });
-      });
+    async function load() {
+      let entries: ReadonlyArray<UpdatesLogEntryLike> = [];
+      let startupLogUnavailable = false;
+      try {
+        if (Updates.isEnabled) entries = await Updates.readLogEntriesAsync(LOG_WINDOW_MS);
+      } catch {
+        startupLogUnavailable = true;
+      }
+      if (cancelled) return;
+      setState({ status: "ready", records: readCrashRecords(entries), startupLogUnavailable });
+    }
+    void load();
     return () => {
       cancelled = true;
     };
@@ -78,30 +82,33 @@ export function SettingsDiagnosticsRouteScreen() {
         className="flex-1"
         contentContainerClassName="gap-6 px-5 pt-4 pb-[18px]"
       >
-        <SettingsSection title="Startup crashes">
+        <SettingsSection title="Crashes">
           {state.status === "loading" ? (
             <View className="items-center gap-3 px-6 py-8">
               <AppActivityIndicator />
               <Text className="text-center text-sm text-foreground-muted">Reading crash log…</Text>
             </View>
-          ) : state.status === "unavailable" ? (
-            <EmptyState
-              icon="exclamationmark.triangle"
-              title="Crash log unavailable"
-              detail="Startup crash records are only kept in store and TestFlight builds."
-            />
           ) : records.length === 0 ? (
             <EmptyState
               icon="checkmark.circle"
-              title="No startup crashes"
-              detail="Nothing has taken the app down during launch in the last 7 days."
+              title="No crashes recorded"
+              detail="No saved fatal JavaScript errors or startup crash records were found."
             />
           ) : (
             records.map((record, index) => (
-              <CrashRow key={record.timestamp} record={record} first={index === 0} />
+              <CrashRow
+                key={`${record.timestamp}-${record.detail}`}
+                record={record}
+                first={index === 0}
+              />
             ))
           )}
         </SettingsSection>
+        {state.status === "ready" && state.startupLogUnavailable ? (
+          <Text className="px-2 text-sm leading-normal text-foreground-muted">
+            Startup crash records could not be read. Saved JavaScript errors are still included.
+          </Text>
+        ) : null}
 
         <View className="gap-3">
           <SettingsSection title="Actions">
@@ -114,8 +121,8 @@ export function SettingsDiagnosticsRouteScreen() {
           </SettingsSection>
           <Text className="px-2 text-sm leading-normal text-foreground-muted">
             Paste the report into a GitHub issue. It contains the app version, the JavaScript error
-            message, and the component stack. Error messages can quote values from the app, so read
-            it over before sharing.
+            message, and the available stack trace. Error messages can quote values from the app, so
+            read it over before sharing.
           </Text>
         </View>
       </ScrollView>
@@ -124,7 +131,7 @@ export function SettingsDiagnosticsRouteScreen() {
 }
 
 function EmptyState(props: {
-  readonly icon: "exclamationmark.triangle" | "checkmark.circle";
+  readonly icon: "checkmark.circle";
   readonly title: string;
   readonly detail: string;
 }) {

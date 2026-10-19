@@ -1,3 +1,5 @@
+import { readPersistedCrashRecords } from "../../lib/crashLog";
+
 export interface UpdatesLogEntryLike {
   readonly timestamp: number;
   readonly message: string;
@@ -37,6 +39,28 @@ export function parseStartupCrashRecords(
     records.push({ timestamp: entry.timestamp, description, frames, detail: body.trim() });
   }
   return records.sort((left, right) => right.timestamp - left.timestamp);
+}
+
+export function readCrashRecords(
+  entries: ReadonlyArray<UpdatesLogEntryLike>,
+): ReadonlyArray<StartupCrashRecord> {
+  const localRecords = readPersistedCrashRecords().map((record) => {
+    const description = record.name ? `${record.name}: ${record.message}` : record.message;
+    const frames = (record.stack ?? "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("at "))
+      .map(compactFrame);
+    return {
+      timestamp: Date.parse(record.capturedAt),
+      description,
+      frames,
+      detail: record.stack ? `${description}\n${record.stack}` : description,
+    };
+  });
+  return [...localRecords, ...parseStartupCrashRecords(entries)].sort(
+    (left, right) => right.timestamp - left.timestamp,
+  );
 }
 
 function compactFrame(line: string): string {
