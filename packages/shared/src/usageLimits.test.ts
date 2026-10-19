@@ -941,6 +941,52 @@ describe("pooled account columns", () => {
     expect(keys(collectLimitPools(accounts.toReversed(), now)[0]!)).toEqual(keys(pool!));
   });
 
+  it.each([undefined, "invalid", "2026-09-03T11:30:00.000Z"])(
+    "keeps blocked sessions empty without predicting a refill from a missing or stale clock (%s)",
+    (resetsAt) => {
+      const [pool] = collectLimitPools(
+        [
+          account("session-clock", [
+            { ...window, resetsAt },
+            { ...weekly, usedPercent: 100 },
+          ]),
+          account("weekly-clock", [window, { ...weekly, usedPercent: 100, resetsAt }]),
+        ],
+        now,
+      );
+      expect(pool!.windows[0]).toMatchObject({ remainingPercent: 0, pace: null, resets: [] });
+      expect(pool!.windows[0]!.columns.map((column) => column.window?.resetsAt)).toEqual([
+        undefined,
+        undefined,
+      ]);
+    },
+  );
+
+  it("orders by usable session refill and clears suppression after a fresh weekly reading", () => {
+    const blocked = account("blocked", [
+      { ...window, resetsAt: "2026-09-03T13:00:00.000Z" },
+      { ...weekly, usedPercent: 100, resetsAt: "2026-09-03T15:00:00.000Z" },
+    ]);
+    const available = account("available", [window]);
+    const [before] = collectLimitPools([blocked, available], now);
+    expect(before!.accounts.map((account) => account.key)).toEqual(["available", "blocked"]);
+    expect(before!.windows[0]!.remainingPercent).toBe(30);
+    const refreshed = {
+      ...blocked,
+      limits: {
+        checkedAt: "2026-09-03T12:00:00.000Z",
+        windows: [blocked.limits.windows[0]!, { ...weekly, usedPercent: 10 }],
+      },
+    };
+    const [after] = collectLimitPools([refreshed, available], now);
+    expect(after!.accounts.map((account) => account.key)).toEqual(["blocked", "available"]);
+    expect(after!.windows[0]!.remainingPercent).toBe(60);
+    expect(after!.windows[0]!.resets[0]).toMatchObject({
+      at: Date.parse("2026-09-03T13:00:00.000Z"),
+      restoresPercent: 20,
+    });
+  });
+
   it("preserves gaps without counting missing windows toward pooled quota", () => {
     const [pool] = collectLimitPools(
       [
