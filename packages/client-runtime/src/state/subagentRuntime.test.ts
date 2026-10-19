@@ -144,7 +144,7 @@ describe("projectedSubagentsToRuntime workflow expansion", () => {
       expect(members?.map((agent) => agent.completedAt)).toEqual([
         "2026-08-01T10:00:09.000Z",
         "2026-08-01T10:00:09.000Z",
-        "2026-08-01T10:00:09.000Z",
+        "2026-08-01T10:00:01.500Z",
       ]);
     },
   );

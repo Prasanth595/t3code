@@ -139,7 +139,10 @@ function workflowMembersToRuntime(
     const failed = status === "failed";
     const startedAt = isoFromEpochMillis(agent.startedAt);
     const completedAt = isTerminalSubagentStatus(status)
-      ? (isoFromEpochMillis(agent.completedAt) ?? coordinator.completedAt)
+      ? (isoFromEpochMillis(agent.completedAt) ??
+        (agent.startedAt !== undefined && agent.durationMs !== undefined
+          ? isoFromEpochMillis(agent.startedAt + agent.durationMs)
+          : coordinator.completedAt))
       : null;
     return {
       ...coordinator,
