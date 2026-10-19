@@ -124,6 +124,27 @@ describe("project snapshot readiness", () => {
     registry.dispose();
   });
 
+  it("waits while an environment is paused by a version mismatch", () => {
+    const { catalog, shells, ready, registry } = makeHarness();
+    const paused = catalogState([LOCAL, REMOTE]);
+    registry.set(catalog, {
+      ...paused,
+      entries: new Map(
+        [...paused.entries].map(([environmentId, entry]) => [
+          environmentId,
+          environmentId === REMOTE ? { ...entry, unsupportedReason: "Update the host" } : entry,
+        ]),
+      ),
+    });
+    registry.set(shells(LOCAL), shellState("live"));
+    expect(registry.get(ready)).toBe(false);
+
+    registry.set(catalog, paused);
+    registry.set(shells(REMOTE), shellState("live"));
+    expect(registry.get(ready)).toBe(true);
+    registry.dispose();
+  });
+
   it("stops waiting for an environment only when it leaves the catalog", () => {
     const { catalog, shells, ready, registry } = makeHarness();
     registry.set(catalog, catalogState([LOCAL, REMOTE]));

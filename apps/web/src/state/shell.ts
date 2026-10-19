@@ -97,6 +97,11 @@ export function createAllEnvironmentProjectSnapshotsReadyAtom(input: {
   return Atom.make((get) => {
     const catalog = get(input.catalogValueAtom);
     if (!catalogIsComplete(catalog, input.requiresPrimaryEnvironment)) return false;
+    // A paused environment's projects come back once its host is compatible,
+    // so a saved scope pointing at one is not missing.
+    for (const entry of catalog.entries.values()) {
+      if (entry.enabled && entry.unsupportedReason !== undefined) return false;
+    }
     for (const environmentId of enabledEnvironmentIds(catalog)) {
       const shell = get(input.shellStateValueAtom(environmentId));
       if (shell.status !== "live" || Option.isNone(shell.snapshot)) return false;
