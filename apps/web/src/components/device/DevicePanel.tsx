@@ -161,6 +161,7 @@ export function DevicePanel(props: {
     <PreviewPanelShell mode={props.mode}>
       {!activeDevice && deviceHostDiagnostics(state.hosts, state.hostStatuses).length > 0 ? (
         <div
+          role="region"
           aria-label="Device host diagnostics"
           tabIndex={0}
           className="max-h-32 shrink-0 overflow-y-auto border-b px-3 py-2"
