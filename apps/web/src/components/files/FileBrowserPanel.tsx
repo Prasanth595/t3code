@@ -134,9 +134,7 @@ function buildTreeEntries(
   const directoryPaths = directories.map(treePath);
   // Expanding a folder lists it, and an ignored one such as `node_modules` can hold tens of
   // thousands, so expand all skips ignored folders. They still open by hand.
-  const expandableDirectoryPaths = directories
-    .filter((entry) => !entry.ignored)
-    .map(treePath);
+  const expandableDirectoryPaths = directories.filter((entry) => !entry.ignored).map(treePath);
   return { entries, entryKinds, treePaths, directoryPaths, expandableDirectoryPaths };
 }
 
@@ -328,7 +326,11 @@ export default function FileBrowserPanel({
   const toggleAllDirectories = () => {
     const expanded = !(expandAll || allDirectoriesExpanded);
     setExpandAll(expanded);
-    setAllDirectoriesExpanded(model, expanded ? expandableDirectoryPaths : directoryPaths, expanded);
+    setAllDirectoriesExpanded(
+      model,
+      expanded ? expandableDirectoryPaths : directoryPaths,
+      expanded,
+    );
   };
   const closeSearch = () => {
     setQuery("");
