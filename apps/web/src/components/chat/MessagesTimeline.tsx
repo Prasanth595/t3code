@@ -305,6 +305,8 @@ import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
 import * as DateTime from "effect/DateTime";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { forwardWheelToTimeline } from "./timelineMinimapWheel";
+import type { ThreadFilePathIndex } from "@t3tools/shared/threadFilePaths";
+import { ThreadFilePathsContext } from "../../threadFilePathsContext";
 import {
   buildReviewCommentRenderablePatch,
   formatReviewCommentFence,
@@ -500,6 +502,7 @@ interface MessagesTimelineProps {
   resolvedTheme: "light" | "dark";
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
+  threadFilePaths?: ThreadFilePathIndex | null;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   runs: ReadonlyArray<HandoffTimelineRun>;
   anchorMessageId: MessageId | null;
@@ -596,6 +599,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   resolvedTheme,
   timestampFormat,
   workspaceRoot,
+  threadFilePaths = null,
   skills = EMPTY_TIMELINE_SKILLS,
   runs: runsProp,
   anchorMessageId,
@@ -1400,16 +1404,24 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // the list would re-render the outgoing thread's rows with the incoming
   // thread's context just before they unmount. extraData hands a changed
   // sharedState to the rows that stay.
+  const rowThreadFilePaths = paintOnly ? null : threadFilePaths;
   const renderItem = ({ item }: { item: MessagesTimelineRow }) => (
     <TimelineRowCtx value={sharedState}>
-      <div className="messages-timeline-row-frame">
-        <div className="chat-content-lane overflow-x-clip" data-timeline-root="true">
-          <TimelineRowContent row={item} />
+      <ThreadFilePathsContext value={rowThreadFilePaths}>
+        <div className="messages-timeline-row-frame">
+          <div className="chat-content-lane overflow-x-clip" data-timeline-root="true">
+            <TimelineRowContent row={item} />
+          </div>
         </div>
-      </div>
+      </ThreadFilePathsContext>
     </TimelineRowCtx>
   );
-  const listExtraData = { identity: listIdentityKey, rowCount: rows.length, sharedState };
+  const listExtraData = {
+    identity: listIdentityKey,
+    rowCount: rows.length,
+    sharedState,
+    threadFilePaths: rowThreadFilePaths,
+  };
 
   const forwardMinimapWheel = (event: WheelEvent) => {
     const scrollNode = listRef.current?.getScrollableNode();
