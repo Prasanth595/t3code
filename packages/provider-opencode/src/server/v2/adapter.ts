@@ -33,6 +33,7 @@ import {
   type RuntimeRequestId,
 } from "@t3tools/contracts";
 import type * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Crypto from "effect/Crypto";
@@ -536,8 +537,7 @@ const LOST_BACKGROUND =
   "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
 const INVENTORY_TIMEOUT = "5 seconds";
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
-/** How long a fork waits for its source to stop running when it can't cut before that run. */
-const FORK_WAIT = "1 minute";
+const FORK_WAIT = 60_000;
 const FORK_POLL = "1 second";
 export const OPENCODE_2_FORK_SOURCE_RUNNING =
   "The thread you forked from is still running. Send your message again when it finishes.";
@@ -3885,93 +3885,107 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
               detail: `OpenCode fork boundary turn ${forkInput.providerTurnId} was not found`,
             });
           }
-          const working = yield* isWorking(sourceId, "fork");
-          const history = selected === undefined ? [] : yield* historyOf(sourceId);
-          const cuts = cutPoints(history);
-          // The caller read the source's turns before any wait, so the turns
-          // run here since then count too, such as a continuation that ran
-          // while the fork waited. A running continuation's own copy already
-          // names the report it answers.
-          const loaded = threads.get(sourceId);
-          const turns = new Map(
-            [
-              ...(forkInput.sourceProviderTurns ?? []),
-              ...(loaded?.providerTurns.values() ?? []),
-              ...(loaded?.active === undefined ? [] : [loaded.active.providerTurn]),
-            ].map((turn) => [turn.id, turn] as const),
-          );
-          // An execution OpenCode started on its own has no turn yet; its
-          // continuation's would cut before its first report.
-          const before =
-            selected === undefined
-              ? null
-              : ((yield* boundaryAfter([...turns.values()], source.id, selected, cuts)) ??
-                loaded?.wakes.find((wake) => wake.first !== undefined && cuts.has(wake.first))
-                  ?.first ??
-                null);
-          // OpenCode copies the history before the cut, or all of it without
-          // one. A source still running is forked only before a turn after the
-          // ones kept, once every execution before that turn has ended;
-          // otherwise the fork would copy a run half done, so it waits.
-          if (working && (before === null || !endedBefore(history, before))) return undefined;
-          // A fork copies the source's history, model, location and rules; its
-          const forked = yield* client.session.fork({
-            sessionID: Session.ID.make(sourceId),
-            ...(before === null ? {} : { before: SessionMessage.ID.make(before) }),
-          });
-          const createdAt = yield* DateTime.now;
-          const providerThread: OrchestrationV2ProviderThread = {
-            id: idAllocator.derive.providerThread({ driver, nativeThreadId: forked.id }),
+          const sourceRunning = new ProviderAdapter.ProviderAdapterForkThreadError({
             driver,
-            providerInstanceId: instanceId,
-            providerSessionId: input.providerSessionId,
-            appThreadId: forkInput.targetThreadId,
-            ownerNodeId: forkInput.ownerNodeId ?? null,
-            nativeThreadRef: ref(forked.id),
-            nativeConversationHeadRef: null,
-            status: "idle",
-            firstRunOrdinal: null,
-            lastRunOrdinal: null,
-            handoffIds: [],
-            forkedFrom: {
-              providerThreadId: source.id,
-              ...(forkInput.providerTurnId === undefined
-                ? {}
-                : { providerTurnId: forkInput.providerTurnId }),
-            },
-            createdAt,
-            updatedAt: createdAt,
-          };
-          // inherits that worktree too, but its first turn starts without a
-          // resume, so a target in another worktree takes the session there now.
-          const cwd = forkInput.runtimePolicy?.cwd;
-          const state = register(providerThread, forked, cwd ?? forked.location.directory);
-          yield* writeRules(state, forkInput.runtimePolicy ?? state.policy);
-          if (cwd != null && forked.location.directory !== cwd) {
-            yield* client.session.move({
-              sessionID: Session.ID.make(forked.id),
-              directory: AbsolutePath.make(cwd),
-            });
-          }
-          return state.providerThread;
-        }).pipe(
-          // The source's own next turn takes its gate between tries, and a try
-          // is never cut short: one cut during its request could leave a fork
-          // no thread has.
-          exclusive(forkInput.sourceProviderThread),
-          Effect.repeat({
-            until: (forked) => forked !== undefined,
-            schedule: Schedule.spaced(FORK_POLL).pipe(Schedule.upTo({ duration: FORK_WAIT })),
-          }),
-          Effect.filterOrFail(
-            (forked): forked is OrchestrationV2ProviderThread => forked !== undefined,
-            () =>
-              new ProviderAdapter.ProviderAdapterForkThreadError({
-                driver,
-                providerThreadId: forkInput.sourceProviderThread.id,
-                cause: OPENCODE_2_FORK_SOURCE_RUNNING,
+            providerThreadId: source.id,
+            cause: OPENCODE_2_FORK_SOURCE_RUNNING,
+          });
+          const deadline = (yield* Clock.currentTimeMillis) + FORK_WAIT;
+          return yield* Effect.gen(function* () {
+            const remaining = deadline - (yield* Clock.currentTimeMillis);
+            if (remaining <= 0) return yield* sourceRunning;
+            const before = yield* Effect.gen(function* () {
+              const working = yield* isWorking(sourceId, "fork");
+              const history = selected === undefined ? [] : yield* historyOf(sourceId);
+              const cuts = cutPoints(history);
+              const selectedAt =
+                selected === undefined
+                  ? -1
+                  : history.findIndex((item) => item.id === promptOf(selected));
+              // Ended wakes can outlive later user turns.
+              const laterCuts = cutPoints(history.slice(0, Math.max(0, selectedAt)));
+              // The caller's snapshot can predate turns observed during the wait.
+              const loaded = threads.get(sourceId);
+              const turns = new Map(
+                [
+                  ...(forkInput.sourceProviderTurns ?? []),
+                  ...(loaded?.providerTurns.values() ?? []),
+                  ...(loaded?.active === undefined ? [] : [loaded.active.providerTurn]),
+                ].map((turn) => [turn.id, turn] as const),
+              );
+              // An execution OpenCode started on its own has no turn yet; its
+              // continuation's would cut before its first report.
+              const before =
+                selected === undefined
+                  ? null
+                  : ((yield* boundaryAfter([...turns.values()], source.id, selected, cuts)) ??
+                    loaded?.wakes.find(
+                      (wake) => wake.first !== undefined && laterCuts.has(wake.first),
+                    )?.first ??
+                    null);
+              // A busy source needs an immutable prefix before the exclusive cut.
+              if (working && (before === null || !endedBefore(history, before))) return undefined;
+              return before;
+            }).pipe(
+              Effect.timeoutOrElse({
+                duration: remaining,
+                orElse: () => Effect.fail(sourceRunning),
               }),
-          ),
+            );
+            if (before === undefined) return undefined;
+            // The polling deadline must not interrupt a fork that OpenCode may have created.
+            const forked = yield* client.session.fork({
+              sessionID: Session.ID.make(sourceId),
+              ...(before === null ? {} : { before: SessionMessage.ID.make(before) }),
+            });
+            const createdAt = yield* DateTime.now;
+            const providerThread: OrchestrationV2ProviderThread = {
+              id: idAllocator.derive.providerThread({ driver, nativeThreadId: forked.id }),
+              driver,
+              providerInstanceId: instanceId,
+              providerSessionId: input.providerSessionId,
+              appThreadId: forkInput.targetThreadId,
+              ownerNodeId: forkInput.ownerNodeId ?? null,
+              nativeThreadRef: ref(forked.id),
+              nativeConversationHeadRef: null,
+              status: "idle",
+              firstRunOrdinal: null,
+              lastRunOrdinal: null,
+              handoffIds: [],
+              forkedFrom: {
+                providerThreadId: source.id,
+                ...(forkInput.providerTurnId === undefined
+                  ? {}
+                  : { providerTurnId: forkInput.providerTurnId }),
+              },
+              createdAt,
+              updatedAt: createdAt,
+            };
+            // A fork inherits the source worktree and starts without a resume,
+            // so move it to the target worktree before its first turn.
+            const cwd = forkInput.runtimePolicy?.cwd;
+            const state = register(providerThread, forked, cwd ?? forked.location.directory);
+            yield* writeRules(state, forkInput.runtimePolicy ?? state.policy);
+            if (cwd != null && forked.location.directory !== cwd) {
+              yield* client.session.move({
+                sessionID: Session.ID.make(forked.id),
+                directory: AbsolutePath.make(cwd),
+              });
+            }
+            return state.providerThread;
+          }).pipe(
+            // Release the source gate between attempts so its next turn can start.
+            exclusive(forkInput.sourceProviderThread),
+            Effect.repeat({
+              until: (forked) => forked !== undefined,
+              schedule: Schedule.spaced(FORK_POLL),
+            }),
+            Effect.filterOrFail(
+              (forked): forked is OrchestrationV2ProviderThread => forked !== undefined,
+              () => sourceRunning,
+            ),
+          );
+        }).pipe(
           Effect.mapError((cause) =>
             isProviderAdapterError(cause)
               ? cause

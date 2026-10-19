@@ -4232,9 +4232,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           promptAccepted,
           ...(heldHistory ? [out("message.list", "<any>"), reply("message.list", "<hang>")] : []),
           // The quiet stream is reopened after its silence limit.
-          ...(!heldHistory
-            ? [...reconnected({ [SESSION]: { type: "running" } }).slice(1), ...openRequests([])]
-            : []),
+          ...reconnected({ [SESSION]: { type: "running" } }).slice(1),
+          ...openRequests([]),
         ]);
         yield* runtime.startTurn({ ...turnInput(thread), providerTurnOrdinal: 2 });
         const first = completedSourceTurn(thread, yield* DateTime.now);
