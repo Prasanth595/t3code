@@ -8,6 +8,7 @@ import type * as Electron from "electron";
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
+import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./DesktopLifecycle.ts";
@@ -218,6 +219,60 @@ describe("DesktopLifecycle", () => {
           assert.deepEqual(events, ["flush", "destroy", "request", "quit"]);
         }),
       ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("disarms a queued installer before a settings relaunch exits", () =>
+    Effect.gen(function* () {
+      const exited = yield* Deferred.make<void>();
+      const events: string[] = [];
+      let armed = true;
+      const layer = DesktopLifecycle.layer.pipe(
+        Layer.provideMerge(
+          Layer.mock(ElectronApp.ElectronApp, {
+            relaunch: () =>
+              Effect.sync(() => {
+                events.push("relaunch");
+              }),
+            exit: () =>
+              Effect.sync(() => {
+                events.push(armed ? "install" : "exit");
+              }).pipe(Effect.andThen(Deferred.succeed(exited, undefined)), Effect.asVoid),
+          }),
+        ),
+        Layer.provideMerge(layerElectronTheme),
+        Layer.provideMerge(
+          Layer.mock(ElectronUpdater.ElectronUpdater, {
+            setAutoInstallOnAppQuit: (value) =>
+              Effect.sync(() => {
+                armed = value;
+              }),
+          }),
+        ),
+        Layer.provideMerge(layerElectronWindow()),
+        Layer.provideMerge(layerDesktopWindow()),
+        Layer.provideMerge(
+          Layer.succeed(DesktopEnvironment.DesktopEnvironment, {
+            platform: "win32",
+            isDevelopment: false,
+          } as DesktopEnvironment.DesktopEnvironment["Service"]),
+        ),
+        Layer.provideMerge(DesktopShutdown.layer),
+        Layer.provideMerge(DesktopState.layer),
+      );
+
+      yield* Effect.gen(function* () {
+        const lifecycle = yield* DesktopLifecycle.DesktopLifecycle;
+        const shutdown = yield* DesktopShutdown.DesktopShutdown;
+        yield* lifecycle.relaunch("serverExposureMode=network-accessible");
+        yield* shutdown.awaitRequest;
+        const beforeShutdown = [...events];
+        yield* shutdown.markComplete;
+        yield* Deferred.await(exited);
+
+        assert.deepEqual(beforeShutdown, []);
+        assert.deepEqual(events, ["relaunch", "exit"]);
+      }).pipe(Effect.provide(layer));
     }),
   );
 

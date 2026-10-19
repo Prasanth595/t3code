@@ -20,14 +20,21 @@ const { autoUpdaterMock } = vi.hoisted(() => ({
   },
 }));
 
+const { appEvents } = await vi.hoisted(async () => {
+  const { EventEmitter } = await import("node:events");
+  return { appEvents: new EventEmitter() };
+});
+
 vi.mock("electron-updater", () => ({
   autoUpdater: autoUpdaterMock,
 }));
+vi.mock("electron", () => ({ app: appEvents }));
 
 import * as ElectronUpdater from "./ElectronUpdater.ts";
 
 describe("ElectronUpdater", () => {
   beforeEach(() => {
+    appEvents.removeAllListeners();
     autoUpdaterMock.allowDowngrade = false;
     autoUpdaterMock.allowPrerelease = false;
     autoUpdaterMock.autoDownload = true;
@@ -95,6 +102,24 @@ describe("ElectronUpdater", () => {
         "Electron updater failed to download the update on channel nightly.",
       );
       assert.notInclude(error.message, cause.message);
+    }).pipe(Effect.provide(ElectronUpdater.layer)),
+  );
+
+  it.effect("records only an armed normal quit, even after the service scope closes", () =>
+    Effect.gen(function* () {
+      const updater = yield* ElectronUpdater.ElectronUpdater;
+      const recordInstall = vi.fn();
+      for (const [exitCode, armed, expectedRecords] of [
+        [1, true, 0],
+        [0, false, 0],
+        [0, true, 1],
+      ] as const) {
+        yield* updater.setAutoInstallOnAppQuit(true);
+        yield* Effect.scoped(updater.onInstallOnAppQuit(recordInstall));
+        yield* updater.setAutoInstallOnAppQuit(armed);
+        appEvents.emit("quit", {}, exitCode);
+        assert.equal(recordInstall.mock.calls.length, expectedRecords);
+      }
     }).pipe(Effect.provide(ElectronUpdater.layer)),
   );
 
