@@ -1,7 +1,6 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { promptLinkAppPath } from "@t3tools/shared/promptLinks";
 import { useRouter } from "@tanstack/react-router";
 import { useEffect, useEffectEvent, useRef } from "react";
 
@@ -10,6 +9,10 @@ import { isPreviewAvailableFor } from "../../browser/previewRuntime";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useScratchProject } from "../../hooks/useScratchProject";
+import { useClientSettings } from "../../hooks/useSettings";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { useProjects } from "../../state/entities";
+import { environmentServerConfigsAtom } from "../../state/server";
 import { selectActiveRightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 import { assetEnvironment } from "../../state/assets";
@@ -18,6 +21,7 @@ import { previewEnvironment } from "../../state/preview";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { resolveDesktopWebLinkTarget } from "./desktopWebLinkTarget";
 
 /**
  * HTML files are served by this machine's environment, so only its threads can
@@ -47,6 +51,8 @@ function threadShowingBrowser(
 export function DesktopWebLinkCoordinator() {
   const router = useRouter();
   const primaryEnvironment = usePrimaryEnvironment();
+  const projects = useProjects();
+  const openPullRequestsInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
   const { scratchEnvironmentId, openScratchProject } = useScratchProject();
   const openThread = useNewThreadHandler();
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
@@ -86,9 +92,21 @@ export function DesktopWebLinkCoordinator() {
   };
 
   const openLink = useEffectEvent(async (url: string) => {
-    const appPath = promptLinkAppPath(url);
-    if (appPath !== null) {
-      await router.navigate({ href: appPath });
+    const target = resolveDesktopWebLinkTarget({
+      url,
+      projects,
+      primaryEnvironmentId: primaryEnvironment?.environmentId ?? null,
+      capabilities: new Map(
+        [...appAtomRegistry.get(environmentServerConfigsAtom)].map(([id, config]) => [
+          id,
+          config.environment.capabilities,
+        ]),
+      ),
+      openPullRequestsInApp,
+    });
+    if (target !== null) {
+      if (target.href !== undefined) await router.navigate({ href: target.href });
+      else await router.navigate(target);
       return;
     }
     const isFile = url.startsWith("file:");
