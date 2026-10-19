@@ -116,6 +116,7 @@ import {
 type CodeFilePosition = NonNullable<PullRequestCodePosition["file"]>;
 
 interface PendingFileReport {
+  readonly scopeKey: string;
   readonly report: (file: CodeFilePosition | null) => void;
   readonly file: CodeFilePosition | null;
   readonly timer: ReturnType<typeof setTimeout>;
@@ -467,6 +468,13 @@ function PullRequestCodeTab({
   // Scrolling fires every frame, so the position goes out once the reader settles.
   const pendingFileReport = useRef<PendingFileReport | null>(null);
   useEffect(() => () => flushFileReport(pendingFileReport), []);
+  useEffect(() => {
+    // A position read in another commit's diff would overwrite the commit just picked.
+    const pending = pendingFileReport.current;
+    if (pending === null || pending.scopeKey === scopeKey) return;
+    clearTimeout(pending.timer);
+    pendingFileReport.current = null;
+  }, [scopeKey]);
 
   const loadDiffFiles = createPullRequestDiffFileContentsLoader(getDiffFileContents, {
     environmentId,
@@ -1311,11 +1319,6 @@ function PullRequestCodeTab({
     answeredReveal.current = revealRequest.nonce;
     revealFile(revealRequest.path);
   });
-  useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- A reveal for a file not loaded yet pages forward, which sets the slice cursor.
-    answerReveal();
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-checked as pages load until the requested file arrives.
-  }, [canLoadNextSlice, items, revealRequest]);
   const answerRestore = useEffectEvent(() => {
     const restore = pendingRestore.current;
     if (restore === null) return;
@@ -1342,10 +1345,11 @@ function PullRequestCodeTab({
     viewer.scrollTo({ type: "item", id: item.id, align: "start", offset: -restore.offset });
   });
   useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- A file not loaded yet pages forward, and a folded one unfolds.
+    // oxlint-disable-next-line react/set-state-in-effect -- A reveal or restore pages forward to a file not loaded yet, and a restore unfolds a folded one.
+    answerReveal();
     answerRestore();
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-checked as pages load until the file arrives.
-  }, [canLoadNextSlice, items, viewer]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Re-checked as pages load until the requested file arrives.
+  }, [canLoadNextSlice, items, revealRequest, viewer]);
   const reportScroll = (
     scrollTop: number,
     view: { getTopForItem: (id: string) => number | undefined },
@@ -1367,6 +1371,7 @@ function PullRequestCodeTab({
     }
     if (pendingFileReport.current !== null) clearTimeout(pendingFileReport.current.timer);
     pendingFileReport.current = {
+      scopeKey,
       report: onFileChange,
       file,
       timer: setTimeout(() => flushFileReport(pendingFileReport), 250),
