@@ -164,6 +164,23 @@ describe("summarizeT3ToolCalls", () => {
     ).toBe("Sent 2 messages to 1 thread");
   });
 
+  it("reads an MCP OkayOutput string as the tool result", () => {
+    const result = { messageId: "message-1", threadId: "thread-1" };
+    expect(
+      summarizeT3ToolCalls("thread-send", [
+        completed(
+          { toolName: "t3_thread_send", args: { threadId: "thread-1" } },
+          {
+            type: "MCP",
+            tool_name: "t3_thread_send",
+            server_name: "t3-code",
+            output: { OkayOutput: JSON.stringify(result) },
+          },
+        ),
+      ]).label,
+    ).toBe("Sent 1 message to 1 thread");
+  });
+
   it("falls back to message counts when a destination is missing or a result is malformed", () => {
     expect(
       summarizeT3ToolCalls("thread-send", [
