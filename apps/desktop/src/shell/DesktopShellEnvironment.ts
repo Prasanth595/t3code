@@ -347,9 +347,6 @@ const readWindowsEnvironment = Effect.fn("desktop.shellEnvironment.readWindowsEn
       captureWindowsEnvironmentCommand(names),
     ];
 
-    // Startup waits for this read, so the candidates share one timeout instead
-    // of each starting its own. One that fails quickly, such as pwsh.exe not
-    // being installed, leaves the rest of the time to the next.
     const deadline =
       (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(LOGIN_SHELL_TIMEOUT);
     for (const command of WINDOWS_SHELL_CANDIDATES) {

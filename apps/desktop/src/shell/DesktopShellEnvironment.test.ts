@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Clock from "effect/Clock";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -53,23 +54,6 @@ function makeProcess(output: string, exitCode = 0): ChildProcessSpawner.ChildPro
   });
 }
 
-/** A shell that never writes or exits, like PowerShell stuck in a profile. */
-function makeHangingProcess(): ChildProcessSpawner.ChildProcessHandle {
-  return ChildProcessSpawner.makeHandle({
-    pid: ChildProcessSpawner.ProcessId(124),
-    stdout: Stream.never,
-    stderr: Stream.empty,
-    all: Stream.never,
-    exitCode: Effect.never,
-    isRunning: Effect.succeed(true),
-    kill: () => Effect.void,
-    stdin: Sink.drain,
-    getInputFd: () => Sink.drain,
-    getOutputFd: () => Stream.empty,
-    unref: Effect.succeed(Effect.void),
-  });
-}
-
 function withProcessEnv<A, E, R>(
   env: NodeJS.ProcessEnv,
   effect: Effect.Effect<A, E, R>,
@@ -97,8 +81,7 @@ function runShellEnvironment(input: {
   ) =>
     | string
     | { output: string; exitCode: number }
-    | "hang"
-    | { readonly spawnFailure: PlatformError.PlatformError };
+    | Effect.Effect<ChildProcessSpawner.ChildProcessHandle, PlatformError.PlatformError>;
   readonly failure?: PlatformError.PlatformError;
 }) {
   const layerEnvironment = Layer.succeed(
@@ -112,10 +95,7 @@ function runShellEnvironment(input: {
     ChildProcessSpawner.make((command) => {
       if (input.failure !== undefined) return Effect.fail(input.failure);
       const result = input.handler(command);
-      if (result === "hang") return Effect.succeed(makeHangingProcess());
-      if (typeof result !== "string" && "spawnFailure" in result) {
-        return Effect.fail(result.spawnFailure);
-      }
+      if (Effect.isEffect(result)) return result;
       return Effect.succeed(
         typeof result === "string"
           ? makeProcess(result)
@@ -521,6 +501,8 @@ describe("DesktopShellEnvironment", () => {
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = { PATH: "C:\\Windows\\System32" };
       const profileShells: string[] = [];
+      const started = yield* Deferred.make<void>();
+      const completed = yield* Deferred.make<void>();
       const baseClock = yield* Clock.Clock;
       let wallTime = 0;
       const clockWithBackwardWallJump: Clock.Clock = {
@@ -536,26 +518,34 @@ describe("DesktopShellEnvironment", () => {
           handler: (command) => {
             if (command._tag !== "StandardCommand") return "";
             if (command.args.includes("-NoProfile")) {
-              return envOutput({ PATH: "C:\\Windows\\System32" });
+              return envOutput({ PATH: "C:\\NoProfile\\Bin;C:\\Windows\\System32" });
             }
             profileShells.push(command.command);
-            // Simulate Windows correcting the wall clock backward while the
-            // first profile probe is still running.
-            wallTime = -60_000;
-            return "hang";
+            return Deferred.succeed(started, undefined).pipe(
+              Effect.as(
+                ChildProcessSpawner.makeHandle({
+                  ...makeProcess(""),
+                  stdout: Stream.never,
+                  all: Stream.never,
+                  exitCode: Effect.never,
+                  isRunning: Effect.succeed(true),
+                }),
+              ),
+            );
           },
         }).pipe(
+          Effect.tap(() => Deferred.succeed(completed, undefined)),
           Effect.provide(Logger.layer([])),
           Effect.provideService(Clock.Clock, clockWithBackwardWallJump),
         ),
       );
+      yield* Deferred.await(started);
+      wallTime = -60_000;
       yield* TestClock.adjust("5 seconds");
-      assert.isDefined(install.pollUnsafe(), "finishes after the shared 5-second budget");
-      yield* Fiber.join(install);
-
-      // The timeout is spent, so Windows PowerShell is not started for another 5 seconds.
+      assert.isTrue(yield* Deferred.isDone(completed), "finishes within the shared budget");
+      assert.isFalse(yield* Fiber.join(install));
       assert.deepEqual(profileShells, ["pwsh.exe"]);
-      assert.equal(env.PATH?.split(";")[0], "C:\\Windows\\System32");
+      assert.equal(env.PATH, "C:\\NoProfile\\Bin;C:\\Windows\\System32");
     }),
   );
 
@@ -569,19 +559,20 @@ describe("DesktopShellEnvironment", () => {
         pathOrDescriptor: "pwsh.exe",
       });
 
-      yield* runShellEnvironment({
+      const prepared = yield* runShellEnvironment({
         env,
         platform: "win32",
         handler: (command) => {
           if (command._tag !== "StandardCommand") return "";
-          if (command.command === "pwsh.exe") return { spawnFailure: missing };
+          if (command.command === "pwsh.exe") return Effect.fail(missing);
           return command.args.includes("-NoProfile")
             ? envOutput({ PATH: "C:\\Windows\\System32" })
             : envOutput({ PATH: "C:\\Profile\\Node;C:\\Windows\\System32" });
         },
       }).pipe(Effect.provide(Logger.layer([])));
 
-      assert.equal(env.PATH?.split(";")[0], "C:\\Profile\\Node");
+      assert.isTrue(prepared);
+      assert.equal(env.PATH, "C:\\Profile\\Node;C:\\Windows\\System32");
     }),
   );
 
