@@ -405,21 +405,20 @@ export function summarizeT3ToolCalls(
       const started = outcomes.filter((outcome) => outcome !== "failed").length;
       const failed = outcomes.length - started;
       failedCount += failed;
-      if (outcomes.length > 0 && started === 0) {
+      if (outcomes.length === 0) {
+        label = phrase(
+          "Started writing",
+          "start writing",
+          `review guides${selected.length === 1 ? "" : ` ${times}`}`,
+        );
+      } else if (started === 0) {
         label = `Could not start ${quantity(failed, "review guide")}`;
       } else {
-        label =
-          outcomes.length === 0
-            ? phrase(
-                "Started writing",
-                "start writing",
-                `review guides${selected.length === 1 ? "" : ` ${times}`}`,
-              )
-            : phrase(
-                "Started",
-                "start",
-                `${quantity(started, "review guide")}${failed > 0 ? `, ${failed} failed` : ""}`,
-              );
+        label = phrase(
+          "Started",
+          "start",
+          `${quantity(started, "review guide")}${failed > 0 ? `, ${failed} failed` : ""}`,
+        );
       }
       break;
     }

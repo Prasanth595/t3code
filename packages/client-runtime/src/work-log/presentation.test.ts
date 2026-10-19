@@ -363,9 +363,6 @@ describe("resolveWorkEntryToolPresentation", () => {
     ["t3_thread_send_attachments", "Sending attachments", "Sent attachments"],
     ["run_scheduled_task_now", "Running a scheduled task", "Requested a run of a scheduled task"],
     ["t3_workflow_stop", "Stopping a workflow", "Requested a stop for a workflow"],
-    ["unwatch_pull_request", "Unwatching a pull request", "Stopped watching a pull request"],
-    ["write_pull_request_guides", "Writing review guides", "Started writing review guides"],
-    ["task_cancel", "Canceling a delegated task", "Requested cancellation of a delegated task"],
   ])("labels %s through its lifecycle", (tool, running, completed) => {
     expect(resolveWorkEntryToolPresentation({ label: `T3-code.${tool}` })?.displayName).toBe(
       running,
@@ -378,13 +375,47 @@ describe("resolveWorkEntryToolPresentation", () => {
     ).toBe(completed);
   });
 
-  it("names a stopped unwatch without repeating the verb", () => {
+  it("distinguishes an interrupted unwatch from a completed unwatch", () => {
+    const entry = { label: "T3-code.unwatch_pull_request" };
     expect(
-      resolveWorkEntryToolPresentation({
-        label: "T3-code.unwatch_pull_request",
-        toolLifecycleStatus: "stopped",
-      })?.displayName,
-    ).toBe("Stopped unwatching a pull request");
+      (["inProgress", "stopped", "completed"] as const).map(
+        (toolLifecycleStatus) =>
+          resolveWorkEntryToolPresentation({ ...entry, toolLifecycleStatus })?.displayName,
+      ),
+    ).toEqual([
+      "Unwatching a pull request",
+      "Stopped unwatching a pull request",
+      "Stopped watching a pull request",
+    ]);
+  });
+
+  it("describes starting review-guide writing in rows and groups without outcomes", () => {
+    const entry = {
+      id: "guides",
+      createdAt: "2026-10-07T00:00:00.000Z",
+      tone: "tool",
+      label: "T3-code.write_pull_request_guides",
+      toolLifecycleStatus: "completed",
+    } satisfies WorkLogPresentationEntry;
+    expect({
+      row: resolveWorkEntryToolPresentation(entry)?.displayName,
+      single: summarizeToolGroup([entry]).summary,
+      repeated: summarizeToolGroup([entry, { ...entry, id: "guides-2" }]).summary,
+    }).toEqual({
+      row: "Started writing review guides",
+      single: "Started writing review guides",
+      repeated: "Started writing review guides 2 times",
+    });
+  });
+
+  it("describes delegated-task cancellation as an ongoing action then a request", () => {
+    const entry = { label: "T3-code.task_cancel" };
+    expect(
+      (["inProgress", "completed"] as const).map(
+        (toolLifecycleStatus) =>
+          resolveWorkEntryToolPresentation({ ...entry, toolLifecycleStatus })?.displayName,
+      ),
+    ).toEqual(["Canceling a delegated task", "Requested cancellation of a delegated task"]);
   });
 
   it("summarizes workflow stop targets separately from their parent thread", () => {
