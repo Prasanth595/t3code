@@ -1438,10 +1438,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
       {
         driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL("./plan_questions/codex_transcript.ndjson", import.meta.url),
-        modelSelection: {
-          ...CODEX_MODEL_SELECTION,
-          options: [{ id: "reasoningEffort", value: "medium" }],
-        },
+        modelSelection: CODEX_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertCodexPlanQuestionsOutput,
       },
@@ -1468,10 +1465,7 @@ export const ORCHESTRATOR_REPLAY_FIXTURES: ReadonlyArray<OrchestratorReplayFixtu
       {
         driver: ProviderDriverKind.make("codex"),
         transcriptFile: new URL("./proposed_plan/codex_transcript.ndjson", import.meta.url),
-        modelSelection: {
-          ...CODEX_MODEL_SELECTION,
-          options: [{ id: "reasoningEffort", value: "medium" }],
-        },
+        modelSelection: CODEX_MODEL_SELECTION,
         runtimePolicyOverride: READ_ONLY_NEVER_POLICY,
         assertOutput: assertProposedPlanOutput,
       },
