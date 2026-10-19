@@ -25,6 +25,7 @@ const state = vi.hoisted(() => ({
   serverConfigs: new Map() as Map<unknown, unknown>,
   stackError: null as string | null,
   refreshStack: vi.fn(),
+  runStackAction: vi.fn(),
   stack: null as null | {
     readonly id: string;
     readonly number: number;
@@ -42,6 +43,10 @@ const state = vi.hoisted(() => ({
 vi.mock(import("~/state/entities"), async (importOriginal) => ({
   ...(await importOriginal()),
   useServerConfigs: (() => state.serverConfigs) as never,
+}));
+vi.mock(import("~/state/use-atom-command"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  useAtomCommand: (() => state.runStackAction) as never,
 }));
 vi.mock(import("~/state/usePullRequestStack"), async (importOriginal) => ({
   ...(await importOriginal()),
@@ -174,7 +179,8 @@ it("offers a retry instead of a dead end when the stack lookup fails", () => {
   expect(state.refreshStack).toHaveBeenCalledTimes(1);
 });
 
-it("offers to merge a stacked pull request only with its whole stack", () => {
+it("offers to merge a stacked pull request only with its whole stack", async () => {
+  state.runStackAction.mockReset().mockResolvedValue({ _tag: "Success" });
   const environmentId = EnvironmentId.make("environment");
   state.serverConfigs = new Map([
     [environmentId, { environment: { capabilities: { pullRequests: true } } }],
@@ -216,6 +222,20 @@ it("offers to merge a stacked pull request only with its whole stack", () => {
       .click(),
   );
   expect(document.body.textContent).toContain("Merge 2 pull requests?");
+
+  // A stale stack would replay old layer heads on the next attempt, so every stack result
+  // must refresh the stack lookup.
+  await act(async () =>
+    [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
+      .find((button) => button.textContent?.trim() === "Merge stack")!
+      .click(),
+  );
+  expect(state.runStackAction).toHaveBeenCalledWith(
+    expect.objectContaining({
+      input: expect.objectContaining({ number: 2, stackNumber: 7, action: "merge" }),
+    }),
+  );
+  expect(state.refreshStack).toHaveBeenCalledTimes(1);
 });
 
 it("requires a new merge click after passing checks become pending and pass again", () => {

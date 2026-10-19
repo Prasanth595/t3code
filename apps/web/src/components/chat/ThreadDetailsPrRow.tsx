@@ -490,6 +490,7 @@ export function ThreadDetailsPrRow({
                 onActed={() => {
                   detailQuery.refresh();
                   checksQuery.refresh();
+                  stackGate.stack.refresh();
                   onActed?.();
                 }}
               />
