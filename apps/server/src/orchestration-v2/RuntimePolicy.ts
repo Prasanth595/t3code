@@ -11,6 +11,9 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import * as GitHubCredentials from "@t3tools/source-control-github/server/GitHubCredentials";
+import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
+import { agentGitHubEnvironment } from "../sourceControl/GitHubWorkspaceAccount.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProjectStore from "./ProjectStore.ts";
@@ -43,6 +46,7 @@ export interface RuntimePolicyV2Shape {
   readonly resolve: (input: {
     readonly thread: OrchestrationV2AppThread;
     readonly modelSelection: ModelSelection;
+    readonly includeEnvironment?: boolean;
   }) => Effect.Effect<ProviderAdapter.ProviderAdapterV2RuntimePolicy, RuntimePolicyV2Error>;
 }
 
@@ -79,6 +83,21 @@ export const layerFromProjectStore: Layer.Layer<
   Effect.gen(function* () {
     const projects = yield* ProjectStore.ProjectStoreV2;
     const providerInstances = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
+    // Orchestration-only runtimes can omit source control; the server supplies both services.
+    const resolver = yield* Effect.serviceOption(
+      RepositoryIdentityResolver.RepositoryIdentityResolver,
+    );
+    const credentials = yield* Effect.serviceOption(GitHubCredentials.GitHubCredentials);
+    const workspaceEnvironment = (cwd: string) =>
+      Option.isNone(resolver) || Option.isNone(credentials)
+        ? Effect.succeed({})
+        : agentGitHubEnvironment(cwd).pipe(
+            Effect.provideService(
+              RepositoryIdentityResolver.RepositoryIdentityResolver,
+              resolver.value,
+            ),
+            Effect.provideService(GitHubCredentials.GitHubCredentials, credentials.value),
+          );
     return RuntimePolicyV2.of({
       resolve: Effect.fn("RuntimePolicyV2.resolve")(function* (input) {
         const instance = yield* providerInstances.getInstance(input.modelSelection.instanceId);
@@ -111,10 +130,12 @@ export const layerFromProjectStore: Layer.Layer<
               }),
             ),
           ));
+        const environment = input.includeEnvironment ? yield* workspaceEnvironment(cwd) : {};
         return ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: providerRuntimeMode(input.thread.runtimeMode, supportedRuntimeModes),
           interactionMode: input.thread.interactionMode,
           cwd,
+          ...(Object.keys(environment).length === 0 ? {} : { environment }),
         });
       }),
     });
