@@ -16,7 +16,9 @@ import {
 } from "./factoryEnvironments";
 import {
   factoryLinkAction,
+  factoryUrl,
   mintPairingToken,
+  originOf,
   parseFactoryMessage,
   probeFactory,
   signInDecision,
@@ -125,7 +127,9 @@ function FactoryWebView(props: { readonly connection: SavedRemoteConnection }) {
           setPhase({ kind: "error", reason: minted.reason });
           return;
         }
-        webViewRef.current?.injectJavaScript(factoryExchangeScript(minted.credential));
+        webViewRef.current?.injectJavaScript(
+          factoryExchangeScript(minted.credential, originOf(httpBaseUrl) ?? ""),
+        );
       }
     },
     [httpBaseUrl, bearerToken],
@@ -143,7 +147,7 @@ function FactoryWebView(props: { readonly connection: SavedRemoteConnection }) {
   return (
     <WebView<object>
       ref={webViewRef}
-      source={{ uri: `${httpBaseUrl}/factory` }}
+      source={{ uri: factoryUrl("/factory", httpBaseUrl) }}
       originWhitelist={["*"]}
       sharedCookiesEnabled
       injectedJavaScriptBeforeContentLoaded={FACTORY_BEFORE_CONTENT_LOADED_SCRIPT}

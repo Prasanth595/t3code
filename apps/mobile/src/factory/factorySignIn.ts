@@ -17,7 +17,12 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const UNREACHABLE = "The server is unreachable.";
 const NO_FACTORY_PAGES = "This server has no Factory pages.";
 
-function originOf(url: string): string | null {
+/** Saved base URLs end in "/", so paths are resolved, never concatenated. */
+export function factoryUrl(path: string, httpBaseUrl: string): string {
+  return new URL(path, httpBaseUrl).toString();
+}
+
+export function originOf(url: string): string | null {
   try {
     const parsed = new URL(url);
     return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.origin : null;
@@ -113,7 +118,7 @@ export async function mintPairingToken(
   if (server.bearerToken === null) return { ok: false, reason: NOT_CONNECTED };
   let response: Response;
   try {
-    response = await request(fetchFn, `${server.httpBaseUrl}/api/auth/pairing-token`, {
+    response = await request(fetchFn, factoryUrl("/api/auth/pairing-token", server.httpBaseUrl), {
       method: "POST",
       headers: authorized(server, { "content-type": "application/json" }),
       body: "{}",
@@ -151,7 +156,7 @@ export async function probeFactory(
   if (server.bearerToken === null) return { ok: false, reason: NOT_CONNECTED };
   let response: Response;
   try {
-    response = await request(fetchFn, `${server.httpBaseUrl}/api/factory/status`, {
+    response = await request(fetchFn, factoryUrl("/api/factory/status", server.httpBaseUrl), {
       method: "GET",
       headers: authorized(server, { accept: "application/json" }),
     });

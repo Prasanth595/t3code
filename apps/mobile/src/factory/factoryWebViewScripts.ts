@@ -24,9 +24,18 @@ export const FACTORY_BEFORE_CONTENT_LOADED_SCRIPT = `
   var originalFetch = window.fetch;
   window.fetch = function () {
     var input = arguments[0];
-    var url = typeof input === "string" ? input : input && input.url;
+    var url = typeof Request !== "undefined" && input instanceof Request ? input.url : String(input);
     return originalFetch.apply(this, arguments).then(function (response) {
-      if (response.status === 401 && url && url.indexOf("/api/factory/status") !== -1) {
+      var target = null;
+      try {
+        target = new URL(url, window.location.href);
+      } catch (error) {}
+      if (
+        response.status === 401 &&
+        target &&
+        target.origin === window.location.origin &&
+        target.pathname === "/api/factory/status"
+      ) {
         post({ type: "unauthorized" });
       }
       return response;
@@ -38,11 +47,15 @@ true;
 `;
 
 /** Trades a one-time pairing credential for the browser session cookie, then opens the Factory pages. */
-export function factoryExchangeScript(credential: string): string {
+export function factoryExchangeScript(credential: string, serverOrigin: string): string {
   return `
 (function () {
   function post(ok) {
     window.ReactNativeWebView.postMessage(JSON.stringify({ type: "exchange", ok: ok }));
+  }
+  if (window.location.origin !== ${JSON.stringify(serverOrigin)}) {
+    post(false);
+    return;
   }
   fetch("/api/auth/browser-session", {
     method: "POST",
