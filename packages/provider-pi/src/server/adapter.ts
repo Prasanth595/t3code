@@ -2853,7 +2853,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (boundary.type === "nothing") {
               return piThreadSnapshot(state.providerThread);
             }
-            const forkEntryId = yield* piForkEntry(boundary, request({ type: "get_entries" }));
+            const forkEntryId = yield* piForkEntry(
+              boundary,
+              rollbackInput.providerThread.createdAt,
+              request({ type: "get_entries" }),
+            );
             return yield* Effect.acquireUseRelease(
               sessionEventPermit.withPermits(1)(
                 Effect.gen(function* () {
@@ -3002,7 +3006,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 const beforeEntry =
                   boundary.type === "nothing"
                     ? null
-                    : yield* piForkEntry(boundary, forkConnection.request({ type: "get_entries" }));
+                    : yield* piForkEntry(
+                        boundary,
+                        source.createdAt,
+                        forkConnection.request({ type: "get_entries" }),
+                      );
                 if (beforeEntry !== null) {
                   const result = yield* forkConnection.request({
                     type: "fork",
@@ -3170,13 +3178,17 @@ function piForkBoundary(input: {
 /** Reads the session tree only for an uncaptured boundary. */
 function piForkEntry<E>(
   boundary: Exclude<PiForkBoundary, { type: "nothing" }>,
+  providerThreadCreatedAt: DateTime.Utc,
   readEntries: Effect.Effect<unknown, E>,
 ): Effect.Effect<string, E | ProviderAdapter.ProviderAdapterProtocolError> {
   if (boundary.type === "entry") return Effect.succeed(boundary.entryId);
   return readEntries.pipe(
     Effect.flatMap((data) => {
       const listing = piSessionListing(data);
-      const entryId = listing === null ? undefined : piUncapturedForkEntry(listing, boundary);
+      const entryId =
+        listing === null
+          ? undefined
+          : piUncapturedForkEntry(listing, boundary, providerThreadCreatedAt);
       return entryId === undefined
         ? Effect.fail(
             new ProviderAdapter.ProviderAdapterProtocolError({
@@ -3191,16 +3203,20 @@ function piForkEntry<E>(
 
 /**
  * Pi shares the server clock. An adopted wake can precede its T3 turn, so search from the target
- * turn's end through the boundary turn's end. At thread start, bound the search by startedAt to
- * preserve inherited session history; a wake predating it cannot be recovered safely.
+ * turn's end through the boundary turn's end. At thread start, use the earlier of thread creation
+ * and turn start to include adopted wakes while preserving inherited session history.
  */
 function piUncapturedForkEntry(
   listing: PiSessionListing,
   boundary: Extract<PiForkBoundary, { type: "uncaptured" }>,
+  providerThreadCreatedAt: DateTime.Utc,
 ): string | undefined {
   const { startedAt, completedAt } = boundary.turn;
   if (startedAt === null || completedAt === null) return undefined;
-  const from = DateTime.toEpochMillis(boundary.target?.completedAt ?? startedAt);
+  const from =
+    boundary.target === null
+      ? Math.min(DateTime.toEpochMillis(providerThreadCreatedAt), DateTime.toEpochMillis(startedAt))
+      : DateTime.toEpochMillis(boundary.target.completedAt ?? startedAt);
   const to = DateTime.toEpochMillis(completedAt);
   const targetRef = boundary.target?.nativeTurnRef;
   const stopAt = targetRef?.strength === "strong" ? targetRef.nativeId : null;

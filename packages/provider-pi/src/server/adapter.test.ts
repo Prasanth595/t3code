@@ -2820,7 +2820,7 @@ describe("PiAdapterV2", () => {
       });
       const rollBackToStart = (startedAt: number) =>
         runtime.rollbackThread({
-          providerThread,
+          providerThread: { ...providerThread, createdAt: at(50) },
           target: {
             type: "thread_start",
             checkpointId: CheckpointId.make("checkpoint-start"),
@@ -2840,15 +2840,25 @@ describe("PiAdapterV2", () => {
           .filter((request) => request.type === "fork")
           .map((request) => request.entryId);
 
-      // The parent history and adopted wake both predate T3's first turn: refuse to guess.
-      fake.queueEntries(UNCAPTURED_TURN_TREE);
-      const unresolved = yield* rollBackToStart(150).pipe(Effect.result);
-      assert.deepEqual(forkedEntries(), []);
-      assert.equal(unresolved._tag, "Failure");
+      const entries = {
+        entries: [
+          ...TURN_ONE_ENTRIES,
+          sessionMessage("u2", "a1b", "user", 100),
+          sessionMessage("a2", "u2", "assistant", 120),
+          sessionMessage("u3", "a2", "user", 160),
+          sessionMessage("a3", "u3", "assistant", 180),
+        ],
+        leafId: "a3",
+      };
 
-      fake.queueEntries(UNCAPTURED_TURN_TREE);
-      yield* rollBackToStart(100);
+      // The adopted wake precedes T3's first turn; its steer must be discarded with it.
+      fake.queueEntries(entries);
+      yield* rollBackToStart(150);
       assert.deepEqual(forkedEntries(), ["u2"]);
+
+      fake.queueEntries(entries);
+      yield* rollBackToStart(100);
+      assert.deepEqual(forkedEntries(), ["u2", "u2"]);
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
