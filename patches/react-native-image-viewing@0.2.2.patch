@@ -212,7 +212,7 @@ index 4730fe40735bd80afc97abdd14150a2fb4abf3e5..0ed2100744ccc9bcee7f1b15b0328a72
      const footerTransform = footerTranslate.getTranslateTransform();
      return [headerTransform, footerTransform, toggleVisible];
 diff --git a/dist/hooks/useImageIndexChange.js b/dist/hooks/useImageIndexChange.js
-index cb5f0f798e5cfeedf459b7d22e92871db3092020..38595e8f25bbe7ede8441b606c1314bd29100824 100644
+index cb5f0f798e5cfeedf459b7d22e92871db3092020..c699d3714585925fc1d7c68a89b49d104d170b65 100644
 --- a/dist/hooks/useImageIndexChange.js
 +++ b/dist/hooks/useImageIndexChange.js
 @@ -5,16 +5,36 @@
@@ -233,7 +233,7 @@ index cb5f0f798e5cfeedf459b7d22e92871db3092020..38595e8f25bbe7ede8441b606c1314bd
 +            // A resized list can still deliver events queued for its previous viewport.
 +            if (activeScroll.current !== handleScroll ||
 +                window.width !== screen.width || window.height !== screen.height ||
-+                event.nativeEvent.layoutMeasurement.width !== screen.width) {
++                Math.abs(event.nativeEvent.layoutMeasurement.width - screen.width) > 1) {
 +                return;
 +            }
 +        }
