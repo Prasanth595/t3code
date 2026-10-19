@@ -220,14 +220,19 @@ export function buildEnvironmentCaptureCommand(
       }
 
       if (isNushell) {
-        // Nu expands home paths only when exporting a list-valued PATH.
-        const value =
+        // Without a configured conversion, Nu expands home paths only in a list PATH.
+        const defaultValue =
           name === "PATH"
             ? "if ($env.PATH? | describe | str starts-with 'list') { " +
               "$env.PATH | each {|p| if ($p | str starts-with '~') { " +
               "$p | path expand --no-symlink } else { $p } } | str join (char esep) " +
               "} else { $env.PATH? | default '' }"
             : `$env.${name}? | default ''`;
+        const value =
+          `if $env.${name}? == null { '' } else if ` +
+          `$env.ENV_CONVERSIONS?.${name}?.to_string? != null { ` +
+          `do $env.ENV_CONVERSIONS.${name}.to_string $env.${name} ` +
+          `} else { ${defaultValue} }`;
         return [
           `print '${envCaptureStart(name)}'`,
           `print (${value})`,
