@@ -207,8 +207,7 @@ export class AssetWorkspaceAssetNotFoundError extends Schema.TaggedError<AssetWo
   "AssetWorkspaceAssetNotFoundError",
   {
     resource: AssetResource,
-    /** The absolute path the host checked for a media file, after expanding
-        `~` and resolving against the workspace. Absent from older servers. */
+    // Absolute path after home/workspace resolution; absent on older servers.
     checkedPath: Schema.optionalKey(Schema.String),
   },
 ) {

@@ -157,7 +157,7 @@ export function createAssetEnvironmentAtoms<R, E>(
     )
       return yield* error;
     const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-    // When the local retry fails too, report the thread's host's failure; defects stay.
+    // Map the full cause so retry defects and interruption survive.
     const asset = yield* registry
       .run(local.environmentId, request(WS_METHODS.assetsCreateUrl, input))
       .pipe(Effect.catchCause((cause) => Effect.failCause(Cause.map(cause, () => error))));

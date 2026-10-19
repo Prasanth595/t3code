@@ -9,7 +9,6 @@ import type { EnvironmentId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
 import { environmentCatalog } from "../connection/catalog";
-import { appAtomRegistry } from "../rpc/atomRegistry";
 import {
   environmentPresentations,
   environmentSummaries,
@@ -72,14 +71,6 @@ export function useEnvironment(
   return environmentId === null || presentation === null
     ? null
     : projectEnvironmentPresentation(environmentId, presentation);
-}
-
-/** A one-off read for event handlers that need the label only when something fails. */
-export function readEnvironmentLabel(environmentId: EnvironmentId): string | null {
-  return (
-    appAtomRegistry.get(environmentPresentations.presentationAtom(environmentId))?.entry.target
-      .label ?? null
-  );
 }
 
 export function usePrimaryEnvironment(): EnvironmentPresentation | null {

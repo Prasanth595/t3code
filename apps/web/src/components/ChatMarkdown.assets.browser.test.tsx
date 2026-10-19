@@ -83,10 +83,6 @@ vi.mock(import("../remoteOpen"), async (original) => ({
   ...(await original()),
   useRemoteOpenResolution: () => remoteOpen,
 }));
-vi.mock(import("../state/environments"), async (original) => ({
-  ...(await original()),
-  readEnvironmentLabel: () => remoteOpen.label,
-}));
 
 import ChatMarkdown from "./ChatMarkdown";
 import { toastManager } from "./ui/toast";
