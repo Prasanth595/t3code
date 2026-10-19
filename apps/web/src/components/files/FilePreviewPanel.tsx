@@ -1232,7 +1232,7 @@ export default function FilePreviewPanel({
               availableEditors={availableEditors}
               openInCwd={absolutePath}
               compact
-              revealFileManager={serverConfig?.shellRevealInFileManager === true}
+              revealFileManager={!isFolder && serverConfig?.shellRevealInFileManager === true}
             />
           ) : null}
           {canToggleRendered && renderedMode ? (
