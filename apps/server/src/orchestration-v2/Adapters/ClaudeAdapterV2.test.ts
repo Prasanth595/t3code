@@ -935,27 +935,6 @@ describe("ClaudeAdapterV2 context usage", () => {
       undefined,
     );
   });
-
-  it("reports the configured auto-compact window unless it exceeds a known context window", () => {
-    const thresholdFor = (
-      autoCompactWindow: string,
-      modelSelection: ModelSelection = CLAUDE_TEST_MODEL_SELECTION,
-    ) =>
-      ClaudeAdapterV2.claudeProviderTurnTokenUsage(
-        { input_tokens: 1, output_tokens: 1 },
-        modelSelection,
-        "2026-08-29T00:00:00.000Z",
-        autoCompactWindow,
-      ).autoCompactThreshold;
-
-    assert.strictEqual(thresholdFor("150000"), 150_000);
-    assert.strictEqual(thresholdFor("650000"), undefined);
-    assert.strictEqual(thresholdFor(""), undefined);
-    assert.strictEqual(
-      thresholdFor("650000", { ...CLAUDE_TEST_MODEL_SELECTION, model: "uncatalogued-model" }),
-      650_000,
-    );
-  });
 });
 
 describe("ClaudeAdapterV2 session permissions", () => {
@@ -4217,7 +4196,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
   it.effect("merges cumulative stream usage into the message_start counts", () =>
     Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
+      const harness = yield* makeWakeHarnessWithOptions({
+        settings: { ...DEFAULT_CLAUDE_SETTINGS, autoCompactWindow: "150000" },
+      });
       yield* harness.runtime.startTurn(
         makeClaudeTestTurnInput({
           threadId: harness.threadId,
@@ -4278,6 +4259,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const terminal = yield* Queue.take(harness.terminalReceipts);
       assert.equal(terminal.status, "completed");
       assert.deepEqual(reportedContextTokens(harness.events), [1_211, 1_230, 1_075, 400]);
+      assert.deepEqual(
+        harness.events.flatMap((event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+            ? [event.providerTurn.tokenUsage.autoCompactThreshold]
+            : [],
+        ),
+        [150_000, 150_000, 150_000, 150_000],
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
@@ -4285,47 +4274,66 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
-  it.effect("ignores snapshot usage from before a compaction without stream usage", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeWakeHarness;
-      yield* harness.runtime.startTurn(
-        makeClaudeTestTurnInput({
-          threadId: harness.threadId,
-          providerThread: harness.providerThread,
-          now: yield* DateTime.now,
-          attemptId: RunAttemptId.make("attempt-snapshot-usage-compaction"),
-          text: "Continue.",
-          attachments: [],
-        }),
-      );
-      const usage = { ...zeroUsage, input_tokens: 1_000, output_tokens: 75 };
-      const frames = [
-        usageSnapshotFrame("msg_fallback", "00000000-0000-4000-8000-000000000790", usage),
-        claudeSdkFrame({
-          type: "system",
-          subtype: "compact_boundary",
-          compact_metadata: { trigger: "auto", pre_tokens: 1_075, post_tokens: 400 },
-          uuid: "00000000-0000-4000-8000-000000000791",
-          session_id: WAKE_NATIVE_SESSION,
-        }),
-        usageSnapshotFrame("msg_fallback", "00000000-0000-4000-8000-000000000792", usage),
-        // A new request after the boundary reports the compacted context.
-        usageSnapshotFrame("msg_after", "00000000-0000-4000-8000-000000000793", {
-          ...zeroUsage,
-          input_tokens: 450,
-          output_tokens: 10,
-        }),
-        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000794", result: "Done." }),
-      ];
-      for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
-      const terminal = yield* Queue.take(harness.terminalReceipts);
-      assert.equal(terminal.status, "completed");
-      assert.deepEqual(reportedContextTokens(harness.events), [1_075, 400, 460]);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+  it.effect.each([
+    { autoCompactWindow: "", model: "claude-sonnet-4-6", threshold: undefined },
+    { autoCompactWindow: "150000", model: "claude-sonnet-4-6", threshold: 150_000 },
+    { autoCompactWindow: "200000", model: "claude-sonnet-4-6", threshold: undefined },
+    { autoCompactWindow: "650000", model: "claude-sonnet-4-6", threshold: undefined },
+    { autoCompactWindow: "650000", model: "uncatalogued-model", threshold: 650_000 },
+  ])(
+    "ignores stale snapshots after compaction and reports threshold $autoCompactWindow for $model",
+    ({ autoCompactWindow, model, threshold }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarnessWithOptions({
+          settings: { ...DEFAULT_CLAUDE_SETTINGS, autoCompactWindow },
+        });
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-snapshot-usage-compaction"),
+            text: "Continue.",
+            attachments: [],
+            modelSelection: { ...CLAUDE_TEST_MODEL_SELECTION, model },
+          }),
+        );
+        const usage = { ...zeroUsage, input_tokens: 1_000, output_tokens: 75 };
+        const frames = [
+          usageSnapshotFrame("msg_fallback", "00000000-0000-4000-8000-000000000790", usage),
+          claudeSdkFrame({
+            type: "system",
+            subtype: "compact_boundary",
+            compact_metadata: { trigger: "auto", pre_tokens: 1_075, post_tokens: 400 },
+            uuid: "00000000-0000-4000-8000-000000000791",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+          usageSnapshotFrame("msg_fallback", "00000000-0000-4000-8000-000000000792", usage),
+          // A new request after the boundary reports the compacted context.
+          usageSnapshotFrame("msg_after", "00000000-0000-4000-8000-000000000793", {
+            ...zeroUsage,
+            input_tokens: 450,
+            output_tokens: 10,
+          }),
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000794", result: "Done." }),
+        ];
+        for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "completed");
+        assert.deepEqual(reportedContextTokens(harness.events), [1_075, 400, 460]);
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.tokenUsage
+              ? [event.providerTurn.tokenUsage.autoCompactThreshold]
+              : [],
+          ),
+          [threshold, threshold, threshold],
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+        ),
       ),
-    ),
   );
 
   it.effect("surfaces a Claude safety model fallback without failing the turn", () =>
