@@ -65,16 +65,13 @@ export function useProactivePanels(input: {
   const proactivePanelObservationRef = useRef<ReturnType<
     typeof observeProactivePanelUserChoice
   > | null>(null);
-  const observedThreadPullRequestRef = useRef<{
-    readonly threadKey: string;
-    readonly reference: ThreadLinkedPullRequest | null;
-  } | null>(null);
+  // ChatView survives thread navigation; keep each thread's last link for re-entry.
+  const observedThreadPullRequestsRef = useRef(new Map<string, ThreadLinkedPullRequest | null>());
   const threadKey = threadRef ? scopedThreadKey(threadRef) : null;
 
   useEffect(() => {
     if (threadKey === null || threadRef === null) {
       proactivePanelObservationRef.current = null;
-      observedThreadPullRequestRef.current = null;
       return;
     }
     const panels = useRightPanelStore.getState();
@@ -90,18 +87,16 @@ export function useProactivePanels(input: {
       userActionRevision,
     } = observation;
     const openSurface = selectActiveRightPanelSurface(panels.byThreadKey, threadRef);
-    const previousPullRequest = observedThreadPullRequestRef.current;
-    observedThreadPullRequestRef.current = {
-      threadKey: threadKey,
-      reference: linkedThreadPullRequest,
-    };
-    const followSelectedPullRequest =
-      previousPullRequest?.threadKey === threadKey &&
-      shouldRetargetThreadPullRequestPanel(
-        previousPullRequest.reference,
-        linkedThreadPullRequest,
-        openSurface,
-      );
+    const previousPullRequest = observedThreadPullRequestsRef.current.get(threadKey) ?? null;
+    // A missing link during loading must not erase the last observed one.
+    if (linkedThreadPullRequest !== null || !threadDetailLoading) {
+      observedThreadPullRequestsRef.current.set(threadKey, linkedThreadPullRequest);
+    }
+    const followSelectedPullRequest = shouldRetargetThreadPullRequestPanel(
+      previousPullRequest,
+      linkedThreadPullRequest,
+      openSurface,
+    );
     // Following the selected linked PR does not open an unrelated panel, so it
     // remains available with proactive panels off. It still respects a later choice.
     if (followSelectedPullRequest && linkedThreadPullRequest !== null) {
