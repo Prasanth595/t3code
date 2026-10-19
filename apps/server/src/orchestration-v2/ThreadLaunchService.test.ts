@@ -1488,6 +1488,91 @@ it.effect("renames a temporary branch on an existing worktree to a generated nam
   }),
 );
 
+it.effect.each(["stable", "upstream/release"])(
+  "launches from %s with the fetched commit and remote PR base",
+  (baseRef) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-remote-base-" });
+      const cwd = `${directory}/repo`;
+      const remote = `${directory}/remote.git`;
+      const worktreePath = `${directory}/worktree`;
+      yield* fs.makeDirectory(cwd);
+      const command = (at: string, args: string[]) =>
+        git.execute({ operation: "launch-test", cwd: at, args });
+      yield* command(cwd, ["init", "-b", "stable"]);
+      yield* command(cwd, ["config", "user.name", "Test"]);
+      yield* command(cwd, ["config", "user.email", "test@example.test"]);
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "initial"]);
+      const localHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* command(cwd, ["init", "--bare", remote]);
+      yield* command(cwd, ["remote", "add", "upstream", remote]);
+      yield* command(cwd, ["push", "-u", "upstream", "stable:release"]);
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "remote advance"]);
+      yield* command(cwd, ["push", "upstream", "stable:release"]);
+      const remoteHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* command(cwd, ["reset", "--hard", localHead]);
+      yield* command(cwd, ["update-ref", "-d", "refs/remotes/upstream/release"]);
+
+      const setupStarted = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        hasCommit: ({ refName }) =>
+          command(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+        git: {
+          remoteExists: (input) => git.remoteExists({ ...input, cwd }),
+          hasRefNamed: () => Effect.succeed(false),
+        },
+        fetchWorktreeBaseCommit: (input) => git.fetchWorktreeBaseCommit({ ...input, cwd }),
+        createWorktree: (input, options) =>
+          git.createWorktree({ ...input, cwd, path: worktreePath }, options),
+        runSetup: () =>
+          Deferred.succeed(setupStarted, undefined).pipe(
+            Effect.as({ status: "no-script" as const }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const workspace = {
+          type: "worktree" as const,
+          baseRef,
+          branch: "feature",
+          startFromOrigin: true,
+        };
+        yield* launches.checkWorktreeBase({ projectId, workspaceStrategy: workspace });
+        const launched = yield* launches.launch(
+          launchInput({
+            command: "command:launch:remote-base",
+            thread: "thread:launch:remote-base",
+            workspace,
+          }),
+        );
+        yield* Deferred.await(setupStarted);
+        const projection = yield* threads.getThreadProjection(launched.threadId);
+        assert.equal(projection.thread.worktreePath, worktreePath);
+        assert.equal(
+          (yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(),
+          remoteHead,
+        );
+        assert.equal(
+          yield* git.readConfigValue(worktreePath, "branch.feature.gh-merge-base"),
+          "release",
+        );
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(
+      Effect.provide(
+        GitVcsDriver.layer.pipe(
+          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-remote-git-" })),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+);
+
 it.effect("shows the fetch diagnosis when preparing a worktree from origin fails", () => {
   const detail =
     "Git could not authenticate with the remote. Check Git credentials or SSH access on the server, then retry.";

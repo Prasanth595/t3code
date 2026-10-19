@@ -15,11 +15,14 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
+import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import * as ServerConfig from "../config.ts";
 import {
   OrchestratorDispatchError,
   OrchestratorProjectionError,
@@ -85,6 +88,7 @@ const project: Project = {
 } as Project;
 
 interface HarnessOptions {
+  readonly git?: Partial<GitWorkflowService.GitWorkflowService["Service"]>;
   readonly thread?: ThreadFixture | null;
   readonly threadReadError?: "projection" | "dispatch";
   readonly capabilities?: ReadonlySet<McpInvocationContext.McpCapability>;
@@ -306,6 +310,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
           createWorktree,
           removeWorktree,
           deleteLocalBranch,
+          ...options.git,
         } satisfies Partial<GitWorkflowService.GitWorkflowService["Service"]>),
         Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({
           runForThread,
@@ -484,34 +489,55 @@ describe("t3_worktree_handoff", () => {
     });
   });
 
-  it.effect("starts from origin and honors an explicit baseRef", () => {
-    const harness = makeHarness();
-    return Effect.gen(function* () {
+  it.effect("uses the fetched commit and remote PR base for an explicit local alias", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "handoff-remote-base-" });
+      const cwd = `${directory}/repo`;
+      const remote = `${directory}/remote.git`;
+      const worktreePath = `${directory}/worktree`;
+      yield* fs.makeDirectory(cwd);
+      const command = (at: string, args: string[]) =>
+        git.execute({ operation: "handoff-test", cwd: at, args });
+      yield* command(cwd, ["init", "-b", "stable"]);
+      yield* command(cwd, ["config", "user.name", "Test"]);
+      yield* command(cwd, ["config", "user.email", "test@example.test"]);
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "remote base"]);
+      const remoteHead = (yield* command(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* command(cwd, ["init", "--bare", remote]);
+      yield* command(cwd, ["remote", "add", "upstream", remote]);
+      yield* command(cwd, ["push", "-u", "upstream", "stable:release"]);
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "local only"]);
+      const harness = makeHarness({
+        git: {
+          fetchWorktreeBaseCommit: (input) => git.fetchWorktreeBaseCommit({ ...input, cwd }),
+          createWorktree: (input) => git.createWorktree({ ...input, cwd, path: worktreePath }),
+        },
+      });
       const result = yield* runHandoff(harness, {
-        branch: "feature/from-origin",
-        baseRef: "dev",
+        branch: "feature/from-remote",
+        baseRef: "stable",
         startFromOrigin: true,
         runSetupScript: false,
       });
 
-      expect(harness.fetchWorktreeBaseCommit).toHaveBeenCalledWith({
-        cwd: workspaceRoot,
-        refName: "dev",
-      });
-      expect(harness.createWorktree).toHaveBeenCalledWith({
-        cwd: workspaceRoot,
-        refName: "abc123",
-        newRefName: "feature/from-origin",
-        baseRefName: "dev",
-        path: null,
-      });
-      expect(harness.localStatus).toHaveBeenCalled();
-      expect(harness.runForThread).not.toHaveBeenCalled();
-      expect(result.worktreePath).toBe("/worktrees/project/feature/from-origin");
+      expect(result.worktreePath).toBe(worktreePath);
       expect(result.startedFromOrigin).toBe(true);
       expect(result.setupScript).toEqual({ status: "skipped" });
-    });
-  });
+      expect((yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim()).toBe(remoteHead);
+      expect(
+        yield* git.readConfigValue(worktreePath, "branch.feature/from-remote.gh-merge-base"),
+      ).toBe("release");
+    }).pipe(
+      Effect.provide(
+        GitVcsDriver.layer.pipe(
+          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "handoff-remote-git-" })),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      ),
+    ),
+  );
 
   it.effect("uses the server setting for startFromOrigin when unspecified", () => {
     const harness = makeHarness({ newWorktreesStartFromOrigin: true });

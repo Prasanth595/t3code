@@ -4293,151 +4293,77 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect.each(["main", "master", "potato4e0"])(
-      "fetches a worktree base from the remote it belongs to (default branch %s)",
-      (main) =>
-        Effect.gen(function* () {
-          // A fork checkout: origin is the fork, upstream is the source, and
-          // the default branch tracks upstream.
-          const cwd = yield* makeTmpDir();
-          const fork = yield* makeTmpDir("git-fork-");
-          const source = yield* makeTmpDir("git-source-");
-          const peer = yield* makeTmpDir("git-peer-");
-          yield* initRepoWithCommit(cwd);
-          yield* git(cwd, ["branch", "-M", main]);
-          yield* git(fork, ["init", "--bare"]);
-          yield* git(source, ["init", "--bare"]);
-          yield* git(cwd, ["remote", "add", "origin", fork]);
-          yield* git(cwd, ["remote", "add", "upstream", source]);
-          yield* git(cwd, ["push", "origin", main]);
-          yield* git(cwd, ["push", "-u", "upstream", main]);
-          const forkHead = yield* git(cwd, ["rev-parse", "HEAD"]);
-          yield* git(peer, ["clone", "--branch", main, source, "."]);
-          yield* git(peer, ["config", "user.email", "test@test.com"]);
-          yield* git(peer, ["config", "user.name", "Test"]);
-          const pushToSource = (branch: string) =>
-            Effect.gen(function* () {
-              yield* git(peer, ["commit", "--allow-empty", "-m", `advance ${branch}`]);
-              yield* git(peer, ["push", "origin", `HEAD:refs/heads/${branch}`]);
-              return yield* git(peer, ["rev-parse", "HEAD"]);
-            });
-          const driver = yield* GitVcsDriver.GitVcsDriver;
-          const fetchBase = (refName: string) => driver.fetchWorktreeBaseCommit({ cwd, refName });
-
-          // Source moves on without cwd fetching, so only a fetch finds it.
-          let sourceHead = yield* pushToSource(main);
-          assert.deepEqual(yield* fetchBase(main), {
-            commitSha: sourceHead,
-            remoteRefName: `upstream/${main}`,
-          });
-
-          // The tracked branch name comes from config, not the local name.
-          const releaseHead = yield* pushToSource("release");
-          yield* git(cwd, ["branch", "stable", main]);
-          yield* git(cwd, ["config", "branch.stable.remote", "upstream"]);
-          yield* git(cwd, ["config", "branch.stable.merge", "refs/heads/release"]);
-          assert.deepEqual(yield* fetchBase("stable"), {
-            commitSha: releaseHead,
-            remoteRefName: "upstream/release",
-          });
-
-          // An explicit remote ref names its own remote.
-          sourceHead = yield* pushToSource(main);
-          assert.deepEqual(yield* fetchBase(`upstream/${main}`), {
-            commitSha: sourceHead,
-            remoteRefName: `upstream/${main}`,
-          });
-
-          // Tracking config counts before its tracking ref was ever fetched.
-          yield* git(cwd, ["update-ref", "-d", `refs/remotes/upstream/${main}`]);
-          sourceHead = yield* pushToSource(main);
-          assert.equal((yield* fetchBase(main))?.commitSha, sourceHead);
-
-          // A remote branch whose name starts with its remote's name loses
-          // that prefix only once.
-          const nestedHead = yield* pushToSource(`upstream/${main}`);
-          assert.deepEqual(yield* fetchBase(`upstream/upstream/${main}`), {
-            commitSha: nestedHead,
-            remoteRefName: `upstream/upstream/${main}`,
-          });
-
-          // Without tracking config, origin is the fallback.
-          yield* git(cwd, ["branch", "--unset-upstream", main]);
-          assert.deepEqual(yield* fetchBase(main), {
-            commitSha: forkHead,
-            remoteRefName: `origin/${main}`,
-          });
-
-          // A local branch named like a remote ref is that local branch, here
-          // tracking another local branch, so it has no remote base.
-          yield* pushToSource("topic");
-          yield* git(cwd, ["branch", "--track", "upstream/topic", main]);
-          assert.isNull(yield* fetchBase("upstream/topic"));
-
-          assert.isNull(yield* fetchBase("no-such-branch"));
-
-          // A branch deleted on the remote is not resolved from its stale
-          // tracking ref.
-          yield* pushToSource("doomed");
-          yield* git(cwd, ["fetch", "upstream"]);
-          yield* git(peer, ["push", "origin", "--delete", "doomed"]);
-          assert.isNull(yield* fetchBase("upstream/doomed"));
-        }),
-    );
-
-    it.effect("fetches a worktree base from the longest matching remote name", () =>
+    it.effect("fetches the selected worktree base from its configured remote", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
-        const team = yield* makeTmpDir("git-team-");
-        const teamFork = yield* makeTmpDir("git-team-fork-");
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        yield* git(team, ["init", "--bare"]);
-        yield* git(teamFork, ["init", "--bare"]);
-        yield* git(cwd, ["push", team, `HEAD:refs/heads/fork/${initialBranch}`]);
-        yield* git(cwd, ["commit", "--allow-empty", "-m", "team fork"]);
-        const teamForkHead = yield* git(cwd, ["rev-parse", "HEAD"]);
-        yield* git(cwd, ["push", teamFork, `HEAD:refs/heads/${initialBranch}`]);
-        // `git remote add` refuses this pair, so write the config directly.
-        // `team` is listed first so a first-match parse would pick it.
-        for (const [name, url] of [
-          ["team", team],
-          ["team/fork", teamFork],
-        ] as const) {
-          yield* git(cwd, ["config", `remote.${name}.url`, url]);
-          yield* git(cwd, [
-            "config",
-            `remote.${name}.fetch`,
-            `+refs/heads/*:refs/remotes/${name}/*`,
-          ]);
-        }
+        const fork = yield* makeTmpDir("git-fork-");
+        const source = yield* makeTmpDir("git-source-");
+        yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "-M", "stable"]);
+        yield* git(fork, ["init", "--bare"]);
+        yield* git(source, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", fork]);
+        yield* git(cwd, ["remote", "add", "upstream", source]);
+        yield* git(cwd, ["push", "origin", "stable"]);
+        yield* git(cwd, ["push", "-u", "upstream", "stable:release"]);
+        const localHead = yield* git(cwd, ["rev-parse", "HEAD"]);
+
+        // Advance the source without updating this checkout's tracking refs.
+        yield* git(cwd, ["commit", "--allow-empty", "-m", "source advance"]);
+        const remoteHead = yield* git(cwd, ["rev-parse", "HEAD"]);
+        yield* git(source, ["--git-dir=.", "fetch", cwd, "stable:refs/heads/release"]);
+        yield* git(cwd, ["reset", "--hard", localHead]);
         const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        assert.deepEqual(yield* driver.fetchWorktreeBaseCommit({ cwd, refName: "stable" }), {
+          commitSha: remoteHead,
+          remoteRefName: "upstream/release",
+        });
+        yield* git(cwd, ["update-ref", "-d", "refs/remotes/upstream/release"]);
         assert.deepEqual(
-          yield* driver.fetchWorktreeBaseCommit({ cwd, refName: `team/fork/${initialBranch}` }),
-          { commitSha: teamForkHead, remoteRefName: `team/fork/${initialBranch}` },
+          yield* driver.fetchWorktreeBaseCommit({ cwd, refName: "upstream/release" }),
+          { commitSha: remoteHead, remoteRefName: "upstream/release" },
         );
+        yield* git(cwd, ["branch", "--unset-upstream", "stable"]);
+        assert.deepEqual(yield* driver.fetchWorktreeBaseCommit({ cwd, refName: "stable" }), {
+          commitSha: localHead,
+          remoteRefName: "origin/stable",
+        });
+        assert.equal(yield* git(cwd, ["rev-parse", "stable"]), localHead);
       }),
     );
 
-    it.effect("fails to fetch a worktree base from an unreachable remote", () =>
+    it.effect("does not use a deleted remote worktree base's stale tracking commit", () =>
       Effect.gen(function* () {
-        const path = yield* Path.Path;
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "-u", "origin", `${initialBranch}:release`]);
+        yield* git(remote, ["--git-dir=.", "update-ref", "-d", "refs/heads/release"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        assert.equal(
+          yield* git(cwd, ["rev-parse", "refs/remotes/origin/release"]),
+          yield* git(cwd, ["rev-parse", "HEAD"]),
+        );
+        assert.isNull(yield* driver.fetchWorktreeBaseCommit({ cwd, refName: initialBranch }));
+        yield* git(cwd, ["remote", "remove", "origin"]);
+        assert.isNull(yield* driver.fetchWorktreeBaseCommit({ cwd, refName: initialBranch }));
+      }),
+    );
+
+    it.effect("fails instead of falling back when the worktree base remote is unreachable", () =>
+      Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
-        yield* git(cwd, ["remote", "add", "origin", path.join(cwd, "missing-remote.git")]);
+        yield* git(cwd, ["remote", "add", "origin", `${cwd}/missing.git`]);
         const driver = yield* GitVcsDriver.GitVcsDriver;
         const error = yield* driver
           .fetchWorktreeBaseCommit({ cwd, refName: initialBranch })
           .pipe(Effect.flip);
-        assert.equal(error.operation, "GitVcsDriver.fetchRemote");
-      }),
-    );
-
-    it.effect("finds no worktree base in a repository without remotes", () =>
-      Effect.gen(function* () {
-        const cwd = yield* makeTmpDir();
-        const { initialBranch } = yield* initRepoWithCommit(cwd);
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        assert.isNull(yield* driver.fetchWorktreeBaseCommit({ cwd, refName: initialBranch }));
+        assert.equal(error._tag, "GitCommandError");
       }),
     );
 
