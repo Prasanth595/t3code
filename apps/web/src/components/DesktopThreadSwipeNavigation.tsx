@@ -62,7 +62,11 @@ export function DesktopThreadSwipeNavigation(input: {
       if (
         isCommandPaletteOpen() ||
         isModelPickerOpen() ||
-        document.querySelector('[role="dialog"], [role="alertdialog"], [aria-modal="true"]')
+        Array.from(
+          document.querySelectorAll(
+            '[role="dialog"]:not([aria-modal="false"]), [role="alertdialog"]:not([aria-modal="false"]), [aria-modal="true"]',
+          ),
+        ).some((element) => element.getClientRects().length > 0)
       ) {
         return;
       }

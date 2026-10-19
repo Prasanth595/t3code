@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { SidebarDragLifecycle, SidebarPointerSensor } from "./Sidebar.pointer";
 import { DesktopThreadSwipeNavigation } from "./DesktopThreadSwipeNavigation";
 import { Dialog, DialogPopup, DialogTitle } from "./ui/dialog";
+import { Popover, PopoverPopup, PopoverTrigger } from "./ui/popover";
 
 const sensors: SidebarPointerSensor[] = [];
 let hidden = false;
@@ -391,7 +392,18 @@ describe("desktop thread swipe navigation", () => {
     expect(wheel({ deltaX: 160 }).defaultPrevented).toBe(false);
     expect(navigate).not.toHaveBeenCalled();
 
-    act(() => root.render(<DesktopThreadSwipeNavigation navigate={navigate} />));
+    act(() =>
+      root.render(
+        <>
+          <DesktopThreadSwipeNavigation navigate={navigate} />
+          <Popover open={false}>
+            <PopoverTrigger>Comment</PopoverTrigger>
+            <PopoverPopup keepMounted>Draft comment</PopoverPopup>
+          </Popover>
+        </>,
+      ),
+    );
+    expect(document.querySelector('[role="dialog"]')).not.toBeNull();
     expect(wheel({ deltaX: 120 }).defaultPrevented).toBe(true);
     expect(navigate).toHaveBeenCalledExactlyOnceWith("next");
   });
