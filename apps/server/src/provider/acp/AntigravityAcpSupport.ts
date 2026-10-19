@@ -100,6 +100,17 @@ function antigravityModelOptions(
   return model.options.flatMap((entry) => ("value" in entry ? [entry] : entry.options));
 }
 
+export function antigravitySessionModels(setup: {
+  readonly configOptions?: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined;
+  readonly models?: EffectAcpSchema.SessionModelState | null | undefined;
+}) {
+  // ACP 1.4 splits model families and thinking levels; only session models
+  // contain the concrete IDs accepted by session/set_model.
+  return setup.configOptions?.some((option) => option.id === "thinking_level")
+    ? (setup.models ?? null)
+    : null;
+}
+
 /** Never replace a saved selection with the default returned by a cold resume. */
 export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpModelSelection")(
   function* <E>(input: {
@@ -114,11 +125,7 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
   }): Effect.fn.Return<string | undefined, E> {
     const configOptions = yield* input.runtime.getConfigOptions;
     const modelConfig = configOptions.find((option) => option.id === "model");
-    // ACP 1.4 groups model families separately from thinking levels. Only the
-    // per-model state contains the concrete IDs accepted by session/set_model.
-    const models = configOptions.some((option) => option.id === "thinking_level")
-      ? input.models
-      : undefined;
+    const models = antigravitySessionModels({ configOptions, models: input.models });
     const current = models
       ? models.currentModelId
       : modelConfig?.type === "select"
@@ -134,10 +141,9 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
       (input.defaultModel && options.some((option) => option.value === input.defaultModel)
         ? input.defaultModel
         : current);
-    const explicit = explicitModel !== undefined;
-    // Session setup can predate an in-session thinking-level change.
-    const restoreDefault = models != null && resolved === input.defaultModel;
-    if (resolved === undefined || (!explicit && !restoreDefault && resolved === current))
+    // Session model state can predate a thinking-level change. Reapply concrete
+    // selections even when setup reports that model as current.
+    if (resolved === undefined || (!models && !explicitModel && resolved === current))
       return current;
     if (!options.some((option) => option.value === resolved)) {
       return yield* Effect.fail(

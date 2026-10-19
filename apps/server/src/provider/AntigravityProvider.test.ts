@@ -180,14 +180,6 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
 });
 
 describe("Antigravity model catalog", () => {
-  it("keeps ACP 1.4 concrete models and the selected thinking level", () => {
-    const models = buildAntigravityModelsFromSession(antigravity140Session);
-    expect(models.map((model) => model.slug)).toEqual(
-      antigravity140Session.models.availableModels.map((model) => model.modelId),
-    );
-    expect(models.find((model) => model.isDefault)?.slug).toBe("gemini-3.8-flash-high");
-  });
-
   it("keeps the captured personal catalog's IDs, labels, order, and selected default", () => {
     const models = buildAntigravityModelsFromSession(sessionSetupResult);
     expect(models.map((model) => [model.slug, model.name])).toEqual(
@@ -253,11 +245,21 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           ...started,
           sessionSetupResult: antigravity140Session,
         });
-        yield* harness.provider.onConfigOptionsUpdated(antigravity140Session.configOptions);
         const snapshot = yield* harness.provider.snapshot.getSnapshot;
-        expect(snapshot.models.map((model) => model.slug)).toEqual(
-          antigravity140Session.models.availableModels.map((model) => model.modelId),
+        expect(snapshot.models.map((model) => [model.slug, model.name])).toEqual([
+          ["gemini-3.8-flash-high", "Gemini 3.8 Flash (High)"],
+          ["gemini-3.8-flash-medium", "Gemini 3.8 Flash (Medium)"],
+          ["gemini-3.8-flash-low", "Gemini 3.8 Flash (Low)"],
+        ]);
+        expect(snapshot.models.find((model) => model.isDefault)?.slug).toBe(
+          "gemini-3.8-flash-high",
         );
+        yield* harness.provider.onConfigOptionsUpdated(
+          antigravity140Session.configOptions.map((option) =>
+            option.id === "thinking_level" ? { ...option, currentValue: "low" } : option,
+          ),
+        );
+        expect((yield* harness.provider.snapshot.getSnapshot).models).toEqual(snapshot.models);
         yield* harness.provider.onSessionStarted(started);
         yield* harness.provider.onConfigOptionsUpdated([
           { ...modelConfig, options: modelOptions.slice(0, 1) },

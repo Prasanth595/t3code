@@ -5,6 +5,7 @@ import {
   ProviderInstanceId,
   ProviderSetupError,
 } from "@t3tools/contracts";
+import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -14,6 +15,7 @@ import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import { ChildProcessSpawner } from "effect/process";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { type AcpError, AcpRequestError } from "effect-acp/errors";
@@ -21,8 +23,12 @@ import type * as AcpSchema from "effect-acp/compat";
 import { expect } from "vite-plus/test";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { makeAntigravityAcpRuntime } from "../provider/acp/AntigravityAcpSupport.ts";
+import {
+  antigravity140AgentSource,
+  decodeAntigravity140Request,
+} from "../provider/acp/antigravity140.fixture.ts";
 import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessionFiles.ts";
-import { antigravity140Session } from "../provider/acp/antigravity140.fixture.ts";
 
 import {
   type AntigravityTextGenerationOptions,
@@ -62,7 +68,6 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
     readonly startError?: AcpError;
     readonly rejectAdmission?: boolean;
     readonly sessionId?: string;
-    readonly sessionSetup?: AcpSchema.NewSessionResponse;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -149,7 +154,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
             return {
               sessionId: nativeSessionId,
               initializeResult: { protocolVersion: 1 },
-              sessionSetupResult: { ...options.sessionSetup, sessionId: nativeSessionId },
+              sessionSetupResult: { sessionId: nativeSessionId },
               modelConfigId: "model",
             };
           }),
@@ -158,28 +163,22 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
             state.selectedModes.push(mode);
             return {};
           }),
-        getConfigOptions: Effect.succeed(
-          options.sessionSetup?.configOptions ?? [
-            {
-              id: "model",
-              name: "Model",
-              category: "model",
-              type: "select",
-              currentValue: modelSelection.model,
-              options: [{ value: modelSelection.model, name: "Gemini test" }],
-            },
-          ],
-        ),
+        getConfigOptions: Effect.succeed([
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue: modelSelection.model,
+            options: [{ value: modelSelection.model, name: "Gemini test" }],
+          },
+        ]),
         getEvents: () => Stream.fromQueue(events),
         setModel: (model) =>
           Effect.sync(() => {
             state.selectedModels.push(model);
           }),
-        setSessionModel: (model) =>
-          Effect.sync(() => {
-            state.selectedModels.push(model);
-            return {};
-          }),
+        setSessionModel: () => Effect.die("ACP 1.3 selects models through config options"),
         prompt: (request) =>
           Effect.gen(function* () {
             state.prompts.push(request);
@@ -288,17 +287,52 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
 });
 
 it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
-  it.effect("generates a title with an ACP 1.4 concrete model selection", () =>
+  it.effect("generates a title in a new ACP 1.4 session using the saved concrete model", () =>
     Effect.gen(function* () {
-      const fixture = yield* makeFixture({ sessionSetup: antigravity140Session });
-      const title = yield* fixture.textGeneration.generateThreadTitle({
-        ...fixture.titleInput,
-        modelSelection: { ...modelSelection, model: "gemini-3.8-flash-low" },
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const crypto = yield* Crypto.Crypto;
+      const profileDirectory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ag-title-" });
+      const agentPath = path.join(profileDirectory, "agent.mjs");
+      const logPath = path.join(profileDirectory, "requests.ndjson");
+      yield* fs.writeFileString(agentPath, antigravity140AgentSource);
+      const textGeneration = yield* makeAntigravityTextGeneration({
+        profileDirectory,
+        makeRuntime: (cwd) =>
+          makeAntigravityAcpRuntime({
+            cwd,
+            clientInfo: { name: "t3-antigravity-test", version: "0.0.0" },
+            childProcessSpawner,
+            spawn: {
+              command: process.execPath,
+              args: [agentPath],
+              cwd,
+              env: { T3_ACP_REQUEST_LOG_PATH: logPath, T3_ACP_TITLE: "1" },
+            },
+          }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+        withProcess: (_stop, task) => task,
       });
-      expect(title).toEqual({ title: "Repair login" });
-      expect(fixture.state.selectedModels).toEqual(["gemini-3.8-flash-low"]);
-      expect(fixture.state.prompts).toHaveLength(1);
-      yield* fixture.assertCleaned;
+      expect(
+        yield* textGeneration.generateThreadTitle({
+          cwd: profileDirectory,
+          message: "Repair login",
+          modelSelection: { ...modelSelection, model: "gemini-3.8-flash-low" },
+        }),
+      ).toEqual({ title: "gemini-3.8-flash-low" });
+      const requests = yield* Effect.forEach(
+        (yield* fs.readFileString(logPath)).trim().split("\n"),
+        (line) => decodeAntigravity140Request(line),
+      );
+      expect(
+        requests
+          .map((request) => request.method)
+          .filter((method) =>
+            ["session/new", "session/resume", "session/set_model", "session/prompt"].includes(
+              method,
+            ),
+          ),
+      ).toEqual(["session/new", "session/set_model", "session/prompt"]);
     }).pipe(Effect.scoped),
   );
 
