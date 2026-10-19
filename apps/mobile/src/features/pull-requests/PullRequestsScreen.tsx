@@ -21,12 +21,14 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { EmptyState } from "../../components/ui/EmptyState";
+import { ScreenContent } from "../../components/ui/ScreenContent";
 import { NativePrimaryColumnContext } from "../../native/v5-workspace-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { useProjects } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { PullRequestListRow } from "./PullRequestListRow";
 import { PullRequestListFilters } from "./PullRequestListFilters";
+import { PullRequestToolbar } from "./PullRequestToolbar.android";
 import { usePullRequestList } from "./usePullRequestList";
 import { usePullRequestListControls } from "./usePullRequestListControls";
 import { usePullRequestListActions } from "./usePullRequestListActions";
@@ -61,6 +63,7 @@ export function PullRequestsScreen(
   props: {
     readonly sidebar?: boolean;
     readonly selectedPullRequestKey?: string | null;
+    readonly onRequestVisibility?: () => void;
   } = {},
 ) {
   const navigation = useNavigation();
@@ -210,7 +213,37 @@ export function PullRequestsScreen(
     ? entries.findIndex((entry) => pullRequestKey(entry) === initialAnchor.key)
     : -1;
 
-  return (
+  const filters = (
+    <PullRequestListFilters
+      environments={environments.map((item) => ({
+        id: String(item.environmentId),
+        label: item.environmentLabel,
+      }))}
+      environmentId={environmentId}
+      onEnvironmentChange={listControls.setEnvironmentId}
+      value={
+        typedDraft ? { ...controls, filters: { ...controls.filters, draft: typedDraft } } : controls
+      }
+      onChange={(next) => {
+        const update = applyPullRequestDraftFilterChange(
+          typedQuery,
+          controls.filters,
+          next.filters,
+        );
+        listControls.setControls(environmentId, { ...next, filters: update.filters });
+        if (update.query !== typedQuery)
+          workspace.dispatch({ type: "query", tab: "pullRequests", query: update.query });
+        void listRef.current?.scrollToOffset({
+          offset: Platform.OS === "ios" ? -insets.top : 0,
+          animated: false,
+        });
+      }}
+      authors={knownFacets.environmentId === environmentId ? knownFacets.authors : facets.authors}
+      labels={knownFacets.environmentId === environmentId ? knownFacets.labels : facets.labels}
+      projects={projects}
+    />
+  );
+  const content = (
     <View className={sidebar ? "flex-1 bg-drawer" : "flex-1 bg-screen"}>
       <LegendList
         ref={listRef}
@@ -272,40 +305,7 @@ export function PullRequestsScreen(
         renderItem={renderPullRequest}
         ListHeaderComponent={
           <>
-            <PullRequestListFilters
-              environments={environments.map((item) => ({
-                id: String(item.environmentId),
-                label: item.environmentLabel,
-              }))}
-              environmentId={environmentId}
-              onEnvironmentChange={listControls.setEnvironmentId}
-              value={
-                typedDraft
-                  ? { ...controls, filters: { ...controls.filters, draft: typedDraft } }
-                  : controls
-              }
-              onChange={(next) => {
-                const update = applyPullRequestDraftFilterChange(
-                  typedQuery,
-                  controls.filters,
-                  next.filters,
-                );
-                listControls.setControls(environmentId, { ...next, filters: update.filters });
-                if (update.query !== typedQuery)
-                  workspace.dispatch({ type: "query", tab: "pullRequests", query: update.query });
-                void listRef.current?.scrollToOffset({
-                  offset: Platform.OS === "ios" ? -insets.top : 0,
-                  animated: false,
-                });
-              }}
-              authors={
-                knownFacets.environmentId === environmentId ? knownFacets.authors : facets.authors
-              }
-              labels={
-                knownFacets.environmentId === environmentId ? knownFacets.labels : facets.labels
-              }
-              projects={projects}
-            />
+            {Platform.OS !== "android" ? filters : null}
             {result.data?.errors.length ? (
               <Text className="px-4 py-3 text-sm text-foreground-muted">
                 {result.data.errors
@@ -372,5 +372,16 @@ export function PullRequestsScreen(
         }
       />
     </View>
+  );
+  if (Platform.OS !== "android") return content;
+  return (
+    <>
+      <PullRequestToolbar
+        sidebar={sidebar}
+        filters={filters}
+        onRequestVisibility={props.onRequestVisibility}
+      />
+      <ScreenContent insetHorizontal={sidebar}>{content}</ScreenContent>
+    </>
   );
 }

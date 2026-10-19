@@ -1,5 +1,5 @@
 import { useNavigation, useNavigationState } from "@react-navigation/native";
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
 import { BackHandler, Keyboard, View, type TextInputInstance } from "react-native";
 import {
   AndroidHeaderIconButton,
@@ -14,6 +14,7 @@ import { useWorkspaceListNavigation } from "../workspace/useAndroidWorkspaceNavi
 
 /** PR search shares the thread list's native Android header placement. */
 export function PullRequestToolbar(props: {
+  readonly filters: ReactNode;
   readonly sidebar?: boolean;
   readonly onRequestVisibility?: () => void;
 }) {
@@ -101,22 +102,13 @@ export function PullRequestToolbar(props: {
         ) : undefined
       }
       actions={
-        searching
-          ? []
-          : [
-              ...(props.sidebar
-                ? [
-                    {
-                      accessibilityLabel: "Show threads",
-                      icon: "text.bubble",
-                      onPress: showThreads,
-                    } as const,
-                  ]
-                : []),
+        !searching && props.sidebar
+          ? [
               {
-                accessibilityLabel: "Search pull requests",
-                icon: "magnifyingglass",
-                onPress: openSearch,
+                accessibilityLabel: "Show threads",
+                icon: "text.bubble",
+                onPress: showThreads,
+                overflowOnly: true,
               },
               {
                 accessibilityLabel: "Open settings",
@@ -126,8 +118,34 @@ export function PullRequestToolbar(props: {
                     screen: "SettingsContent",
                     params: { screen: "Settings" },
                   }),
+                overflowOnly: true,
               },
             ]
+          : []
+      }
+      trailing={
+        <>
+          {!searching ? (
+            <AndroidHeaderIconButton
+              accessibilityLabel="Search pull requests"
+              icon="magnifyingglass"
+              onPress={openSearch}
+            />
+          ) : null}
+          {props.filters}
+          {!searching && !props.sidebar ? (
+            <AndroidHeaderIconButton
+              accessibilityLabel="Open settings"
+              icon="gearshape"
+              onPress={() =>
+                navigation.navigate("SettingsSheet", {
+                  screen: "SettingsContent",
+                  params: { screen: "Settings" },
+                })
+              }
+            />
+          ) : null}
+        </>
       }
     />
   );
