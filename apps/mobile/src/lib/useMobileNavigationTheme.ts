@@ -2,8 +2,7 @@ import { DarkTheme, DefaultTheme, type Theme } from "@react-navigation/native";
 import { useMemo } from "react";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
-import { useThemeFontFamilies } from "./useThemeFontFamilies";
-import { useUniwindTheme } from "./useUniwindTheme";
+import { useUniwindTheme, useThemeFontFamilies } from "./useUniwindTheme";
 
 export function useMobileNavigationTheme(surface: "screen" | "sidebar" = "screen"): Theme {
   const { themeAppearance: appearance } = useAppearancePreferences();

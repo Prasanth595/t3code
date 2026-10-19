@@ -8,9 +8,8 @@ import { StackActions, useNavigation } from "@react-navigation/native";
 import { RefreshControl, ScrollView, View } from "react-native";
 
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
-import { useThemeFontFamilies } from "../../lib/useThemeFontFamilies";
 import { resolveNativeMarkdownTypography } from "../../lib/appearancePreferences";
-import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { useUniwindTheme, useThemeFontFamilies } from "../../lib/useUniwindTheme";
 import {
   ThreadMarkdownImage,
   ThreadMarkdownImageView,

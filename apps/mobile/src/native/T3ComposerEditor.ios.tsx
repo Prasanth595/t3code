@@ -23,9 +23,8 @@ import {
   contextRecordFileName,
 } from "../lib/composerChipPresentation";
 import { contextChipIconUri } from "../lib/contextChipIconSource";
-import { useUniwindTheme } from "../lib/useUniwindTheme";
+import { useUniwindTheme, useThemeFontFamilies } from "../lib/useUniwindTheme";
 import { createNativeComposerTheme } from "../lib/nativeComposerTheme";
-import { useThemeFontFamilies } from "../lib/useThemeFontFamilies";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import {
   acknowledgeComposerNativeEvent,
