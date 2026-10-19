@@ -35,10 +35,23 @@ describe("web runtime", () => {
 
 describe("web runtime relay telemetry policy", () => {
   it.each([
-    { surface: "desktop opt-out", desktopEnabled: false, exports: false },
-    { surface: "desktop enabled", desktopEnabled: true, exports: true },
-    { surface: "ordinary browser ignores host opt-out", desktopEnabled: undefined, exports: true },
-  ])("applies $surface before the first relay span", async ({ desktopEnabled, exports }) => {
+    {
+      surface: "desktop opt-out",
+      desktopBridge: { getRelayTelemetryEnabled: () => false },
+      exports: false,
+    },
+    {
+      surface: "desktop enabled",
+      desktopBridge: { getRelayTelemetryEnabled: () => true },
+      exports: true,
+    },
+    { surface: "older desktop bridge", desktopBridge: {}, exports: true },
+    {
+      surface: "ordinary browser ignores host opt-out",
+      desktopBridge: undefined,
+      exports: true,
+    },
+  ])("applies $surface before the first relay span", async ({ desktopBridge, exports }) => {
     vi.resetModules();
     vi.stubEnv("T3CODE_TELEMETRY_ENABLED", "false");
     vi.stubEnv("T3CODE_OTEL_SDK_DISABLED", "true");
@@ -46,12 +59,7 @@ describe("web runtime relay telemetry policy", () => {
     vi.stubEnv("VITE_RELAY_OTLP_TRACES_URL", "https://telemetry.example.test/v1/traces");
     vi.stubEnv("VITE_RELAY_OTLP_TRACES_DATASET", "relay-test");
     vi.stubEnv("VITE_RELAY_OTLP_TRACES_TOKEN", "test-token");
-    vi.stubGlobal("window", {
-      desktopBridge:
-        desktopEnabled === undefined
-          ? undefined
-          : { getRelayTelemetryEnabled: () => desktopEnabled },
-    });
+    vi.stubGlobal("window", { desktopBridge });
     const fetchFn = vi.fn<typeof fetch>(async () => new Response(null, { status: 202 }));
     vi.stubGlobal("fetch", fetchFn);
     // Re-import after setting runtime policy: static initialization creates the exporter layer.

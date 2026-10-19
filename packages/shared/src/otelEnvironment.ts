@@ -246,7 +246,7 @@ const endpointSignal = (name: OtlpSignalName, own: Settings, generic: Settings):
   };
 };
 
-export const load: Effect.Effect<OtelEnvironment> = Config.all({
+const sdkFlags = {
   t3: flag(
     "T3CODE_OTEL_SDK_DISABLED",
     T3CODE_TRUE,
@@ -263,6 +263,10 @@ export const load: Effect.Effect<OtelEnvironment> = Config.all({
     (value) =>
       `OTEL_SDK_DISABLED=${value} was read as false; the OpenTelemetry specification recognizes only the string true, so use OTEL_SDK_DISABLED=true or T3CODE_OTEL_SDK_DISABLED to say it any other way`,
   ),
+};
+
+export const load: Effect.Effect<OtelEnvironment> = Config.all({
+  ...sdkFlags,
   resource: resourceAttributes,
   generic: settings("OTEL_EXPORTER_OTLP_"),
   traces: settings("OTEL_EXPORTER_OTLP_TRACES_"),
@@ -311,16 +315,15 @@ export const load: Effect.Effect<OtelEnvironment> = Config.all({
   Effect.orDie,
 );
 
-/**
- * Whether the built-in relay tracer may export. `T3CODE_TELEMETRY_ENABLED=false` turns it off
- * along with product events, and `T3CODE_OTEL_SDK_DISABLED=false` cannot turn it back on.
- */
 export const isRelayTracingEnabled = (env: Readonly<Record<string, string | undefined>>) =>
-  Effect.gen(function* () {
-    const telemetry = yield* flag("T3CODE_TELEMETRY_ENABLED", T3CODE_TRUE, T3CODE_FALSE, String);
-    return telemetry.value !== false && !(yield* load).disabled;
+  Config.all({
+    ...sdkFlags,
+    telemetry: flag("T3CODE_TELEMETRY_ENABLED", T3CODE_TRUE, T3CODE_FALSE, String),
   }).pipe(
-    Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord({ ...env }))),
+    Effect.map(
+      ({ telemetry, t3, spec }) => telemetry.value !== false && !(t3.value ?? spec.value ?? false),
+    ),
+    Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnvRecord(env))),
     Effect.orDie,
     Effect.runSync,
   );
