@@ -222,11 +222,6 @@ interface IdleThreadUnload {
   readonly fiber: Fiber.Fiber<void, never> | null;
 }
 
-interface DetachedProviderThreadUnloadState {
-  readonly shouldUnload: boolean;
-  readonly idleUnloadFiber: Fiber.Fiber<void, never> | null;
-}
-
 type ProviderSessionEventSignal =
   | { readonly type: "event"; readonly event: ProviderAdapter.ProviderAdapterV2Event }
   | {
@@ -2441,114 +2436,63 @@ export const layerWithOptions = (
             }
             const unloadThread = detached.value.exposedRuntime.unloadThread;
             if (detached.value.supportsMultipleProviderThreads && unloadThread !== undefined) {
-              const unloadForOwner = (
-                ownerThreadId: ThreadId,
-                providerThreads: ReadonlyArray<OrchestrationV2ProviderThread>,
-              ) =>
-                threadAttachment.withLock(
+              // Take one owner lock at a time so parent and child cleanup cannot deadlock.
+              for (const providerThread of detachedProviderThreads) {
+                if (providerThread.nativeThreadRef === null) continue;
+                const ownerThreadId = providerThread.appThreadId ?? input.threadId;
+                yield* threadAttachment.withLock(
                   threadAttachmentKey({
                     providerSessionId: input.providerSessionId,
                     threadId: ownerThreadId,
                   }),
-                  Effect.forEach(
-                    providerThreads,
-                    (providerThread) =>
-                      Effect.gen(function* () {
-                        const unloadState = yield* Ref.modify(
-                          sessions,
-                          (
-                            current,
-                          ): readonly [
-                            DetachedProviderThreadUnloadState,
-                            Map<string, LiveSessionEntry>,
-                          ] => {
-                            const latest = current.get(key);
-                            if (
-                              latest?.runtime !== detached.value.runtime ||
-                              latest.attachedThreadIds.has(ownerThreadId)
-                            ) {
-                              return [
-                                { shouldUnload: false, idleUnloadFiber: null },
-                                current,
-                              ] as const;
-                            }
-                            const loaded =
-                              latest.loadedProviderThreadKeyByThread.get(ownerThreadId);
-                            const clearLoaded =
-                              loaded?.runtimeKey === providerThreadRuntimeKey(providerThread);
-                            const idleUnload = latest.idleThreadUnloads.get(ownerThreadId);
-                            const clearIdleUnload =
-                              idleUnload?.providerThread.id === providerThread.id;
-                            if (!clearLoaded && !clearIdleUnload) {
-                              return [
-                                { shouldUnload: true, idleUnloadFiber: null },
-                                current,
-                              ] as const;
-                            }
-                            const loadedProviderThreadKeyByThread = new Map(
-                              latest.loadedProviderThreadKeyByThread,
-                            );
-                            if (clearLoaded) {
-                              loadedProviderThreadKeyByThread.delete(ownerThreadId);
-                            }
-                            const idleThreadUnloads = new Map(latest.idleThreadUnloads);
-                            if (clearIdleUnload) idleThreadUnloads.delete(ownerThreadId);
-                            const updated = new Map(current);
-                            updated.set(key, {
-                              ...latest,
-                              loadedProviderThreadKeyByThread,
-                              idleThreadUnloads,
-                            });
-                            return [
-                              {
-                                shouldUnload: true,
-                                idleUnloadFiber: clearIdleUnload
-                                  ? (idleUnload?.fiber ?? null)
-                                  : null,
-                              },
-                              updated,
-                            ] as const;
-                          },
-                        );
-                        if (!unloadState.shouldUnload) return;
-                        yield* cancelIdleFiber(unloadState.idleUnloadFiber);
-                        yield* unloadThread({ providerThread }).pipe(
-                          Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
-                          Effect.catchCause((cause) =>
-                            Effect.logWarning(
-                              "orchestration-v2.driver-session.detach-unload-failed",
-                              {
-                                providerSessionId: input.providerSessionId,
-                                threadId: ownerThreadId,
-                                providerThreadId: providerThread.id,
-                                cause,
-                              },
-                            ),
-                          ),
-                        );
-                      }),
-                    { concurrency: 1, discard: true },
-                  ),
+                  Effect.gen(function* () {
+                    const unload = yield* Ref.modify(sessions, (current) => {
+                      const latest = current.get(key);
+                      if (
+                        latest?.runtime !== detached.value.runtime ||
+                        latest.attachedThreadIds.has(ownerThreadId)
+                      ) {
+                        return [Option.none<Fiber.Fiber<void, never> | null>(), current] as const;
+                      }
+                      const loaded = latest.loadedProviderThreadKeyByThread.get(ownerThreadId);
+                      const clearLoaded =
+                        loaded?.runtimeKey === providerThreadRuntimeKey(providerThread);
+                      const idleUnload = latest.idleThreadUnloads.get(ownerThreadId);
+                      const clearIdleUnload = idleUnload?.providerThread.id === providerThread.id;
+                      if (!clearLoaded && !clearIdleUnload)
+                        return [Option.some(null), current] as const;
+                      const loadedProviderThreadKeyByThread = new Map(
+                        latest.loadedProviderThreadKeyByThread,
+                      );
+                      if (clearLoaded) loadedProviderThreadKeyByThread.delete(ownerThreadId);
+                      const idleThreadUnloads = new Map(latest.idleThreadUnloads);
+                      if (clearIdleUnload) idleThreadUnloads.delete(ownerThreadId);
+                      const updated = new Map(current);
+                      updated.set(key, {
+                        ...latest,
+                        loadedProviderThreadKeyByThread,
+                        idleThreadUnloads,
+                      });
+                      return [
+                        Option.some(clearIdleUnload ? (idleUnload?.fiber ?? null) : null),
+                        updated,
+                      ] as const;
+                    });
+                    if (Option.isNone(unload)) return;
+                    yield* cancelIdleFiber(unload.value);
+                    yield* unloadThread({ providerThread }).pipe(
+                      Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning("orchestration-v2.driver-session.detach-unload-failed", {
+                          providerSessionId: input.providerSessionId,
+                          threadId: ownerThreadId,
+                          providerThreadId: providerThread.id,
+                          cause,
+                        }),
+                      ),
+                    );
+                  }),
                 );
-              const providerThreadsByOwner = new Map<
-                ThreadId,
-                Array<OrchestrationV2ProviderThread>
-              >();
-              for (const providerThread of detachedProviderThreads) {
-                if (providerThread.nativeThreadRef === null) continue;
-                const ownerThreadId = providerThread.appThreadId ?? input.threadId;
-                const owned = providerThreadsByOwner.get(ownerThreadId) ?? [];
-                owned.push(providerThread);
-                providerThreadsByOwner.set(ownerThreadId, owned);
-              }
-              // finish the detaching thread's cleanup before taking any child owner's lock.
-              yield* unloadForOwner(
-                input.threadId,
-                providerThreadsByOwner.get(input.threadId) ?? [],
-              );
-              for (const [ownerThreadId, providerThreads] of providerThreadsByOwner) {
-                if (ownerThreadId === input.threadId) continue;
-                yield* unloadForOwner(ownerThreadId, providerThreads);
               }
             }
             yield* scheduleIdleRelease(input.providerSessionId);
