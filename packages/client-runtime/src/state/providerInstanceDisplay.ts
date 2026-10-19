@@ -42,11 +42,6 @@ export function normalizeProviderAccentColor(value: string | undefined): string 
   return /^#[0-9a-fA-F]{6}$/u.test(trimmed) ? trimmed : undefined;
 }
 
-/**
- * Disabled instances can't be picked, so they never make another instance
- * ambiguous, but a disabled entry itself (an old thread's row) still counts
- * against the enabled ones.
- */
 export function shouldShowInstanceBadge(
   entry: {
     readonly driverKind: ProviderDriverKind;
@@ -61,6 +56,7 @@ export function shouldShowInstanceBadge(
   }>,
 ): boolean {
   if (entry.accentColor) return true;
+  // Count a historical thread's disabled owner, but only enabled siblings.
   let sharedProviderCount = entry.enabled ? 0 : 1;
   for (const candidate of entries) {
     if (!candidate.enabled || candidate.driverKind !== entry.driverKind) continue;

@@ -121,15 +121,9 @@ export function deriveProviderEntriesByEnvironment(
   const byEnvironment = new Map<string, ReadonlyMap<string, ProviderInstanceEntry>>();
   for (const [environmentId, providers, settings] of providersByEnvironment) {
     const derived = deriveProviderInstanceEntries(providers);
-    // One map per environment serves every project with a thread there, so
-    // there is no single project to scope `enabled` to. It keeps the snapshot's
-    // value, which is on when the machine or any project turns the instance on.
+    // The snapshot includes instances enabled by any project; machine settings alone do not.
     const entries = settings
-      ? applyProviderInstanceSettings(derived, settings, null).map((entry) =>
-          entry.enabled === entry.snapshot.enabled
-            ? entry
-            : { ...entry, enabled: entry.snapshot.enabled },
-        )
+      ? derived.map((entry) => applyProviderInstanceBranding(entry, settings))
       : derived;
     byEnvironment.set(
       environmentId,
@@ -152,33 +146,40 @@ export function applyProviderInstanceSettings(
   projectId: ProjectId | null,
 ): ReadonlyArray<ProviderInstanceEntry> {
   return entries.map((entry) => {
-    const explicitInstance = Object.hasOwn(settings.providerInstances, entry.instanceId)
-      ? settings.providerInstances[entry.instanceId]
-      : undefined;
     const enabled = resolveProjectProviderInstanceEnabled(settings, projectId, entry.instanceId);
-    if (entry.driverKind !== "acpRegistry" || explicitInstance === undefined) {
-      return enabled === entry.enabled ? entry : { ...entry, enabled };
-    }
-    const config =
-      explicitInstance.config !== null && typeof explicitInstance.config === "object"
-        ? (explicitInstance.config as Readonly<Record<string, unknown>>)
-        : null;
-    if (config?.source === "local") {
-      return { ...entry, enabled, acpRegistryAgentId: undefined, acpRegistryIconUrl: undefined };
-    }
-    const agentId = config?.agentId;
-    const iconUrl = config?.registryIconUrl;
-    return {
-      ...entry,
-      enabled,
-      ...(typeof agentId === "string" && agentId.trim()
-        ? { acpRegistryAgentId: agentId.trim() }
-        : {}),
-      ...(typeof iconUrl === "string" && iconUrl.trim()
-        ? { acpRegistryIconUrl: iconUrl.trim() }
-        : {}),
-    };
+    return applyProviderInstanceBranding(
+      enabled === entry.enabled ? entry : { ...entry, enabled },
+      settings,
+    );
   });
+}
+
+function applyProviderInstanceBranding(
+  entry: ProviderInstanceEntry,
+  settings: Pick<ServerSettings, "providerInstances">,
+): ProviderInstanceEntry {
+  const explicitInstance = Object.hasOwn(settings.providerInstances, entry.instanceId)
+    ? settings.providerInstances[entry.instanceId]
+    : undefined;
+  if (entry.driverKind !== "acpRegistry" || explicitInstance === undefined) return entry;
+  const config =
+    explicitInstance.config !== null && typeof explicitInstance.config === "object"
+      ? (explicitInstance.config as Readonly<Record<string, unknown>>)
+      : null;
+  if (config?.source === "local") {
+    return { ...entry, acpRegistryAgentId: undefined, acpRegistryIconUrl: undefined };
+  }
+  const agentId = config?.agentId;
+  const iconUrl = config?.registryIconUrl;
+  return {
+    ...entry,
+    ...(typeof agentId === "string" && agentId.trim()
+      ? { acpRegistryAgentId: agentId.trim() }
+      : {}),
+    ...(typeof iconUrl === "string" && iconUrl.trim()
+      ? { acpRegistryIconUrl: iconUrl.trim() }
+      : {}),
+  };
 }
 
 export function sortProviderInstanceEntries(

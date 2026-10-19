@@ -129,15 +129,11 @@ describe("shouldShowInstanceBadge", () => {
     expect(shouldShowInstanceBadge(first, [first, second])).toBe(true);
   });
 
-  it("hides the badge when the other instance sharing the driver is disabled", () => {
-    const entry = { driverKind: codex, accentColor: undefined, enabled: true };
-    const disabled = { driverKind: codex, accentColor: undefined, enabled: false };
-    expect(shouldShowInstanceBadge(entry, [entry, disabled])).toBe(false);
-  });
+  it("only badges the disabled instance when an enabled sibling remains", () => {
+    const enabled = { driverKind: codex, enabled: true };
+    const disabled = { driverKind: codex, enabled: false };
 
-  it("keeps the badge on a disabled instance that shares a driver with an enabled one", () => {
-    const enabled = { driverKind: codex, accentColor: undefined, enabled: true };
-    const disabled = { driverKind: codex, accentColor: undefined, enabled: false };
+    expect(shouldShowInstanceBadge(enabled, [enabled, disabled])).toBe(false);
     expect(shouldShowInstanceBadge(disabled, [enabled, disabled])).toBe(true);
   });
 
