@@ -2727,10 +2727,12 @@ export class MachineMapObject extends DurableObject<Env> {
           email: null,
           keys: [],
           serviceToken: null,
-          position: freePosition([
-            ...this.#map.machines.map((m) => m.position),
-            ...this.#map.clients.map((c) => c.position),
-          ]),
+          position:
+            request.client.position ??
+            freePosition([
+              ...this.#map.machines.map((m) => m.position),
+              ...this.#map.clients.map((c) => c.position),
+            ]),
           createdAt: nowIso(),
         };
         const arrows = request.arrows

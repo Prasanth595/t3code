@@ -28,6 +28,8 @@ import { confirmResume, EmergencyButton } from "./emergency.tsx";
 import { COMMAND_LABEL, LEVEL_LABEL, timeUntil } from "./format.ts";
 import { CopyIcon, KindIcon } from "./icons.tsx";
 import { OBTAINIUM_ADD_URL } from "./obtainium.ts";
+import { INVITE_FALLBACK, inviteAppUrl, isPhone } from "../clientInvite.ts";
+import { clearPendingInvite, invitePasskeyUrl, savePendingInvite } from "./pendingInvite.ts";
 import { playJoinSound, showJoinEffects } from "./panicEffects.ts";
 import { QrCodeSvg } from "./QrCode.tsx";
 import {
@@ -181,6 +183,10 @@ export function DialogHost({ dialog, close }: { dialog: Dialog; close: () => voi
           {...(dialog.clientId ? { clientId: dialog.clientId } : {})}
         />
       );
+    case "addPhone":
+      return <InviteAppDialog phone position={dialog.position} close={close} />;
+    case "resumeInvite":
+      return <InviteAppDialog phone={dialog.phone} resume={dialog.request} close={close} />;
     case "importSettings":
       return <ImportSettingsDialog close={close} />;
     case "emergency":
@@ -606,12 +612,38 @@ function NewJoinCodeDialog(props: {
  * MM-913: an invite for a native app. Making it needs the passkey check of MM-1207, because the
  * app gets the access of its client. The QR holds the only copy of the code.
  */
-function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () => void }) {
+function InviteAppDialog({
+  clientId,
+  phone = false,
+  position,
+  resume,
+  close,
+}: {
+  clientId?: ClientId;
+  phone?: boolean;
+  position?: MapPosition | undefined;
+  resume?: InviteRequest;
+  close: () => void;
+}) {
   const portal = usePortalContext();
   const { map, now } = portal;
-  const existing = clientId === undefined ? undefined : map.clients.find((c) => c.id === clientId);
-  const [name, setName] = useState("");
-  const [arrows, setArrows] = useState<Record<string, MachineLevel>>({});
+  const targetId = resume?.client._tag === "existing" ? resume.client.clientId : clientId;
+  const existing = targetId === undefined ? undefined : map.clients.find((c) => c.id === targetId);
+  const [name, setName] = useState(
+    resume?.client._tag === "new" ? resume.client.name : phone ? "Phone" : "",
+  );
+  const [arrows, setArrows] = useState<Record<string, MachineLevel>>(
+    resume
+      ? Object.fromEntries(
+          map.machines.map((m) => [
+            m.id,
+            resume.arrows.find((a) => a.to === m.id)?.level ?? "none",
+          ]),
+        )
+      : {},
+  );
+  const resumed = useRef(false);
+  const pickedPosition = resume?.client._tag === "new" ? resume.client.position : position;
   const [needsPasskey, setNeedsPasskey] = useState(false);
   const [invite, setInvite] = useState<InviteResponse | null>(null);
   const [status, setStatus] = useState<ApprovalsStatus | null>(null);
@@ -635,17 +667,23 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
     };
   }, []);
 
-  const create = () =>
+  const request = (): InviteRequest =>
+    existing
+      ? { client: { _tag: "existing", clientId: existing.id }, arrows: [] }
+      : {
+          client: {
+            _tag: "new",
+            name: name.trim(),
+            ...(pickedPosition ? { position: pickedPosition } : {}),
+          },
+          arrows: map.machines.flatMap((machine) => {
+            const level = arrows[machine.id] ?? (phone ? "standard" : "none");
+            return level === "none" ? [] : [{ to: machine.id, level }];
+          }),
+        };
+
+  const create = (request: InviteRequest) =>
     run(async () => {
-      const request: InviteRequest = existing
-        ? { client: { _tag: "existing", clientId: existing.id }, arrows: [] }
-        : {
-            client: { _tag: "new", name: name.trim() },
-            arrows: map.machines.flatMap((machine) => {
-              const level = arrows[machine.id] ?? "none";
-              return level === "none" ? [] : [{ to: machine.id, level }];
-            }),
-          };
       try {
         setInvite(await callApi<InviteResponse>("POST", "/api/grant/invite", request));
       } catch (reason) {
@@ -654,9 +692,21 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
       }
     });
 
+  useEffect(() => {
+    if (!resume || resumed.current) return;
+    resumed.current = true;
+    clearPendingInvite();
+    const url = new URL(location.href);
+    url.searchParams.delete("resume");
+    history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+    create(resume);
+  }, []);
+
   return (
     <Modal
-      title={existing ? `Invite an app into ${existing.name}` : "Invite an app"}
+      title={
+        existing ? `Invite an app into ${existing.name}` : phone ? "Add phone" : "Invite an app"
+      }
       onClose={close}
     >
       {invite ? (
@@ -665,10 +715,21 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
             <QrCodeSvg value={invite.url} />
           </div>
           <p className="small">
+            <a href={OBTAINIUM_ADD_URL} target="_blank" rel="noreferrer">
+              Add with Obtainium
+            </a>
+          </p>
+          <p className="small">
             Scan this with the T3 app on the phone. It works once and expires{" "}
             {timeUntil(invite.expiresAt, now)}. Close this dialog when the phone joined.
           </p>
           <p className="small mono break">{invite.url}</p>
+          {isPhone(navigator.userAgent) && (
+            <a className="btn primary" href={inviteAppUrl(invite.url)}>
+              Open in the T3 app
+            </a>
+          )}
+          <p className="small muted">{INVITE_FALLBACK}</p>
           <div className="actions end">
             <button
               type="button"
@@ -702,7 +763,7 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
           className="stack"
           onSubmit={(e) => {
             e.preventDefault();
-            create();
+            create(request());
           }}
         >
           <p className="small muted">
@@ -744,7 +805,7 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
                 <label className="field inline" key={machine.id}>
                   {machine.name}
                   <select
-                    value={arrows[machine.id] ?? "none"}
+                    value={arrows[machine.id] ?? (phone ? "standard" : "none")}
                     onChange={(e) => {
                       const level = LEVELS.find((l) => l === e.target.value) ?? "none";
                       setArrows({ ...arrows, [machine.id]: level });
@@ -771,7 +832,16 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
               Cancel
             </button>
             {needsPasskey ? (
-              <button type="button" className="btn primary" onClick={confirmWithPasskey}>
+              <button
+                type="button"
+                className="btn primary"
+                onClick={() =>
+                  run(async () => {
+                    savePendingInvite(request(), phone);
+                    location.href = invitePasskeyUrl(location.hash);
+                  })
+                }
+              >
                 Confirm with passkey
               </button>
             ) : (
@@ -784,7 +854,9 @@ function InviteAppDialog({ clientId, close }: { clientId?: ClientId; close: () =
               </button>
             )}
           </div>
-          {needsPasskey && <p className="hint">After the passkey, open this invite again.</p>}
+          {needsPasskey && (
+            <p className="hint">After the passkey, this dialog returns with your invite.</p>
+          )}
         </form>
       )}
     </Modal>
@@ -918,6 +990,11 @@ export function Palette({ close, toggleHold }: { close: () => void; toggleHold: 
       label: "Add machine",
       kind: "action",
       run: () => portal.open({ _tag: "addMachine" }),
+    });
+    out.push({
+      label: "Add phone",
+      kind: "action",
+      run: () => portal.open({ _tag: "addPhone" }),
     });
     out.push({
       label: portal.draft ? "Stop holding changes" : "Hold changes",

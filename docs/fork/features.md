@@ -116,6 +116,10 @@ Only the owner changes `clientAccess` and `machineMap`: in the portal with the p
 
 Only the owner makes an invite, in the portal. "Invite an app" shows a QR code that a native app, such as the T3 Android app, uses once (MM-913). The app gets its own Cloudflare Access token, and each machine gives it the level of its arrow.
 
+To add a phone from the map, select "Add phone", or double-click empty map space (long-press on a phone) and select "Add phone here". Check the name and arrows, which start at `standard`, then make the invite with the passkey check. The same dialog shows the QR code, link and "Add with Obtainium". The phone card appears at the chosen point. "Invite an app" in Clients still starts new arrows at `none`.
+
+After a passkey check, the dialog returns and makes the invite without another click. On the same phone, select "Open in the T3 app" in the dialog or invite page, then tap Add environment in the app. Or copy the link, open the T3 app, open Environments, tap +, and paste it in Address. Older app builds need this copy-and-paste path.
+
 - In the mobile app, scan the code in Add environment, or paste its link in Address. The app then pairs with every machine that it may reach.
 
 ### Emergency pause

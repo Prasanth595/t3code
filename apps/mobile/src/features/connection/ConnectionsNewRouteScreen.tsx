@@ -33,10 +33,12 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { CloudEnvironmentRows } from "./CloudEnvironmentRows";
 import { splitEnvironmentSections } from "./environmentSections";
+import { useForkClientInvite } from "./forkClientInvite";
 
 type ConnectionsNewRouteParams = {
   readonly mode?: string;
   readonly pairingUrl?: string;
+  readonly inviteUrl?: string;
   readonly autoConnect?: string;
   readonly routeFor?: EnvironmentId;
 };
@@ -96,6 +98,8 @@ export function ConnectionsNewRouteScreen({
     setHostInput(host);
     setCodeInput(code);
   }, [routePairingUrl]);
+
+  useForkClientInvite(params.inviteUrl, setHostInput);
 
   useEffect(() => {
     if (pairingConnectionError) {
