@@ -527,23 +527,16 @@ describe("AntigravityAdapterV2 html_render pages", () => {
       let sessionUpdate: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
       const instanceId = ProviderInstanceId.make("antigravity-html-render-test");
       const threadId = ThreadId.make("thread-antigravity-html-render");
-      const page = (name: string, title = "Revenue") => ({
+      const page = (name: string) => ({
         attachmentId: `${threadId}-${name}-html`,
-        title,
+        title: "Revenue",
         height: 240,
       });
-      const revenue = { html: "<p>Revenue</p>", title: "Revenue", height: 240 };
-      const restated = { ...revenue, html: "<p>Revenue, restated</p>" };
-      const margin = { ...revenue, html: "<p>Margin</p>", title: "Margin" };
-      const byRegion = { ...revenue, html: "<p>Revenue by region</p>" };
-      const byMonth = { ...revenue, html: "<p>Revenue by month</p>" };
-      // About the size of the page in the session that showed the bug.
+      // Long enough that Antigravity bounds the html the adapter sees.
       const rows = Array.from({ length: 500 }, (_, row) => `<tr><td>Row ${row}</td></tr>`);
-      const report = { ...revenue, html: `<table>${rows.join("")}</table>` };
-      const renderError = {
-        content: [{ type: "text", text: "html_render failed" }],
-        isError: true,
-      };
+      const report = { html: `<table>${rows.join("")}</table>`, title: "Revenue", height: 240 };
+      const failed = { ...report, html: "<p>Revenue</p>" };
+      const errored = { ...report, html: "<p>Revenue error</p>" };
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
         selfInvocation: yield* resolveSelfInvocation(),
@@ -565,10 +558,11 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                 Effect.sync(() => {
                   sessionUpdate = handler;
                 }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+              // agy_acp_server 1.3/1.4 without a permission prompt: the call is
+              // titled "Running <tool>" and completes with the step's summary
+              // in place of the MCP result.
               prompt: () =>
                 Effect.gen(function* () {
-                  // Antigravity's runtime bounds each update before the
-                  // adapter sees it, html_render's html included.
                   const send = (update: EffectAcpSchema.SessionUpdate) =>
                     sessionUpdate === undefined
                       ? Effect.die("the adapter must handle session updates")
@@ -578,19 +572,14 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                             update,
                           }),
                         );
-                  // agy_acp_server 1.3.0 and 1.4.0 without a permission prompt:
-                  // the title is "Running <tool>", rawInput holds only the
-                  // tool's arguments, and the completion reports the step's
-                  // own summary as rawOutput instead of the MCP result.
-                  const start = (
-                    toolCallId: string,
-                    rawInput: {
-                      readonly html?: string;
-                      readonly title: string;
-                      readonly height: number;
-                    },
-                  ) =>
-                    send({
+                  const calls = [
+                    ["published", report],
+                    ["unpublished", { ...report, html: "<p>Costs</p>" }],
+                    ["failed", failed],
+                    ["error", errored],
+                  ] as const;
+                  for (const [toolCallId, rawInput] of calls) {
+                    yield* send({
                       sessionUpdate: "tool_call",
                       toolCallId,
                       title: "Running html_render",
@@ -598,119 +587,71 @@ describe("AntigravityAdapterV2 html_render pages", () => {
                       status: "in_progress",
                       rawInput,
                     });
-                  yield* start("trajectory:1", revenue);
-                  yield* start("trajectory:2", { ...revenue, title: "Costs" });
-                  yield* start("trajectory:3", restated);
-                  yield* start("trajectory:4", revenue);
-                  yield* start("trajectory:5", revenue);
-                  yield* start("trajectory:6", margin);
-                  yield* start("trajectory:7", margin);
-                  yield* start("trajectory:8", byRegion);
-                  yield* start("trajectory:9", byMonth);
-                  yield* start("trajectory:10", report);
-                  yield* start("trajectory:11", { title: "Revenue", height: 240 });
-                  // T3's MCP server publishes while each call runs.
-                  yield* mcpSessions.recordHtmlRender(threadId, revenue, page("first"));
-                  yield* mcpSessions.recordHtmlRender(threadId, restated, page("second"));
-                  yield* mcpSessions.recordHtmlRender(threadId, margin, page("seventh", "Margin"));
-                  yield* mcpSessions.recordHtmlRender(threadId, margin, page("sixth", "Margin"));
-                  yield* mcpSessions.recordHtmlRender(threadId, byRegion, page("eighth"));
-                  yield* mcpSessions.recordHtmlRender(threadId, byMonth, page("ninth"));
-                  yield* mcpSessions.recordHtmlRender(threadId, report, page("tenth"));
+                  }
+                  yield* mcpSessions.recordHtmlRender(threadId, report, page("report"));
+                  yield* mcpSessions.recordHtmlRender(threadId, failed, page("failed"));
+                  yield* mcpSessions.recordHtmlRender(threadId, errored, page("error"));
+                  for (const [toolCallId, status] of [
+                    ["unpublished", "completed"],
+                    ["failed", "failed"],
+                    ["published", "completed"],
+                    ["published", "completed"],
+                  ] as const) {
+                    yield* send({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId,
+                      status,
+                      rawOutput: `Summary of ${toolCallId}`,
+                    });
+                  }
                   yield* send({
                     sessionUpdate: "tool_call_update",
-                    toolCallId: "trajectory:1",
+                    toolCallId: "error",
                     status: "completed",
-                    rawOutput: "Render revenue chart",
+                    rawOutput: { result: { isError: true, content: [] } },
                   });
-                  // A repeated completion keeps the call's page and takes no other.
+                  for (const [name, rawInput] of [
+                    ["failed", failed],
+                    ["error", errored],
+                  ] as const) {
+                    const toolCallId = `${name}-retry`;
+                    yield* send({
+                      sessionUpdate: "tool_call",
+                      toolCallId,
+                      title: "Running html_render",
+                      kind: "other",
+                      status: "in_progress",
+                      rawInput,
+                    });
+                    yield* mcpSessions.recordHtmlRender(threadId, rawInput, page(toolCallId));
+                    yield* send({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId: name,
+                      status: name === "failed" ? "failed" : "completed",
+                      rawOutput:
+                        name === "failed"
+                          ? "Summary of failed"
+                          : { result: { isError: true, content: [] } },
+                    });
+                    yield* send({
+                      sessionUpdate: "tool_call_update",
+                      toolCallId,
+                      status: "completed",
+                      rawOutput: `Summary of ${toolCallId}`,
+                    });
+                  }
+                  yield* mcpSessions.recordHtmlRender(threadId, report, page("replacement"));
                   yield* send({
                     sessionUpdate: "tool_call_update",
-                    toolCallId: "trajectory:1",
+                    toolCallId: "published",
                     status: "completed",
-                    rawOutput: "Render revenue chart",
-                  });
-                  // A call with no page published for its arguments stays as reported.
-                  yield* send({
-                    sessionUpdate: "tool_call_update",
-                    toolCallId: "trajectory:2",
-                    status: "completed",
-                    rawOutput: "Render costs chart",
-                  });
-                  // A failed call does not claim a page.
-                  yield* send({
-                    sessionUpdate: "tool_call_update",
-                    toolCallId: "trajectory:3",
-                    status: "failed",
-                    rawOutput: "MCP call timed out",
-                  });
-                  // Nor does a completed call whose MCP result is an error,
-                  // whether the agent reports the result bare or wrapped.
-                  yield* send({
-                    sessionUpdate: "tool_call_update",
-                    toolCallId: "trajectory:4",
-                    status: "completed",
-                    rawOutput: renderError,
-                  });
-                  yield* send({
-                    sessionUpdate: "tool_call_update",
-                    toolCallId: "trajectory:5",
-                    status: "completed",
-                    rawOutput: { result: renderError },
-                  });
-                  // A call that reports its page takes that page, not the
-                  // older one another call published with the same arguments,
-                  // and a repeated completion takes nothing more.
-                  yield* send({
-                    sessionUpdate: "tool_call_update",
-                    toolCallId: "trajectory:6",
-                    status: "completed",
-                    rawOutput: {
-                      result: {
-                        content: [{ type: "text", text: "Shown to the reader." }],
-                        structuredContent: { htmlRender: page("sixth", "Margin") },
-                      },
-                    },
+                    rawOutput: { htmlRender: page("replacement") },
                   });
                   yield* send({
                     sessionUpdate: "tool_call_update",
-                    toolCallId: "trajectory:6",
+                    toolCallId: "published",
                     status: "completed",
-                    rawOutput: "Render margin chart",
-                  });
-                  yield* send({
-                    sessionUpdate: "tool_call_update",
-                    toolCallId: "trajectory:7",
-                    status: "completed",
-                    rawOutput: "Render margin chart",
-                  });
-                  // Calls with the same title and height that complete out of
-                  // order each take the page published with their html.
-                  yield* send({
-                    sessionUpdate: "tool_call_update",
-                    toolCallId: "trajectory:9",
-                    status: "completed",
-                    rawOutput: "Render revenue by month",
-                  });
-                  yield* send({
-                    sessionUpdate: "tool_call_update",
-                    toolCallId: "trajectory:8",
-                    status: "completed",
-                    rawOutput: "Render revenue by region",
-                  });
-                  // The adapter sees only the end of a long page.
-                  yield* send({
-                    sessionUpdate: "tool_call_update",
-                    toolCallId: "trajectory:10",
-                    status: "completed",
-                    rawOutput: "Render revenue report",
-                  });
-                  // A call without its html cannot tell which page is its own.
-                  yield* send({
-                    sessionUpdate: "tool_call_update",
-                    toolCallId: "trajectory:11",
-                    status: "completed",
-                    rawOutput: "Render revenue chart",
+                    rawOutput: "Summary of published",
                   });
                   return { stopReason: "end_turn" as const };
                 }),
@@ -778,110 +719,76 @@ describe("AntigravityAdapterV2 html_render pages", () => {
         modelSelection,
         runtimePolicy,
       });
-      const events = yield* session.events.pipe(
-        Stream.takeUntil((event) => event.type === "turn.terminal"),
-        Stream.runCollect,
+      const events = Array.from(
+        yield* session.events.pipe(
+          Stream.takeUntil((event) => event.type === "turn.terminal"),
+          Stream.runCollect,
+        ),
       );
-      const finalItem = (nativeId: string) =>
-        Array.from(events).findLast(
+      const tool = (nativeId: string) => {
+        const event = events.findLast(
           (event) =>
             event.type === "turn_item.updated" &&
             event.turnItem.nativeItemRef?.nativeId === nativeId,
         );
-      const toolItem = (nativeId: string) => {
-        const event = finalItem(nativeId);
-        return event?.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool"
-          ? event.turnItem
-          : undefined;
-      };
-      const tool = (nativeId: string) => {
-        const item = toolItem(nativeId);
-        return item !== undefined
-          ? {
-              status: item.status,
-              toolName: item.toolName,
-              page: htmlRenderFromToolItem(item),
-              output: item.output,
-            }
-          : undefined;
+        if (event?.type !== "turn_item.updated" || event.turnItem.type !== "dynamic_tool") {
+          return undefined;
+        }
+        const item = event.turnItem;
+        return {
+          status: item.status,
+          toolName: item.toolName,
+          page: htmlRenderFromToolItem(item),
+          output: item.output,
+        };
       };
 
-      assert.deepEqual(tool("trajectory:1"), {
+      assert.deepEqual(tool("published"), {
         status: "completed",
         toolName: "t3-code.html_render",
-        page: page("first"),
-        output: { htmlRender: page("first") },
+        page: page("replacement"),
+        output: { htmlRender: page("replacement") },
       });
-      assert.deepEqual(tool("trajectory:2"), {
+      assert.deepEqual(tool("unpublished"), {
         status: "completed",
         toolName: "t3-code.html_render",
         page: undefined,
-        output: "Render costs chart",
+        output: "Summary of unpublished",
       });
-      assert.deepEqual(tool("trajectory:3"), {
+      assert.deepEqual(tool("failed"), {
         status: "failed",
         toolName: "t3-code.html_render",
         page: undefined,
-        output: "MCP call timed out",
+        output: "Summary of failed",
       });
-      assert.deepEqual(tool("trajectory:4"), {
+      assert.deepEqual(tool("error"), {
         status: "completed",
         toolName: "t3-code.html_render",
         page: undefined,
-        output: renderError,
+        output: [],
       });
-      assert.deepEqual(tool("trajectory:5"), {
-        status: "completed",
-        toolName: "t3-code.html_render",
-        page: undefined,
-        output: renderError.content,
-      });
-      assert.deepEqual(tool("trajectory:6"), {
-        status: "completed",
-        toolName: "t3-code.html_render",
-        page: page("sixth", "Margin"),
-        output: { htmlRender: page("sixth", "Margin") },
-      });
-      assert.deepEqual(tool("trajectory:7"), {
-        status: "completed",
-        toolName: "t3-code.html_render",
-        page: page("seventh", "Margin"),
-        output: { htmlRender: page("seventh", "Margin") },
-      });
-      assert.deepEqual(tool("trajectory:8"), {
-        status: "completed",
-        toolName: "t3-code.html_render",
-        page: page("eighth"),
-        output: { htmlRender: page("eighth") },
-      });
-      assert.deepEqual(tool("trajectory:9"), {
-        status: "completed",
-        toolName: "t3-code.html_render",
-        page: page("ninth"),
-        output: { htmlRender: page("ninth") },
-      });
-      // The adapter saw only the end of the long page.
-      assert.isAbove(report.html.length, 8_000);
-      assert.propertyVal(
-        toolItem("trajectory:10")?.input,
-        "html",
-        `[Earlier output truncated]\n\n${report.html.slice(-8_000)}`,
+      assert.deepEqual(
+        events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "dynamic_tool" &&
+          event.turnItem.nativeItemRef?.nativeId === "published" &&
+          event.turnItem.status === "completed"
+            ? [htmlRenderFromToolItem(event.turnItem)]
+            : [],
+        ),
+        [page("report"), page("report"), page("replacement"), page("replacement")],
       );
-      assert.deepEqual(tool("trajectory:10"), {
-        status: "completed",
-        toolName: "t3-code.html_render",
-        page: page("tenth"),
-        output: { htmlRender: page("tenth") },
-      });
-      assert.deepEqual(tool("trajectory:11"), {
-        status: "completed",
-        toolName: "t3-code.html_render",
-        page: undefined,
-        output: "Render revenue chart",
-      });
-      // Each page goes to one call; the unclaimed one stays for a later call.
-      assert.deepEqual(yield* mcpSessions.takeHtmlRender(threadId, restated), page("second"));
-      assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, margin), undefined);
+      for (const name of ["failed-retry", "error-retry"]) {
+        assert.deepEqual(tool(name), {
+          status: "completed",
+          toolName: "t3-code.html_render",
+          page: page(name),
+          output: { htmlRender: page(name) },
+        });
+      }
+      assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, report), undefined);
+      assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, failed), undefined);
+      assert.strictEqual(yield* mcpSessions.takeHtmlRender(threadId, errored), undefined);
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 });

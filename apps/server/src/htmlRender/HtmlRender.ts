@@ -95,12 +95,6 @@ export class HtmlRender extends Context.Service<
   HtmlRender,
   {
     readonly prepare: (html: string) => Effect.Effect<string, HtmlRenderPrepareError>;
-    /**
-     * Stores a prepared page as a thread attachment for clients to show inline,
-     * measuring its height at each client width when the preview browser is
-     * already installed. The thread's provider session keeps the reference for
-     * an agent that reports the call without its result.
-     */
     readonly publish: (input: {
       readonly threadId: ThreadId;
       readonly html: string;
@@ -432,9 +426,7 @@ const make = Effect.gen(function* () {
           .recordHtmlRender(input.threadId, input, reference)
           .pipe(Effect.as(reference));
       }),
-      // Only the returned reference lets thread deletion find the page, so a
-      // publish that fails or is interrupted before returning removes it and
-      // any session entry recorded for it.
+      // An interrupted publish must leave neither an attachment nor a recoverable reference.
       Effect.onError(() =>
         Effect.all(
           [

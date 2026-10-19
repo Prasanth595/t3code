@@ -3071,48 +3071,42 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const toolName = `${mcpIdentity.server}.${mcpIdentity.tool}`;
             const input =
               mcpIdentity.input ?? unknownRecord(rawInputRecord?.arguments) ?? rawInputRecord ?? {};
-            const output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
-            // Antigravity reports its own summary of an MCP call in place of
-            // the result, so a completed html_render can arrive without its
-            // page. The MCP server kept the page for the thread; storing it on
-            // the tool keeps it through later updates of this call. A repeated
-            // completion replaces that stored output with the summary again,
-            // so it reuses the call's page instead of taking another one.
-            // ACP reports status apart from the result, so a completed call
-            // can still carry an MCP error; that error is what the call shows.
-            const outputIsError =
+            let output = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
+            const isHtmlRender = resolveT3McpToolId(toolName) === HTML_RENDER_TOOL_NAME;
+            const isError =
               compactDynamicToolOutput(output)?.isError === true ||
               compactDynamicToolOutput(rawOutputRecord?.result)?.isError === true;
-            const renderCompleted =
-              status === "completed" &&
-              resolveT3McpToolId(toolName) === HTML_RENDER_TOOL_NAME &&
-              !outputIsError;
-            const reportedPage = renderCompleted
-              ? htmlRenderFromToolItem({ toolName, output })
-              : undefined;
-            const previousPage = renderCompleted
-              ? htmlRenderFromToolItem({
-                  toolName,
-                  output:
-                    previous?.data.rawOutput === undefined
-                      ? undefined
-                      : acpMcpToolCallOutput(previous.data.rawOutput),
-                })
-              : undefined;
-            // The MCP server keeps the page of every call, so a call that
-            // reports its page still takes it the first time it completes;
-            // left behind, it would show for a later call with the same
-            // arguments.
-            const keptPage =
-              renderCompleted && previousPage === undefined
-                ? yield* mcpSessions.takeHtmlRender(context.input.threadId, input, reportedPage)
-                : undefined;
-            const page = reportedPage === undefined ? (previousPage ?? keptPage) : undefined;
-            if (page !== undefined) {
-              context.tools.set(toolCall.toolCallId, {
-                ...toolCall,
-                data: { ...toolCall.data, rawOutput: { htmlRender: page } },
+            if (
+              isHtmlRender &&
+              (status === "failed" || (status === "completed" && isError)) &&
+              previous?.status !== "failed" &&
+              previous?.status !== "completed"
+            ) {
+              // A failed call may have published before the provider lost its result.
+              yield* mcpSessions.takeHtmlRender(
+                context.input.threadId,
+                input,
+                htmlRenderFromToolItem({ toolName, output }),
+              );
+            }
+            if (status === "completed" && isHtmlRender && !isError) {
+              const reportedPage = htmlRenderFromToolItem({ toolName, output });
+              // Antigravity replaces MCP results with summaries, including on repeated completions.
+              const previousPage = htmlRenderFromToolItem({
+                toolName,
+                output: acpMcpToolCallOutput(previous?.data.rawOutput ?? previous?.data.content),
               });
+              const page = reportedPage
+                ? yield* mcpSessions.takeHtmlRender(context.input.threadId, input, reportedPage)
+                : (previousPage ??
+                  (yield* mcpSessions.takeHtmlRender(context.input.threadId, input)));
+              if (reportedPage === undefined && page !== undefined) {
+                output = { htmlRender: page };
+                context.tools.set(toolCall.toolCallId, {
+                  ...toolCall,
+                  data: { ...toolCall.data, rawOutput: output },
+                });
+              }
             }
             turnItem = {
               ...base,
@@ -3127,11 +3121,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               type: "dynamic_tool",
               toolName,
               input,
-              ...(page !== undefined
-                ? { output: { htmlRender: page } }
-                : output === undefined
-                  ? {}
-                  : { output }),
+              ...(output === undefined ? {} : { output }),
             };
             yield* emitProviderEvent({ type: "turn_item.updated", driver, turnItem });
             yield* rearmDeferredFinalize(context);
