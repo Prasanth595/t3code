@@ -1,13 +1,9 @@
-/**
- * Port of `@effect/sql-sqlite-node` that uses the native `node:sqlite`
- * bindings instead of `better-sqlite3`.
- *
- * @module SqliteClient
- */
 import * as NodeSqlite from "node:sqlite";
+import * as NodeUtil from "node:util";
 import * as NodeWorkerThreads from "node:worker_threads";
 
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -16,11 +12,13 @@ import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
+import * as References from "effect/References";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Context from "effect/Context";
 import * as Stream from "effect/Stream";
+import * as Tracer from "effect/Tracer";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import * as Client from "effect/sql/SqlClient";
 import type { Connection } from "effect/sql/SqlConnection";
@@ -39,31 +37,45 @@ export interface SqliteClientConfig {
   readonly transformResultNames?: ((str: string) => string) | undefined;
   readonly transformQueryNames?: ((str: string) => string) | undefined;
   /**
-   * Run transactions marked with `readOnly` on a second connection in a worker
-   * thread, so long reads block neither the event loop nor writes. Ignored for
-   * in-memory databases, which a second connection cannot share.
+   * Ignored for in-memory databases, which a second connection cannot share.
    */
   readonly readerWorker?: boolean | undefined;
-  /** How long a reader worker may take to open the database before reads use the writer. Default 10 seconds. */
   readonly readerStartupTimeout?: Duration.Input | undefined;
+  /**
+   * Ignored for in-memory databases.
+   */
+  readonly checkpointWorker?: boolean | undefined;
 }
 
-/**
- * Set by `readOnly`. A top-level transaction started while it is true runs on
- * the reader worker when the client has one, and on the writer otherwise.
- */
 const ReadOnly = Context.Reference<boolean>("@t3tools/shared/nodeSqliteClient/ReadOnly", {
   defaultValue: () => false,
 });
 
 /**
- * Marks the SQL in `effect` as read-only. Wrap the whole transaction, as in
- * `sql.withTransaction(reads).pipe(readOnly)`. Inside an open write
- * transaction the reads keep using the writer, and a write attempted on the
- * reader fails with "attempt to write a readonly database".
+ * Wrap the whole transaction, as in
+ * `sql.withTransaction(reads).pipe(readOnly)`. Inside an open write transaction
+ * the reads keep using the writer, and a write attempted on the reader fails
+ * with "attempt to write a readonly database".
  */
 export const readOnly = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   Effect.provideService(effect, ReadOnly, true);
+
+interface Acquired {
+  readonly connection: "writer" | "reader";
+  readonly lockWaitMs: number;
+}
+
+const annotateAcquired = (fiber: Fiber.Fiber<unknown, unknown>, acquired: Acquired | undefined) => {
+  const span = Context.getOrUndefined(fiber.context, Tracer.ParentSpan);
+  if (span?._tag !== "Span" || acquired === undefined) return;
+  span.attribute("db.connection", acquired.connection);
+  span.attribute("db.lock_wait_ms", acquired.lockWaitMs);
+};
+
+const TransactionAcquire = Context.Reference<{ acquired?: Acquired } | undefined>(
+  "@t3tools/shared/nodeSqliteClient/TransactionAcquire",
+  { defaultValue: () => undefined },
+);
 
 export class UnsupportedNodeSqliteVersionError extends Schema.TaggedError<UnsupportedNodeSqliteVersionError>()(
   "UnsupportedNodeSqliteVersionError",
@@ -86,13 +98,6 @@ export class UnsupportedNodeSqliteOperationError extends Schema.TaggedError<Unsu
   }
 }
 
-/**
- * Verify that the current Node.js version includes the `node:sqlite` APIs
- * used by `NodeSqliteClient` — specifically `StatementSync.columns()` (added
- * in Node 22.16.0 / 23.11.0).
- *
- * @see https://github.com/nodejs/node/pull/57490
- */
 const checkNodeSqliteCompat = () => {
   const parts = process.versions.node.split(".").map(Number);
   const major = parts[0] ?? 0;
@@ -112,8 +117,7 @@ const checkNodeSqliteCompat = () => {
 
 /**
  * `node:sqlite` reports the SQLite result code as `errcode`, while
- * `classifySqliteError` reads `errno`. Copy it across so busy, locked and
- * constraint failures get their own reasons instead of `UnknownError`.
+ * `classifySqliteError` reads `errno`.
  */
 const classifyError = (cause: unknown, message: string, operation: string) => {
   if (
@@ -124,6 +128,48 @@ const classifyError = (cause: unknown, message: string, operation: string) => {
     Object.assign(cause, { errno: cause.errcode });
   }
   return classifySqliteError(cause, { message, operation });
+};
+
+/**
+ * SQLite keeps its copy of a statement's text and blob parameters until the
+ * statement is bound again or finalized, and `node:sqlite` cannot clear them.
+ */
+const LARGE_BINDING_SIZE = 64 * 1024;
+
+const isBlob = (value: unknown): value is ArrayBufferView | ArrayBufferLike =>
+  ArrayBuffer.isView(value) || NodeUtil.types.isAnyArrayBuffer(value);
+
+const bindingSize = (value: unknown): number => {
+  if (typeof value === "string") {
+    return value.length;
+  }
+  return isBlob(value) ? value.byteLength : 0;
+};
+
+const hasLargeBinding = (params: ReadonlyArray<unknown>): boolean => {
+  try {
+    let size = 0;
+    for (const param of params) {
+      if (
+        (typeof param === "object" || typeof param === "function") &&
+        param !== null &&
+        !isBlob(param)
+      ) {
+        // `node:sqlite` takes named parameters as one object, callable or not.
+        // Read data properties only: calling a getter here would run it twice.
+        for (const property of Object.values(Object.getOwnPropertyDescriptors(param))) {
+          if (!property.enumerable) continue;
+          if (!("value" in property)) return true;
+          size += bindingSize(property.value);
+        }
+      } else {
+        size += bindingSize(param);
+      }
+    }
+    return size > LARGE_BINDING_SIZE;
+  } catch {
+    return true;
+  }
 };
 
 // Evaluated source instead of a worker file, so the reader also starts from
@@ -229,12 +275,9 @@ const failed = (cause: unknown, message: string, operation: string) =>
 const endsReadTransaction = (sql: string) => /^\s*ROLLBACK\b|^\s*COMMIT\b/i.test(sql);
 
 /**
- * Read-only connections served by one worker thread at a time. Each worker
- * gets its own `Connection`, so a transaction stays on the worker it began on:
- * once that worker exits, its statements fail rather than silently continuing
- * outside the transaction on a replacement. The next acquire starts a new one.
- * A worker that cannot open the database read-only, or finds it outside WAL
- * mode, turns the reader off for the life of the client: reads use the writer.
+ * Each worker gets its own `Connection`, so a transaction stays on the worker
+ * it began on: once that worker exits, its statements fail rather than silently
+ * continuing outside the transaction on a replacement.
  */
 const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
   let current:
@@ -281,7 +324,6 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
     worker.on("message", (reply: ReaderReply | ReaderStartup) => {
       if ("type" in reply) {
         announce(reply);
-        // An idle reader must not keep the process alive.
         if (pending.size === 0) worker.unref();
         return;
       }
@@ -327,8 +369,9 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
             },
           });
           if (pending.size === 1) worker.ref();
+          const cached = input.cached && !hasLargeBinding(input.params);
           // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
-          worker.postMessage({ id, safeIntegers, ...input });
+          worker.postMessage({ id, safeIntegers, ...input, cached });
         });
       });
 
@@ -377,7 +420,6 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
     options.readerStartupTimeout ?? Duration.seconds(10),
   );
 
-  // Runs once: concurrent first acquires share one startup and may all see it fail.
   const turnOff = (reader: typeof current, reason: string) =>
     Effect.suspend(() => {
       if (reader !== undefined) {
@@ -391,7 +433,6 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
       }).pipe(Effect.as(undefined));
     });
 
-  /** The live worker's connection once it is ready, or undefined to use the writer. */
   return Effect.suspend((): Effect.Effect<Connection | undefined> => {
     if (unavailable) return Effect.succeed(undefined);
     let reader: NonNullable<typeof current>;
@@ -426,12 +467,116 @@ const makeReader = Effect.fnUntraced(function* (options: SqliteClientConfig) {
   });
 });
 
+const CHECKPOINT_FRAMES = 1000;
+// While the worker runs, the writer still checkpoints a WAL this long. Writes
+// with no pause leave the worker behind, and the WAL can only restart once
+// every frame is checkpointed, so this keeps the file from growing forever.
+const WRITER_BACKSTOP_FRAMES = 10 * CHECKPOINT_FRAMES;
+const CHECKPOINT_IDLE_MS = 100;
+
+// SQLite before 3.51 reads NOOP as PASSIVE and would checkpoint on every
+// request, so the worker refuses to start there and the writer keeps
+// checkpointing.
+const checkpointWorkerSource = `
+const { parentPort, workerData } = require("node:worker_threads");
+const { DatabaseSync } = require("node:sqlite");
+const db = new DatabaseSync(workerData.filename);
+const version = db.prepare("SELECT sqlite_version() AS version").get().version;
+const [major, minor] = version.split(".").map(Number);
+if (major < 3 || (major === 3 && minor < 51)) throw new Error("SQLite " + version + " has no NOOP checkpoint");
+// macOS fsync() does not flush the drive cache; F_FULLFSYNC does. Other platforms ignore this.
+db.exec("PRAGMA checkpoint_fullfsync = ON;");
+const frames = db.prepare("PRAGMA wal_checkpoint(NOOP)");
+const checkpoint = db.prepare("PRAGMA wal_checkpoint(PASSIVE)");
+const finish = () => {
+  const { log, checkpointed } = frames.get();
+  if (log >= workerData.frames && checkpointed < log) checkpoint.get();
+};
+let idle;
+parentPort.on("message", (request) => {
+  const { log, checkpointed } = frames.get();
+  if (log - checkpointed >= workerData.frames) checkpoint.get();
+  clearTimeout(idle);
+  idle = setTimeout(finish, workerData.idleMs);
+  parentPort.postMessage(request);
+});
+`;
+
+/**
+ * Call the returned function after each statement on the writer.
+ */
+const startCheckpointWorker = Effect.fnUntraced(function* (
+  filename: string,
+  writer: NodeSqlite.DatabaseSync,
+) {
+  const warn = (reason: string) =>
+    Effect.logWarning(
+      "SQLite checkpoint worker unavailable; checkpoints run on the main connection",
+      { reason },
+    );
+  let worker: NodeWorkerThreads.Worker;
+  try {
+    worker = new NodeWorkerThreads.Worker(checkpointWorkerSource, {
+      eval: true,
+      workerData: { filename, frames: CHECKPOINT_FRAMES, idleMs: CHECKPOINT_IDLE_MS },
+    });
+  } catch (cause) {
+    yield* warn(String(cause));
+    return undefined;
+  }
+  writer.exec(`PRAGMA wal_autocheckpoint = ${WRITER_BACKSTOP_FRAMES};`);
+  const runFork = Effect.runForkWith(yield* Effect.context<never>());
+  let stopped = false;
+  let checking = false;
+  let checkAgain = false;
+  const handBack = (reason: string) => {
+    if (stopped) return;
+    stopped = true;
+    try {
+      writer.exec(`PRAGMA wal_autocheckpoint = ${CHECKPOINT_FRAMES};`);
+    } catch {}
+    runFork(warn(reason));
+  };
+  worker.on("error", (cause) => handBack(cause.message));
+  worker.on("exit", (code) => handBack(`exited with code ${code}`));
+  yield* Effect.addFinalizer(() =>
+    Effect.promise(() => {
+      stopped = true;
+      return worker.terminate();
+    }),
+  );
+
+  // At most one request is in flight. A statement that runs during it asks for
+  // one more check, so the frames of a last commit before idle still get one.
+  const check = () => {
+    if (stopped) return;
+    if (checking) {
+      checkAgain = true;
+      return;
+    }
+    checking = true;
+    // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
+    worker.postMessage(null);
+  };
+  worker.on("message", () => {
+    checking = false;
+    if (checkAgain) {
+      checkAgain = false;
+      check();
+    }
+  });
+  // After the listeners: adding a "message" listener refs the worker again.
+  worker.unref();
+  return check;
+});
+
 const make = Effect.fn("makeWithDatabase")(function* (
   options: SqliteClientConfig,
 ): Effect.fn.Return<Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity> {
   yield* checkNodeSqliteCompat();
 
   const compiler = Statement.makeCompilerSqlite(options.transformQueryNames);
+  const isFileDatabase = options.filename !== ":memory:" && options.filename !== "";
   const transformRows = options.transformResultNames
     ? Statement.defaultTransforms(options.transformResultNames).array
     : undefined;
@@ -459,6 +604,11 @@ const make = Effect.fn("makeWithDatabase")(function* (
           }),
       }).pipe(Effect.orDie),
     );
+    // Started after the close finalizer, so the worker stops before the writer closes.
+    const checkpoint =
+      options.checkpointWorker && isFileDatabase
+        ? yield* startCheckpointWorker(options.filename, db)
+        : undefined;
 
     const statementReaderCache = new WeakMap<NodeSqlite.StatementSync, boolean>();
     const hasRows = (statement: NodeSqlite.StatementSync): boolean => {
@@ -487,6 +637,9 @@ const make = Effect.fn("makeWithDatabase")(function* (
         Exit.isSuccess(exit) ? (options.prepareCacheTTL ?? Duration.minutes(10)) : Duration.zero,
     });
 
+    const statementFor = (sql: string, params: ReadonlyArray<unknown>) =>
+      hasLargeBinding(params) ? prepare(sql) : Cache.get(prepareCache, sql);
+
     const runStatement = (
       statement: NodeSqlite.StatementSync,
       params: ReadonlyArray<unknown>,
@@ -496,9 +649,12 @@ const make = Effect.fn("makeWithDatabase")(function* (
         try {
           statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
           if (hasRows(statement)) {
-            return Effect.succeed(statement.all(...(params as any)));
+            const rows = statement.all(...(params as any));
+            checkpoint?.();
+            return Effect.succeed(rows);
           }
           const result = statement.run(...(params as any));
+          checkpoint?.();
           return Effect.succeed(raw ? (result as unknown as ReadonlyArray<any>) : []);
         } catch (cause) {
           return Effect.fail(
@@ -510,7 +666,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
       });
 
     const run = (sql: string, params: ReadonlyArray<unknown>, raw = false) =>
-      Effect.flatMap(Cache.get(prepareCache, sql), (s) => runStatement(s, params, raw));
+      Effect.flatMap(statementFor(sql, params), (s) => runStatement(s, params, raw));
 
     const runStatementValues = (
       statement: NodeSqlite.StatementSync,
@@ -521,14 +677,19 @@ const make = Effect.fn("makeWithDatabase")(function* (
         (statement) =>
           Effect.try({
             try: () => {
+              statement.setReadBigInts(
+                Boolean(Context.get(Fiber.getCurrent()!.context, Client.SafeIntegers)),
+              );
               if (hasRows(statement)) {
                 statement.setReturnArrays(true);
-                // Safe to cast to array after we've setReturnArrays(true)
-                return statement.all(...(params as any)) as unknown as ReadonlyArray<
+                const rows = statement.all(...(params as any)) as unknown as ReadonlyArray<
                   ReadonlyArray<unknown>
                 >;
+                checkpoint?.();
+                return rows;
               }
               statement.run(...(params as any));
+              checkpoint?.();
               return [];
             },
             catch: (cause) =>
@@ -555,7 +716,7 @@ const make = Effect.fn("makeWithDatabase")(function* (
       );
 
     const runValues = (sql: string, params: ReadonlyArray<unknown>) =>
-      Effect.flatMap(Cache.get(prepareCache, sql), (statement) =>
+      Effect.flatMap(statementFor(sql, params), (statement) =>
         runStatementValues(statement, params),
       );
 
@@ -589,56 +750,89 @@ const make = Effect.fn("makeWithDatabase")(function* (
   const semaphore = yield* Semaphore.make(1);
   const connection = yield* makeConnection;
   const acquireReader =
-    options.readerWorker && options.filename !== ":memory:" && options.filename !== ""
-      ? yield* makeReader(options)
-      : undefined;
+    options.readerWorker && isFileDatabase ? yield* makeReader(options) : undefined;
   const readerSemaphore = yield* Semaphore.make(1);
 
-  const writer = { lock: semaphore, connection };
-  // Picks the reader only for `readOnly` work, and the writer whenever the
-  // reader is turned off.
+  const writer = { name: "writer" as const, lock: semaphore, connection };
   const route = Effect.withFiber((fiber) =>
     acquireReader !== undefined && Context.get(fiber.context, ReadOnly)
       ? Effect.map(acquireReader, (readerConnection) =>
           readerConnection === undefined
             ? writer
-            : { lock: readerSemaphore, connection: readerConnection },
+            : { name: "reader" as const, lock: readerSemaphore, connection: readerConnection },
         )
       : Effect.succeed(writer),
   );
 
+  const acquired = (
+    target: { readonly name: Acquired["connection"] },
+    clock: Clock.Clock,
+    start: bigint,
+  ): Acquired => ({
+    connection: target.name,
+    lockWaitMs: Number((clock.monotonicTimeNanosUnsafe() - start) / 1000n) / 1000,
+  });
+
   const acquirer = Effect.flatMap(route, (target) =>
-    target.lock.withPermits(1)(Effect.succeed(target.connection)),
+    Effect.withFiber((fiber) => {
+      if (
+        !fiber.getRef(References.TracerEnabled) ||
+        !fiber.getRef(Statement.SpanPropagationEnabled)
+      ) {
+        return target.lock.withPermits(1)(Effect.succeed(target.connection));
+      }
+      const clock = fiber.getRef(Clock.Clock);
+      const start = clock.monotonicTimeNanosUnsafe();
+      return target.lock.withPermits(1)(
+        Effect.sync(() => {
+          annotateAcquired(fiber, acquired(target, clock, start));
+          return target.connection;
+        }),
+      );
+    }),
   );
   const transactionAcquirer = Effect.flatMap(route, (target) =>
     Effect.uninterruptibleMask((restore) => {
       const fiber = Fiber.getCurrent()!;
       const scope = Context.getUnsafe(fiber.context, Scope.Scope);
+      const clock = fiber.getRef(Clock.Clock);
+      const start = clock.monotonicTimeNanosUnsafe();
       return Effect.as(
-        Effect.tap(restore(target.lock.take(1)), () =>
-          Scope.addFinalizer(scope, target.lock.release(1)),
-        ),
+        Effect.tap(restore(target.lock.take(1)), () => {
+          const pending = fiber.getRef(TransactionAcquire);
+          if (pending !== undefined) pending.acquired = acquired(target, clock, start);
+          return Scope.addFinalizer(scope, target.lock.release(1));
+        }),
         target.connection,
       );
     }),
   );
 
-  return yield* Client.make({
+  const client = yield* Client.make({
     acquirer,
     compiler,
     transactionAcquirer,
     // A deferred BEGIN only takes the write lock at the first write. If another
     // process commits after this transaction's first read, that write fails at
-    // once with SQLITE_BUSY_SNAPSHOT, which busy_timeout cannot wait out. Taking
-    // the lock up front makes it wait instead, at the cost of serializing
-    // read-only transactions behind other processes' writers. Read-only
-    // connections cannot write, so they keep the deferred BEGIN.
+    // once with SQLITE_BUSY_SNAPSHOT, which busy_timeout cannot wait out.
     beginTransaction: options.readonly === true ? "BEGIN" : "BEGIN IMMEDIATE",
     spanAttributes: [
       ...(options.spanAttributes ? Object.entries(options.spanAttributes) : []),
       [ATTR_DB_SYSTEM_NAME, "sqlite"],
     ],
     transformRows,
+  });
+  const withTransaction = client.withTransaction;
+  return Object.assign(client, {
+    withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Effect.suspend(() => {
+        const pending: { acquired?: Acquired } = {};
+        const body = Effect.withFiber<A, E, R>((fiber) => {
+          annotateAcquired(fiber, pending.acquired);
+          return effect;
+        });
+        return withTransaction(body).pipe(Effect.provideService(TransactionAcquire, pending));
+      }),
   });
 });
 

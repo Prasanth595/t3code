@@ -4,7 +4,6 @@ import { GROK_COST_USD_TICKS_PER_DOLLAR, parseGrokLine } from "./usage.ts";
 import { grokUsageResponseToLimits } from "./usageLimits.ts";
 
 describe("parseGrokLine", () => {
-  /** Shaped after a real Grok Build `turn_completed` session update. */
   function turnCompleted(overrides?: {
     sessionId?: string;
     promptId?: string;
