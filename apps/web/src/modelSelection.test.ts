@@ -956,31 +956,104 @@ describe("resolveAppModelSelectionState with the opencode plan agent", () => {
 });
 
 describe("isModelSelectableForInstance", () => {
-  it("treats hidden models as selectable when validating a saved selection", () => {
-    const instanceId = ProviderInstanceId.make("claudeAgent");
+  it("validates a hidden saved default while keeping it out of the picker", () => {
+    const instanceId = ProviderInstanceId.make("claude_openrouter");
+    const hiddenModel = "claude-opus-4-6";
+    const visibleModel = "claude-sonnet-4-6";
     const providers = [
-      provider({ instanceId: "claudeAgent", models: ["claude-opus-4-6", "claude-opus-5-5"] }),
+      provider({
+        provider: ProviderDriverKind.make("claudeAgent"),
+        instanceId,
+        models: [hiddenModel, visibleModel],
+      }),
     ];
+    const savedDefault = createModelSelection(instanceId, hiddenModel, [
+      { id: "effort", value: "high" },
+    ]);
     const settings: UnifiedSettings = {
       ...DEFAULT_UNIFIED_SETTINGS,
+      defaultModelSelection: savedDefault,
       providerModelPreferences: {
-        [instanceId]: { hiddenModels: ["claude-opus-4-6"], modelOrder: [] },
+        [instanceId]: { hiddenModels: [hiddenModel], modelOrder: [visibleModel, hiddenModel] },
       },
     };
 
     expect(
+      getCustomModelOptionsByInstance(settings, providers, instanceId, hiddenModel)
+        .get(instanceId)
+        ?.map((option) => option.slug),
+    ).toEqual([visibleModel]);
+    expect(
+      isModelSelectableForInstance(
+        settings,
+        providers,
+        savedDefault.instanceId,
+        savedDefault.model,
+      ),
+    ).toBe(true);
+    expect(isModelSelectableForInstance(settings, providers, instanceId, visibleModel)).toBe(true);
+    expect(
       getCustomModelOptionsByInstance(settings, providers)
         .get(instanceId)
-        ?.some((option) => option.slug === "claude-opus-4-6"),
-    ).toBe(false);
-    expect(isModelSelectableForInstance(settings, providers, instanceId, "claude-opus-4-6")).toBe(
+        ?.map((option) => option.slug),
+    ).toEqual([visibleModel]);
+  });
+
+  it("validates custom models only on the instance that declares them", () => {
+    const stockId = ProviderInstanceId.make("claudeAgent");
+    const customId = ProviderInstanceId.make("claude_openrouter");
+    const driver = ProviderDriverKind.make("claudeAgent");
+    const providers = [
+      provider({ provider: driver, instanceId: stockId, models: ["claude-sonnet-4-6"] }),
+      provider({ provider: driver, instanceId: customId, models: ["claude-sonnet-4-6"] }),
+    ];
+    const settings = settingsWithProviderInstances();
+
+    expect(isModelSelectableForInstance(settings, providers, customId, "openai/gpt-5.5")).toBe(
       true,
     );
-    expect(isModelSelectableForInstance(settings, providers, instanceId, "claude-opus-5-5")).toBe(
-      true,
-    );
-    expect(isModelSelectableForInstance(settings, providers, instanceId, "missing-model")).toBe(
+    expect(isModelSelectableForInstance(settings, providers, stockId, "openai/gpt-5.5")).toBe(
       false,
     );
+    expect(
+      isModelSelectableForInstance(
+        settings,
+        providers,
+        ProviderInstanceId.make("claude_removed"),
+        "claude-sonnet-4-6",
+      ),
+    ).toBe(false);
+  });
+
+  it("rejects unavailable providers and missing catalog models even when hidden", () => {
+    const instanceId = ProviderInstanceId.make("opencode");
+    const availableModel = "opencode/big-pickle";
+    const missingModel = "opencode/kimi-k3";
+    const liveProvider = provider({
+      provider: ProviderDriverKind.make("opencode"),
+      instanceId,
+      models: [availableModel],
+    });
+    const settings: UnifiedSettings = {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerModelPreferences: {
+        [instanceId]: { hiddenModels: [availableModel, missingModel], modelOrder: [] },
+      },
+    };
+
+    expect(isModelSelectableForInstance(settings, [liveProvider], instanceId, availableModel)).toBe(
+      true,
+    );
+    expect(isModelSelectableForInstance(settings, [liveProvider], instanceId, missingModel)).toBe(
+      false,
+    );
+    expect(
+      isModelSelectableForInstance(
+        settings,
+        [{ ...liveProvider, availability: "unavailable" }],
+        instanceId,
+        availableModel,
+      ),
+    ).toBe(false);
   });
 });

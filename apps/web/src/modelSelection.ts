@@ -301,6 +301,21 @@ export function getCustomModelOptionsByInstance(
   return out;
 }
 
+export function isModelSelectableForInstance(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+  instanceId: ProviderInstanceId,
+  model: string,
+): boolean {
+  const entry = deriveProviderInstanceEntries(providers).find(
+    (candidate) => candidate.instanceId === instanceId,
+  );
+  if (!entry?.isAvailable) return false;
+  return getAppModelOptionsForInstance({ ...settings, providerModelPreferences: {} }, entry).some(
+    (option) => option.slug === model && !option.isUnavailable,
+  );
+}
+
 export function selectsPlanAgent(options: ModelSelection["options"]): boolean {
   return options?.some((option) => option.id === "agent" && option.value === "plan") ?? false;
 }
