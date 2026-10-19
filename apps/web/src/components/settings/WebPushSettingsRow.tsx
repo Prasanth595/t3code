@@ -2,7 +2,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 import { useState } from "react";
 
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { useEnvironmentIds } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { webPushTest } from "../../state/webPush";
@@ -19,7 +19,6 @@ const selectWebPushEnabled = (settings: ClientSettings) => settings.webPushEnabl
 export function WebPushSettingsRow() {
   const enabled = useClientSettings(selectWebPushEnabled);
   const wanted = useClientSettings(webPushWanted);
-  const updateSettings = useUpdateClientSettings();
   const environmentIds = useEnvironmentIds();
   const test = useAtomCommand(webPushTest, { reportFailure: false });
   const [testing, setTesting] = useState(false);
@@ -68,7 +67,7 @@ export function WebPushSettingsRow() {
           <SettingResetButton
             label="Web Push"
             onClick={() =>
-              void updateSettings({ webPushEnabled: DEFAULT_CLIENT_SETTINGS.webPushEnabled })
+              void updateClientSettings({ webPushEnabled: DEFAULT_CLIENT_SETTINGS.webPushEnabled })
             }
           />
         ) : null
@@ -82,7 +81,7 @@ export function WebPushSettingsRow() {
           ) : null}
           <Switch
             checked={enabled}
-            onCheckedChange={(checked) => void updateSettings({ webPushEnabled: checked })}
+            onCheckedChange={(checked) => void updateClientSettings({ webPushEnabled: checked })}
             aria-label="Web Push"
           />
         </div>

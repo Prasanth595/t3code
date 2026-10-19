@@ -123,3 +123,12 @@ export function movePinnedScriptId(
   next.splice(toIndex, 0, scriptId);
   return next;
 }
+
+/**
+ * Leading spaces omit scripts from Bash history with ignorespace/ignoreboth,
+ * zsh with HIST_IGNORE_SPACE, and fish. Only the first line is prefixed, so later
+ * entries from multiline input may still enter history. PowerShell/PSReadLine history is not suppressed.
+ */
+export function projectScriptTerminalInput(command: string): string {
+  return ` ${command}\r`;
+}

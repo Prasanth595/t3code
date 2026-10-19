@@ -1,6 +1,6 @@
 import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { Switch } from "../ui/switch";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -10,7 +10,6 @@ const selectEnabled = (settings: ClientSettings) => settings.pullRequestFilterCh
 /** Fork: `pullRequestFilterChips`, the active filters as chips above the pull request list. */
 export function PullRequestFilterChipsSettingsRow() {
   const enabled = useClientSettings(selectEnabled);
-  const updateSettings = useUpdateClientSettings();
   return (
     <SettingsRow
       {...searchableSetting("pull-request-filter-chips")}
@@ -20,7 +19,7 @@ export function PullRequestFilterChipsSettingsRow() {
           <SettingResetButton
             label="pull request filter chips"
             onClick={() =>
-              void updateSettings({
+              void updateClientSettings({
                 pullRequestFilterChips: DEFAULT_CLIENT_SETTINGS.pullRequestFilterChips,
               })
             }
@@ -31,7 +30,7 @@ export function PullRequestFilterChipsSettingsRow() {
         <Switch
           checked={enabled}
           onCheckedChange={(checked) =>
-            void updateSettings({ pullRequestFilterChips: Boolean(checked) })
+            void updateClientSettings({ pullRequestFilterChips: Boolean(checked) })
           }
           aria-label="Pull request filter chips"
         />

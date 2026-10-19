@@ -1,7 +1,7 @@
 import { type ClientSettings, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
 
 import { isElectron } from "../../env";
-import { useClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { useClientSettings, updateClientSettings } from "../../hooks/useSettings";
 import { Switch } from "../ui/switch";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -11,7 +11,6 @@ const selectInstalledAppEnabled = (settings: ClientSettings) => settings.install
 /** Fork setting: the service worker of the installed web app. The desktop app does not need it. */
 export function InstalledAppSettingsRow() {
   const enabled = useClientSettings(selectInstalledAppEnabled);
-  const updateSettings = useUpdateClientSettings();
   if (isElectron) return null;
 
   return (
@@ -23,7 +22,7 @@ export function InstalledAppSettingsRow() {
           <SettingResetButton
             label="installed app"
             onClick={() =>
-              void updateSettings({
+              void updateClientSettings({
                 installedAppEnabled: DEFAULT_CLIENT_SETTINGS.installedAppEnabled,
               })
             }
@@ -33,7 +32,7 @@ export function InstalledAppSettingsRow() {
       control={
         <Switch
           checked={enabled}
-          onCheckedChange={(checked) => void updateSettings({ installedAppEnabled: checked })}
+          onCheckedChange={(checked) => void updateClientSettings({ installedAppEnabled: checked })}
           aria-label="Installed app"
         />
       }
