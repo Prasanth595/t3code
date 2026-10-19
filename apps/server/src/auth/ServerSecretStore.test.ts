@@ -196,6 +196,7 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
           return {
             ...fileSystem,
             makeDirectory: () => Effect.void,
+            readDirectory: () => Effect.succeed([]),
             writeFile: () => Effect.void,
             rename: () => Effect.void,
             chmod: (path, mode) =>
@@ -222,6 +223,41 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       );
       assert.isAtLeast(chmodCalls.filter((call) => call.mode === 0o600).length, 2);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect.each([false, true])(
+    "cleans crash temporaries at startup with a final secret: %s",
+    (hasFinal) =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(config.secretsDir, { recursive: true });
+        const final = `${config.secretsDir}/plugin-setting-test.bin`;
+        const temporary = `${final}.00000000-0000-4000-8000-000000000001.tmp`;
+        const unrelated = `${config.secretsDir}/notes.tmp`;
+        if (hasFinal) yield* fs.writeFileString(final, "old-secret");
+        yield* fs.writeFileString(temporary, "new-secret");
+        yield* fs.writeFileString(unrelated, "keep");
+        const store = yield* ServerSecretStore.make;
+        assert.isFalse(yield* fs.exists(temporary));
+        assert.isTrue(yield* fs.exists(unrelated));
+        assert.equal(Option.isSome(yield* store.get("plugin-setting-test")), hasFinal);
+        if (hasFinal) assert.equal(yield* fs.readFileString(final), "old-secret");
+      }).pipe(Effect.provide(layerServerConfig())),
+  );
+
+  it.effect("removes orphan temporaries when the final secret is missing", () =>
+    Effect.gen(function* () {
+      const store = yield* ServerSecretStore.ServerSecretStore;
+      const fs = yield* FileSystem.FileSystem;
+      const temporary = `${store.directory}/plugin-setting-test.bin.00000000-0000-4000-8000-000000000001.tmp`;
+      const other = `${store.directory}/other.bin.00000000-0000-4000-8000-000000000001.tmp`;
+      yield* fs.writeFileString(temporary, "secret");
+      yield* fs.writeFileString(other, "other-secret");
+      yield* store.remove("plugin-setting-test");
+      assert.isFalse(yield* fs.exists(temporary));
+      assert.isTrue(yield* fs.exists(other));
+    }).pipe(Effect.provide(layerServerSecretStore())),
   );
 
   it.effect("propagates read failures other than missing-file errors", () =>
