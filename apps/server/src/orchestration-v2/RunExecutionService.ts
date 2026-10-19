@@ -1215,7 +1215,7 @@ export const layer: Layer.Layer<
           // Held text writes nothing, so its item would take a position only
           // when finally written, behind every item that began after it.
           const reservedHeldTurnItemIds = new Set<TurnItemId>();
-          const providerEventFiber = yield* eventSubscription.events.pipe(
+          const startProviderEvents = eventSubscription.events.pipe(
             Stream.filterEffect((event) =>
               Ref.modify(eventRouting, (state) => routeProviderEvent(event, routeIdentity, state)),
             ),
@@ -1388,128 +1388,138 @@ export const layer: Layer.Layer<
             ),
             Effect.ensuring(closeEventSubscription),
             Effect.forkDetach,
-          );
-          // An unstarted fiber skips its finalizer when interrupted.
-          const stopProviderEvents = Fiber.interrupt(providerEventFiber).pipe(
-            Effect.ensuring(closeEventSubscription),
+            // An unstarted fiber skips its finalizer when interrupted.
+            Effect.map((providerEventFiber) =>
+              Fiber.interrupt(providerEventFiber).pipe(Effect.ensuring(closeEventSubscription)),
+            ),
           );
 
-          // A provider turn is a sign that the session is still alive. Keep
-          // its already-issued MCP credential valid even when the agent goes
-          // a long time between browser-tool calls.
-          yield* McpSessionRegistry.touchActiveMcpThread(input.run.threadId);
-          const appContext = (yield* mcpAppModelContext
-            .forThread(input.run.threadId)
-            .pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("Failed to read MCP app model context.", { cause }).pipe(
-                  Effect.as([]),
-                ),
-              ),
-            )).map((entry) => ({
-            // The item id alone is unique and needs no escaping; server and
-            // tool names are free text that would break the tag Codex wraps
-            // the context in.
-            key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
-            text: entry.text,
-          }));
-          const turnInput = {
-            appThread: input.appThread,
-            threadId: input.run.threadId,
-            runId: input.run.id,
-            runOrdinal: input.run.ordinal,
-            providerTurnOrdinal: input.providerTurnOrdinal,
-            ...(input.nativeThreadHasTurns === undefined
-              ? {}
-              : { nativeThreadHasTurns: input.nativeThreadHasTurns }),
-            ...(input.run.restartContinuationOfRunId === undefined
-              ? {}
-              : {
-                  restartContinuationOfRunId: input.run.restartContinuationOfRunId,
-                }),
-            attemptId: input.attemptId,
-            rootNodeId: input.rootNode.id,
-            providerThread: input.providerThread,
-            message: input.message,
-            modelSelection: input.modelSelection,
-            runtimePolicy: input.runtimePolicy,
-            ...(appContext.length === 0 ? {} : { appContext }),
-          };
-          // Check after the context read: ingestion can settle the run while
-          // it awaits. A failed ownership read fails the start below.
-          const shouldStart =
-            input.shouldStartProviderTurn === undefined
-              ? Exit.succeed(true)
-              : yield* Effect.exit(input.shouldStartProviderTurn());
-          if (Exit.isSuccess(shouldStart) && !shouldStart.value) {
-            yield* stopProviderEvents;
-            return;
-          }
-
-          const compact =
-            input.message.attachments.length === 0 &&
-            input.message.text.trim().toLowerCase() === "/compact";
-          const startTurn = compact
-            ? (input.session.compactThread?.(turnInput) ??
-              Effect.fail(
-                new ProviderAdapter.ProviderAdapterTurnStartError({
-                  driver: input.session.driver,
+          // Startup owns ingestion until the provider accepts the turn.
+          yield* Effect.acquireUseRelease(
+            startProviderEvents,
+            (stopProviderEvents) =>
+              Effect.gen(function* () {
+                // A provider turn is a sign that the session is still alive. Keep
+                // its already-issued MCP credential valid even when the agent goes
+                // a long time between browser-tool calls.
+                yield* McpSessionRegistry.touchActiveMcpThread(input.run.threadId);
+                const appContext = (yield* mcpAppModelContext
+                  .forThread(input.run.threadId)
+                  .pipe(
+                    Effect.catch((cause) =>
+                      Effect.logWarning("Failed to read MCP app model context.", { cause }).pipe(
+                        Effect.as([]),
+                      ),
+                    ),
+                  )).map((entry) => ({
+                  // The item id alone is unique and needs no escaping; server and
+                  // tool names are free text that would break the tag Codex wraps
+                  // the context in.
+                  key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
+                  text: entry.text,
+                }));
+                const turnInput = {
+                  appThread: input.appThread,
                   threadId: input.run.threadId,
-                  providerThreadId: input.providerThread.id,
                   runId: input.run.id,
-                  cause: "This provider does not support context compaction.",
-                }),
-              ))
-            : input.session.startTurn(turnInput);
-          yield* Effect.andThen(shouldStart, startTurn).pipe(
-            Effect.catchCause((cause) =>
-              Effect.logError("orchestration V2 provider turn start failed", {
-                runId: input.run.id,
-                cause,
-              }).pipe(
-                Effect.andThen(stopProviderEvents),
-                Effect.andThen(Ref.get(latestProviderThread)),
-                Effect.flatMap((providerThread) =>
-                  Ref.get(latestTurnItemOrdinal).pipe(
-                    Effect.flatMap((latestItemOrdinal) =>
-                      Ref.get(openRunOwnedSubagents).pipe(
-                        Effect.flatMap((openSubagents) =>
-                          writeFinalRunEvents({
-                            run: input.run,
-                            rootNode: input.rootNode,
-                            checkpointScope: input.checkpointScope,
-                            providerThread,
-                            attempt: input.attempt,
-                            writeIfRunCurrent: {
-                              activeAttemptId: input.attempt.id,
-                              expectedStatus: "running",
-                            },
-                            openRunOwnedSubagents: openSubagents,
-                            terminal: makeFailedTerminalEvent(
-                              makeProviderFailure({
-                                cause: Cause.squash(cause),
-                                class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
-                              }),
-                              latestItemOrdinal + 1,
+                  runOrdinal: input.run.ordinal,
+                  providerTurnOrdinal: input.providerTurnOrdinal,
+                  ...(input.nativeThreadHasTurns === undefined
+                    ? {}
+                    : { nativeThreadHasTurns: input.nativeThreadHasTurns }),
+                  ...(input.run.restartContinuationOfRunId === undefined
+                    ? {}
+                    : {
+                        restartContinuationOfRunId: input.run.restartContinuationOfRunId,
+                      }),
+                  attemptId: input.attemptId,
+                  rootNodeId: input.rootNode.id,
+                  providerThread: input.providerThread,
+                  message: input.message,
+                  modelSelection: input.modelSelection,
+                  runtimePolicy: input.runtimePolicy,
+                  ...(appContext.length === 0 ? {} : { appContext }),
+                };
+                // Check after the context read: ingestion can settle the run while
+                // it awaits. A failed ownership read fails the start below.
+                const shouldStart =
+                  input.shouldStartProviderTurn === undefined
+                    ? Exit.succeed(true)
+                    : yield* Effect.exit(input.shouldStartProviderTurn());
+                if (Exit.isSuccess(shouldStart) && !shouldStart.value) {
+                  yield* stopProviderEvents;
+                  return;
+                }
+
+                const compact =
+                  input.message.attachments.length === 0 &&
+                  input.message.text.trim().toLowerCase() === "/compact";
+                const startTurn = compact
+                  ? (input.session.compactThread?.(turnInput) ??
+                    Effect.fail(
+                      new ProviderAdapter.ProviderAdapterTurnStartError({
+                        driver: input.session.driver,
+                        threadId: input.run.threadId,
+                        providerThreadId: input.providerThread.id,
+                        runId: input.run.id,
+                        cause: "This provider does not support context compaction.",
+                      }),
+                    ))
+                  : input.session.startTurn(turnInput);
+                yield* Effect.andThen(shouldStart, startTurn).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logError("orchestration V2 provider turn start failed", {
+                      runId: input.run.id,
+                      cause,
+                    }).pipe(
+                      Effect.andThen(stopProviderEvents),
+                      Effect.andThen(Ref.get(latestProviderThread)),
+                      Effect.flatMap((providerThread) =>
+                        Ref.get(latestTurnItemOrdinal).pipe(
+                          Effect.flatMap((latestItemOrdinal) =>
+                            Ref.get(openRunOwnedSubagents).pipe(
+                              Effect.flatMap((openSubagents) =>
+                                writeFinalRunEvents({
+                                  run: input.run,
+                                  rootNode: input.rootNode,
+                                  checkpointScope: input.checkpointScope,
+                                  providerThread,
+                                  attempt: input.attempt,
+                                  writeIfRunCurrent: {
+                                    activeAttemptId: input.attempt.id,
+                                    expectedStatus: "running",
+                                  },
+                                  openRunOwnedSubagents: openSubagents,
+                                  terminal: makeFailedTerminalEvent(
+                                    makeProviderFailure({
+                                      cause: Cause.squash(cause),
+                                      class: Exit.isFailure(shouldStart)
+                                        ? "unknown"
+                                        : "provider_error",
+                                    }),
+                                    latestItemOrdinal + 1,
+                                  ),
+                                  failureItemPersisted: false,
+                                  refreshAfterTurn,
+                                }),
+                              ),
                             ),
-                            failureItemPersisted: false,
-                            refreshAfterTurn,
-                          }),
+                          ),
                         ),
+                      ),
+                      Effect.mapError(
+                        (writeCause) =>
+                          new RunExecutionStartError({
+                            commandId: input.commandId,
+                            runId: input.run.id,
+                            cause: { start: cause, write: writeCause },
+                          }),
                       ),
                     ),
                   ),
-                ),
-                Effect.mapError(
-                  (writeCause) =>
-                    new RunExecutionStartError({
-                      commandId: input.commandId,
-                      runId: input.run.id,
-                      cause: { start: cause, write: writeCause },
-                    }),
-                ),
-              ),
-            ),
+                );
+              }),
+            (stopProviderEvents, exit) => (Exit.isFailure(exit) ? stopProviderEvents : Effect.void),
           );
         }),
     } satisfies RunExecutionServiceV2Shape);
