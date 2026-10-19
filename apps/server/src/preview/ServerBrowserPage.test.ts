@@ -409,10 +409,16 @@ it("captures the native display viewport after page script reassigns the globals
       offset: { x: 0, y: 0 },
     });
     const { windowId } = await cdp.send("Browser.getWindowForTarget");
+    // CDP acknowledges the bounds change before the renderer applies the resize.
+    const resize = await page.evaluateHandle(`({
+      done: new Promise(resolve => window.addEventListener("resize", () => resolve(), { once: true })),
+    })`);
     await cdp.send("Browser.setWindowBounds", {
       windowId,
       bounds: { width: 390, height: 844 },
     });
+    await resize.evaluate("resize => resize.done");
+    await resize.dispose();
     expect(await snapshotSize()).toEqual({ width: 585, height: 1266 });
   } finally {
     await browser.close();
