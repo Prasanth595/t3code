@@ -60,7 +60,7 @@ match in a folded file opens it. Escape closes the search. This shortcut is not
 configurable. A very large uncommitted diff loads its files as you scroll, and
 find only searches the files loaded so far.
 
-## iPad
+## iPad and Android
 
 With a hardware keyboard, use `Cmd+1` through `Cmd+9` to open the first nine
 displayed threads. The shortcuts follow the current list filters and order.
@@ -72,8 +72,13 @@ to show only actions.
 In a new thread, `Cmd+Shift+H` moves the draft to the next machine.
 
 In the composer, Return sends and `Shift+Return` inserts a new line. `Cmd+Return`
-also sends. To make Return insert a new line instead, change the Return key
-behavior in Settings → Keyboard.
+sends using the alternate follow-up behavior (queue or steer). To make Return insert
+a new line instead, change the Return key behavior in Settings → Keyboard. With that
+setting, `Cmd+Return` sends and `Cmd+Shift+Return` uses the alternate behavior.
+Soft keyboards always insert a new line.
+
+On Android, use `Ctrl` in place of `Cmd`. Thread shortcuts and the command palette
+need a tablet-sized screen; on a phone, `Ctrl+K` opens search.
 
 ## Edit the configuration file
 

@@ -173,6 +173,7 @@
     },
     "autolinking": {
       "buildFromSource": [
+        "expo-modules-core",
         "@expo/ui",
         "expo-ui",
         "expo-notifications",
