@@ -1,38 +1,31 @@
 import {
+  AuthProvidersManageScope,
   type EnvironmentId,
   type ProviderConsumeResetCreditOutcome,
-  ProviderInstanceId,
+  ProviderConsumeResetCreditInput,
   ServerProvider,
   ServerProviderResetCredits,
   ServerProviderUsageWindow,
-  UsageLimitSourceAccount,
-  UsageLimitSourceSnapshot,
   UsageProviderKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
-  collectLimitSources,
-  collectLimitsGroups,
   elapsedShare,
   formatDuration,
   formatResetsIn,
-  limitsNotice,
   type LimitPace,
   paceOf,
-  providerLimitsLabel,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
-import { Fragment, useState } from "react";
+import { Fragment, type ReactNode, useState } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { environmentPresentations } from "../../state/presentation";
+import { useEnvironmentScope, readEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
-import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { getDriverOption } from "../settings/providerDriverMeta";
-import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import {
   AlertDialog,
   AlertDialogClose,
@@ -44,6 +37,7 @@ import {
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { UsageLimitsPooled } from "./UsageLimitsPooled";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof GaugeIcon }> = {
@@ -52,15 +46,14 @@ const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof Ga
   under: { label: "Under pace: headroom left for the rest of the window", icon: TrendingDownIcon },
 };
 
-/** The series colour the cost chart uses for this driver, so the two views read as one. */
-function barColor(driver: ServerProvider["driver"]): string {
-  const kind: UsageProviderKind | undefined =
-    driver === "codex" ? "codex" : driver === "claudeAgent" ? "claude" : undefined;
-  return kind ? PROVIDER_PRESENTATION[kind].color : "var(--foreground)";
+export function barColor(driver: ServerProvider["driver"]): string {
+  const presentation = Object.values(PROVIDER_PRESENTATION).find(
+    (entry) => entry.driverKind === driver,
+  );
+  return presentation?.color ?? "var(--foreground)";
 }
 
-/** Pace as a glyph with the words on hover. */
-function PaceIcon({ pace }: { readonly pace: LimitPace }) {
+export function PaceIcon({ pace }: { readonly pace: LimitPace }) {
   const Icon = PACE[pace].icon;
   return (
     <Tooltip>
@@ -80,12 +73,6 @@ function PaceIcon({ pace }: { readonly pace: LimitPace }) {
   );
 }
 
-/**
- * One window as a full-width bar from the moment it opened to its reset.
- * The fill is the share of quota spent; the hairline is how far into the
- * window the clock is, which is also where even spending would have put the
- * fill. Hover for the exact figures and reset time.
- */
 function WindowBar({
   color,
   window,
@@ -98,7 +85,6 @@ function WindowBar({
   const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const remaining = remainingPercent(window);
   const elapsed = elapsedShare(window, now);
-  // The fill is quota left, so the even-spending mark is the time left.
   const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
   const resetsIn = formatResetsIn(window, now);
   const resetsAt = window.resetsAt
@@ -116,7 +102,7 @@ function WindowBar({
             role="img"
             aria-label={summary}
             tabIndex={0}
-            className="relative h-6 cursor-default rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
+            className="relative h-6 cursor-default rounded-full outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           />
         }
       >
@@ -135,7 +121,7 @@ function WindowBar({
           />
         ) : null}
       </TooltipTrigger>
-      <TooltipPopup side="top" className="max-w-72 text-xs">
+      <TooltipPopup side="top">
         <div className="flex flex-col gap-0.5">
           <span className="text-foreground">
             {remaining}% left{timeLeft !== null ? ` · ${timeLeft}% of the window left` : ""}
@@ -155,10 +141,6 @@ function WindowBar({
   );
 }
 
-/**
- * One account's windows as rows: label and percent, bar, pace and countdown.
- * Compact rows fit the composer panel with narrower columns.
- */
 export function LimitWindows({
   driver,
   windows,
@@ -202,94 +184,6 @@ export function LimitWindows({
   );
 }
 
-/**
- * Heading shared by local providers and source accounts: icon, driver, instance, plan,
- * and the signed-in email blurred until clicked, as provider settings do.
- */
-function AccountHeading({
-  driver,
-  label,
-  instanceLabel,
-  plan,
-  email,
-  accentColor,
-}: {
-  readonly driver: ServerProvider["driver"];
-  readonly label: string;
-  readonly instanceLabel: string;
-  readonly plan: string | undefined;
-  readonly email: string | undefined;
-  readonly accentColor?: string | undefined;
-}) {
-  return (
-    <h2 className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium text-foreground">
-      <ProviderInstanceIcon
-        driverKind={driver}
-        displayName={instanceLabel}
-        accentColor={accentColor}
-        showBadge={Boolean(accentColor)}
-        indicatorBackground="var(--background)"
-        className="size-5"
-        iconClassName="size-4 text-foreground/80"
-      />
-      <span className="truncate">{label}</span>
-      {instanceLabel !== label ? (
-        <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">
-          · {instanceLabel}
-        </span>
-      ) : null}
-      {plan ? <span className="font-normal text-muted-foreground">· {plan}</span> : null}
-      {email ? (
-        <RedactedSensitiveText
-          value={email}
-          ariaLabel="Toggle account email visibility"
-          revealTooltip="Click to reveal email"
-          hideTooltip="Click to hide email"
-        />
-      ) : null}
-    </h2>
-  );
-}
-
-function ProviderLimits({
-  provider,
-  environmentId,
-  now,
-}: {
-  readonly provider: ServerProvider;
-  readonly environmentId: EnvironmentId;
-  readonly now: number;
-}) {
-  const limits = provider.usageLimits;
-  if (!limits) return null;
-  const notice = limitsNotice(limits);
-  return (
-    <section className="flex flex-col gap-3">
-      <AccountHeading
-        driver={provider.driver}
-        label={getDriverOption(provider.driver)?.label ?? String(provider.driver)}
-        instanceLabel={providerLimitsLabel(provider, (driver) => getDriverOption(driver)?.label)}
-        plan={provider.auth.label}
-        email={provider.auth.email}
-        accentColor={provider.accentColor}
-      />
-      {notice ? (
-        <span className="text-xs text-muted-foreground">{notice}</span>
-      ) : (
-        <LimitWindows driver={provider.driver} windows={limits.windows} now={now} />
-      )}
-      {limits.resetCredits ? (
-        <ResetCredits
-          environmentId={environmentId}
-          instanceId={provider.instanceId}
-          credits={limits.resetCredits}
-          now={now}
-        />
-      ) : null}
-    </section>
-  );
-}
-
 const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   reset: "Reset applied. Your windows have cleared.",
   nothingToReset: "Nothing to reset right now.",
@@ -297,45 +191,25 @@ const OUTCOME_TEXT: Record<ProviderConsumeResetCreditOutcome, string> = {
   alreadyRedeemed: "That credit was already redeemed.",
 };
 
-/**
- * Banked reset credits with a confirmed redeem action. Redeeming spends a
- * credit the provider granted the user, so it never fires on a bare click.
- */
-export function ResetCredits({
-  environmentId,
-  instanceId,
-  credits,
-  now,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly instanceId: ProviderInstanceId;
-  readonly credits: ServerProviderResetCredits;
-  readonly now: number;
-}) {
+export function useResetCredit(
+  environmentId: EnvironmentId,
+  input: ProviderConsumeResetCreditInput,
+) {
+  const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const consume = useAtomCommand(serverEnvironment.consumeResetCredit, { reportFailure: false });
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
-  if (credits.availableCount === 0 && status === null) return null;
-
-  const expiresIn = credits.nextExpiresAt
-    ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
-    : null;
-  const summary =
-    credits.availableCount === 0
-      ? "No reset credits banked"
-      : `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
-          expiresIn ? ` · next expires in ${expiresIn}` : ""
-        }`;
 
   const redeem = async () => {
     setConfirming(false);
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
-    const result = await consume({ environmentId, input: { instanceId } });
+    const result = await consume({ environmentId, input });
     setBusy(false);
     if (result._tag === "Success") {
-      setStatus(OUTCOME_TEXT[result.value.outcome]);
+      setStatus(result.value.warning ?? OUTCOME_TEXT[result.value.outcome]);
       return;
     }
     setStatus(
@@ -345,138 +219,148 @@ export function ResetCredits({
     );
   };
 
+  return { canManageProviders, confirming, setConfirming, busy, status, redeem };
+}
+
+/**
+ * Redeeming spends a credit the provider granted the user, so it never fires on a bare click.
+ * Mount it outside any popover that holds the button: dialogs stack under popovers, and closing
+ * the popover would unmount a dialog rendered inside it.
+ */
+export function ResetCreditDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+  disabled = false,
+}: {
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly onConfirm: () => void;
+  readonly disabled?: boolean;
+}) {
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogPopup>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Use a reset credit?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This redeems one credit on your account and clears the current rate-limit windows. It
+            cannot be undone.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <Button disabled={disabled} onClick={onConfirm}>
+            Use credit
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogPopup>
+    </AlertDialog>
+  );
+}
+
+export function resetCreditsSummary(
+  credits: ServerProviderResetCredits,
+  now: number,
+  compact = false,
+): string {
+  const expiresIn = credits.nextExpiresAt
+    ? formatDuration(Date.parse(credits.nextExpiresAt) - now)
+    : null;
+  if (credits.availableCount === 0) return "No reset credits banked";
+  if (compact)
+    return `${credits.availableCount} banked${expiresIn ? ` · expires in ${expiresIn}` : ""}`;
+  return `${credits.availableCount} ${credits.availableCount === 1 ? "reset credit" : "reset credits"} banked${
+    expiresIn ? ` · next expires in ${expiresIn}` : ""
+  }`;
+}
+
+export function ResetCredits({
+  environmentId,
+  input,
+  credits,
+  now,
+}: {
+  readonly environmentId: EnvironmentId;
+  readonly input: ProviderConsumeResetCreditInput;
+  readonly credits: ServerProviderResetCredits;
+  readonly now: number;
+}) {
+  const { canManageProviders, confirming, setConfirming, busy, status, redeem } = useResetCredit(
+    environmentId,
+    input,
+  );
+  if (credits.availableCount === 0 && status === null) return null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-      <span className="tabular-nums">{summary}</span>
+      <span className="tabular-nums">{resetCreditsSummary(credits, now)}</span>
       {credits.availableCount > 0 ? (
-        <Button size="xs" variant="outline" disabled={busy} onClick={() => setConfirming(true)}>
+        <Button
+          size="xs"
+          variant="outline"
+          disabled={busy || !canManageProviders}
+          onClick={() => {
+            if (readEnvironmentScope(environmentId, AuthProvidersManageScope)) setConfirming(true);
+          }}
+        >
           {busy ? "Using…" : "Use reset"}
         </Button>
       ) : null}
       {status ? <span className="text-foreground">{status}</span> : null}
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogPopup>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Use a reset credit?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This redeems one credit on your account and clears the current rate-limit windows. It
-              cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-            <Button onClick={() => void redeem()}>Use credit</Button>
-          </AlertDialogFooter>
-        </AlertDialogPopup>
-      </AlertDialog>
-    </div>
-  );
-}
-
-/** One account pooled by a usage-limit source, drawn like a provider row. */
-function SourceAccountLimits({
-  account,
-  sourceKind,
-  now,
-}: {
-  readonly account: UsageLimitSourceAccount;
-  readonly sourceKind: string;
-  readonly now: number;
-}) {
-  const notice = limitsNotice(account.usageLimits);
-  return (
-    <section className="flex flex-col gap-3">
-      <AccountHeading
-        driver={account.driver}
-        label={getDriverOption(account.driver)?.label ?? String(account.driver)}
-        instanceLabel={sourceKind}
-        plan={account.plan}
-        email={account.email}
+      <ResetCreditDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        onConfirm={() => void redeem()}
+        disabled={!canManageProviders}
       />
-      {notice ? (
-        <span className="text-xs text-muted-foreground">{notice}</span>
-      ) : (
-        <LimitWindows driver={account.driver} windows={account.usageLimits.windows} now={now} />
-      )}
-    </section>
-  );
-}
-
-const SOURCE_KIND_LABEL: Record<UsageLimitSourceSnapshot["kind"], string> = {
-  cliproxy: "CLI Proxy",
-};
-
-type LimitsSource = ReturnType<typeof collectLimitSources>[number];
-
-/** Read-only accounts pooled by a configured usage source. */
-function SourceLimits({ source, now }: { readonly source: LimitsSource; readonly now: number }) {
-  const kind = SOURCE_KIND_LABEL[source.kind];
-  return (
-    <div className="flex flex-col gap-6">
-      {source.error ? (
-        <span className="text-xs text-muted-foreground">{source.error}</span>
-      ) : source.accounts.length === 0 ? (
-        <span className="text-xs text-muted-foreground">
-          {source.hiddenAccountCount > 0
-            ? "All accounts are shown by connected providers."
-            : "No accounts reported."}
-        </span>
-      ) : (
-        source.accounts.map((account) => (
-          <SourceAccountLimits key={account.id} account={account} sourceKind={kind} now={now} />
-        ))
-      )}
     </div>
   );
 }
 
 /**
- * Subscription quota windows from every connected environment's providers.
- * Countdowns anchor to render time rather than ticking: a live clock would
- * repaint the page every minute for no decision-changing gain.
+ * The page advances `now` on explicit refresh rather than ticking: a live clock would repaint the
+ * page for no decision-changing gain.
  */
 export function UsageLimitsSection({
   selectedEnvironmentIds,
+  hiddenProviders,
+  now,
+  cursorPrompt,
 }: {
   readonly selectedEnvironmentIds: ReadonlySet<EnvironmentId> | null;
+  readonly hiddenProviders: ReadonlySet<UsageProviderKind>;
+  readonly now: number;
+  readonly cursorPrompt?: ReactNode;
 }) {
-  const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const selected =
-    selectedEnvironmentIds === null
-      ? presentations
-      : new Map([...presentations].filter(([id]) => selectedEnvironmentIds.has(id)));
-  const groups = collectLimitsGroups(selected);
-  const sources = collectLimitSources(selected);
-  // Anchored once per mount on purpose: countdowns must not tick (see below).
-  const [now] = useState(() => Date.now());
-
-  return (
-    <div className="flex flex-col gap-8">
-      {groups.length === 0 && sources.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No provider on the selected environments reports subscription limits.
-        </p>
-      ) : null}
-      {sources.map((source) => (
-        <SourceLimits key={source.key} source={source} now={now} />
-      ))}
-      {groups.map((group) => (
-        <div key={group.environmentId} className="flex flex-col gap-6">
-          {group.environmentLabel ? (
-            <h2 className="text-xs tracking-wide text-muted-foreground uppercase">
-              {group.environmentLabel}
-            </h2>
-          ) : null}
-          {group.providers.map((provider) => (
-            <ProviderLimits
-              key={provider.instanceId}
-              provider={provider}
-              environmentId={group.environmentId}
-              now={now}
-            />
-          ))}
-        </div>
-      ))}
-    </div>
+  const presentations = useAtomValue(environmentPresentations.presentationsWithProvidersAtom);
+  const hiddenDrivers = new Set<ServerProvider["driver"]>(
+    [...hiddenProviders].map((provider) => PROVIDER_PRESENTATION[provider].driverKind),
   );
+  const isVisible = (driver: ServerProvider["driver"]) => !hiddenDrivers.has(driver);
+  const selected = new Map(
+    [...presentations].flatMap(([id, presentation]) => {
+      if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(id)) return [];
+      const config = presentation.serverConfig;
+      if (hiddenDrivers.size === 0 || config === null) return [[id, presentation] as const];
+      return [
+        [
+          id,
+          {
+            ...presentation,
+            serverConfig: {
+              ...config,
+              providers: config.providers.filter((provider) => isVisible(provider.driver)),
+              usageLimitSources: config.usageLimitSources?.flatMap((source) => {
+                const accounts = source.accounts.filter((account) => isVisible(account.driver));
+                return accounts.length === 0 && source.accounts.length > 0
+                  ? []
+                  : [{ ...source, accounts }];
+              }),
+            },
+          },
+        ] as const,
+      ];
+    }),
+  );
+  return <UsageLimitsPooled presentations={selected} now={now} cursorPrompt={cursorPrompt} />;
 }
