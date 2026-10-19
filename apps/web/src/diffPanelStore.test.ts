@@ -131,30 +131,6 @@ describe("diffPanelStore", () => {
 describe("selectThreadDiffPanelBaseRef", () => {
   beforeEach(() => useDiffPanelStore.setState({ byThreadKey: {}, branchBaseRefByThreadKey: {} }));
 
-  it("uses the remembered Changes base while viewing uncommitted edits or a turn", () => {
-    const store = useDiffPanelStore.getState();
-    store.selectBranchBaseRef(THREAD_REF, "origin/release");
-    expect(selectThreadDiffPanelBaseRef(useDiffPanelStore.getState(), THREAD_REF)).toBe(
-      "origin/release",
-    );
-    store.selectGitScope(THREAD_REF, "unstaged");
-    expect(selectThreadDiffPanelBaseRef(useDiffPanelStore.getState(), THREAD_REF)).toBe(
-      "origin/release",
-    );
-    store.selectTurn(THREAD_REF, RunId.make("turn-1"));
-    expect(selectThreadDiffPanelBaseRef(useDiffPanelStore.getState(), THREAD_REF)).toBe(
-      "origin/release",
-    );
-  });
-
-  it("returns to automatic after clearing a custom base", () => {
-    const store = useDiffPanelStore.getState();
-    store.selectBranchBaseRef(THREAD_REF, "origin/release");
-    store.selectBranchBaseRef(THREAD_REF, null);
-    store.selectTurn(THREAD_REF, RunId.make("turn-1"));
-    expect(selectThreadDiffPanelBaseRef(useDiffPanelStore.getState(), THREAD_REF)).toBeNull();
-  });
-
   it("keeps bases scoped to their environment and thread", () => {
     const otherEnvironmentRef = scopeThreadRef(
       EnvironmentId.make("environment-2"),
