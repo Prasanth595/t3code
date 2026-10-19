@@ -13,6 +13,7 @@ import {
   isWorkspaceImagePreviewPath,
   isWorkspaceVideoPreviewPath,
 } from "@t3tools/shared/filePreview";
+import { useAtomValue } from "@effect/atom-react";
 import {
   DEFAULT_TOKENIZE_MAX_LENGTH,
   VirtualizedFile,
@@ -36,7 +37,6 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { useAtomValue } from "@effect/atom-react";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
 import { Code2, Eye, Table2 } from "lucide";

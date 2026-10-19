@@ -222,9 +222,6 @@ export const OpenInPicker = memo(function OpenInPicker({
   compact?: boolean;
   enableShortcut?: boolean;
   displayMode?: "toolbar" | "panel";
-  /** `openInCwd` is a file: the file manager selects it instead of handing it
-      to its default app. Pass only when the server sets
-      `shellRevealInFileManager`. */
   revealFileManager?: boolean;
 }) {
   const isPanel = displayMode === "panel";
