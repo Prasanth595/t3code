@@ -224,6 +224,7 @@ for fd in /proc/self/fd/*; do
   fi
 done
 while read -r _; do :; done
+set +p
 exec "$@" </dev/null
 `;
 
@@ -232,7 +233,14 @@ export const make = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const env = yield* HostProcess.Environment;
   const appImagePath = env.APPIMAGE;
-  if (platform !== "linux" || !Electron.app.isPackaged || !appImagePath?.trim()) {
+  const executablePath = yield* HostProcess.ExecutablePath;
+  if (
+    platform !== "linux" ||
+    !appImagePath?.trim() ||
+    !env.APPDIR ||
+    !executablePath.startsWith(`${env.APPDIR}/`) ||
+    !Electron.app.isPackaged
+  ) {
     return electronApp;
   }
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -247,6 +255,8 @@ export const make = Effect.gen(function* () {
           ChildProcess.make(
             "bash",
             [
+              // Ignore startup files in the waiter; +p before exec keeps this mode helper-local.
+              "-p",
               "-c",
               appImageRelaunchScript,
               "t3code-appimage-relaunch",
@@ -258,8 +268,7 @@ export const make = Effect.gen(function* () {
               stdin: "pipe",
               stdout: "ignore",
               stderr: "ignore",
-              // Startup files could redirect stdin and bypass the parent-exit wait.
-              env: { ...env, BASH_ENV: undefined, ENV: undefined },
+              env,
             },
           ),
         );

@@ -119,6 +119,12 @@ describe("ElectronApp", () => {
     { platform: "linux", APPIMAGE: "  ", packaged: true },
     { platform: "linux", APPIMAGE: "/tmp/app.AppImage", packaged: false },
     { platform: "darwin", APPIMAGE: "/tmp/app.AppImage", packaged: true },
+    {
+      platform: "linux",
+      APPIMAGE: "/tmp/other.AppImage",
+      packaged: true,
+      executablePath: "/tmp/mount-other/t3code",
+    },
   ] as const)("keeps native relaunch outside packaged AppImages: %j", (input) => {
     isPackagedMock.mockReturnValue(input.packaged);
     return Effect.gen(function* () {
@@ -130,7 +136,14 @@ describe("ElectronApp", () => {
     }).pipe(
       Effect.provide(electronAppLayer),
       Effect.provideService(HostProcess.Platform, input.platform),
-      Effect.provideService(HostProcess.Environment, { APPIMAGE: input.APPIMAGE }),
+      Effect.provideService(HostProcess.Environment, {
+        APPIMAGE: input.APPIMAGE,
+        APPDIR: "/tmp/mount",
+      }),
+      Effect.provideService(
+        HostProcess.ExecutablePath,
+        "executablePath" in input ? input.executablePath : "/tmp/mount/t3code",
+      ),
     );
   });
 
@@ -144,10 +157,10 @@ describe("ElectronApp", () => {
       const output = path.join(directory, "result");
       const startup = path.join(directory, "startup");
       const startupMarker = path.join(directory, "startup-ran");
-      yield* fs.writeFileString(startup, `printf ran > "${startupMarker}"\nexec </dev/null\n`);
+      yield* fs.writeFileString(startup, `printf ran >> "${startupMarker}"\nexec </dev/null\n`);
       yield* fs.writeFileString(
         launcher,
-        '#!/bin/sh\nif [ -e /proc/self/fd/3 ] || [ -e /proc/self/fd/65 ]; then exit 65; fi\nif [ -n "$BASH_ENV$ENV" ]; then exit 66; fi\nprintf "%s\\n" "$@" > "$1"\n',
+        '#!/usr/bin/env bash\nif [ -e /proc/self/fd/3 ] || [ -e /proc/self/fd/65 ]; then exit 65; fi\nprintf "%s\\n" "$BASH_ENV" "$ENV" "$@" > "$1"\n',
       );
       yield* fs.chmod(launcher, 0o700);
       let command: ChildProcess.StandardCommand | undefined;
@@ -181,11 +194,16 @@ describe("ElectronApp", () => {
         Effect.provide(ElectronApp.layer),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, recordingSpawner),
         Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.ExecutablePath, path.join(directory, "mount", "t3code")),
         Effect.provideService(HostProcess.Environment, {
+          ...process.env,
           APPIMAGE: launcher,
+          APPDIR: path.join(directory, "mount"),
           BASH_ENV: startup,
           ENV: startup,
-          PATH: process.env.PATH,
+          SHELLOPTS: "braceexpand:hashall:interactive-comments",
+          // Node uses a socket for stdin; skip Bash's remote-shell startup heuristic.
+          SHLVL: "1",
         }),
       );
       assert.equal(relaunchMock.mock.calls.length, 0);
@@ -194,7 +212,6 @@ describe("ElectronApp", () => {
       const waiting = yield* spawner.spawn(
         ChildProcess.make(command!.command, command!.args, {
           ...command!.options,
-          env: command!.options.env ?? { ...process.env, BASH_ENV: startup },
           detached: false,
           additionalFds: { fd3: { type: "output" }, fd65: { type: "output" } },
         }),
@@ -204,10 +221,11 @@ describe("ElectronApp", () => {
       // Closing the parent-owned pipe stands in for parent exit, without a PID poll.
       yield* Stream.run(Stream.empty, waiting.stdin);
       assert.equal(yield* waiting.exitCode, 0);
-      assert.isFalse(yield* fs.exists(startupMarker));
+      // Only the replacement may source startup files, after the parent-exit wait.
+      assert.equal(yield* fs.readFileString(startupMarker), "ran");
       assert.equal(
         yield* fs.readFileString(output),
-        `${output}\ntwo words\n$HOME\n(Nightly)\n trailing \n`,
+        `${startup}\n${startup}\n${output}\ntwo words\n$HOME\n(Nightly)\n trailing \n`,
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
@@ -223,7 +241,11 @@ describe("ElectronApp", () => {
       }).pipe(
         Effect.provide(ElectronApp.layer),
         Effect.provideService(HostProcess.Platform, "linux"),
-        Effect.provideService(HostProcess.Environment, { APPIMAGE: "/tmp/app.AppImage" }),
+        Effect.provideService(HostProcess.Environment, {
+          APPIMAGE: "/tmp/app.AppImage",
+          APPDIR: "/tmp/mount",
+        }),
+        Effect.provideService(HostProcess.ExecutablePath, "/tmp/mount/t3code"),
         Effect.provideService(
           ChildProcessSpawner.ChildProcessSpawner,
           ChildProcessSpawner.make(() =>

@@ -1,5 +1,4 @@
 import { assert, describe, it } from "@effect/vitest";
-import { vi } from "vite-plus/test";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -21,8 +20,6 @@ import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendPool from "./DesktopBackendPool.ts";
 import type { DesktopBackendSnapshot, DesktopBackendStartConfig } from "./DesktopBackendManager.ts";
-
-vi.mock("electron", () => ({ app: { isPackaged: false } }));
 
 function makeStubInstance(
   id: DesktopBackendPool.BackendInstanceId,

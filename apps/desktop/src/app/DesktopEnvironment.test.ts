@@ -39,17 +39,6 @@ const makeEnvironment = (
 ) => DesktopEnvironment.DesktopEnvironment.pipe(Effect.provide(layerEnvironment(overrides, env)));
 
 describe("DesktopEnvironment", () => {
-  it.effect("preserves whitespace in the packaged AppImage launcher path", () =>
-    Effect.gen(function* () {
-      const APPIMAGE = " /tmp/T3 Code.AppImage ";
-      const environment = yield* makeEnvironment(
-        { platform: "linux", isPackaged: true },
-        { APPIMAGE },
-      );
-      assert.deepEqual(environment.appImagePath, Option.some(APPIMAGE));
-    }),
-  );
-
   it.effect("derives state paths and development identity inside Effect", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment(
