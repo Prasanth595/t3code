@@ -525,7 +525,11 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
     }
   };
 
-  const openMockSession = (label: string, env: Record<string, string>) =>
+  const openMockSession = (
+    label: string,
+    env: Record<string, string>,
+    crashBeforeSettlement = false,
+  ) =>
     Effect.gen(function* () {
       const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
@@ -551,6 +555,8 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
       });
       // A deferred finish waits out a debounce; the hook says how far to move the clock.
       const finishArmed = yield* Deferred.make<Duration.Input>();
+      const terminationHandled = yield* Deferred.make<void>();
+      const promptSettledWithBackgroundWork = yield* Deferred.make<void>();
       const instanceId = ProviderInstanceId.make(`antigravity-${label}`);
       const adapter = yield* makeAntigravityAdapterV2({
         instanceId,
@@ -558,10 +564,17 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
         testHooks: {
           onDeferredFinalizeScheduled: (debounce) =>
             Deferred.succeed(finishArmed, debounce).pipe(Effect.asVoid),
+          afterPromptSettledWithBackgroundWork: () =>
+            Deferred.succeed(promptSettledWithBackgroundWork, undefined).pipe(Effect.asVoid),
         },
         makeRuntime: (input) =>
           makeAntigravityAcpRuntime({
             ...input,
+            onTermination: (error) =>
+              (input.onTermination?.(error) ?? Effect.void).pipe(
+                Effect.andThen(Deferred.succeed(terminationHandled, undefined)),
+                Effect.asVoid,
+              ),
             childProcessSpawner,
             spawn: {
               command: process.execPath,
@@ -574,7 +587,32 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
                 ...env,
               },
             },
-          }).pipe(Effect.provideService(Crypto.Crypto, crypto)),
+          }).pipe(
+            Effect.provideService(Crypto.Crypto, crypto),
+            Effect.map((runtime) => {
+              if (!crashBeforeSettlement) return runtime;
+              return {
+                ...runtime,
+                prompt: (...args: Parameters<typeof runtime.prompt>) =>
+                  runtime.prompt(...args).pipe(
+                    Effect.tap(() =>
+                      Effect.gen(function* () {
+                        if (!crashBeforeSettlement) return;
+                        crashBeforeSettlement = false;
+                        // Hold a genuine successful response while termination wins the
+                        // adapter callback permit. The prompt consumer lives in session scope.
+                        const commandPid = yield* readCommandPid;
+                        const agentPid = Number(yield* fileSystem.readFileString(agentPidPath));
+                        assert.isTrue(pidIsRunning(commandPid));
+                        assert.isTrue(pidIsRunning(agentPid));
+                        process.kill(agentPid, "SIGKILL");
+                        yield* Deferred.await(terminationHandled);
+                      }).pipe(Effect.orDie),
+                    ),
+                  ),
+              };
+            }),
+          ),
         withProcess: (_stop, task) => task,
         defaultModel: Effect.succeed(undefined),
       });
@@ -682,6 +720,7 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
         readAgentPid: fileSystem.readFileString(agentPidPath).pipe(Effect.map(Number)),
         commandItem,
         finishArmed,
+        promptSettledWithBackgroundWork,
       };
     });
 
@@ -716,38 +755,54 @@ describe("AntigravityAdapterV2 commands that outlive the prompt", () => {
     }).pipe(Effect.provide(layerSession), Effect.scoped),
   );
 
-  it.effect.each(["Stop", "fallback restart", "agent crash"])(
+  it.effect.each(["Stop", "fallback restart", "agent crash", "agent crash before settlement"])(
     "lets %s end the running command and respawns the agent for the next turn",
     (action) =>
       Effect.gen(function* () {
-        const mock = yield* openMockSession("command-stopped", {
-          T3_ACP_EMIT_COMMAND_OUTLIVING_PROMPT: "1",
-        });
+        const crashBeforeSettlement = action === "agent crash before settlement";
+        const crashed = action === "agent crash" || crashBeforeSettlement;
+        const mock = yield* openMockSession(
+          "command-stopped",
+          { T3_ACP_EMIT_COMMAND_OUTLIVING_PROMPT: "1" },
+          crashBeforeSettlement,
+        );
         yield* mock.startTurn(1);
 
-        yield* mock.waitForReply;
-        const commandPid = yield* mock.readCommandPid;
-        assert.isTrue(pidIsRunning(commandPid));
-        const agentPid = yield* mock.readAgentPid;
-        assert.isTrue(pidIsRunning(agentPid));
-        const providerTurnId = mock.commandItem("command-outliving-prompt")?.providerTurnId;
-        if (providerTurnId == null) return yield* Effect.die("missing command item");
+        if (!crashBeforeSettlement) {
+          yield* mock.waitForReply;
+          assert.isTrue(pidIsRunning(yield* mock.readCommandPid));
+          const agentPid = yield* mock.readAgentPid;
+          assert.isTrue(pidIsRunning(agentPid));
+          const providerTurnId = mock.commandItem("command-outliving-prompt")?.providerTurnId;
+          if (providerTurnId == null) return yield* Effect.die("missing command item");
 
-        if (action === "agent crash") {
-          process.kill(agentPid, "SIGKILL");
-        } else {
-          yield* mock.session.interruptTurn({
-            providerThread: mock.providerThread,
-            providerTurnId,
-            ...(action === "Stop" ? { requestRuntimeRestart: true } : {}),
-          });
+          if (action === "agent crash") {
+            process.kill(agentPid, "SIGKILL");
+          } else {
+            yield* mock.session.interruptTurn({
+              providerThread: mock.providerThread,
+              providerTurnId,
+              ...(action === "Stop" ? { requestRuntimeRestart: true } : {}),
+            });
+          }
         }
-        assert.equal(
-          yield* mock.waitForTerminal,
-          action === "agent crash" ? "failed" : "interrupted",
-        );
+        const terminal = crashBeforeSettlement
+          ? Effect.raceFirst(
+              mock.waitForTerminal,
+              Deferred.await(mock.promptSettledWithBackgroundWork).pipe(
+                Effect.andThen(
+                  Effect.sync(() =>
+                    assert.fail("the terminated agent left the turn waiting for background work"),
+                  ),
+                ),
+              ),
+            )
+          : mock.waitForTerminal;
+        assert.equal(yield* terminal, crashed ? "failed" : "interrupted");
+        const commandPid = yield* mock.readCommandPid;
+        const agentPid = yield* mock.readAgentPid;
         const commandStatus = mock.commandItem("command-outliving-prompt")?.status;
-        if (action === "agent crash") {
+        if (crashed) {
           assert.oneOf(commandStatus, ["failed", "interrupted"]);
         } else {
           assert.equal(commandStatus, "interrupted");
