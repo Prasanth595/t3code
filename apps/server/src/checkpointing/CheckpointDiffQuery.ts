@@ -161,9 +161,8 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      // A single turn starts at the checkpoint its capture diffed against: the
-      // previous ordinal in the same scope. That checkpoint may belong to a
-      // stopped run or be the baseline left when the previous run captured none.
+      // Capture compares against the preceding scope ordinal, even when that
+      // checkpoint belongs to a stopped run or has no run.
       const parentCheckpoint =
         input.fromTurnCount === input.toTurnCount - 1
           ? projection.checkpoints.find(
