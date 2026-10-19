@@ -3,7 +3,6 @@ import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
 import { serializeLegacyContextMessage } from "@t3tools/shared/composerContextLegacySend";
 import {
   GitCommandError,
-  GitManagerError,
   ProjectId,
   PullRequestAction,
   type PullRequestCheck,
@@ -1053,27 +1052,22 @@ describe("what to say when an action fails", () => {
     expect(readableFailure(undefined, hint)).toBe(hint);
   });
 
-  it("explains a failed checkout with the server's reason, without a git command's cwd wrapper", () => {
-    const reason = "This PR branch is already checked out in the main repo. Use Local.";
-    expect(
-      checkoutFailureDescription(
-        new GitManagerError({
-          cwd: "/server/private-project",
-          operation: "preparePullRequestThread",
-          detail: reason,
-        }),
-      ),
-    ).toContain(reason);
-    const gitFailure = checkoutFailureDescription(
+  it("uses bounded git diagnostics and falls back when checkout has no useful detail", () => {
+    const diagnostic = (detail: string) =>
       new GitCommandError({
-        cwd: "/server/private-project",
+        cwd: "/workspace",
         operation: "GitVcsDriver.createWorktree",
         command: "git worktree add",
-        detail: reason,
-      }),
-    );
-    expect(gitFailure).toBe(reason);
-    expect(checkoutFailureDescription(undefined)).toContain("not checked out elsewhere");
+        detail,
+      });
+    const reason = "The worktree directory already exists. Choose another directory.";
+    expect(checkoutFailureDescription(diagnostic(reason))).toBe(reason);
+    expect(checkoutFailureDescription(diagnostic("x".repeat(900)))).toBe(`${"x".repeat(319)}…`);
+    for (const failure of [undefined, diagnostic(""), diagnostic("exited with code 1")]) {
+      expect(checkoutFailureDescription(failure)).toBe(
+        "Check that the branch still exists and is not checked out elsewhere, then try again.",
+      );
+    }
   });
 
   it("bounds a host that answers with a page of output", () => {
