@@ -1066,13 +1066,14 @@ describe("orchestration v2 provider switching", () => {
       ),
   );
 
-  it.live("keeps a nearly full native thread usable after a run fails to start", () =>
+  it.live("omits failed-start recovery but preserves required handoffs", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const cwd = yield* checkpointWorkspace("handoff-retry-full-window");
         const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
         const injectedHistory = yield* Ref.make<ReadonlyArray<unknown>>([]);
         const failStart = yield* Ref.make(false);
+        const generation = yield* Ref.make(0);
         const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
           makeTestAdapter({
             instanceId: CODEX_MODEL_SELECTION.instanceId,
@@ -1083,13 +1084,22 @@ describe("orchestration v2 provider switching", () => {
             capturedTurns,
             injectedHistory,
             failStartOnce: failStart,
+            nativeThreadGeneration: generation,
             tokenUsageByRunOrdinal: { 1: { usedTokens: 366_046, maxTokens: 475_000 } },
+          }),
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: {},
+            capturedTurns,
           }),
         ]);
         yield* Effect.gen(function* () {
           const orchestrator = yield* Orchestrator.OrchestratorV2;
           const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          const send = (ordinal: number, text: string) =>
+          const send = (ordinal: number, text: string, selection = CODEX_MODEL_SELECTION) =>
             orchestrator
               .dispatch({
                 type: "message.dispatch",
@@ -1100,7 +1110,7 @@ describe("orchestration v2 provider switching", () => {
                 creationSource: "web",
                 text,
                 attachments: [],
-                modelSelection: CODEX_MODEL_SELECTION,
+                modelSelection: selection,
                 dispatchMode: { type: "start_immediately" },
               })
               .pipe(
@@ -1137,9 +1147,7 @@ describe("orchestration v2 provider switching", () => {
           yield* Ref.set(failStart, true);
           assert.equal((yield* send(2, "Request the provider never saw")).status, "failed");
 
-          const retry = yield* send(3, "Try that again");
-          assert.equal(retry.status, "completed");
-          assert.equal((yield* Ref.get(capturedTurns)).at(-1)?.text, "Try that again");
+          assert.equal((yield* send(3, "Try that again")).status, "completed");
           const retried = yield* orchestrator.getThreadProjection(threadId);
           const missedRequest = retried.turnItems.find(
             (item) =>
@@ -1151,11 +1159,35 @@ describe("orchestration v2 provider switching", () => {
           assert.include(settled.delivery?.omittedItemIds ?? [], missedRequest.id);
 
           assert.equal((yield* send(4, "Next request")).status, "completed");
-          assert.equal((yield* Ref.get(capturedTurns)).at(-1)?.text, "Next request");
+          assert.deepEqual(
+            (yield* Ref.get(capturedTurns)).map((turn) => turn.text),
+            ["Long-running work", "Try that again", "Next request"],
+          );
+          assert.equal(yield* Ref.get(generation), 1);
+          assert.isEmpty(yield* Ref.get(injectedHistory));
           assert.lengthOf(
             (yield* orchestrator.getThreadProjection(threadId)).contextHandoffs,
             retried.contextHandoffs.length,
           );
+
+          yield* Ref.set(failStart, true);
+          assert.equal((yield* send(5, "Another missed request")).status, "failed");
+          assert.equal(
+            (yield* send(6, "Work on Claude", CLAUDE_MODEL_SELECTION)).status,
+            "completed",
+          );
+          const required = yield* send(7, "Return to Codex");
+          assert.equal(required.status, "failed");
+          const rejected = yield* orchestrator.getThreadProjection(threadId);
+          const failure = rejected.turnItems.find(
+            (item) => item.type === "error" && item.runId === required.id,
+          );
+          assert.include(
+            failure?.type === "error" ? failure.failure.message : "",
+            "Insufficient context allowance for the provider handoff",
+          );
+          assert.lengthOf(yield* Ref.get(capturedTurns), 4);
+          assert.isEmpty(yield* Ref.get(injectedHistory));
         }).pipe(
           Effect.provide(
             ProviderReplayHarness.layerWithRegistry(

@@ -1079,26 +1079,24 @@ export const layer: Layer.Layer<
         Effect.gen(function* () {
           const retryHandoff =
             missedItems.length === 0
-              ? []
-              : [
-                  yield* contextHandoffService.prepareProviderHandoff({
-                    threadId: projection.thread.id,
-                    targetRunId: run.id,
-                    transferId: null,
-                    fromProviderThreadIds: [providerThread.id],
-                    toProviderThreadId: providerThread.id,
-                    fromProviderInstanceId: run.providerInstanceId,
-                    toProviderInstanceId: run.providerInstanceId,
-                    coveredRunOrdinals: {
-                      from: missedRuns[0]!.ordinal,
-                      to: missedRuns.at(-1)!.ordinal,
-                    },
-                    strategy: "delta_since_target_last_seen",
-                    items: missedItems,
-                    runs: projection.runs,
-                    createdAt: yield* DateTime.now,
-                  }),
-                ];
+              ? undefined
+              : yield* contextHandoffService.prepareProviderHandoff({
+                  threadId: projection.thread.id,
+                  targetRunId: run.id,
+                  transferId: null,
+                  fromProviderThreadIds: [providerThread.id],
+                  toProviderThreadId: providerThread.id,
+                  fromProviderInstanceId: run.providerInstanceId,
+                  toProviderInstanceId: run.providerInstanceId,
+                  coveredRunOrdinals: {
+                    from: missedRuns[0]!.ordinal,
+                    to: missedRuns.at(-1)!.ordinal,
+                  },
+                  strategy: "delta_since_target_last_seen",
+                  items: missedItems,
+                  runs: projection.runs,
+                  createdAt: yield* DateTime.now,
+                });
           const deliveryInput = {
             deferInline: compact,
             providerThread: runningProviderThread,
@@ -1146,45 +1144,43 @@ export const layer: Layer.Layer<
               }),
           };
           const nativeThreadId = runningProviderThread.nativeThreadRef?.nativeId;
-          // Missed runs never reached this native thread, so replaying them is
-          // optional context. When not even their recovery pointer fits, record
-          // them as omitted instead of refusing every later request.
+          // Missed-run recovery is optional in an existing native thread. Required
+          // handoffs must still fit, and omissions settle only after turn acceptance.
           const delivery = yield* deliverContextHandoffs({
             ...deliveryInput,
-            handoffs: [...effectiveHandoffs, ...retryHandoff],
+            handoffs:
+              retryHandoff === undefined ? effectiveHandoffs : [...effectiveHandoffs, retryHandoff],
           }).pipe(
             Effect.catchTags({
-              ContextHandoffBudgetError: (error) =>
-                retryHandoff.length === 0 || nativeThreadId == null
-                  ? Effect.fail(error)
-                  : Effect.gen(function* () {
-                      const required = yield* deliverContextHandoffs({
-                        ...deliveryInput,
-                        handoffs: effectiveHandoffs,
-                      });
-                      const omitted = retryHandoff.map(
-                        (handoff): OrchestrationV2ContextHandoff => ({
-                          ...handoff,
-                          delivery: {
-                            nativeThreadId,
-                            status: "inline",
-                            itemIds: [],
-                            omittedItemIds: [
-                              ...(handoff.history?.omittedItemIds ?? []),
-                              ...(handoff.history?.messages ?? []).map((message) => message.itemId),
-                            ],
-                          },
-                        }),
-                      );
-                      return {
-                        ...required,
-                        delivered: required.delivered.pipe(
-                          Effect.andThen(
-                            Effect.forEach(omitted, deliveryInput.persist, { discard: true }),
-                          ),
-                        ),
-                      };
-                    }),
+              ContextHandoffBudgetError: Effect.fnUntraced(function* (error) {
+                if (retryHandoff === undefined || nativeThreadId == null || !sameNativeThread)
+                  return yield* error;
+                const required = yield* deliverContextHandoffs({
+                  ...deliveryInput,
+                  handoffs: effectiveHandoffs,
+                });
+                return {
+                  ...required,
+                  delivered: required.delivered.pipe(
+                    Effect.andThen(
+                      deliveryInput.persist({
+                        ...retryHandoff,
+                        delivery: {
+                          nativeThreadId,
+                          status: "inline",
+                          itemIds: [],
+                          omittedItemIds: [
+                            ...(retryHandoff.history?.omittedItemIds ?? []),
+                            ...(retryHandoff.history?.messages ?? []).map(
+                              (message) => message.itemId,
+                            ),
+                          ],
+                        },
+                      }),
+                    ),
+                  ),
+                };
+              }),
             }),
           );
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
