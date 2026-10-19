@@ -88,11 +88,10 @@ export async function findWorkspaceFileMatch(
       return result ? pickWorkspaceBasenameMatch(relativePath, result.entries) : null;
     }
     if (!/[\\/]/.test(relativePath) || (await lookup.literalExists()) !== false) return null;
-    const result = await lookup.searchFiles(relativePath);
+    const query = slashPath(relativePath).replace(/^(?:\.\/)+/, "");
+    const result = await lookup.searchFiles(query);
     // Truncation also covers an incomplete index scan, so uniqueness is unknown.
-    return result && !result.truncated
-      ? pickWorkspaceSuffixMatch(relativePath, result.entries)
-      : null;
+    return result && !result.truncated ? pickWorkspaceSuffixMatch(query, result.entries) : null;
   } catch {
     return null;
   }

@@ -96,13 +96,16 @@ describe("findWorkspaceFileMatch", () => {
     // The literal file may be ignored by the index; metadata uncertainty also keeps it.
     const deps = lookup(true, [nestedPlan]);
     await expect(findWorkspaceFileMatch("docs/plan.md", deps)).resolves.toBeNull();
+    await expect(findWorkspaceFileMatch("./docs/plan.md", deps)).resolves.toBeNull();
     expect(deps.searchFiles).not.toHaveBeenCalled();
   });
 
   it("finds a unique nested file when the literal path is missing", async () => {
-    const deps = lookup(false, [nestedPlan]);
-    await expect(findWorkspaceFileMatch("docs/plan.md", deps)).resolves.toBe(nestedPlan.path);
-    expect(deps.searchFiles).toHaveBeenCalledWith("docs/plan.md");
+    for (const path of ["docs/plan.md", "./docs/plan.md"]) {
+      const deps = lookup(false, [nestedPlan]);
+      await expect(findWorkspaceFileMatch(path, deps)).resolves.toBe(nestedPlan.path);
+      expect(deps.searchFiles).toHaveBeenCalledWith("docs/plan.md");
+    }
   });
 
   it("prefers exact case, then accepts a unique case-folded suffix across separators", async () => {

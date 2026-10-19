@@ -2391,8 +2391,8 @@ function useChatMarkdownState({
     () => () => {
       mediaRequestId.current += 1;
     },
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Changes invalidate media requests from the previous markdown context.
-    [mediaScopeKey, text, workspaceMutationId],
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Leaving the scope invalidates pending media requests; streamed text updates keep them alive.
+    [mediaScopeKey],
   );
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
@@ -2401,6 +2401,9 @@ function useChatMarkdownState({
   const searchProjectEntries = useAtomQueryRunner(projectEnvironment.searchEntries, {
     reportFailure: false,
     refresh: true,
+  });
+  const invalidateFileMetadata = useAtomCommand(projectEnvironment.invalidateFileMetadata, {
+    reportFailure: false,
   });
   const readFileMetadata = useAtomQueryRunner(projectEnvironment.fileMetadata, {
     reportFailure: false,
@@ -2649,6 +2652,12 @@ function useChatMarkdownState({
       }
       const match = await findWorkspaceFileMatch(relativePath, {
         literalExists: async () => {
+          // A refreshed query still reuses retained metadata, including cached misses.
+          const invalidated = await invalidateFileMetadata({
+            environmentId,
+            input: { paths: [fileLinkMeta.filePath] },
+          });
+          if (invalidated._tag !== "Success") return true;
           const result = await readFileMetadata({
             environmentId,
             input: { path: fileLinkMeta.filePath },
