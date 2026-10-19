@@ -241,6 +241,9 @@ describe("composer suggestion dismissal", () => {
     });
     expect(composer.trigger?.kind).toBe(candidate?.kind);
     expect(composer.resolveTrigger(candidate, true)).toEqual(candidate);
+    await act(() => composer.setTrigger(composer.detectTrigger(text, 0), undefined, true));
+    expect(composer.trigger).toBeNull();
+    await updatePrompt(text);
     await act(() => composer.dismissTrigger(composer.trigger));
     await updatePrompt(`${text}x`);
 

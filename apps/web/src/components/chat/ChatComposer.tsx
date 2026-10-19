@@ -3536,7 +3536,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ) => {
     expandComposerForEditorChange();
     const hasSelection =
-      nextPrompt === promptRef.current && window.getSelection()?.isCollapsed === false;
+      nextPrompt === promptRef.current && composerEditorRef.current?.hasSelection() === true;
     // Typing is when the menu is about to need skills, so it re-checks a
     // snapshot that has aged past its TTL.
     refreshWorkspaceSnapshotOnTyping();
@@ -3767,7 +3767,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ? null
         : resolveComposerTrigger(
             detectActiveComposerTrigger(snapshot.value, snapshot.expandedCursor),
-            window.getSelection()?.isCollapsed === false,
+            composerEditorRef.current?.hasSelection() === true,
           ),
     };
   };
@@ -4219,7 +4219,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       !event.isComposing &&
       (key === "Enter" || (key === "Tab" && !event.shiftKey))
     ) {
-      if (window.getSelection()?.isCollapsed && snapshot.value === promptRef.current) {
+      if (
+        composerEditorRef.current?.hasSelection() === false &&
+        snapshot.value === promptRef.current
+      ) {
         const cursor = snapshot.expandedCursor;
         const edit =
           key === "Enter"

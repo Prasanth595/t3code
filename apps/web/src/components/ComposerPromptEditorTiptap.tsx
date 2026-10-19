@@ -125,6 +125,7 @@ export interface ComposerPromptEditorHandle {
   focusAt: (cursor: number) => void;
   focusAtEnd: () => void;
   readSelectionRange: () => { start: number; end: number };
+  hasSelection: () => boolean;
   requestCitationComment: (request: ComposerCitationCommentRequest) => void;
   readSnapshot: () => {
     value: string;
@@ -1633,6 +1634,7 @@ function ComposerPromptEditorTiptapInner(props: ComposerPromptEditorProps) {
         readSnapshot();
         return selectionRangeRef.current;
       },
+      hasSelection: () => editor !== null && !editor.state.selection.empty,
       requestCitationComment: (request) => {
         citationRequestRef.current = request;
         if (!editor) return;

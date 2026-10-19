@@ -53,7 +53,8 @@ export function useComposerTriggerState(initialText: string, initialEnabled = tr
 
   const setTrigger = (candidate: ComposerTrigger | null, text?: string, hasSelection = false) => {
     if (hasSelection && (candidate === null || candidate.kind === "path")) {
-      clearPathTriggerForSelection();
+      previousSearchRef.current = { text: "", trigger: null, queryEnd: 0 };
+      setActiveTrigger(null);
       return;
     }
     if (text !== undefined || candidate === null) {
