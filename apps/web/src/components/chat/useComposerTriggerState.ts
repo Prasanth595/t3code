@@ -29,9 +29,9 @@ export function useComposerTriggerState(initialText: string, initialEnabled = tr
       : candidate;
   };
 
-  const setTrigger = (candidate: ComposerTrigger | null) => {
-    if (previousSearchRef.current.trigger !== candidate) {
-      previousSearchRef.current = { text: "", trigger: null };
+  const setTrigger = (candidate: ComposerTrigger | null, text?: string) => {
+    if (text !== undefined || candidate === null) {
+      previousSearchRef.current = { text: text ?? "", trigger: candidate };
     }
     const activeTrigger = resolveTrigger(candidate);
     if (candidate === null || activeTrigger !== null) {

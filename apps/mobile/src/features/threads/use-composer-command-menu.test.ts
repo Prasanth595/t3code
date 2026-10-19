@@ -322,9 +322,11 @@ describe("workspace command discovery retry", () => {
   });
 });
 
-describe("mobile multi-word path search", () => {
+describe("mobile mention search", () => {
   let root: Root;
   let menu: ReturnType<typeof useComposerCommandMenu>;
+  const onChangeDraftMessage = vi.fn();
+
   function Probe({ draftMessage, ownerKey }: { draftMessage: string; ownerKey: string }) {
     const state = useComposerCommandMenu({
       draftMessage,
@@ -334,18 +336,20 @@ describe("mobile multi-word path search", () => {
       selectedProviderStatus: null,
       hasThread: false,
       hasCompactableConversation: false,
-      onChangeDraftMessage() {},
+      onChangeDraftMessage,
     });
     useLayoutEffect(() => {
       menu = state;
     });
     return null;
   }
-  async function type(text: string, ownerKey = "draft-1") {
-    await act(() => root.render(createElement(Probe, { draftMessage: text, ownerKey })));
-    await act(() => menu.onSelectionChange({ start: text.length, end: text.length }));
+
+  async function renderDraft(draftMessage: string, ownerKey = "draft-1") {
+    await act(() => root.render(createElement(Probe, { draftMessage, ownerKey })));
   }
+
   beforeEach(() => {
+    onChangeDraftMessage.mockReset();
     const document = { nodeType: 9, addEventListener() {}, removeEventListener() {} };
     const container = {
       nodeType: 1,
@@ -360,57 +364,60 @@ describe("mobile multi-word path search", () => {
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     root = createRoot(container as unknown as HTMLElement);
   });
+
   afterEach(async () => {
     await act(() => root.unmount());
     vi.unstubAllGlobals();
   });
-  it("keeps the full query through spaces and closes after accepting a file", async () => {
-    const query = "Foreign Subsidiaries Motion Video";
-    for (let length = 0; length <= query.length; length += 1) {
-      await type("@" + query.slice(0, length));
-      expect(menu.trigger).toEqual({
-        kind: "path",
-        query: query.slice(0, length),
-        rangeStart: 0,
-        rangeEnd: length + 1,
-      });
-    }
-    await type("[Foreign Subsidiaries](Foreign%20Subsidiaries) ");
-    expect(menu.trigger).toBeNull();
-  });
-  it("keeps typed extensions separate from existing prose and closes on a caret jump", async () => {
+
+  it("keeps the replacement range while native selection trails text changes", async () => {
+    const prefix = "Inspect ";
     const suffix = " then summarize";
-    await type("@Foreign" + suffix);
-    await act(() => menu.onSelectionChange({ start: 8, end: 8 }));
-    await act(() =>
-      root.render(
-        createElement(Probe, {
-          draftMessage: "@Foreign Subsidiaries" + suffix,
-          ownerKey: "draft-1",
-        }),
-      ),
-    );
-    const cursor = "@Foreign Subsidiaries".length;
+    await renderDraft(`${prefix}@Release${suffix}`);
+    const cursor = `${prefix}@Release`.length;
     await act(() => menu.onSelectionChange({ start: cursor, end: cursor }));
-    expect(menu.trigger?.query).toBe("Foreign Subsidiaries");
-    expect(menu.trigger?.rangeEnd).toBe(cursor);
-    const end = cursor + suffix.length;
+    await renderDraft(`${prefix}@Release ${suffix}`);
+    expect(menu.trigger?.query).toBe("Release ");
+    await renderDraft(`${prefix}@Release Notes.md${suffix}`);
+    expect.soft(menu.trigger?.query).toBe("Release Notes.md");
+    const end = `${prefix}@Release Notes.md`.length;
     await act(() => menu.onSelectionChange({ start: end, end }));
+    expect(menu.trigger).toMatchObject({ query: "Release Notes.md", rangeEnd: end });
+    await act(() =>
+      menu.onSelect({
+        id: "path:docs/Release Notes.md",
+        type: "path",
+        path: "docs/Release Notes.md",
+        kind: "file",
+        label: "Release Notes.md",
+        description: "docs",
+      }),
+    );
+    const expected = "Inspect [Release Notes.md](docs/Release%20Notes.md)  then summarize";
+    expect(onChangeDraftMessage).toHaveBeenCalledExactlyOnceWith(expected);
+    await renderDraft(expected);
     expect(menu.trigger).toBeNull();
   });
 
-  it("does not carry an active search into a different draft", async () => {
-    await type("@Foreign");
-    await type("@Foreign Subsidiaries");
-    expect(menu.trigger?.query).toBe("Foreign Subsidiaries");
-    await type("@Foreign Subsidiaries", "draft-2");
+  it("drops continuation on text selection and when switching draft owners", async () => {
+    await renderDraft("@Release");
+    await renderDraft("@Release Notes");
+    const end = "@Release Notes".length;
+    await act(() => menu.onSelectionChange({ start: end, end }));
+    expect(menu.trigger?.query).toBe("Release Notes");
+    await act(() => menu.onSelectionChange({ start: 0, end }));
     expect(menu.trigger).toBeNull();
-  });
-  it("closes when text is selected and does not resume it after the boundary", async () => {
-    await type("@Foreign ");
-    await act(() => menu.onSelectionChange({ start: 0, end: 9 }));
+    await act(() => menu.onSelectionChange({ start: end, end }));
     expect(menu.trigger).toBeNull();
-    await type("@Foreign Subsidiaries");
+
+    await renderDraft("@Release");
+    await act(() => menu.onSelectionChange({ start: 8, end: 8 }));
+    await renderDraft("@Release Notes");
+    await act(() => menu.onSelectionChange({ start: end, end }));
+    expect(menu.trigger?.query).toBe("Release Notes");
+    await renderDraft("@Release Notes", "draft-2");
+    expect(menu.trigger).toBeNull();
+    await renderDraft("@Release Notes draft", "draft-2");
     expect(menu.trigger).toBeNull();
   });
 });

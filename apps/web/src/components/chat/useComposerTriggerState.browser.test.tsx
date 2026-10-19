@@ -1,8 +1,7 @@
 import { act, StrictMode, useLayoutEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { matchComposerThreadItems } from "@t3tools/client-runtime/composerThreadItems";
+import { replaceTextRange, serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 
 import { detectComposerTrigger } from "../../composer-logic";
 import { useComposerTriggerState } from "./useComposerTriggerState";
@@ -62,74 +61,73 @@ describe("composer suggestion dismissal", () => {
     await updatePrompt("@Literal answer more");
     expect(composer.trigger).toBeNull();
   });
-  it("keeps a multi-word @ search active and replaces its whole range", async () => {
-    const prefix = "Please inspect ";
-    const query = "Foreign Subsidiaries Motion Video";
-    for (let length = 0; length <= query.length; length += 1) {
-      const text = `${prefix}@${query.slice(0, length)}`;
-      await updatePrompt(text);
+
+  it("continues through spaces and replaces only the mention before closing", async () => {
+    const prefix = "Inspect ";
+    const suffix = " then summarize";
+    for (const query of ["Release", "Release ", "Release Notes.md"]) {
+      const beforeCaret = `${prefix}@${query}`;
+      await updatePrompt(beforeCaret + suffix, beforeCaret.length);
       expect(composer.trigger).toEqual({
         kind: "path",
-        query: query.slice(0, length),
+        query,
         rangeStart: prefix.length,
-        rangeEnd: text.length,
+        rangeEnd: beforeCaret.length,
       });
     }
-    const environmentId = EnvironmentId.make("env-1");
-    const items = matchComposerThreadItems({
-      environmentId,
-      excludeThreadId: null,
-      query: composer.trigger!.query,
-      shells: [query, "Foreign Subsidiaries Training"].map((title, index) => ({
-        environmentId,
-        id: ThreadId.make("thread-" + index),
-        title,
-        archivedAt: null,
-        updatedAt: "2026-10-03T00:00:00.000Z",
-      })),
-    });
-    expect(items.map((item) => item.label)).toEqual([query]);
+    const text = `${prefix}@Release Notes.md${suffix}`;
+    const trigger = composer.resolveTrigger(
+      composer.detectTrigger(text, text.length - suffix.length),
+    );
+    expect(trigger).not.toBeNull();
+    const result = replaceTextRange(
+      text,
+      trigger!.rangeStart,
+      trigger!.rangeEnd,
+      serializeComposerFileLink("docs/Release Notes.md"),
+    );
+    expect(result.text).toBe("Inspect [Release Notes.md](docs/Release%20Notes.md) then summarize");
+    await updatePrompt(result.text, result.cursor);
+    expect(composer.trigger).toBeNull();
   });
 
-  it("closes when the caret jumps into existing prose and rejects keyboard selection", async () => {
+  it("rejects selection after the caret leaves the query for existing prose", async () => {
     const suffix = " then summarize";
-    await updatePrompt("@Foreign" + suffix, "@Foreign".length);
-    await updatePrompt("@Foreign Subsidiaries" + suffix, "@Foreign Subsidiaries".length);
-    expect(composer.trigger?.query).toBe("Foreign Subsidiaries");
-    // Keyboard selection re-reads the editor before its next selection render.
-    const text = "@Foreign Subsidiaries" + suffix;
+    await updatePrompt("Inspect @Release" + suffix, "Inspect @Release".length);
+    const text = "Inspect @Release Notes" + suffix;
+    await updatePrompt(text, "Inspect @Release Notes".length);
+    expect(composer.trigger?.query).toBe("Release Notes");
     expect(composer.resolveTrigger(composer.detectTrigger(text, text.length))).toBeNull();
     await updatePrompt(text);
     expect(composer.trigger).toBeNull();
-  });
-
-  it("preserves the suffix when editing a query before existing prose", async () => {
-    const suffix = " then summarize";
-    await updatePrompt("@Foreign" + suffix, "@Foreign".length);
-    await updatePrompt("@Foreign " + suffix, "@Foreign ".length);
-    await updatePrompt("@Foreign Subsidiaries" + suffix, "@Foreign Subsidiaries".length);
-    expect(composer.trigger?.rangeEnd).toBe("@Foreign Subsidiaries".length);
-    await updatePrompt("@Foreign Subsidiaries" + suffix, 0);
-    await updatePrompt("@Foreign Subsidiaries" + suffix);
+    await updatePrompt(text + " more");
     expect(composer.trigger).toBeNull();
   });
 
-  it("does not reopen a dismissed multi-word search as typing continues", async () => {
-    await updatePrompt("@Foreign");
-    await updatePrompt("@Foreign ");
-    await act(() => composer.dismissTrigger(composer.trigger));
-    await updatePrompt("@Foreign Subsidiaries");
+  it.each(["\n", "\t"])("closes an active search at a %j boundary", async (boundary) => {
+    await updatePrompt("@Release");
+    await updatePrompt("@Release Notes");
+    expect(composer.trigger?.query).toBe("Release Notes");
+    await updatePrompt(`@Release Notes${boundary}`);
     expect(composer.trigger).toBeNull();
-    await updatePrompt("@Foreign Subsidiaries @src");
+    await updatePrompt(`@Release Notes${boundary}more`);
+    expect(composer.trigger).toBeNull();
+  });
+
+  it("keeps Escape dismissal through spaces until a new mention starts", async () => {
+    await updatePrompt("@Release");
+    await updatePrompt("@Release Notes");
+    const trigger = composer.trigger;
+    expect(trigger?.query).toBe("Release Notes");
+    await act(() => {
+      composer.dismissTrigger(trigger);
+      expect(composer.resolveTrigger(trigger)).toBeNull();
+    });
+    await updatePrompt("@Release Notes ");
+    await updatePrompt("@Release Notes draft");
+    expect(composer.trigger).toBeNull();
+    await updatePrompt("@Release Notes draft @src");
     expect(composer.trigger?.query).toBe("src");
-  });
-
-  it("closes after selection and leaves following prose outside the search", async () => {
-    await updatePrompt("@Foreign");
-    await updatePrompt("@Foreign Subsidiaries");
-    await updatePrompt("[Foreign Subsidiaries](Foreign%20Subsidiaries) ");
-    await updatePrompt("[Foreign Subsidiaries](Foreign%20Subsidiaries) please inspect");
-    expect(composer.trigger).toBeNull();
   });
 
   it("closes suggestions and rejects keyboard selection before the next render", async () => {

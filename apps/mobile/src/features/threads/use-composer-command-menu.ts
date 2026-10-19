@@ -337,6 +337,7 @@ export function useComposerCommandMenu({
     ownerKey,
     draftMessage,
     selection,
+    cursor: selection.end,
     enabled,
     trigger: enabled ? detectComposerTrigger(draftMessage, selection.end) : null,
   }));
@@ -347,14 +348,14 @@ export function useComposerCommandMenu({
     previousSearch.selection !== selection ||
     previousSearch.enabled !== enabled
   ) {
-    // Native text and selection events can arrive separately. Apply the edit's
-    // length change while waiting for the caret event, then validate that event
-    // against the updated query range.
+    // Native text events can lead selection events by several edits. Accumulate
+    // those edits from the predicted cursor until native selection catches up.
     const cursor =
-      selection.end +
-      (previousSearch.selection === selection && previousSearch.ownerKey === ownerKey
-        ? draftMessage.length - previousSearch.draftMessage.length
-        : 0);
+      previousSearch.ownerKey !== ownerKey
+        ? draftMessage.length
+        : previousSearch.selection === selection
+          ? previousSearch.cursor + draftMessage.length - previousSearch.draftMessage.length
+          : selection.end;
     trigger =
       enabled && selection.start === selection.end
         ? (detectComposerTrigger(draftMessage, cursor) ??
@@ -365,7 +366,7 @@ export function useComposerCommandMenu({
             previousSearch.draftMessage,
           ))
         : null;
-    setPreviousSearch({ ownerKey, draftMessage, selection, enabled, trigger });
+    setPreviousSearch({ ownerKey, draftMessage, selection, cursor, enabled, trigger });
   }
   const pathSearch = useComposerPathSearch({
     environmentId,
