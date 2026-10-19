@@ -1,5 +1,5 @@
 import type { NativeStackNavigationOptions } from "@react-navigation/native-stack";
-import { useEffect, useState, type ReactNode } from "react";
+import { createContext, use, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Animated, Platform, Pressable, View } from "react-native";
 
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
@@ -20,36 +20,47 @@ import {
 const STATUS_SHOW_DELAY_MS = 800;
 const FADE_IN_MS = 250;
 
-// The delay hides brief reconnects, so it is the workspace's, not each header's. A header that
-// mounts while the status already shows (a tab opened for the first time) shows it at once
-// instead of the brand until its own delay runs out.
-let statusShowing = false;
-
-function useDelayedConnectionStatus(): {
-  readonly presentation: WorkspaceConnectionStatusPresentation;
+type ConnectionStatus = WorkspaceConnectionStatusPresentation & {
+  /** Only while the status first appears. A header that shows it later shows it at once. */
   readonly fadeIn: boolean;
-} | null {
+};
+
+const ConnectionStatusContext = createContext<ConnectionStatus | null>(null);
+
+/**
+ * The delay hides brief reconnects, so it is the workspace's, not each header's: every header
+ * shows the status from the same moment. Headers read it from context instead of subscribing
+ * themselves, because a hidden Android tab drops its subscriptions and showed a stale status for
+ * a moment when it came back, while context still reaches it.
+ */
+export function WorkspaceConnectionStatusProvider(props: { readonly children: ReactNode }) {
   const { state } = useWorkspaceState();
   const presentation = workspaceConnectionStatusPresentation(state);
   const hasStatus = presentation !== null;
-  const [shown, setShown] = useState<"waited" | "joined" | null>(() =>
-    hasStatus && statusShowing ? "joined" : null,
-  );
+  const [phase, setPhase] = useState<"waiting" | "fading" | "shown">("waiting");
 
   useEffect(() => {
-    if (!hasStatus) {
-      statusShowing = false;
-      setShown(null);
-      return;
-    }
-    const timer = setTimeout(() => {
-      statusShowing = true;
-      setShown((current) => current ?? "waited");
-    }, STATUS_SHOW_DELAY_MS);
-    return () => clearTimeout(timer);
+    if (!hasStatus) return;
+    const timers = [
+      setTimeout(() => setPhase("fading"), STATUS_SHOW_DELAY_MS),
+      setTimeout(() => setPhase("shown"), STATUS_SHOW_DELAY_MS + FADE_IN_MS),
+    ];
+    return () => {
+      for (const timer of timers) clearTimeout(timer);
+      setPhase("waiting");
+    };
   }, [hasStatus]);
 
-  return shown && presentation ? { presentation, fadeIn: shown === "waited" } : null;
+  const label = presentation?.label;
+  const showsProgress = presentation?.showsProgress ?? false;
+  const status = useMemo(
+    () =>
+      label === undefined || phase === "waiting"
+        ? null
+        : { label, showsProgress, fadeIn: phase === "fading" },
+    [label, showsProgress, phase],
+  );
+  return <ConnectionStatusContext value={status}>{props.children}</ConnectionStatusContext>;
 }
 
 /**
@@ -65,7 +76,7 @@ function StatusFadeIn(props: {
   readonly maxWidth?: number;
 }) {
   const { animate } = props;
-  const [opacity] = useState(() => new Animated.Value(animate ? 0 : 1));
+  const [opacity] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
     if (!animate) return;
@@ -81,7 +92,13 @@ function StatusFadeIn(props: {
   return (
     <Animated.View
       style={[
-        { alignItems: "center", flexDirection: "row", maxWidth: props.maxWidth, opacity },
+        {
+          alignItems: "center",
+          flexDirection: "row",
+          maxWidth: props.maxWidth,
+          // A hidden tab never runs the fade, so its value would still be 0 when the tab returns.
+          opacity: animate ? opacity : 1,
+        },
         props.grow ? { flex: 1, minWidth: 0 } : null,
       ]}
     >
@@ -98,11 +115,11 @@ export function WorkspaceConnectionTitle(props: {
   readonly statusOffset?: number;
   readonly maxWidth?: number;
 }) {
-  const delayed = useDelayedConnectionStatus();
+  const status = use(ConnectionStatusContext);
   const size = props.size ?? "navbar";
   const { scale } = useAndroidControlSizing();
 
-  if (delayed === null) {
+  if (status === null) {
     return props.grow ? (
       <View style={{ alignItems: "center", flex: 1, flexDirection: "row", minWidth: 0 }}>
         {props.brand}
@@ -112,9 +129,8 @@ export function WorkspaceConnectionTitle(props: {
     );
   }
 
-  const status = delayed.presentation;
   return (
-    <StatusFadeIn animate={delayed.fadeIn} grow={props.grow} maxWidth={props.maxWidth}>
+    <StatusFadeIn animate={status.fadeIn} grow={props.grow} maxWidth={props.maxWidth}>
       <Pressable
         accessibilityHint="Opens environment settings"
         accessibilityLabel={status.label}

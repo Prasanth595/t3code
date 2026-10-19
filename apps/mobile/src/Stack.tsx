@@ -32,6 +32,7 @@ import { useResolveClassNames } from "uniwind";
 import { AppText as Text } from "./components/ui/AppText";
 import { androidWorkspaceDestinationAnimation } from "./lib/android-workspace-navigation";
 import { getCompactBrandHeaderOptions } from "./components/CompactBrandTitle";
+import { WorkspaceConnectionStatusProvider } from "./features/home/WorkspaceConnectionTitle";
 import { WorkspaceRootScreen } from "./features/workspace/WorkspaceRootScreen";
 import { AndroidWorkspaceSettings } from "./features/workspace/AndroidWorkspaceSettings";
 import { AndroidWorkspaceTabsProvider } from "./features/workspace/AndroidWorkspaceTabsProvider";
@@ -624,16 +625,18 @@ function RootStackLayout(props: {
       <ThreadOutboxDrainWorker />
       <ShowcaseCaptureCoordinator pathname={pathname} />
       <ExistingThreadSettingsRouteProvider>
-        <AndroidWorkspaceTabsProvider state={props.state}>
-          <AdaptiveWorkspaceLayout
-            pathname={workspaceLocation.pathname}
-            workspaceRouteKey={workspaceLocation.routeKey}
-            selectedPullRequestKey={selectedPullRequestKey(props.state)}
-          >
-            {props.children}
-            <HardwareKeyboardCommandOverlay />
-          </AdaptiveWorkspaceLayout>
-        </AndroidWorkspaceTabsProvider>
+        <WorkspaceConnectionStatusProvider>
+          <AndroidWorkspaceTabsProvider state={props.state}>
+            <AdaptiveWorkspaceLayout
+              pathname={workspaceLocation.pathname}
+              workspaceRouteKey={workspaceLocation.routeKey}
+              selectedPullRequestKey={selectedPullRequestKey(props.state)}
+            >
+              {props.children}
+              <HardwareKeyboardCommandOverlay />
+            </AdaptiveWorkspaceLayout>
+          </AndroidWorkspaceTabsProvider>
+        </WorkspaceConnectionStatusProvider>
       </ExistingThreadSettingsRouteProvider>
     </HardwareKeyboardCommandProvider>
   );

@@ -229,6 +229,9 @@ export function PullRequestsScreen(
           />
         }
         alwaysBounceVertical
+        // Android flashes a list's scrollbar whenever it becomes visible, which was every return
+        // to this tab. The thread list shows none either.
+        showsVerticalScrollIndicator={Platform.OS !== "android"}
         recycleItems
         renderScrollComponent={Platform.OS === "ios" ? PullRequestScrollView : undefined}
         contentInsetAdjustmentBehavior="never"
