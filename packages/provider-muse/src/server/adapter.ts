@@ -1,4 +1,4 @@
-import { MspError, type SendUserTurnOptions } from "@muse-code/sdk";
+import { MspError, type ProcessExit, type SendUserTurnOptions } from "@muse-code/sdk";
 import {
   MUSE_DEFAULT_MODEL,
   ProviderDriverKind,
@@ -1652,7 +1652,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
         });
         // Finalizers run in reverse order: reap detached work after closing the host.
         const scopeUnit = launch.unit;
-        if (scopeUnit !== undefined) yield* Scope.addFinalizer(scope, agentScope.stop(scopeUnit));
+        const stopScope =
+          scopeUnit === undefined ? Effect.void : yield* Effect.cached(agentScope.stop(scopeUnit));
+        yield* Scope.addFinalizer(scope, stopScope);
+        const processExited = yield* Deferred.make<ProcessExit>();
+        // Observe raw exit before acquisition: inherited stdout can also block startup cleanup.
+        yield* Deferred.await(processExited).pipe(Effect.andThen(stopScope), Effect.forkIn(scope));
         const created = yield* Effect.acquireRelease(
           createMuseSdkHostEffect(
             {
@@ -1661,6 +1666,9 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               cwd,
               environment,
               runtimeMode: input.runtimePolicy.runtimeMode,
+              onProcessExit: (exit) => {
+                Deferred.doneUnsafe(processExited, Effect.succeed(exit));
+              },
             },
             options.createHost,
           ).pipe(
@@ -1715,7 +1723,7 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               epoch,
             });
         });
-        void created.exited.then((exit) => {
+        const reportExit = (exit: ProcessExit) => {
           if (!closed && epoch === hostEpoch) {
             const reason = created
               .stderrTail?.()
@@ -1729,7 +1737,12 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
               epoch,
             });
           }
-        });
+        };
+        void created.exited.then(reportExit);
+        yield* Deferred.await(processExited).pipe(
+          Effect.tap((exit) => Effect.sync(() => reportExit(exit))),
+          Effect.forkIn(scope),
+        );
       });
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {

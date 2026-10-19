@@ -36,7 +36,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import type { MuseItem, MuseSubscriptionUsage } from "./protocol.ts";
-import type { MuseSdkHost } from "./sdk.ts";
+import type { MuseSdkHost, MuseSdkHostOptions } from "./sdk.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -92,6 +92,7 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
   const closing = pendingPromise<void>();
   let closeCount = 0;
   let closeGate: Promise<void> | undefined;
+  let onProcessExit: MuseSdkHostOptions["onProcessExit"];
   let history: MuseItem[] = [];
   const responses = new Map<
     string,
@@ -157,6 +158,10 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
     calls,
     closeCount: () => closeCount,
     closing: closing.promise,
+    observeProcessExit: (callback: MuseSdkHostOptions["onProcessExit"]) => {
+      onProcessExit = callback;
+    },
+    exitProcess: () => Effect.sync(() => onProcessExit?.({ code: 1, signal: null })),
     holdClose: (gate: Promise<void>) => {
       closeGate = gate;
     },
@@ -209,7 +214,11 @@ const makeHarness = Effect.fnUntraced(function* (
     instanceId,
     settings: museSettings,
     environment: { PATH: "/fake/bin" },
-    createHost: async () => (hostCount++ === 0 ? fake.host : (replacement ?? fake).host),
+    createHost: async (options) => {
+      const selected = hostCount++ === 0 ? fake : (replacement ?? fake);
+      selected.observeProcessExit(options.onProcessExit);
+      return selected.host;
+    },
     ...overrides,
   });
   const runtime = yield* adapter.openSession({
@@ -876,36 +885,74 @@ describe("MuseAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect("settles an active turn once when both the connection and host exit unexpectedly", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      const harness = yield* makeHarness(fake);
-      const { nativeId } = yield* startConversation(harness, fake);
-      yield* fake.emit("approval/requested", approval(nativeId));
-      yield* harness.takeEvent(
-        "runtime_request.updated",
-        (event) => event.runtimeRequest.status === "pending",
-      );
-      yield* fake.disconnect();
-      const terminal = yield* harness.takeEvent("turn.terminal");
-      assert.strictEqual(terminal.status, "failed");
-      assert.strictEqual(terminal.threadDisposition, "broken");
-      assert.isTrue(
-        harness.allEvents.some(
-          (event) =>
-            event.type === "runtime_request.updated" && event.runtimeRequest.status === "cancelled",
-        ),
-      );
-      const result = yield* harness.runtime
-        .startTurn(yield* turnInput(harness.providerThread, 2))
-        .pipe(Effect.exit);
-      assert.strictEqual(result._tag, "Failure");
-      assert.strictEqual(
-        harness.allEvents.filter((event) => event.type === "turn.terminal").length,
-        1,
-      );
-      assert.strictEqual(fake.calls.filter((call) => call.method === "turn/start").length, 1);
-    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  it.effect(
+    "settles an active turn and reaps its scope on raw exit before inherited stdio closes",
+    () =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const pipeClosed = pendingPromise<void>();
+        fake.holdClose(pipeClosed.promise);
+        const stopped = yield* Deferred.make<void>();
+        const units: string[] = [];
+        let hostExited = false;
+        let connectionClosed = false;
+        void fake.host.exited.then(() => {
+          hostExited = true;
+        });
+        void fake.host.connection.closed.then(() => {
+          connectionClosed = true;
+        });
+        yield* Effect.gen(function* () {
+          const harness = yield* makeHarness(fake);
+          const { nativeId } = yield* startConversation(harness, fake);
+          yield* fake.emit("approval/requested", approval(nativeId));
+          yield* harness.takeEvent(
+            "runtime_request.updated",
+            (event) => event.runtimeRequest.status === "pending",
+          );
+          yield* fake.exitProcess();
+          yield* Deferred.await(stopped);
+          assert.deepStrictEqual(units, ["t3code-muse-exit.scope"]);
+          const terminal = yield* harness.takeEvent("turn.terminal");
+          assert.strictEqual(terminal.status, "failed");
+          assert.strictEqual(terminal.threadDisposition, "broken");
+          assert.isFalse(hostExited);
+          assert.isFalse(connectionClosed);
+          assert.isTrue(
+            harness.allEvents.some(
+              (event) =>
+                event.type === "runtime_request.updated" &&
+                event.runtimeRequest.status === "cancelled",
+            ),
+          );
+          pipeClosed.resolve();
+          yield* fake.disconnect();
+          yield* Deferred.await(harness.eventsEnded);
+          const result = yield* harness.runtime
+            .startTurn(yield* turnInput(harness.providerThread, 2))
+            .pipe(Effect.exit);
+          assert.strictEqual(result._tag, "Failure");
+          assert.strictEqual(
+            harness.allEvents.filter((event) => event.type === "turn.terminal").length,
+            1,
+          );
+          assert.strictEqual(fake.calls.filter((call) => call.method === "turn/start").length, 1);
+        }).pipe(
+          Effect.ensuring(Effect.sync(() => pipeClosed.resolve())),
+          Effect.scoped,
+          Effect.provideService(AgentScope, {
+            ...AgentScope.defaultValue(),
+            wrap: ({ command, args }) =>
+              Effect.succeed({ command, args, unit: "t3code-muse-exit.scope" }),
+            stop: (unit) =>
+              Effect.gen(function* () {
+                units.push(unit);
+                yield* Deferred.succeed(stopped, undefined);
+              }),
+          }),
+        );
+        assert.deepStrictEqual(units, ["t3code-muse-exit.scope"]);
+      }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("turns a delivery gap into a broken terminal and rejects subsequent work", () =>
