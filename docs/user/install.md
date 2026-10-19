@@ -180,7 +180,10 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 On macOS and Linux, T3 Code reads `PATH` from your login shell (`$SHELL -ilc`)
 at startup and adds its entries ahead of the `PATH` it was started with. The
 desktop app also reads a fixed set of session and configuration variables, such
-as `SSH_AUTH_SOCK` and `T3CODE_TELEMETRY_ENABLED`, but never secrets. Each login
+as `LANG` and `T3CODE_TELEMETRY_ENABLED`, but never secrets. It takes
+`SSH_AUTH_SOCK` from the shell only when started without one, which on macOS
+never happens: point SSH at another agent with `IdentityAgent` in
+`~/.ssh/config`. Each login
 shell gets 5 seconds and must not wait for input; if yours does not answer, T3
 Code tries other shells, then on macOS `launchctl getenv PATH`, then falls back
 to the `PATH` it was started with.
