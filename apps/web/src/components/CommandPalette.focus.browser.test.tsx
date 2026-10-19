@@ -95,6 +95,7 @@ afterEach(async () => {
     await vi.runOnlyPendingTimersAsync();
   });
   container.remove();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -207,57 +208,65 @@ describe("command palette focus restoration", () => {
 });
 
 describe("global usage shortcut context", () => {
-  it("opens Usage only while outside Usage, including after returning to the previous route", async () => {
-    const shortcut = {
-      key: "u",
-      ctrlKey: false,
-      metaKey: false,
-      shiftKey: false,
-      altKey: false,
-      modKey: true,
-    };
-    routeState.keybindings = [
-      {
-        command: "navigation.back",
-        shortcut,
-        whenAst: { type: "identifier", name: "usagePageOpen" },
-      },
-      {
-        command: "usage.open",
-        shortcut,
-        whenAst: { type: "not", node: { type: "identifier", name: "usagePageOpen" } },
-      },
-    ];
-    const render = () =>
-      act(() =>
-        root.render(
-          <CommandPalette>
-            <span>Page</span>
-          </CommandPalette>,
-        ),
-      );
-    const pressUsage = () =>
-      act(() =>
-        window.dispatchEvent(
-          new KeyboardEvent("keydown", {
-            key: "u",
-            ctrlKey: true,
-            bubbles: true,
-            cancelable: true,
-          }),
-        ),
-      );
-    await render();
-    await pressUsage();
-    expect(routeState.navigate).toHaveBeenCalledExactlyOnceWith({ to: "/usage" });
-    routeState.navigate.mockClear();
-    routeState.pathname = "/usage";
-    await render();
-    await pressUsage();
-    expect(routeState.navigate).not.toHaveBeenCalled();
-    routeState.pathname = "/settings";
-    await render();
-    await pressUsage();
-    expect(routeState.navigate).toHaveBeenCalledExactlyOnceWith({ to: "/usage" });
-  });
+  it.each([
+    { platform: "Linux x86_64", ctrlKey: true, metaKey: false },
+    { platform: "MacIntel", ctrlKey: false, metaKey: true },
+  ])(
+    "opens Usage only outside Usage and after returning on $platform",
+    async ({ platform, ctrlKey, metaKey }) => {
+      vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+      const shortcut = {
+        key: "u",
+        ctrlKey: false,
+        metaKey: false,
+        shiftKey: false,
+        altKey: false,
+        modKey: true,
+      };
+      routeState.keybindings = [
+        {
+          command: "navigation.back",
+          shortcut,
+          whenAst: { type: "identifier", name: "usagePageOpen" },
+        },
+        {
+          command: "usage.open",
+          shortcut,
+          whenAst: { type: "not", node: { type: "identifier", name: "usagePageOpen" } },
+        },
+      ];
+      const render = () =>
+        act(() =>
+          root.render(
+            <CommandPalette>
+              <span>Page</span>
+            </CommandPalette>,
+          ),
+        );
+      const pressUsage = () =>
+        act(() =>
+          window.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key: "u",
+              ctrlKey,
+              metaKey,
+              bubbles: true,
+              cancelable: true,
+            }),
+          ),
+        );
+      await render();
+      await pressUsage();
+      expect(routeState.navigate).toHaveBeenCalledExactlyOnceWith({ to: "/usage" });
+      routeState.navigate.mockClear();
+      routeState.pathname = "/usage";
+      await render();
+      await pressUsage();
+      expect(routeState.navigate).not.toHaveBeenCalled();
+      routeState.pathname = "/settings";
+      await render();
+      await pressUsage();
+      expect(routeState.navigate).toHaveBeenCalledExactlyOnceWith({ to: "/usage" });
+    },
+  );
 });
