@@ -175,6 +175,7 @@ describe("extractTerminalLinks", () => {
   it.each([
     " GET /api/trpc/post.list,user.me?batch=1&input=%7B%220%22%3A%7B%22json%22%3Anull%7D%7D 200 in 35ms",
     "GET /api?+debug 200",
+    'Started GET "/posts?page=2" for ::1',
     "proxying api/trpc/post.list?batch=1 to the backend",
   ])("does not turn a logged request route into an editor link: %s", (line) => {
     expect(extractTerminalLinks(line)).toEqual([]);

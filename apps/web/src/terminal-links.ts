@@ -36,7 +36,7 @@ const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
 const TRAILING_PATH_PUNCTUATION_PATTERN = /[.,;:!?]+$/;
 // A question mark is legal in filenames; only exclude query-bearing request targets.
 const REQUEST_ROUTE_PATTERN =
-  /(?:^|[\s"'`])(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|CONNECT|TRACE|proxying)\s+(?:\/|[A-Za-z0-9_-]+\/)[^\s?]*\?\S*/g;
+  /(?:^|[\s"'`])(?:GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|CONNECT|TRACE|proxying)\s+["'`]?(?:\/|[A-Za-z0-9_-]+\/)[^\s?]*\?\S*/g;
 
 function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
   let output = value.replace(
