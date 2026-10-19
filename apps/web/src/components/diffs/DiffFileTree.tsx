@@ -68,7 +68,6 @@ export function DiffFileTree({
   const handledRevealRef = useRef<{
     path: string;
     revealRequestId: number;
-    modelPath: string;
   } | null>(null);
   const mountedPresentationRef = useRef<ReturnType<typeof diffFileTreeModel> | null>(null);
 
@@ -148,14 +147,10 @@ export function DiffFileTree({
       return;
     }
     const handled = handledRevealRef.current;
-    if (
-      handled?.path === selectedPath &&
-      handled.revealRequestId === revealRequestId &&
-      handled.modelPath === modelPath
-    ) {
+    if (handled?.path === selectedPath && handled.revealRequestId === revealRequestId) {
       return;
     }
-    handledRevealRef.current = { path: selectedPath, revealRequestId, modelPath };
+    handledRevealRef.current = { path: selectedPath, revealRequestId };
     syncingSelectionRef.current = true;
     for (const path of model.getSelectedPaths()) {
       if (path !== modelPath) model.getItem(path)?.deselect();
