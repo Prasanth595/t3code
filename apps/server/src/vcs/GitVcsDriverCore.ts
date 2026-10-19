@@ -334,7 +334,8 @@ function parseRemoteFetchUrls(stdout: string): Map<string, string> {
   for (const line of stdout.split("\n")) {
     const trimmed = line.trim();
     if (trimmed.length === 0) continue;
-    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)$/.exec(trimmed);
+    // Partial clones append the promisor filter, e.g. `(fetch) [blob:none]`.
+    const match = /^(\S+)\s+(\S+)\s+\((fetch|push)\)(?:\s+\[[^\]]+\])?$/.exec(trimmed);
     if (!match) continue;
     const [, remoteName = "", remoteUrl = "", direction = ""] = match;
     if (direction !== "fetch" || remoteName.length === 0 || remoteUrl.length === 0) {
@@ -1658,6 +1659,23 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return remoteBase.exitCode === 0 ? { baseRef, comparisonRef } : null;
   });
 
+  // Tracking may point to a different remote than the primary one. Resolve its
+  // full ref so a similarly named local branch or tag cannot shadow it.
+  const resolveTrackedRemoteBaseRef = Effect.fn("resolveTrackedRemoteBaseRef")(function* (
+    cwd: string,
+    refName: string,
+  ) {
+    const upstream = yield* executeGit(
+      "GitVcsDriver.resolveTrackedRemoteBaseRef",
+      cwd,
+      ["rev-parse", "--symbolic-full-name", `${refName}@{upstream}`],
+      { allowNonZeroExit: true },
+    );
+    const comparisonRef = upstream.stdout.trim();
+    if (upstream.exitCode !== 0 || !comparisonRef.startsWith("refs/remotes/")) return null;
+    return { baseRef: comparisonRef.slice("refs/remotes/".length), comparisonRef };
+  });
+
   const resolveBaseBranchForNoUpstream = Effect.fn("resolveBaseBranchForNoUpstream")(function* (
     cwd: string,
     refName: string,
@@ -1701,19 +1719,22 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         continue;
       }
       if (normalizedCandidate === refName) {
-        if (
-          options?.allowRemoteOfCurrent &&
-          primaryRemoteName &&
-          (yield* remoteBranchExists({
-            cwd,
-            remoteName: primaryRemoteName,
-            refName: normalizedCandidate,
-          }))
-        ) {
-          return {
-            baseRef: `${primaryRemoteName}/${normalizedCandidate}`,
-            comparisonRef: `refs/remotes/${primaryRemoteName}/${normalizedCandidate}`,
-          };
+        if (options?.allowRemoteOfCurrent) {
+          const trackedRemoteBase = yield* resolveTrackedRemoteBaseRef(cwd, refName);
+          if (trackedRemoteBase !== null) return trackedRemoteBase;
+          if (
+            primaryRemoteName &&
+            (yield* remoteBranchExists({
+              cwd,
+              remoteName: primaryRemoteName,
+              refName: normalizedCandidate,
+            }))
+          ) {
+            return {
+              baseRef: `${primaryRemoteName}/${normalizedCandidate}`,
+              comparisonRef: `refs/remotes/${primaryRemoteName}/${normalizedCandidate}`,
+            };
+          }
         }
         continue;
       }
@@ -3581,7 +3602,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           "config",
           `branch.${input.newRefName}.gh-merge-base`,
           baseBranch,
-        ]);
+        ]).pipe(
+          Effect.catchTags({
+            GitCommandError: () =>
+              Effect.logWarning(
+                "worktree base-ref configuration failed; using base-branch fallback",
+              ),
+          }),
+        );
       }
     }
 
