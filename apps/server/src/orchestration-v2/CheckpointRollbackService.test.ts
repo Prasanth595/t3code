@@ -716,9 +716,14 @@ it.effect.each([
             open: () =>
               Effect.succeed({
                 rollbackThread: (input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput) =>
-                  Effect.gen(function* () {
-                    const turnIds = yield* resolveCodexRollbackTurnIds(input);
-                    assert.equal(turnIds.size, 2 - targetOrdinal);
+                  Effect.sync(() => {
+                    assert.equal(
+                      input.target.type,
+                      targetOrdinal === 0 ? "thread_start" : "provider_turn",
+                    );
+                    if (input.target.type === "provider_turn") {
+                      assert.equal(input.target.providerTurn.id, `turn-${targetOrdinal}`);
+                    }
                     calls.push("provider");
                     return { providerThread };
                   }),
@@ -747,7 +752,16 @@ it.effect.each([
   },
 );
 
-it.effect("replays a Codex rewind that failed after reverting without losing more turns", () => {
+it.effect.each([
+  "retained turn",
+  "goal continuations",
+  "thread start",
+  "missing native boundary",
+  "unidentified native boundary",
+])("replays a Codex rewind safely: %s", (scenario) => {
+  const targetOrdinal = scenario === "thread start" ? 0 : 1;
+  const invalidBoundary =
+    scenario === "missing native boundary" || scenario === "unidentified native boundary";
   const threadId = ThreadId.make("rewind-replay");
   const providerThreadId = ProviderThreadId.make("rewind-replay-provider");
   const providerSessionId = ProviderSessionId.make("rewind-replay-session");
@@ -773,11 +787,14 @@ it.effect("replays a Codex rewind that failed after reverting without losing mor
       runAttemptId: `attempt-${ordinal}`,
       ordinal,
       status: "completed",
-      nativeTurnRef: { nativeId: `native-${ordinal}` },
+      nativeTurnRef:
+        scenario === "unidentified native boundary" && ordinal === 1
+          ? null
+          : { driver: "codex", nativeId: `native-${ordinal}`, strength: "strong" },
     })),
     nodes: [],
     attempts: [1, 2, 3].map((ordinal) => ({ id: `attempt-${ordinal}`, runId: `run-${ordinal}` })),
-    checkpoints: [{ id: checkpointId, scopeId, status: "ready", appRunOrdinal: 1 }],
+    checkpoints: [{ id: checkpointId, scopeId, status: "ready", appRunOrdinal: targetOrdinal }],
     checkpointScopes: [{ id: scopeId, cwd: process.cwd() }],
     runs: [1, 2, 3].map((ordinal) => ({
       id: `run-${ordinal}`,
@@ -787,15 +804,41 @@ it.effect("replays a Codex rewind that failed after reverting without losing mor
       activeAttemptId: `attempt-${ordinal}`,
     })),
   } as unknown as OrchestrationV2ThreadProjection;
-  let nativeTurns = ["native-1", "native-2", "native-3"];
+  // A goal can produce several native turns under one durable provider turn.
+  const retainedTurns = ["native-1-initial", "native-1"];
+  const initialTurns = [
+    ...retainedTurns.filter((id) => scenario !== "missing native boundary" || id !== "native-1"),
+    ...(scenario === "goal continuations" ? ["native-2-initial"] : []),
+    "native-2",
+    "native-3",
+    ...(scenario === "goal continuations" || scenario === "thread start" ? ["native-3-goal"] : []),
+  ];
+  let nativeTurns = [...initialTurns];
   const codex = {
-    request: (method: string, params: { readonly beforeTurnId: string }) =>
+    request: (
+      method: string,
+      params: {
+        readonly beforeTurnId: string;
+        readonly cursor?: string | null;
+        readonly limit: number;
+      },
+    ) =>
       Effect.sync(() => {
         if (method === "thread/turns/list") {
-          return { data: nativeTurns.toReversed().map((id) => ({ id })), nextCursor: null };
+          const offset = Number(params.cursor ?? 0);
+          const end = offset + Math.min(params.limit, 2);
+          return {
+            data: nativeTurns
+              .toReversed()
+              .slice(offset, end)
+              .map((id) => ({ id })),
+            nextCursor: end < nativeTurns.length ? String(end) : null,
+          };
         }
         if (method === "thread/revert") {
-          nativeTurns = nativeTurns.slice(0, nativeTurns.indexOf(params.beforeTurnId));
+          const boundary = nativeTurns.indexOf(params.beforeTurnId);
+          assert.isAtLeast(boundary, 0);
+          nativeTurns = nativeTurns.slice(0, boundary);
         }
         return { thread: {} };
       }),
@@ -818,7 +861,7 @@ it.effect("replays a Codex rewind that failed after reverting without losing mor
         ThreadCommandExecutor.layer,
         Layer.mock(CheckpointService.CheckpointServiceV2)({
           restore: () =>
-            restores++ === 0
+            restores++ < 2
               ? Effect.fail(
                   new CheckpointService.CheckpointRestoreError({
                     scopeId,
@@ -891,16 +934,28 @@ it.effect("replays a Codex rewind that failed after reverting without losing mor
       },
     ]);
 
-    yield* worker.drain();
-    assert.deepEqual(nativeTurns, ["native-1"]);
-    assert.deepEqual(writes, []);
+    if (invalidBoundary) {
+      yield* worker.drain();
+      assert.deepEqual(nativeTurns, initialTurns);
+      assert.equal(restores, 0);
+      assert.deepEqual(writes, []);
+      const queued = Option.getOrThrow(yield* outbox.get(effectId));
+      assert.equal(queued.attemptCount, 1);
+      assert.isNotNull(queued.lastError);
+      assert.notEqual(queued.status, "succeeded");
+      return;
+    }
 
-    yield* TestClock.adjust("1 second");
-    yield* worker.drain();
-    assert.deepEqual(nativeTurns, ["native-1"]);
-    assert.equal(restores, 2);
-    assert.equal(writes.length, 1);
-    assert.equal(Option.getOrThrow(yield* outbox.get(effectId)).status, "succeeded");
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      yield* worker.drain();
+      assert.deepEqual(nativeTurns, targetOrdinal === 0 ? [] : retainedTurns);
+      assert.equal(restores, attempt);
+      assert.equal(writes.length, attempt === 3 ? 1 : 0);
+      const queued = Option.getOrThrow(yield* outbox.get(effectId));
+      assert.equal(queued.attemptCount, attempt);
+      assert.equal(queued.status, attempt === 3 ? "succeeded" : "pending");
+      if (attempt < 3) yield* TestClock.adjust("1 second");
+    }
   }).pipe(Effect.provide(layerTest));
 });
 
