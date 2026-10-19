@@ -302,6 +302,8 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           model,
           "--config",
           `model_reasoning_effort="${reasoningEffort}"`,
+          // Older Codex uses codex_hooks; newer versions give hooks precedence
+          // over that alias, so both must be disabled.
           "--config",
           "features.codex_hooks=false",
           "--config",
