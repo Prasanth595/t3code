@@ -20,8 +20,12 @@ import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "./DeviceLoadingView";
-import { DeviceSetup, deviceHubReadiness } from "./DeviceSetup";
-import { DeviceHostDiagnostics } from "./DeviceHostDiagnostics";
+import {
+  DeviceHostDiagnostics,
+  DeviceSetup,
+  deviceHostDiagnostics,
+  deviceHubReadiness,
+} from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
 
@@ -155,11 +159,11 @@ export function DevicePanel(props: {
 
   return (
     <PreviewPanelShell mode={props.mode}>
-      {!activeDevice ? (
+      {!activeDevice && deviceHostDiagnostics(state.hosts, state.hostStatuses).length > 0 ? (
         <div
           aria-label="Device host diagnostics"
           tabIndex={0}
-          className="max-h-32 shrink-0 overflow-y-auto border-b px-3 py-2 empty:hidden"
+          className="max-h-32 shrink-0 overflow-y-auto border-b px-3 py-2"
         >
           <DeviceHostDiagnostics hosts={state.hosts} hostStatuses={state.hostStatuses} />
         </div>

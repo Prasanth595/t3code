@@ -41,7 +41,7 @@ import { DeviceHostEditor } from "./DeviceHostEditor";
 import { useHostConnectionChecks } from "./useHostConnectionChecks";
 import { deviceHostConnectionKey } from "./deviceHostConnectionChecks";
 import { settingsScopeEnvironmentLabel, settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
-import { DeviceHostDiagnostics } from "../device/DeviceHostDiagnostics";
+import { DeviceHostDiagnostics } from "../device/DeviceSetup";
 
 export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null }) {
   const { scope, environments, connectedEnvironments } = useSettingsScope();
@@ -500,9 +500,11 @@ function DeviceHostList({
                 </div>
               ) : null}
               {!compact && !error && first.state ? (
-                <div className="mt-1 empty:hidden">
-                  <DeviceHostDiagnostics hosts={[host]} hostStatuses={first.state.hostStatuses} />
-                </div>
+                <DeviceHostDiagnostics
+                  className="mt-1"
+                  hosts={[host]}
+                  hostStatuses={first.state.hostStatuses}
+                />
               ) : null}
             </div>
             {!compact && progress ? (

@@ -56,8 +56,8 @@ import {
   platformSetupStatus,
   deviceHubDescription,
   agentDeviceDescription,
+  DeviceHostDiagnostics,
 } from "~/components/device/DeviceSetup";
-import { DeviceHostDiagnostics } from "~/components/device/DeviceHostDiagnostics";
 import { isElectron } from "../../env";
 
 import { Badge } from "../ui/badge";
@@ -916,6 +916,7 @@ export function DeviceIntegrationControls({
                     status={platformSetupStatus(state, "android")}
                   />
                 </div>
+                {/* Remote hosts report their own warnings in the device host list below. */}
                 <DeviceHostDiagnostics
                   hosts={state.hosts.filter((host) => host.kind === "local")}
                   hostStatuses={state.hostStatuses}
