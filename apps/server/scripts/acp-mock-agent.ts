@@ -48,12 +48,15 @@ const failLoadSession = process.env.T3_ACP_FAIL_LOAD_SESSION === "1";
 const failLoadSessionAfterConfigReplay =
   process.env.T3_ACP_FAIL_LOAD_SESSION_AFTER_CONFIG_REPLAY === "1";
 const emitLoadReplay = process.env.T3_ACP_EMIT_LOAD_REPLAY === "1";
+const hangLoadSessionAfterReplay = process.env.T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY === "1";
+const loadSessionDelayMs = Number(process.env.T3_ACP_LOAD_SESSION_DELAY_MS ?? "5000");
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
 const failPromptOrdinal = Number(process.env.T3_ACP_FAIL_PROMPT_ORDINAL);
 const compactionPromptOrdinals = new Set(
   (process.env.T3_ACP_COMPACTION_PROMPT_ORDINALS ?? "").split(",").map(Number),
 );
 const failSetModeConfigOption = process.env.T3_ACP_FAIL_SET_MODE_CONFIG_OPTION === "1";
+let omitModelConfigOption = process.env.T3_ACP_OMIT_MODEL_CONFIG_OPTION === "1";
 const emitEmptyDefaultAgentOption = process.env.T3_ACP_EMIT_EMPTY_DEFAULT_AGENT_OPTION === "1";
 const promptResponseText = process.env.T3_ACP_PROMPT_RESPONSE_TEXT;
 const promptDelayMs = Number(process.env.T3_ACP_PROMPT_DELAY_MS ?? "0");
@@ -107,6 +110,9 @@ process.once("SIGINT", () => {
 });
 
 function configOptions(): ReadonlyArray<AcpSchema.SessionConfigOption> {
+  if (omitModelConfigOption) {
+    return [];
+  }
   if (antigravityProfile) {
     return [
       {
@@ -639,6 +645,21 @@ const program = Effect.gen(function* () {
         return yield* AcpError.AcpRequestError.internalError(
           "Mock load session failure after config replay",
         );
+      }
+      if (hangLoadSessionAfterReplay) {
+        emitLoadReplayNotifications(requestedSessionId);
+        yield* agent.client.sessionUpdate({
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "user_message_chunk",
+            messageId: "mock-user-message",
+            content: { type: "text", text: "replay-tail" },
+          },
+        });
+        yield* Effect.sleep(loadSessionDelayMs);
+        return {
+          configOptions: configOptions(),
+        };
       }
       if (emitLoadReplay) {
         emitLoadReplayNotifications(requestedSessionId);
@@ -1765,6 +1786,16 @@ const program = Effect.gen(function* () {
     }
     if (method === "_test/finish-cancel") {
       return Deferred.succeed(nativeCancelRelease, undefined).pipe(Effect.as({}));
+    }
+    if (method === "_test/model-config-update") {
+      return Effect.gen(function* () {
+        omitModelConfigOption = (params as { readonly omit?: boolean } | undefined)?.omit === true;
+        yield* agent.client.sessionUpdate({
+          sessionId,
+          update: { sessionUpdate: "config_option_update", configOptions: configOptions() },
+        });
+        return {};
+      });
     }
     if (method === "_test/startup-metadata") {
       return Effect.gen(function* () {

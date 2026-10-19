@@ -1135,6 +1135,108 @@ describe("AcpSessionRuntime", () => {
     ),
   );
 
+  describe("late session/load response after replay idle", () => {
+    const lateLoadRuntimeOptions = (extra?: {
+      readonly resumeSessionId?: string;
+      readonly lifecycle?: boolean;
+    }) =>
+      AcpSessionRuntime.layer({
+        authMethodId: "test",
+        spawn: {
+          command: mockAgentCommand,
+          args: mockAgentArgs,
+          env: {
+            T3_ACP_HANG_LOAD_SESSION_AFTER_REPLAY: "1",
+            T3_ACP_LOAD_SESSION_DELAY_MS: "600",
+            ...(extra?.lifecycle ? { T3_ACP_SESSION_LIFECYCLE: "1" } : {}),
+          },
+        },
+        cwd: process.cwd(),
+        ...(extra?.resumeSessionId ? { resumeSessionId: extra.resumeSessionId } : {}),
+        sessionLoadReplayIdleGap: "50 millis",
+        sessionLoadTimeout: "5 seconds",
+        clientInfo: { name: "t3-test", version: "0.0.0" },
+      });
+    const nextConfigUpdate = (runtime: AcpSessionRuntime.AcpSessionRuntime["Service"]) =>
+      runtime.getEvents().pipe(
+        Stream.filter((event) => event._tag === "ConfigOptionsUpdated"),
+        Stream.runHead,
+        Effect.map(Option.getOrThrow),
+      );
+    const modelOption = (configOptions: ReadonlyArray<{ readonly category?: string | null }>) =>
+      configOptions.find((option) => option.category === "model");
+
+    it.effect("adopts the final configOptions when replay idle completed startup first", () =>
+      Effect.gen(function* () {
+        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+        const started = yield* runtime.start().pipe(Effect.timeout("2 seconds"));
+        expect(started.sessionSetupResult._meta).toMatchObject({
+          t3SessionLoadReady: "replay_idle",
+        });
+        expect(yield* runtime.getConfigOptions).toEqual([]);
+
+        const update = yield* nextConfigUpdate(runtime).pipe(Effect.timeout("5 seconds"));
+
+        expect(modelOption(update.configOptions)).toBeDefined();
+        expect(modelOption(yield* runtime.getConfigOptions)).toBeDefined();
+        const current = yield* runtime.start();
+        expect(modelOption(current.sessionSetupResult.configOptions ?? [])).toBeDefined();
+        expect(current.modelConfigId).toBe("model");
+      }).pipe(
+        Effect.provide(lateLoadRuntimeOptions({ resumeSessionId: "mock-session-1" })),
+        Effect.scoped,
+        Effect.provide(NodeServices.layer),
+        TestClock.withLive,
+      ),
+    );
+
+    it.effect("keeps a newer config update instead of the late load response", () =>
+      Effect.gen(function* () {
+        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+        yield* runtime.start().pipe(Effect.timeout("2 seconds"));
+        yield* runtime.request("_test/startup-metadata", {});
+        const newer = yield* nextConfigUpdate(runtime).pipe(Effect.timeout("2 seconds"));
+        expect(modelOption(newer.configOptions)).toMatchObject({ currentValue: "gpt-5.4" });
+
+        const lateUpdate = yield* nextConfigUpdate(runtime).pipe(
+          Effect.timeoutOption("1500 millis"),
+        );
+
+        expect(Option.isNone(lateUpdate)).toBe(true);
+        expect(modelOption(yield* runtime.getConfigOptions)).toMatchObject({
+          currentValue: "gpt-5.4",
+        });
+      }).pipe(
+        Effect.provide(lateLoadRuntimeOptions({ resumeSessionId: "mock-session-1" })),
+        Effect.scoped,
+        Effect.provide(NodeServices.layer),
+        TestClock.withLive,
+      ),
+    );
+
+    it.effect("ignores the late load response once another session is active", () =>
+      Effect.gen(function* () {
+        const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
+        yield* runtime.start();
+        yield* runtime.loadSession("mock-session-2").pipe(Effect.timeout("2 seconds"));
+        const resumed = yield* runtime.resumeSession("mock-session-3");
+        expect(resumed.sessionId).toBe("mock-session-3");
+
+        const lateUpdate = yield* nextConfigUpdate(runtime).pipe(
+          Effect.timeoutOption("1500 millis"),
+        );
+
+        expect(Option.isNone(lateUpdate)).toBe(true);
+        expect((yield* runtime.start()).sessionId).toBe("mock-session-3");
+      }).pipe(
+        Effect.provide(lateLoadRuntimeOptions({ lifecycle: true })),
+        Effect.scoped,
+        Effect.provide(NodeServices.layer),
+        TestClock.withLive,
+      ),
+    );
+  });
+
   it.effect("rejects invalid config option values before sending session/set_config_option", () => {
     const tempDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "acp-runtime-"));
     const requestLogPath = NodePath.join(tempDir, "requests.ndjson");

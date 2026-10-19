@@ -39,6 +39,7 @@ import {
   extractModelConfigId,
   findModelConfigOption,
   findSessionConfigOption,
+  isReplayIdleLoadResponse,
   mergeToolCallState,
   toolCallProgressLength,
   parseSessionModeState,
@@ -1249,6 +1250,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   );
   const assistantSegmentRef = yield* Ref.make<AcpAssistantSegmentState>({ nextSegmentIndex: 0 });
   const configOptionsRef = yield* Ref.make(sessionConfigOptionsFromSetup(undefined));
+    // Bumped when the agent or the user changes config after setup, so a late
+    // session/load response never overwrites something newer than itself.
+    const configRevisionRef = yield* Ref.make(0);
   const initializeStateRef = yield* Ref.make<AcpInitializeState>({ _tag: "NotStarted" });
   const startStateRef = yield* Ref.make<AcpStartState>({ _tag: "NotStarted" });
   const startupMetadataRef = yield* Ref.make<ReadonlyArray<EffectAcpSchema.SessionNotification>>(
@@ -1673,6 +1677,11 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
   const acp = yield* Effect.service(EffectAcpClient.AcpClient).pipe(Effect.provide(acpContext));
 
   const processSessionUpdate = (notification: EffectAcpSchema.SessionNotification) =>
+      (notification.update.sessionUpdate === "config_option_update"
+        ? Ref.update(configRevisionRef, (revision) => revision + 1)
+        : Effect.void
+      ).pipe(
+        Effect.andThen(
     handleSessionUpdate({
       queue: eventQueue,
       modeStateRef,
@@ -1682,7 +1691,9 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       assistantSegmentRef,
       assistantItemRuntimeId,
       params: notification,
-    });
+          }),
+        ),
+      );
 
   yield* acp.handleSessionUpdate((notification) =>
     notificationSemaphore.withPermit(
@@ -1858,6 +1869,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       | EffectAcpSchema.ResumeSessionResponse,
   ) {
     const configOptions = sessionConfigOptionsFromSetup(response);
+      yield* Ref.update(configRevisionRef, (revision) => revision + 1);
     yield* Ref.set(configOptionsRef, configOptions);
     yield* Queue.offer(eventQueue, {
       _tag: "ConfigOptionsUpdated",
@@ -1880,12 +1892,7 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       | EffectAcpSchema.ResumeSessionResponse,
   ): Effect.fn.Return<AcpSessionRuntimeStartResult, EffectAcpErrors.AcpError> {
     const current = yield* getStartedState;
-    const meta = sessionSetupResult._meta;
-    const syntheticReplayIdle =
-      meta !== null &&
-      typeof meta === "object" &&
-      !Array.isArray(meta) &&
-      (meta as { readonly t3SessionLoadReady?: unknown }).t3SessionLoadReady === "replay_idle";
+        const syntheticReplayIdle = isReplayIdleLoadResponse(sessionSetupResult);
     const extractedModelConfigId = extractModelConfigId(sessionSetupResult);
     const nextModelConfigId =
       extractedModelConfigId ?? (syntheticReplayIdle ? current.modelConfigId : undefined);
@@ -1916,6 +1923,57 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
     yield* Ref.set(startStateRef, { _tag: "Started", result: nextState });
     return nextState;
   });
+
+    // Replay idle can win before the agent answers session/load. Its answer still
+    // carries the real config, so keep waiting for it and apply it as long as the
+    // session is still current and nothing has changed config in the meantime.
+    const adoptLateLoadResponse = (
+      loadFiber: Fiber.Fiber<EffectAcpSchema.LoadSessionResponse, EffectAcpErrors.AcpError>,
+      sessionId: string,
+      revision: number,
+    ) =>
+      Fiber.join(loadFiber).pipe(
+        Effect.flatMap((late) =>
+          late.configOptions == null
+            ? Effect.void
+            : Ref.get(startStateRef).pipe(
+                // Startup writes config from the synthetic response when it
+                // finishes; applying before that would be overwritten.
+                Effect.flatMap((state) =>
+                  state._tag === "Starting"
+                    ? Deferred.await(state.deferred).pipe(Effect.ignore)
+                    : Effect.void,
+                ),
+                Effect.andThen(
+                  notificationSemaphore.withPermit(
+                    Effect.gen(function* () {
+                      const state = yield* Ref.get(startStateRef);
+                      if (state._tag !== "Started" || state.result.sessionId !== sessionId) return;
+                      if ((yield* Ref.get(configRevisionRef)) !== revision) return;
+                      yield* processSessionUpdate({
+                        sessionId,
+                        update: {
+                          sessionUpdate: "config_option_update",
+                          configOptions: late.configOptions ?? [],
+                        },
+                      });
+                      yield* Ref.set(startStateRef, {
+                        _tag: "Started",
+                        result: {
+                          ...state.result,
+                          sessionSetupResult: late,
+                          modelConfigId: extractModelConfigId(late) ?? state.result.modelConfigId,
+                        },
+                      });
+                    }),
+                  ),
+                ),
+              ),
+        ),
+        Effect.ignore,
+        Effect.forkIn(runtimeScope),
+        Effect.asVoid,
+      );
 
   const runLoadSessionWithReplayIdle = (
     loadPayload: EffectAcpSchema.LoadSessionRequest,
@@ -1951,11 +2009,22 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
           const idleFiber = yield* waitForSessionLoadReplayIdle({
             gateRef: sessionLoadGateRef,
           }).pipe(Effect.forkIn(runtimeScope));
+            // The RPC outlives the race when replay idle wins, so it is not
+            // raced directly: that would drop the agent's final response.
+            const loadFiber = yield* acp.agent
+              .loadSession(loadPayload)
+              .pipe(Effect.forkIn(runtimeScope));
+            const revision = yield* Ref.get(configRevisionRef);
           const loaded = yield* Effect.raceFirst(
-            acp.agent.loadSession(loadPayload),
+              Fiber.join(loadFiber),
             Fiber.join(idleFiber),
           ).pipe(
             Effect.ensuring(Fiber.interrupt(idleFiber).pipe(Effect.ignore)),
+              Effect.onExit((exit) =>
+                Exit.isSuccess(exit) && isReplayIdleLoadResponse(exit.value)
+                  ? adoptLateLoadResponse(loadFiber, loadPayload.sessionId, revision)
+                  : Fiber.interrupt(loadFiber).pipe(Effect.ignore),
+              ),
             Effect.timeoutOption(sessionLoadTimeout),
             Effect.flatMap((result) =>
               Effect.fromOption(

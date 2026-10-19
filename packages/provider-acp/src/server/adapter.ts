@@ -553,6 +553,10 @@ export const AcpProviderCapabilitiesV2 = {
   },
 } satisfies OrchestrationV2ProviderCapabilities;
 
+const hasModelConfigOption = (
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
+) => findModelConfigOption(configOptions) !== undefined;
+
 function negotiatedCapabilities(
   base: OrchestrationV2ProviderCapabilities,
   started: AcpSessionRuntime.AcpSessionRuntimeStartResult,
@@ -1591,6 +1595,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.set(activeSessionSetup, setup);
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
+        const providerSessionRef = yield* Ref.make<OrchestrationV2ProviderSession | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
         // Unique markers keep delayed prompt completions from clearing later compactions.
@@ -5920,6 +5925,39 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
         });
 
+        // The agent can add or drop its model option after setup (for example when
+        // session/load answers after replay idle), so the capability follows the
+        // live options instead of the setup response.
+        const refreshModelSwitchCapability = Effect.fnUntraced(function* (
+          configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+        ) {
+          const current = yield* Ref.get(providerSessionRef);
+          const supportsModelSwitchInSession =
+            hasModelConfigOption(configOptions) ||
+            (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models != null;
+          if (
+            current === null ||
+            current.capabilities.sessions.supportsModelSwitchInSession ===
+              supportsModelSwitchInSession
+          ) {
+            return;
+          }
+          const next: OrchestrationV2ProviderSession = {
+            ...current,
+            capabilities: {
+              ...current.capabilities,
+              sessions: { ...current.capabilities.sessions, supportsModelSwitchInSession },
+            },
+            updatedAt: yield* DateTime.now,
+          };
+          yield* Ref.set(providerSessionRef, next);
+          yield* Queue.offer(events, {
+            type: "provider_session.updated",
+            driver,
+            providerSession: next,
+          });
+        });
+
         const wireAcpRuntimeHandlers = Effect.fnUntraced(function* (
           targetRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"],
           handlerGeneration: number,
@@ -5936,7 +5974,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
               return runRuntimeCallbackAtGeneration(
                 handlerGeneration,
-                flavor.onSessionEvent?.(event) ?? Effect.void,
+                Effect.gen(function* () {
+                  if (event._tag === "ConfigOptionsUpdated") {
+                    yield* refreshModelSwitchCapability(event.configOptions);
+                  }
+                  yield* flavor.onSessionEvent?.(event) ?? Effect.void;
+                }),
               ).pipe(Effect.asVoid);
             }),
             Effect.forkIn(runtimeScope ?? sessionScope),
@@ -6879,11 +6922,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           status: "ready",
           cwd: input.runtimePolicy.cwd ?? process.cwd(),
           model: input.modelSelection.model,
-          capabilities,
+          capabilities: {
+            ...capabilities,
+            sessions: {
+              ...capabilities.sessions,
+              supportsModelSwitchInSession:
+                hasModelConfigOption(yield* runtime.getConfigOptions) ||
+                (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models != null,
+            },
+          },
           createdAt,
           updatedAt: createdAt,
           lastError: null,
         };
+        yield* Ref.set(providerSessionRef, providerSession);
 
         const providerTurnPayload = (
           context: ActiveAcpTurn,
@@ -7773,7 +7825,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           instanceId: options.instanceId,
           driver,
           providerSessionId: input.providerSessionId,
-          providerSession,
+          get providerSession() {
+            return Ref.getUnsafe(providerSessionRef) ?? providerSession;
+          },
           events: Stream.fromEffectRepeat(Queue.take(events)),
           ...(flavor.getModelContextWindow === undefined
             ? {}
