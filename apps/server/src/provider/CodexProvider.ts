@@ -68,6 +68,7 @@ type CodexRateLimitsProbe =
 
 const CODEX_APP_SERVER_PROBE_FORCE_KILL_AFTER = "2 seconds" as const;
 const CODEX_CATALOG_REFRESH_TIMEOUT = "3 seconds" as const;
+const CODEX_CONFIG_PROBE_TIMEOUT = "3 seconds" as const;
 const CODEX_CATALOG_REFRESH_POLL = "100 millis" as const;
 const CODEX_CLIENT_NAME = "T3 Code";
 // Codex's probe does a full handshake plus account, models, and skills requests, which can
@@ -265,8 +266,7 @@ export function applyPreferredCodexDefaultModel(
   });
 }
 
-/** Codex's configured service tier is global, so it is the default for every model. */
-export function applyCodexServiceTierDefault(
+function applyConfiguredCodexServiceTier(
   models: ReadonlyArray<ServerProviderModel>,
   serviceTier: string | undefined,
 ): ReadonlyArray<ServerProviderModel> {
@@ -279,7 +279,6 @@ export function applyCodexServiceTierDefault(
         ...model.capabilities,
         optionDescriptors: model.capabilities.optionDescriptors.map((descriptor) => {
           if (descriptor.id !== "serviceTier" || descriptor.type !== "select") return descriptor;
-          // Codex config spells Priority as "fast"; older catalogs advertise "fast" directly.
           const value = descriptor.options.find(
             (option) =>
               option.id === serviceTier || (serviceTier === "fast" && option.id === "priority"),
@@ -524,11 +523,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
       // The shared catalog must exclude config from the server's launch project.
       client.request("config/read", { includeLayers: false }).pipe(
         Effect.map((response) => response.config.service_tier ?? undefined),
-        Effect.timeoutOption(Duration.millis(RATE_LIMITS_PROBE_TIMEOUT_MS)),
+        Effect.timeoutOption(CODEX_CONFIG_PROBE_TIMEOUT),
         Effect.map(Option.getOrUndefined),
-        Effect.catch((error) =>
-          Effect.logDebug("Codex config read failed.", { cause: error }).pipe(Effect.as(undefined)),
-        ),
+        Effect.catch(() => Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined))),
       ),
       // Usage is an enrichment: a failure or a slow answer degrades to "no
       // usage this probe" rather than costing the account and models.
@@ -561,7 +558,7 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     account: accountResponse,
     ...(rateLimits ? { rateLimits } : {}),
     version,
-    models: applyCodexServiceTierDefault(
+    models: applyConfiguredCodexServiceTier(
       applyPreferredCodexDefaultModel(appendCustomCodexModels(models, input.customModels ?? [])),
       serviceTier,
     ),
