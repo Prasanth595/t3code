@@ -46,10 +46,6 @@ export function shouldNavigateAfterThreadPark(input: {
 const THREAD_SELECTION_SAFE_SELECTOR = "[data-thread-item], [data-thread-selection-safe]";
 export const THREAD_JUMP_HINT_SHOW_DELAY_MS = 200;
 
-// Accessible name for a sidebar row: "title, status, project". The title is the
-// row's identity and must lead when users scan tasks; status and project tell
-// same-titled rows apart. Only static context belongs here; row actions stay
-// separate controls with their own names.
 export function resolveSidebarRowAccessibleName(input: {
   readonly title: string;
   readonly statusLabel: string | null;

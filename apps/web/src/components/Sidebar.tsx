@@ -1162,26 +1162,12 @@ function SortableThreadRow(
 const draftSurfaceClassName = "bg-warning/4 hover:bg-warning/8";
 const draftPenClassName = "size-3 shrink-0 text-warning-foreground";
 
-// The row's one control for opening it, named "title, status, project" so
-// tabbing between rows tells same-titled threads apart. The visible title and
-// project text are aria-hidden so browse mode does not read them twice; visible
-// status labels stay exposed because they are live regions. It fills the row
-// behind the visible content, which gives screen reader cursors and voice
-// control a row-sized target, and its activation bubbles to the row surface's
-// click handler like any other click on the row. Secondary actions
-// must stay its siblings, never its children: WebKit drops everything inside a
-// button from the accessibility tree, and NVDA's browse mode hides the
-// contents of a named button. The row surface needs `isolate` so the negative
-// z-index keeps this above the surface's background.
 const SIDEBAR_ROW_SECONDARY_CONTROL_SELECTOR = "button:not([data-sidebar-row-primary]), a, input";
 
-// Row surface mousedown handler. A press on the row's content lands on
-// elements that cannot take focus, so hand focus to the primary action, the
-// way pressing a button focuses it. The keyboard and the context menu key then
-// pick up from this row.
+// Visible row content covers the primary button, so presses must transfer focus.
 function focusSidebarRowPrimaryAction(event: ReactMouseEvent<HTMLElement>) {
   if ((event.target as HTMLElement).closest(SIDEBAR_ROW_SECONDARY_CONTROL_SELECTOR)) return;
-  const primaryAction = event.currentTarget.querySelector<HTMLElement>(
+  const primaryAction = event.currentTarget.querySelector<HTMLButtonElement>(
     "[data-sidebar-row-primary]",
   );
   if (!primaryAction) return;
@@ -1189,17 +1175,18 @@ function focusSidebarRowPrimaryAction(event: ReactMouseEvent<HTMLElement>) {
   primaryAction.focus({ preventScroll: true });
 }
 
+// Keep actions outside the named button so screen readers expose them. Row
+// isolation keeps this button above its background and behind its visible content.
 function SidebarRowPrimaryAction(props: { name: string; isActive: boolean; isBusy?: boolean }) {
   return (
     <button
       type="button"
       data-sidebar-row-primary
+      aria-label={props.name}
       aria-current={props.isActive ? "page" : undefined}
       aria-busy={props.isBusy || undefined}
       className="absolute inset-0 -z-1 cursor-pointer rounded-[inherit] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-    >
-      <span className="sr-only">{props.name}</span>
-    </button>
+    />
   );
 }
 
@@ -1363,7 +1350,13 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
   const handleActivate = () => onNavigate(draftId);
   const handleContextMenu = (event: ReactMouseEvent) => {
     event.preventDefault();
-    onContextMenu(draftId, { x: event.clientX, y: event.clientY });
+    const bounds = event.currentTarget.getBoundingClientRect();
+    onContextMenu(
+      draftId,
+      event.clientX === 0 && event.clientY === 0
+        ? { x: bounds.left, y: bounds.bottom }
+        : { x: event.clientX, y: event.clientY },
+    );
   };
   const handleDiscard = (event: ReactMouseEvent) => {
     event.preventDefault();

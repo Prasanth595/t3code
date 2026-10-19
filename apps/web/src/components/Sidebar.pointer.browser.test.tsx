@@ -436,9 +436,17 @@ describe("sidebar row controls", () => {
     const row = primary.element().closest('[data-testid="sidebar-draft-row"]')!;
     const rect = row.getBoundingClientRect();
     expect(rect.width).toBeGreaterThan(0);
-    for (const shortcut of ["{Shift>}{F10}{/Shift}", "{ContextMenu}"]) {
+    for (const openMenu of [
+      () => userEvent.keyboard("{Shift>}{F10}{/Shift}"),
+      () => userEvent.keyboard("{ContextMenu}"),
+      () => {
+        primary
+          .element()
+          .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+      },
+    ]) {
       await act(() => (primary.element() as HTMLElement).focus());
-      await act(() => userEvent.keyboard(shortcut));
+      await act(openMenu);
       const menu = document.querySelector<HTMLElement>('[data-level="0"]')!;
       expect(menu).not.toBeNull();
       expect(menu.getBoundingClientRect().left).toBeGreaterThanOrEqual(rect.left);
