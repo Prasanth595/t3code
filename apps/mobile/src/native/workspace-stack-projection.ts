@@ -6,7 +6,6 @@ import type {
 
 type Route = StackNavigationState<ParamListBase>["routes"][number];
 
-/** Project one router history into native columns and a modal presentation stack. */
 export function projectWorkspaceStack(
   state: StackNavigationState<ParamListBase>,
   isOverlay: (route: Route) => boolean,
@@ -44,7 +43,33 @@ export function nativeWorkspacePopAction(
     : null;
 }
 
-/** Group pushes with the modal that owns their native stack. */
+/** A native card pop must preserve pushes made before its completion event reaches JS. */
+export function nativeStackPopAction(
+  state: Pick<NavigationState, "key" | "index" | "routes">,
+  dismissedKey: string,
+  destinationKey?: string,
+) {
+  const sourceIndex = state.routes.findIndex((route) => route.key === dismissedKey);
+  const destinationIndex =
+    destinationKey === undefined
+      ? sourceIndex - 1
+      : state.routes.findIndex((route) => route.key === destinationKey);
+  if (
+    sourceIndex <= 0 ||
+    sourceIndex > state.index ||
+    destinationIndex < 0 ||
+    destinationIndex >= sourceIndex
+  ) {
+    return null;
+  }
+  return {
+    type: "POP" as const,
+    payload: { count: sourceIndex - destinationIndex },
+    source: dismissedKey,
+    target: state.key,
+  };
+}
+
 export function partitionStackPresentations<T>(
   routes: readonly T[],
   isModal: (route: T) => boolean,
