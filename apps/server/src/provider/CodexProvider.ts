@@ -405,25 +405,44 @@ export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
   };
 }
 
-class CodexMetadataCwdError extends Schema.TaggedError<CodexMetadataCwdError>()(
-  "CodexMetadataCwdError",
+class CodexMetadataCwdRelativeError extends Schema.TaggedError<CodexMetadataCwdRelativeError>()(
+  "CodexMetadataCwdRelativeError",
   {
     metadataCwd: Schema.String,
-    reason: Schema.Literals(["relative", "unavailable", "not-directory"]),
-    cause: Schema.optionalKey(Schema.Defect()),
   },
 ) {
   override get message(): string {
-    switch (this.reason) {
-      case "relative":
-        return "Codex metadata directory must be an absolute path";
-      case "unavailable":
-        return "Codex metadata directory does not exist or cannot be accessed";
-      case "not-directory":
-        return "Codex metadata directory is not a directory";
-    }
+    return "Codex metadata directory must be an absolute path";
   }
 }
+
+class CodexMetadataCwdUnavailableError extends Schema.TaggedError<CodexMetadataCwdUnavailableError>()(
+  "CodexMetadataCwdUnavailableError",
+  {
+    metadataCwd: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return "Codex metadata directory does not exist or cannot be accessed";
+  }
+}
+
+class CodexMetadataCwdNotDirectoryError extends Schema.TaggedError<CodexMetadataCwdNotDirectoryError>()(
+  "CodexMetadataCwdNotDirectoryError",
+  {
+    metadataCwd: Schema.String,
+  },
+) {
+  override get message(): string {
+    return "Codex metadata directory is not a directory";
+  }
+}
+
+type CodexMetadataCwdError =
+  | CodexMetadataCwdRelativeError
+  | CodexMetadataCwdUnavailableError
+  | CodexMetadataCwdNotDirectoryError;
 
 type CodexProcessCwdPurpose =
   | { readonly kind: "metadata" }
@@ -454,25 +473,21 @@ export function resolveCodexProcessCwd({
     const path = yield* Path.Path;
     const metadataCwd = expandHomePath(settings.metadataCwd, yield* HostProcess.HomeDirectory);
     if (!path.isAbsolute(metadataCwd)) {
-      return yield* new CodexMetadataCwdError({ metadataCwd, reason: "relative" });
+      return yield* new CodexMetadataCwdRelativeError({ metadataCwd });
     }
     const fileSystem = yield* FileSystem.FileSystem;
     const canonical = yield* fileSystem
       .realPath(metadataCwd)
       .pipe(
-        Effect.mapError(
-          (cause) => new CodexMetadataCwdError({ metadataCwd, reason: "unavailable", cause }),
-        ),
+        Effect.mapError((cause) => new CodexMetadataCwdUnavailableError({ metadataCwd, cause })),
       );
     const info = yield* fileSystem
       .stat(canonical)
       .pipe(
-        Effect.mapError(
-          (cause) => new CodexMetadataCwdError({ metadataCwd, reason: "unavailable", cause }),
-        ),
+        Effect.mapError((cause) => new CodexMetadataCwdUnavailableError({ metadataCwd, cause })),
       );
     if (info.type !== "Directory") {
-      return yield* new CodexMetadataCwdError({ metadataCwd, reason: "not-directory" });
+      return yield* new CodexMetadataCwdNotDirectoryError({ metadataCwd });
     }
     return purpose.kind === "metadata" ? canonical : (purpose.workspaceCwd ?? canonical);
   });
