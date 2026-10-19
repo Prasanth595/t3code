@@ -3389,7 +3389,11 @@ function applyClaudeTaskTool(
     if (id === undefined || text === undefined) return undefined;
     return new Map(tasks).set(id, { text, status: "pending" });
   }
-  if (toolName !== "TaskUpdate" || claudeTaskField(result, "success") === false) {
+  if (
+    toolName !== "TaskUpdate" ||
+    claudeTaskField(result, "success") === false ||
+    (typeof result === "string" && !result.startsWith("Updated task #"))
+  ) {
     return undefined;
   }
   const id = claudeTaskString(input, "taskId") ?? claudeTaskString(result, "taskId");

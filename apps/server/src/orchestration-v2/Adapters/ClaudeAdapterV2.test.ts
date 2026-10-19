@@ -4808,8 +4808,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               content:
                 parentToolUseId !== null && tool.name === "TaskCreate"
                   ? `Task #${tool.output.task.id} created successfully: ${tool.output.task.subject}`
-                  : "Task tool finished.",
-              is_error: options?.isError ?? false,
+                  : parentToolUseId !== null && tool.name === "TaskUpdate"
+                    ? tool.output.success
+                      ? `Updated task #${tool.output.taskId} ${tool.output.updatedFields.join(", ")}`
+                      : tool.output.error
+                    : "Task tool finished.",
+              ...(options?.isError === undefined ? {} : { is_error: options.isError }),
             },
             ...(options?.extraToolResult
               ? [{ type: "tool_result", tool_use_id: "unrelated-tool", content: "ok" }]
@@ -5122,6 +5126,19 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       const child = { parentToolUseId: "tool-parent-agent" };
       yield* harness.call(updateTask({ taskId: "1", status: "completed" }), child);
       yield* harness.call(createTask("2", "Child task"), child);
+      yield* harness.call(
+        {
+          name: "TaskUpdate",
+          input: { taskId: "2", status: "completed" },
+          output: {
+            success: false,
+            taskId: "2",
+            updatedFields: [],
+            error: "Tests must pass before completing.",
+          },
+        },
+        child,
+      );
       yield* harness.call(updateTask({ taskId: "2", status: "in_progress" }), {
         ...child,
         isError: true,
