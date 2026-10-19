@@ -41,6 +41,7 @@ import {
   ACP_REGISTRY_PROVIDER,
   makeAcpRegistryAdapterV2,
   acpRegistryPromptFailure,
+  acpRegistryProbeResult,
 } from "@t3tools/provider-acp-registry/testing";
 
 const registryUrl = "https://registry.test/registry.json";
@@ -163,9 +164,6 @@ describe("AcpRegistryAdapterV2", () => {
       options: ["ask", "auto"].map((value) => ({ value, name: value })),
     });
 
-    // A scripted ACP v1 agent: initialize, session/new answered with `setup`,
-    // then the frames T3 must send (and the agent's answers) to apply the
-    // user's stored model selection. Returns how the session open ended.
     const openWithStoredSelection = Effect.fn("openWithStoredSelection")(function* (input: {
       readonly setup: unknown;
       readonly selectionFrames: ReadonlyArray<Frame>;
@@ -236,9 +234,6 @@ describe("AcpRegistryAdapterV2", () => {
           }),
         })
         .pipe(Effect.asVoid, Effect.scoped, Effect.exit);
-      // Closing the session stops the agent. It records its replay status before
-      // sending each answer, so the status is final once T3 has read the last
-      // one. The script must be consumed exactly.
       yield* makeAcpReplayCompletenessAssertion(fileSystem, statusPath, transcript);
       return opened;
     });
@@ -274,24 +269,31 @@ describe("AcpRegistryAdapterV2", () => {
       }).pipe(Effect.map(assertOpened), Effect.provide(layerTest), Effect.scoped),
     );
 
-    // Two `category: "model"` selects, as fx and Cline advertise: ACP breaks the
-    // tie by array order, so `provider` is the model option. The boolean before
-    // it cannot hold a model id.
-    const competingModelOptions = (provider: string) => [
+    const modelOptions = [
       { id: "fast", name: "Fast", category: "model", type: "boolean", currentValue: false },
+      {
+        id: " ",
+        name: "Unnamed",
+        category: "model",
+        type: "select",
+        currentValue: "unaddressable",
+        options: [{ value: "unaddressable", name: "Unaddressable" }],
+      },
       {
         id: "provider",
         name: "Provider",
         category: "model",
         type: "select",
-        currentValue: provider,
+        currentValue: "gateway",
         options: [
           {
             group: "hosted",
             name: "Hosted",
-            options: ["gateway", "codex"].map((value) => ({ value, name: value })),
+            options: [
+              { value: "gateway", name: "Gateway" },
+              { value: "codex", name: "Codex" },
+            ],
           },
-          { group: "local", name: "Local", options: [{ value: "pi", name: "pi" }] },
         ],
       },
       {
@@ -299,34 +301,64 @@ describe("AcpRegistryAdapterV2", () => {
         name: "Model",
         category: "model",
         type: "select",
-        currentValue: "claude-opus-5.5",
-        options: ["claude-opus-5.5", "claude-haiku-5.5"].map((value) => ({ value, name: value })),
+        currentValue: "later-model",
+        options: [{ value: "later-model", name: "Later model" }],
       },
-    ];
+    ] as const;
 
-    it.effect(
-      "writes a model to the first model-category select, the option the picker lists",
-      () =>
-        openWithStoredSelection({
-          setup: { configOptions: competingModelOptions("pi") },
+    it.effect("opens a model from the catalog by writing the first usable model select", () =>
+      Effect.gen(function* () {
+        const setup = { sessionId: "agent-session", configOptions: modelOptions };
+        const catalog = acpRegistryProbeResult(ProviderInstanceId.make("acp-registry-mode-pick"), {
+          sessionId: setup.sessionId,
+          initializeResult: { protocolVersion: 1 },
+          sessionSetupResult: {
+            ...setup,
+            // The catalog uses the normalized groupId; ACP v1 sends group on the wire.
+            configOptions: modelOptions.map((option) =>
+              option.id === "provider"
+                ? {
+                    ...option,
+                    options: [{ ...option.options[0], groupId: option.options[0].group }],
+                  }
+                : option,
+            ),
+          },
+          modelConfigId: "provider",
+        });
+        assert.deepEqual(catalog.models, [
+          { id: "gateway", name: "Gateway", description: null },
+          { id: "codex", name: "Codex", description: null },
+        ]);
+        assert.equal(catalog.currentModelId, "gateway");
+        const model = catalog.models[1]?.id;
+        assert.isDefined(model);
+        const opened = yield* openWithStoredSelection({
+          setup,
           selectionFrames: [
             outbound("session/set_config_option", {
               sessionId: "agent-session",
               configId: "provider",
               value: "codex",
             }),
-            answer("session/set_config_option", { configOptions: competingModelOptions("codex") }),
+            answer("session/set_config_option", {
+              configOptions: modelOptions.map((option) =>
+                option.id === "provider" ? { ...option, currentValue: "codex" } : option,
+              ),
+            }),
           ],
-          model: "codex",
-        }).pipe(Effect.map(assertOpened), Effect.provide(layerTest), Effect.scoped),
+          model,
+        });
+        assertOpened(opened);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
     );
 
-    it.effect("rejects a model the model option does not offer without sending it", () =>
+    it.effect("rejects a later-option model before writing any configuration", () =>
       Effect.gen(function* () {
         const opened = yield* openWithStoredSelection({
-          setup: { configOptions: competingModelOptions("pi") },
+          setup: { configOptions: modelOptions },
           selectionFrames: [],
-          model: "claude-haiku-5.5",
+          model: "later-model",
         });
         assert.isTrue(Exit.isFailure(opened));
         const failure = Exit.isFailure(opened) ? Cause.squash(opened.cause) : undefined;
@@ -337,8 +369,8 @@ describe("AcpRegistryAdapterV2", () => {
           code: -32602,
           data: {
             configId: "provider",
-            allowedValues: ["gateway", "codex", "pi"],
-            receivedValue: "claude-haiku-5.5",
+            allowedValues: ["gateway", "codex"],
+            receivedValue: "later-model",
           },
         });
       }).pipe(Effect.provide(layerTest), Effect.scoped),

@@ -177,8 +177,6 @@ function materializeInbound(value: unknown): unknown {
   );
 }
 
-// Builds the wire message for a recorded inbound frame, or stops the replay
-// and returns undefined when the frame cannot be sent.
 function inboundMessage(recorded: LogicalFrame): JsonRpcMessage | undefined {
   const frame = materializeInbound(recorded) as LogicalFrame;
   switch (frame.kind) {
@@ -217,10 +215,8 @@ function inboundMessage(recorded: LogicalFrame): JsonRpcMessage | undefined {
   }
 }
 
-// Consumes entries up to the next expected outbound frame, publishes the status,
-// then sends the inbound frames. The status is the completeness receipt, and T3
-// may stop (kill) this process as soon as it reads the last frame, so the status
-// has to count a frame before the frame is visible.
+// T3 may kill the agent after its last reply. Record the batch, including trailing
+// runtime exits, before publishing any frames.
 function flushInbound(): void {
   const messages: Array<JsonRpcMessage> = [];
   while (!stopped) {

@@ -384,12 +384,7 @@ type AcpSelectConfigOption = Extract<
   { readonly type: "select" }
 >;
 
-/**
- * Finds the config option that selects the session's model: the first
- * `category: "model"` select. ACP breaks ties between options of one category
- * by array order, and only a select can hold a model id. Model discovery, the
- * current model, and `setModel` writes all use this one option.
- */
+// ACP resolves options in the same category by array order.
 export function findModelConfigOption(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | null | undefined,
 ): AcpSelectConfigOption | undefined {
