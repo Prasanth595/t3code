@@ -46,6 +46,7 @@ vi.mock("@react-navigation/native", () => {
   return {
     StackActions: { replace: () => ({}) },
     useNavigation: () => navigation,
+    useRoute: () => ({ key: "thread", name: "Thread", params: undefined }),
   };
 });
 vi.mock("../../native/useOpenPullRequest", () => ({ useOpenPullRequest: () => () => {} }));

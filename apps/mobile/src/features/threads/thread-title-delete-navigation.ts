@@ -1,5 +1,7 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
+import { resetAndroidWorkspace } from "../../lib/android-workspace-navigation";
+
 interface ThreadRouteNavigation {
   readonly isFocused: () => boolean;
   readonly getState: () =>
@@ -32,4 +34,19 @@ export function threadRouteStillShows(
     firstParam(params?.environmentId) === thread.environmentId &&
     firstParam(params?.threadId) === thread.id
   );
+}
+
+/**
+ * Leaves a deleted thread for Home by resetting the root stack, so Back from a covering
+ * route such as Files cannot reopen it. Android passes its list return, which also selects
+ * the Threads tab.
+ */
+export function leaveDeletedThread(
+  navigation: ThreadRouteNavigation & Parameters<typeof resetAndroidWorkspace>[0],
+  thread: Pick<EnvironmentThreadShell, "environmentId" | "id">,
+  androidReturnToList?: () => void,
+) {
+  if (!threadRouteStillShows(navigation, thread)) return;
+  if (androidReturnToList) androidReturnToList();
+  else resetAndroidWorkspace(navigation);
 }

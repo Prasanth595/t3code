@@ -15,7 +15,7 @@ import { useThreadListActions } from "../home/useThreadListActions";
 import { useWorkspaceListNavigation } from "../workspace/useAndroidWorkspaceNavigation";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { buildThreadTitleMenu, threadTitleSnoozeUntil } from "./thread-title-menu";
-import { threadRouteStillShows } from "./thread-title-delete-navigation";
+import { leaveDeletedThread } from "./thread-title-delete-navigation";
 import { ThreadTitleMenuTrigger } from "./ThreadTitleMenuTrigger";
 import { Platform, View } from "react-native";
 
@@ -82,9 +82,9 @@ export function ThreadTitleMenu(props: {
               void handlers.regenerateThreadTitle(thread);
               return;
             case "delete":
-              handlers.confirmDeleteThread(thread, () => {
-                if (threadRouteStillShows(navigation, thread)) returnToList();
-              });
+              handlers.confirmDeleteThread(thread, () =>
+                leaveDeletedThread(navigation, thread, android ? returnToList : undefined),
+              );
               return;
             case "copy-thread-id":
               void copyTextWithHaptic(thread.id, { target: "thread-id" });
