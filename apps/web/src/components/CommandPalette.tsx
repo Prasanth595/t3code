@@ -2870,19 +2870,24 @@ function OpenCommandPaletteDialog(props: {
   function handleKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
     const command = resolveShortcutCommand(event, keybindings, {
       platform: navigator.platform,
-      context: { modelPickerOpen: false },
+      context: { modelPickerOpen: false, editableFocus: true },
     });
-    // A shortcut shown on a listed item runs that item. The global handlers
-    // ignore shortcuts while the palette is open, so nothing else would.
+    // Global new-thread handlers ignore shortcuts while the palette is open.
     const isJump = threadJumpIndexFromCommand(command ?? "") !== null;
-    const matchingItem = command
-      ? displayedGroups
-          .flatMap((group) => group.items)
-          .find((item) => item.shortcutCommand === command)
-      : undefined;
     const isNewThread =
-      command === "chat.new" || command === "chat.newLocal" || command === "chat.newWithoutProject";
-    if (isJump || (matchingItem && isNewThread)) {
+      !event.nativeEvent.isComposing &&
+      event.keyCode !== 229 &&
+      (command === "chat.new" ||
+        command === "chat.newLocal" ||
+        command === "chat.newWithoutProject");
+    const matchingItem =
+      isJump || isNewThread
+        ? displayedGroups
+            .flatMap((group) => group.items)
+            .find((item) => item.shortcutCommand === command)
+        : undefined;
+    if (isJump || matchingItem) {
+      (event as typeof event & { preventBaseUIHandler?: () => void }).preventBaseUIHandler?.();
       event.preventDefault();
       event.stopPropagation();
       if (matchingItem) {
