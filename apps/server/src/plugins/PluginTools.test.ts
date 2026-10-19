@@ -160,6 +160,7 @@ const inventory = (count: number) => {
   });
   const unused = () => Effect.die("not used by PluginTools");
   const catalog = PluginCatalog.PluginCatalog.of({
+    ready: Effect.void,
     list: Effect.sync(() => {
       counts.lists++;
       return { installations: rows };
