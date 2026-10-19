@@ -906,7 +906,14 @@ it.layer(
         auth: { status: "authenticated" },
         checkedAt: "2026-08-13T00:00:00.000Z",
         version: "1.2.0",
-        models: [{ slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null }],
+        models: [
+          {
+            slug: "gpt-5.6-sol",
+            name: "GPT-5.6-Sol",
+            isCustom: false,
+            capabilities: codexModelCapabilities,
+          },
+        ],
         slashCommands: [],
         skills: [],
       } as const satisfies ServerProvider;
@@ -933,22 +940,67 @@ it.layer(
         ProviderRegistry.mergeProviderSnapshot(previousProvider, checkingProvider).models,
         [
           { slug: "default", name: "Default", isCustom: false, capabilities: null },
-          { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
+          ...previousProvider.models,
         ],
       );
       assert.deepStrictEqual(
         ProviderRegistry.mergeProviderSnapshot(previousProvider, confirmedCheckingProvider).models,
         [
           { slug: "default", name: "Default", isCustom: false, capabilities: null },
-          { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
+          ...previousProvider.models,
         ],
       );
       assert.deepStrictEqual(
         ProviderRegistry.mergeProviderSnapshot(previousProvider, failedProbeProvider).models,
         [
           { slug: "default", name: "Default", isCustom: false, capabilities: null },
-          { slug: "gpt-5.6-sol", name: "GPT-5.6-Sol", isCustom: false, capabilities: null },
+          ...previousProvider.models,
         ],
+      );
+    });
+
+    it("does not carry an ACP Registry model's older options onto a refresh that lists it without options", () => {
+      const thinking = createModelCapabilities({
+        optionDescriptors: [
+          selectDescriptor("thought_level", "Thinking", [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High", isDefault: true },
+          ]),
+        ],
+      });
+      const previousProvider = {
+        instanceId: ProviderInstanceId.make("acpRegistry_devin"),
+        driver: ProviderDriverKind.make("acpRegistry"),
+        status: "ready",
+        enabled: true,
+        installed: true,
+        auth: { status: "unknown" },
+        checkedAt: "2026-10-03T00:00:00.000Z",
+        version: "3000.11.3",
+        models: [
+          { slug: "opus", name: "Opus", isCustom: false, capabilities: thinking },
+          { slug: "glm", name: "GLM", isCustom: false, capabilities: thinking },
+        ],
+        slashCommands: [],
+        skills: [],
+      } as const satisfies ServerProvider;
+      const refreshedProvider = {
+        ...previousProvider,
+        checkedAt: "2026-10-03T00:01:00.000Z",
+        models: [
+          {
+            slug: "opus",
+            name: "Opus",
+            isCustom: false,
+            capabilities: createModelCapabilities({ optionDescriptors: [] }),
+          },
+          { slug: "glm", name: "GLM", isCustom: false, capabilities: thinking },
+        ],
+      } satisfies ServerProvider;
+
+      assert.deepStrictEqual(
+        ProviderRegistry.mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+        [...refreshedProvider.models],
       );
     });
 
