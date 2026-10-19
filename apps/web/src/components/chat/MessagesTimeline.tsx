@@ -1,6 +1,9 @@
 import { ThreadFindTimelineContext } from "./ThreadFindProvider";
 import { shallow } from "zustand/vanilla/shallow";
-import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
+import {
+  remarkKeepWindowsPaths,
+  shouldPreserveAssistantLineBreaks,
+} from "@t3tools/shared/markdownPipeline";
 import { MarkdownFindContext, findRevealRef } from "./markdownFindContext";
 import { useChatCanvas } from "./ChatCanvasContext";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
@@ -121,6 +124,7 @@ import type { Root, RootContent } from "mdast";
 import { T3Wordmark } from "../T3Wordmark";
 import { ThreadContextChip } from "../ThreadContextChip";
 import {
+  ArrowRightIcon,
   BotIcon,
   BrainIcon,
   CheckIcon,
@@ -160,6 +164,7 @@ import type {
 import { Button, InlineButton } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
 import { useAssetUrlRefresh, useAssetUrls, useAssetUrlState } from "../../assets/assetUrls";
+import { AttachmentImage } from "../media/AttachmentImage";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
 import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import {
@@ -795,8 +800,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   }, [latestRun, listIdentityKey]);
 
-  // Find the fold that hides the match: imported turns have no run id but still
-  // fold under a synthetic key, so the match's own run id cannot open them.
+  // Imported turns fold under synthetic keys rather than the entries' own run ids.
   const findFoldRunIds = findActive
     ? timelineTurnFoldRunIdsByEntryId({
         timelineEntries,
@@ -806,9 +810,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
         runlessWorkActive,
       })
     : null;
-  const activeFindRunId = activeFindMatch
-    ? findFoldRunIds?.get(activeFindMatch.entryId)
-    : undefined;
+  const activeFindRunId =
+    findActive && activeFindMatch ? findFoldRunIds?.get(activeFindMatch.entryId) : undefined;
   const [expandedFindRunId, setExpandedFindRunId] = useState<RunId | undefined>();
   if (expandedFindRunId !== activeFindRunId) {
     setExpandedFindRunId(activeFindRunId);
@@ -998,6 +1001,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
     viewport: timelineViewportElement,
     historyLoading: citationHistoryLoading,
     loadEarlier,
+    getTurnFoldRunId: (entryId) =>
+      (
+        findFoldRunIds ??
+        timelineTurnFoldRunIdsByEntryId({
+          timelineEntries,
+          latestRun,
+          runningRunId,
+          isWorking,
+          runlessWorkActive,
+        })
+      ).get(entryId),
     onExpandTurn: expandCitedRun,
     onManualNavigation,
   });
@@ -1539,8 +1553,17 @@ function keyExtractor(item: MessagesTimelineRow) {
   return item.id;
 }
 
+// LegendList estimates unmeasured rows from the running average size of their
+// type. One type for every assistant reply lets a few very long replies, or
+// one that is streaming, lift the estimate for short replies to thousands of
+// pixels. Rows then mount one at a time, each measurement shrinks the list
+// and mounts the next row in the same commit, and scrolling into unmeasured
+// history exceeds React's nested update limit. Doubling-length buckets keep
+// each average within about 2x of the rows it estimates.
 function getItemType(item: MessagesTimelineRow) {
-  return item.kind === "message" ? `message:${item.message.role}` : item.kind;
+  if (item.kind !== "message") return item.kind;
+  const lengthBucket = Math.max(0, Math.floor(Math.log2(item.message.text.length / 1000)));
+  return `message:${item.message.role}:${lengthBucket}`;
 }
 
 interface TimelinePositionState {
@@ -1995,6 +2018,20 @@ function ContextCompactionTimelineRow({
 }: {
   row: Extract<TimelineRow, { kind: "context-compaction" }>;
 }) {
+  const content = (
+    <span className="flex items-center gap-1.5">
+      <Minimize2Icon aria-hidden="true" className="size-3" />
+      {row.tokenCounts ? (
+        <>
+          Context compacted {row.tokenCounts.before}
+          <ArrowRightIcon aria-hidden="true" className="size-3" />
+          {row.tokenCounts.after} tokens
+        </>
+      ) : (
+        row.label
+      )}
+    </span>
+  );
   return (
     <div
       role="separator"
@@ -2006,18 +2043,8 @@ function ContextCompactionTimelineRow({
         ref={row.active ? observeVisibleAnimation : undefined}
         className="relative shrink-0 overflow-hidden"
       >
-        <span className="flex items-center gap-1.5">
-          <Minimize2Icon aria-hidden="true" className="size-3" />
-          {row.label}
-        </span>
-        {row.active ? (
-          <ActivityShimmerOverlay>
-            <span className="flex items-center gap-1.5">
-              <Minimize2Icon aria-hidden="true" className="size-3" />
-              {row.label}
-            </span>
-          </ActivityShimmerOverlay>
-        ) : null}
+        {content}
+        {row.active ? <ActivityShimmerOverlay>{content}</ActivityShimmerOverlay> : null}
       </span>
       <span className="h-px flex-1 bg-border/70" />
     </div>
@@ -2258,7 +2285,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           )}
         </p>
       ) : null}
-      {row.message.inputIntent && row.message.inputIntent !== "turn_start" ? (
+      {row.message.inputIntent === "steer" ||
+      row.message.inputIntent === "promoted_queued_to_steer" ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
@@ -2286,7 +2314,9 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
                       ctx.onImageExpand(preview);
                     }}
                   >
-                    <img
+                    <AttachmentImage
+                      name={image.name}
+                      mimeType={image.mimeType}
                       src={image.previewUrl}
                       alt={image.name}
                       className="block size-full object-cover"
@@ -2427,24 +2457,8 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
 function UserMessageIntentMarker({
   intent,
 }: {
-  readonly intent: NonNullable<ChatMessage["inputIntent"]>;
+  readonly intent: "steer" | "promoted_queued_to_steer";
 }) {
-  const presentation =
-    intent === "queued_turn"
-      ? {
-          label: "From queue",
-          icon: null,
-        }
-      : intent === "promoted_queued_to_steer"
-        ? {
-            label: "Steer",
-            icon: Redo2Icon,
-          }
-        : {
-            label: "Steer",
-            icon: Redo2Icon,
-          };
-  const IntentIcon = presentation.icon;
   return (
     <Tooltip>
       <TooltipTrigger
@@ -2455,15 +2469,13 @@ function UserMessageIntentMarker({
           />
         }
       >
-        {IntentIcon ? <IntentIcon aria-hidden="true" className="size-3" /> : null}
-        {presentation.label}
+        <Redo2Icon aria-hidden="true" className="size-3" />
+        Steer
       </TooltipTrigger>
       <TooltipPopup side="top">
-        {intent === "queued_turn"
-          ? "Queued while the agent was busy"
-          : intent === "promoted_queued_to_steer"
-            ? "Originally queued, then promoted to steer the active turn"
-            : "Steered the active turn"}
+        {intent === "promoted_queued_to_steer"
+          ? "Originally queued, then promoted to steer the active turn"
+          : "Steered the active turn"}
       </TooltipPopup>
     </Tooltip>
   );
@@ -3833,6 +3845,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
             <ReactMarkdown
               remarkPlugins={[
                 remarkGfm,
+                remarkKeepWindowsPaths,
                 [remarkThoughtPreview, row.active ? "Thinking" : "Thought"],
               ]}
             >
@@ -5463,6 +5476,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                 <ReactMarkdown
                   remarkPlugins={[
                     remarkGfm,
+                    remarkKeepWindowsPaths,
                     [
                       remarkThoughtPreview,
                       workEntry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought",
