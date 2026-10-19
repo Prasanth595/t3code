@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   factoryLinkAction,
+  factoryUrl,
   mintPairingToken,
   parseFactoryMessage,
   probeFactory,
@@ -9,6 +10,7 @@ import {
 } from "./factorySignIn";
 
 const BASE = "https://mac.tail1234.ts.net";
+const SLASH_BASE = "https://mac.tail1234.ts.net:3876/";
 const BEARER = "bearer-secret-123";
 const CREDENTIAL = "credential-secret-456";
 const server = { httpBaseUrl: BASE, bearerToken: BEARER };
@@ -203,5 +205,29 @@ describe("probeFactory", () => {
     });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toContain("unreachable");
+  });
+});
+
+describe("factoryUrl", () => {
+  it("joins a path onto a base with or without a trailing slash", () => {
+    expect(factoryUrl("/factory", SLASH_BASE)).toBe("https://mac.tail1234.ts.net:3876/factory");
+    expect(factoryUrl("/factory", BASE)).toBe(`${BASE}/factory`);
+  });
+
+  it("is used for the mint and probe requests", async () => {
+    const urls: string[] = [];
+    const slash = { httpBaseUrl: SLASH_BASE, bearerToken: BEARER };
+    await mintPairingToken(slash, async (url) => {
+      urls.push(url);
+      return json(200, { credential: CREDENTIAL });
+    });
+    await probeFactory(slash, async (url) => {
+      urls.push(url);
+      return json(200, {});
+    });
+    expect(urls).toEqual([
+      "https://mac.tail1234.ts.net:3876/api/auth/pairing-token",
+      "https://mac.tail1234.ts.net:3876/api/factory/status",
+    ]);
   });
 });
