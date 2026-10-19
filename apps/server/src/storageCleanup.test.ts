@@ -1357,7 +1357,7 @@ describe("storage cleanup reports and local file policies", () => {
   it.live("compares the checked-out branch without a full status", () =>
     runCleanupTest(
       Effect.gen(function* () {
-        const { service, fs, worktree, command, setThreads, fullStatusCalls } =
+        const { service, fs, repo, worktree, command, setThreads, fullStatusCalls } =
           yield* cleanupFixture();
         const changed = { outcome: "kept", reason: "Repository or branch changed" };
         yield* command(worktree, ["checkout", "--detach"]);
@@ -1375,8 +1375,15 @@ describe("storage cleanup reports and local file policies", () => {
         const index = (yield* command(worktree, ["rev-parse", "--git-path", "index"])).stdout;
         yield* fs.writeFileString(`${index.trim()}.lock`, "");
         const locked = (yield* service.runNow).entries[0];
-        expect(locked).toMatchObject({ outcome: "failed" });
+        expect(locked).toMatchObject({
+          outcome: "failed",
+          projectPath: repo,
+          path: worktree,
+          threadId: "thread-1",
+          threadTitle: "Thread",
+        });
         expect(locked?.reason).toContain("Git index is locked");
+        expect(yield* fs.readFileString(`${worktree}/tracked.txt`)).toBe("original\n");
         yield* fs.remove(`${index.trim()}.lock`);
         const gitFile = yield* fs.readFileString(`${worktree}/.git`);
         yield* fs.writeFileString(`${worktree}/.git`, "gitdir: /missing-git-directory\n");
@@ -1384,22 +1391,6 @@ describe("storage cleanup reports and local file policies", () => {
         yield* fs.writeFileString(`${worktree}/.git`, gitFile);
         expect((yield* service.runNow).entries[0]).toMatchObject({ outcome: "removed" });
         expect(fullStatusCalls()).toBe(0);
-      }),
-    ),
-  );
-  it.live("identifies the project and folder when worktree cleanup fails", () =>
-    runCleanupTest(
-      Effect.gen(function* () {
-        const { service, fs, worktree, repo, command } = yield* cleanupFixture();
-        const index = (yield* command(worktree, ["rev-parse", "--git-path", "index"])).stdout;
-        yield* fs.writeFileString(`${index.trim()}.lock`, "");
-        const report = yield* service.runNow;
-        expect(report.entries[0]).toMatchObject({
-          outcome: "failed",
-          projectPath: repo,
-          path: worktree,
-          threadId: "thread-1",
-        });
       }),
     ),
   );
