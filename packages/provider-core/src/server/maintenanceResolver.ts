@@ -827,10 +827,21 @@ export function createProviderVersionAdvisory(input: {
   };
 }
 
+const DEFAULT_NPM_REGISTRY_URL = "https://registry.npmjs.org";
+
+// Advisory HTTP requests do not carry npm CLI authentication or scoped-registry config.
+const NpmRegistryUrlConfig = Config.String("T3CODE_NPM_REGISTRY_URL").pipe(
+  Config.withDefault(DEFAULT_NPM_REGISTRY_URL),
+  Config.map((url) => url.trim().replace(/\/+$/, "") || DEFAULT_NPM_REGISTRY_URL),
+);
+
 const fetchNpmLatestVersion = Effect.fn("fetchNpmLatestVersion")(function* (packageName: string) {
   const client = yield* HttpClient.HttpClient;
+  const registryUrl = yield* NpmRegistryUrlConfig.pipe(
+    Effect.orElseSucceed(() => DEFAULT_NPM_REGISTRY_URL),
+  );
   const request = HttpClientRequest.get(
-    `https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`,
+    `${registryUrl}/${encodeURIComponent(packageName)}/latest`,
   ).pipe(HttpClientRequest.setHeader("accept", "application/json"));
   const response = yield* client.execute(request).pipe(
     Effect.timeoutOption(LATEST_VERSION_TIMEOUT_MS),
