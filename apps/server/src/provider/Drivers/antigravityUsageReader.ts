@@ -13,7 +13,6 @@ import * as SqlClient from "effect/sql/SqlClient";
 type FieldValue = number | bigint | Uint8Array;
 type Fields = Map<number, FieldValue[]>;
 
-/** Antigravity stores usage metadata as protobuf, independently of conversation text. */
 function fields(bytes: Uint8Array): Fields {
   let offset = 0;
   const result: Fields = new Map();
@@ -135,12 +134,13 @@ function metadata(bytes: Uint8Array, step: boolean): Metadata {
   const data = step ? root : nested(root, 1);
   const model = step ? nested(data, 24) : data;
   const usage = bytesAt(data, step ? 9 : 4);
-  const main = usage === undefined ? undefined : fields(usage);
+  // Copy the usage bytes: subarrays kept in usages would hold each row's whole blob alive.
+  const main = usage === undefined ? undefined : fields(usage.slice());
   const attempts: Fields[] = [];
   for (const retry of data.get(step ? 28 : 17) ?? []) {
     if (!(retry instanceof Uint8Array)) throw new Error("Invalid retry metadata");
     const retryUsage = bytesAt(fields(retry), 2);
-    if (retryUsage !== undefined) attempts.push(fields(retryUsage));
+    if (retryUsage !== undefined) attempts.push(fields(retryUsage.slice()));
   }
   // A main usage equal to the sum of the attempts is their total, not another call.
   // An attempt carrying a different response id is kept apart just in case.
@@ -195,7 +195,6 @@ interface UsageCandidate {
   timestampQuality: number;
 }
 
-/** A conversation database whose usage tables are missing or undecodable. */
 class AntigravityDatabaseDecodeError extends Schema.TaggedError<AntigravityDatabaseDecodeError>()(
   "AntigravityDatabaseDecodeError",
   { path: Schema.String, cause: Schema.optional(Schema.Defect()) },
@@ -204,6 +203,14 @@ class AntigravityDatabaseDecodeError extends Schema.TaggedError<AntigravityDatab
     return `Antigravity usage could not be decoded from ${this.path}.`;
   }
 }
+
+/**
+ * One statement.all() holds the event loop until every row it returns is in memory, and a
+ * generation row carries the conversation's whole context so far, often megabytes, so generations
+ * are read one at a time.
+ */
+const GENERATION_PAGE_ROWS = 1;
+const STEP_PAGE_ROWS = 64;
 
 const readDatabase = Effect.fn("readDatabase")(function* (
   path: string,
@@ -226,24 +233,46 @@ const readDatabase = Effect.fn("readDatabase")(function* (
     if (!tables.has("gen_metadata") && !tables.has("steps")) {
       return yield* new AntigravityDatabaseDecodeError({ path });
     }
+    // A rowid seek works whatever the table's indexes. Antigravity declares idx as the INTEGER
+    // PRIMARY KEY, so rowid order is idx order; the sort keeps idx order where rows are stored
+    // otherwise.
     const readMetadata = Effect.fnUntraced(function* (
       query: string,
-      column: string,
+      pageRows: number,
       step: boolean,
     ) {
       const entries: Array<{ idx: number; entry: Metadata }> = [];
-      for (const row of yield* sql.unsafe<Record<string, unknown>>(query)) {
-        const idx = row.idx;
-        if (typeof idx !== "number") {
-          return yield* new AntigravityDatabaseDecodeError({ path });
+      let after = -Infinity;
+      while (true) {
+        const rows = yield* sql
+          .unsafe<{
+            readonly row_id: number;
+            readonly idx: unknown;
+            readonly data: unknown;
+          }>(query, [after, pageRows])
+          .pipe(Effect.withTracerEnabled(false));
+        for (const row of rows) {
+          // Skipped here rather than in SQL, so a statement never scans past
+          // more than one page of steps that have no metadata.
+          if (step && row.data === null) continue;
+          const idx = row.idx;
+          if (typeof idx !== "number") {
+            return yield* new AntigravityDatabaseDecodeError({ path });
+          }
+          entries.push({ idx, entry: yield* decode(() => metadata(blob(row.data), step)) });
         }
-        entries.push({ idx, entry: yield* decode(() => metadata(blob(row[column]), step)) });
-        if (entries.length % 256 === 0) yield* Effect.yieldNow;
+        if (rows.length < pageRows) break;
+        after = rows[rows.length - 1]!.row_id;
+        yield* Effect.yieldNow;
       }
-      return entries;
+      return entries.sort((a, b) => a.idx - b.idx);
     });
     const generations = tables.has("gen_metadata")
-      ? yield* readMetadata("SELECT idx, data FROM gen_metadata ORDER BY idx", "data", false)
+      ? yield* readMetadata(
+          "SELECT rowid AS row_id, idx, data FROM gen_metadata WHERE rowid > ? ORDER BY rowid LIMIT ?",
+          GENERATION_PAGE_ROWS,
+          false,
+        )
       : [];
     let trajectoryTimestamp: number | null = null;
     if (tables.has("trajectory_metadata_blob")) {
@@ -255,8 +284,8 @@ const readDatabase = Effect.fn("readDatabase")(function* (
     }
     const steps = tables.has("steps")
       ? yield* readMetadata(
-          "SELECT idx, metadata FROM steps WHERE metadata IS NOT NULL ORDER BY idx",
-          "metadata",
+          "SELECT rowid AS row_id, idx, metadata AS data FROM steps WHERE rowid > ? ORDER BY rowid LIMIT ?",
+          STEP_PAGE_ROWS,
           true,
         )
       : [];
@@ -349,11 +378,6 @@ interface CachedDatabase {
  */
 export const makeAntigravityUsageCache = () => new Map<string, CachedDatabase>();
 
-/**
- * Reads and merges aliases across every configured Antigravity store before date
- * filtering. With a cache, databases unchanged since the previous read are not
- * decoded again.
- */
 export const readAntigravityUsage = Effect.fn("readAntigravityUsage")(function* (
   conversationsDirectories: string | readonly string[],
   sinceMs: number,
