@@ -53,12 +53,6 @@ export const ComposerCodeExtension = Code.extend({
 
 const SURROUND_MARKS: Record<string, string> = { "`": "code", "*": "italic", _: "italic" };
 
-/**
- * Typing a markdown marker over a selection styles it, matching what typing the
- * markers around the text would produce. Returns null when the marker has no
- * mark in this schema (plain mode) or the selection spans lines, where inline
- * markdown cannot reach, so the caller wraps with literal characters.
- */
 export function surroundSelectionWithMark(
   state: EditorState,
   from: number,
@@ -66,7 +60,12 @@ export function surroundSelectionWithMark(
   marker: string,
 ) {
   const markType = state.schema.marks[SURROUND_MARKS[marker] ?? ""];
-  if (!markType || !state.doc.resolve(from).sameParent(state.doc.resolve(to))) return null;
+  if (!markType) return null;
+  const $from = state.doc.resolve(from);
+  if (!$from.sameParent(state.doc.resolve(to)) || !$from.parent.type.allowsMarkType(markType)) {
+    return null;
+  }
+  // Inline markdown cannot span lines, so keep literal wrapping across hard breaks.
   let crossesLine = false;
   state.doc.nodesBetween(from, to, (node) => {
     if (node.type.name === "hardBreak") crossesLine = true;

@@ -25,6 +25,7 @@ import {
   serializeEditorDoc,
   serializeSelection,
   stepCaretAcrossStyledEdge,
+  surroundSelectionWithMark,
 } from "./composer-rich-text-doc";
 
 function stubAtom(name: string, attrs: Record<string, { default: unknown }>) {
@@ -1154,5 +1155,65 @@ describe("caret stops at styled edges", () => {
     expect(stepCaretAcrossStyledEdge(stateAt("**bold** tail", 3), -1)).toBeNull();
     expect(stepCaretAcrossStyledEdge(stateAt("plain text", 1), -1)).toBeNull();
     expect(caretTakesMarksBefore(stateAt("plain text", 1))).toBe(false);
+  });
+});
+
+describe("surroundSelectionWithMark", () => {
+  it.each([
+    ["`", "say `hello` now"],
+    ["*", "say *hello* now"],
+    ["_", "say *hello* now"],
+  ])("formats a selection with %s like typed markers", (marker, expected) => {
+    const doc = schema.node("doc", null, [
+      schema.node("paragraph", null, schema.text("say hello now")),
+    ]);
+    const state = EditorState.create({ doc, selection: TextSelection.create(doc, 5, 10) });
+    const tr = surroundSelectionWithMark(state, 5, 10, marker);
+    expect(tr).not.toBeNull();
+    const formatted = state.apply(tr!);
+    const typed = ProseMirrorNode.fromJSON(
+      schema,
+      buildDocJson(`say ${marker}hello${marker} now`, (name) => ({
+        label: name,
+        description: null,
+      })),
+    );
+    expect(formatted.doc.eq(typed)).toBe(true);
+    expect(serializeEditorDoc(formatted.doc).value).toBe(expected);
+    expect(formatted.doc.textBetween(formatted.selection.from, formatted.selection.to)).toBe(
+      "hello",
+    );
+  });
+
+  it.each([
+    [
+      "plain mode",
+      plainSchema.node("doc", null, [plainSchema.node("paragraph", null, plainSchema.text("one"))]),
+    ],
+    [
+      "paragraphs",
+      schema.node("doc", null, [
+        schema.node("paragraph", null, schema.text("one")),
+        schema.node("paragraph", null, schema.text("two")),
+      ]),
+    ],
+    [
+      "a hard break",
+      schema.node("doc", null, [
+        schema.node("paragraph", null, [
+          schema.text("one"),
+          schema.node("hardBreak"),
+          schema.text("two"),
+        ]),
+      ]),
+    ],
+    [
+      "a code block",
+      schema.node("doc", null, [schema.node("codeBlock", null, schema.text("one"))]),
+    ],
+  ])("leaves selections in %s to literal wrapping", (_, doc) => {
+    doc.check();
+    const state = EditorState.create({ doc });
+    expect(surroundSelectionWithMark(state, 1, doc.content.size - 1, "`")).toBeNull();
   });
 });
