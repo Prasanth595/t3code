@@ -25,7 +25,7 @@ import { ThreadSearchMatchExcerpt } from "./ThreadSearchMatch";
 
 interface CommandPaletteResultsProps {
   emptyStateMessage?: string;
-  emptyStateTone?: "muted" | "error";
+  emptyStateTone?: "muted" | "error" | "status";
   groups: ReadonlyArray<CommandPaletteGroup>;
   highlightedItemValue?: string | null;
   isActionsOnly: boolean;
@@ -35,13 +35,13 @@ interface CommandPaletteResultsProps {
 
 function CommandPaletteEmptyState(props: {
   emptyStateMessage?: string;
-  emptyStateTone?: "muted" | "error";
+  emptyStateTone?: "muted" | "error" | "status";
   isActionsOnly: boolean;
 }) {
   const isError = props.emptyStateTone === "error";
   return (
     <div
-      role={isError ? "alert" : undefined}
+      role={isError ? "alert" : props.emptyStateTone === "status" ? "status" : undefined}
       className={cn(
         "py-10 text-center text-sm",
         isError ? "text-destructive" : "text-muted-foreground",

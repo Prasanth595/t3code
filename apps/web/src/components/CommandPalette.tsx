@@ -3333,9 +3333,11 @@ function OpenCommandPaletteDialog(props: {
                   (addProjectCloneFlow.source === "url"
                     ? "Enter a Git clone URL and press Enter to continue."
                     : "Enter a repository path and press Enter to look it up.")),
-              ...(cloneLookupError && !isRemoteProjectLookingUp
-                ? { emptyStateTone: "error" as const }
-                : {}),
+              ...(isRemoteProjectLookingUp
+                ? { emptyStateTone: "status" as const }
+                : cloneLookupError
+                  ? { emptyStateTone: "error" as const }
+                  : {}),
             }
           : addProjectCloneFlow?.step === "confirm"
             ? { emptyStateMessage: "Choose a destination path and press Enter to clone." }
