@@ -1,7 +1,5 @@
-// Installed via a side-effect import listed first so the fatal-error handler
-// is in place before the rest of the app module graph evaluates.
-import "./src/lib/installCrashLog";
-
+// Must stay first: the render counter wraps the DevTools hook before any React commit.
+import "./src/features/development/render-counter-entry";
 import { registerRootComponent } from "expo";
 import "react-native-gesture-handler";
 import { LogBox } from "react-native";
