@@ -592,7 +592,6 @@ export function HandoffRow(props: {
 }) {
   const { from: fromEndpoints, to } = props.endpoints;
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(props.environmentId));
-  // Settings carry each ACP instance's agent, which tells its glyph apart.
   const derived = deriveProviderInstanceEntries(props.providers);
   const entries = settings ? applyProviderInstanceSettings(derived, settings, null) : derived;
   return (
@@ -636,8 +635,6 @@ function HandoffEndpoint(props: {
   readonly model?: string | undefined;
 }) {
   const entry = props.entries.find((candidate) => candidate.instanceId === props.instanceId);
-  // Same account badge as the sidebar: a handoff between two accounts of one
-  // provider would otherwise show the same glyph on both sides.
   const showBadge = entry !== undefined && shouldShowInstanceBadge(entry, props.entries);
   const model = props.model?.trim();
   const providerModel =
@@ -668,9 +665,8 @@ function HandoffEndpoint(props: {
               acpRegistryAgentId={entry?.acpRegistryAgentId}
               acpRegistryIconUrl={entry?.acpRegistryIconUrl}
               showBadge={showBadge}
-              // Glyph dims, badge stays saturated; sized like the sidebar row.
-              iconClassName={cn("size-3.5", showBadge && "opacity-60")}
-              badgeClassName="right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3 px-0.5 text-5xs"
+              size="compact"
+              iconClassName={cn(showBadge && "opacity-60")}
               indicatorBackground="var(--background)"
             />
             <span
