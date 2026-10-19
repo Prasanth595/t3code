@@ -13,6 +13,16 @@ export function pdfInitialPage(uri: string): number {
   return Number.isSafeInteger(page) && page > 0 ? page : 1;
 }
 
+export function pdfLinkUrl(href: string, sourceUri: string): string | null {
+  if (href.trim().length === 0) return null;
+  try {
+    const url = new URL(href, sourceUri);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function preparePdfPreview(uri: string, signal: AbortSignal) {
   if (signal.aborted) return null;
   const source = uri.split("#", 1)[0]!;

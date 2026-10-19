@@ -11,13 +11,19 @@ function fixture(nativePdfViewer = false) {
     requestId: string;
     frameId: string;
     request: { url: string; method: string };
+    responseStatusCode: number;
+    responseHeaders: Array<{ name: string; value: string }>;
   }) => void = () => {
     throw new Error("Navigation handler was not installed");
   };
   const send = vi.fn(async (method: string, params: Record<string, unknown> = {}) => {
     if (method === "Runtime.evaluate") return { result: { value: nativePdfViewer } };
     if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
-    if (method === "Fetch.fulfillRequest" || method === "Fetch.continueRequest") {
+    if (
+      method === "Fetch.fulfillRequest" ||
+      method === "Fetch.continueRequest" ||
+      method === "Fetch.failRequest"
+    ) {
       completed.resolve({ method, params });
     }
     return {};
@@ -31,8 +37,20 @@ function fixture(nativePdfViewer = false) {
   return {
     cdp,
     send,
-    navigate: (url = source, frameId = "main", method = "GET") => {
-      paused({ requestId: "request-1", frameId, request: { url, method } });
+    navigate: (
+      url = source,
+      frameId = "main",
+      method = "GET",
+      status = 200,
+      contentType = "application/pdf",
+    ) => {
+      paused({
+        requestId: "request-1",
+        frameId,
+        request: { url, method },
+        responseStatusCode: status,
+        responseHeaders: [{ name: "Content-Type", value: contentType }],
+      });
       return completed.promise;
     },
   };
@@ -62,8 +80,49 @@ describe("PDF document navigation", () => {
     );
     expect(test.send).toHaveBeenCalledWith("Fetch.enable", {
       patterns: [
-        { urlPattern: "*/api/assets/*", resourceType: "Document", requestStage: "Request" },
+        { urlPattern: "*/api/assets/*", resourceType: "Document", requestStage: "Response" },
       ],
+    });
+  });
+
+  it.each([401, 403, 404, 410, 500])(
+    "fails unavailable PDF assets with HTTP %s",
+    async (status) => {
+      const test = fixture();
+      await installPdfDocumentNavigation(test.cdp);
+      expect(await test.navigate(source, "main", "GET", status)).toEqual({
+        method: "Fetch.failRequest",
+        params: { requestId: "request-1", errorReason: "Failed" },
+      });
+      expect(test.send.mock.calls.some(([method]) => method === "Fetch.fulfillRequest")).toBe(
+        false,
+      );
+    },
+  );
+
+  it("rejects a non-PDF response instead of committing a successful PDF tab", async () => {
+    const test = fixture();
+    await installPdfDocumentNavigation(test.cdp);
+    expect(await test.navigate(source, "main", "GET", 200, "text/html")).toMatchObject({
+      method: "Fetch.failRequest",
+    });
+  });
+
+  it("allows redirects to reach their asset response", async () => {
+    const test = fixture();
+    await installPdfDocumentNavigation(test.cdp);
+    expect(await test.navigate(source, "main", "GET", 302)).toMatchObject({
+      method: "Fetch.continueRequest",
+    });
+  });
+
+  it("accepts a partial PDF response", async () => {
+    const test = fixture();
+    await installPdfDocumentNavigation(test.cdp);
+    expect(
+      await test.navigate(source, "main", "GET", 206, "Application/PDF; charset=binary"),
+    ).toMatchObject({
+      method: "Fetch.fulfillRequest",
     });
   });
 

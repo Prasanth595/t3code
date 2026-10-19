@@ -7,6 +7,7 @@ export function previewPdfAssetUrl(rawUrl: string, httpBaseUrl: string | null): 
   if (httpBaseUrl === null) return null;
   try {
     const url = new URL(rawUrl);
+    const baseUrl = new URL(httpBaseUrl);
     if (
       (url.protocol !== "http:" && url.protocol !== "https:") ||
       !url.pathname.startsWith("/api/assets/") ||
@@ -14,9 +15,10 @@ export function previewPdfAssetUrl(rawUrl: string, httpBaseUrl: string | null): 
     ) {
       return null;
     }
+    if (url.origin !== baseUrl.origin && !isLoopbackHost(url.hostname)) return url.href;
     // The browser may run on the host's loopback address. Fetch signed bytes
     // through this client's environment connection, including remote routes.
-    return new URL(`${url.pathname}${url.search}${url.hash}`, httpBaseUrl).href;
+    return new URL(`${url.pathname}${url.search}${url.hash}`, baseUrl).href;
   } catch {
     return null;
   }

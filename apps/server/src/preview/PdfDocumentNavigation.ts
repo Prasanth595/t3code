@@ -30,6 +30,21 @@ export async function installPdfDocumentNavigation(cdp: CDPSession) {
         await proceed();
         return;
       }
+      const status = event.responseStatusCode;
+      if (status === undefined || (status >= 300 && status < 400)) {
+        await proceed();
+        return;
+      }
+      const contentType = event.responseHeaders
+        ?.find((header) => header.name.toLowerCase() === "content-type")
+        ?.value.split(";", 1)[0]
+        ?.trim()
+        .toLowerCase();
+      if (status < 200 || status >= 300 || contentType !== "application/pdf") {
+        // Reach the browser's requestfailed path instead of committing a successful PDF tab.
+        await cdp.send("Fetch.failRequest", { requestId, errorReason: "Failed" });
+        return;
+      }
       const name = escapeHtml(
         decodeURIComponent(new URL(request.url).pathname.split("/").at(-1) ?? "PDF"),
       );
@@ -50,6 +65,8 @@ export async function installPdfDocumentNavigation(cdp: CDPSession) {
   });
   // Only document navigations pause; the client's PDF fetch gets the original bytes.
   await cdp.send("Fetch.enable", {
-    patterns: [{ urlPattern: "*/api/assets/*", resourceType: "Document", requestStage: "Request" }],
+    patterns: [
+      { urlPattern: "*/api/assets/*", resourceType: "Document", requestStage: "Response" },
+    ],
   });
 }

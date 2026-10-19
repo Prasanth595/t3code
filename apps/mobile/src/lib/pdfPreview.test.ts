@@ -16,7 +16,7 @@ vi.mock("expo-file-system", () => ({
   FileMode: { ReadOnly: "r" },
 }));
 
-import { isPdfPreviewUri, pdfInitialPage, preparePdfPreview } from "./pdfPreview";
+import { isPdfPreviewUri, pdfInitialPage, pdfLinkUrl, preparePdfPreview } from "./pdfPreview";
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -25,6 +25,26 @@ beforeEach(() => {
 });
 
 describe("PDF navigation", () => {
+  it("resolves web links against the original PDF rather than its download cache", () => {
+    expect(
+      pdfLinkUrl("../next.pdf#page=2", "https://environment.test/api/assets/token/files/a.pdf"),
+    ).toBe("https://environment.test/api/assets/token/next.pdf#page=2");
+    expect(pdfLinkUrl("https://example.com/?q=one#section", "file:///cache/preview.pdf")).toBe(
+      "https://example.com/?q=one#section",
+    );
+  });
+
+  it.each([
+    "",
+    "javascript:alert(1)",
+    "data:text/html,hello",
+    "file:///private/a.pdf",
+    "intent://open",
+    "https://[",
+  ])("ignores unsupported or invalid PDF links: %s", (href) => {
+    expect(pdfLinkUrl(href, "https://environment.test/a.pdf")).toBeNull();
+  });
+
   it("recognizes signed PDF links with queries and page fragments", () => {
     expect(
       isPdfPreviewUri("https://environment.test/api/assets/token/Syllabus.PDF?x=1#page=8"),

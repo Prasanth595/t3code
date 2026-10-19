@@ -3,7 +3,8 @@ import { View } from "react-native";
 import Pdf from "react-native-pdf-jsi";
 
 import { FilePreviewLoading, FilePreviewNotice } from "../features/files/FilePreviewFeedback";
-import { pdfInitialPage, preparePdfPreview } from "../lib/pdfPreview";
+import { pdfInitialPage, pdfLinkUrl, preparePdfPreview } from "../lib/pdfPreview";
+import { tryOpenExternalUrl } from "../lib/openExternalUrl";
 import { ControlPill } from "./ui/ControlPill";
 
 function NativePdfPreview(props: { readonly uri: string; readonly onRetry: () => void }) {
@@ -53,6 +54,10 @@ function NativePdfPreview(props: { readonly uri: string; readonly onRetry: () =>
       trustAllCerts={false}
       enableAnnotationRendering
       enableDoubleTapZoom
+      onPressLink={(href) => {
+        const url = pdfLinkUrl(href, props.uri);
+        if (url !== null) void tryOpenExternalUrl(url, "file-preview");
+      }}
       onError={() => {
         cached.current?.dispose();
         cached.current = null;

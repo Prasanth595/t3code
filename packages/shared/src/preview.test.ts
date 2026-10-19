@@ -36,6 +36,22 @@ describe("previewPdfAssetUrl", () => {
   it("waits for the environment connection", () => {
     expect(previewPdfAssetUrl("http://localhost/api/assets/token/paper.pdf", null)).toBeNull();
   });
+
+  it("preserves matching PDF URLs on unrelated origins", () => {
+    const source = "https://another-environment.test/api/assets/token/guide.pdf?revision=2#page=3";
+    expect(previewPdfAssetUrl(source, "https://environment.test")).toBe(source);
+  });
+
+  it("keeps URLs from the connected environment", () => {
+    const source = "https://environment.test/api/assets/token/guide.pdf#page=2";
+    expect(previewPdfAssetUrl(source, "https://environment.test")).toBe(source);
+  });
+
+  it("remaps IPv6 loopback assets through the client connection", () => {
+    expect(
+      previewPdfAssetUrl("http://[::1]:14537/api/assets/token/guide.pdf", "https://remote.test"),
+    ).toBe("https://remote.test/api/assets/token/guide.pdf");
+  });
 });
 
 describe("resolveAddressBarInput", () => {
