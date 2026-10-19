@@ -359,9 +359,23 @@ function nextListCursor(
   fetched: ReadonlyArray<ProviderChangeRequest>,
   delivered: ReadonlyArray<ProviderChangeRequest>,
   /** A provider may consume malformed offset-paged rows that never appear in `delivered`. */
-  cursorAdvance = delivered.length,
+  reportedAdvance: number | undefined,
+  readAt: number,
 ): string | null {
-  if (fetched.length === 0) return null;
+  const cursorAdvance = reportedAdvance ?? delivered.length;
+  if (fetched.length === 0) {
+    // An offset-paged host can read a whole slice of rows it then drops — a Forgejo list of
+    // closed change requests that were all merged — and still have more after them. Its offset
+    // is all it continues from, so the boundary only has to stay valid.
+    return cursorAdvance > 0
+      ? listCursorAt(
+          previous,
+          previous?.updatedBefore ?? DateTime.formatIso(DateTime.makeUnsafe(readAt)),
+          fetched,
+          cursorAdvance,
+        )
+      : null;
+  }
   // Taken from what the host answered rather than from what survived de-duplication: a slice can
   // be entirely rows already sent — a hundred change requests touched in the same second is one
   // repository's boring afternoon — and reading "nothing new" as "nothing left" would end the
@@ -1202,7 +1216,7 @@ export const make = Effect.gen(function* () {
                   truncated: page.truncated,
                   nextCursor:
                     page.continues && page.truncated
-                      ? nextListCursor(cursor, page.items, items, page.cursorAdvance)
+                      ? nextListCursor(cursor, page.items, items, page.cursorAdvance, observedAt)
                       : null,
                 };
               }),
