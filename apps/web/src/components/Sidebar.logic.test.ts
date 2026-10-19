@@ -48,6 +48,7 @@ import {
   sortLogicalProjectsForSidebar,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
+  sidebarMarkerId,
   planSidebarThreadDrop,
   sortPinnedThreadsForSidebar,
   sortProjectsForSidebar,
@@ -2337,6 +2338,50 @@ describe("Working shelf (beta)", () => {
             activeTimeOrdered: true,
           }),
         ).toEqual({ kind: "none" });
+      },
+    );
+
+    it.each([null, "p2"])(
+      "prepends a collapsed-header drop before every pin with routed pin %s",
+      (routedPin) => {
+        const visiblePins = routedPin === null ? [] : [routedPin];
+        const pinnedKeysById = new Map([
+          ["p1", "gg"],
+          ["p2", "nn"],
+          ["p3", "tt"],
+        ]);
+        const target = resolveSidebarDropTarget(
+          [
+            marker("pinned-header"),
+            ...visiblePins.map((key) => row(key, "pinned")),
+            marker("pinned-divider"),
+            row("a1", "active"),
+          ],
+          "a1",
+          sidebarMarkerId("pinned-header"),
+          ["p1", "p2", "p3"],
+        );
+        expect(target).not.toBeNull();
+        const plan = planSidebarThreadDrop({
+          activeKey: "a1",
+          activeSection: "active",
+          target: target!,
+          pinnedOrder: visiblePins,
+          pinnedKeysById,
+          reorderableKeys: new Set(["a1", ...visiblePins]),
+          activeOrder: ["a1"],
+          activeKeysById: new Map(),
+        });
+        expect(plan.kind).toBe("pin");
+        if (plan.kind !== "pin") return;
+        expect(plan.extraAssignments).toEqual([]);
+        expect(plan.order).toEqual(["a1", ...visiblePins]);
+        const persistedKeys = new Map(pinnedKeysById);
+        persistedKeys.set("a1", plan.orderKey!);
+        expect([...persistedKeys].toSorted((a, b) => a[1].localeCompare(b[1]))).toEqual([
+          ["a1", expect.any(String)],
+          ...pinnedKeysById,
+        ]);
       },
     );
 

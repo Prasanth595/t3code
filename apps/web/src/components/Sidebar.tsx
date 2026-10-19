@@ -366,6 +366,7 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
+const PINNED_SHELF_EXPANDED_KEY = "t3code:sidebar:pinned-expanded";
 
 const inboxReturns = createInboxReturnTracker();
 
@@ -477,6 +478,11 @@ function useSidebarThreads(input: {
     false,
     Schema.Boolean,
   );
+  const [pinnedShelfExpanded, setPinnedShelfExpanded] = useLocalStorage(
+    PINNED_SHELF_EXPANDED_KEY,
+    true,
+    Schema.Boolean,
+  );
   // The settled tail restarts whenever the project scope changes.
   const [settledTail, setSettledTail] = useState({
     scopeKey: projectScopeKey,
@@ -521,8 +527,11 @@ function useSidebarThreads(input: {
   const visibleWorkingThreads = workingShelfExpanded
     ? workingThreads
     : routeThreadOnly(workingThreads, routeThreadKey);
+  const visiblePinnedThreads = pinnedShelfExpanded
+    ? pinnedThreads
+    : routeThreadOnly(pinnedThreads, routeThreadKey);
   const orderedThreads = [
-    ...pinnedThreads,
+    ...visiblePinnedThreads,
     ...activeThreads,
     ...visibleWorkingThreads,
     ...visibleSnoozedThreads,
@@ -562,6 +571,9 @@ function useSidebarThreads(input: {
     toggleSnoozedShelf: () => setSnoozedShelfExpanded((value) => !value),
     workingShelfExpanded,
     toggleWorkingShelf: () => setWorkingShelfExpanded((value) => !value),
+    pinnedShelfExpanded,
+    togglePinnedShelf: () => setPinnedShelfExpanded((value) => !value),
+    visiblePinnedThreads,
     renderedSettledThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
@@ -570,7 +582,7 @@ function useSidebarThreads(input: {
     settledThreadKeys: new Set(settledThreads.map(threadShellKey)),
     snoozedThreadKeys: new Set(snoozedThreads.map(threadShellKey)),
     sectionByThreadKey,
-    pinnedKeys: pinnedThreads.map(threadShellKey),
+    pinnedKeys: visiblePinnedThreads.map(threadShellKey),
     activeKeys: activeThreads.map(threadShellKey),
     pinnedKeysById: new Map(
       threads.map((thread) => [threadShellKey(thread), thread.pinOrderKey ?? null] as const),
@@ -2985,6 +2997,9 @@ export default function Sidebar() {
     toggleSnoozedShelf,
     workingShelfExpanded,
     toggleWorkingShelf,
+    pinnedShelfExpanded,
+    togglePinnedShelf,
+    visiblePinnedThreads,
     renderedSettledThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
@@ -3543,7 +3558,7 @@ export default function Sidebar() {
       return [];
     }
     const items: SidebarListItem[] = [{ kind: "marker", marker: "pinned-header" }];
-    const pinnedRows = rowsOf(pinnedThreads, "pinned");
+    const pinnedRows = rowsOf(visiblePinnedThreads, "pinned");
     items.push(...pinnedRows);
     items.push({ kind: "marker", marker: "pinned-divider" });
     const activeRows = rowsOf(activeThreads, "active");
@@ -3614,6 +3629,7 @@ export default function Sidebar() {
         : { ...current, targetSection: target?.section ?? null },
     );
   };
+  const collapsedPinnedOrder = pinnedShelfExpanded ? undefined : pinnedThreads.map(threadShellKey);
   const sortableIds = sidebarListItems.map(sidebarListItemId);
   // Outside a drag the orders are constants, so the strategy, and with it
   // every sortable row, keeps its identity while thread shells stream in.
@@ -3648,7 +3664,12 @@ export default function Sidebar() {
     if (source === undefined) return createSidebarCollisionDetection(() => false);
     return createSidebarCollisionDetection(
       (id) => {
-        const target = resolveSidebarDropTarget(sidebarListItems, draggedThreadKey, id);
+        const target = resolveSidebarDropTarget(
+          sidebarListItems,
+          draggedThreadKey,
+          id,
+          collapsedPinnedOrder,
+        );
         if (target === null) return false;
         return (
           planSidebarThreadDrop({
@@ -3673,6 +3694,7 @@ export default function Sidebar() {
       {
         items: sidebarListItems,
         activationY: dragActivationY ?? null,
+        pinnedCollapsed: !pinnedShelfExpanded,
       },
     );
   })();
@@ -3682,7 +3704,12 @@ export default function Sidebar() {
     const target =
       event.over === null
         ? null
-        : resolveSidebarDropTarget(sidebarListItems, activeKey, String(event.over.id));
+        : resolveSidebarDropTarget(
+            sidebarListItems,
+            activeKey,
+            String(event.over.id),
+            collapsedPinnedOrder,
+          );
     const activeThread = threadByKey.get(activeKey);
     if (activeSection === undefined || target === null || activeThread === undefined) return;
     const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
@@ -4912,12 +4939,39 @@ export default function Sidebar() {
                         }
                         switch (item.marker) {
                           case "pinned-header":
+                            // The sortable boundary reserves only drag-label height.
+                            if (pinnedThreads.length > 0) {
+                              items.push(
+                                <li
+                                  key="pinned-shelf-header"
+                                  data-thread-selection-safe
+                                  className="mx-0.5 h-8 list-none"
+                                >
+                                  <CollapsibleSectionHeader
+                                    onClick={togglePinnedShelf}
+                                    expanded={pinnedShelfExpanded}
+                                    tone={
+                                      dragTargetSection === "pinned"
+                                        ? "accent"
+                                        : from !== null
+                                          ? "emphasized"
+                                          : "muted"
+                                    }
+                                    data-testid="sidebar-pinned-shelf-toggle"
+                                  >
+                                    {pinnedShelfExpanded
+                                      ? "Pinned"
+                                      : `Pinned (${pinnedThreads.length})`}
+                                  </CollapsibleSectionHeader>
+                                </li>,
+                              );
+                            }
                             items.push(
                               <SidebarDragBoundary
                                 key="pinned-header"
                                 marker="pinned-header"
                                 label="Pinned"
-                                visible={from !== null}
+                                visible={from !== null && pinnedThreads.length === 0}
                                 isDropTarget={dragTargetSection === "pinned"}
                               />,
                             );

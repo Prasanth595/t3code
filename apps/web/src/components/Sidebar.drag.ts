@@ -33,6 +33,7 @@ export function createSidebarCollisionDetection(
   options: {
     items?: readonly SidebarListItem[];
     activationY?: number | null;
+    pinnedCollapsed?: boolean;
   } = {},
 ): CollisionDetection {
   const validity = new Map<string, boolean>();
@@ -79,6 +80,29 @@ export function createSidebarCollisionDetection(
             collisions = [target, ...collisions.filter((collision) => collision !== target)];
         }
       }
+    }
+    // The clamped card stays below the toggle, so its center can select the divider.
+    const headerRect =
+      pointer && options.pinnedCollapsed
+        ? args.droppableContainers
+            .find((container) => container.id === sidebarMarkerId("pinned-header"))
+            ?.node.current?.previousElementSibling?.querySelector<HTMLElement>(
+              '[data-testid="sidebar-pinned-shelf-toggle"]',
+            )
+            ?.getBoundingClientRect()
+        : undefined;
+    if (
+      pointer &&
+      headerRect &&
+      pointer.x >= headerRect.left &&
+      pointer.x <= headerRect.right &&
+      pointer.y >= headerRect.top &&
+      pointer.y <= headerRect.bottom
+    ) {
+      const header = collisions.find(
+        (collision) => collision.id === sidebarMarkerId("pinned-header"),
+      );
+      if (header) collisions = [header, ...collisions.filter((collision) => collision !== header)];
     }
     const nearest = collisions[0];
     if (!nearest || nearest.id === args.active.id) {

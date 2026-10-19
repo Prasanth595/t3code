@@ -170,6 +170,7 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
 export type SidebarDropTarget = {
   readonly section: "pinned" | "active" | "settled";
   readonly pinnedOrder: readonly string[];
+  readonly pinnedKeyOrder?: readonly string[];
   readonly activeOrder: readonly string[];
 };
 
@@ -177,6 +178,7 @@ export function resolveSidebarDropTarget(
   items: readonly SidebarListItem[],
   activeKey: string,
   overId: string,
+  collapsedPinnedOrder?: readonly string[],
 ): SidebarDropTarget | null {
   const activeIndex = items.findIndex((item) => sidebarListItemId(item) === activeKey);
   const overIndex = items.findIndex((item) => sidebarListItemId(item) === overId);
@@ -200,7 +202,16 @@ export function resolveSidebarDropTarget(
     } else if (currentSection === "pinned") pinnedOrder.push(item.key);
     else activeOrder.push(item.key);
   }
-  return { section, pinnedOrder, activeOrder };
+  return {
+    section,
+    pinnedOrder,
+    activeOrder,
+    ...(overId === sidebarMarkerId("pinned-header") &&
+    collapsedPinnedOrder !== undefined &&
+    collapsedPinnedOrder[0] !== activeKey
+      ? { pinnedKeyOrder: [activeKey, ...collapsedPinnedOrder.filter((key) => key !== activeKey)] }
+      : {}),
+  };
 }
 
 export type SidebarThreadDropPlan =
@@ -347,13 +358,15 @@ export function planSidebarThreadDrop(input: {
     case "pinned": {
       const order = target.pinnedOrder;
       if (
+        target.pinnedKeyOrder === undefined &&
         activeSection === "pinned" &&
         order.length === pinnedOrder.length &&
         order.every((key, index) => key === pinnedOrder[index])
       ) {
         return { kind: "none" };
       }
-      const assignments = arrange(order, pinnedKeysById, reorderableKeys);
+      // A collapsed header means the start of the full run, including hidden pins.
+      const assignments = arrange(target.pinnedKeyOrder ?? order, pinnedKeysById, reorderableKeys);
       if (assignments === null) return { kind: "none" };
       if (activeSection === "pinned") {
         return assignments.length === 0
