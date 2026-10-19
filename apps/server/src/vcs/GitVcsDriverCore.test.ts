@@ -2099,6 +2099,10 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           deletions: 0,
         });
         if ((yield* HostProcess.Platform) !== "win32") {
+          assert.include(
+            branch.diff,
+            'diff --git "a/tab\\tand\\nnewline.txt" "b/tab\\tand\\nnewline.txt"',
+          );
           assert.deepInclude(branch.files ?? [], {
             path: "tab\tand\nnewline.txt",
             previousPath: null,
