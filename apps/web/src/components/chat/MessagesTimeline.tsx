@@ -1496,6 +1496,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
             hitStripWidth={minimapHitStripWidth}
             currentIndex={minimapCurrentIndex}
             stripMap={minimapStripMap}
+            composerInset={contentInsetEndAdjustment}
             onWheel={forwardMinimapWheel}
             onSelect={(item) => {
               onManualNavigation();
@@ -1602,6 +1603,7 @@ function TimelineMinimap({
   currentIndex,
   items,
   stripMap,
+  composerInset,
   onWheel,
   onSelect,
 }: {
@@ -1610,6 +1612,7 @@ function TimelineMinimap({
   currentIndex: number | null;
   items: ReadonlyArray<TimelineMinimapItem>;
   stripMap: Map<string, HTMLSpanElement>;
+  composerInset: number;
   onWheel: (event: WheelEvent) => void;
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
@@ -1682,7 +1685,7 @@ function TimelineMinimap({
   return (
     <div
       className={cn(
-        "group/minimap pointer-events-none absolute inset-y-0 left-0 z-40 hidden w-18 [@media(pointer:fine)]:block",
+        "group/minimap pointer-events-none absolute top-0 left-0 z-40 hidden w-18 [@media(pointer:fine)]:block",
         hasPersistentGutter
           ? "opacity-100"
           : "opacity-0 transition-opacity duration-150 hover:opacity-100 focus-within:opacity-100",
@@ -1690,6 +1693,7 @@ function TimelineMinimap({
       data-testid="timeline-minimap"
       data-persistent-gutter={hasPersistentGutter ? "true" : "false"}
       ref={wheelTargetRef}
+      style={{ bottom: composerInset }}
     >
       <div className="relative h-full w-full select-none">
         <div

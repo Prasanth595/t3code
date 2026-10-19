@@ -1302,3 +1302,23 @@ describe("MessagesTimeline send anchor", () => {
     expect(onAnchorReady).not.toHaveBeenCalled();
   });
 });
+
+describe("MessagesTimeline minimap", () => {
+  it("keeps the rail between the top of the timeline and the composer", async () => {
+    const turns = Array.from({ length: 100 }, (_, index) =>
+      message(`Prompt ${index}`, {}, `prompt-${index}`),
+    );
+    await renderTimeline(turns, { contentInsetEndAdjustment: 120 });
+    container.style.height = "300px";
+
+    const bounds = container.getBoundingClientRect();
+    await vi.waitFor(() => {
+      for (const element of [button("Previous turn"), button("Next turn")]) {
+        const rect = element.getBoundingClientRect();
+        expect(rect.height).toBeGreaterThan(0);
+        expect(rect.top).toBeGreaterThanOrEqual(bounds.top);
+        expect(rect.bottom).toBeLessThanOrEqual(bounds.bottom - 120);
+      }
+    });
+  });
+});
