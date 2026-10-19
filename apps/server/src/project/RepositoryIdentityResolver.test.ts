@@ -271,16 +271,23 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     ),
   );
 
-  it.effect("separates login homes on one server while absolute paths share an identity", () =>
+  it.effect("keeps ambiguous personal-login aliases while absolute paths share an identity", () =>
     Effect.gen(function* () {
       const alice = () => Effect.succeed(processOutput("hostname server.test\nuser alice\n"));
       const bob = () => Effect.succeed(processOutput("hostname server.test\nuser bob\n"));
       expect((yield* resolveRemote("alice-box:app.git", alice))?.canonicalKey).toBe(
-        "server.test/~alice/app",
+        "alice-box/app",
       );
-      expect((yield* resolveRemote("bob-box:app.git", bob))?.canonicalKey).toBe(
-        "server.test/~bob/app",
+      expect((yield* resolveRemote("bob-box:app.git", bob))?.canonicalKey).toBe("bob-box/app");
+      const forge = yield* resolveRemote("forgejo@code.example.org:Team/App.git", () =>
+        Effect.succeed(processOutput("hostname code.example.org\nuser forgejo\nport 22\n")),
       );
+      expect(forge).toMatchObject({
+        canonicalKey: "code.example.org/team/app",
+        displayName: "Team/App",
+        owner: "Team",
+        name: "App",
+      });
       const absolute = yield* resolveRemote("alice-box:/srv/app.git", alice);
       expect(absolute?.canonicalKey).toBe("server.test/srv/app");
       expect((yield* resolveRemote("ssh://bob@server.test/srv/app.git", bob))?.canonicalKey).toBe(
@@ -382,7 +389,7 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
               });
         expect((yield* resolveRemote("gh:Team/App.git", ssh))?.canonicalKey).toBe("gh/team/app");
         expect((yield* resolveRemote("alice@server.test:app.git", ssh))?.canonicalKey).toBe(
-          "server.test/~alice/app",
+          "server.test/app",
         );
       }),
   );

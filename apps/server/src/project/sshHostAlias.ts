@@ -80,13 +80,6 @@ const readSshConfig = Effect.fn("sshHostAlias.readSshConfig")(function* (remote:
   return result._tag === "Some" && result.value.code === 0 ? result.value.stdout : "";
 });
 
-function homeQualifiedPath(path: string, user: string | undefined): string {
-  if (!user || user === "git") return path;
-  const inOwnHome = path.replace(/^\/?~\//, "");
-  if (inOwnHome === path && /^[/~]/.test(path)) return path;
-  return `~${user}/${inOwnHome}`;
-}
-
 export const expandSshHostAlias = Effect.fn("sshHostAlias.expandSshHostAlias")(function* (
   remoteUrl: string,
 ) {
@@ -101,18 +94,25 @@ export const expandSshHostAlias = Effect.fn("sshHostAlias.expandSshHostAlias")(f
   const provider = detectSourceControlProviderFromGitRemoteUrl(`git@${resolvedHost}:`);
   const isForge = provider !== null && provider.kind !== "unknown";
   const port = config.get("port") ?? remote.port;
+  const configUser = config.get("user");
+  const user = remote.user ?? (isSshName(configUser) ? configUser : undefined);
+  const personalPath =
+    !isForge &&
+    user !== undefined &&
+    user !== "git" &&
+    (!remote.path.startsWith("/") || remote.path.startsWith("/~"));
   // Known forges keep their existing SSH/HTTPS identity. Other non-default
   // ports may serve distinct repositories, so their aliases stay distinct.
   const host =
-    isLocalLoopbackHost(hostName) || (!isForge && port !== undefined && port !== "22")
+    isLocalLoopbackHost(hostName) ||
+    (!isForge && port !== undefined && port !== "22") ||
+    personalPath
       ? alias
       : resolvedHost;
-  const configUser = config.get("user");
-  const user = remote.user ?? (isSshName(configUser) ? configUser : undefined);
-  // Relative paths on plain servers belong to the effective login's home;
-  // forges and the shared git login interpret them as repository names.
-  const path = isForge ? remote.path : homeQualifiedPath(remote.path, user);
-  if (host === alias && path === remote.path) return remoteUrl;
+  // A non-git login can serve either a home directory or a self-hosted forge.
+  // Preserve the alias rather than inventing a repository path for either.
+  if (host === alias) return remoteUrl;
+  const path = remote.path;
   return path.startsWith("/")
     ? `ssh://${user ?? "git"}@${host}${path}`
     : `${user ?? "git"}@${host}:${path}`;
