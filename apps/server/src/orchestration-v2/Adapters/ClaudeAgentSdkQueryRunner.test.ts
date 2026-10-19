@@ -164,16 +164,11 @@ it.effect("forks in-process when the instance shares the server's config dir", (
         .spyOn(ClaudeSdk, "forkSession")
         .mockResolvedValue({ sessionId: "forked-in-process" });
       yield* Effect.addFinalizer(() => Effect.sync(() => inProcessFork.mockRestore()));
-      const path = yield* Path.Path;
-      const homeDirectory = yield* HostProcess.HomeDirectory;
-      const hostConfigDir =
-        process.env.CLAUDE_CONFIG_DIR?.trim() || path.join(homeDirectory, ".claude");
-
       const runner = yield* ClaudeAgentSdkQueryRunner;
       const forked = yield* runner.forkSession({
         sessionId: FORK_SESSION_ID,
         options: { dir: "/repo" },
-        environment: { ...process.env, CLAUDE_CONFIG_DIR: hostConfigDir },
+        environment: { ...process.env },
         threadId: ThreadId.make("thread-fork-shared-config-dir"),
         providerSessionId: ProviderSessionId.make("session-fork-shared-config-dir"),
       });
