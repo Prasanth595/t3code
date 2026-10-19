@@ -6,7 +6,7 @@ import {
   type Node as ProseMirrorNode,
   type ResolvedPos,
 } from "@tiptap/pm/model";
-import { Code, inputRegexMatch } from "@tiptap/extension-code";
+import { Code } from "@tiptap/extension-code";
 import { Blockquote } from "@tiptap/extension-blockquote";
 import { CodeBlock } from "@tiptap/extension-code-block";
 import { Heading } from "@tiptap/extension-heading";
@@ -47,77 +47,65 @@ const TIPTAP_TO_MARK: Record<string, RichTextMark> = {
   code: "code",
 };
 
-type PastedRange = { from: number; to: number };
+type CodePair = { from: number; to: number };
 
-const pastedPairKey = new PluginKey<PastedRange[]>("pastedBacktickPair");
+const codePairKey = new PluginKey<CodePair[]>("typedBacktickPairs");
 
-/** Paste insertions that contain a backtick, mapped by each later transaction. */
-function pastedRanges(tr: Transaction, previous: readonly PastedRange[]): PastedRange[] {
-  const ranges = previous.flatMap((range) => {
-    const from = tr.mapping.map(range.from, 1);
-    const to = tr.mapping.map(range.to, -1);
-    return from < to ? [{ from, to }] : [];
-  });
-  if (tr.getMeta("paste") !== true && tr.getMeta("uiEvent") !== "paste") return ranges;
-  tr.steps.forEach((step, index) => {
-    const after = tr.mapping.slice(index + 1);
-    step.getMap().forEach((_from, _to, start, end) => {
-      if (start >= end) return;
-      const from = after.map(start, 1);
-      const to = after.map(end, -1);
-      if (from < to && tr.doc.textBetween(from, to).includes("`")) ranges.push({ from, to });
-    });
-  });
-  return ranges;
-}
-
-/**
- * Formats a finished backtick pair when the caret moves onto its closing
- * backtick. The code input rule only sees text typed in front of the caret,
- * so a pair typed before its contents stays literal until the caret leaves it.
- * A pair inserted by a paste stays literal through that later move.
- */
-export function codePairCaretPlugin(type: MarkType): Plugin {
-  return new Plugin({
-    key: pastedPairKey,
+// Input rules only see text before the caret, so filling an already typed
+// pair needs a separate exit handler. Only typed pairs opt into that handler.
+function codePairCaretPlugin(type: MarkType) {
+  return new Plugin<CodePair[]>({
+    key: codePairKey,
     state: {
-      init: (): PastedRange[] => [],
-      apply: (tr, ranges) => pastedRanges(tr, ranges),
+      init: () => [],
+      apply(tr, pairs) {
+        const mapped = pairs.flatMap((pair) => {
+          const from = tr.mapping.mapResult(pair.from, 1);
+          const to = tr.mapping.mapResult(pair.to, -1);
+          return from.deleted || to.deleted ? [] : [{ from: from.pos, to: to.pos }];
+        });
+        const typed = tr.getMeta(codePairKey) as CodePair | undefined;
+        return typed ? [...mapped, typed] : mapped;
+      },
+    },
+    props: {
+      handleTextInput(view, from, to, text, insert) {
+        if (view.composing || from !== to || text !== "`") return false;
+        const $from = view.state.doc.resolve(from);
+        if (
+          !$from.parent.isTextblock ||
+          $from.parent.type.spec.code ||
+          !/(^|[^`])`$/.test($from.nodeBefore?.text ?? "")
+        ) {
+          return false;
+        }
+        view.dispatch(insert().setMeta(codePairKey, { from: from - 1, to: from + 1 }));
+        return true;
+      },
     },
     appendTransaction(transactions, oldState, state) {
       if (!state.selection.empty || oldState.selection.from === state.selection.from) return null;
       if (transactions.some((tr) => tr.docChanged)) return null;
-      const $from = state.selection.$from;
-      if (!$from.parent.isTextblock || $from.parent.type.spec.code) return null;
-      let textOnly = true;
-      $from.parent.forEach((node) => {
-        if (!node.isText) textOnly = false;
-      });
-      if (!textOnly) return null;
-      // The match is end-anchored, so a backtick after the caret is invisible
-      // to it. At the end of the text there is no next character to read.
+      const pair = codePairKey.getState(state)?.find(({ to }) => to === state.selection.from);
+      if (!pair) return null;
+      const $start = state.doc.resolve(pair.from);
+      const $end = state.selection.$from;
+      if (!$start.sameParent($end) || $start.parent.type.spec.code) return null;
       if (
-        $from.parentOffset < $from.parent.content.size &&
-        $from.parent.textBetween($from.parentOffset, $from.parentOffset + 1) === "`"
+        $start.nodeBefore?.text?.endsWith("`") ||
+        $end.nodeAfter?.text?.startsWith("`") ||
+        !/^`[^`]+`$/.test(state.doc.textBetween(pair.from, pair.to))
       ) {
         return null;
       }
-      const before = $from.parent.textBetween(0, $from.parentOffset);
-      const found = inputRegexMatch(before);
-      const content = found?.replaceWith;
-      if (!found || content === undefined) return null;
-      const from = $from.start() + found.index;
-      const to = from + found.text.length;
-      const pasted = pastedPairKey.getState(state);
-      if (pasted?.some((range) => range.from < to && from < range.to)) return null;
-      let marked = false;
-      state.doc.nodesBetween(from, to, (node) => {
-        if (node.isText && node.marks.length > 0) marked = true;
+      let plain = true;
+      state.doc.nodesBetween(pair.from, pair.to, (node) => {
+        if (node.isInline && (!node.isText || node.marks.length > 0)) plain = false;
       });
-      if (marked) return null;
-      const tr = state.tr.delete(to - 1, to).delete(from, from + 1);
-      tr.addMark(from, from + content.length, type.create());
-      tr.setSelection(TextSelection.create(tr.doc, from + content.length));
+      if (!plain) return null;
+      const tr = state.tr.delete(pair.to - 1, pair.to).delete(pair.from, pair.from + 1);
+      tr.addMark(pair.from, pair.to - 2, type.create());
+      tr.setSelection(TextSelection.create(tr.doc, pair.to - 2));
       tr.removeStoredMark(type);
       return tr;
     },
@@ -127,8 +115,6 @@ export function codePairCaretPlugin(type: MarkType): Plugin {
 /**
  * Tiptap's code mark excludes every other mark, which rejects the `bold+code`
  * spans markdown like `**\`x\`**` parses into and drops the whole insert.
- * `codePairCaretPlugin` covers a pair typed around its contents, which the
- * stock input rule never sees.
  */
 export const ComposerCodeExtension = Code.extend({
   excludes: "code",

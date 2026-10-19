@@ -1165,6 +1165,7 @@ describe("inline code entry", () => {
         StarterKit.configure({ code: false, codeBlock: false, trailingNode: false }),
         ComposerCodeExtension,
         ComposerCodeBlockExtension,
+        stubAtom("composer-mention", { path: { default: "" }, source: { default: "" } }),
       ],
       content: { type: "doc", content: [{ type: block }] },
     });
@@ -1186,20 +1187,55 @@ describe("inline code entry", () => {
     }
   }
 
-  it("formats a filled pair on exit, leaves following text plain, and keeps the normal input rule", () => {
+  it.each(["", "prefix ", "@README.md"])(
+    "formats a filled pair after %j, leaves following text plain, and keeps the normal input rule",
+    (prefix) => {
+      const editor = editorFor();
+      if (prefix === "@README.md") {
+        editor.commands.insertContent({
+          type: "composer-mention",
+          attrs: { path: "README.md", source: prefix },
+        });
+      } else {
+        type(editor, prefix);
+      }
+      const offset = editor.state.selection.from - 1;
+      type(editor, "``");
+      editor.commands.setTextSelection(offset + 2);
+      type(editor, "hello world");
+      expect(serializeEditorDoc(editor.state.doc).value).toBe(`${prefix}\`hello world\``);
+      expect(editor.state.doc.firstChild?.lastChild?.marks).toEqual([]);
+
+      editor.commands.setTextSelection(offset + 14);
+      expect(editor.state.doc.textContent).toBe(
+        `${prefix === "@README.md" ? "" : prefix}hello world`,
+      );
+      expect(serializeEditorDoc(editor.state.doc).value).toBe(`${prefix}\`hello world\``);
+      type(editor, " next `typed`");
+      expect(serializeEditorDoc(editor.state.doc).value).toBe(
+        `${prefix}\`hello world\` next \`typed\``,
+      );
+      const formatted = editor.state.doc.toJSON();
+      let undos = 0;
+      while (editor.commands.undo()) undos += 1;
+      expect(undos).toBeGreaterThan(0);
+      expect(serializeEditorDoc(editor.state.doc).value).toBe("");
+      for (let i = 0; i < undos; i += 1) expect(editor.commands.redo()).toBe(true);
+      expect(editor.state.doc.toJSON()).toEqual(formatted);
+    },
+  );
+
+  it("keeps composition edits literal until the caret leaves the typed pair", () => {
     const editor = editorFor();
     type(editor, "``");
     editor.commands.setTextSelection(2);
-    type(editor, "hello world");
-    expect(editor.state.doc.textContent).toBe("`hello world`");
+    editor.view.dispatch(editor.state.tr.insertText("世").setMeta("composition", 1));
+    editor.view.dispatch(editor.state.tr.insertText("世界", 2, 3).setMeta("composition", 1));
+    expect(editor.state.doc.textContent).toBe("`世界`");
     expect(editor.state.doc.firstChild?.firstChild?.marks).toEqual([]);
-
-    editor.commands.setTextSelection(14);
-    expect(editor.state.doc.textContent).toBe("hello world");
-    expect(serializeEditorDoc(editor.state.doc).value).toBe("`hello world`");
-    type(editor, " next `typed`");
-    expect(editor.state.doc.textContent).toBe("hello world next typed");
-    expect(serializeEditorDoc(editor.state.doc).value).toBe("`hello world` next `typed`");
+    editor.commands.setTextSelection(5);
+    expect(editor.state.doc.textContent).toBe("世界");
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("`世界`");
   });
 
   it.each(["paste", "setContent"])("keeps a %s pair literal after moving through it", (source) => {
@@ -1208,6 +1244,7 @@ describe("inline code entry", () => {
     if (source === "paste") {
       editor.view.dispatch(editor.state.tr.insertText(literal).setMeta("uiEvent", "paste"));
     } else {
+      type(editor, "``");
       editor.commands.setContent({
         type: "doc",
         content: [{ type: "paragraph", content: [{ type: "text", text: literal }] }],
