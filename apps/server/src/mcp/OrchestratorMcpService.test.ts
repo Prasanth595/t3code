@@ -2219,6 +2219,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           .updateScheduledTask(supervisedClient, {
             scheduledTaskId: bound.id,
             prompt: "Something else",
+            target: { model: "gpt-5.4-mini" },
           })
           .pipe(Effect.flip);
         assert.equal(error.code, "runtime_mode_escalation_denied");
@@ -2275,6 +2276,330 @@ describe("OrchestratorMcpService provider resolution", () => {
         assert.equal(yield* Ref.get(upserted), 1);
         assert.equal(updated.scheduledTaskId, bound.id);
         assert.equal(updated.webhookUrl, undefined);
+      }),
+    );
+  });
+
+  describe("scheduled task targets", () => {
+    const miniModel = "gpt-5.4-mini";
+    const callerSelection = {
+      instanceId: codexInstanceId,
+      model: "gpt-5.4",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    };
+    const stored: ScheduledTask = {
+      id: ScheduledTaskId.make("scheduled-task:triage"),
+      title: "Triage",
+      prompt: "Triage {{body.issue.title}}",
+      enabled: true,
+      schedule: { type: "webhook", signature: null },
+      projectId,
+      threadId: null,
+      workspaceStrategy: { type: "root" },
+      modelSelection: callerSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+      createdAt: "2026-10-05T00:00:00.000Z",
+      updatedAt: "2026-10-05T00:00:00.000Z",
+      nextRunAt: null,
+      lastRunAt: null,
+      lastRunStatus: "never",
+      lastRunError: null,
+      runCount: 0,
+    };
+
+    const codex: ServerProvider = {
+      ...providerSnapshot({
+        instanceId: codexInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+      }),
+      models: [callerSelection.model, miniModel].map((slug) => ({
+        slug,
+        name: slug,
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "reasoningEffort",
+              label: "Reasoning effort",
+              type: "select",
+              options: [
+                { id: "low", label: "Low" },
+                { id: "high", label: "High" },
+              ],
+            },
+          ],
+        },
+      })),
+    };
+    const peer: ServerProvider = {
+      ...providerSnapshot({
+        instanceId: antigravityInstanceId,
+        driver: ProviderDriverKind.make("antigravity"),
+      }),
+      models: codex.models.toReversed(),
+      supportedRuntimeModes: ["approval-required", "full-access"],
+    };
+    const client: McpInvocationScope = {
+      ...scope,
+      thread: undefined,
+      client: { sessionId: "scheduler", label: "Test", access: "full-access" },
+    };
+    const createInput = { prompt: "Triage", schedule: stored.schedule, bindToCurrentThread: false };
+
+    const setup = Effect.fnUntraced(function* (
+      runtimeMode: ScheduledTask["runtimeMode"] = "full-access",
+    ) {
+      const saved = yield* Ref.make<ReadonlyArray<ScheduledTask>>([]);
+      const providers = yield* Ref.make<ReadonlyArray<ServerProvider>>([codex, peer]);
+      const enabled = yield* Ref.make(true);
+      const reads = yield* Ref.make(0);
+      const probes = yield* Ref.make<ReadonlyArray<ProviderInstanceId>>([]);
+      const initial = { ...stored, runtimeMode };
+      const parent = parentProjection([], callerSelection);
+      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService.pipe(
+        Effect.provide(
+          layerOrchestratorService.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                NodeServices.layer,
+                ServerSettings.layerTest(),
+                Layer.mock(ThreadManagementService.ThreadManagementService)({
+                  getThreadRecords: () =>
+                    Effect.succeed({
+                      ...parent,
+                      thread: { ...parent.thread, runtimeMode },
+                    }),
+                  isProviderInstanceEnabledForProject: () => Ref.get(enabled),
+                }),
+                Layer.mock(ProviderRegistry.ProviderRegistry)({
+                  getProviders: Ref.update(reads, (count) => count + 1).pipe(
+                    Effect.andThen(Ref.get(providers)),
+                  ),
+                  refreshInstance: (id) =>
+                    Ref.update(probes, (ids) => [...ids, id]).pipe(Effect.as([codex, peer])),
+                }),
+                adapterRegistryLayer([codexInstanceId, antigravityInstanceId]),
+                Layer.mock(ProjectService.ProjectService)({
+                  getById: () =>
+                    Effect.succeedSome({
+                      id: projectId,
+                      defaultModelSelection: { instanceId: codexInstanceId, model: miniModel },
+                    } as never),
+                }),
+                Layer.mock(SecretRequests.SecretRequests)({}),
+                Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+                  list: () =>
+                    Ref.get(saved).pipe(
+                      Effect.map((tasks) => ({
+                        tasks: [tasks.at(-1) ?? initial],
+                      })),
+                    ),
+                  upsert: (input) => {
+                    const task = {
+                      ...initial,
+                      ...input,
+                      id: input.id ?? initial.id,
+                      threadId: input.threadId ?? null,
+                      createdBy: input.createdBy ?? initial.createdBy,
+                      creationSource: input.creationSource ?? initial.creationSource,
+                      schedule:
+                        input.schedule.type === "webhook"
+                          ? { ...input.schedule, signature: input.schedule.signature ?? null }
+                          : input.schedule,
+                    };
+                    return Ref.update(saved, (tasks) => [...tasks, task]).pipe(Effect.as({ task }));
+                  },
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+      return { mcp, saved, providers, enabled, reads, probes };
+    });
+
+    it.effect("preserves legacy selections and modes without consulting providers", () =>
+      Effect.gen(function* () {
+        const { mcp, saved, providers, reads, probes } = yield* setup("auto");
+        yield* Ref.set(providers, []);
+        yield* mcp.scheduleTask(scope, createInput);
+        yield* mcp.updateScheduledTask(scope, { scheduledTaskId: stored.id, title: "Renamed" });
+        yield* mcp.scheduleTask(client, { ...createInput, projectId });
+        yield* mcp.updateScheduledTask(client, { scheduledTaskId: stored.id, enabled: false });
+        assert.deepEqual(
+          (yield* Ref.get(saved)).map((task) => task.modelSelection),
+          [
+            callerSelection,
+            callerSelection,
+            { instanceId: codexInstanceId, model: miniModel },
+            { instanceId: codexInstanceId, model: miniModel },
+          ],
+        );
+        assert.deepEqual(
+          (yield* Ref.get(saved)).map((task) => task.runtimeMode),
+          ["auto", "auto", "full-access", "full-access"],
+        );
+        assert.equal(yield* Ref.get(reads), 0);
+        assert.deepEqual(yield* Ref.get(probes), []);
+      }),
+    );
+
+    it.effect(
+      "saves targeted selections and reports them in create, update and list summaries",
+      () =>
+        Effect.gen(function* () {
+          const { mcp, saved } = yield* setup();
+          const created = yield* mcp.scheduleTask(scope, {
+            ...createInput,
+            target: { model: miniModel },
+          });
+          assert.containSubset(created, {
+            providerInstanceId: codexInstanceId,
+            model: miniModel,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          });
+          assert.isUndefined(created.options);
+          const options = [{ id: "reasoningEffort", value: "low" }];
+          const updated = yield* mcp.updateScheduledTask(scope, {
+            scheduledTaskId: stored.id,
+            target: { options },
+          });
+          const summary = {
+            providerInstanceId: codexInstanceId,
+            model: miniModel,
+            options,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+          };
+          assert.containSubset(updated, summary);
+          assert.containSubset((yield* mcp.listScheduledTasks(scope, {})).tasks, [summary]);
+          yield* mcp.updateScheduledTask(scope, {
+            scheduledTaskId: stored.id,
+            target: { model: callerSelection.model },
+          });
+          yield* mcp.scheduleTask(client, { ...createInput, projectId, target: { options } });
+          assert.deepEqual(
+            (yield* Ref.get(saved)).map((task) => task.modelSelection),
+            [
+              { instanceId: codexInstanceId, model: miniModel },
+              { instanceId: codexInstanceId, model: miniModel, options },
+              { instanceId: codexInstanceId, model: callerSelection.model },
+              { instanceId: codexInstanceId, model: miniModel, options },
+            ],
+          );
+        }),
+    );
+
+    it.effect(
+      "keeps an advertised stored model on provider-only updates and refuses incompatible providers",
+      () =>
+        Effect.gen(function* () {
+          const { mcp, saved, providers } = yield* setup();
+          const moved = yield* mcp.updateScheduledTask(scope, {
+            scheduledTaskId: stored.id,
+            target: { providerInstanceId: peer.instanceId },
+          });
+          assert.equal(moved.model, callerSelection.model);
+          assert.isUndefined(moved.options);
+          yield* Ref.set(providers, [{ ...codex, models: [codex.models[1]!] }, peer]);
+          const error = yield* mcp
+            .updateScheduledTask(scope, {
+              scheduledTaskId: stored.id,
+              target: { providerInstanceId: codexInstanceId },
+            })
+            .pipe(Effect.flip);
+          assert.equal(error.code, "model_unavailable");
+          yield* Ref.set(providers, [{ ...codex, models: [] }, peer]);
+          const unadvertised = yield* mcp
+            .updateScheduledTask(scope, {
+              scheduledTaskId: stored.id,
+              target: { providerInstanceId: codexInstanceId },
+            })
+            .pipe(Effect.flip);
+          assert.equal(unadvertised.code, "model_unavailable");
+          assert.deepEqual(
+            (yield* Ref.get(saved)).map((task) => task.modelSelection),
+            [{ instanceId: peer.instanceId, model: callerSelection.model }],
+          );
+        }),
+    );
+
+    it.effect("validates targets before writing and re-probes an unavailable provider once", () =>
+      Effect.gen(function* () {
+        const { mcp, saved, providers, enabled, probes } = yield* setup();
+        const unknownModel = yield* mcp
+          .scheduleTask(scope, {
+            ...createInput,
+            target: { model: "unknown-model" },
+          })
+          .pipe(Effect.flip);
+        assert.equal(unknownModel.code, "model_unavailable");
+        const invalidOptions = yield* mcp
+          .updateScheduledTask(scope, {
+            scheduledTaskId: stored.id,
+            target: { options: [{ id: "reasoningEffort", value: "invalid" }] },
+          })
+          .pipe(Effect.flip);
+        assert.equal(invalidOptions.code, "invalid_request");
+        yield* Ref.set(enabled, false);
+        const disabled = yield* mcp
+          .updateScheduledTask(scope, {
+            scheduledTaskId: stored.id,
+            target: { model: miniModel },
+          })
+          .pipe(Effect.flip);
+        assert.equal(disabled.code, "invalid_request");
+        yield* Ref.set(enabled, true);
+        const noAdapter = { ...peer, instanceId: ProviderInstanceId.make("no-adapter") };
+        yield* Ref.set(providers, [codex, noAdapter]);
+        const unavailable = yield* mcp
+          .scheduleTask(scope, {
+            ...createInput,
+            target: { providerInstanceId: noAdapter.instanceId },
+          })
+          .pipe(Effect.flip);
+        assert.equal(unavailable.code, "provider_unavailable");
+        assert.deepEqual(yield* Ref.get(saved), []);
+        assert.deepEqual(yield* Ref.get(probes), [noAdapter.instanceId]);
+        yield* Ref.set(providers, [{ ...peer, installed: false }]);
+        const recovered = yield* mcp.scheduleTask(scope, {
+          ...createInput,
+          target: { providerInstanceId: peer.instanceId },
+        });
+        assert.equal(recovered.model, miniModel);
+        assert.equal(recovered.providerInstanceId, peer.instanceId);
+        assert.deepEqual(yield* Ref.get(probes), [noAdapter.instanceId, peer.instanceId]);
+        assert.equal((yield* Ref.get(saved)).length, 1);
+      }),
+    );
+
+    it.effect("steps down an inherited runtime when creating a task on another provider", () =>
+      Effect.gen(function* () {
+        const { mcp, saved } = yield* setup("auto");
+        const result = yield* mcp.scheduleTask(scope, {
+          ...createInput,
+          target: { providerInstanceId: peer.instanceId },
+        });
+        assert.equal((yield* Ref.get(saved))[0]?.runtimeMode, "approval-required");
+        assert.equal(result.runtimeMode, "approval-required");
+        assert.equal(result.interactionMode, "default");
+      }),
+    );
+
+    it.effect("steps down a stored runtime when updating a task to another provider", () =>
+      Effect.gen(function* () {
+        const { mcp, saved } = yield* setup("auto");
+        const result = yield* mcp.updateScheduledTask(client, {
+          scheduledTaskId: stored.id,
+          target: { providerInstanceId: peer.instanceId },
+        });
+        assert.equal((yield* Ref.get(saved))[0]?.runtimeMode, "approval-required");
+        assert.equal(result.runtimeMode, "approval-required");
+        assert.equal(result.interactionMode, "default");
       }),
     );
   });

@@ -546,6 +546,12 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
         "True (default) posts each run into this thread; false creates a fresh top-level thread per run.",
     }),
   ),
+  target: Schema.optional(
+    OrchestratorMcpTarget.annotate({
+      description:
+        "Provider, model, and options for runs that launch a fresh thread. Omit to inherit the calling thread's selection, or the project default when there is no calling thread. Options carry over only when the provider and model stay the same.",
+    }),
+  ),
   clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
 });
 export type OrchestratorMcpScheduleTaskInput = typeof OrchestratorMcpScheduleTaskInput.Type;
@@ -560,6 +566,11 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
   schedule: ScheduledTaskSchedule,
   nextRunAt: Schema.NullOr(IsoDateTime),
   lastRunStatus: ScheduledTaskRunStatus,
+  providerInstanceId: ProviderInstanceId,
+  model: Schema.String,
+  options: Schema.optional(Schema.Array(ProviderOptionSelection)),
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
   webhookUrl: Schema.optional(Schema.String).annotate({
     description:
       "Public URL to give the sender. Absent when this environment has no T3 Connect managed tunnel; the user must enable T3 Connect remote access first.",
@@ -597,6 +608,12 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   schedule: Schema.optional(OrchestratorMcpSchedule),
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
+  target: Schema.optional(
+    OrchestratorMcpTarget.annotate({
+      description:
+        "Change the provider, model, or options for runs that launch a fresh thread. Omitted fields inherit the stored selection. A provider-only change keeps the stored model if the destination advertises it, otherwise it fails with model_unavailable. Options carry over only when the provider and model stay the same.",
+    }),
+  ),
 });
 export type OrchestratorMcpUpdateScheduledTaskInput =
   typeof OrchestratorMcpUpdateScheduledTaskInput.Type;

@@ -123,6 +123,7 @@ const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
 
 interface ResolvedTarget {
   readonly modelSelection: ModelSelection;
+  readonly advertisedModels: ServerProvider["models"];
   readonly supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined;
 }
 
@@ -274,6 +275,11 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
     schedule: task.schedule,
     nextRunAt: task.nextRunAt,
     lastRunStatus: task.lastRunStatus,
+    providerInstanceId: task.modelSelection.instanceId,
+    model: task.modelSelection.model,
+    ...(task.modelSelection.options === undefined ? {} : { options: task.modelSelection.options }),
+    runtimeMode: task.runtimeMode,
+    interactionMode: task.interactionMode,
     ...(task.webhook?.url == null || !mayRun ? {} : { webhookUrl: task.webhook.url }),
     ...(task.webhook === undefined
       ? {}
@@ -1196,7 +1202,12 @@ const make = Effect.gen(function* () {
   };
 
   const resolveTarget = (input: {
-    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly parent: {
+      readonly thread: Pick<
+        OrchestrationV2ThreadProjection["thread"],
+        "projectId" | "modelSelection"
+      >;
+    };
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
     /**
@@ -1330,9 +1341,38 @@ const make = Effect.gen(function* () {
             : requestedOptions === undefined
               ? { instanceId, model }
               : { instanceId, model, options: requestedOptions },
+        advertisedModels: provider.models,
         supportedRuntimeModes: provider.supportedRuntimeModes,
       };
     });
+
+  const resolveScheduledTaskTarget = Effect.fnUntraced(function* (input: {
+    readonly projectId: ProjectId;
+    readonly inherited: ModelSelection;
+    readonly target: OrchestratorMcpTarget;
+  }) {
+    const target = yield* resolveTargetRechecking({
+      parent: { thread: { projectId: input.projectId, modelSelection: input.inherited } },
+      target: input.target,
+      providers: yield* loadProviders,
+    });
+    // Driver-only resolution already filters candidates by project enablement.
+    if (
+      (input.target.providerInstanceId !== undefined || input.target.driverKind === undefined) &&
+      !(yield* threadManagement.isProviderInstanceEnabledForProject({
+        projectId: input.projectId,
+        instanceId: target.modelSelection.instanceId,
+      }))
+    ) {
+      return yield* threadManagementFailure(
+        new ThreadManagementService.ThreadManagementProviderInstanceDisabledError({
+          projectId: input.projectId,
+          instanceId: target.modelSelection.instanceId,
+        }),
+      );
+    }
+    return target;
+  });
 
   const requestKey = (clientRequestId: string | undefined): Effect.Effect<string> =>
     clientRequestId === undefined
@@ -1655,8 +1695,20 @@ const make = Effect.gen(function* () {
               : "bindToCurrentThread binds to this thread, which belongs to a different project.",
           );
         }
-        const modelSelection =
+        const inherited =
           parent?.thread.modelSelection ?? (yield* projectDefaultModelSelection(project));
+        const target =
+          input.target === undefined
+            ? undefined
+            : yield* resolveScheduledTaskTarget({
+                projectId,
+                inherited,
+                target: input.target,
+              });
+        const runtimeMode =
+          target === undefined
+            ? limits.runtimeMode
+            : yield* resolveRuntimeMode(limits.runtimeMode, undefined, target);
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
           input.title ?? (derivedTitle.length > 0 ? derivedTitle.slice(0, 80) : "Scheduled task");
@@ -1668,8 +1720,8 @@ const make = Effect.gen(function* () {
           projectId,
           threadId: bindToCurrentThread && parent !== undefined ? parent.thread.id : null,
           workspaceStrategy: scheduledTaskWorkspaceStrategy(bindToCurrentThread),
-          modelSelection,
-          runtimeMode: limits.runtimeMode,
+          modelSelection: target?.modelSelection ?? inherited,
+          runtimeMode,
           interactionMode: limits.interactionMode,
           createdBy: "agent",
           creationSource: "mcp",
@@ -1734,6 +1786,32 @@ const make = Effect.gen(function* () {
             : input.bindToCurrentThread && parent !== undefined
               ? parent.thread.id
               : null;
+        const target =
+          input.target === undefined
+            ? undefined
+            : yield* resolveScheduledTaskTarget({
+                projectId: existing.projectId,
+                inherited: existing.modelSelection,
+                target: {
+                  ...input.target,
+                  model: input.target.model ?? existing.modelSelection.model,
+                },
+              });
+        if (
+          target !== undefined &&
+          input.target?.model === undefined &&
+          target.modelSelection.instanceId !== existing.modelSelection.instanceId &&
+          !target.advertisedModels.some((model) => model.slug === existing.modelSelection.model)
+        ) {
+          return yield* failure(
+            "model_unavailable",
+            `Model ${existing.modelSelection.model} is not advertised by provider ${target.modelSelection.instanceId}; name a model in target to switch providers.`,
+          );
+        }
+        const runtimeMode =
+          target === undefined
+            ? existing.runtimeMode
+            : yield* resolveRuntimeMode(existing.runtimeMode, undefined, target);
         // Rebinding changes where runs execute, so the workspace strategy must
         // follow: unbinding a root-strategy task would otherwise run loose
         // prompts in the shared project checkout.
@@ -1750,8 +1828,8 @@ const make = Effect.gen(function* () {
           projectId: existing.projectId,
           threadId,
           workspaceStrategy,
-          modelSelection: existing.modelSelection,
-          runtimeMode: existing.runtimeMode,
+          modelSelection: target?.modelSelection ?? existing.modelSelection,
+          runtimeMode,
           interactionMode: existing.interactionMode,
           createdBy: existing.createdBy,
           creationSource: existing.creationSource,
