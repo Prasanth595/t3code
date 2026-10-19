@@ -25,6 +25,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { describe } from "vite-plus/test";
 
 import * as ResetCreditCoordinator from "../provider/resetCreditCoordinator.ts";
+import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "../background/HostPowerMonitor.ts";
@@ -187,6 +188,7 @@ const layerOrchestration = RuntimeLayer.layer.pipe(
   Layer.provide(layerServerSettings),
   Layer.provideMerge(layerProviderInstanceRegistry),
   Layer.provide(ResetCreditCoordinator.layer),
+  Layer.provide(UsageLimitSources.layerTest),
   Layer.provide(layerBackgroundPolicy),
   Layer.provide(layerPlatformTest),
   Layer.provide(McpProviderSessions.layer),
