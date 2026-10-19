@@ -2169,8 +2169,7 @@ const make = Effect.gen(function* () {
         await applySetting(tab, setting);
         return;
       }
-      // Viewer navigations don't wait to commit, so a slow one can't hold back the
-      // viewer's next input. A newer navigation replaces it, as in Chrome.
+      // A stalled navigation must not block a corrected URL or further viewer input.
       case "navigate":
         if (typeof message.url === "string") {
           const url = normalizePreviewUrl(message.url);
