@@ -99,7 +99,7 @@ import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import { relayUrlConfig } from "./publicConfig.ts";
 import { checkRelayClock } from "./relayClock.ts";
 import {
-  filterRelayResponse,
+  filterRelayClient,
   relayRequestError,
   type RelayRequestError,
   shouldRetryRelayRequest,
@@ -527,6 +527,7 @@ const make = Effect.gen(function* () {
   const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
   const cliTokenManager = yield* CliTokenManager.CloudCliTokenManager;
   const httpClient = yield* HttpClient.HttpClient;
+  const relayHttpClient = filterRelayClient(httpClient);
   const httpServer = yield* HttpServer.HttpServer;
   const awarenessRelay = yield* AgentAwarenessRelay.AgentAwarenessRelay;
   const crypto = yield* Crypto.Crypto;
@@ -853,8 +854,7 @@ const make = Effect.gen(function* () {
     HttpClientRequest.post(input.url).pipe(
       HttpClientRequest.bearerToken(input.token),
       HttpClientRequest.bodyJson(input.payload),
-      Effect.flatMap(httpClient.execute),
-      Effect.flatMap(filterRelayResponse),
+      Effect.flatMap(relayHttpClient.execute),
       Effect.flatMap(HttpClientResponse.schemaBodyJson(input.schema)),
       Effect.timeout(input.timeout ?? "10 seconds"),
       Effect.mapError(relayRequestError),
@@ -1307,8 +1307,7 @@ const make = Effect.gen(function* () {
       `${bytesToString(relayUrl.value)}/v1/client/environment-links/${encodeURIComponent(environmentId)}/tunnel`,
     ).pipe(
       HttpClientRequest.bearerToken(token.value.accessToken),
-      httpClient.execute,
-      Effect.flatMap(filterRelayResponse),
+      relayHttpClient.execute,
       Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayOkResponse)),
       withRelayClientTracing,
     );

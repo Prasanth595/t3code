@@ -2,9 +2,11 @@ import { RelayProtectedError } from "@t3tools/contracts/relay";
 import { clockSkewFromDateHeader, describeClockSkew } from "@t3tools/shared/clockSkew";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { isHttpClientError } from "effect/http/HttpClientError";
 
@@ -58,11 +60,13 @@ function recoveryHint(error: RelayProtectedError): string {
 
 export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(function* (
   response: HttpClientResponse.HttpClientResponse,
+  requestDurationMillis = 0,
 ) {
   if (response.status >= 200 && response.status < 300) return response;
   const clockSkewSeconds = clockSkewFromDateHeader(
     response.headers.date,
     yield* Clock.currentTimeMillis,
+    requestDurationMillis,
   );
   const decoded = yield* HttpClientResponse.schemaBodyJson(RelayProtectedError)(response).pipe(
     Effect.option,
@@ -115,3 +119,13 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
   }
   return yield* new RelayRequestError({ rejection: "unavailable", description });
 });
+
+export const filterRelayClient = (client: HttpClient.HttpClient) =>
+  HttpClient.transformResponse(client, (response) =>
+    response.pipe(
+      Effect.timed,
+      Effect.flatMap(([duration, result]) =>
+        filterRelayResponse(result, Duration.toMillis(duration)),
+      ),
+    ),
+  );

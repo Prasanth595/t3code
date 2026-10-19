@@ -4,12 +4,13 @@ const CLOCK_SKEW_LIMIT_SECONDS = 60;
 /**
  * Seconds this machine's clock is ahead of (positive) or behind (negative) the
  * relay, judged from the HTTP `Date` header of a relay response received at
- * `nowMillis`. `null` when the header is missing, unparseable, or within the
- * limit.
+ * `nowMillis`, allowing for the request's monotonic elapsed time. `null` when
+ * the header is missing, unparseable, or does not establish skew beyond the limit.
  */
 export function clockSkewFromDateHeader(
   dateHeader: string | undefined,
   nowMillis: number,
+  requestDurationMillis = 0,
 ): number | null {
   if (dateHeader === undefined) return null;
   const relayMillis = Date.parse(dateHeader);
@@ -17,7 +18,16 @@ export function clockSkewFromDateHeader(
   // `Date` has whole-second precision, so the relay's true time is up to a
   // second later than the header says.
   const skewSeconds = Math.round((nowMillis - relayMillis - 500) / 1_000);
-  return Math.abs(skewSeconds) > CLOCK_SKEW_LIMIT_SECONDS ? skewSeconds : null;
+  // Date may originate anywhere between request start and receipt. Transport
+  // delay alone cannot establish that the host clock is ahead.
+  const minimumSkewSeconds = Math.round(
+    (nowMillis - relayMillis - 500 - requestDurationMillis) / 1_000,
+  );
+  return minimumSkewSeconds > CLOCK_SKEW_LIMIT_SECONDS
+    ? minimumSkewSeconds
+    : skewSeconds < -CLOCK_SKEW_LIMIT_SECONDS
+      ? skewSeconds
+      : null;
 }
 
 function skewAmount(seconds: number): string {

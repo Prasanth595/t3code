@@ -31,7 +31,7 @@ import * as BootService from "../cloud/bootService.ts";
 import * as CliState from "../cloud/CliState.ts";
 import * as CliTokenManager from "../cloud/CliTokenManager.ts";
 import { checkRelayClock } from "../cloud/relayClock.ts";
-import { filterRelayResponse } from "../cloud/relayResponse.ts";
+import { filterRelayClient } from "../cloud/relayResponse.ts";
 import {
   CLOUD_LINK_REVOKED,
   CLOUD_LINKED_USER_ID,
@@ -343,13 +343,12 @@ const unlinkRelayEnvironment = Effect.fn("cloud.cli.unlink_relay_environment")(f
   const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const environmentId = yield* environment.getEnvironmentId;
   const relayUrl = yield* relayUrlConfig;
-  const httpClient = yield* HttpClient.HttpClient;
+  const httpClient = filterRelayClient(yield* HttpClient.HttpClient);
   const response = yield* HttpClientRequest.delete(
     `${relayUrl}/v1/client/environment-links/${encodeURIComponent(environmentId)}`,
   ).pipe(
     HttpClientRequest.bearerToken(token.value.accessToken),
     httpClient.execute,
-    Effect.flatMap(filterRelayResponse),
     Effect.flatMap(HttpClientResponse.schemaBodyJson(RelayOkResponse)),
     withRelayClientTracing,
   );

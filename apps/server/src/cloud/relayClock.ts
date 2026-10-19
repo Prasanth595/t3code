@@ -1,5 +1,6 @@
 import { clockSkewFromDateHeader } from "@t3tools/shared/clockSkew";
 import * as Clock from "effect/Clock";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
@@ -7,8 +8,14 @@ import { HttpClient, HttpClientRequest } from "effect/http";
 export const checkRelayClock = Effect.fn("cloud.checkRelayClock")(
   function* (relayUrl: string) {
     const httpClient = yield* HttpClient.HttpClient;
-    const response = yield* httpClient.execute(HttpClientRequest.head(`${relayUrl}/`));
-    return clockSkewFromDateHeader(response.headers.date, yield* Clock.currentTimeMillis);
+    const [duration, response] = yield* httpClient
+      .execute(HttpClientRequest.head(`${relayUrl}/`))
+      .pipe(Effect.timed);
+    return clockSkewFromDateHeader(
+      response.headers.date,
+      yield* Clock.currentTimeMillis,
+      Duration.toMillis(duration),
+    );
   },
   Effect.timeout("2 seconds"),
   Effect.orElseSucceed(() => null),
