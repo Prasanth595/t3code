@@ -175,6 +175,138 @@ describe("threadHistoryPaging", () => {
     expect(item.payloadBudgetExceeded).toBe(false);
   });
 
+  it("opens a long completed turn at its viewport and keeps its prompt and interrupt dependency", () => {
+    const promptRow = makeRow(0);
+    if (promptRow.item.type !== "command_execution") throw new Error("Expected command fixture");
+    const prompt: OrchestrationV2ProjectedTurnItem = {
+      ...promptRow,
+      item: {
+        ...promptRow.item,
+        type: "user_message",
+        runId: RUN,
+        createdBy: "user",
+        creationSource: "web",
+        inputIntent: "turn_start",
+        messageId: MessageId.make("long-turn-prompt"),
+        text: "Do the long task.\n".repeat(375),
+        attachments: [],
+      },
+    };
+    const rows = [
+      prompt,
+      interruptRow(1, "run_interrupt_request"),
+      ...Array.from({ length: 300 }, (_, index) => {
+        const row = makeRow(index + 2);
+        return { ...row, item: { ...row.item, runId: RUN } };
+      }),
+      interruptRow(302, "run_interrupt_result"),
+    ];
+    const full = makeProjection(rows);
+    const projection = {
+      ...full,
+      runs: full.runs.map((run) => ({ ...run, id: RUN, ordinal: 1, status: "completed" as const })),
+    };
+    const legacy = buildBoundedThreadProjection({ projection, snapshotSequence: 7 });
+    expect(legacy.projection.visibleTurnItems).toEqual(rows);
+    expect(legacy.hasMoreHistory).toBe(false);
+
+    const viewport = buildBoundedThreadProjection({
+      projection,
+      snapshotSequence: 7,
+      viewportWindow: true,
+    });
+    const recent = rows.slice(-THREAD_HISTORY_PAGE_POLICY.maxItems);
+    expect(viewport.projection.visibleTurnItems).toHaveLength(recent.length + 1);
+    expect(viewport.projection.visibleTurnItems.map((row) => row.sourceItemId)).toEqual(
+      [prompt, ...recent].map((row) => row.sourceItemId),
+    );
+    expect(viewport.projection.turnItems).toContainEqual(rows[1]!.item);
+    expect(viewport.latestLocalTurnOrdinal).toBe(303);
+    expect(viewport.hasMoreHistory).toBe(true);
+    expect(decodeThreadHistoryCursor(viewport.historyCursor!).si).toBe(recent[0]!.sourceItemId);
+    const older = selectHistoryPageFromCursor({
+      items: rows,
+      cursor: viewport.historyCursor!,
+      snapshotSequence: 7,
+    });
+    expect([...older.items, ...recent].map((row) => row.sourceItemId)).toEqual(
+      rows.map((row) => row.sourceItemId),
+    );
+    expect(older.hasMoreHistory).toBe(false);
+
+    const policy = { maxItems: 75, maxEncodedBytes: 20_000 };
+    const encodedBytes = (value: unknown) => Buffer.byteLength(JSON.stringify(value), "utf8");
+    expect(encodedBytes(makeProjection([prompt]))).toBeLessThan(policy.maxEncodedBytes);
+    const smallest = buildBoundedThreadProjection({
+      projection,
+      snapshotSequence: 7,
+      viewportWindow: true,
+      policy: { ...policy, maxItems: 1 },
+    });
+    expect(smallest.projection.visibleTurnItems.map((row) => row.sourceItemId)).toEqual([
+      prompt.sourceItemId,
+      rows.at(-1)!.sourceItemId,
+    ]);
+    expect(encodedBytes(smallest.projection)).toBeLessThan(policy.maxEncodedBytes);
+    expect(smallest.payloadBudgetExceeded).toBe(false);
+
+    const byteBounded = buildBoundedThreadProjection({
+      projection,
+      snapshotSequence: 7,
+      viewportWindow: true,
+      policy,
+    });
+    expect.soft(encodedBytes(byteBounded.projection)).toBeLessThanOrEqual(policy.maxEncodedBytes);
+    expect.soft(byteBounded.payloadBudgetExceeded).toBe(false);
+    expect(byteBounded.projection.visibleTurnItems[0]?.item).toEqual(prompt.item);
+    expect(byteBounded.projection.turnItems).toContainEqual(prompt.item);
+    expect(byteBounded.projection.turnItems).toContainEqual(rows[1]!.item);
+    const tail = byteBounded.projection.visibleTurnItems.slice(1);
+    expect(tail.length).toBeGreaterThan(0);
+    expect(tail.length).toBeLessThan(recent.length);
+    expect(tail.map((row) => row.sourceItemId)).toEqual(
+      rows.slice(-tail.length).map((row) => row.sourceItemId),
+    );
+    expect(byteBounded.hasMoreHistory).toBe(true);
+    expect(decodeThreadHistoryCursor(byteBounded.historyCursor!).si).toBe(tail[0]!.sourceItemId);
+    let cursor = byteBounded.historyCursor;
+    const recovered = [...tail];
+    const seenCursors = new Set<string>();
+    while (cursor !== null) {
+      expect(seenCursors.has(cursor)).toBe(false);
+      seenCursors.add(cursor);
+      const page = selectHistoryPageFromCursor({
+        items: rows,
+        cursor,
+        snapshotSequence: 7,
+        policy,
+      });
+      expect(page.items.length).toBeGreaterThan(0);
+      expect(page.hasMoreHistory).toBe(page.nextCursor !== null);
+      recovered.unshift(...page.items);
+      cursor = page.nextCursor;
+    }
+    expect(recovered.map((row) => row.sourceItemId)).toEqual(rows.map((row) => row.sourceItemId));
+
+    const hugePrompt = { ...prompt, item: { ...prompt.item, text: "p".repeat(20_000) } };
+    const hugeRows = [hugePrompt, ...rows.slice(1)];
+    const oversized = buildBoundedThreadProjection({
+      projection: {
+        ...projection,
+        visibleTurnItems: hugeRows,
+        turnItems: hugeRows.map((row) => row.item),
+      },
+      snapshotSequence: 7,
+      viewportWindow: true,
+      policy,
+    });
+    expect(encodedBytes(oversized.projection)).toBeGreaterThan(policy.maxEncodedBytes);
+    expect(oversized.payloadBudgetExceeded).toBe(true);
+    expect(oversized.projection.visibleTurnItems[0]?.item).toEqual(hugePrompt.item);
+    expect(oversized.projection.visibleTurnItems.at(-1)?.item).toEqual(rows.at(-1)!.item);
+    expect(oversized.projection.turnItems).toContainEqual(hugePrompt.item);
+  });
+
   it("keeps background turns with user turns, with main's 150-turn fan-out ceiling", () => {
     const items = Array.from({ length: 161 }, (_, turn) => {
       const row = makeRow(turn * 2);
@@ -716,9 +848,12 @@ describe("threadHistoryPaging", () => {
     expect(bounded.payloadBudgetExceeded).toBe(true);
     expect(bounded.projection.plans[0]).toEqual(actionable.plans[0]);
     expect(bounded.projection.visibleTurnItems).toEqual(actionable.visibleTurnItems);
+    expect(Buffer.byteLength(JSON.stringify(bounded.projection), "utf8")).toBeGreaterThan(
+      THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
+    );
   });
 
-  it("keeps agent-only turns visible when checkpoint file lists fill the byte budget", () => {
+  it("keeps agent-only turns visible and defers checkpoint files outside the final viewport", () => {
     const items = Array.from({ length: 3 }, (_, turn) => {
       const first = makeRow(turn * 5);
       const prompt = {
@@ -726,6 +861,7 @@ describe("threadHistoryPaging", () => {
         item: {
           ...first.item,
           type: "user_message" as const,
+          runId: RunId.make(`run-${turn}`),
           createdBy: "agent" as const,
           creationSource: "provider" as const,
           inputIntent: "turn_start" as const,
@@ -734,13 +870,20 @@ describe("threadHistoryPaging", () => {
           attachments: [],
         },
       } as OrchestrationV2ProjectedTurnItem;
-      return [prompt, ...Array.from({ length: 4 }, (_, index) => makeRow(turn * 5 + index + 1))];
+      return [
+        prompt,
+        ...Array.from({ length: 4 }, (_, index) => {
+          const row = makeRow(turn * 5 + index + 1);
+          return { ...row, item: { ...row.item, runId: prompt.item.runId } };
+        }),
+      ];
     }).flat();
-    const files = Array.from(
-      { length: 15_000 },
-      (_, index) =>
-        `work/ws-${index % 40}/.jj/repo/store/extra/${index.toString(16).padStart(40, "0")}`,
-    );
+    const files = Array.from({ length: 15_000 }, (_, index) => ({
+      path: `work/ws-${index % 40}/.jj/repo/store/extra/${index.toString(16).padStart(40, "0")}`,
+      kind: "modified" as const,
+      additions: 1,
+      deletions: 0,
+    }));
     const projection = {
       ...makeProjection(items),
       checkpoints: [{ id: "checkpoint-1", files }],
@@ -751,6 +894,56 @@ describe("threadHistoryPaging", () => {
     expect(bounded.projection.visibleTurnItems).toHaveLength(items.length);
     expect(bounded.hasMoreHistory).toBe(false);
     expect(bounded.payloadBudgetExceeded).toBe(true);
+    expect(bounded.projection.checkpoints).toEqual(projection.checkpoints);
+
+    const viewportItems = items.map((row) =>
+      row.item.type === "command_execution"
+        ? { ...row, item: { ...row.item, output: "x".repeat(50_000) } }
+        : row,
+    );
+    const viewportFiles = files.slice(0, 1_500);
+    const viewportProjection = {
+      ...makeProjection(viewportItems),
+      runs: [0, 1, 2, 3].map((index) => ({
+        id: `run-${index}`,
+        status: index === 3 ? "running" : "completed",
+      })),
+      checkpoints: [
+        ...[0, 1, 2, 3].map((index) => ({
+          id: `checkpoint-${index}`,
+          runId: `run-${index}`,
+          nodeId: null,
+          status: "ready",
+          files: index === 3 ? files.slice(0, 1) : viewportFiles,
+        })),
+        ...["pending", "capturing"].map((status) => ({
+          id: `checkpoint-${status}`,
+          runId: null,
+          nodeId: null,
+          status,
+          files: files.slice(0, 1),
+        })),
+      ],
+    } as unknown as typeof projection;
+    const viewport = buildBoundedThreadProjection({
+      projection: viewportProjection,
+      snapshotSequence: 1,
+      viewportWindow: true,
+    });
+    expect(viewport.projection.visibleTurnItems.length).toBeLessThan(viewportItems.length);
+    expect(new Set(viewport.projection.visibleTurnItems.map((row) => row.item.runId))).toEqual(
+      new Set([RunId.make("run-1"), RunId.make("run-2")]),
+    );
+    expect.soft(viewport.projection.checkpoints[0]?.files).toHaveLength(0);
+    expect.soft(viewport.projection.checkpoints[0]?.deferredFileCount).toBe(viewportFiles.length);
+    expect(viewport.projection.checkpoints.slice(1)).toEqual(
+      viewportProjection.checkpoints.slice(1),
+    );
+    expect
+      .soft(Buffer.byteLength(JSON.stringify(viewport.projection), "utf8"))
+      .toBeLessThanOrEqual(THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes);
+    expect.soft(viewport.payloadBudgetExceeded).toBe(false);
+    expect(viewportProjection.checkpoints[0]?.files).toEqual(viewportFiles);
   });
 
   it("keeps paged historical plan detail in the turn item and only status in its artifact", () => {

@@ -454,15 +454,57 @@ export function boundedTimelineEncodedBytes(input: {
   return total;
 }
 
+function checkpointsForViewport(
+  projection: OrchestrationV2ThreadProjection,
+  items: ReadonlyArray<OrchestrationV2TurnItem>,
+) {
+  const retainedRunIds = new Set(items.map((item) => item.runId));
+  for (const run of projection.runs) {
+    if (["queued", "preparing", "starting", "running", "waiting"].includes(run.status)) {
+      retainedRunIds.add(run.id);
+    }
+  }
+  const retainedNodeIds = new Set(items.map((item) => item.nodeId));
+  for (const node of projection.nodes) {
+    if (["pending", "running", "waiting"].includes(node.status)) {
+      retainedNodeIds.add(node.id);
+    }
+  }
+  for (const request of projection.runtimeRequests) {
+    if (request.status === "pending") retainedNodeIds.add(request.nodeId);
+  }
+  const retainedCheckpointIds = new Set(
+    items.flatMap((item) => ("checkpointId" in item ? [item.checkpointId] : [])),
+  );
+  return projection.checkpoints.map((checkpoint) =>
+    ["pending", "capturing"].includes(checkpoint.status) ||
+    (checkpoint.runId !== null && retainedRunIds.has(checkpoint.runId)) ||
+    (checkpoint.nodeId !== null && retainedNodeIds.has(checkpoint.nodeId)) ||
+    retainedCheckpointIds.has(checkpoint.id) ||
+    checkpoint.deferredFileCount !== undefined
+      ? checkpoint
+      : { ...checkpoint, files: [], deferredFileCount: checkpoint.files.length },
+  );
+}
+
 export function buildBoundedThreadProjection(input: {
   readonly projection: OrchestrationV2ThreadProjection;
   readonly snapshotSequence: number;
   readonly policy?: ThreadHistoryPagePolicy | undefined;
+  readonly viewportWindow?: boolean;
 }): BoundedProjectionResult {
   const policy = input.policy ?? THREAD_HISTORY_PAGE_POLICY;
   const threadId = input.projection.thread.id;
   const controlProjection = {
     ...input.projection,
+    ...(input.viewportWindow
+      ? {
+          checkpoints: checkpointsForViewport(
+            input.projection,
+            input.projection.visibleTurnItems.slice(-policy.maxItems).map(({ item }) => item),
+          ),
+        }
+      : {}),
     plans: input.projection.plans.filter((plan) => plan.status === "active"),
     contextHandoffs: input.projection.contextHandoffs.filter(
       (handoff) => handoff.status === "pending" || handoff.status === "ready",
@@ -470,11 +512,32 @@ export function buildBoundedThreadProjection(input: {
   };
   const latestLocalTurnOrdinal = computeLatestLocalTurnOrdinal(input.projection.turnItems);
 
+  const promptByRunId = new Map<string, OrchestrationV2ProjectedTurnItem>();
+  const unbudgetedMessages = new Map(
+    input.viewportWindow ? controlProjection.messages.map((message) => [message.id, message]) : [],
+  );
+  if (input.viewportWindow) {
+    for (const row of controlProjection.visibleTurnItems) {
+      if (
+        row.item.runId != null &&
+        !promptByRunId.has(row.item.runId) &&
+        (isThreadHistoryTurnStart(row.item) || row.item.type === "notification")
+      ) {
+        promptByRunId.set(row.item.runId, row);
+      }
+    }
+  }
   const dependencyReserve = (() => {
     let reserve = 0;
     for (const item of controlProjection.turnItems) {
       if (item.type === "run_interrupt_request") {
         reserve += bytesOfJson(item);
+      }
+    }
+    if (input.viewportWindow) {
+      for (const message of messagesForBoundedProjection(controlProjection, [])) {
+        reserve += bytesOfJson(message);
+        unbudgetedMessages.delete(message.id);
       }
     }
     return reserve;
@@ -492,18 +555,49 @@ export function buildBoundedThreadProjection(input: {
     policy.maxEncodedBytes - dependencyReserve - controlBytes - 1_024,
   );
   const windowPolicy: ThreadHistoryPagePolicy = {
-    maxUserTurns: policy.maxUserTurns,
+    maxUserTurns: input.viewportWindow ? undefined : policy.maxUserTurns,
     maxItems: policy.maxItems,
     maxEncodedBytes: windowBudget,
   };
 
+  const budgetedRowIds = new Set<TurnItemId>();
+  const chargeRow = (row: OrchestrationV2ProjectedTurnItem) => {
+    if (budgetedRowIds.has(row.sourceItemId)) return 0;
+    budgetedRowIds.add(row.sourceItemId);
+    let cost = projectedRowBoundedSnapshotEncodedBytes(row, threadId);
+    if (isLocalProjectedRow(controlProjection, row) && "messageId" in row.item) {
+      const message = unbudgetedMessages.get(row.item.messageId);
+      if (message !== undefined) {
+        cost += bytesOfJson(message);
+        unbudgetedMessages.delete(message.id);
+      }
+    }
+    return cost;
+  };
   const window = selectRecentTimelineWindow({
     items: controlProjection.visibleTurnItems,
     snapshotSequence: input.snapshotSequence,
     policy: windowPolicy,
-    rowEncodedBytes: (row) => projectedRowBoundedSnapshotEncodedBytes(row, threadId),
+    rowEncodedBytes: (row) => {
+      if (!input.viewportWindow) return projectedRowBoundedSnapshotEncodedBytes(row, threadId);
+      // Charge a run's prompt with its first admitted row, even when the prompt is outside the tail.
+      const cost = chargeRow(row);
+      const prompt = row.item.runId == null ? undefined : promptByRunId.get(row.item.runId);
+      return cost + (prompt === undefined ? 0 : chargeRow(prompt));
+    },
   });
-  const visibleTurnItems = renumberPositions(window.items);
+  const windowRunIds = new Set(window.items.map(({ item }) => item.runId));
+  const visibleItemIds = new Set(window.items.map((row) => row.sourceItemId));
+  const prompts = [...promptByRunId.values()].filter(
+    (row) => windowRunIds.has(row.item.runId) && !visibleItemIds.has(row.sourceItemId),
+  );
+  // The cursor stays at the row window so paging fills the gap below its prompt.
+  for (const prompt of prompts) visibleItemIds.add(prompt.sourceItemId);
+  const visibleTurnItems = renumberPositions(
+    prompts.length === 0
+      ? window.items
+      : controlProjection.visibleTurnItems.filter((row) => visibleItemIds.has(row.sourceItemId)),
+  );
   const windowTurnItems = localTurnItemsForVisibleWindow(controlProjection, visibleTurnItems);
   const dependencyTurnItems = retainedInterruptRequestTurnItems(
     controlProjection,
@@ -515,6 +609,34 @@ export function buildBoundedThreadProjection(input: {
   }
   for (const item of dependencyTurnItems) {
     turnItemById.set(String(item.id), item);
+  }
+  const checkpointItems = visibleTurnItems.map(({ item }) => item);
+  if (input.viewportWindow) {
+    const activeRunIds = new Set(
+      controlProjection.runs
+        .filter((run) =>
+          ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
+        )
+        .map((run) => run.id),
+    );
+    const pendingRequestIds = new Set(
+      controlProjection.runtimeRequests
+        .filter((request) => request.status === "pending")
+        .map((request) => request.id),
+    );
+    for (const item of controlProjection.turnItems) {
+      if (
+        (item.runId !== null &&
+          activeRunIds.has(item.runId) &&
+          (item.type === "user_message" ||
+            item.type === "notification" ||
+            ["pending", "starting", "running", "waiting"].includes(item.status))) ||
+        ("requestId" in item && pendingRequestIds.has(item.requestId))
+      ) {
+        turnItemById.set(String(item.id), item);
+        checkpointItems.push(item);
+      }
+    }
   }
   const turnItems = [...turnItemById.values()];
 
@@ -550,6 +672,10 @@ export function buildBoundedThreadProjection(input: {
 
   const projection = {
     ...controlProjection,
+    // Byte trimming can remove runs that were eligible when reserving control state.
+    ...(input.viewportWindow
+      ? { checkpoints: checkpointsForViewport(input.projection, checkpointItems) }
+      : {}),
     plans,
     contextHandoffs,
     messages: messagesForBoundedProjection(controlProjection, turnItems),
@@ -561,7 +687,6 @@ export function buildBoundedThreadProjection(input: {
     historyCursor: window.nextCursor,
     hasMoreHistory: window.hasMoreHistory,
     latestLocalTurnOrdinal,
-    payloadBudgetExceeded:
-      controlBytes > policy.maxEncodedBytes || bytesOfJson(projection) > policy.maxEncodedBytes,
+    payloadBudgetExceeded: bytesOfJson(projection) > policy.maxEncodedBytes,
   };
 }
