@@ -1,6 +1,6 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
-import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
-import ChatMarkdown from "../ChatMarkdown";
+import { memo, useEffect, useEffectEvent, useId, useRef, useState } from "react";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { type PendingUserInput } from "../../session-logic";
 import {
   derivePendingUserInputProgress,
@@ -10,11 +10,12 @@ import { CheckIcon } from "lucide-react";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { cn } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
+import ChatMarkdown from "../ChatMarkdown";
 
 interface PendingUserInputPanelProps {
+  pendingUserInputs: PendingUserInput[];
   cwd: string | undefined;
   threadRef: ScopedThreadRef;
-  pendingUserInputs: PendingUserInput[];
   disabled?: boolean;
   respondingRequestIds: RuntimeRequestId[];
   answers: Record<string, PendingUserInputDraftAnswer>;
@@ -25,9 +26,9 @@ interface PendingUserInputPanelProps {
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
+  pendingUserInputs,
   cwd,
   threadRef,
-  pendingUserInputs,
   disabled = false,
   respondingRequestIds,
   answers,
@@ -42,10 +43,10 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
 
   return (
     <ComposerPendingUserInputCard
-      cwd={cwd}
-      threadRef={threadRef}
       key={activePrompt.requestId}
       prompt={activePrompt}
+      cwd={cwd}
+      threadRef={threadRef}
       disabled={disabled}
       isResponding={respondingRequestIds.includes(activePrompt.requestId)}
       answers={answers}
@@ -58,9 +59,9 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
 });
 
 const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard({
+  prompt,
   cwd,
   threadRef,
-  prompt,
   disabled,
   isResponding,
   answers,
@@ -69,9 +70,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onAdvance,
   onDismiss,
 }: {
+  prompt: PendingUserInput;
   cwd: string | undefined;
   threadRef: ScopedThreadRef;
-  prompt: PendingUserInput;
   disabled: boolean;
   isResponding: boolean;
   answers: Record<string, PendingUserInputDraftAnswer>;
@@ -83,50 +84,39 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   // Message-mode requests remain answerable after their provider turn ends.
   const canRespond = prompt.responseCapability !== "not_resumable";
   const responseDisabled = disabled || isResponding || !canRespond;
+  const autoAdvanceTimerRef = useRef<number | null>(null);
+  // The auto-advance timer fires after the render that armed it.
+  const advance = useStableCallback(onAdvance);
+  const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
+    questionId: string;
+    optionValue: string;
+  } | null>(null);
+  const [collapsedQuestionId, setCollapsedQuestionId] = useState<string | null>(null);
+  // The active question keys the shortcut listener, so it must keep its identity across renders.
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const optionIdPrefix = useId();
   const headerId = `${optionIdPrefix}-header`;
   const previewId = `${optionIdPrefix}-preview`;
   const activeQuestion = progress.activeQuestion;
-  const autoAdvanceTimerRef = useRef<number | null>(null);
-  const onAdvanceRef = useRef(onAdvance);
-  const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
-    questionId: string;
-    optionValue: string;
-  } | null>(null);
-  // Collapsing hides everything but the header so a tall prompt stops covering
-  // the thread the user is trying to read. Scoped to a single question: the card
-  // is keyed by request id so the next prompt starts expanded, and storing the
-  // collapsed question's id (rather than a bare flag) reopens the card when the
-  // prompt advances to its next question, which can happen without a click —
-  // sending from the composer advances the active question.
-  const [collapsedQuestionId, setCollapsedQuestionId] = useState<string | null>(null);
+  const customAnswerActive = progress.customAnswer.trim().length > 0;
+  // Read here, before the hooks below, so the compiler can keep `activeQuestion` cached.
+  const draftSelectedOptions = activeQuestion?.options.map(
+    (option) =>
+      !customAnswerActive && progress.selectedOptionValues.includes(option.value ?? option.label),
+  );
   const isCollapsed = collapsedQuestionId !== null && collapsedQuestionId === activeQuestion?.id;
 
-  useEffect(() => {
-    onAdvanceRef.current = onAdvance;
-  }, [onAdvance]);
-
-  useEffect(() => {
-    if (!activeQuestion || activeQuestion.multiSelect || !optimisticSingleSelect) {
-      return;
-    }
-    if (optimisticSingleSelect.questionId !== activeQuestion.id) {
-      setOptimisticSingleSelect(null);
-      return;
-    }
-    if (
-      progress.customAnswer.trim().length === 0 &&
-      progress.selectedOptionValues.includes(optimisticSingleSelect.optionValue)
-    ) {
-      setOptimisticSingleSelect(null);
-    }
-  }, [
-    activeQuestion,
-    optimisticSingleSelect,
-    progress.customAnswer,
-    progress.selectedOptionValues,
-  ]);
+  // The optimistic pick is dropped once the draft confirms it or the question moves on.
+  if (
+    optimisticSingleSelect &&
+    activeQuestion &&
+    !activeQuestion.multiSelect &&
+    (optimisticSingleSelect.questionId !== activeQuestion.id ||
+      (!customAnswerActive &&
+        progress.selectedOptionValues.includes(optimisticSingleSelect.optionValue)))
+  ) {
+    setOptimisticSingleSelect(null);
+  }
 
   // A delayed answer only advances its own question, while permission remains granted.
   useEffect(() => {
@@ -140,30 +130,25 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     return clearAutoAdvance;
   }, [activeQuestion?.id, disabled]);
 
-  const handleOptionSelection = useCallback(
-    (questionId: string, optionValue: string) => {
-      if (disabled || isResponding) return;
-      if (activeQuestion?.multiSelect) {
-        onToggleOption(questionId, optionValue);
-        return;
-      }
-      setOptimisticSingleSelect({ questionId, optionValue });
+  const handleOptionSelection = (questionId: string, optionValue: string) => {
+    if (disabled || isResponding) return;
+    if (activeQuestion?.multiSelect) {
       onToggleOption(questionId, optionValue);
-      if (autoAdvanceTimerRef.current !== null) {
-        window.clearTimeout(autoAdvanceTimerRef.current);
-      }
-      autoAdvanceTimerRef.current = window.setTimeout(() => {
-        autoAdvanceTimerRef.current = null;
-        onAdvanceRef.current();
-      }, 200);
-    },
-    [activeQuestion, disabled, isResponding, onToggleOption],
-  );
+      return;
+    }
+    setOptimisticSingleSelect({ questionId, optionValue });
+    onToggleOption(questionId, optionValue);
+    if (autoAdvanceTimerRef.current !== null) {
+      window.clearTimeout(autoAdvanceTimerRef.current);
+    }
+    autoAdvanceTimerRef.current = window.setTimeout(() => {
+      autoAdvanceTimerRef.current = null;
+      advance();
+    }, 200);
+  };
 
-  // Keyboard shortcut: number keys 1-9 select corresponding options when focus is
-  // outside editable fields. Multi-select prompts toggle options in place; single-
-  // select prompts keep the existing auto-advance behavior. Collapsed prompts opt
-  // out, since the numbers they refer to are not on screen.
+  const selectOptionFromShortcut = useEffectEvent(handleOptionSelection);
+
   useEffect(() => {
     if (!activeQuestion || responseDisabled || isCollapsed) return;
     const handler = (event: globalThis.KeyboardEvent) => {
@@ -185,17 +170,15 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       const option = activeQuestion.options[optionIndex];
       if (!option) return;
       event.preventDefault();
-      handleOptionSelection(activeQuestion.id, option.value ?? option.label);
+      selectOptionFromShortcut(activeQuestion.id, option.value ?? option.label);
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, handleOptionSelection, isCollapsed, responseDisabled]);
+  }, [activeQuestion, isCollapsed, responseDisabled]);
 
   if (!activeQuestion) {
     return null;
   }
-
-  const customAnswerActive = progress.customAnswer.trim().length > 0;
 
   return (
     <Collapsible
@@ -259,7 +242,12 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       <CollapsiblePanel>
         <ComposerBanner.Scroll>
           <ComposerBanner.Body className="pe-1 pb-1 wrap-anywhere">
-            <ChatMarkdown text={activeQuestion.question} cwd={cwd} threadRef={threadRef} />
+            <ChatMarkdown
+              text={activeQuestion.question}
+              cwd={cwd}
+              threadRef={threadRef}
+              className="text-foreground/85"
+            />
             {activeQuestion.multiSelect ? (
               <p className="mt-1 text-secondary-label text-xs">Select one or more options.</p>
             ) : null}
@@ -270,8 +258,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   optimisticSingleSelect?.questionId === activeQuestion.id &&
                   optimisticSingleSelect.optionValue === optionValue;
                 const isSelected =
-                  isOptimisticallySelected ||
-                  (!customAnswerActive && progress.selectedOptionValues.includes(optionValue));
+                  isOptimisticallySelected || draftSelectedOptions?.[index] === true;
                 const shortcutKey = index < 9 ? index + 1 : null;
                 const labelId = `${optionIdPrefix}-${index}-label`;
                 const descriptionId = `${optionIdPrefix}-${index}-description`;
