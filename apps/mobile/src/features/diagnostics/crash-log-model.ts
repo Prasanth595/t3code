@@ -58,9 +58,22 @@ export function readCrashRecords(
       detail: record.stack ? `${description}\n${record.stack}` : description,
     };
   });
-  return [...localRecords, ...parseStartupCrashRecords(entries)].sort(
-    (left, right) => right.timestamp - left.timestamp,
-  );
+  const records: StartupCrashRecord[] = [...localRecords];
+  for (const startupRecord of parseStartupCrashRecords(entries)) {
+    // Expo's native launch handler can record the same fatal error after ErrorUtils.
+    const localRecord = localRecords.find(
+      (record) =>
+        record.description === startupRecord.description &&
+        Math.abs(record.timestamp - startupRecord.timestamp) <= 5_000,
+    );
+    if (localRecord) {
+      localRecord.detail += `\n\n${startupRecord.detail}`;
+      localRecord.frames.push(...startupRecord.frames);
+    } else {
+      records.push(startupRecord);
+    }
+  }
+  return records.sort((left, right) => right.timestamp - left.timestamp);
 }
 
 function compactFrame(line: string): string {
@@ -76,7 +89,7 @@ export function formatStartupCrashReport(
   app: { readonly version: string; readonly build: string },
 ): string {
   const header = `T3 Code ${app.version} (${app.build})`;
-  if (records.length === 0) return `${header}\nNo startup crashes recorded.`;
+  if (records.length === 0) return `${header}\nNo crashes recorded.`;
   return [
     header,
     ...records.map(

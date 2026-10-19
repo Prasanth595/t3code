@@ -46,9 +46,9 @@ function persistCrashRecord(error: unknown): void {
   const record = {
     capturedAt: new Date().toISOString(),
     isFatal: true,
-    message: cause?.message ?? safeErrorMessage(error),
-    name: cause?.name ?? null,
-    stack: cause?.stack ?? null,
+    message: typeof cause?.message === "string" ? cause.message : safeErrorMessage(error),
+    name: typeof cause?.name === "string" ? cause.name : null,
+    stack: typeof cause?.stack === "string" ? cause.stack : null,
   };
   crashSequence += 1;
   // Keep lexical directory ordering aligned with capture order for records
@@ -56,8 +56,17 @@ function persistCrashRecord(error: unknown): void {
   const sequence = String(crashSequence).padStart(6, "0");
   const file = new File(directory, `crash-${Date.now()}-${sequence}.json`);
   file.create({ intermediates: true, overwrite: true });
-  // ErrorUtils may terminate the runtime as soon as we delegate to its handler.
-  file.writeSync(JSON.stringify(record));
+  try {
+    // ErrorUtils may terminate the runtime as soon as we delegate to its handler.
+    file.writeSync(JSON.stringify(record));
+  } catch (error) {
+    try {
+      file.delete();
+    } catch {
+      // Cleanup failure must not replace the write error.
+    }
+    throw error;
+  }
   for (const oldFile of crashLogFiles().slice(MAX_PERSISTED_CRASH_LOGS)) {
     try {
       oldFile.delete();

@@ -156,7 +156,7 @@ describe("formatStartupCrashReport", () => {
 
   it("says so when nothing was recorded", () => {
     expect(formatStartupCrashReport([], { version: "1.1.1", build: "56" })).toBe(
-      "T3 Code 1.1.1 (56)\nNo startup crashes recorded.",
+      "T3 Code 1.1.1 (56)\nNo crashes recorded.",
     );
   });
 });
@@ -224,18 +224,41 @@ describe("persisted fatal JS diagnostics", () => {
     // Only disk survives a fresh module graph; recovery must not rely on logger memory.
     vi.resetModules();
     const { readCrashRecords } = await import("./crash-log-model");
-    const records = readCrashRecords([FATAL]);
+    const startupDetail = [
+      "Domain: RCTErrorDomain",
+      `Description: Unhandled JS Exception: Error: ${fatal.message}`,
+      "",
+      "This error is located at:",
+      `    at NativeThreadBoundary (${BUNDLE}:88:9)`,
+    ].join("\n");
+    const nearbyTimestamp = capturedAt.getTime() + 50;
+    const records = readCrashRecords([
+      FATAL,
+      {
+        ...FATAL,
+        timestamp: capturedAt.getTime() + 33,
+        message: `ErrorRecovery fatal exception: ${startupDetail}`,
+      },
+      { ...FATAL, timestamp: nearbyTimestamp },
+    ]);
 
-    expect(records).toHaveLength(2);
+    expect(records).toHaveLength(3);
     expect(records.map((record) => record.timestamp)).toEqual([
+      nearbyTimestamp,
       capturedAt.getTime(),
       FATAL.timestamp,
     ]);
-    expect(records[0]?.description).toContain(fatal.message);
-    expect(records[0]?.detail).toContain(fatal.stack);
+    expect(records.map((record) => record.description)).toEqual([
+      "TypeError: Cannot read property 'defaultModelSelection' of null",
+      `Error: ${fatal.message}`,
+      "TypeError: Cannot read property 'defaultModelSelection' of null",
+    ]);
+    expect(records[1]?.detail).toContain(fatal.stack);
+    expect(records[1]?.detail).toContain(startupDetail);
     const report = formatStartupCrashReport(records, { version: "1.1.1", build: "56" });
     expect(report).toContain(capturedAt.toISOString());
     expect(report).toContain(fatal.stack);
+    expect(report).toContain(startupDetail);
     expect(report).toContain("defaultModelSelection");
     expect(report).toContain("at NewTaskFlowProvider");
   });
@@ -258,7 +281,7 @@ describe("persisted fatal JS diagnostics", () => {
       expect(previous).toHaveBeenLastCalledWith(fatal, true);
       expect(previous.mock.calls.at(-1)?.[0]).toBe(fatal);
       await Promise.allSettled(disk.pendingWrites);
-      expect([...disk.files.values()].every((content) => content === "")).toBe(true);
+      expect(disk.files.size).toBe(0);
     }
     expect(previous).toHaveBeenCalledTimes(3);
   });
