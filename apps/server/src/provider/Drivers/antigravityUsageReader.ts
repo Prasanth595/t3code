@@ -161,7 +161,10 @@ function metadata(bytes: Uint8Array, step: boolean): Metadata {
   // response ids. Several attempts are separate calls unless they share a response id, in
   // which case the id merge would collapse them, so the total is kept as one record instead.
   const attemptIds = attempts.flatMap((attempt) =>
-    USAGE_ID_FIELDS.map((key) => textAt(attempt, key)).filter((id) => id !== ""),
+    USAGE_ID_FIELDS.flatMap((key) => {
+      const id = textAt(attempt, key);
+      return id ? [`${key}:${id}`] : [];
+    }),
   );
   const attemptsAreDistinct = new Set(attemptIds).size === attemptIds.length;
   const usages =
@@ -295,6 +298,25 @@ const readDatabase = Effect.fn("readDatabase")(function* (
   }).pipe(sql.withTransaction);
 });
 
+interface IdlessCopy {
+  candidate: UsageCandidate;
+  timestampMs: number;
+}
+
+// Distant equal-counter calls can be unrelated, so id-less pairing needs a bounded window.
+const COPY_WINDOW_MS = 100_000;
+
+function uniqueCopyMatches(source: readonly IdlessCopy[], target: readonly IdlessCopy[]): number[] {
+  let start = 0;
+  let end = 0;
+  return source.map(({ timestampMs }) => {
+    while (start < target.length && target[start]!.timestampMs < timestampMs - COPY_WINDOW_MS)
+      start++;
+    while (end < target.length && target[end]!.timestampMs <= timestampMs + COPY_WINDOW_MS) end++;
+    return end - start === 1 ? start : -1;
+  });
+}
+
 function usageCandidates(
   path: string,
   sessionId: string,
@@ -304,12 +326,12 @@ function usageCandidates(
   fallbackTimestamp: number,
 ): UsageCandidate[] {
   const records: UsageCandidate[] = [];
+  const copies = new Map<string, [IdlessCopy[], IdlessCopy[]]>();
   const generationModels = new Map(generations.map(({ idx, entry }) => [idx, entry.model]));
   for (const [source, entries] of [
     ["step", steps],
     ["generation", generations],
   ] as const) {
-    const occurrences = new Map<string, number>();
     for (const [index, { idx, entry }] of entries.entries()) {
       for (const [usageIndex, usage] of entry.usages.entries()) {
         const outputTokens = Math.max(numberAt(usage, 3), numberAt(usage, 9) + numberAt(usage, 10));
@@ -347,19 +369,49 @@ function usageCandidates(
           speed: "standard",
           dedupeKey: keys[0] ?? `antigravity:${sessionId}:${source}:${index}:${usageIndex}`,
         };
-        if (keys.length === 0) {
-          const counters = JSON.stringify(USAGE_COUNTER_FIELDS.map((key) => numberAt(usage, key)));
-          const occurrence = occurrences.get(counters) ?? 0;
-          occurrences.set(counters, occurrence + 1);
-          // Pair nth step and generation copies only within this database.
-          keys.push(`antigravity:local:${JSON.stringify([path, counters, occurrence])}`);
-        }
-        records.push({
+        const candidate = {
           record,
           keys,
           timestampQuality: entry.timestampMs !== null ? 2 : trajectoryTimestamp !== null ? 1 : 0,
-        });
+        };
+        records.push(candidate);
+        // Display fallbacks (including a generation at the same idx) cannot establish identity.
+        // Prefer the row's model over the usage enum, which can hide differing model labels.
+        let copyModel = entry.model || MODEL_IDS[numberAt(usage, 1)] || "";
+        if (
+          keys.length > 0 ||
+          entry.timestampMs === null ||
+          !copyModel ||
+          copyModel.startsWith("antigravity-")
+        )
+          continue;
+        // Step and generation metadata use these different labels for the same Flash variant.
+        if (copyModel === "gemini-3.8-flash-n") {
+          copyModel = "gemini-3.8-flash-high";
+        }
+        const identity = JSON.stringify([
+          copyModel,
+          ...USAGE_COUNTER_FIELDS.map((key) => numberAt(usage, key)),
+        ]);
+        const group = copies.get(identity) ?? [[], []];
+        group[source === "step" ? 0 : 1].push({ candidate, timestampMs: entry.timestampMs });
+        copies.set(identity, group);
       }
+    }
+  }
+  for (const [stepCopies, generationCopies] of copies.values()) {
+    stepCopies.sort((a, b) => a.timestampMs - b.timestampMs);
+    generationCopies.sort((a, b) => a.timestampMs - b.timestampMs);
+    const stepMatches = uniqueCopyMatches(stepCopies, generationCopies);
+    const generationMatches = uniqueCopyMatches(generationCopies, stepCopies);
+    for (const [index, match] of stepMatches.entries()) {
+      // Require a unique partner in both directions, without removing ambiguous candidates.
+      if (match < 0 || generationMatches[match] !== index) continue;
+      const step = stepCopies[index]!.candidate;
+      const generation = generationCopies[match]!.candidate;
+      const key = `antigravity:local:${JSON.stringify([path, step.record.dedupeKey])}`;
+      step.keys = [key];
+      generation.keys = [key];
     }
   }
   return records;

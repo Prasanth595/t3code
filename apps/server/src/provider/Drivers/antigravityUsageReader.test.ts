@@ -136,216 +136,261 @@ describe("readAntigravityUsage", () => {
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("counts id-less Antigravity step, generation and list copies once", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const dir = yield* tempDir;
-      const usage = [
-        ...protoNumber(1, 1016),
-        ...protoNumber(2, 100),
-        ...protoNumber(3, 40),
-        ...protoNumber(4, 5),
-        ...protoNumber(5, 20),
-        ...protoNumber(9, 10),
-        ...protoNumber(10, 30),
-      ];
-      yield* seedDatabase(path.join(dir, "id-less.db"), (db) =>
-        Effect.gen(function* () {
-          yield* createTables(db);
-          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
-            7,
-            new Uint8Array(protoBytes(9, usage)),
-          ]);
-          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
-            0,
-            new Uint8Array(
-              protoBytes(1, [...protoBytes(4, usage), ...protoBytes(17, protoBytes(2, usage))]),
-            ),
-          ]);
-        }),
-      );
-      const result = yield* readAntigravityUsage(dir, 0);
-      assert.deepStrictEqual(result.errors, []);
-      const read = records(result);
-      assert.strictEqual(read.length, 1);
-      assert.deepStrictEqual(read[0]?.totals, {
-        uncachedInputTokens: 100,
-        cachedInputTokens: 20,
-        cacheCreationTokens: 5,
-        outputTokens: 40,
-        reasoningTokens: 10,
-      });
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect(
-    "counts id-less Antigravity retried calls once per attempt instead of adding the total",
-    () =>
+  const attemptUsage = (scale: number, ids: number[] = []) => [
+    ...protoNumber(2, 100 * scale),
+    ...protoNumber(3, 40 * scale),
+    ...protoNumber(4, 5 * scale),
+    ...protoNumber(5, 20 * scale),
+    ...protoNumber(9, 10 * scale),
+    ...protoNumber(10, 30 * scale),
+    ...ids,
+  ];
+  const usageRow = (
+    source: "step" | "generation",
+    main: number[],
+    attempts: number[][] = [],
+    model = "gemini-3.1-pro",
+    seconds = 1780000000,
+  ) => {
+    const step = source === "step";
+    const data = [
+      ...protoBytes(step ? 9 : 4, main),
+      ...attempts.flatMap((usage) => protoBytes(step ? 28 : 17, protoBytes(2, usage))),
+      ...(step ? protoBytes(24, protoText(12, model)) : protoText(19, model)),
+      ...(step
+        ? protoBytes(8, protoNumber(1, seconds))
+        : protoBytes(9, protoBytes(4, protoNumber(1, seconds)))),
+    ];
+    return new Uint8Array(step ? data : protoBytes(1, data));
+  };
+  const readUsageRows = Effect.fnUntraced(function* (
+    steps: Uint8Array[],
+    generations: Uint8Array[],
+  ) {
+    const path = yield* Path.Path;
+    const dir = yield* tempDir;
+    yield* seedDatabase(path.join(dir, "attempts.db"), (db) =>
       Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const dir = yield* tempDir;
-        const counters = (
-          input: number,
-          output: number,
-          cache: number,
-          read: number,
-          thinking: number,
-        ) => [
-          ...protoNumber(1, 1016),
-          ...protoNumber(2, input),
-          ...protoNumber(3, output),
-          ...protoNumber(4, cache),
-          ...protoNumber(5, read),
-          ...protoNumber(9, thinking),
-          ...protoNumber(10, output - thinking),
-        ];
-        const first = counters(100, 40, 5, 20, 10);
-        const second = counters(200, 60, 7, 30, 15);
-        const total = counters(300, 100, 12, 50, 25);
-        yield* seedDatabase(path.join(dir, "attempts.db"), (db) =>
-          Effect.gen(function* () {
-            yield* createTables(db);
-            yield* db.run("INSERT INTO steps VALUES (?, ?)", [
-              211,
-              new Uint8Array(protoBytes(9, first)),
-            ]);
-            yield* db.run("INSERT INTO steps VALUES (?, ?)", [
-              213,
-              new Uint8Array(protoBytes(9, second)),
-            ]);
-            yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
-              104,
-              new Uint8Array(
-                protoBytes(1, [
-                  ...protoBytes(4, total),
-                  ...protoBytes(17, protoBytes(2, first)),
-                  ...protoBytes(17, protoBytes(2, second)),
-                ]),
-              ),
-            ]);
-          }),
-        );
-        const result = yield* readAntigravityUsage(dir, 0);
-        assert.deepStrictEqual(result.errors, []);
-        assert.deepStrictEqual(
-          records(result).map((record) => record.totals),
+        yield* createTables(db);
+        for (const [index, row] of steps.entries()) {
+          yield* db.run("INSERT INTO steps VALUES (?, ?)", [7 + index * 2, row]);
+        }
+        for (const [index, row] of generations.entries()) {
+          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [index, row]);
+        }
+      }),
+    );
+    const result = yield* readAntigravityUsage(dir, 0);
+    assert.deepStrictEqual(result.errors, []);
+    return records(result);
+  });
+  const attemptTotals = (scale: number) => ({
+    uncachedInputTokens: 100 * scale,
+    cachedInputTokens: 20 * scale,
+    cacheCreationTokens: 5 * scale,
+    outputTokens: 40 * scale,
+    reasoningTokens: 10 * scale,
+  });
+
+  it.effect.each([
+    { name: "retry attempts", attempts: [1, 2], step: "gemini-3.1-pro", gen: "gemini-3.1-pro" },
+    {
+      name: "single call with Gemini variant labels",
+      attempts: [1],
+      step: "gemini-3.8-flash-high",
+      gen: "gemini-3.8-flash-n",
+    },
+  ])(
+    "counts $name once across main, attempt, step and generation copies",
+    ({ attempts, step, gen }) =>
+      Effect.gen(function* () {
+        const usages = attempts.map((scale) => attemptUsage(scale));
+        const read = yield* readUsageRows(
+          usages.map((usage) => usageRow("step", usage, [usage], step)),
           [
-            {
-              uncachedInputTokens: 100,
-              cachedInputTokens: 20,
-              cacheCreationTokens: 5,
-              outputTokens: 40,
-              reasoningTokens: 10,
-            },
-            {
-              uncachedInputTokens: 200,
-              cachedInputTokens: 30,
-              cacheCreationTokens: 7,
-              outputTokens: 60,
-              reasoningTokens: 15,
-            },
+            usageRow(
+              "generation",
+              attemptUsage(attempts.reduce((a, b) => a + b, 0)),
+              usages,
+              gen,
+              1780000010,
+            ),
           ],
+        );
+        assert.deepStrictEqual(
+          read.map(({ totals, model, timestampMs }) => ({ totals, model, timestampMs })),
+          attempts.map((scale) => ({
+            totals: attemptTotals(scale),
+            model: step,
+            timestampMs: 1780000000000,
+          })),
         );
       }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("keeps the response id of an Antigravity usage whose single attempt has none", () =>
+  const response = protoText(11, "response");
+  const aliases = [response, protoText(12, "provider"), protoText(7, "message")];
+  it.effect.each([
+    {
+      name: "preserves main response aliases when the single attempt has none",
+      steps: [usageRow("step", attemptUsage(1, aliases.flat()), [attemptUsage(1)])],
+      generations: aliases.map((alias) => usageRow("generation", attemptUsage(1, alias))),
+      expected: [1],
+    },
+    {
+      name: "keeps the aggregate when retries share a response ID",
+      steps: [],
+      generations: [
+        usageRow("generation", attemptUsage(3, response), [
+          attemptUsage(1, response),
+          attemptUsage(2, response),
+        ]),
+      ],
+      expected: [3],
+    },
+    {
+      name: "keeps equal-counter attempts with different response IDs separate",
+      steps: [],
+      generations: [
+        usageRow("generation", attemptUsage(1, response), [
+          attemptUsage(1, protoText(11, "other")),
+        ]),
+      ],
+      expected: [1, 1],
+    },
+    {
+      name: "keeps retry IDs in their response and provider namespaces",
+      steps: [],
+      generations: [
+        usageRow("generation", attemptUsage(3, [...response, ...protoText(12, "response")]), [
+          attemptUsage(1, response),
+          attemptUsage(2, protoText(12, "response")),
+        ]),
+      ],
+      expected: [1, 2],
+    },
+  ])("$name", ({ steps, generations, expected }) =>
     Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const dir = yield* tempDir;
-      const counters = [
-        ...protoNumber(2, 100),
-        ...protoNumber(3, 40),
-        ...protoNumber(5, 20),
-        ...protoNumber(10, 40),
-      ];
-      yield* seedDatabase(path.join(dir, "id-on-main.db"), (db) =>
-        Effect.gen(function* () {
-          yield* createTables(db);
-          yield* db.run("INSERT INTO steps VALUES (?, ?)", [
-            3,
-            new Uint8Array([
-              ...protoBytes(9, [...counters, ...protoText(11, "response-1")]),
-              ...protoBytes(28, protoBytes(2, counters)),
-            ]),
-          ]);
-          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
-            0,
-            new Uint8Array(
-              protoBytes(1, protoBytes(4, [...counters, ...protoText(11, "response-1")])),
-            ),
-          ]);
-        }),
+      const read = yield* readUsageRows(steps, generations);
+      assert.deepStrictEqual(
+        read.map((record) => record.totals),
+        expected.map(attemptTotals),
       );
-      const result = yield* readAntigravityUsage(dir, 0);
-      assert.deepStrictEqual(result.errors, []);
-      const read = records(result);
-      assert.strictEqual(read.length, 1);
-      assert.strictEqual(read[0]?.totals.uncachedInputTokens, 100);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("keeps the Antigravity total when the attempts share one response id", () =>
-    Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const dir = yield* tempDir;
-      const counters = (input: number, output: number) => [
-        ...protoNumber(2, input),
-        ...protoNumber(3, output),
-        ...protoNumber(10, output),
-        ...protoText(11, "response-1"),
-      ];
-      yield* seedDatabase(path.join(dir, "shared-id.db"), (db) =>
-        Effect.gen(function* () {
-          yield* db.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
-          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
-            0,
-            new Uint8Array(
-              protoBytes(1, [
-                ...protoBytes(4, counters(300, 30)),
-                ...protoBytes(17, protoBytes(2, counters(100, 10))),
-                ...protoBytes(17, protoBytes(2, counters(200, 20))),
-              ]),
-            ),
-          ]);
-        }),
-      );
-      const result = yield* readAntigravityUsage(dir, 0);
-      assert.deepStrictEqual(result.errors, []);
-      const read = records(result);
-      assert.strictEqual(read.length, 1);
-      assert.strictEqual(read[0]?.totals.uncachedInputTokens, 300);
-      assert.strictEqual(read[0]?.totals.outputTokens, 30);
-    }).pipe(Effect.provide(NodeServices.layer)),
+  it.effect.each([
+    {
+      name: "different models with missing copies",
+      steps: [
+        ["claude-opus-4-6", 1780000000],
+        ["gemini-3.1-pro", 1780000000],
+      ],
+      generations: [
+        ["gemini-3.1-pro", 1780000010],
+        ["claude-sonnet-4-6", 1780000010],
+      ],
+      expected: [
+        ["claude-opus-4-6", 1780000000],
+        ["gemini-3.1-pro", 1780000000],
+        ["claude-sonnet-4-6", 1780000010],
+      ],
+    },
+    {
+      name: "distant timestamps with missing copies",
+      steps: [
+        ["gemini-3.1-pro", 1780000000],
+        ["gemini-3.1-pro", 1780086400],
+      ],
+      generations: [
+        ["gemini-3.1-pro", 1780086410],
+        ["gemini-3.1-pro", 1780172810],
+      ],
+      expected: [
+        ["gemini-3.1-pro", 1780000000],
+        ["gemini-3.1-pro", 1780086400],
+        ["gemini-3.1-pro", 1780172810],
+      ],
+    },
+    {
+      name: "ambiguous copies without model evidence",
+      steps: [
+        ["", 1780000000],
+        ["", 1780000000],
+      ],
+      generations: [
+        ["", 1780000010],
+        ["", 1780000010],
+      ],
+      expected: [
+        ["antigravity-unknown", 1780000000],
+        ["antigravity-unknown", 1780000000],
+        ["antigravity-unknown", 1780000010],
+        ["antigravity-unknown", 1780000010],
+      ],
+    },
+    {
+      name: "ambiguous copies without timestamp evidence",
+      steps: [
+        ["gemini-3.1-pro", 0],
+        ["gemini-3.1-pro", 0],
+      ],
+      generations: [
+        ["gemini-3.1-pro", 0],
+        ["gemini-3.1-pro", 0],
+      ],
+      expected: [
+        ["gemini-3.1-pro", 0],
+        ["gemini-3.1-pro", 0],
+        ["gemini-3.1-pro", 0],
+        ["gemini-3.1-pro", 0],
+      ],
+    },
+    {
+      name: "multiple plausible partners with model and timestamp evidence",
+      steps: [
+        ["gemini-3.1-pro", 1780000000],
+        ["gemini-3.1-pro", 1780000020],
+      ],
+      generations: [["gemini-3.1-pro", 1780000010]],
+      expected: [
+        ["gemini-3.1-pro", 1780000000],
+        ["gemini-3.1-pro", 1780000020],
+        ["gemini-3.1-pro", 1780000010],
+      ],
+    },
+  ] as const)(
+    "does not infer identity from equal counters: $name",
+    ({ steps, generations, expected }) =>
+      Effect.gen(function* () {
+        const read = yield* readUsageRows(
+          steps.map(([model, seconds]) => usageRow("step", attemptUsage(1), [], model, seconds)),
+          generations.map(([model, seconds]) =>
+            usageRow("generation", attemptUsage(1), [], model, seconds),
+          ),
+        );
+        assert.deepStrictEqual(
+          read.map((record) => record.totals),
+          expected.map(() => attemptTotals(1)),
+        );
+        assert.deepStrictEqual(
+          read.map(({ model, timestampMs }) => [model, steps[0][1] === 0 ? 0 : timestampMs / 1000]),
+          expected.map((entry) => [...entry]),
+        );
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("keeps an Antigravity list entry apart when it carries another response id", () =>
+  it.effect("retains differing source model labels despite a shared usage model enum", () =>
     Effect.gen(function* () {
-      const path = yield* Path.Path;
-      const dir = yield* tempDir;
-      const counters = [
-        ...protoNumber(2, 100),
-        ...protoNumber(3, 40),
-        ...protoNumber(5, 20),
-        ...protoNumber(10, 40),
-      ];
-      yield* seedDatabase(path.join(dir, "other-id.db"), (db) =>
-        Effect.gen(function* () {
-          yield* db.exec("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)");
-          yield* db.run("INSERT INTO gen_metadata VALUES (?, ?)", [
-            0,
-            new Uint8Array(
-              protoBytes(1, [
-                ...protoBytes(4, [...counters, ...protoText(11, "response-1")]),
-                ...protoBytes(17, protoBytes(2, [...counters, ...protoText(11, "response-2")])),
-              ]),
-            ),
-          ]);
-        }),
+      const usage = attemptUsage(1, protoNumber(1, 1016));
+      const read = yield* readUsageRows(
+        [usageRow("step", usage, [], "claude-opus-4-6")],
+        [usageRow("generation", usage, [], "claude-sonnet-4-6", 1780000010)],
       );
-      const result = yield* readAntigravityUsage(dir, 0);
-      assert.deepStrictEqual(result.errors, []);
-      assert.strictEqual(records(result).length, 2);
+      assert.deepStrictEqual(
+        read.map((record) => record.totals),
+        [attemptTotals(1), attemptTotals(1)],
+      );
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
