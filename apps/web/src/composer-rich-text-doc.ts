@@ -758,16 +758,13 @@ function pushBlankLineRun(acc: RichAccumulator, pmPos: number): void {
     kind: "prefix",
     flatStart: acc.flat,
     docLen: 0,
-    collapsedLen: 1,
     mdLen: 1,
     openLen: 0,
     closeLen: 0,
     pmPos,
     mdStart: acc.md,
-    collapsedStart: acc.collapsed,
   });
   acc.value += "\n";
-  acc.collapsed += 1;
   acc.md += 1;
 }
 
@@ -1255,12 +1252,8 @@ export interface SkillChipReplacement {
 }
 
 /**
- * The edits that bring a document's skill chips in line with the provider's
- * skills: a chip for a skill the provider lacks becomes its `$name` text, and
- * `$name` text for a skill it has becomes a chip. The skill list loads after
- * the editor opens and differs per provider, so the same prompt can need
- * different chips without its text changing. Ordered last-first, so applying
- * them in order keeps every position valid.
+ * Use the same Markdown token boundaries as draft restoration. Apply edits
+ * last-first so positions stay valid and unrelated citation nodes keep their keys.
  */
 export function skillChipReplacements(
   doc: ProseMirrorNode,

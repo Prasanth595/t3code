@@ -785,9 +785,8 @@ export function ComposerPromptEditorTiptap(props: ComposerPromptEditorProps) {
     setSelection({ value, cursor, expandedCursor });
     onPromptChange(value, cursor, expandedCursor, ...rest);
   };
-  // Extensions are creation-time, so changing text mode remounts the editor.
-  // Keep the exact Markdown caret across that remount: the collapsed cursor
-  // cannot represent positions inside an unknown `$name` rendered as text.
+  // Changing text mode remounts the editor. Its collapsed cursor cannot represent
+  // a caret inside unknown `$name` text, so retain the exact Markdown offset here.
   return (
     <ComposerPromptEditorTiptapInner
       key={props.literalText ? "literal" : props.richTextEnabled ? "rich" : "plain"}
@@ -1615,15 +1614,9 @@ function ComposerPromptEditorTiptapInner(
     value,
   ]);
 
-  // Skill chips follow the provider's skill list. Only the affected nodes are
-  // replaced, outside undo history, so undo cannot bring back a stale chip and
-  // citation chips keep the keys their open comment editors are bound to.
-  const skillsRef = useRef(skills);
+  // Reconcile loaded or switched provider skills without rebuilding citation node views.
   useEffect(() => {
-    const previousSkills = skillsRef.current;
-    skillsRef.current = skills;
-    if (!editor || literalText || previousSkills === skills) return;
-    if (previousSkills.length === 0 && skills.length === 0) return;
+    if (!editor || literalText) return;
     const replacements = skillChipReplacements(editor.state.doc, (name) =>
       composerSkillMeta(skills, name),
     );
