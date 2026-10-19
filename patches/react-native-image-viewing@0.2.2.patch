@@ -212,16 +212,16 @@ index 4730fe40735bd80afc97abdd14150a2fb4abf3e5..0ed2100744ccc9bcee7f1b15b0328a72
      const footerTransform = footerTranslate.getTranslateTransform();
      return [headerTransform, footerTransform, toggleVisible];
 diff --git a/dist/hooks/useImageIndexChange.js b/dist/hooks/useImageIndexChange.js
-index cb5f0f798e5cfeedf459b7d22e92871db3092020..c699d3714585925fc1d7c68a89b49d104d170b65 100644
+index cb5f0f798e5cfeedf459b7d22e92871db3092020..97ca2c9c326b1c53e6a5d90c3bb95d53342088d1 100644
 --- a/dist/hooks/useImageIndexChange.js
 +++ b/dist/hooks/useImageIndexChange.js
-@@ -5,16 +5,36 @@
+@@ -5,16 +5,34 @@
   * LICENSE file in the root directory of this source tree.
   *
   */
 -import { useState } from "react";
 +import { useCallback, useLayoutEffect, useRef, useState } from "react";
-+import { Dimensions, Platform } from "react-native";
++import { Platform } from "react-native";
  const useImageIndexChange = (imageIndex, screen) => {
      const [currentImageIndex, setImageIndex] = useState(imageIndex);
 -    const onScroll = (event) => {
@@ -229,10 +229,8 @@ index cb5f0f798e5cfeedf459b7d22e92871db3092020..c699d3714585925fc1d7c68a89b49d10
 +    const activeScroll = useRef(null);
 +    const onScroll = useCallback(function handleScroll(event) {
 +        if (Platform.OS === "android") {
-+            const window = Dimensions.get("window");
-+            // A resized list can still deliver events queued for its previous viewport.
++            // Events at this width stay valid until commit; replaced or relaid-out lists do not.
 +            if (activeScroll.current !== handleScroll ||
-+                window.width !== screen.width || window.height !== screen.height ||
 +                Math.abs(event.nativeEvent.layoutMeasurement.width - screen.width) > 1) {
 +                return;
 +            }
