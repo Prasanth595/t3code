@@ -234,7 +234,6 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         stdin: {
           stream: Stream.encodeText(Stream.make(prompt)),
         },
-        detached: false,
         forceKillAfter: "1 second",
       });
 

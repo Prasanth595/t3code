@@ -178,6 +178,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           env: input.env,
           cwd: input.cwd,
           shell: spawnCommand.shell,
+          forceKillAfter: "1 second",
         }),
       );
       const [stdout, , exitCode] = yield* Effect.all(
@@ -319,7 +320,6 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
         stdin: {
           stream: Stream.encodeText(Stream.make(prompt)),
         },
-        detached: false,
         forceKillAfter: "1 second",
       });
 
