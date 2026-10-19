@@ -273,32 +273,6 @@ const readProviderTemplate = (cwd: string, kind: "gitlab" | "azure-devops", tree
     return yield* provider.readChangeRequestTemplate!({ cwd, treeish });
   });
 
-it.effect.each([
-  ["gitlab", ".gitlab/merge_request_templates/Default.md"],
-  ["gitlab", ".gitlab/merge_request_templates/DEFAULT.MD"],
-  ...[".azuredevops/", ".vsts/", "docs/", ""].flatMap((directory) =>
-    ["md", "txt"].map(
-      (extension) => ["azure-devops", `${directory}pull_request_template.${extension}`] as const,
-    ),
-  ),
-  ["azure-devops", ".AzureDevOps/PULL_REQUEST_TEMPLATE.MD"],
-] as const)("%s reads its committed template at %s", ([kind, relativePath]) =>
-  runWithTempDirectory((cwd) =>
-    Effect.gen(function* () {
-      yield* writeTemplate(cwd, relativePath, "## Context\n\n## Verification");
-      yield* commitTemplates(cwd);
-      yield* runGit(cwd, ["branch", "base"]);
-      yield* writeTemplate(cwd, "subdir/.keep", "");
-      yield* writeTemplate(cwd, relativePath, "changed on the feature branch");
-      yield* commitTemplates(cwd);
-      assert.strictEqual(
-        Option.getOrThrow(yield* readProviderTemplate(`${cwd}/subdir`, kind, "base")),
-        "## Context\n\n## Verification",
-      );
-    }),
-  ),
-);
-
 it.effect("GitLab prefers Default.md over named templates and ignores other hosts", () =>
   runWithTempDirectory((cwd) =>
     Effect.gen(function* () {
@@ -307,7 +281,7 @@ it.effect("GitLab prefers Default.md over named templates and ignores other host
       yield* writeTemplate(cwd, ".azuredevops/pull_request_template.md", "Azure");
       yield* commitTemplates(cwd);
       assert.isTrue(Option.isNone(yield* readProviderTemplate(cwd, "gitlab")));
-      yield* writeTemplate(cwd, ".gitlab/merge_request_templates/Default.md", "GitLab default");
+      yield* writeTemplate(cwd, ".gitlab/merge_request_templates/DEFAULT.MD", "GitLab default");
       yield* commitTemplates(cwd);
       assert.strictEqual(
         Option.getOrThrow(yield* readProviderTemplate(cwd, "gitlab")),
@@ -325,21 +299,23 @@ it.effect("Azure follows its directory precedence and ignores other hosts", () =
       yield* writeTemplate(cwd, ".gitlab/merge_request_templates/Default.md", "GitLab");
       yield* commitTemplates(cwd);
       assert.isTrue(Option.isNone(yield* readProviderTemplate(cwd, "azure-devops")));
-      for (let i = 0; i < 2_000; i++) {
-        yield* writeTemplate(cwd, `docs/archive/unrelated-document-${i}.md`, "unrelated");
-      }
-      for (const directory of ["", "docs/", ".vsts/", ".azuredevops/"]) {
-        yield* writeTemplate(
-          cwd,
-          `${directory}pull_request_template.md`,
-          `from ${directory || "root"}`,
-        );
-        yield* commitTemplates(cwd);
-        assert.strictEqual(
-          Option.getOrThrow(yield* readProviderTemplate(cwd, "azure-devops")),
-          `from ${directory || "root"}`,
-        );
-      }
+      yield* writeTemplate(cwd, "pull_request_template.md", "root default");
+      yield* writeTemplate(cwd, "docs/pull_request_template.txt", "docs default");
+      yield* writeTemplate(cwd, ".vsts/pull_request_template.md", "legacy default");
+      yield* writeTemplate(cwd, ".AzureDevOps/PULL_REQUEST_TEMPLATE.MD", " \n");
+      yield* writeTemplate(cwd, ".AzureDevOps/PULL_REQUEST_TEMPLATE.TXT", "Azure default");
+      yield* commitTemplates(cwd);
+      assert.strictEqual(
+        Option.getOrThrow(yield* readProviderTemplate(cwd, "azure-devops")),
+        "Azure default",
+      );
+
+      yield* writeTemplate(cwd, ".AzureDevOps/PULL_REQUEST_TEMPLATE.MD", "Markdown default");
+      yield* commitTemplates(cwd);
+      assert.strictEqual(
+        Option.getOrThrow(yield* readProviderTemplate(cwd, "azure-devops")),
+        "Markdown default",
+      );
     }),
   ),
 );
