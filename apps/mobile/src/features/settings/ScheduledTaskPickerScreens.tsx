@@ -131,7 +131,15 @@ export function ScheduledTaskBranchPickerRouteScreen() {
       title="Base branch"
       project={project}
       branches={visibleBranches}
-      selectedBranchName={baseRef}
+      selectedBranchName={
+        visibleBranches.find(
+          (branch) =>
+            branch.name === baseRef ||
+            (editor.draft.startFromOrigin &&
+              branch.isRemote &&
+              branch.name === `origin/${baseRef}`),
+        )?.name ?? baseRef
+      }
       query={query}
       onQueryChange={setQuery}
       loading={
