@@ -320,9 +320,7 @@ export const make = Effect.gen(function* () {
     threadId?: ThreadId,
   ) {
     const settings = yield* settingsService.getSettings;
-    if (!autoSettlementConfigured(settings)) {
-      return;
-    }
+    const automaticSettlementEnabled = autoSettlementConfigured(settings);
     const threads = yield* projections.getSettlementCandidates(threadId);
     if (threads.length === 0) return;
     const projectShells = yield* projectStore.listShells();
@@ -332,7 +330,11 @@ export const make = Effect.gen(function* () {
     // the merged pull request: most threads carry no link and settle from
     // their branch lookup, which would otherwise wait for the next minute's
     // sweep on a possibly stale cached answer.
-    const candidates = threads.filter((thread) => isAutoSettlementCandidate(thread, nowMs));
+    const candidates = threads.filter(
+      (thread) =>
+        (automaticSettlementEnabled || thread.lineage.relationshipToParent === "subagent") &&
+        isAutoSettlementCandidate(thread, nowMs),
+    );
 
     const settleThread = Effect.fn("ThreadSettlementServiceV2.settleThread")(
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
@@ -624,7 +626,10 @@ export const make = Effect.gen(function* () {
   const processEvent = (event: OrchestrationV2DomainEvent) => {
     switch (event.type) {
       case "thread.settled":
-        return cleanUpSettledThread(event.threadId);
+        return cleanUpSettledThread(event.threadId).pipe(Effect.andThen(worker.enqueue(undefined)));
+      case "thread.archived":
+      case "thread.deleted":
+        return worker.enqueue(undefined);
       case "thread.pull-request-link-updated":
       case "thread.pull-request-synced":
       case "provider-session.detached":

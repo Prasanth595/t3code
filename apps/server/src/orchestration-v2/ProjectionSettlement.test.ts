@@ -438,14 +438,33 @@ it.effect.each([
     assert.deepEqual(yield* ids(), [parent]);
 
     const parentThread = yield* store.getThread(parent);
-    yield* store.apply({
-      id: EventId.make("event:settlement:subagent-parent-settled"),
-      type: "thread.settled",
-      threadId: parent,
-      occurredAt: now,
-      payload: { ...parentThread, settledOverride: "settled", settledAt: now, updatedAt: now },
+    for (const [type, overrides] of [
+      ["thread.settled", { settledOverride: "settled", settledAt: now }],
+      ["thread.archived", { archivedAt: now }],
+      ["thread.deleted", { deletedAt: now }],
+    ] satisfies ReadonlyArray<
+      readonly [
+        "thread.settled" | "thread.archived" | "thread.deleted",
+        Partial<OrchestrationV2AppThread>,
+      ]
+    >) {
+      yield* store.apply({
+        id: EventId.make(`event:settlement:subagent-parent:${type}`),
+        type,
+        threadId: parent,
+        occurredAt: now,
+        payload: { ...parentThread, ...overrides, updatedAt: now },
+      });
+      assert.deepEqual(yield* ids(), [child]);
+    }
+    const orphan = yield* createThread("orphan", {
+      lineage: {
+        parentThreadId: ThreadId.make("missing-parent"),
+        relationshipToParent: "subagent",
+        rootThreadId: parent,
+      },
     });
-    assert.deepEqual(yield* ids(), [child]);
+    assert.deepEqual(new Set(yield* ids()), new Set([child, orphan]));
   }).pipe(Effect.provide(testLayer)),
 );
 
