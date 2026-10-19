@@ -4,8 +4,13 @@ import { act, createRef, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 
+import { detectComposerTrigger } from "~/composer-logic";
 import { serializeEditorDoc } from "~/composer-rich-text-doc";
-import { ComposerPromptEditor, type ComposerPromptEditorHandle } from "./ComposerPromptEditor";
+import {
+  ComposerPromptEditor,
+  type ComposerPromptEditorHandle,
+  type ComposerPromptEditorProps,
+} from "./ComposerPromptEditor";
 
 let root: Root;
 let container: HTMLDivElement;
@@ -33,10 +38,12 @@ function Composer({
   value,
   richTextEnabled,
   skills,
+  onChange,
 }: {
   value: string;
   richTextEnabled: boolean;
   skills: ReadonlyArray<ServerProviderSkill>;
+  onChange?: ComposerPromptEditorProps["onChange"] | undefined;
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
@@ -49,7 +56,10 @@ function Composer({
       skills={skills}
       disabled={false}
       placeholder=""
-      onChange={(value, cursor) => setPrompt({ value, cursor })}
+      onChange={(...args) => {
+        setPrompt({ value: args[0], cursor: args[1] });
+        onChange?.(...args);
+      }}
       onPaste={() => {}}
     />
   );
@@ -59,9 +69,17 @@ async function mountEditor(
   value: string,
   richTextEnabled = true,
   skills: ReadonlyArray<ServerProviderSkill> = [],
+  onChange?: ComposerPromptEditorProps["onChange"],
 ) {
   await act(async () =>
-    root.render(<Composer value={value} richTextEnabled={richTextEnabled} skills={skills} />),
+    root.render(
+      <Composer
+        value={value}
+        richTextEnabled={richTextEnabled}
+        skills={skills}
+        onChange={onChange}
+      />,
+    ),
   );
   const element = container.querySelector<HTMLElement & { editor: Editor }>(".tiptap");
   if (!element) throw new Error("Composer did not mount");
@@ -180,6 +198,44 @@ it("keeps unknown dollar names editable when restoring and pasting a draft", asy
   expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
 });
 
+it("keeps skill queries active before whitespace and line breaks, suppressing only real chips", async () => {
+  const onChange = vi.fn<ComposerPromptEditorProps["onChange"]>();
+  const editor = await mountEditor("use  now\nfirst \n$babysit tail", true, [babysit], onChange);
+  const trigger = () => {
+    const [value, , expandedCursor, suppressTrigger] = onChange.mock.lastCall!;
+    return suppressTrigger ? null : detectComposerTrigger(value, expandedCursor);
+  };
+  await act(async () => {
+    editor.commands.setTextSelection("use ".length + 1);
+    typeText(editor, editor.state.selection.from, editor.state.selection.to, "$bab");
+  });
+  expect.soft(trigger()).toMatchObject({ kind: "skill", query: "bab" });
+  await act(async () => {
+    editor.commands.setTextSelection(editor.state.doc.child(0).nodeSize + 1 + "first ".length);
+    typeText(editor, editor.state.selection.from, editor.state.selection.to, "$bab");
+  });
+  expect.soft(trigger()).toMatchObject({ kind: "skill", query: "bab" });
+  await act(async () => {
+    editor.commands.setHardBreak();
+  });
+  await act(async () => {
+    editor.commands.setTextSelection(editor.state.selection.from - 1);
+  });
+  expect(editor.state.selection.$from.nodeAfter?.type.name).toBe("hardBreak");
+  expect.soft(trigger()).toMatchObject({ kind: "skill", query: "bab" });
+
+  const chip = serializeEditorDoc(editor.state.doc).runs.find((run) => run.kind === "token")!;
+  await act(async () => {
+    editor.commands.setTextSelection(chip.pmPos);
+  });
+  expect(onChange.mock.lastCall![3]).toBe(true);
+  await act(async () => {
+    editor.commands.setTextSelection(chip.pmPos + 1);
+  });
+  expect(onChange.mock.lastCall![3]).toBe(true);
+  expect(trigger()).toBeNull();
+});
+
 it("keeps the caret inside unknown dollar text across rich and plain remounts", async () => {
   const value = "echo $HOME now";
   let editor = await mountEditor(value);
@@ -238,8 +294,19 @@ it("reconciles provider skills and metadata without losing formatting, caret, or
       .click();
   });
   expect(document.body.textContent).toContain("Previous provider description");
+  await mountEditor(value, true, [
+    {
+      ...babysit,
+      displayName: "Current Babysit",
+      shortDescription: "  Current short description  ",
+    },
+  ]);
+  expect(container.textContent).toContain("Current Babysit");
+  expect(document.body.textContent).toContain("Current short description");
+  expect(document.body.textContent).not.toContain("Previous provider description");
   await mountEditor(value, true, [{ ...babysit, displayName: "Current Babysit" }]);
   expect(container.textContent).toContain("Current Babysit");
+  expect(document.body.textContent).not.toContain("Current short description");
   expect(document.body.textContent).toContain("No description is available for this skill.");
   expect(document.body.textContent).not.toContain("Previous provider description");
 });
