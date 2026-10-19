@@ -4923,6 +4923,94 @@ layer("GitHubPullRequestApi.layer", (it) => {
     }),
   );
 
+  it.effect(
+    "keeps requested Bots distinct from same-slug humans across listing, detail and reviewer changes",
+    () =>
+      Effect.gen(function* () {
+        const human = {
+          __typename: "User",
+          login: "example",
+          name: "Example",
+          avatarUrl: "https://avatars/human",
+        };
+        const bot = { __typename: "Bot", login: "example", avatarUrl: "https://avatars/bot" };
+        const reviewRequests = { nodes: [{ requestedReviewer: bot }] };
+        mockedExecute.mockReturnValueOnce(Effect.succeed(emptySearch()));
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              listedPullRequests(2, 7, (number) => ({
+                reviewRequests: [number === 7 ? bot : human],
+              })),
+            ),
+          ),
+        );
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(output(encodeJson(coreResponse({ reviewRequests })))),
+        );
+        mockedExecute.mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              encodeJson({
+                data: {
+                  repository: {
+                    assignableUsers: { pageInfo: { hasNextPage: false }, nodes: [human] },
+                    pullRequest: {
+                      author: { __typename: "User", login: "author" },
+                      reviewRequests,
+                    },
+                  },
+                },
+              }),
+            ),
+          ),
+        );
+        mockedExecute.mockReturnValueOnce(Effect.succeed(output("{}")));
+        const provider = yield* GitHubPullRequestProvider.make;
+        const input = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
+        const listed = yield* provider.listChangeRequests({
+          ...input,
+          state: "open",
+          involvement: "reviewing",
+          viewer: "example[bot]",
+          limit: 10,
+        });
+        expect.soft(listed.items.map((item) => item.number)).toEqual([7]);
+        const detail = yield* provider.getChangeRequest(input);
+        expect.soft(detail.reviewers.map((reviewer) => reviewer.login)).toEqual(["example[bot]"]);
+        const list = yield* provider.listReviewerCandidates(input);
+        expect.soft(list.candidates).toEqual([
+          {
+            kind: "user",
+            id: "example[bot]",
+            login: "example[bot]",
+            name: null,
+            avatarUrl: bot.avatarUrl,
+            isRequested: true,
+          },
+          {
+            kind: "user",
+            id: "example",
+            login: "example",
+            name: human.name,
+            avatarUrl: human.avatarUrl,
+            isRequested: false,
+          },
+        ]);
+        yield* provider.setReviewerRequest({
+          ...input,
+          reviewers: list.candidates,
+          requested: true,
+        });
+        expect.soft(mockedExecute.mock.calls.at(-1)?.[0]).toMatchObject({
+          kind: "rest",
+          method: "POST",
+          path: "repos/acme/web/pulls/7/requested_reviewers",
+          body: { reviewers: ["example[bot]", "example"], team_reviewers: [] },
+        });
+      }),
+  );
+
   it.effect("reads who may review and who already has in one request", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValue(

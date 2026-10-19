@@ -1,6 +1,6 @@
 import { SourceControlProviderKind } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -174,6 +174,7 @@ function harness(input: {
   readonly localBranches?: ReadonlyArray<string>;
   readonly resolved?: string;
   readonly gitFailure?: unknown;
+  readonly process?: SourceControlHost.SourceControlHost["Service"]["process"];
 }) {
   const git: Array<readonly [string, unknown]> = [];
   const graphqlCalls: Array<GraphQlCall> = [];
@@ -208,7 +209,7 @@ function harness(input: {
   };
   const host = TestSourceControlHost.layer({
     git: hostGit,
-    process: {
+    process: input.process ?? {
       run: (args) =>
         Effect.succeed(
           args.args[0] === "remote"
@@ -306,6 +307,92 @@ it.effect("discovers a configured enterprise installation without a CLI login", 
     }),
   );
 });
+
+it.effect(
+  "prefers the creation host's CLI account over a saved enterprise account unless overridden",
+  () => {
+    const checkedHosts: string[] = [];
+    const { layer } = harness({
+      remotes: "",
+      process: {
+        run: ({ args }) =>
+          Effect.succeed(
+            processOutput(
+              args[0] === "--version"
+                ? "gh version 2.80.0"
+                : encodeJson({
+                    hosts: {
+                      "github.com": [
+                        {
+                          state: "success",
+                          active: true,
+                          host: "github.com",
+                          login: "public-user",
+                        },
+                      ],
+                    },
+                  }),
+            ),
+          ),
+      },
+      api: {
+        rest: ({ host }) => {
+          checkedHosts.push(host);
+          return host === "enterprise.example"
+            ? Effect.succeed(restResponse({ login: "enterprise-user", id: 123 }))
+            : Effect.fail(
+                new GitHubRequestPolicy.GitHubApiAuthenticationError({
+                  host,
+                  operation: "discovery",
+                }),
+              );
+        },
+      },
+    });
+    return Effect.gen(function* () {
+      const settings = yield* TestSourceControlHost.TestSourceControlHostSettings;
+      yield* settings.update({
+        sourceControlHosts: { github: { tokens: { "enterprise.example": "saved-enterprise" } } },
+      });
+      const discovery = yield* GitHubSourceControlProvider.makeDiscovery;
+      const result = yield* discovery.probe("/repo");
+      expect.soft(result.auth.status).toBe("authenticated");
+      expect.soft(result.auth.account).toEqual(Option.some("public-user"));
+      expect.soft(result.auth.host).toEqual(Option.some("github.com"));
+      expect.soft(result.auth.accounts).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            host: "github.com",
+            account: "public-user",
+            authenticated: true,
+          }),
+          expect.objectContaining({
+            host: "enterprise.example",
+            account: "enterprise-user",
+            authenticated: true,
+          }),
+        ]),
+      );
+      expect.soft(checkedHosts).toEqual(["enterprise.example"]);
+
+      yield* settings.update({
+        sourceControlHosts: {
+          github: { tokens: { "enterprise.example": "saved-enterprise", "github.com": "refused" } },
+        },
+      });
+      const overridden = yield* discovery.probe("/repo");
+      expect.soft(checkedHosts).toContain("github.com");
+      expect.soft(overridden.auth.account).not.toEqual(Option.some("public-user"));
+      expect
+        .soft(overridden.auth.accounts)
+        .toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ host: "github.com", account: "public-user", active: false }),
+          ]),
+        );
+    }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+  },
+);
 
 describe("GitHubSourceControlProvider repository resolution", () => {
   it.effect("reads the repository gh would pick from the remotes", () => {
@@ -848,6 +935,7 @@ describe("GitHub App repository ownership", () => {
     paginated?: boolean;
     personal?: boolean;
     returnsRepository?: boolean;
+    mutationError?: { readonly type: string; readonly message: string };
     host?: string;
   }) => {
     const host = options.host ?? "github.com";
@@ -898,7 +986,12 @@ describe("GitHub App repository ownership", () => {
             ...(options.returnsRepository === false &&
             call.operationName === "CreateInstallationRepository"
               ? {
-                  errors: [{ type: "NOT_FOUND", message: "Could not resolve the new repository." }],
+                  errors: [
+                    options.mutationError ?? {
+                      type: "NOT_FOUND",
+                      message: "Could not resolve the new repository.",
+                    },
+                  ],
                 }
               : {}),
             data:
@@ -1045,6 +1138,26 @@ describe("GitHub App repository ownership", () => {
       }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
     },
   );
+
+  it.effect("shows GitHub's creation refusal without retrying the mutation", () => {
+    const message = "Resource not accessible by integration";
+    const { layer, graphqlCalls } = appHarness({
+      owners: ["acme"],
+      returnsRepository: false,
+      mutationError: { type: "FORBIDDEN", message },
+    });
+    return Effect.gen(function* () {
+      const provider = yield* GitHubSourceControlProvider.make;
+      const error = yield* provider
+        .createRepository({ cwd: "/repo", repository: "notes", visibility: "private" })
+        .pipe(Effect.flip);
+      assert.strictEqual(
+        graphqlCalls.filter((call) => call.operationName === "CreateInstallationRepository").length,
+        1,
+      );
+      assert.include(error.message, message);
+    }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+  });
 });
 
 describe("GitHubSourceControlProvider.checkoutChangeRequest", () => {

@@ -312,5 +312,16 @@ describe("new project publish targets", () => {
     expect(
       getNewProjectPublishTarget(targets, SourceControlProviderKind.make("gitlab"))?.owner,
     ).toBe("group");
+
+    const targetsForAccount = (account: string) =>
+      getNewProjectPublishTargets({
+        versionControlSystems: [],
+        sourceControlProviders: [readyHost("github", account), readyHost("gitlab", "group")],
+      }).map((target) => ({ kind: target.definition.kind, owner: target.owner }));
+    expect(targetsForAccount("octocat")).toEqual([
+      { kind: "github", owner: "octocat" },
+      { kind: "gitlab", owner: "group" },
+    ]);
+    expect(targetsForAccount("example[bot]")).toEqual([{ kind: "gitlab", owner: "group" }]);
   });
 });
