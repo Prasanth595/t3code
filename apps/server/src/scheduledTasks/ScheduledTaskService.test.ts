@@ -576,3 +576,118 @@ it.effect("guarded mutations reject changed bindings and current or new bound-th
     assert.deepEqual((yield* service.list()).tasks, [unbound]);
   }).pipe(Effect.provide(atomicLayer)),
 );
+
+it.effect.each(["project move", "webhook conversion"] as const)(
+  "manual reservation rejects a %s after the initial load",
+  (change) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* insertRow(
+        sql,
+        { id: atomicTaskId, next: "2026-09-09T12:01:00.000Z", enabled: 1, status: "never" },
+        "2026-09-09T12:00:00.000Z",
+      );
+      let changeBeforeReservation = false;
+      let launches = 0;
+      const serviceSql = new Proxy(sql, {
+        get(target, key) {
+          if (key !== "withTransaction") return Reflect.get(target, key);
+          return <A, E, R>(body: Effect.Effect<A, E, R>) =>
+            Effect.suspend(() => {
+              if (!changeBeforeReservation) return target.withTransaction(body);
+              changeBeforeReservation = false;
+              const mutation =
+                change === "project move"
+                  ? sql`UPDATE scheduled_tasks SET project_id = 'project:destination' WHERE task_id = ${atomicTaskId}`
+                  : sql`UPDATE scheduled_tasks SET schedule_json = '{"type":"webhook","signature":null,"maxDeliveryAgeMinutes":null}', next_run_at = NULL WHERE task_id = ${atomicTaskId}`;
+              return mutation.pipe(Effect.andThen(target.withTransaction(body)));
+            });
+        },
+      });
+      const context = yield* Layer.build(
+        ScheduledTaskService.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              atomicDependencies,
+              Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+                launch: () =>
+                  Effect.sync(() => {
+                    launches++;
+                  }).pipe(Effect.andThen(Effect.die("unexpected manual dispatch"))),
+              }),
+            ),
+          ),
+          Layer.provide(Layer.succeed(SqlClient.SqlClient, serviceSql)),
+        ),
+      );
+      const service = yield* ScheduledTaskService.ScheduledTaskService.pipe(
+        Effect.provideContext(context),
+      );
+      changeBeforeReservation = true;
+      const rejected = yield* service
+        .runNow(atomicScope)
+        .pipe(Effect.match({ onFailure: (error) => error, onSuccess: () => undefined }));
+      assert.equal(launches, 0);
+      const task = (yield* service.list()).tasks[0]!;
+      assert.equal(
+        task.projectId,
+        change === "project move" ? "project:destination" : atomicProjectId,
+      );
+      assert.equal(task.schedule.type, change === "project move" ? "interval" : "webhook");
+      assert.equal(task.lastRunStatus, "never");
+      assert.equal(task.runCount, 0);
+      assert.isNull(task.lastRunAt);
+      assert.isTrue(isScheduledTaskError(rejected));
+    }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("completion preserves a pause committed before its transaction", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* insertRow(
+      sql,
+      { id: atomicTaskId, next: "2026-09-09T12:01:00.000Z", enabled: 1, status: "never" },
+      "2026-09-09T12:00:00.000Z",
+    );
+    let pauseBeforeCompletion = false;
+    const serviceSql = new Proxy(sql, {
+      get(target, key) {
+        if (key !== "withTransaction") return Reflect.get(target, key);
+        return <A, E, R>(body: Effect.Effect<A, E, R>) =>
+          Effect.suspend(() => {
+            if (!pauseBeforeCompletion) return target.withTransaction(body);
+            pauseBeforeCompletion = false;
+            return sql`UPDATE scheduled_tasks SET enabled = 0, next_run_at = NULL WHERE task_id = ${atomicTaskId}`.pipe(
+              Effect.andThen(target.withTransaction(body)),
+            );
+          });
+      },
+    });
+    const context = yield* Layer.build(
+      ScheduledTaskService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            atomicDependencies,
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+              launch: () =>
+                Effect.sync(() => {
+                  pauseBeforeCompletion = true;
+                }).pipe(Effect.andThen(Effect.die("test launch failure"))),
+            }),
+          ),
+        ),
+        Layer.provide(Layer.succeed(SqlClient.SqlClient, serviceSql)),
+      ),
+    );
+    const service = yield* ScheduledTaskService.ScheduledTaskService.pipe(
+      Effect.provideContext(context),
+    );
+    const result = yield* service.runNow(atomicScope);
+    const task = (yield* service.list()).tasks[0]!;
+    assert.equal(task.enabled, false);
+    assert.isNull(task.nextRunAt);
+    assert.equal(task.lastRunStatus, "failed");
+    assert.equal(task.runCount, 1);
+    assert.deepEqual(result.task, task);
+  }).pipe(Effect.scoped, Effect.provide(SqlitePersistence.layerMemory)),
+);
