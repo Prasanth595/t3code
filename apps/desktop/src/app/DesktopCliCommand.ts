@@ -1,3 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off -- FileSystem.access has no execute check, and the shell's PATH lookup needs access(X_OK).
+import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
+
 import type { DesktopCliCommandState } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -122,12 +126,14 @@ export const make = Effect.gen(function* () {
       Effect.mapError(() => fail("Could not update your PATH.")),
     );
 
-  // The shell skips directories and files without an execute bit.
+  // The shell runs only a regular file this user may execute. stat and access
+  // both follow symlinks, so a link counts by what it points to.
   const isExecutableFile = (target: string) =>
-    fs.stat(target).pipe(
-      Effect.map((info) => info.type === "File" && (info.mode & 0o111) !== 0),
-      Effect.orElseSucceed(() => false),
-    );
+    Effect.gen(function* () {
+      if ((yield* fs.stat(target)).type !== "File") return false;
+      yield* Effect.tryPromise(() => NodeFSP.access(target, NodeFS.constants.X_OK));
+      return true;
+    }).pipe(Effect.orElseSucceed(() => false));
 
   const firstOnPath = Effect.gen(function* () {
     for (const directory of pathEntries(process.env.PATH, ":")) {
