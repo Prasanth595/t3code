@@ -51,7 +51,7 @@ export function markdownMathRanges(source: string, tree?: Root) {
 }
 
 /** Messages without these characters skip math parsing entirely. */
-export function mayContainMath(text: string): boolean {
+function mayContainMath(text: string): boolean {
   return (
     text.includes("$") ||
     text.includes("\\(") ||
