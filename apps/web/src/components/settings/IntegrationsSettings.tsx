@@ -971,10 +971,6 @@ export function DeviceIntegrationControls({
   );
 }
 
-/**
- * Server-authoritative, so it follows the header's environment and project
- * selection and stays editable on clients without the desktop-only preview.
- */
 function AgentBrowserAccessSetting() {
   const { scope } = useSettingsScope();
   const settings = useScopedSettings();
