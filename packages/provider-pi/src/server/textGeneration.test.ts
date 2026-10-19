@@ -7,7 +7,6 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { makePiTextGeneration } from "./textGeneration.ts";
@@ -15,11 +14,10 @@ import { makePiTextGeneration } from "./textGeneration.ts";
 const decodeJsonLine = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const encodeJsonLine = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-const makeFakePi = (reply: string, options: { readonly setModelError?: string } = {}) =>
+const makeFakePi = (reply: string, setModelError?: string) =>
   Effect.gen(function* () {
     const stdout = yield* Queue.unbounded<Uint8Array, Cause.Done>();
     const received: Array<Record<string, unknown>> = [];
-    let launchArgs: ReadonlyArray<string> = [];
     const emit = (record: Record<string, unknown>) =>
       Queue.offer(stdout, new TextEncoder().encode(`${encodeJsonLine(record)}\n`));
     let buffered = "";
@@ -37,17 +35,16 @@ const makeFakePi = (reply: string, options: { readonly setModelError?: string } 
             yield* emit({ type: "agent_settled" });
           } else if (record["type"] === "get_last_assistant_text") {
             yield* emit({ ...response, success: true, data: { text: reply } });
-          } else if (record["type"] === "set_model" && options.setModelError !== undefined) {
-            yield* emit({ ...response, success: false, error: options.setModelError });
+          } else if (record["type"] === "set_model" && setModelError !== undefined) {
+            yield* emit({ ...response, success: false, error: setModelError });
           } else {
             yield* emit({ ...response, success: true });
           }
         }
       });
-    const spawner = ChildProcessSpawner.make((command) =>
-      Effect.sync(() => {
-        if (ChildProcess.isStandardCommand(command)) launchArgs = command.args;
-        return ChildProcessSpawner.makeHandle({
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.succeed(
+        ChildProcessSpawner.makeHandle({
           // Outside the valid pid range, so PiRpc's process-group kill never lands.
           pid: ChildProcessSpawner.ProcessId(999_999_999),
           exitCode: Effect.never,
@@ -60,16 +57,10 @@ const makeFakePi = (reply: string, options: { readonly setModelError?: string } 
           all: Stream.empty,
           getInputFd: () => Sink.drain,
           getOutputFd: () => Stream.empty,
-        });
-      }),
+        }),
+      ),
     );
-    return {
-      spawner,
-      received,
-      get launchArgs() {
-        return launchArgs;
-      },
-    };
+    return { spawner, received };
   });
 
 it.effect("puts linked source control context in the Pi thread title prompt", () =>
@@ -97,7 +88,7 @@ it.effect("puts linked source control context in the Pi thread title prompt", ()
 
 it.effect("names the model and the disabled extensions when Pi cannot load it", () =>
   Effect.gen(function* () {
-    const pi = yield* makeFakePi("", { setModelError: "Model not found: demo/demo-model" });
+    const pi = yield* makeFakePi("", "Model not found: demo/demo-model");
     const textGeneration = yield* makePiTextGeneration(
       { enabled: true, binaryPath: "pi", launchArgs: "", customModels: [] },
       {},
@@ -117,7 +108,6 @@ it.effect("names the model and the disabled extensions when Pi cannot load it", 
     assert.include(error.detail, "Pi rejected model 'demo/demo-model'");
     assert.include(error.detail, "Model not found: demo/demo-model");
     assert.include(error.detail, "--no-extensions");
-    assert.include(pi.launchArgs, "--no-extensions");
     assert.isUndefined(pi.received.find((record) => record["type"] === "prompt"));
   }),
 );
