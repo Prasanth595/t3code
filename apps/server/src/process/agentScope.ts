@@ -88,17 +88,9 @@ const STOP_TIMEOUT_OPTION = "--property=TimeoutStopSec=10s";
 // Nested agent scopes inherit only the controllers enabled on their parent
 // slices. Without Delegate, rootless containers (kind + Podman, Docker rootless)
 // fail cgroup setup when tools like make deploy run inside an agent session.
-const DELEGATE_OPTIONS = [
-  "--property=Delegate=yes",
-  "--property=DelegateControllers=cpu cpuset io memory pids",
-] as const;
-const DELEGATE_PROPERTIES = [
-  "Delegate=yes",
-  "DelegateControllers=cpu cpuset io memory pids",
-] as const;
-// systemd derives parent slice names from the leaf name, so
-// app-t3code-agents.slice always lives under app-t3code.slice.
-const PARENT_SLICE = "app-t3code.slice";
+// Pass controllers via Delegate= (systemd-run rejects DelegateControllers=).
+// Systemd enables those controllers on ancestor slices when the scope starts.
+const DELEGATE_OPTION = "--property=Delegate=cpu cpuset io memory pids";
 const STOPPING_POLL_INTERVAL = "100 millis";
 const STOPPING_POLL_ATTEMPTS = 20;
 const CLEAR_FAILED_INTERVAL = "1 second";
@@ -187,9 +179,9 @@ export const make = Effect.gen(function* () {
       // Prefer Delegate-enabled options so nested cgroups can enable cpu/cpuset/io.
       // Fall back when the local systemd rejects those properties.
       const stopOptions = [STOP_TIMEOUT_OPTION];
-      const stopWithDelegate = [...stopOptions, ...DELEGATE_OPTIONS];
+      const stopWithDelegate = [...stopOptions, DELEGATE_OPTION];
       const oomOptions = [...stopOptions, "--property=OOMPolicy=stop"];
-      const oomWithDelegate = [...oomOptions, ...DELEGATE_OPTIONS];
+      const oomWithDelegate = [...oomOptions, DELEGATE_OPTION];
       const scopeOptions = (yield* probe(oomWithDelegate))
         ? oomWithDelegate
         : (yield* probe(oomOptions))
@@ -217,33 +209,18 @@ export const make = Effect.gen(function* () {
           stderr: limited._tag === "Some" ? limited.value.stderr.trim() : undefined,
         });
       }
-      // Delegate on parent and agent slices so controllers reach nested scopes.
-      for (const slice of [PARENT_SLICE, AGENT_SLICE, ownedSlice]) {
-        const delegated = yield* run(systemctl, [
-          "--user",
-          "set-property",
-          "--runtime",
-          slice,
-          ...DELEGATE_PROPERTIES,
-        ]);
-        if (delegated._tag === "None" || delegated.value.code !== 0) {
-          yield* Effect.logWarning("Could not enable cgroup Delegate on agents slice", {
-            slice,
-            stderr: delegated._tag === "Some" ? delegated.value.stderr.trim() : undefined,
-          });
-        }
-      }
       yield* Effect.logInfo("Agent scopes are on", {
         slice: AGENT_SLICE,
         ...limits,
         oomPolicy: scopeOptions.includes("--property=OOMPolicy=stop"),
-        delegate: scopeOptions.includes("--property=Delegate=yes"),
+        delegate: scopeOptions.includes(DELEGATE_OPTION),
       });
       return {
         systemdRun,
         systemctl,
         runtimeDir,
-        supportsOomPolicy,
+        supportsOomPolicy: scopeOptions.includes("--property=OOMPolicy=stop"),
+        supportsDelegate: scopeOptions.includes(DELEGATE_OPTION),
       };
     }),
   );
@@ -382,6 +359,7 @@ export const make = Effect.gen(function* () {
         // unload the unit even when it fails.
         options: [
           STOP_TIMEOUT_OPTION,
+          ...(scope.supportsDelegate ? [DELEGATE_OPTION] : []),
           ...(scope.supportsOomPolicy
             ? [`--property=OOMPolicy=${continuing ? "continue" : "stop"}`]
             : []),
