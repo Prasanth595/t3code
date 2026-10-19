@@ -16,6 +16,9 @@ import {
   shouldRetargetThreadPullRequestPanel,
 } from "../components/ChatView.logic";
 
+// Settings and drafts unmount ChatView; remember links until the page reloads.
+const observedThreadPullRequests = new Map<string, ThreadLinkedPullRequest | null>();
+
 /**
  * Opens the right panel on its own when there is something new to look at: a
  * change request linked to the thread, or the diff of a turn that just
@@ -65,8 +68,6 @@ export function useProactivePanels(input: {
   const proactivePanelObservationRef = useRef<ReturnType<
     typeof observeProactivePanelUserChoice
   > | null>(null);
-  // ChatView survives thread navigation; keep each thread's last link for re-entry.
-  const observedThreadPullRequestsRef = useRef(new Map<string, ThreadLinkedPullRequest | null>());
   const threadKey = threadRef ? scopedThreadKey(threadRef) : null;
 
   useEffect(() => {
@@ -87,10 +88,10 @@ export function useProactivePanels(input: {
       userActionRevision,
     } = observation;
     const openSurface = selectActiveRightPanelSurface(panels.byThreadKey, threadRef);
-    const previousPullRequest = observedThreadPullRequestsRef.current.get(threadKey) ?? null;
+    const previousPullRequest = observedThreadPullRequests.get(threadKey) ?? null;
     // A missing link during loading must not erase the last observed one.
     if (linkedThreadPullRequest !== null || !threadDetailLoading) {
-      observedThreadPullRequestsRef.current.set(threadKey, linkedThreadPullRequest);
+      observedThreadPullRequests.set(threadKey, linkedThreadPullRequest);
     }
     const followSelectedPullRequest = shouldRetargetThreadPullRequestPanel(
       previousPullRequest,
