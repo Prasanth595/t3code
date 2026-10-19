@@ -5055,7 +5055,7 @@ export default function ChatView(props: ChatViewProps) {
     }
     const shell = readThreadShell(threadRef);
     if (shell === null ? isEnvironmentLive() : shell.deletedAt != null) {
-      toastManager.add({ type: "info", title: "This thread was deleted" });
+      toastManager.add({ type: "info", title: "This thread is no longer available" });
       return;
     }
     void navigate({
