@@ -421,6 +421,67 @@ it.layer(NodeServices.layer)("AntigravityAuth", (it) => {
       }),
   );
 
+  it.effect("reports failed cancellation when saved credentials cannot be restored", () =>
+    Effect.gen(function* () {
+      const profile = yield* makeCredentialProfile;
+      const backupPath = `${profile.tokenPath}.before-sign-in`;
+      let failRestore = false;
+      const restoring = yield* Deferred.make<void>();
+      const continueRestore = yield* Deferred.make<void>();
+      const credentialFileSystem = FileSystem.FileSystem.of({
+        ...profile.fs,
+        link: (from, to) =>
+          Effect.gen(function* () {
+            if (failRestore) {
+              yield* Deferred.succeed(restoring, undefined);
+              yield* Deferred.await(continueRestore);
+            }
+            yield* profile.fs.link(
+              from,
+              failRestore ? `${profile.directory}/missing/acp_token.json` : to,
+            );
+          }),
+      });
+      const harness = yield* makeHarness({
+        profileDirectory: profile.profileDirectory,
+        credentialFileSystem,
+      });
+      const state = yield* harness.auth.controller.start(owner);
+      yield* phase(harness.auth, "waiting");
+      failRestore = true;
+      const cancellation = yield* harness.auth.controller
+        .cancel(owner, state.flowId!)
+        .pipe(Effect.forkScoped);
+      yield* Deferred.await(restoring);
+      const stopping = yield* harness.auth.controller
+        .subscribe(owner)
+        .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+      assert.equal(stopping.phase, "verifying");
+      assert.isTrue(
+        Exit.isFailure(yield* harness.auth.controller.start(otherOwner).pipe(Effect.exit)),
+      );
+      assert.isTrue(
+        Exit.isFailure(
+          yield* harness.auth
+            .withProcess(Effect.void, Effect.void)
+            .pipe(Effect.scoped, Effect.exit),
+        ),
+      );
+      yield* Deferred.succeed(continueRestore, undefined);
+      const result = yield* Fiber.join(cancellation);
+      const subscribed = yield* harness.auth.controller
+        .subscribe(owner)
+        .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+
+      assert.isFalse(yield* profile.fs.exists(profile.tokenPath));
+      assert.equal(yield* profile.fs.readFileString(backupPath), "previous-account");
+      assert.deepEqual(
+        { result: result.phase, subscribed: subscribed.phase },
+        { result: "failed", subscribed: "failed" },
+      );
+    }),
+  );
+
   it.effect.each([false, true])(
     "retires the old account on sign-out and reports backup cleanup failure (%s)",
     (failCleanup) =>
