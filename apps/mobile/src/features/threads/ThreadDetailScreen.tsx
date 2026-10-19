@@ -657,8 +657,6 @@ export const ThreadDetailScreen = function ThreadDetailScreen(props: ThreadDetai
       { duration: 180, easing: Easing.out(Easing.cubic), reduceMotion: ReduceMotion.System },
     ),
   );
-  // Keep the status above expanded questions and composer suggestions.
-  // Suggestions remain overlays, so opening them does not move the feed.
   const floatingControlLift = useDerivedValue(
     () =>
       Math.max(
