@@ -108,7 +108,16 @@ describe("VcsProcess.run", () => {
       fsyncMethods: ["fsync", "writeout-only"],
     },
     { stderr: "fatal: Operation not supported", fsyncMethods: ["fsync"] },
-    { stderr: "fatal: couldn't write '/Volumes/share/.git/index'", fsyncMethods: ["fsync"] },
+    {
+      stderr:
+        "fatal: update_ref failed for ref 'refs/t3/checkpoints/x': cannot update ref 'refs/t3/checkpoints/x': couldn't write '/Volumes/share/.git/refs/t3/checkpoints/x.lock': Input/output error",
+      fsyncMethods: ["fsync"],
+    },
+    {
+      stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
+      fsyncMethods: ["fsync", "writeout-only"],
+      fallbackFails: true,
+    },
     {
       platform: "linux",
       stderr: "fatal: fsync error on '.git/objects/a5/tmp_obj_Pseg66': Operation not supported",
@@ -128,7 +137,9 @@ describe("VcsProcess.run", () => {
             run: (input) =>
               Effect.sync(() => {
                 seen.push(input.args);
-                const failed = input.args.includes("core.fsyncMethod=fsync");
+                const failed =
+                  input.args.includes("core.fsyncMethod=fsync") ||
+                  ("fallbackFails" in scenario && scenario.fallbackFails);
                 return {
                   stdout: "",
                   stderr: failed ? stderr : "",
@@ -158,7 +169,15 @@ describe("VcsProcess.run", () => {
             "add",
           ]),
         );
-        expect(Exit.isSuccess(exit)).toBe(fsyncMethods.length === 2);
+        expect(Exit.isSuccess(exit)).toBe(
+          fsyncMethods.length === 2 && !("fallbackFails" in scenario && scenario.fallbackFails),
+        );
+        if (Exit.isFailure(exit)) {
+          expect(Cause.findErrorOption(exit.cause)).toMatchObject({
+            _tag: "Some",
+            value: { _tag: "VcsProcessExitError", exitCode: 128 },
+          });
+        }
       }),
   );
 
