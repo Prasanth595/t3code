@@ -29,6 +29,16 @@ beforeEach(() => {
   });
 });
 
+async function reloadRightPanelStore() {
+  const { storage, name } = useRightPanelStore.persist.getOptions();
+  const persisted = await storage!.getItem(name!);
+  expect(persisted).not.toBeNull();
+  useRightPanelStore.setState(useRightPanelStore.getInitialState());
+  await storage!.setItem(name!, persisted!);
+  await useRightPanelStore.persist.rehydrate();
+  expect(useRightPanelStore.persist.hasHydrated()).toBe(true);
+}
+
 describe("rightPanelStore", () => {
   it("records single and bulk tab closes, newest first", () => {
     const store = useRightPanelStore.getState();
@@ -309,61 +319,82 @@ describe("rightPanelStore", () => {
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
   });
 
-  it.each([
-    { dismissal: "hide", dismiss: () => useRightPanelStore.getState().close(refA) },
-    {
-      dismissal: "close tab",
-      dismiss: () => useRightPanelStore.getState().closeSurface(refA, "diff"),
-    },
-  ])("offers each turn's diff once after $dismissal and reload", ({ dismiss }) => {
+  it("offers each completed diff once across dismissal, panel changes, and reload", async () => {
     const store = useRightPanelStore.getState();
     expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(true);
-    dismiss();
-    const persisted = JSON.parse(
-      JSON.stringify({ byThreadKey: useRightPanelStore.getState().byThreadKey }),
-    );
-    useRightPanelStore.setState(migratePersistedRightPanelState(persisted));
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
 
+    store.close(refA);
+    await reloadRightPanelStore();
     expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(false);
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
+
+    store.open(refA, "files");
+    store.openFile(refA, "src/app.ts");
+    await reloadRightPanelStore();
+    expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(false);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("file");
+
+    store.closeAllSurfaces(refA);
+    await reloadRightPanelStore();
+    expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(false);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
+
+    const otherEnvironment = scopeThreadRef("env-2" as EnvironmentId, refA.threadId);
+    for (const ref of [refB, otherEnvironment]) {
+      expect(store.openProactive(ref, completedDiff, store.getUserActionRevision(ref))).toBe(true);
+      expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, ref)).toBe("diff");
+    }
 
     const nextTurn = { ...completedDiff, turnId: RunId.make("turn-2") };
     expect(store.openProactive(refA, nextTurn, store.getUserActionRevision(refA))).toBe(true);
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+    store.closeSurface(refA, "diff");
+
+    // A later storage migration must preserve the dismissal, just like an ordinary reload.
+    const { storage, name, version } = useRightPanelStore.persist.getOptions();
+    const persisted = await storage!.getItem(name!);
+    await storage!.setItem(name!, { ...persisted!, version: version! - 1 });
+    await reloadRightPanelStore();
+    expect(store.openProactive(refA, nextTurn, store.getUserActionRevision(refA))).toBe(false);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
+
+    store.open(refA, "diff");
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
   });
 
-  it.each([
-    { action: "open file", act: () => useRightPanelStore.getState().openFile(refA, "src/app.ts") },
-    { action: "open files", act: () => useRightPanelStore.getState().open(refA, "files") },
-    {
-      action: "open pull request",
-      act: () => useRightPanelStore.getState().openPullRequest(refA, linkedPullRequest),
-    },
-  ])("keeps the offered turn after dismissing, then $action, then reload", ({ act }) => {
-    const store = useRightPanelStore.getState();
-    expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(true);
-    store.close(refA);
-    act();
-    const persisted = JSON.parse(
-      JSON.stringify({ byThreadKey: useRightPanelStore.getState().byThreadKey }),
-    );
-    useRightPanelStore.setState(migratePersistedRightPanelState(persisted));
-    const before = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
-
-    expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(false);
-    expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toBe(
-      before,
-    );
-  });
-
-  it("does not retry a diff offer the user already declined", () => {
+  it("does not retry declined diff offers after manual choices or PR priority clear", async () => {
     const store = useRightPanelStore.getState();
     const revision = store.getUserActionRevision(refA);
     store.openFile(refA, "src/app.ts");
     expect(store.openProactive(refA, completedDiff, revision)).toBe(false);
-
+    await reloadRightPanelStore();
     expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(false);
     expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("file");
+
+    store.closeAllSurfaces(refA);
+    expect(store.openProactive(refA, completedDiff, store.getUserActionRevision(refA))).toBe(false);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
+
+    const nextTurn = { ...completedDiff, turnId: RunId.make("turn-2") };
+    store.openPullRequest(refA, linkedPullRequest);
+    expect(store.openProactive(refA, nextTurn, store.getUserActionRevision(refA))).toBe(false);
+    expect(selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA)).toEqual(
+      linkedPullRequest,
+    );
+    store.closeSurface(refA, linkedPullRequest.id);
+    await reloadRightPanelStore();
+    expect(store.openProactive(refA, nextTurn, store.getUserActionRevision(refA))).toBe(false);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBeNull();
+
+    expect(
+      store.openProactive(
+        refA,
+        { ...completedDiff, turnId: RunId.make("turn-3") },
+        store.getUserActionRevision(refA),
+      ),
+    ).toBe(true);
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
   });
 
   it("keeps manual choices scoped to their thread and environment", () => {

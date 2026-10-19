@@ -95,7 +95,6 @@ export interface ThreadRightPanelState {
   surfaces: RightPanelSurface[];
   dismissedDeviceSurfaceIds?: string[];
   maximized?: true;
-  /** The last turn whose diff was offered automatically. Each turn is offered once. */
   proactiveDiffTurnId?: RunId;
 }
 
@@ -103,10 +102,6 @@ export interface ThreadPanelVisibility {
   inlineOpen: boolean;
   popoverOpen: boolean;
 }
-
-export type ProactivePanelRequest =
-  | Extract<RightPanelSurface, { kind: "pull-request" | "pull-requests" }>
-  | { kind: "diff"; turnId: RunId };
 
 interface RightPanelStoreState {
   byThreadKey: Record<string, ThreadRightPanelState>;
@@ -123,7 +118,9 @@ interface RightPanelStoreState {
    */
   openProactive: (
     ref: ScopedThreadRef,
-    request: ProactivePanelRequest,
+    request:
+      | Extract<RightPanelSurface, { kind: "pull-request" | "pull-requests" }>
+      | { kind: "diff"; turnId: RunId },
     expectedUserActionRevision: number,
   ) => boolean;
   open: (
@@ -311,12 +308,7 @@ const updateThreadStateMap = (
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
 ): Record<string, ThreadRightPanelState> => {
   const current = byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
-  const updated = updater(current);
-  // Many actions rebuild the thread state from scratch. Only `openProactive` replaces the offer.
-  const next =
-    updated.proactiveDiffTurnId === undefined && current.proactiveDiffTurnId !== undefined
-      ? { ...updated, proactiveDiffTurnId: current.proactiveDiffTurnId }
-      : updated;
+  const next = updater(current);
   if (
     !next.isOpen &&
     next.activeSurfaceId === null &&
@@ -615,9 +607,9 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           if (request.kind === "diff") {
             const current = selectThreadRightPanelState(state.byThreadKey, ref);
             if (current.proactiveDiffTurnId === request.turnId) return state;
+            const activePanel = selectActiveRightPanel(state.byThreadKey, ref);
             const pullRequestActive =
-              selectActiveRightPanel(state.byThreadKey, ref) === "pull-request" ||
-              selectActiveRightPanel(state.byThreadKey, ref) === "pull-requests";
+              activePanel === "pull-request" || activePanel === "pull-requests";
             opened =
               (state.userActionRevisionByThreadKey[threadKey] ?? 0) ===
                 expectedUserActionRevision && !pullRequestActive;
