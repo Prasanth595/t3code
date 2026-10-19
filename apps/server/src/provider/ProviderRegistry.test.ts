@@ -952,8 +952,8 @@ it.layer(
       );
     });
 
-    it("does not copy older ACP Registry model options onto a model the snapshot has not observed", () => {
-      const narrowThinking = createModelCapabilities({
+    it("does not carry an ACP Registry model's older options onto a refresh that lists it without options", () => {
+      const thinking = createModelCapabilities({
         optionDescriptors: [
           selectDescriptor("thought_level", "Thinking", [
             { id: "low", label: "Low" },
@@ -961,6 +961,7 @@ it.layer(
           ]),
         ],
       });
+      // Snapshots cached before per-model options gave every model the same list.
       const cachedProvider = {
         instanceId: ProviderInstanceId.make("acpRegistry_devin"),
         driver: ProviderDriverKind.make("acpRegistry"),
@@ -971,13 +972,13 @@ it.layer(
         checkedAt: "2026-10-03T00:00:00.000Z",
         version: "3000.11.3",
         models: [
-          { slug: "opus", name: "Opus", isCustom: false, capabilities: narrowThinking },
-          { slug: "glm", name: "GLM", isCustom: false, capabilities: narrowThinking },
+          { slug: "opus", name: "Opus", isCustom: false, capabilities: thinking },
+          { slug: "glm", name: "GLM", isCustom: false, capabilities: thinking },
         ],
         slashCommands: [],
         skills: [],
       } as const satisfies ServerProvider;
-      const probedProvider = {
+      const refreshedProvider = {
         ...cachedProvider,
         checkedAt: "2026-10-03T00:01:00.000Z",
         models: [
@@ -987,13 +988,13 @@ it.layer(
             isCustom: false,
             capabilities: createModelCapabilities({ optionDescriptors: [] }),
           },
-          { slug: "glm", name: "GLM", isCustom: false, capabilities: narrowThinking },
+          { slug: "glm", name: "GLM", isCustom: false, capabilities: thinking },
         ],
       } satisfies ServerProvider;
 
       assert.deepStrictEqual(
-        ProviderRegistry.mergeProviderSnapshot(cachedProvider, probedProvider).models,
-        [...probedProvider.models],
+        ProviderRegistry.mergeProviderSnapshot(cachedProvider, refreshedProvider).models,
+        [...refreshedProvider.models],
       );
     });
 

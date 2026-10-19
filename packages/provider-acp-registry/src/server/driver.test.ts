@@ -1,7 +1,6 @@
 import {
   AcpRegistryOperationError,
   ProviderInstanceId,
-  type ProviderOptionDescriptor,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "../settings.ts";
@@ -12,12 +11,11 @@ import * as Schema from "effect/Schema";
 
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
-import { recordAcpRegistryModelOptions, type AcpRegistryLiveConfiguration } from "./probe.ts";
+import type { AcpRegistryLiveConfiguration } from "./probe.ts";
 import {
   acpRegistrySnapshotReadiness,
   applyAcpRegistryAvailableCommands,
   applyAcpRegistryLiveConfiguration,
-  applyAcpRegistryModelOptions,
   buildCheckedAcpRegistrySnapshot,
   checkAcpRegistryProviderReadiness,
   checkAcpRegistryProviderStatus,
@@ -39,50 +37,14 @@ const noSessionManagement = {
   canConfigureProviders: false,
 } as const;
 
-const WIDE_LEVELS = ["low", "medium", "high", "xhigh", "max"];
-const NARROW_LEVELS = ["low", "high", "max"];
-const thinking = (levels: ReadonlyArray<string>, currentValue: string) => ({
-  id: "thought_level",
-  label: "Thinking",
-  type: "select" as const,
-  options: levels.map((id) => ({ id, label: id })),
-  currentValue,
+const observedLiveConfiguration = Effect.fn(function* (
+  configuration: AcpRegistryLiveConfiguration,
+) {
+  const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+  yield* coordinator.publishLiveConfiguration(identity.instanceId, configuration);
+  return Option.getOrThrow(yield* coordinator.getLiveConfiguration(identity.instanceId));
 });
-const wideThinking = thinking(WIDE_LEVELS, "medium");
-const narrowThinking = thinking(NARROW_LEVELS, "high");
-const models = [
-  { id: "opus", name: "Opus", description: null },
-  { id: "glm", name: "GLM", description: null },
-];
 
-function probedSnapshot(
-  currentModelId: string | null,
-  configOptions: ReadonlyArray<ProviderOptionDescriptor>,
-  settings: { readonly customModels?: ReadonlyArray<string> } = {},
-): ServerProvider {
-  return buildCheckedAcpRegistrySnapshot({
-    ...identity,
-    settings: decodeSettings({ agentId: "devin", ...settings }),
-    checkedAt: "2026-10-03T10:00:00.000Z",
-    inspection: { status: "ready", agentId: "devin", version: "1.0.0", distribution: "binary" },
-    probe: {
-      probe: {
-        instanceId: identity.instanceId,
-        ready: true,
-        icon: null,
-        authMethods: [],
-        models,
-        currentModelId,
-        configOptions,
-        sessionManagement: noSessionManagement,
-      },
-      slashCommands: [],
-      skills: [],
-    },
-  });
-}
-
-/** Thinking-level choice ids each model offers in the composer. */
 function thinkingChoices(provider: ServerProvider): Record<string, ReadonlyArray<string>> {
   return Object.fromEntries(
     provider.models.map((model) => [
@@ -94,20 +56,6 @@ function thinkingChoices(provider: ServerProvider): Record<string, ReadonlyArray
       ),
     ]),
   );
-}
-
-function thinkingCurrentValue(provider: ServerProvider, slug: string) {
-  const descriptor = provider.models
-    .find((model) => model.slug === slug)
-    ?.capabilities?.optionDescriptors?.find((candidate) => candidate.id === "thought_level");
-  return descriptor?.type === "select" ? descriptor.currentValue : undefined;
-}
-
-/** The coordinator state after one live session reports `latest`. */
-function liveState(
-  latest: AcpRegistryLiveConfiguration,
-): AcpRegistryRuntimeCoordinator.AcpRegistryLiveConfigurationState {
-  return { latest, modelOptions: recordAcpRegistryModelOptions(new Map(), latest) };
 }
 
 function catalogWithInspection(
@@ -169,187 +117,144 @@ describe("acpRegistrySnapshotReadiness", () => {
     });
   });
 
-  it("keeps authentication unknown when an agent permits a discovery session before sign-in", () => {
-    const snapshot = buildCheckedAcpRegistrySnapshot({
-      ...identity,
-      settings: decodeSettings({ agentId: "test-agent" }),
-      checkedAt: "2026-08-13T10:00:00.000Z",
-      inspection: {
-        status: "ready",
-        agentId: "test-agent",
-        version: "1.0.0",
-        distribution: "binary",
-      },
-      probe: {
-        probe: {
-          instanceId: identity.instanceId,
-          ready: true,
-          icon: null,
-          authMethods: [{ id: "browser", name: "Browser", description: null, type: "agent" }],
-          models: [],
-          currentModelId: null,
-          configOptions: [],
-          sessionManagement: noSessionManagement,
-        },
-        slashCommands: [],
-        skills: [],
-      },
-    });
-    expect(snapshot.auth.status).toBe("unknown");
-    expect(snapshot.setup?.canAuthenticate).toBe(true);
-    expect(
-      applyAcpRegistryLiveConfiguration(
-        snapshot,
-        liveState({ models: [], currentModelId: null, configOptions: [] }),
-        [],
-      ).auth.status,
-    ).toBe("unknown");
-  });
-
-  it("overlays live configuration without dropping probe-owned session capabilities", () => {
-    const provider = buildCheckedAcpRegistrySnapshot({
-      ...identity,
-      settings: decodeSettings({ agentId: "test-agent" }),
-      checkedAt: "2026-08-13T10:00:00.000Z",
-      inspection: {
-        status: "ready",
-        agentId: "test-agent",
-        version: "1.0.0",
-        distribution: "npx",
-      },
-      probe: {
-        probe: {
-          instanceId: identity.instanceId,
-          ready: true,
-          icon: null,
-          authMethods: [],
-          models: [{ id: "probe-model", name: "Probe model", description: null }],
-          currentModelId: "probe-model",
-          configOptions: [],
-          sessionManagement: {
-            canList: true,
-            canLoad: true,
-            canResume: true,
-            canLogout: true,
-            canDelete: true,
-            canConfigureProviders: true,
+  it.effect(
+    "keeps authentication unknown when an agent permits a discovery session before sign-in",
+    () =>
+      Effect.gen(function* () {
+        const snapshot = buildCheckedAcpRegistrySnapshot({
+          ...identity,
+          settings: decodeSettings({ agentId: "test-agent" }),
+          checkedAt: "2026-08-13T10:00:00.000Z",
+          inspection: {
+            status: "ready",
+            agentId: "test-agent",
+            version: "1.0.0",
+            distribution: "binary",
           },
-        },
-        slashCommands: [],
-        skills: [],
-      },
-    });
-
-    expect(
-      applyAcpRegistryLiveConfiguration(
-        provider,
-        liveState({
-          models: [{ id: "live-model", name: "Live model", description: null }],
-          currentModelId: "live-model",
-          configOptions: [],
-        }),
-        [],
-      ),
-    ).toMatchObject({
-      auth: { status: "unknown", canLogout: true },
-      nativeSessions: { canList: true, canLoad: true, canResume: true },
-      models: [{ slug: "live-model", isDefault: true }],
-    });
-  });
-
-  it("describes discovered session options only on the model they belong to", () => {
-    const snapshot = probedSnapshot("opus", [wideThinking], { customModels: ["custom-model"] });
-    expect(thinkingChoices(snapshot)).toEqual({
-      opus: WIDE_LEVELS,
-      glm: [],
-      "custom-model": [],
-    });
-
-    // A session whose current model is not one the agent lists describes no model.
-    expect(thinkingChoices(probedSnapshot(null, [wideThinking]))).toEqual({ opus: [], glm: [] });
-  });
-
-  it.effect("keeps each model's last observed options across live sessions and refreshes", () =>
-    Effect.gen(function* () {
-      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
-      const otherInstance = ProviderInstanceId.make("acpRegistry_other");
-      const liveConfiguration = () =>
-        coordinator.getLiveConfiguration(identity.instanceId).pipe(Effect.map(Option.getOrThrow));
-
-      // A thread runs on Opus with Extra High selected, then another on GLM.
-      yield* coordinator.publishLiveConfiguration(identity.instanceId, {
-        models,
-        currentModelId: "opus",
-        configOptions: [{ ...wideThinking, currentValue: "xhigh" }],
-      });
-      yield* coordinator.publishLiveConfiguration(identity.instanceId, {
-        models,
-        currentModelId: "glm",
-        configOptions: [narrowThinking],
-      });
-      // Another instance's sessions never reach this one.
-      yield* coordinator.publishLiveConfiguration(otherInstance, {
-        models,
-        currentModelId: "opus",
-        configOptions: [narrowThinking],
-      });
-
-      const live = applyAcpRegistryLiveConfiguration(
-        probedSnapshot(null, []),
-        yield* liveConfiguration(),
-        [],
-      );
-      expect(thinkingChoices(live)).toEqual({ opus: WIDE_LEVELS, glm: NARROW_LEVELS });
-      expect(thinkingCurrentValue(live, "opus")).toBe("xhigh");
-
-      // A refresh probes Opus again; the newest GLM session must not replace its list.
-      const refreshed = applyAcpRegistryLiveConfiguration(
-        probedSnapshot("opus", [wideThinking]),
-        yield* liveConfiguration(),
-        [],
-      );
-      expect(thinkingChoices(refreshed)).toEqual({ opus: WIDE_LEVELS, glm: NARROW_LEVELS });
-
-      // A session on an unlisted model adds nothing and removes nothing.
-      yield* coordinator.publishLiveConfiguration(identity.instanceId, {
-        models,
-        currentModelId: null,
-        configOptions: [{ ...narrowThinking, id: "unrelated" }],
-      });
-      expect(
-        thinkingChoices(
+          probe: {
+            probe: {
+              instanceId: identity.instanceId,
+              ready: true,
+              icon: null,
+              authMethods: [{ id: "browser", name: "Browser", description: null, type: "agent" }],
+              models: [],
+              currentModelId: null,
+              configOptions: [],
+              sessionManagement: noSessionManagement,
+            },
+            slashCommands: [],
+            skills: [],
+          },
+        });
+        expect(snapshot.auth.status).toBe("unknown");
+        expect(snapshot.setup?.canAuthenticate).toBe(true);
+        expect(
           applyAcpRegistryLiveConfiguration(
-            probedSnapshot("opus", [wideThinking]),
-            yield* liveConfiguration(),
+            snapshot,
+            yield* observedLiveConfiguration({
+              models: [],
+              currentModelId: null,
+              configOptions: [],
+            }),
             [],
-          ),
+          ).auth.status,
+        ).toBe("unknown");
+      }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
+  );
+
+  it.effect("overlays live configuration without dropping probe-owned session capabilities", () =>
+    Effect.gen(function* () {
+      const provider = buildCheckedAcpRegistrySnapshot({
+        ...identity,
+        settings: decodeSettings({ agentId: "test-agent" }),
+        checkedAt: "2026-08-13T10:00:00.000Z",
+        inspection: {
+          status: "ready",
+          agentId: "test-agent",
+          version: "1.0.0",
+          distribution: "npx",
+        },
+        probe: {
+          probe: {
+            instanceId: identity.instanceId,
+            ready: true,
+            icon: null,
+            authMethods: [],
+            models: [{ id: "probe-model", name: "Probe model", description: null }],
+            currentModelId: "probe-model",
+            configOptions: [],
+            sessionManagement: {
+              canList: true,
+              canLoad: true,
+              canResume: true,
+              canLogout: true,
+              canDelete: true,
+              canConfigureProviders: true,
+            },
+          },
+          slashCommands: [],
+          skills: [],
+        },
+      });
+
+      expect(
+        applyAcpRegistryLiveConfiguration(
+          provider,
+          yield* observedLiveConfiguration({
+            models: [{ id: "live-model", name: "Live model", description: null }],
+            currentModelId: "live-model",
+            configOptions: [],
+          }),
+          [],
         ),
-      ).toEqual({ opus: WIDE_LEVELS, glm: NARROW_LEVELS });
+      ).toMatchObject({
+        auth: { status: "unknown", canLogout: true },
+        nativeSessions: { canList: true, canLoad: true, canResume: true },
+        models: [{ slug: "live-model", isDefault: true }],
+      });
     }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 
-  it("keeps a model's probed options when a later probe starts on another model", () => {
-    const firstProbe = probedSnapshot("opus", [wideThinking]);
-    const probed = recordAcpRegistryModelOptions(new Map(), {
-      models,
-      currentModelId: "opus",
-      configOptions: [wideThinking],
-    });
-    expect(thinkingChoices(applyAcpRegistryModelOptions(firstProbe, probed))).toEqual({
-      opus: WIDE_LEVELS,
-      glm: [],
-    });
+  it("describes discovered session options only on the model they belong to", () => {
+    const thinking = {
+      id: "thought_level",
+      label: "Thinking",
+      type: "select" as const,
+      options: ["low", "medium", "high"].map((id) => ({ id, label: id })),
+      currentValue: "medium",
+    };
+    const probedOn = (currentModelId: string | null) =>
+      buildCheckedAcpRegistrySnapshot({
+        ...identity,
+        settings: decodeSettings({ agentId: "devin", customModels: ["custom-model"] }),
+        checkedAt: "2026-10-03T10:00:00.000Z",
+        inspection: { status: "ready", agentId: "devin", version: "1.0.0", distribution: "binary" },
+        probe: {
+          probe: {
+            instanceId: identity.instanceId,
+            ready: true,
+            icon: null,
+            authMethods: [],
+            models: [
+              { id: "opus", name: "Opus", description: null },
+              { id: "glm", name: "GLM", description: null },
+            ],
+            currentModelId,
+            configOptions: [thinking],
+            sessionManagement: noSessionManagement,
+          },
+          slashCommands: [],
+          skills: [],
+        },
+      });
 
-    const laterProbe = probedSnapshot("glm", [narrowThinking]);
-    const reprobed = recordAcpRegistryModelOptions(probed, {
-      models,
-      currentModelId: "glm",
-      configOptions: [narrowThinking],
+    expect(thinkingChoices(probedOn("opus"))).toEqual({
+      opus: ["low", "medium", "high"],
+      glm: [],
+      "custom-model": [],
     });
-    expect(thinkingChoices(applyAcpRegistryModelOptions(laterProbe, reprobed))).toEqual({
-      opus: WIDE_LEVELS,
-      glm: NARROW_LEVELS,
-    });
+    // An unidentified current model must not give every listed model its options.
+    expect(thinkingChoices(probedOn(null))).toEqual({ opus: [], glm: [], "custom-model": [] });
   });
 
   it("maps registry inspection status to provider readiness", () => {
