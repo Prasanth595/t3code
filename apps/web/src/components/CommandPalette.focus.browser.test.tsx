@@ -1,23 +1,33 @@
 import { act, useImperativeHandle, useRef } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { CommandPalette } from "./CommandPalette";
 import { useComposerHandleContext } from "../composerHandleContext";
 import { openCommandPalette } from "../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../state/server";
 
+const routeState = vi.hoisted(() => ({
+  pathname: "/settings",
+  navigate: vi.fn(),
+  keybindings: null as ResolvedKeybindingsConfig | null,
+}));
+
 vi.mock("@tanstack/react-router", () => ({
-  useNavigate: () => vi.fn(),
+  useNavigate: () => routeState.navigate,
   useParams: () => null,
-  useLocation: () => "/settings",
+  useLocation: ({ select }: { select: (location: { pathname: string }) => unknown }) =>
+    select({ pathname: routeState.pathname }),
 }));
 vi.mock("@effect/atom-react", async (importOriginal) => {
   const original = await importOriginal<typeof import("@effect/atom-react")>();
   return {
     ...original,
     useAtomValue: (atom: unknown) =>
-      atom === primaryServerKeybindingsAtom ? DEFAULT_RESOLVED_KEYBINDINGS : [],
+      atom === primaryServerKeybindingsAtom
+        ? (routeState.keybindings ?? DEFAULT_RESOLVED_KEYBINDINGS)
+        : [],
   };
 });
 vi.mock("../hooks/useTheme", () => ({
@@ -69,6 +79,9 @@ let root: Root;
 let container: HTMLDivElement;
 
 beforeEach(() => {
+  routeState.pathname = "/settings";
+  routeState.keybindings = null;
+  routeState.navigate.mockClear();
   vi.useFakeTimers();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   container = document.createElement("div");
@@ -190,5 +203,61 @@ describe("command palette focus restoration", () => {
     const composer = container.querySelector("textarea")!;
     expect(document.activeElement).toBe(composer);
     expect(composer.selectionStart).toBe(composer.value.length);
+  });
+});
+
+describe("global usage shortcut context", () => {
+  it("opens Usage only while outside Usage, including after returning to the previous route", async () => {
+    const shortcut = {
+      key: "u",
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+      altKey: false,
+      modKey: true,
+    };
+    routeState.keybindings = [
+      {
+        command: "navigation.back",
+        shortcut,
+        whenAst: { type: "identifier", name: "usagePageOpen" },
+      },
+      {
+        command: "usage.open",
+        shortcut,
+        whenAst: { type: "not", node: { type: "identifier", name: "usagePageOpen" } },
+      },
+    ];
+    const render = () =>
+      act(() =>
+        root.render(
+          <CommandPalette>
+            <span>Page</span>
+          </CommandPalette>,
+        ),
+      );
+    const pressUsage = () =>
+      act(() =>
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "u",
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true,
+          }),
+        ),
+      );
+    await render();
+    await pressUsage();
+    expect(routeState.navigate).toHaveBeenCalledExactlyOnceWith({ to: "/usage" });
+    routeState.navigate.mockClear();
+    routeState.pathname = "/usage";
+    await render();
+    await pressUsage();
+    expect(routeState.navigate).not.toHaveBeenCalled();
+    routeState.pathname = "/settings";
+    await render();
+    await pressUsage();
+    expect(routeState.navigate).toHaveBeenCalledExactlyOnceWith({ to: "/usage" });
   });
 });
