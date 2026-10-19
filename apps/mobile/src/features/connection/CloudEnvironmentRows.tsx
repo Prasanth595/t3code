@@ -88,7 +88,9 @@ function CloudEnvironmentRowsContent(
   const listingComplete =
     props.showcaseAvailableEnvironments !== undefined ||
     !discoveryAvailable ||
-    (!controller.relayDiscovery.isRefreshing && controller.relayDiscovery.error === null);
+    (!controller.relayDiscovery.isRefreshing &&
+      !controller.relayDiscovery.isOffline &&
+      controller.relayDiscovery.error === null);
   const listedIds = listingComplete
     ? new Set(listedCloudEnvironments.map((entry) => entry.environment.environmentId))
     : null;

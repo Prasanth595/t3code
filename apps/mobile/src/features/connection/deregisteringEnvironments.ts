@@ -10,8 +10,9 @@ export type DeregisteringEnvironments = ReadonlyMap<EnvironmentId, "pending" | "
 
 /**
  * Drops unlinked entries a finished listing no longer has, so a later re-link
- * shows again. Pass `null` while discovery is refreshing or failed: a refresh
- * empties the list before it fetches, and that gap is not proof of removal.
+ * shows again. Pass `null` while discovery is refreshing, offline, or failed:
+ * a refresh empties the list before it fetches, and that gap is not proof of
+ * removal.
  */
 export function settleDeregisteringEnvironments(
   deregistering: DeregisteringEnvironments,
