@@ -78,12 +78,12 @@ describe("ElectronShell", () => {
 
       const electronShell = yield* ElectronShell.ElectronShell;
       const result = yield* electronShell.openExternal(
-        "vscode://vscode-remote/ssh-remote+example.com/home/user/project",
+        "vscode://vscode-remote/ssh-remote+user%40example.com/home/user/project",
       );
 
       assert.equal(result, true);
       assert.deepEqual(openExternalMock.mock.calls, [
-        ["vscode://vscode-remote/ssh-remote+example.com/home/user/project"],
+        ["vscode://vscode-remote/ssh-remote+user%40example.com/home/user/project"],
       ]);
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
@@ -94,13 +94,13 @@ describe("ElectronShell", () => {
 
       const electronShell = yield* ElectronShell.ElectronShell;
       const results = yield* Effect.all([
-        electronShell.openExternal("zed://ssh/example.com/home/user/project"),
+        electronShell.openExternal("zed://ssh/user@example.com/home/user/project"),
         electronShell.openExternal("zed://ssh/example.com/"),
       ]);
 
       assert.deepEqual(results, [true, true]);
       assert.deepEqual(openExternalMock.mock.calls, [
-        ["zed://ssh/example.com/home/user/project"],
+        ["zed://ssh/user@example.com/home/user/project"],
         ["zed://ssh/example.com/"],
       ]);
     }).pipe(Effect.provide(ElectronShell.layer)),
@@ -111,32 +111,12 @@ describe("ElectronShell", () => {
       openExternalMock.mockResolvedValue(undefined);
 
       const url =
-        "jetbrains://gateway/ssh/environment?h=example.com&launchIde=true&ideHint=IU&projectHint=%2Fhome%2Fuser%2Fproject";
+        "jetbrains://gateway/ssh/environment?h=example.com&launchIde=true&ideHint=IU&projectHint=%2Fhome%2Fuser%2Fproject&u=user";
       const electronShell = yield* ElectronShell.ElectronShell;
       const result = yield* electronShell.openExternal(url);
 
       assert.equal(result, true);
       assert.deepEqual(openExternalMock.mock.calls, [[url]]);
-    }).pipe(Effect.provide(ElectronShell.layer)),
-  );
-
-  it.effect("opens remote SSH editor URLs with a login user in the target", () =>
-    Effect.gen(function* () {
-      openExternalMock.mockResolvedValue(undefined);
-
-      const electronShell = yield* ElectronShell.ElectronShell;
-      const results = yield* Effect.all([
-        electronShell.openExternal(
-          "cursor://vscode-remote/ssh-remote+r2d2%40r2d2/Users/r2d2/project",
-        ),
-        electronShell.openExternal("zed://ssh/r2d2@r2d2/Users/r2d2/project"),
-      ]);
-
-      assert.deepEqual(results, [true, true]);
-      assert.deepEqual(openExternalMock.mock.calls, [
-        ["cursor://vscode-remote/ssh-remote+r2d2%40r2d2/Users/r2d2/project"],
-        ["zed://ssh/r2d2@r2d2/Users/r2d2/project"],
-      ]);
     }).pipe(Effect.provide(ElectronShell.layer)),
   );
 
