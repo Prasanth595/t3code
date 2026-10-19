@@ -64,6 +64,7 @@ function NativeSheetHeader(props: SheetHeaderProps) {
             <Toolbar.Custom>
               <View
                 className="size-11 items-center justify-center"
+                accessible
                 accessibilityLabel={confirmation.label}
                 accessibilityState={{ busy: true }}
               >

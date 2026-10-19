@@ -83,6 +83,7 @@ function ConfiguredConnectOnboardingRouteScreen() {
             isRefreshing ? (
               <View
                 className="size-12 items-center justify-center"
+                accessible
                 accessibilityLabel="Refreshing environments"
                 accessibilityState={{ busy: true }}
               >
