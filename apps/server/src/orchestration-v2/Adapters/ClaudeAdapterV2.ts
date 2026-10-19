@@ -8152,7 +8152,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               nativeToolInput,
               null,
             );
-          } else if (!heldForEcho && (!settled || subagentToolCalls.has(nativeRequestId))) {
+          } else if (!heldForEcho && !settled) {
             yield* ensureToolCallStarted({
               context,
               nativeItemId: nativeRequestId,
