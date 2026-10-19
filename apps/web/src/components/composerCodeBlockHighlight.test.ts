@@ -2,7 +2,7 @@ import { Editor } from "@tiptap/core";
 import { EditorState, type Plugin, type Transaction } from "@tiptap/pm/state";
 import type { DecorationSet, EditorView } from "@tiptap/pm/view";
 import StarterKit from "@tiptap/starter-kit";
-import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import { ComposerCodeBlockExtension } from "~/composer-rich-text-doc";
 import type { DiffThemeName } from "~/lib/diffRendering";
@@ -10,8 +10,6 @@ import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 
 import {
   composerCodeBlockHighlight,
-  DEFERRED_HIGHLIGHT_CODE_BLOCK_LENGTH,
-  DEFERRED_HIGHLIGHT_DELAY_MS,
   MAX_HIGHLIGHTED_CODE_BLOCK_LENGTH,
   shouldHighlightCodeBlock,
   tokenizeBlock,
@@ -142,35 +140,19 @@ describe("a highlighter that fails to load", () => {
   });
 });
 
-describe("typing in a long fence", () => {
+describe("highlighting edited fences", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
-  /** A fence long enough that its re-tokenizing waits for typing to pause. */
-  const LONG = `x ${"y ".repeat(DEFERRED_HIGHLIGHT_CODE_BLOCK_LENGTH / 2)}`;
-
-  /**
-   * Mounts the plugin on a headless view holding one fence. The highlighter
-   * colors every token starting with `x` and counts how often it tokenizes;
-   * `load` decides per language whether it loads at all.
-   */
-  async function mountFence(text: string, load: (language: string) => boolean = () => true) {
+  async function mountFence(text: string) {
     vi.useFakeTimers();
-    let tokenized = 0;
     const highlighter = fakeHighlighter((content) =>
       content.startsWith("x") ? "#ff0000" : undefined,
     );
-    vi.mocked(getSyntaxHighlighterPromise).mockImplementation((language) => {
-      if (!load(language)) return Promise.reject(new Error("Shiki failed to load"));
-      return Promise.resolve({
-        codeToTokens(code: string) {
-          tokenized += 1;
-          return highlighter.codeToTokens(code, { lang: language, theme: THEME });
-        },
-      } as unknown as Awaited<ReturnType<typeof getSyntaxHighlighterPromise>>);
-    });
+    const tokenize = vi.spyOn(highlighter, "codeToTokens");
+    vi.mocked(getSyntaxHighlighterPromise).mockResolvedValue(highlighter);
     const editor = new Editor({
       extensions: [
         StarterKit.configure({ codeBlock: false, trailingNode: false }),
@@ -204,14 +186,24 @@ describe("typing in a long fence", () => {
         return state;
       },
       dispatch: (transaction: Transaction) => {
+        const previous = state;
         state = state.apply(transaction);
-        pluginView?.update?.(view, state);
+        pluginView?.update?.(view, previous);
       },
     } as unknown as EditorView;
     pluginView = plugin.spec.view!(view);
+    onTestFinished(() => {
+      pluginView?.destroy?.();
+      editor.destroy();
+    });
     await vi.advanceTimersByTimeAsync(0);
     return {
-      tokenized: () => tokenized,
+      tokenize,
+      ranges: () =>
+        plugin
+          .getState(state)!
+          .find()
+          .map(({ from, to }) => [from, to]),
       edit: async (change: (transaction: Transaction) => Transaction) => {
         view.dispatch(change(state.tr));
         await vi.advanceTimersByTimeAsync(0);
@@ -224,50 +216,62 @@ describe("typing in a long fence", () => {
     };
   }
 
-  it("keeps a long fence's colors while typing and re-tokenizes once it pauses", async () => {
-    const fence = await mountFence(LONG);
-    expect(fence.tokenized()).toBe(1);
-
-    await fence.edit((tr) => tr.insertText("y ", 1));
-    await vi.advanceTimersByTimeAsync(DEFERRED_HIGHLIGHT_DELAY_MS - 50);
-    await fence.edit((tr) => tr.insertText("y ", 1));
-    await vi.advanceTimersByTimeAsync(DEFERRED_HIGHLIGHT_DELAY_MS - 50);
-
-    // Each keystroke restarts the wait, and the `x` moved with the text typed before it.
-    expect(fence.tokenized()).toBe(1);
-    expect(fence.colored()).toEqual(["x"]);
-
-    await vi.advanceTimersByTimeAsync(50);
-
-    expect(fence.tokenized()).toBe(2);
-    expect(fence.colored()).toEqual(["x"]);
-  });
-
-  it("re-tokenizes a short fence on every keystroke", async () => {
-    const fence = await mountFence("x y");
+  it("maps colors while typing above 2,000 characters and refreshes 300 ms after the last edit", async () => {
+    const fence = await mountFence(`x ${"y".repeat(1_999)}`);
+    expect(fence.tokenize).toHaveBeenCalledTimes(1);
 
     await fence.edit((tr) => tr.insertText("x ", 1));
+    await vi.advanceTimersByTimeAsync(250);
+    await fence.edit((tr) => tr.insertText("y ", 1));
+    await vi.advanceTimersByTimeAsync(299);
 
-    expect(fence.tokenized()).toBe(2);
+    expect(fence.tokenize).toHaveBeenCalledTimes(1);
+    expect(fence.colored()).toEqual(["x"]);
+    expect(fence.ranges()).toEqual([[5, 6]]);
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(fence.tokenize).toHaveBeenCalledTimes(2);
     expect(fence.colored()).toEqual(["x", "x"]);
   });
 
-  it("keeps a colored token split across two fences to each fence's own part", async () => {
-    const fence = await mountFence("x".repeat(6_000));
+  it("refreshes immediately when an edit leaves the fence at 2,000 characters", async () => {
+    const fence = await mountFence(`x ${"y".repeat(1_996)}`);
 
-    await fence.edit((tr) => tr.split(3_001));
-    await fence.edit((tr) => tr.insertText("x", 2));
-    await fence.edit((tr) => tr.insertText("x", 2));
+    await fence.edit((tr) => tr.insertText("x ", 1));
 
-    expect(fence.colored()).toEqual(["x".repeat(3_002), "x".repeat(3_000)]);
+    expect(fence.tokenize).toHaveBeenCalledTimes(2);
+    expect(fence.colored()).toEqual(["x", "x"]);
   });
 
-  it("drops a fence's colors when the highlighter for its new language fails to load", async () => {
-    const fence = await mountFence(LONG, (language) => language === "ts");
-    expect(fence.colored()).toEqual(["x"]);
+  it("clips a split token to its fences without coloring the paragraph between them", async () => {
+    const fence = await mountFence("x".repeat(6_000));
+
+    await fence.edit((tr) =>
+      tr
+        .split(3_001)
+        .insert(
+          3_002,
+          tr.doc.type.schema.node("paragraph", null, [tr.doc.type.schema.text("plain")]),
+        ),
+    );
+
+    expect(fence.tokenize).toHaveBeenCalledTimes(1);
+    expect(fence.ranges()).toEqual([
+      [1, 3_001],
+      [3_010, 6_010],
+    ]);
+    expect(fence.colored()).toEqual(["x".repeat(3_000), "x".repeat(3_000)]);
+  });
+
+  it("clears retained colors when the new language highlighter fails to load", async () => {
+    const fence = await mountFence(`x ${"y".repeat(1_999)}`);
+    vi.mocked(getSyntaxHighlighterPromise).mockRejectedValue(new Error("Shiki failed to load"));
 
     await fence.edit((tr) => tr.setNodeMarkup(0, undefined, { language: "py" }));
-    await vi.advanceTimersByTimeAsync(DEFERRED_HIGHLIGHT_DELAY_MS);
+    expect(fence.colored()).toEqual(["x"]);
+
+    await vi.advanceTimersByTimeAsync(300);
 
     expect(fence.colored()).toEqual([]);
   });
