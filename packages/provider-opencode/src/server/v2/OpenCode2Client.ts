@@ -91,7 +91,8 @@ const decodeEnvelope = Schema.decodeUnknownOption(
   ),
 );
 
-const undecodable = Effect.fn("OpenCode2Client.undecodable")(function* (data: string) {
+// Rejected stream frames can be frequent when the server introduces new event types.
+const undecodable = Effect.fnUntraced(function* (data: string) {
   const envelope = decodeEnvelope(data);
   const type = envelope._tag === "Some" ? envelope.value.type.slice(0, 80) : "<unreadable>";
   const sessionID = envelope._tag === "Some" ? envelope.value.data?.sessionID : undefined;

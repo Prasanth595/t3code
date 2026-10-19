@@ -99,10 +99,8 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
   const directory = path.join(input.stateDir, ENTRY_DIRECTORY);
   const recordable = platform === "linux" || platform === "darwin";
 
-  const observeLinux = Effect.fn("OpenCodeServerLedger.observeLinux")(function* (
-    pid: number,
-    group?: number,
-  ) {
+  // A process-group scan calls this for every /proc entry; avoid a span per process.
+  const observeLinux = Effect.fnUntraced(function* (pid: number, group?: number) {
     const stat = yield* fs.readFileString(`/proc/${pid}/stat`);
     const fields = stat
       .slice(stat.lastIndexOf(")") + 2)
