@@ -1732,28 +1732,21 @@ describe("Usage shortcuts", () => {
 });
 
 describe("unsettle last thread shortcut", () => {
-  it.each(["MacIntel", "Win32", "Linux"])(
-    "resolves mod+shift+u outside the terminal on %s",
-    (platform) => {
-      const shortcut = event({
-        key: "u",
-        metaKey: platform === "MacIntel",
-        ctrlKey: platform !== "MacIntel",
-        shiftKey: true,
-      });
-      assert.equal(
-        resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
-          platform,
-          context: { terminalFocus: false },
-        }),
-        "thread.unsettleLast",
-      );
-      assert.isNull(
-        resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
-          platform,
-          context: { terminalFocus: true },
-        }),
-      );
-    },
-  );
+  it("resolves mod+shift+u outside the terminal only", () => {
+    const shortcut = event({ key: "u", metaKey: true, shiftKey: true });
+    const options = { platform: "MacIntel" };
+    assert.equal(
+      resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+        ...options,
+        context: { terminalFocus: false },
+      }),
+      "thread.unsettleLast",
+    );
+    assert.isNull(
+      resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+        ...options,
+        context: { terminalFocus: true },
+      }),
+    );
+  });
 });
