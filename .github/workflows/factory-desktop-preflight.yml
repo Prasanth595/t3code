@@ -1,0 +1,38 @@
+name: Factory desktop preflight
+
+# Checks the macOS signing secrets in the desktop-release environment without
+# printing them. Run it by hand after adding or rotating any of them. The checks
+# live in factory/scripts/desktop-preflight.sh, which factory-desktop.yml also
+# runs before every build.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    name: Signing secrets
+    runs-on: macos-15
+    timeout-minutes: 10
+    # The secrets live in this environment, which only main may deploy from,
+    # so a factory pull request from a branch in this repo never receives them.
+    environment: desktop-release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /factory/scripts/
+          sparse-checkout-cone-mode: false
+
+      - name: Check signing secrets
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          MACOS_PROVISIONING_PROFILE: ${{ secrets.MACOS_PROVISIONING_PROFILE }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: factory/scripts/desktop-preflight.sh

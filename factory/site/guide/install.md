@@ -1,6 +1,6 @@
 # Install and run
 
-The factory runs in a T3 server started by a macOS LaunchAgent. The desktop app is optional: it is a window onto that server. Both are built from a clone of this repo on an Apple silicon Mac.
+The factory runs in a T3 server started by a macOS LaunchAgent. The desktop app is optional: it is a window onto that server. The server is built from a clone of this repo on an Apple silicon Mac; the app comes signed from the repo's releases.
 
 ## Before you start
 
@@ -23,7 +23,7 @@ From a clean checkout, build and install in one step:
 factory/scripts/deploy.sh
 ```
 
-It builds `release/t3fac-<version>-darwin-arm64.tar.gz`, smoke-tests it, then installs it: the archive is unpacked under `~/.local/share/t3fac/versions/`, `~/.local/share/t3fac/current` points at it, and the LaunchAgent `io.github.rawphp.t3fac` restarts the server on port 3876 with its data in `~/.config/t3fac`. A second LaunchAgent, `io.github.rawphp.t3fac.logrotate`, rotates the log.
+It builds `release/t3fac-<version>-darwin-arm64.tar.gz`, smoke-tests it, then installs it: the archive is unpacked under `~/.local/share/t3fac/versions/`, `~/.local/share/t3fac/current` points at it, and the LaunchAgent `io.github.rawphp.t3fac` restarts the server on port 3876 with its data in `~/.config/t3fac`. A second LaunchAgent, `io.github.rawphp.t3fac.logrotate`, rotates the log, and a third, `io.github.rawphp.t3fac.autodeploy`, [follows `main`](#follow-main) once you turn it on.
 
 `deploy.sh` reuses an archive already built for the same commit. Pass `--rebuild` to build again, or `--build-only` to stop before installing. [Scripts](/agents/scripts) lists every script and its exit codes.
 
@@ -40,19 +40,54 @@ export PATH
 
 Check what the running job has with `launchctl print gui/$(id -u)/io.github.rawphp.t3fac`.
 
-## Install the desktop app
+## Follow main
+
+Once it is on, the server follows `main` on its own. Every 10 minutes the autodeploy job fetches a clone kept for it, and when `origin/main` is not the installed commit it builds and installs that commit with `deploy.sh`, health check and rollback included. Each deploy restarts the server, so it waits while an agent is at work in any thread, yours or the factory's, while a factory run has a gate at work, or while a pass is running, and tries again on the next tick. A thread waiting on your answer doesn't hold it up.
+
+A build that fails, or is still going after an hour, is tried again on the next two ticks; after the third failure that commit is left until `main` moves. A commit that fails its health check is left at once.
+
+The job builds with its plist's `PATH`, which covers Homebrew, `vp` and `~/.cargo/bin` from rustup, plus anything `~/.config/t3fac/env` adds to it.
+
+To turn it on, make a clone used for nothing else, and mint a token that can read the factory's status:
 
 ```sh
-vp run dist:desktop:dmg:arm64
+git clone https://github.com/original-solutions/t3code-factory ~/.local/share/t3fac/clone
+~/.local/share/t3fac/current/t3 auth session issue --base-dir ~/.config/t3fac \
+  --scope orchestration:read --ttl 365d --label autodeploy --token-only
 ```
 
-The dmg lands under `release/`. It is unsigned, so the first time you open the app, right-click it and choose Open. It installs beside upstream T3 Code as `T3 Code Factory` and shares no data with it or with the LaunchAgent server.
+Then add both to `~/.config/t3fac/env`. Leave out `export`, so the server and its sessions don't get the token:
 
-The app's built-in server has no machine config, so its factory stays idle. Keep it that way: before you save Settings → Factory in the app, pick the LaunchAgent server's environment. Saving the form for the built-in server would start a second factory on this Mac that claims the same issues. To see the factory in the app, pair the LaunchAgent server as an environment in Settings → Connections, with a pairing link from:
+```sh
+T3FAC_AUTODEPLOY_CLONE="$HOME/.local/share/t3fac/clone"
+T3FAC_AUTODEPLOY_TOKEN=<token>
+```
+
+When the token expires, the log says it cannot read the status and nothing deploys until you mint a new one.
+
+A deploy or rollback you run by hand stays until `main` moves: the next tick leaves it in place and logs that it is doing so.
+
+To turn it off, remove `T3FAC_AUTODEPLOY_CLONE` from `~/.config/t3fac/env`. To stop the job until the next install or rollback, run `launchctl bootout gui/$(id -u)/io.github.rawphp.t3fac.autodeploy`. To remove it, run that, then delete `~/Library/LaunchAgents/io.github.rawphp.t3fac.autodeploy.plist` and `~/.local/share/t3fac/autodeploy.sh`; a later install puts them back.
+
+## Install the desktop app
+
+Every merge to `main` publishes a signed, notarized build for Apple silicon as a prerelease.
+
+1. Open the newest prerelease on the [releases page](https://github.com/original-solutions/t3code-factory/releases) and download its `.dmg`.
+2. Open the dmg and drag `T3 Code Factory (Nightly)` to Applications.
+3. Open the app from Applications.
+
+You install it once. When a newer build is published, the app shows "Update available"; choose "Restart to update" to install it. The app installs beside upstream T3 Code and shares no data with it.
+
+To build it yourself instead, run `vp run dist:desktop:dmg:arm64`. That dmg lands under `release/` and is unsigned, so the first time you open the app, right-click it and choose Open. It has no update feed.
+
+The app runs no server of its own. It opens onto the LaunchAgent server on port 3876, so install the server first and keep it running. The first time you open the app it asks for a pairing link. Make one with:
 
 ```sh
 ~/.local/share/t3fac/current/t3 pair --base-dir ~/.config/t3fac
 ```
+
+Paste the link into the app. It remembers the pairing, so later launches open straight onto the server. If the server is down, the app can't load until it's back; use Try again, or wait for it to reconnect. The Factory pages in the app show that server directly.
 
 Add `--tailscale` for a link that works over your tailnet, for example from a phone's browser. The Factory pages are part of the fork's web app, so any browser paired with the server can open them. A connection through T3 Connect (the relay) doesn't reach them yet. [Remote access](https://github.com/pingdotgg/t3code/tree/main/docs/user/remote-access.md) covers pairing in general.
 
@@ -62,6 +97,8 @@ Add `--tailscale` for a link that works over your tailnet, for example from a ph
 | --------------------------------------------- | ------------------------------------------------------------------------------------- |
 | `~/Library/Logs/t3fac/t3fac.log`              | The server's output, including each factory pass. Rotated at 20 MB, five copies kept. |
 | `~/Library/Logs/t3fac/logrotate.log`          | One line per rotation.                                                                |
+| `~/Library/Logs/t3fac/autodeploy.log`         | One line per deploy, failed deploy or wait while [following main](#follow-main).      |
+| `~/Library/Logs/t3fac/autodeploy-build.log`   | The build and install output of the latest autodeploy attempt.                        |
 | `~/.config/t3fac/factory/events.jsonl`        | The factory's machine log: passes, skipped repos, errors, server starts and stops.    |
 | `~/.config/t3fac/factory/runs/<run id>.jsonl` | One ledger per run. The run's page shows it.                                          |
 
@@ -81,6 +118,8 @@ factory/scripts/rollback.sh
 ```
 
 It points `current` back at the previous version, restarts the server and runs the same health check. With no previous version it exits 1; install an older archive from `release/` with `factory/scripts/install.sh <archive>` instead.
+
+While [autodeploy](#follow-main) is on, the rollback lasts until `main` moves; then the new `main` is deployed. To stay on the older version past that, turn autodeploy off first.
 
 ## Restart without installing
 

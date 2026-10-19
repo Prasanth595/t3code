@@ -91,6 +91,7 @@ const input = (dir: string, over: Partial<Parameters<typeof buildStatus>[0]> = {
   dataDir: dir,
   nowMs: NOW,
   passRunning: false,
+  runningThreads: 0,
   attention: [] as ReadonlyArray<AttentionItem>,
   ...over,
 });
@@ -169,6 +170,7 @@ describe("buildStatus: nothing recorded", () => {
         stale: false,
       },
       slots: { used: 0, max: 5 },
+      threads: { running: 0 },
       paused_by_hand: null,
       runs: [],
       left_out: [],
@@ -208,6 +210,11 @@ describe("buildStatus: nothing recorded", () => {
     expect(status.data_dir).toBe(dir);
   });
 
+  it("the threads with an agent at work come through as given, null included", () => {
+    expect(report(tempDir(), { runningThreads: 3 }).threads).toEqual({ running: 3 });
+    expect(report(tempDir(), { runningThreads: null }).threads).toEqual({ running: null });
+  });
+
   it("the json keys are in the documented order", () => {
     const status = report(tempDir());
     expect(Object.keys(status)).toEqual([
@@ -219,6 +226,7 @@ describe("buildStatus: nothing recorded", () => {
       "data_dir",
       "passes",
       "slots",
+      "threads",
       "paused_by_hand",
       "runs",
       "left_out",
@@ -654,6 +662,7 @@ describe("buildStatus: the rest of the report", () => {
         stale: false,
       },
       slots: { used: 1, max: 5 },
+      threads: { running: 0 },
       paused_by_hand: null,
       runs: [
         {
