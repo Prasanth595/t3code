@@ -4515,6 +4515,54 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(completed.afterTokenCount, 400);
       assert.deepEqual(completed.completedAt, yield* DateTime.now);
 
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "manual", pre_tokens: 2000, post_tokens: 500 },
+          uuid: "00000000-0000-4000-8000-000000000217",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "status",
+          status: "compacting",
+          uuid: "00000000-0000-4000-8000-000000000218",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      const nextCompactions = yield* observeCompactions("00000000-0000-4000-8000-000000000219");
+      assert.lengthOf(nextCompactions, 4);
+      const boundaryOnly = nextCompactions[2]!;
+      const nextRunning = nextCompactions[3]!;
+      assert.equal(boundaryOnly.status, "completed");
+      assert.notEqual(boundaryOnly.id, completed.id);
+      assert.isAbove(boundaryOnly.ordinal, completed.ordinal);
+      assert.equal(boundaryOnly.beforeTokenCount, 2000);
+      assert.equal(boundaryOnly.afterTokenCount, 500);
+      assert.equal(nextRunning.status, "running");
+      assert.notEqual(nextRunning.id, boundaryOnly.id);
+      assert.isAbove(nextRunning.ordinal, boundaryOnly.ordinal);
+
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "compact_boundary",
+          compact_metadata: { trigger: "auto", pre_tokens: 3000, post_tokens: 600 },
+          uuid: "00000000-0000-4000-8000-000000000220",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      const allCompactions = yield* observeCompactions("00000000-0000-4000-8000-000000000221");
+      assert.lengthOf(allCompactions, 5);
+      assert.equal(allCompactions[4]?.id, nextRunning.id);
+      assert.equal(allCompactions[4]?.ordinal, nextRunning.ordinal);
+      assert.equal(allCompactions[4]?.status, "completed");
+      assert.equal(allCompactions[4]?.beforeTokenCount, 3000);
+      assert.equal(allCompactions[4]?.afterTokenCount, 600);
+
       yield* Queue.offer(
         harness.sdkMessages,
         makeResultFrame({
@@ -4529,7 +4577,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ? [event.turnItem]
             : [],
         ),
-        afterBoundary,
+        allCompactions,
       );
     }).pipe(
       Effect.scoped,
