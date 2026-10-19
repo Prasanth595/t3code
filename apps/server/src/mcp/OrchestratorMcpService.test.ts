@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   CommandId,
   EnvironmentId,
+  type OrchestrationV2StoredEvent,
   NodeId,
   type OrchestrationV2ThreadShell,
   type ScheduledTask,
@@ -16,9 +17,13 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
 
 import {
   DispatchModeLimit,
@@ -899,6 +904,112 @@ describe("OrchestratorMcpService provider resolution", () => {
     runtimeRequests: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
+
+  it.effect("waits for publication before returning and acknowledging a terminal task", () =>
+    Effect.gen(function* () {
+      const watching = yield* Deferred.make<void>();
+      const updates = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
+      const acknowledgements = yield* Ref.make(0);
+      let published = false;
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        childThreadId,
+        origin: "app_owned",
+        driver: "codex",
+        providerInstanceId: codexInstanceId,
+        status: "completed",
+        model: "gpt-5.4",
+        result: null,
+        completionDelivery: { state: "pending" },
+      };
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          hasReceipt: () => Effect.succeed(false),
+          assertProviderInstanceEnabled: () => Effect.void,
+          getThreadEventSequence: () => Effect.succeed(0),
+          getThreadRecords: (threadId) =>
+            Effect.sync(() =>
+              threadId === parentThreadId
+                ? parentProjection([{ ...task, result: published ? "terminal result" : null }])
+                : ({
+                    ...childProjection,
+                    runs: [
+                      {
+                        id: RunId.make("run:mcp-wait-child"),
+                        ordinal: 1,
+                        status: "completed" as const,
+                        startedAt: DateTime.makeUnsafe("2026-10-03T10:00:00Z"),
+                      },
+                    ],
+                  } as unknown as OrchestrationV2ThreadProjection),
+            ),
+          delegatedTaskResultPending: () => Effect.succeed(false),
+          streamStoredEventsFrom: (
+            options: Parameters<
+              ThreadManagementService.ThreadManagementService["Service"]["streamStoredEventsFrom"]
+            >[0],
+          ) =>
+            options?.threadId === parentThreadId && options.eventType === "subagent.updated"
+              ? Stream.fromEffect(Deferred.succeed(watching, undefined)).pipe(
+                  Stream.drain,
+                  Stream.concat(Stream.fromQueue(updates)),
+                )
+              : Stream.never,
+          dispatch: (command) =>
+            (command.type === "delegated_task.completion-delivery.acknowledge"
+              ? Ref.update(acknowledgements, (count) => count + 1)
+              : Effect.void
+            ).pipe(
+              Effect.as({
+                sequence: 1,
+                storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
+              } as never),
+            ),
+        }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        ServerSettings.layerTest(),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const delegate = service.delegateTask(scope, {
+          task: "Summarize the diff.",
+          mode: "wait",
+          clientRequestId: "wait-for-publication",
+        });
+        const waiter = yield* delegate.pipe(Effect.forkChild);
+        yield* Effect.raceFirst(
+          Deferred.await(watching),
+          Fiber.join(waiter).pipe(Effect.andThen(Effect.die("Wait returned before publication"))),
+        );
+        assert.equal(yield* Ref.get(acknowledgements), 0);
+        published = true;
+        yield* Queue.offer(updates, {
+          event: { type: "subagent.updated", threadId: parentThreadId, payload: task },
+        } as OrchestrationV2StoredEvent);
+        const result = yield* Fiber.join(waiter);
+        assert.equal(result.status, "completed");
+        assert.equal(result.summary, "terminal result");
+        assert.isFalse(result.waitTimedOut);
+        assert.equal(yield* Ref.get(acknowledgements), 1);
+        // Legacy published rows need not have a result transfer.
+        assert.isNull(result.resultContextTransferId);
+        assert.equal((yield* delegate).summary, "terminal result");
+        assert.equal(yield* Ref.get(acknowledgements), 2);
+      }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
+    }),
+  );
 
   it.effect(
     "advertises orchestration capability from registered adapters rather than a driver allowlist",

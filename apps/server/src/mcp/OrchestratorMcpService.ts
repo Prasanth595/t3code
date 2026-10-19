@@ -1339,13 +1339,16 @@ const make = Effect.gen(function* () {
       ? crypto.randomUUIDv4().pipe(Effect.orDie)
       : Effect.succeed(clientRequestId);
 
-  const readTask = (
+  const readTaskObservation = (
     scope: McpThreadInvocationScope,
     taskId: NodeId,
     waitTimedOut = false,
     acknowledgeTerminal = false,
     acknowledgementOperation = "task-status-acknowledge",
-  ): Effect.Effect<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure> =>
+  ): Effect.Effect<
+    { readonly response: OrchestratorMcpDelegateTaskResult; readonly published: boolean },
+    OrchestratorMcpFailure
+  > =>
     Effect.gen(function* () {
       yield* requireCapability(scope);
       const parentProjection = yield* loadProjection(scope.thread.threadId);
@@ -1517,8 +1520,11 @@ const make = Effect.gen(function* () {
             ),
           );
       }
-      return response;
+      return { response, published: task.result !== null };
     });
+
+  const readTask = (...args: Parameters<typeof readTaskObservation>) =>
+    readTaskObservation(...args).pipe(Effect.map(({ response }) => response));
 
   const waitForTask = (scope: McpThreadInvocationScope, taskId: NodeId, timeoutMs: number) =>
     Effect.gen(function* () {
@@ -1532,15 +1538,22 @@ const make = Effect.gen(function* () {
       const afterSequence = yield* threadManagement
         .getThreadEventSequence(scope.thread.threadId)
         .pipe(Effect.mapError(streamError));
-      const initial = yield* readTask(scope, taskId, false, true);
-      if (initial.hasPendingQuestion || isTerminalTaskStatus(initial.status)) {
-        return Option.some(initial);
+      // Status can derive a terminal result before publication. A blocking
+      // wait owns delivery until it can acknowledge the published task row.
+      const settled = ({
+        response,
+        published,
+      }: Effect.Success<ReturnType<typeof readTaskObservation>>) =>
+        response.hasPendingQuestion || (isTerminalTaskStatus(response.status) && published);
+      const initial = yield* readTaskObservation(scope, taskId, false, true);
+      if (settled(initial)) {
+        return Option.some(initial.response);
       }
       // One stream per event type, so transcript events never fill a buffer.
       return yield* Stream.mergeAll(
         TASK_WAKE_EVENTS.map(({ thread, eventType }) =>
           threadManagement.streamStoredEventsFrom({
-            threadId: thread === "parent" ? scope.thread.threadId : initial.childThreadId,
+            threadId: thread === "parent" ? scope.thread.threadId : initial.response.childThreadId,
             afterSequence,
             eventType,
           }),
@@ -1548,8 +1561,9 @@ const make = Effect.gen(function* () {
         { concurrency: "unbounded" },
       ).pipe(
         Stream.mapError(streamError),
-        Stream.mapEffect(() => readTask(scope, taskId, false, true)),
-        Stream.filter((result) => result.hasPendingQuestion || isTerminalTaskStatus(result.status)),
+        Stream.mapEffect(() => readTaskObservation(scope, taskId, false, true)),
+        Stream.filter(settled),
+        Stream.map(({ response }) => response),
         Stream.runHead,
       );
     }).pipe(Effect.timeoutOption(Duration.millis(timeoutMs)), Effect.map(Option.flatten));

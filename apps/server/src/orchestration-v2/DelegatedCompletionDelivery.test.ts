@@ -957,6 +957,25 @@ it.effect.each(["missing thread", "exhausted retries"] as const)(
           deliveryState: "delivered",
           now,
         });
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const queuedMessages = ["first", "second"].map((name) =>
+          MessageId.make(`message:terminal-repair-queue:${name}`),
+        );
+        if (failure === "exhausted retries") {
+          for (const messageId of queuedMessages) {
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`command:terminal-repair-queue:${messageId}`),
+              threadId,
+              messageId,
+              text: "Continue queued work.",
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+              dispatchMode: { type: "queue_after_active" },
+            });
+          }
+        }
         const attempts = yield* Queue.unbounded<number>();
         let reads = 0;
         const read = projections.getRunMessage;
@@ -964,13 +983,32 @@ it.effect.each(["missing thread", "exhausted retries"] as const)(
           args[0] === threadId
             ? Effect.gen(function* () {
                 yield* Queue.offer(attempts, ++reads);
-                return yield* failure === "missing thread"
-                  ? new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })
-                  : new ProjectionStore.ProjectionStoreReadError({ threadId });
+                if (failure === "missing thread") {
+                  return yield* new ProjectionStore.ProjectionStoreThreadNotFoundError({
+                    threadId,
+                  });
+                }
+                if (reads === 1) {
+                  return yield* new ProjectionStore.ProjectionStoreReadError({ threadId });
+                }
+                return yield* read(...args);
               })
             : read(...args),
         );
-        yield* Effect.addFinalizer(() => Effect.sync(() => spy.mockRestore()));
+        const getThread = projections.getThread;
+        const lineageSpy = vi
+          .spyOn(projections, "getThread")
+          .mockImplementation((id) =>
+            id === threadId && failure === "exhausted retries"
+              ? Effect.fail(new ProjectionStore.ProjectionStoreReadError({ threadId }))
+              : getThread(id),
+          );
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            spy.mockRestore();
+            lineageSpy.mockRestore();
+          }),
+        );
         const terminal = runEvent({ threadId, runId, ordinal: 1, status: "completed", now });
         yield* sink.write({
           commandId: CommandId.make(`command:terminal-repair-stop:${failure}`),
@@ -979,6 +1017,33 @@ it.effect.each(["missing thread", "exhausted retries"] as const)(
         assert.equal(yield* Queue.take(attempts), 1);
         if (failure === "exhausted retries") {
           assert.equal(yield* Queue.take(attempts), 2);
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          const promoted = projection.runs.find((run) => run.userMessageId === queuedMessages[0])!;
+          assert.notEqual(promoted.status, "queued");
+          // Model a newer failure committed before its live reaction runs.
+          // Reconciliation suppresses that reaction so the old retries run first.
+          yield* sink.write({
+            commandId: reconcileCommandId("terminal-repair-newer-failure"),
+            events: [
+              {
+                id: EventId.make("event:terminal-repair-newer-failure"),
+                type: "run.updated",
+                threadId,
+                runId: promoted.id,
+                occurredAt: now,
+                payload: {
+                  ...promoted,
+                  status: "failed",
+                  completedAt: now,
+                  workspacePreparation: {
+                    type: "worktree",
+                    baseRef: "HEAD",
+                    startFromOrigin: false,
+                  },
+                },
+              },
+            ],
+          });
           for (const [index, delay] of [250, 500, 1000, 2000].entries()) {
             yield* TestClock.adjust(delay);
             assert.equal(yield* Queue.take(attempts), index + 3);
@@ -987,8 +1052,15 @@ it.effect.each(["missing thread", "exhausted retries"] as const)(
         assert.deepInclude(yield* Deferred.await(stopped), { threadId, runId });
         yield* TestClock.adjust("1 hour");
         assert.equal(reads, failure === "missing thread" ? 1 : 6);
+        if (failure === "exhausted retries") {
+          const projection = yield* orchestrator.getThreadProjection(threadId);
+          const waiting = projection.runs.find((run) => run.userMessageId === queuedMessages[1]);
+          assert.equal(waiting?.status, "queued");
+          assert.isFalse(waiting?.queueHeld ?? false);
+        }
 
         const resumed = yield* Deferred.make<void>();
+        lineageSpy.mockRestore();
         spy.mockImplementation((...args) =>
           read(...args).pipe(Effect.tap(() => Deferred.succeed(resumed, undefined))),
         );

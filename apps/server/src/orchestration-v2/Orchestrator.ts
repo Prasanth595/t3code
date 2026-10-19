@@ -11401,69 +11401,55 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : threadDispatch.withLock(parentThreadId, dispatch);
     });
 
-  const reactToTerminalRun = (
-    stored: OrchestrationV2StoredEvent,
-    pendingOffers: Map<RunId, MessageId>,
-  ) =>
-    Effect.gen(function* () {
-      const threadId = stored.event.threadId;
-      // finalize writes the parent thread and startNextQueuedRun writes this
-      // thread, so each takes its own thread's lock, sequentially and never
-      // nested: dispatchDelegatedTaskRequest already writes child events
-      // while holding the parent lock, so nesting the parent lock inside the
-      // child lock here would invert that order, and the keyed executor's
-      // semaphores are neither reentrant nor deadlock-aware.
-      if (stored.event.type === "run.updated") {
-        yield* threadDispatch.withLock(
-          threadId,
-          finalizeDelegatedCompletionDelivery(threadId, stored.event.payload.id, pendingOffers),
-        );
-      }
-      yield* threadDispatch
-        .withLock(
-          threadId,
-          startNextQueuedRun(
-            threadId,
-            stored.event.type === "run.updated"
-              ? {
-                  endedRunId: stored.event.payload.id,
-                  ...(stored.event.payload.status === "failed"
-                    ? { failedRunId: stored.event.payload.id }
-                    : {}),
-                }
-              : undefined,
-          ),
-        )
-        .pipe(
-          Effect.catchCause((cause) =>
-            Effect.logWarning("Failed to start the next queued V2 run", { threadId, cause }),
-          ),
-        );
-      const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
-      if (parentThreadId !== undefined) {
-        yield* threadDispatch.withLock(
-          parentThreadId,
-          finalizeAppOwnedSubagent(threadId, { pendingOffers }),
-        );
-      }
-    });
-
   const terminalRetryRuns = new Map<RunId, Map<RunId, MessageId>>();
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
       if (stored.event.type !== "run.updated") return;
       const threadId = stored.event.threadId;
       const runId = stored.event.payload.id;
-      // Publication and queueing are separate. Keep unfinished reservations
-      // across replays so a later failure cannot duplicate a successful offer.
+      // Repair only this reaction's unfinished offer reservations.
       const pendingOffers = terminalRetryRuns.get(runId) ?? new Map<RunId, MessageId>();
-      const react = reactToTerminalRun(stored, pendingOffers);
-      const retryable = (error: Effect.Error<typeof react>) =>
+      // Intake takes parent then child. Release the child lock before taking
+      // the parent lock here, including on retries.
+      const settleDelivery = threadDispatch.withLock(
+        threadId,
+        finalizeDelegatedCompletionDelivery(threadId, runId, pendingOffers),
+      );
+      const publishResult = Effect.gen(function* () {
+        const parentThreadId = yield* appOwnedSubagentParentThreadId(threadId);
+        if (parentThreadId !== undefined) {
+          yield* threadDispatch.withLock(
+            parentThreadId,
+            finalizeAppOwnedSubagent(threadId, { pendingOffers }),
+          );
+        }
+      });
+      const finalize = settleDelivery.pipe(Effect.andThen(publishResult));
+      // Promote once after the first settlement attempt, even if it failed.
+      // Replaying this event's queue decision could bypass a newer failure.
+      const promoteQueue = threadDispatch
+        .withLock(
+          threadId,
+          startNextQueuedRun(threadId, {
+            endedRunId: runId,
+            ...(stored.event.payload.status === "failed" ? { failedRunId: runId } : {}),
+          }),
+        )
+        .pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Failed to start the next queued V2 run", { threadId, cause }),
+          ),
+        );
+      const initial = settleDelivery.pipe(
+        Effect.ensuring(promoteQueue),
+        Effect.andThen(publishResult),
+      );
+      const retryable = (error: Effect.Error<typeof finalize>) =>
         error._tag !== "ProjectionStoreThreadNotFoundError";
-      const logFailure = (cause: Cause.Cause<Effect.Error<typeof react>>) =>
+      const logFailure = (cause: Cause.Cause<Effect.Error<typeof finalize>>) =>
         Effect.logWarning("Failed to react to terminal V2 run", { threadId, runId, cause });
-      yield* react.pipe(
-        Effect.retry({ times: 1, while: retryable }),
+      yield* initial.pipe(
+        Effect.catch((error) => (retryable(error) ? finalize : Effect.fail(error))),
         Effect.catch((error) => {
           if (!retryable(error)) return logFailure(Cause.fail(error));
           if (terminalRetryRuns.has(runId)) return Effect.void;
@@ -11472,7 +11458,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return Effect.uninterruptible(
             Effect.gen(function* () {
               terminalRetryRuns.set(runId, pendingOffers);
-              yield* react.pipe(
+              yield* finalize.pipe(
                 Effect.retry({
                   schedule: Schedule.exponential("500 millis").pipe(Schedule.upTo({ times: 3 })),
                   while: retryable,
