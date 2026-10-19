@@ -2011,7 +2011,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ? heldRequestIds.has(incomingPendingUserInputs[0].requestId)
     : false;
   const pendingUserInputRequestKey = incomingPendingUserInputs[0]
-    ? JSON.stringify([composerDraftTargetKey, incomingPendingUserInputs[0].requestId])
+    ? JSON.stringify([environmentId, activeThreadId, incomingPendingUserInputs[0].requestId])
     : null;
   // Keep the message selected as options advance within the same request.
   const [messageModeRequestKey, setMessageModeRequestKey] = useState<string | null>(null);
@@ -2854,6 +2854,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   })();
 
   const setPromptFromTraits = (nextPrompt: string) => {
+    if (activePendingProgress !== null) {
+      setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+      scheduleComposerFocus();
+      return;
+    }
     if (nextPrompt === promptRef.current) {
       scheduleComposerFocus();
       return;

@@ -411,10 +411,12 @@ export function usePendingThreadRequests(input: {
     if (!activePendingUserInput) {
       return;
     }
-    // The option replaces the custom answer. Anything typed there is the
-    // user's text, so it goes back to the thread draft instead of vanishing.
-    const displacedAnswer =
-      pendingUserInputAnswersByRequestId[activePendingRequestKey]?.[questionId]?.customAnswer;
+    const answeringPendingUserInput =
+      composerRef.current?.getSendContext().answeringPendingUserInput !== false;
+    // Only the answer editor may move displaced answer text into the message.
+    const displacedAnswer = answeringPendingUserInput
+      ? pendingUserInputAnswersByRequestId[activePendingRequestKey]?.[questionId]?.customAnswer
+      : undefined;
     const currentPrompt =
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.prompt ?? "";
     const nextPrompt = carryDisplacedCustomAnswerIntoPrompt(currentPrompt, displacedAnswer);
@@ -457,7 +459,7 @@ export function usePendingThreadRequests(input: {
       };
     });
     // Only an answering composer shows the custom answer the option cleared.
-    if (composerRef.current?.getSendContext().answeringPendingUserInput !== false) {
+    if (answeringPendingUserInput) {
       promptRef.current = "";
       composerRef.current?.resetCursorState({ cursor: 0 });
     }

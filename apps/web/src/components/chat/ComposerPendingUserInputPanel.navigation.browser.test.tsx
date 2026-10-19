@@ -186,7 +186,9 @@ it("keeps the message and insertion point when an option advances the pending qu
         updatedAt: projection.updatedAt,
         type: "user_input_request" as const,
         requestId: prompt.requestId,
-        questions: prompt.questions,
+        questions: prompt.questions.map((question, index) =>
+          index === 0 ? { ...question, initialAnswer: "Use OAuth" } : question,
+        ),
       },
     ],
   };
