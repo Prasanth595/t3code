@@ -59,16 +59,13 @@ export const layerHttpPairing = (accessToken: string) =>
       Effect.sync(() =>
         HttpClientResponse.fromWeb(
           request,
-          new Response(
-            JSON.stringify({
-              access_token: accessToken,
-              issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
-              token_type: "Bearer",
-              expires_in: 3600,
-              scope: "environment:connect",
-            }),
-            { status: 200, headers: { "content-type": "application/json" } },
-          ),
+          Response.json({
+            access_token: accessToken,
+            issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+            token_type: "Bearer",
+            expires_in: 3600,
+            scope: "environment:connect",
+          }),
         ),
       ),
     ),

@@ -1,7 +1,10 @@
 // Pairing the factory server from the web UI's pairing page, and the bearer it leaves behind.
 // Upstream's pairing exchange sets a cookie session, which cannot work from the desktop's
 // custom-scheme origin to 127.0.0.1, so the exchange runs here and the page reloads.
-import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
+import {
+  bootstrapRemoteBearerSession,
+  type RemoteEnvironmentAuthError,
+} from "@t3tools/client-runtime/authorization";
 import { FORK_FACTORY_SERVER_URL } from "@t3tools/shared/forkIdentity";
 import { getPairingTokenFromUrl } from "@t3tools/shared/remote";
 import * as Effect from "effect/Effect";
@@ -10,10 +13,13 @@ import * as Schema from "effect/Schema";
 import * as HttpClient from "effect/http/HttpClient";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as DesktopIpc from "../ipc/DesktopIpc.ts";
 import { PAIR_FACTORY_SERVER_CHANNEL } from "./factoryServerChannel.ts";
 import { factoryServerIsLocalEnvironment, usesFactoryServer } from "./factoryServer.ts";
 import { readFactoryServerBearer, writeFactoryServerBearer } from "./factoryServerCredential.ts";
+
+const { logWarning } = makeComponentLogger("desktop-factory-server");
 
 export class FactoryServerPairingError extends Schema.TaggedError<FactoryServerPairingError>()(
   "FactoryServerPairingError",
@@ -31,6 +37,37 @@ const credentialFromInput = (input: string): string | null => {
   const url = URL.canParse(trimmed) ? new URL(trimmed) : null;
   return url === null ? trimmed : getPairingTokenFromUrl(url);
 };
+
+/**
+ * What the pairing page shows for a failed exchange. Only the server turning the credential
+ * down says "rejected"; an unreachable server and any other failure each get their own reason.
+ * The token endpoint declares 400 and 401, and an older or foreign server may send a plain
+ * OAuth error with 400, 401 or 403, which arrives as an undeclared status.
+ */
+const pairingFailureReason = (error: RemoteEnvironmentAuthError): string => {
+  switch (error._tag) {
+    case "RemoteEnvironmentAuthFetchError":
+    case "RemoteEnvironmentAuthTimeoutError":
+      return `Could not reach the factory server at ${FORK_FACTORY_SERVER_URL}. Is it running?`;
+    case "EnvironmentAuthInvalidError":
+    case "EnvironmentRequestInvalidError":
+      return REJECTED_REASON;
+    case "RemoteEnvironmentAuthUndeclaredStatusError":
+      return error.status === 400 || error.status === 401 || error.status === 403
+        ? REJECTED_REASON
+        : COULD_NOT_COMPLETE_REASON;
+    case "RemoteEnvironmentAuthInvalidJsonError":
+    case "EnvironmentScopeRequiredError":
+    case "EnvironmentOperationForbiddenError":
+    case "EnvironmentResourceNotFoundError":
+    case "EnvironmentInternalError":
+      return COULD_NOT_COMPLETE_REASON;
+  }
+};
+
+const REJECTED_REASON = "The factory server rejected this pairing link.";
+const COULD_NOT_COMPLETE_REASON =
+  "The factory server could not complete the pairing. Check its logs and try again.";
 
 /**
  * The stored bearer, `""` before pairing, and `null` when the factory server is not the local
@@ -66,18 +103,15 @@ export const pairFactoryServer = DesktopIpc.makeIpcMethod({
       clientMetadata: { label: "T3 Code Factory Desktop", deviceType: "desktop" },
     }).pipe(
       Effect.provideService(HttpClient.HttpClient, httpClient),
+      Effect.tapError((error) => logWarning("factory server pairing failed", { error })),
       Effect.mapError(
-        (error) =>
-          new FactoryServerPairingError({
-            reason:
-              error._tag === "RemoteEnvironmentAuthFetchError" ||
-              error._tag === "RemoteEnvironmentAuthTimeoutError"
-                ? `Could not reach the factory server at ${FORK_FACTORY_SERVER_URL}. Is it running?`
-                : "The factory server rejected this pairing link.",
-          }),
+        (error) => new FactoryServerPairingError({ reason: pairingFailureReason(error) }),
       ),
     );
     yield* writeFactoryServerBearer(session.access_token).pipe(
+      Effect.tapError((error) =>
+        logWarning("could not store the factory server credential", { error }),
+      ),
       Effect.mapError((error) => new FactoryServerPairingError({ reason: error.message })),
     );
   }),
