@@ -31,6 +31,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -88,6 +89,7 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
   let notify: Parameters<MuseSdkHost["connection"]["onNotification"]>[0] = () => {};
   let sequence = 0;
   let sessionId = "";
+  const closing = pendingPromise<void>();
   let closeCount = 0;
   let closeGate: Promise<void> | undefined;
   let history: MuseItem[] = [];
@@ -144,6 +146,7 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
     exited: exited.promise,
     close: async () => {
       closeCount += 1;
+      closing.resolve();
       await closeGate;
       closed.resolve();
       exited.resolve({ code: 0, signal: null });
@@ -153,6 +156,7 @@ const makeFakeMuse = Effect.fnUntraced(function* (idPrefix = "native") {
     host,
     calls,
     closeCount: () => closeCount,
+    closing: closing.promise,
     holdClose: (gate: Promise<void>) => {
       closeGate = gate;
     },
@@ -804,26 +808,55 @@ describe("MuseAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 
-  it.effect("closes its SDK host exactly once when its session scope ends", () =>
-    Effect.gen(function* () {
-      const fake = yield* makeFakeMuse();
-      let hostExited = false;
-      void fake.host.exited.then(() => {
-        hostExited = true;
-      });
-      const stopped: Array<{ unit: string; hostExited: boolean }> = [];
-      yield* makeHarness(fake).pipe(
-        Effect.scoped,
-        Effect.provideService(AgentScope, {
-          ...AgentScope.defaultValue(),
-          wrap: ({ command, args }) =>
-            Effect.succeed({ command, args, unit: "t3code-muse-test.scope" }),
-          stop: (unit) => Effect.sync(() => void stopped.push({ unit, hostExited })),
-        }),
-      );
-      assert.strictEqual(fake.closeCount(), 1);
-      assert.deepStrictEqual(stopped, [{ unit: "t3code-muse-test.scope", hostExited: true }]);
-    }).pipe(Effect.provide(testLayer)),
+  it.effect.each(["normal", "inherited pipe"] as const)(
+    "closes its SDK host exactly once on session teardown with %s shutdown",
+    (shutdown) =>
+      Effect.gen(function* () {
+        const fake = yield* makeFakeMuse();
+        const pipeClosed = pendingPromise<void>();
+        if (shutdown === "inherited pipe") fake.holdClose(pipeClosed.promise);
+        let hostExited = false;
+        void fake.host.exited.then(() => {
+          hostExited = true;
+        });
+        const stopped: Array<{ unit: string; hostExited: boolean }> = [];
+        const release = makeHarness(fake).pipe(
+          Effect.scoped,
+          Effect.provideService(AgentScope, {
+            ...AgentScope.defaultValue(),
+            wrap: ({ command, args }) =>
+              Effect.succeed({ command, args, unit: "t3code-muse-test.scope" }),
+            stop: (unit) =>
+              Effect.sync(() => {
+                stopped.push({ unit, hostExited });
+                pipeClosed.resolve();
+              }),
+          }),
+        );
+        if (shutdown === "inherited pipe") {
+          yield* Effect.gen(function* () {
+            const releasing = yield* release.pipe(Effect.forkChild({ startImmediately: true }));
+            yield* Effect.promise(() => fake.closing);
+            yield* TestClock.adjust("12999 millis");
+            assert.strictEqual(fake.closeCount(), 1);
+            assert.deepStrictEqual(stopped, []);
+            yield* TestClock.adjust("1 millis");
+            assert.deepStrictEqual(
+              [...stopped],
+              [{ unit: "t3code-muse-test.scope", hostExited: false }],
+            );
+            yield* Fiber.join(releasing);
+          }).pipe(Effect.ensuring(Effect.sync(() => pipeClosed.resolve())));
+        } else {
+          yield* release;
+        }
+        assert.strictEqual(fake.closeCount(), 1);
+        assert.deepStrictEqual(stopped, [
+          { unit: "t3code-muse-test.scope", hostExited: shutdown === "normal" },
+        ]);
+        yield* Effect.promise(() => fake.host.exited);
+        assert.isTrue(hostExited);
+      }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect(

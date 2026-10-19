@@ -1679,7 +1679,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
                 closed = true;
                 hostEpoch++;
               }
-              yield* Effect.tryPromise(() => created.close()).pipe(Effect.ignore);
+              const close = Effect.tryPromise(() => created.close());
+              // SDK shutdown sends SIGKILL after 10s + 2s, but inherited pipes can
+              // keep its close promise pending. Let the scope reap those holders.
+              yield* (
+                scopeUnit === undefined
+                  ? close
+                  : close.pipe(Effect.interruptible, Effect.timeoutOption("13 seconds"))
+              ).pipe(Effect.ignore);
             }),
           { interruptible: true },
         ).pipe(Effect.provideService(Scope.Scope, scope));
