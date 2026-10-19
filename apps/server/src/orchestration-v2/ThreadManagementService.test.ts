@@ -2,6 +2,7 @@ import { expect, it } from "@effect/vitest";
 import {
   CommandId,
   EnvironmentId,
+  EventId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   MessageId,
   NodeId,
@@ -18,6 +19,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   RunId,
+  RunAttemptId,
   ThreadId,
 } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
@@ -38,6 +40,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
 import * as Orchestrator from "./Orchestrator.ts";
+import { emptyProjection } from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -490,6 +493,203 @@ it.effect("rejects an oversized expanded steer to the caller before committing i
     expect(dispatched).toEqual(["message.dispatch"]);
   }).pipe(Effect.provide(layerTest));
 });
+
+it.effect(
+  "rejects oversized queue edits and promotion of older oversized messages before committing",
+  () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:queue-citation");
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const providerThreadId = ProviderThreadId.make("provider-thread:queue-citation");
+      const modelSelection = { instanceId: providerInstanceId, model: "test" };
+      const runs: Array<OrchestrationV2Run> = (["running", "queued"] as const).map(
+        (status, index) => ({
+          id: RunId.make(`run:queue-citation:${status}`),
+          threadId,
+          ordinal: index + 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId,
+          userMessageId: MessageId.make(`message:queue-citation:${status}`),
+          rootNodeId: NodeId.make(`node:queue-citation:${status}`),
+          activeAttemptId: RunAttemptId.make(`attempt:queue-citation:${status}`),
+          status,
+          queuePosition: status === "queued" ? 1 : null,
+          requestedAt: now,
+          startedAt: status === "running" ? now : null,
+          completedAt: null,
+          checkpointId: null,
+          contextHandoffId: null,
+        }),
+      );
+      let projection = emptyProjection({
+        id: EventId.make("event:queue-citation:created"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: threadId,
+          projectId: ProjectId.make("project:queue-citation"),
+          title: "Queued citations",
+          providerInstanceId,
+          modelSelection,
+          createdBy: "user",
+          creationSource: "web",
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThreadId,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      projection = {
+        ...projection,
+        runs,
+        nodes: runs.map((run) => ({
+          id: run.rootNodeId!,
+          threadId,
+          runId: run.id,
+          parentNodeId: null,
+          rootNodeId: run.rootNodeId!,
+          kind: "root_turn",
+          status: run.status === "running" ? "running" : "pending",
+          countsForRun: true,
+          providerThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: run.startedAt,
+          completedAt: null,
+        })),
+        attempts: runs.map((run) => ({
+          id: run.activeAttemptId!,
+          runId: run.id,
+          attemptOrdinal: 1,
+          rootNodeId: run.rootNodeId!,
+          providerInstanceId,
+          providerThreadId,
+          providerTurnId: null,
+          reason: "initial",
+          status: run.status === "running" ? "running" : "pending",
+          startedAt: run.startedAt,
+          completedAt: null,
+        })),
+        messages: runs.map((run) => ({
+          id: run.userMessageId,
+          threadId,
+          runId: run.id,
+          nodeId: run.rootNodeId,
+          role: "user",
+          text: "Keep this message",
+          attachments: [],
+          streaming: false,
+          createdBy: "user",
+          creationSource: "web",
+          createdAt: now,
+          updatedAt: now,
+        })),
+      };
+      const citation = serializeAssistantCitation({
+        version: 1,
+        environmentId: EnvironmentId.make("environment:queue-citation"),
+        threadId,
+        messageId: MessageId.make("message:queue-citation:source"),
+        text: "Quoted claim",
+        start: 0,
+        end: 12,
+        prefix: "",
+        suffix: "",
+      });
+      const text = `${"x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - citation.length - 1)} ${citation}`;
+      const dispatched: Array<string> = [];
+      const layerTest = ThreadManagementService.layer.pipe(
+        Layer.provide(Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({})),
+        Layer.provide(
+          Layer.mock(Orchestrator.OrchestratorV2)({
+            getThreadRecords: () => Effect.succeed(projection),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command.type);
+                return { sequence: 1, storedEvents: [] };
+              }),
+          }),
+        ),
+        Layer.provide(ServerSettings.layerTest()),
+        Layer.provideMerge(layerReceiptsTest),
+      );
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        const edit = {
+          type: "queued-run.edit",
+          commandId: CommandId.make("command:queue-citation:edit"),
+          threadId,
+          runId: runs[1]!.id,
+          text,
+        } satisfies OrchestrationV2Command;
+        const editError = yield* threads.dispatch(edit).pipe(Effect.flip);
+        expect(editError).toBeInstanceOf(Orchestrator.OrchestratorCommandRejectedError);
+        expect(userFacingDispatchErrorMessage(editError)).toMatch(
+          /over the .*character limit.*quotes are expanded/,
+        );
+        expect(projection.runs).toEqual(runs);
+        expect(projection.messages.map((message) => message.text)).toEqual([
+          "Keep this message",
+          "Keep this message",
+        ]);
+        expect(dispatched).toEqual([]);
+
+        // Simulate a message persisted before citation validation existed.
+        projection = {
+          ...projection,
+          messages: projection.messages.map((message) =>
+            message.runId === edit.runId ? { ...message, text } : message,
+          ),
+        };
+        const beforePromotion = projection;
+        const promote = {
+          type: "queued-message.promote-to-steer",
+          commandId: CommandId.make("command:queue-citation:promote"),
+          threadId,
+          queuedRunId: edit.runId,
+          targetRunId: runs[0]!.id,
+        } satisfies OrchestrationV2Command;
+        const promoteError = yield* threads.dispatch(promote).pipe(Effect.flip);
+        expect(promoteError).toBeInstanceOf(Orchestrator.OrchestratorCommandRejectedError);
+        expect(userFacingDispatchErrorMessage(promoteError)).toMatch(
+          /over the .*character limit.*quotes are expanded/,
+        );
+        expect(projection).toEqual(beforePromotion);
+        expect(projection.runs.map((run) => run.status)).toEqual(["running", "queued"]);
+        expect(dispatched).toEqual([]);
+
+        const receipts = yield* CommandReceiptStore.CommandReceiptStoreV2;
+        for (const command of [edit, promote]) {
+          yield* receipts.insertIfAbsent({
+            commandId: command.commandId,
+            threadId,
+            commandType: command.type,
+            acceptedAt: now,
+            resultSequence: 1,
+            status: "accepted",
+            error: null,
+          });
+          yield* threads.dispatch(command);
+        }
+        expect(dispatched).toEqual([edit.type, promote.type]);
+      }).pipe(Effect.provide(layerTest));
+    }),
+);
 
 it.effect(
   "a replay of an already-accepted command id dispatches despite the instance now being disabled",
