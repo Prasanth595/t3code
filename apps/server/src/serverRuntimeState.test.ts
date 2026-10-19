@@ -205,72 +205,77 @@ describe("server ownership", () => {
   );
 
   describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("lock file checks", () => {
-    it.effect.each(["unchanged", "unlink", "replace", "during acquisition", "stat error"] as const)(
-      "monitors ownership after %s",
-      (operation) => {
-        const messages: unknown[] = [];
-        const logger = Logger.make(({ message }) => messages.push(message));
-        return Effect.gen(function* () {
-          const fs = yield* FileSystem.FileSystem;
-          const path = yield* Path.Path;
-          const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-owner-lost-" });
-          const statePath = path.join(root, "server-runtime.json");
-          const lockPath = path.join(root, "server-owner.sqlite");
-          const replacement = path.join(root, "replacement.sqlite");
-          if (operation === "during acquisition") {
-            yield* fs.writeFileString(lockPath, "");
-            yield* fs.writeFileString(replacement, "");
-            const exec = NodeSqlite.DatabaseSync.prototype.exec;
-            yield* Effect.acquireRelease(
-              Effect.sync(() =>
-                vi
-                  .spyOn(NodeSqlite.DatabaseSync.prototype, "exec")
-                  .mockImplementationOnce(function (this: NodeSqlite.DatabaseSync, sql: string) {
-                    exec.call(this, sql);
-                    NodeFS.renameSync(replacement, lockPath);
-                  }),
-              ),
-              (spy) => Effect.sync(() => spy.mockRestore()),
-            );
-          }
-          yield* ServerOwnership.acquireServerOwnership(statePath);
-          if (operation === "unlink") {
-            yield* fs.remove(lockPath);
-          } else if (operation === "replace") {
-            yield* fs.writeFileString(replacement, "");
-            yield* fs.rename(replacement, lockPath);
-          }
-          if (operation === "stat error") {
-            yield* fs.chmod(root, 0);
-            yield* TestClock.adjust("5 seconds").pipe(
-              Effect.ensuring(fs.chmod(root, 0o700).pipe(Effect.orDie)),
-            );
-            assert.deepEqual(messages, []);
-            yield* fs.remove(lockPath);
-          }
-          yield* TestClock.adjust("5 seconds");
-          const expected =
-            operation === "unchanged"
-              ? []
-              : [
-                  [
-                    `Server ownership lock at ${lockPath} was deleted or replaced. Another server may now share this T3 home. Stop any other server using this home, then restart this server. Do not delete server-owner.sqlite while a server is running.`,
-                  ],
-                ];
-          assert.deepEqual(messages, expected);
-          if (operation !== "unchanged") {
-            yield* fs.remove(`${lockPath}-journal`, { force: true });
-            yield* Effect.scoped(ServerOwnership.acquireServerOwnership(statePath));
-          }
-          yield* TestClock.adjust("15 seconds");
-          assert.deepEqual(messages, expected);
-        }).pipe(
-          Effect.provide(
-            Layer.merge(layerOwnership, Logger.layer([logger], { mergeWithExisting: false })),
-          ),
-        );
-      },
-    );
+    it.effect.each([
+      "unchanged",
+      "unlink",
+      "replace",
+      "during acquisition",
+      "first acquisition",
+      "stat error",
+    ] as const)("monitors ownership after %s", (operation) => {
+      const messages: unknown[] = [];
+      const logger = Logger.make(({ message }) => messages.push(message));
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-owner-lost-" });
+        const statePath = path.join(root, "server-runtime.json");
+        const lockPath = path.join(root, "server-owner.sqlite");
+        const replacement = path.join(root, "replacement.sqlite");
+        if (operation === "during acquisition" || operation === "first acquisition") {
+          if (operation === "during acquisition") yield* fs.writeFileString(lockPath, "");
+          yield* fs.writeFileString(replacement, "");
+          const exec = NodeSqlite.DatabaseSync.prototype.exec;
+          yield* Effect.acquireRelease(
+            Effect.sync(() =>
+              vi.spyOn(NodeSqlite.DatabaseSync.prototype, "exec").mockImplementationOnce(function (
+                this: NodeSqlite.DatabaseSync,
+                sql: string,
+              ) {
+                exec.call(this, sql);
+                NodeFS.renameSync(replacement, lockPath);
+              }),
+            ),
+            (spy) => Effect.sync(() => spy.mockRestore()),
+          );
+        }
+        yield* ServerOwnership.acquireServerOwnership(statePath);
+        if (operation === "unlink") {
+          yield* fs.remove(lockPath);
+        } else if (operation === "replace") {
+          yield* fs.writeFileString(replacement, "");
+          yield* fs.rename(replacement, lockPath);
+        }
+        if (operation === "stat error") {
+          yield* fs.chmod(root, 0);
+          yield* TestClock.adjust("5 seconds").pipe(
+            Effect.ensuring(fs.chmod(root, 0o700).pipe(Effect.orDie)),
+          );
+          assert.deepEqual(messages, []);
+          yield* fs.remove(lockPath);
+        }
+        yield* TestClock.adjust("5 seconds");
+        const expected =
+          operation === "unchanged"
+            ? []
+            : [
+                [
+                  `Server ownership lock at ${lockPath} was deleted or replaced. Another server may now share this T3 home. Stop any other server using this home, then restart this server. Do not delete server-owner.sqlite while a server is running.`,
+                ],
+              ];
+        assert.deepEqual(messages, expected);
+        if (operation !== "unchanged") {
+          yield* fs.remove(`${lockPath}-journal`, { force: true });
+          yield* Effect.scoped(ServerOwnership.acquireServerOwnership(statePath));
+        }
+        yield* TestClock.adjust("15 seconds");
+        assert.deepEqual(messages, expected);
+      }).pipe(
+        Effect.provide(
+          Layer.merge(layerOwnership, Logger.layer([logger], { mergeWithExisting: false })),
+        ),
+      );
+    });
   });
 
   it.effect("refuses beside a live pre-lock server and ignores a stale record", () =>

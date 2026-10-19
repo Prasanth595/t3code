@@ -197,7 +197,11 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
     Effect.try({
       try: () => {
         NodeFS.mkdirSync(stateDir, { recursive: true });
-        const before = NodeFS.statSync(lockPath, { bigint: true, throwIfNoEntry: false });
+        let before = NodeFS.statSync(lockPath, { bigint: true, throwIfNoEntry: false });
+        if (before === undefined) {
+          NodeFS.closeSync(NodeFS.openSync(lockPath, "a"));
+          before = NodeFS.statSync(lockPath, { bigint: true });
+        }
         const db = new NodeSqlite.DatabaseSync(lockPath);
         try {
           db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
@@ -205,8 +209,7 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
           return {
             db,
             identity,
-            replacedDuringAcquire:
-              before !== undefined && (before.dev !== identity.dev || before.ino !== identity.ino),
+            replacedDuringAcquire: before.dev !== identity.dev || before.ino !== identity.ino,
           };
         } catch (cause) {
           db.close();
