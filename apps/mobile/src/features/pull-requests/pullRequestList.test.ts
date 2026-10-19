@@ -202,10 +202,15 @@ describe("mobile PR list pagination", () => {
       },
       { state: "open", cursors: first.nextCursors },
     );
-    expect(partial.nextCursors).toEqual({
+    expect(partial.entries.map((row) => row.number)).toEqual([3, 2]);
+    const retryInput = nextPullRequestListInput(partial, { state: "open" })!;
+    expect(retryInput.cursors).toEqual({
       readable: "readable-second",
       failed: "failed-first",
     });
+    const retried = appendPullRequestListPage(partial, page([entry(1)]), retryInput);
+    expect(retried.entries.map((row) => row.number)).toEqual([3, 2, 1]);
+    expect(nextPullRequestListInput(retried, { state: "open" })).toBeNull();
   });
   it("keeps the whole continuation when an older server omits failed cursor keys", () => {
     const first = pullRequestListHead(null, page([entry(2)], { repo: "first" }));
@@ -224,7 +229,11 @@ describe("mobile PR list pagination", () => {
       { state: "open", cursors: first.nextCursors },
     );
     expect(partial.entries.map((row) => row.number)).toEqual([2, 1]);
-    expect(partial.nextCursors).toEqual({ repo: "first" });
+    const retryInput = nextPullRequestListInput(partial, { state: "open" })!;
+    expect(retryInput.cursors).toEqual({ repo: "first" });
+    const retried = appendPullRequestListPage(partial, page([entry(1)]), retryInput);
+    expect(retried.entries.map((row) => row.number)).toEqual([2, 1]);
+    expect(nextPullRequestListInput(retried, { state: "open" })).toBeNull();
   });
   it("keeps a limit-based continuation retryable after a keyed repository failure", () => {
     const first = pullRequestListHead(null, { ...page([entry(3)]), truncated: true });
@@ -340,16 +349,6 @@ describe("all-environment PR list", () => {
         merged.localSearchHosts,
       ).map((row) => row.environmentId),
     ).toEqual([mbp]);
-  });
-  it("keeps provider summaries with the environment that reported them", () => {
-    const result = { ...page([]), providers: [provider({ host: "github.acme.dev" })] };
-    const merged = mergeEnvironmentPullRequestPages([
-      { environmentId: cups, pages: pullRequestListHead(null, result) },
-    ]);
-
-    expect(merged.providers).toEqual([
-      expect.objectContaining({ environmentId: cups, host: "github.acme.dev" }),
-    ]);
   });
 });
 
@@ -513,100 +512,65 @@ describe("pull request list errors", () => {
     host: "github.com",
   });
 
-  it("keeps environment failures apart from repeated repository failures", () => {
+  it("summarizes repeated repository failures while retaining details and a single actionable error", () => {
+    const errors = [repository(1), repository(2), repository(1)];
+    expect(pullRequestListErrorMessage(errors)).toBe("2 repositories could not be read.");
+    expect(groupPullRequestListErrors(errors).repositories).toEqual([repository(1), repository(2)]);
+    expect(pullRequestListErrorMessage([repository(1)])).toBe(
+      "repo-1: org/repo-1 could not be read.",
+    );
+  });
+
+  it("keeps host failures actionable without hiding another environment or legacy repository errors", () => {
+    const otherId = EnvironmentId.make("environment-2");
     const offline = {
-      environmentId: EnvironmentId.make("environment-2"),
+      environmentId: EnvironmentId.make("offline"),
       projectTitle: "",
       message: "Disconnected.",
     };
-    const grouped = groupPullRequestListErrors([
-      repository(1),
-      offline,
-      repository(2),
-      repository(1),
+    const failedProvider = provider({
+      configured: false,
+      detail: "Run gh auth login --hostname github.com.",
+    });
+    const merged = mergeEnvironmentPullRequestPages([
+      {
+        environmentId,
+        pages: pullRequestListHead(null, { ...page([]), providers: [failedProvider] }),
+      },
     ]);
+    const otherRepository = { ...repository(1), environmentId: otherId };
+    const legacy = { ...repository(3), host: undefined };
+    const errors = [repository(1), repository(2), otherRepository, legacy, offline];
+    const grouped = groupPullRequestListErrors(errors, merged.providers);
 
     expect(grouped.environments).toEqual([offline]);
-    expect(grouped.repositories.map((error) => error.projectTitle)).toEqual(["repo-1", "repo-2"]);
-  });
-
-  it("shows one actionable host failure instead of its repository errors", () => {
-    const failedProvider = {
-      ...provider({
-        configured: false,
-        detail: "Run gh auth login --hostname github.com.",
-      }),
-      environmentId,
-    };
-    const grouped = groupPullRequestListErrors(
-      [repository(1), repository(2), { ...repository(3), host: "gitlab.com" }],
-      [failedProvider],
-    );
-
-    expect(grouped.providers).toEqual([failedProvider]);
-    expect(grouped.repositories.map((error) => error.projectTitle)).toEqual(["repo-3"]);
-    expect(pullRequestListErrorMessage([repository(1), repository(2)], [failedProvider])).toBe(
-      "github.com: Run gh auth login --hostname github.com.",
+    expect(grouped.providers).toEqual([{ ...failedProvider, environmentId }]);
+    expect(grouped.repositories).toEqual([otherRepository, legacy]);
+    expect(pullRequestListErrorMessage(errors, merged.providers)).toBe(
+      "github.com: Run gh auth login --hostname github.com.\n2 repositories could not be read.",
     );
   });
 
-  it("keeps legacy repository errors whose host is absent", () => {
-    const legacy = { ...repository(1), host: undefined };
-    const failedProvider = {
-      ...provider({ detail: "GitHub could not be reached." }),
-      environmentId,
-    };
-
-    expect(groupPullRequestListErrors([legacy], [failedProvider]).repositories).toEqual([legacy]);
-  });
-
-  it("hides stale host and repository details when the environment request fails", () => {
-    const offline = { environmentId, projectTitle: "", message: "Disconnected." };
-    const failedProvider = {
-      ...provider({ detail: "GitHub could not be reached." }),
-      environmentId,
-    };
-
-    const grouped = groupPullRequestListErrors([repository(1), offline], [failedProvider]);
-    expect(grouped.environments).toEqual([offline]);
-    expect(grouped.providers).toEqual([]);
-    expect(grouped.repositories).toEqual([]);
-  });
-
-  it("hides cached details from disconnected environments but keeps their failure", () => {
+  it("keeps environment failures visible while suppressing stale host and repository details", () => {
     const connectedId = EnvironmentId.make("environment-2");
     const failedProvider = {
       ...provider({ detail: "GitHub could not be reached." }),
       environmentId,
     };
     const connectedRepository = { ...repository(2), environmentId: connectedId };
-
-    const cached = groupPullRequestListErrors(
-      [repository(1), connectedRepository],
-      [failedProvider],
-      new Set([connectedId]),
-    );
-    expect(cached.environments).toEqual([]);
-    expect(cached.providers).toEqual([]);
-    expect(cached.repositories).toEqual([connectedRepository]);
+    const errors = [repository(1), connectedRepository];
+    expect(groupPullRequestListErrors(errors, [failedProvider], new Set([connectedId]))).toEqual({
+      environments: [],
+      providers: [],
+      repositories: [connectedRepository],
+    });
 
     const offline = { environmentId, projectTitle: "", message: "Disconnected." };
-    const failed = groupPullRequestListErrors(
-      [repository(1), offline, connectedRepository],
-      [failedProvider],
-      new Set([connectedId]),
-    );
-    expect(failed.environments).toEqual([offline]);
-    expect(failed.repositories).toEqual([connectedRepository]);
-  });
-
-  it("summarizes many repository failures in one line", () => {
-    expect(pullRequestListErrorMessage([repository(1)])).toBe(
-      "repo-1: org/repo-1 could not be read.",
-    );
-    expect(pullRequestListErrorMessage([1, 2, 3].map(repository))).toBe(
-      "3 repositories could not be read.",
-    );
+    expect(groupPullRequestListErrors([...errors, offline], [failedProvider])).toEqual({
+      environments: [offline],
+      providers: [],
+      repositories: [connectedRepository],
+    });
   });
 });
 
