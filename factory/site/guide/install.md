@@ -42,9 +42,9 @@ Check what the running job has with `launchctl print gui/$(id -u)/io.github.rawp
 
 ## Follow main
 
-Once it is on, the server follows `main` on its own. Every 10 minutes the autodeploy job fetches a clone kept for it, and when `origin/main` is not the installed commit it builds and installs that commit with `deploy.sh`, health check and rollback included. It waits while a factory run has a session or gate at work, or a pass is running, and tries again on the next tick. A commit whose build or health check fails is not tried again until `main` moves; a build still going after an hour is stopped and tried again on the next tick.
+Once it is on, the server follows `main` on its own. Every 10 minutes the autodeploy job fetches a clone kept for it, and when `origin/main` is not the installed commit it builds and installs that commit with `deploy.sh`, health check and rollback included. Each deploy restarts the server, so it waits while an agent is at work in any thread, yours or the factory's, while a factory run has a gate at work, or while a pass is running, and tries again on the next tick. A thread waiting on your answer doesn't hold it up.
 
-It waits only for the factory. Each deploy restarts the server, which cuts off any chat or agent session you have open on it, so expect that within 10 minutes of a merge to `main`.
+A build that fails, or is still going after an hour, is tried again on the next two ticks; after the third failure that commit is left until `main` moves. A commit that fails its health check is left at once.
 
 The job builds with its plist's `PATH`, which covers Homebrew, `vp` and `~/.cargo/bin` from rustup, plus anything `~/.config/t3fac/env` adds to it.
 
