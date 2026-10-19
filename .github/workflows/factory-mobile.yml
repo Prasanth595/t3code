@@ -151,7 +151,9 @@ jobs:
             "$app_id.sharing=$SHARING_PROFILE"
 
           # The run number makes every upload's CFBundleVersion unique. The app and
-          # its extensions must carry the same one.
+          # its extensions must carry the same one. The app's Info.plist holds it
+          # literally; the widgets generate theirs from CURRENT_PROJECT_VERSION,
+          # which Archive sets.
           while IFS= read -r plist; do
             plutil -replace CFBundleVersion -string "$GITHUB_RUN_NUMBER" "$plist"
           done < <(find apps/mobile/ios -mindepth 2 -maxdepth 2 -name Info.plist -not -path '*/Pods/*')
@@ -181,7 +183,8 @@ jobs:
             -scheme "$SCHEME" \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -archivePath "$RUNNER_TEMP/factory-mobile.xcarchive"
+            -archivePath "$RUNNER_TEMP/factory-mobile.xcarchive" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER"
 
       - id: export
         name: Export for App Store Connect
@@ -248,4 +251,4 @@ jobs:
         if: always()
         run: |
           security delete-keychain "$RUNNER_TEMP/factory-mobile.keychain-db" 2>/dev/null || true
-          rm -rf "$RUNNER_TEMP/private_keys"
+          rm -rf "$RUNNER_TEMP/private_keys" "$RUNNER_TEMP/factory-mobile.p12"
