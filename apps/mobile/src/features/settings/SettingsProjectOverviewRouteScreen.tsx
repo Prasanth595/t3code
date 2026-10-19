@@ -1,7 +1,10 @@
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { AppText as Text, AppTextInput } from "../../components/ui/AppText";
 import { ProjectFavicon } from "../../components/ProjectFavicon";
-import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
+import {
+  deriveProjectGroupLabel,
+  projectGroupTitleNeedsUpdate,
+} from "@t3tools/client-runtime/state/project-grouping";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { useState } from "react";
 import { Platform, Pressable, View } from "react-native";
@@ -69,7 +72,10 @@ function ProjectOverviewContent(props: {
     reportFailure: true,
   });
   const nextName = (draftName ?? displayName).trim();
-  const canSave = !isSaving && nextName.length > 0 && nextName !== displayName;
+  const canSave =
+    !isSaving &&
+    nextName.length > 0 &&
+    projectGroupTitleNeedsUpdate(props.members, nextName, draftName !== null);
 
   const saveName = () => {
     if (!canSave) return;

@@ -198,6 +198,17 @@ export function resolveScratchProjectScopeKey(
     : key;
 }
 
+export function projectGroupTitleNeedsUpdate(
+  members: ReadonlyArray<Pick<EnvironmentProject, "title" | "titleIsExplicit">>,
+  nextTitle: string,
+  wasEdited: boolean,
+): boolean {
+  return (
+    wasEdited &&
+    members.some((member) => member.title !== nextTitle || member.titleIsExplicit !== true)
+  );
+}
+
 export function deriveProjectGroupLabel(input: {
   readonly representative: Pick<EnvironmentProject, "title" | "repositoryIdentity">;
   readonly members: ReadonlyArray<

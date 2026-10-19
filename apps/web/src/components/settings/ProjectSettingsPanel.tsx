@@ -10,6 +10,7 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { projectGroupTitleNeedsUpdate } from "@t3tools/client-runtime/state/project-grouping";
 import { AsyncResult } from "effect/reactivity";
 import { type EnvironmentId, type ProjectIconOverride } from "@t3tools/contracts";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -45,7 +46,6 @@ import {
 } from "./ProjectFaviconPickerDialog";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
-import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { settingsScopeEnvironmentLabels } from "./settingsScopeAxis";
 
@@ -184,7 +184,7 @@ function ProjectDetail({
   const deleteProject = useOrchestrationCommand(projectEnvironment.delete, {
     reportFailure: false,
   });
-  const projectNameEditedRef = useRef(false);
+  const [draftName, setDraftName] = useState<string | null>(null);
 
   const faviconPath = representative.faviconPath ?? null;
   const projectIcon = representative.projectIcon ?? null;
@@ -280,17 +280,13 @@ function ProjectDetail({
       toastManager.add({ type: "warning", title: "Project title cannot be empty" });
       return;
     }
-    if (
-      !projectGroupTitleNeedsUpdate(
-        group.memberProjects.map((member) => member.title),
-        title,
-        wasEdited,
-        group.displayName,
-      )
-    ) {
+    if (!projectGroupTitleNeedsUpdate(group.memberProjects, title, wasEdited)) {
       return;
     }
-    await updateAllMembers({ title }, "Failed to rename project");
+    const result = await updateAllMembers({ title }, "Failed to rename project");
+    if (result._tag !== "Failure") {
+      setDraftName((current) => (current?.trim() === title ? null : current));
+    }
   };
 
   const [faviconPickerOpen, setFaviconPickerOpen] = useComposerMenuState(!canEditGroup);
@@ -499,19 +495,16 @@ function ProjectDetail({
             description="The shared name for this project group in the sidebar and thread lists."
             control={
               <Input
-                key={`${group.projectKey}:${group.displayName}`}
                 size="sm"
                 className="w-full sm:w-64"
                 aria-label="Project name"
                 disabled={!canEditGroup}
-                defaultValue={group.displayName}
-                onChange={() => {
-                  projectNameEditedRef.current = true;
+                value={draftName ?? group.displayName}
+                onChange={(event) => {
+                  setDraftName(event.currentTarget.value);
                 }}
                 onBlur={(event) => {
-                  const wasEdited = projectNameEditedRef.current;
-                  projectNameEditedRef.current = false;
-                  void renameGroup(event.currentTarget.value, wasEdited);
+                  void renameGroup(event.currentTarget.value, draftName !== null);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") event.currentTarget.blur();
