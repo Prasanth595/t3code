@@ -10,6 +10,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 const scripts = NodePath.resolve(import.meta.dirname, "../../../../factory/scripts");
 const label = "io.github.rawphp.t3fac";
 const logrotateLabel = "io.github.rawphp.t3fac.logrotate";
+const autodeployLabel = "io.github.rawphp.t3fac.autodeploy";
 const uid = process.getuid?.() ?? 0;
 
 const v1 = "0.0.1-test+fac.aaaaaaa";
@@ -42,6 +43,8 @@ const plistPath = () => NodePath.join(home, "Library/LaunchAgents", `${label}.pl
 const root = () => NodePath.join(home, ".local/share/t3fac");
 const logrotatePlistPath = () =>
   NodePath.join(home, "Library/LaunchAgents", `${logrotateLabel}.plist`);
+const autodeployPlistPath = () =>
+  NodePath.join(home, "Library/LaunchAgents", `${autodeployLabel}.plist`);
 const logPath = () => NodePath.join(home, "Library/Logs/t3fac/t3fac.log");
 
 const run = (script: string, ...args: Array<string>) => runWith({}, script, ...args);
@@ -177,10 +180,12 @@ const setupInstalledSandbox = () => {
   expect(run("install.sh", archives[v2]!).status).toBe(0);
 };
 
-// The launchctl calls about each job. The logrotate job's come first: install.sh and
-// rollback.sh restart it just before the main job.
-const mainCalls = (calls: Array<string>) => calls.filter((c) => !c.includes(logrotateLabel));
+// The launchctl calls about each job. The timer jobs' come first: install.sh and rollback.sh
+// restart the logrotate job, then the autodeploy job, just before the main job.
+const mainCalls = (calls: Array<string>) =>
+  calls.filter((c) => !c.includes(logrotateLabel) && !c.includes(autodeployLabel));
 const logrotateCalls = (calls: Array<string>) => calls.filter((c) => c.includes(logrotateLabel));
+const autodeployCalls = (calls: Array<string>) => calls.filter((c) => c.includes(autodeployLabel));
 
 // bootout, then at least one print poll, then bootstrap, for the main job.
 const expectRestartSequence = (allCalls: Array<string>) => {
@@ -258,6 +263,58 @@ describe("install.sh and rollback.sh", () => {
       `print gui/${uid}/${logrotateLabel}`,
       `bootstrap gui/${uid} ${logrotatePlistPath()}`,
     ]);
+  });
+
+  it("writes, installs and bootstraps the autodeploy job on a first install", () => {
+    setupSandbox();
+    archives[v1] = makeArchive(v1);
+    const result = run("install.sh", archives[v1]!);
+    expect(result.status).toBe(0);
+
+    const plist = NodeFS.readFileSync(autodeployPlistPath(), "utf8");
+    expect(plist).not.toContain("@HOME@");
+    for (const part of [
+      `<string>${autodeployLabel}</string>`,
+      "StartInterval",
+      "<integer>600</integer>",
+      `${home}/.local/share/t3fac/autodeploy.sh`,
+      `${home}/Library/Logs/t3fac/autodeploy.log`,
+    ]) {
+      expect(plist).toContain(part);
+    }
+
+    const installed = NodePath.join(root(), "autodeploy.sh");
+    expect(NodeFS.readFileSync(installed, "utf8")).toBe(
+      NodeFS.readFileSync(NodePath.join(scripts, "autodeploy.sh"), "utf8"),
+    );
+    expect(NodeFS.statSync(installed).mode & 0o111).not.toBe(0);
+    // autodeploy.sh sources it from beside itself.
+    expect(NodeFS.readFileSync(NodePath.join(root(), "lib/lock.sh"), "utf8")).toBe(
+      NodeFS.readFileSync(NodePath.join(scripts, "lib/lock.sh"), "utf8"),
+    );
+
+    expect(autodeployCalls(result.calls)).toEqual([
+      `print gui/${uid}/${autodeployLabel}`,
+      `bootstrap gui/${uid} ${autodeployPlistPath()}`,
+    ]);
+    // Between the logrotate job and the server's restart.
+    const firstAutodeploy = result.calls.findIndex((c) => c.includes(autodeployLabel));
+    expect(result.calls.slice(0, firstAutodeploy)).toEqual(logrotateCalls(result.calls));
+    expect(mainCalls(result.calls)).toEqual(result.calls.slice(firstAutodeploy + 2));
+  });
+
+  it("copies autodeploy.sh but leaves its job loaded when autodeploy.sh runs the install", () => {
+    setupSandbox();
+    archives[v1] = makeArchive(v1);
+    expect(run("install.sh", archives[v1]!).status).toBe(0);
+    const installed = NodePath.join(root(), "autodeploy.sh");
+    const inode = NodeFS.statSync(installed).ino;
+    const result = runWith({ T3FAC_SKIP_RELOAD: autodeployLabel }, "install.sh", archives[v1]!);
+    expect(result.status).toBe(0);
+    expect(NodeFS.statSync(installed).ino).not.toBe(inode);
+    expect(autodeployCalls(result.calls)).toEqual([]);
+    expect(logrotateCalls(result.calls)).toContain(`bootout gui/${uid}/${logrotateLabel}`);
+    expectRestartSequence(result.calls);
   });
 
   it("keeps the old version as previous and boots the job out first when loaded", () => {
@@ -432,6 +489,100 @@ describe("install.sh and rollback.sh when the logrotate job cannot be reloaded",
     expect(NodeFS.readdirSync(root()).filter((f) => f.startsWith(".rotate-log."))).toEqual([]);
     expect(logrotateCalls(result.calls)).toEqual([]);
     expectRestartSequence(result.calls);
+  });
+});
+
+describe("install.sh and rollback.sh and the deploy lock", () => {
+  // A symlink to its holder's pid, shared with autodeploy.sh.
+  const lockPath = () => NodePath.join(root(), "deploy.lock");
+  const holdPath = () => NodePath.join(root(), "autodeploy.hold");
+  const lockExists = () => {
+    try {
+      NodeFS.readlinkSync(lockPath());
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  beforeEach(() => {
+    setupInstalledSandbox();
+    archives[v3] = makeArchive(v3);
+    // The sandbox's own installs ran by hand.
+    NodeFS.rmSync(holdPath(), { force: true });
+  });
+
+  afterEach(() => {
+    NodeFS.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  it.each([
+    ["install.sh", () => [archives[v3]!]],
+    ["rollback.sh", () => []],
+  ])("%s refuses to run while another deploy holds the lock", (script, args) => {
+    NodeFS.symlinkSync(String(process.pid), lockPath());
+    const result = run(script, ...args());
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`another deploy is running (pid ${process.pid})`);
+    expect(result.calls).toEqual([]);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v2}`);
+    expect(NodeFS.readlinkSync(lockPath())).toBe(String(process.pid));
+  });
+
+  it("install.sh runs under a lock its caller holds and leaves it in place", () => {
+    NodeFS.symlinkSync(String(process.pid), lockPath());
+    const result = runWith({ T3FAC_DEPLOY_LOCK: String(process.pid) }, "install.sh", archives[v3]!);
+    expect(result.status).toBe(0);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v3}`);
+    expect(NodeFS.readlinkSync(lockPath())).toBe(String(process.pid));
+  });
+
+  it("install.sh takes over a lock whose holder is gone and releases it", () => {
+    const gone = NodeChildProcess.spawnSync("bash", ["-c", "echo $$"], { encoding: "utf8" });
+    NodeFS.symlinkSync(gone.stdout.trim(), lockPath());
+    const result = run("install.sh", archives[v3]!);
+    expect(result.status).toBe(0);
+    expect(lockExists()).toBe(false);
+  });
+
+  it("rolls back autodeploy's unhealthy install without touching its job or holding it off", () => {
+    const result = runWith(
+      { T3FAC_SKIP_RELOAD: autodeployLabel, LAUNCHCTL_HEALTHY: `versions/${v1} versions/${v2}` },
+      "install.sh",
+      archives[v3]!,
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`rolled back to ${v2}`);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v2}`);
+    expect(autodeployCalls(result.calls)).toEqual([]);
+    expect(NodeFS.existsSync(holdPath())).toBe(false);
+  });
+
+  it.each([
+    ["install.sh", () => [archives[v3]!]],
+    ["rollback.sh", () => []],
+  ])("%s run by hand holds autodeploy off", (script, args) => {
+    const result = run(script, ...args());
+    expect(result.status).toBe(0);
+    expect(NodeFS.existsSync(holdPath())).toBe(true);
+  });
+
+  it("install.sh run by autodeploy does not hold it off", () => {
+    const result = runWith({ T3FAC_SKIP_RELOAD: autodeployLabel }, "install.sh", archives[v3]!);
+    expect(result.status).toBe(0);
+    expect(NodeFS.existsSync(holdPath())).toBe(false);
+  });
+
+  it("install.sh rolls back under its own lock when the new version is unhealthy", () => {
+    const result = runWith(
+      { LAUNCHCTL_HEALTHY: `versions/${v1} versions/${v2}` },
+      "install.sh",
+      archives[v3]!,
+    );
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(`rolled back to ${v2}`);
+    expect(NodeFS.readlinkSync(NodePath.join(root(), "current"))).toBe(`versions/${v2}`);
+    expect(lockExists()).toBe(false);
   });
 });
 

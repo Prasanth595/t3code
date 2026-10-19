@@ -58,6 +58,11 @@ export interface StatusReport {
     readonly stale: boolean;
   };
   readonly slots: { readonly used: number; readonly max: number | null };
+  /**
+   * Threads with an agent at work, a person's or the factory's; null when T3 could not say.
+   * Autodeploy waits for none, as installing restarts the server under them.
+   */
+  readonly threads: { readonly running: number | null };
   /** Claims held back by a person, or null. */
   readonly paused_by_hand: { readonly since: string; readonly for_ms: number } | null;
   /** The runs that are not finished, oldest first. */
@@ -231,6 +236,8 @@ export const buildStatus = (input: {
   readonly nowMs: number;
   /** A pass is running now (the loop's `passRunning`). */
   readonly passRunning: boolean;
+  /** The loop's `runningThreads`, or null when it failed. */
+  readonly runningThreads: number | null;
   readonly attention: ReadonlyArray<AttentionItem>;
 }): StatusReport => {
   const { dataDir, nowMs } = input;
@@ -278,6 +285,7 @@ export const buildStatus = (input: {
     data_dir: dataDir,
     passes: passesOf(log, settings, input.passRunning, nowMs),
     slots: { used, max: settings === null ? null : settings.maxConcurrentRuns },
+    threads: { running: input.runningThreads },
     paused_by_hand:
       pause === null
         ? null

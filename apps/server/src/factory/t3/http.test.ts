@@ -43,6 +43,7 @@ import { route } from "./auth.ts";
 import * as ServerExitService from "./exit.ts";
 import { CONFIG_PATH, DISMISS_PATH, FactoryRoutes, RESTART_PATH, STATUS_PATH } from "./http.ts";
 import { FactoryPaths } from "./paths.ts";
+import { SessionsError } from "./sessions.ts";
 import { WatchedReposError } from "./watchedRepos.ts";
 
 const TEST_ROUTE_PATH = "/api/factory/test/settings";
@@ -160,6 +161,8 @@ const makeExits = (): Exits & { readonly settle: () => void } => {
 interface World {
   readonly status?: FactoryStatus;
   readonly passRunning?: boolean;
+  /** Threads with an agent at work, or "fails" for a read that fails. */
+  readonly runningThreads?: number | "fails";
   readonly attention?: ReadonlyArray<AttentionItem>;
   /** The factory dir; the machine config is `<dir>/config.yml`. */
   readonly dir?: string;
@@ -227,6 +230,10 @@ const worldContext = (
         }),
         awaitPass: Effect.never,
         passRunning: Effect.succeed(world.passRunning ?? false),
+        runningThreads:
+          world.runningThreads === "fails"
+            ? Effect.fail(new SessionsError({ operation: "running-threads", cause: "locked" }))
+            : Effect.succeed(world.runningThreads ?? 0),
         status: world.status ?? idle,
         reload,
         // The real save, over a loop that counts its reloads: the loop's own is tested in index.test.ts.
@@ -412,6 +419,7 @@ describe("GET /api/factory/status", () => {
         "data_dir",
         "passes",
         "slots",
+        "threads",
         "paused_by_hand",
         "runs",
         "left_out",
@@ -439,6 +447,20 @@ describe("GET /api/factory/status", () => {
         (body.runs as Array<{ id: string; state: string }>).map((run) => [run.id, run.state]),
         [[ID, "building"]],
       );
+    }),
+  );
+
+  it.effect("counts the threads with an agent at work, and says null when T3 cannot", () =>
+    Effect.gen(function* () {
+      yield* serving({ status: running, runningThreads: 2 }, async (call, { tokens }) => {
+        const body = await json(await call("GET", STATUS_PATH, tokens.read));
+        assert.deepStrictEqual(body.threads, { running: 2 });
+      });
+      yield* serving({ status: running, runningThreads: "fails" }, async (call, { tokens }) => {
+        const response = await call("GET", STATUS_PATH, tokens.read);
+        assert.strictEqual(response.status, 200);
+        assert.deepStrictEqual((await json(response)).threads, { running: null });
+      });
     }),
   );
 
