@@ -46,7 +46,10 @@ if ! security import "$cert_path" -k "$keychain" -P "$CSC_KEY_PASSWORD" -T /usr/
   echo "::error::CSC_LINK is not a .p12 that CSC_KEY_PASSWORD opens."
   exit 1
 fi
-if ! security find-identity -v -p codesigning "$keychain" | grep -q "Developer ID Application: .*($APPLE_TEAM_ID)"; then
+# Read the whole list first: under pipefail, grep -q stopping at the match kills
+# security with SIGPIPE and fails a keychain that holds the identity.
+identities="$(security find-identity -v -p codesigning "$keychain")" || identities=""
+if ! grep -q "Developer ID Application: .*($APPLE_TEAM_ID)" <<<"$identities"; then
   echo "::error::CSC_LINK holds no valid Developer ID Application identity for team $APPLE_TEAM_ID."
   exit 1
 fi
