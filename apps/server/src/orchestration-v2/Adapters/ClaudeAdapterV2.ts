@@ -5097,12 +5097,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             workflow === undefined
               ? undefined
               : withWorkflowMemberThreadIds(workflow, childThreadId);
-          const effort =
-            existingSubagent === undefined
-              ? (input.effort ??
-                input.owner?.effort ??
-                compileClaudeModelSelection(input.context.input.modelSelection).effort)
-              : existingSubagent.effort;
+          // Custom agent definitions can override the parent or owner's effort.
+          const effort = existingSubagent === undefined ? input.effort : existingSubagent.effort;
           const model = input.model ?? priorTask?.model ?? null;
           const task = {
             ...(priorTask ?? {
