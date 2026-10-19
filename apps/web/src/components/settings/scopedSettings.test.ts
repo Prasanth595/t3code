@@ -624,6 +624,39 @@ describe("scoped settings writes", () => {
 });
 
 describe("scoped settings mixed values", () => {
+  it.each([
+    ["no project override capability", environment("Server", { projectOverrides: false })],
+    [
+      "no project override container support",
+      { ...server, unsupportedSettingKeys: new Set(["projectSettingsOverrides"]) },
+    ],
+  ])("excludes a checkout with %s from project values and sources", (_reason, incapable) => {
+    const supported = environment("Laptop", {
+      settings: {
+        projectSettingsOverrides: { [laptopProjectId]: { defaultAutoPull: true } },
+      },
+    });
+    const selected = [incapable, supported];
+    const targets = resolveScopedSettingsTargets(project, selected);
+    expect.soft(scopedSettingsAreMixed(targets, ["defaultAutoPull"])).toBe(false);
+    expect.soft(scopedDisplaySettings(targets[0]!, targets).defaultAutoPull).toBe(true);
+    expect.soft(scopedSettingsSource(targets, ["defaultAutoPull"])).toBe("project");
+    expect(
+      planScopedSettingsPatch(project, selected, { defaultAutoPull: false }).serverWrites.map(
+        ({ environmentId }) => environmentId,
+      ),
+    ).toEqual([laptop.environmentId]);
+
+    const environmentTargets = resolveScopedSettingsTargets(all, [
+      incapable,
+      environment("Laptop", { settings: { defaultAutoPull: true } }),
+    ]);
+    expect(scopedSettingsAreMixed(environmentTargets, ["defaultAutoPull"])).toBe(true);
+    expect(scopedDisplaySettings(environmentTargets[0]!, environmentTargets).defaultAutoPull).toBe(
+      false,
+    );
+  });
+
   it("compares only requested settings across connected targets", () => {
     const changed = environment("Changed", { settings: { enableAgentBrowserAccess: false } });
     const targets = resolveScopedSettingsTargets(all, [laptop, changed]);
