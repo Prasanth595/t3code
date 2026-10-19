@@ -14,6 +14,7 @@ import { mapRemoteEnvironmentError } from "../connection/errors.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import type { PreparedConnection } from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { connectionRouteId } from "../connection/routes.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
@@ -77,6 +78,30 @@ export const fetchEnvironmentSessionState = Effect.fn(
   });
 });
 
+interface SessionOwner {
+  readonly supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"];
+  readonly prepared: PreparedConnection;
+}
+
+interface SessionSnapshot extends SessionOwner {
+  readonly session: AuthSessionState;
+}
+
+// DPoP tokens rotate within a supervisor; bearer tokens define the grant.
+function sameSessionOwner(previous: SessionOwner, current: SessionOwner): boolean {
+  const before = previous.prepared;
+  const after = current.prepared;
+  return (
+    previous.supervisor === current.supervisor &&
+    before.target._tag === after.target._tag &&
+    connectionRouteId(before.target) === connectionRouteId(after.target) &&
+    before.httpAuthorization?._tag === after.httpAuthorization?._tag &&
+    (before.httpAuthorization?._tag !== "Bearer" ||
+      (after.httpAuthorization?._tag === "Bearer" &&
+        before.httpAuthorization.token === after.httpAuthorization.token))
+  );
+}
+
 function makeEnvironmentSessionAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, E>,
 ) {
@@ -116,17 +141,29 @@ function makeEnvironmentSessionAtoms<R, E>(
     ).pipe(Atom.withLabel(`environment-config-value:${environmentId}`)),
   );
 
-  const preparedConnectionAtom = Atom.family((environmentId: EnvironmentId) =>
+  const connectionStateAtom = Atom.family((environmentId: EnvironmentId) =>
     runtime.atom(
       followStreamInEnvironment(
         environmentId,
         Stream.unwrap(
           EnvironmentSupervisor.EnvironmentSupervisor.pipe(
-            Effect.map((supervisor) => SubscriptionRef.changes(supervisor.prepared)),
+            Effect.map((supervisor) =>
+              SubscriptionRef.changes(supervisor.prepared).pipe(
+                Stream.map((prepared) => ({ supervisor, prepared })),
+              ),
+            ),
           ),
         ),
       ),
-      { initialValue: Option.none<PreparedConnection>() },
+      { initialValue: null },
+    ),
+  );
+
+  const preparedConnectionAtom = Atom.family((environmentId: EnvironmentId) =>
+    connectionStateAtom(environmentId).pipe(
+      Atom.map(
+        AsyncResult.map((connection) => connection?.prepared ?? Option.none<PreparedConnection>()),
+      ),
     ),
   );
 
@@ -138,23 +175,24 @@ function makeEnvironmentSessionAtoms<R, E>(
     ).pipe(Atom.withLabel(`environment-prepared-connection:${environmentId}`)),
   );
 
-  const sessionStateAtom = Atom.family((environmentId: EnvironmentId) =>
+  const sessionQueryAtom = Atom.family((environmentId: EnvironmentId) =>
     runtime
       .atom((get) => {
-        const prepared = Option.getOrNull(get(preparedConnectionValueAtom(environmentId)));
-        if (prepared === null) {
+        const connection = Option.getOrNull(
+          AsyncResult.value(get(connectionStateAtom(environmentId))),
+        );
+        const prepared = connection === null ? null : Option.getOrNull(connection.prepared);
+        if (connection === null || prepared === null) {
           return Effect.never;
         }
-        // Scope checks reject a Failure outright, so one slow response would
-        // revoke a grant this connection already confirmed until the client
-        // reloads. With a confirmed grant, keep it (the result stays waiting)
-        // and retry transient failures; rejected credentials still fail.
-        const hasConfirmedGrant = Option.isSome(
-          Option.flatMap(
-            get.self<AsyncResult.AsyncResult<AuthSessionState, unknown>>(),
-            AsyncResult.value,
-          ),
+        const owner = { supervisor: connection.supervisor, prepared };
+        const previous = Option.getOrNull(
+          get.self<AsyncResult.AsyncResult<SessionSnapshot, unknown>>(),
         );
+        const hasConfirmedGrant =
+          previous?._tag === "Success" &&
+          previous.value.session.authenticated &&
+          sameSessionOwner(previous.value, owner);
         const fetchSession = Effect.gen(function* () {
           const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
           const remoteAuthorization = yield* Effect.serviceOption(
@@ -168,7 +206,7 @@ function makeEnvironmentSessionAtoms<R, E>(
             remoteAuthorization,
           }).pipe(Effect.provideService(HttpClient.HttpClient, client.value));
         });
-        return hasConfirmedGrant
+        const request = hasConfirmedGrant
           ? fetchSession.pipe(
               Effect.retry({
                 while: isTransientSessionError,
@@ -176,12 +214,36 @@ function makeEnvironmentSessionAtoms<R, E>(
               }),
             )
           : fetchSession;
+        return request.pipe(Effect.map((session) => ({ ...owner, session })));
       })
-      .pipe(
-        Atom.swr({ staleTime: 30_000, revalidateOnMount: true }),
-        Atom.setIdleTTL(5 * 60_000),
-        Atom.withLabel(`environment-session-state:${environmentId}`),
-      ),
+      .pipe(Atom.withLabel(`environment-session-query:${environmentId}`)),
+  );
+
+  const sessionStateAtom = Atom.family((environmentId: EnvironmentId) =>
+    sessionQueryAtom(environmentId).pipe(
+      Atom.transform((get, query) => {
+        const result = get(query);
+        const connection = Option.getOrNull(
+          AsyncResult.value(get(connectionStateAtom(environmentId))),
+        );
+        // A replacement must not expose the previous credential while its check waits.
+        return AsyncResult.flatMap(result, (confirmed, previous) => {
+          const prepared = connection === null ? null : Option.getOrNull(connection.prepared);
+          const belongsToConnection =
+            result._tag !== "Failure" &&
+            connection !== null &&
+            confirmed.supervisor === connection.supervisor &&
+            (prepared === null ||
+              sameSessionOwner(confirmed, { supervisor: connection.supervisor, prepared }));
+          return belongsToConnection
+            ? AsyncResult.success(confirmed.session, previous)
+            : AsyncResult.initial<AuthSessionState>(result.waiting);
+        });
+      }),
+      Atom.swr({ staleTime: 30_000, revalidateOnMount: true }),
+      Atom.setIdleTTL(5 * 60_000),
+      Atom.withLabel(`environment-session-state:${environmentId}`),
+    ),
   );
 
   const sessionStateValueAtom = Atom.family((environmentId: EnvironmentId) =>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   EnvironmentId,
+  WS_METHODS,
   ORCHESTRATION_PROTOCOL_HEADER,
   ORCHESTRATION_PROTOCOL_VERSION_TEXT,
   ProjectId,
@@ -13,29 +14,39 @@ import {
   type OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
 import { RelayClientTracer } from "@t3tools/shared/relayTracing";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import * as Tracer from "effect/Tracer";
 import { TestClock } from "effect/testing";
 import type { HttpClient } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
+  BearerConnectionTarget,
+  ConnectionBlockedError,
   ConnectionTransientError,
   RelayConnectionTarget,
   type PreparedConnection,
   type PreparedHttpAuthorization,
 } from "../connection/model.ts";
+import { EnvironmentRegistry } from "../connection/registry.ts";
+import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import { withOrchestrationProtocolHeader } from "./environmentHttpAuth.ts";
-import { fetchEnvironmentSessionState } from "./session.ts";
+import { createCommandPermissions } from "./commandPermissions.ts";
+import { createEnvironmentSessionAtoms, fetchEnvironmentSessionState } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
@@ -175,6 +186,58 @@ function makeHarness(reply: (requestNumber: number) => Response | Promise<Respon
     httpLayer: RpcHttp.layerRemoteHttpClient(fetchFn),
   };
 }
+
+const makeSessionHarness = Effect.fn(function* (
+  http: ReturnType<typeof makeHarness>,
+  connection = PREPARED,
+) {
+  const prepared = yield* SubscriptionRef.make(Option.some(connection));
+  const supervisor = { target: connection.target, prepared } as EnvironmentSupervisor["Service"];
+  const environments = {
+    followStream: (_environmentId, stream) =>
+      Stream.provideService(stream, EnvironmentSupervisor, supervisor),
+  } as EnvironmentRegistry["Service"];
+  const clock = yield* Clock.Clock;
+  let checkFinished: Deferred.Deferred<void> | undefined;
+  const finishCheck = () => {
+    if (checkFinished) Deferred.doneUnsafe(checkFinished, Effect.void);
+  };
+  const nextCheck = () => {
+    checkFinished = Deferred.makeUnsafe<void>();
+    return Deferred.await(checkFinished).pipe(Effect.andThen(Effect.yieldNow));
+  };
+  const runtime = Atom.runtime(
+    Layer.mergeAll(
+      Layer.succeed(EnvironmentRegistry, environments),
+      Layer.succeed(Clock.Clock, {
+        ...clock,
+        sleep: (duration) =>
+          Effect.sync(() => {
+            // The first retry is a milestone; request deadlines use six seconds.
+            if (Duration.toMillis(duration) === 1_000) finishCheck();
+          }).pipe(Effect.andThen(clock.sleep(duration))),
+      }),
+      http.httpLayer,
+      Layer.succeed(
+        RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
+        http.remoteAuthorization,
+      ),
+      Layer.succeed(ManagedRelay.ManagedRelayDpopSigner, Option.getOrThrow(http.input.signer)),
+    ),
+  );
+  const registry = AtomRegistry.make();
+  yield* Effect.addFinalizer(() => Effect.sync(() => registry.dispose()));
+  const atom = createEnvironmentSessionAtoms(runtime).sessionStateAtom(TARGET.environmentId);
+  const permissions = createCommandPermissions(runtime, WS_METHODS.scheduledTasksDelete);
+  registry.mount(atom);
+  registry.subscribe(atom, (result) => {
+    if (!result.waiting && !AsyncResult.isInitial(result)) finishCheck();
+  });
+  const read = AtomRegistry.getResult(registry, atom, { suspendOnWaiting: true }).pipe(
+    Effect.tap(() => Effect.yieldNow),
+  );
+  return { registry, atom, permissions, prepared, read, nextCheck };
+});
 
 type HttpInput = ReturnType<typeof makeHarness>["input"];
 const LOADERS: ReadonlyArray<{
@@ -596,7 +659,8 @@ describe("authenticated environment HTTP requests", () => {
       );
 
       expect(error).toMatchObject({
-        _tag: "RemoteEnvironmentAuthFetchError",
+        _tag: "ConnectionBlockedError",
+        reason: "authentication",
         message: "The environment rejected the renewed session authorization.",
       });
       expect(harness.calls).toHaveLength(2);
@@ -734,6 +798,167 @@ describe("authenticated environment HTTP requests", () => {
       });
       expect(harness.calls).toEqual([]);
     }),
+  );
+});
+
+describe("session refresh permissions", () => {
+  it.effect.each(["network failure", "timeout"] as const)(
+    "keeps confirmed permissions through a $0 and recovers on retry",
+    (failure) =>
+      Effect.gen(function* () {
+        const refreshing = Promise.withResolvers<void>();
+        const failedResponse = Promise.withResolvers<Response>();
+        const recovering = Promise.withResolvers<void>();
+        const recoveredResponse = Promise.withResolvers<Response>();
+        const http = makeHarness((requestNumber) => {
+          if (requestNumber === 2) {
+            refreshing.resolve();
+            return failedResponse.promise;
+          }
+          if (requestNumber === 3) {
+            recovering.resolve();
+            return recoveredResponse.promise;
+          }
+          return Response.json(SESSION);
+        });
+        const { registry, atom, permissions, read, nextCheck } = yield* makeSessionHarness(http);
+        expect(yield* read).toEqual(SESSION);
+        const observed: Array<boolean> = [];
+        registry.subscribe(permissions.permissionAtom(TARGET.environmentId), (allowed) =>
+          observed.push(allowed),
+        );
+        const checked = nextCheck();
+        registry.refresh(atom);
+        yield* Effect.promise(() => refreshing.promise);
+        if (failure === "network failure") {
+          failedResponse.reject(new TypeError("Failed to fetch"));
+        } else {
+          yield* TestClock.adjust("6 seconds");
+        }
+
+        yield* checked;
+        expect(registry.get(permissions.permissionAtom(TARGET.environmentId))).toBe(true);
+        yield* permissions.authorize(registry, TARGET.environmentId);
+        yield* TestClock.adjust("1 second");
+        yield* Effect.promise(() => recovering.promise);
+        expect(registry.get(permissions.permissionAtom(TARGET.environmentId))).toBe(true);
+        recoveredResponse.resolve(Response.json({ ...SESSION, scopes: ["orchestration:read"] }));
+        expect(yield* read).toMatchObject({ scopes: ["orchestration:read"] });
+        expect(registry.get(permissions.permissionAtom(TARGET.environmentId))).toBe(false);
+        expect(observed.slice(0, -1)).not.toContain(false);
+        expect(http.calls).toHaveLength(3);
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect("denies an initial failure without manufacturing a cached grant", () =>
+    Effect.gen(function* () {
+      const http = makeHarness(() => Promise.reject(new TypeError("Failed to fetch")));
+      const { registry, permissions, read } = yield* makeSessionHarness(http);
+      expect((yield* read.pipe(Effect.flip))._tag).toBe("RemoteEnvironmentAuthFetchError");
+      expect(registry.get(permissions.permissionAtom(TARGET.environmentId))).toBe(false);
+      expect(
+        (yield* permissions.authorize(registry, TARGET.environmentId).pipe(Effect.flip))._tag,
+      ).toBe("EnvironmentAuthorizationError");
+      yield* TestClock.adjust("1 minute");
+      expect(http.calls).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect.each([
+    "bearer session rejection",
+    "DPoP renewal rejection",
+    "renewed DPoP session rejection",
+  ] as const)("revokes cached permissions after $0 without transient retries", (failure) =>
+    Effect.gen(function* () {
+      const http = makeHarness((requestNumber) => {
+        if (requestNumber === 1) return Response.json(SESSION);
+        return Response.json(UNAUTHENTICATED_SESSION);
+      });
+      if (failure === "DPoP renewal rejection") {
+        const authorize = http.remoteAuthorization.authorizeDpopHttp;
+        http.remoteAuthorization = {
+          ...http.remoteAuthorization,
+          authorizeDpopHttp: (input) =>
+            input.rejectedAccessToken === undefined
+              ? authorize(input)
+              : Effect.fail(
+                  new ConnectionBlockedError({
+                    reason: "authentication",
+                    detail: "Relay access was revoked.",
+                  }),
+                ),
+        };
+      }
+      const { registry, atom, permissions, read, nextCheck } = yield* makeSessionHarness(
+        http,
+        failure === "bearer session rejection"
+          ? { ...PREPARED, httpAuthorization: { _tag: "Bearer", token: "bearer-token" } }
+          : PREPARED,
+      );
+      yield* read;
+      expect(registry.get(permissions.permissionAtom(TARGET.environmentId))).toBe(true);
+      const checked = nextCheck();
+      registry.refresh(atom);
+      yield* checked;
+
+      expect(registry.get(permissions.permissionAtom(TARGET.environmentId))).toBe(false);
+      expect(
+        (yield* permissions.authorize(registry, TARGET.environmentId).pipe(Effect.flip))._tag,
+      ).toBe("EnvironmentAuthorizationError");
+      expect(registry.get(atom).waiting).toBe(false);
+      const requests = http.calls.length;
+      yield* TestClock.adjust("1 minute");
+      expect(http.calls).toHaveLength(requests);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("does not reuse a previous credential's grant when its replacement fails", () =>
+    Effect.gen(function* () {
+      const replacementRequested = Promise.withResolvers<void>();
+      const http = makeHarness((requestNumber) => {
+        if (requestNumber === 1) return Response.json(SESSION);
+        replacementRequested.resolve();
+        return Promise.reject(new TypeError("Failed to fetch"));
+      });
+      const connection: PreparedConnection = {
+        ...PREPARED,
+        target: new BearerConnectionTarget({
+          environmentId: TARGET.environmentId,
+          label: TARGET.label,
+          connectionId: "saved-connection",
+        }),
+        httpAuthorization: { _tag: "Bearer", token: "previous-credential" },
+      };
+      const { registry, atom, permissions, prepared, read, nextCheck } = yield* makeSessionHarness(
+        http,
+        connection,
+      );
+      yield* read;
+      expect(registry.get(permissions.permissionAtom(TARGET.environmentId))).toBe(true);
+      const checked = nextCheck();
+      yield* SubscriptionRef.set(prepared, Option.none());
+      yield* Effect.yieldNow;
+      yield* SubscriptionRef.set(
+        prepared,
+        Option.some({
+          ...connection,
+          httpAuthorization: { _tag: "Bearer", token: "replacement-credential" },
+        }),
+      );
+      yield* Effect.promise(() => replacementRequested.promise);
+      yield* checked;
+
+      expect(new Headers(http.calls[1]!.init.headers).get("authorization")).toBe(
+        "Bearer replacement-credential",
+      );
+      expect(registry.get(permissions.permissionAtom(TARGET.environmentId))).toBe(false);
+      expect(registry.get(atom).waiting).toBe(false);
+      expect(
+        (yield* permissions.authorize(registry, TARGET.environmentId).pipe(Effect.flip))._tag,
+      ).toBe("EnvironmentAuthorizationError");
+      yield* TestClock.adjust("1 minute");
+      expect(http.calls).toHaveLength(2);
+    }).pipe(Effect.scoped),
   );
 });
 

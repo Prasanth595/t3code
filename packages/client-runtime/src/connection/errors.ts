@@ -132,6 +132,8 @@ export function mapRemoteEnvironmentError(
 ): ConnectionAttemptError {
   const networkHint = connectionMethod === "relay" ? ` ${NETWORK_BLOCKING_HINT}` : "";
   switch (error._tag) {
+    case "ConnectionBlockedError":
+      return error;
     case "EnvironmentAuthInvalidError":
       return new ConnectionBlockedError({
         reason: "authentication",
