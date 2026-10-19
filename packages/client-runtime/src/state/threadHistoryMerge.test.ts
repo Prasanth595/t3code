@@ -250,11 +250,9 @@ describe("threadHistoryMerge", () => {
       ...loading,
       loading: false,
     });
-    // Stale cursor must not mutate replacement progressive meta.
     expect(
       clearActiveHistoryLoading("cursor-a", { ...loading, historyCursor: "cursor-b" }),
     ).toEqual({ ...loading, historyCursor: "cursor-b" });
-    // Already idle: identity-preserving no-op shape.
     const idle = { ...loading, loading: false };
     expect(clearActiveHistoryLoading("cursor-a", idle)).toBe(idle);
   });
@@ -321,8 +319,6 @@ describe("threadHistoryMerge", () => {
   });
 
   it("keeps a history-page interrupt result visible when its request was retained at cold open", () => {
-    // Cold bounded window: only a recent filler. Request was retained in
-    // turnItems (not visible). Result arrives later via load-earlier merge.
     const runId = "run-interrupt-cold" as never;
     const nodeId = "node-interrupt-cold" as never;
     const recent = row(5);
@@ -405,7 +401,6 @@ describe("threadHistoryMerge", () => {
           completedAt: null,
         },
       ],
-      // Request retained from full projection; no result yet in the window.
       turnItems: [requestItem, recent.item],
       visibleTurnItems: [{ ...recent, position: 0 }],
     };
@@ -485,7 +480,6 @@ describe("threadHistoryMerge", () => {
       "item-5",
     ]);
 
-    // Without the cold-open retained request, the same update would hide the result.
     const withoutRequest = {
       ...merged,
       turnItems: merged.turnItems.filter((item) => item.type !== "run_interrupt_request"),
