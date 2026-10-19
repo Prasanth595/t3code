@@ -408,9 +408,9 @@ export function upgradeLegacyContextMessage(text: string): UpgradedLegacyContext
     if (placedTerminals.has(record)) continue;
     const label = inlineTerminalLabel(record);
     let at = body.indexOf(label);
-    // The letter/digit test is an alternation rather than a character class: on the
-    // V8 in our pinned Electron, a one-character class directly before `$` fails to
-    // match a letter outside the BMP (see #18272), while this form reads correctly.
+    // Alternation instead of a character class: on Electron 44's V8 (15.2) a class
+    // directly before `$` with the `u` flag never matches a code point outside the
+    // BMP, so `𐐀@build:7` would become a chip (#18272).
     while (
       at !== -1 &&
       (/(?:\p{L}|\p{N}|\p{M}|[_@.-])$/u.test(body.slice(0, at)) ||
