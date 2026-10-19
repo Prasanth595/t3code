@@ -936,6 +936,46 @@ describe("Grok child results", () => {
     return { ...session, request };
   });
 
+  it.effect("delivers held child result text after an earlier provider continuation", () =>
+    Effect.gen(function* () {
+      const session = yield* makeMixedWakeSession();
+      // A previously queued native continuation can start before this text offer is consumed.
+      yield* session.startFollowup(2, {
+        createdBy: "agent",
+        creationSource: "provider",
+        messageId: MessageId.make("message-grok-earlier-native-continuation"),
+        text: "Background activity updated.",
+        attachments: [],
+      });
+      yield* TestClock.adjust("3 seconds");
+      const nativeTerminal = yield* session.nextEvent(
+        (event) => event.type === "turn.terminal" && event.runOrdinal === 2,
+      );
+      assert.equal(nativeTerminal.type === "turn.terminal" && nativeTerminal.status, "completed");
+      assert.lengthOf(session.prompts, 1, "the native continuation attaches without prompting");
+
+      yield* session.startFollowup(3, {
+        createdBy: "agent",
+        creationSource: "server",
+        messageId: session.request.messageId!,
+        text: session.request.detail!,
+        attachments: [],
+      });
+      const textTerminal = yield* session.nextEvent(
+        (event) => event.type === "turn.terminal" && event.runOrdinal === 3,
+      );
+      assert.equal(textTerminal.type === "turn.terminal" && textTerminal.status, "completed");
+      const delivered = session.prompts
+        .slice(1)
+        .flatMap((prompt) =>
+          prompt.prompt.flatMap((part) => (part.type === "text" ? [part.text] : [])),
+        )
+        .join("\n");
+      assert.include(delivered, "REVIEW_DONE", "the held child result must still reach the model");
+      assert.lengthOf(session.prompts, 2);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   it.effect("drains a native wake alongside child result text and remains wakeable", () =>
     Effect.gen(function* () {
       const session = yield* makeMixedWakeSession();
