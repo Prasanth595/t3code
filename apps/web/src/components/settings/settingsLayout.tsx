@@ -530,7 +530,6 @@ export function SettingsPageContainer({
       onTargetHandled={clearTargetHash}
     >
       <div
-        // The scroll padding keeps focused rows clear of the pinned scope sentence.
         className="topbar-scroll-fade scrollbar-gutter-both flex-1 scroll-pt-24 overflow-y-auto"
         data-settings-page-scroll
       >

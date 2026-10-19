@@ -68,12 +68,7 @@ export function SettingsScopeSentence() {
     onChange: scope.selectScope,
   };
   return (
-    // Pinned to the top of the settings scroll area so the pickers stay in reach
-    // on long pages. The negative margins pull the opaque background over the
-    // page's top padding and down toward the first section without moving the
-    // layout, and the trailing gradient fades rows out as they slide under it.
-    <p className="sticky top-0 z-10 -mt-6 -mb-3 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 bg-background px-3 pt-6 pb-3 text-base text-muted-foreground after:pointer-events-none after:absolute after:inset-x-0 after:top-full after:h-4 after:bg-linear-to-b after:from-background after:to-transparent sm:px-4">
-      {/* Each connective stays with its picker so a wrap never strands "on". */}
+    <p className="sticky top-0 z-10 -mt-6 -mb-3 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 bg-background px-3 pt-6 pb-3 text-base text-muted-foreground sm:px-4">
       <span className="flex min-w-0 items-center gap-1.5">
         <span className="shrink-0">Applying settings for</span>
         <ProjectScopeMenu {...props} />
@@ -138,7 +133,7 @@ function ScopeMenu({
     <Trigger
       aria-label={`${ariaLabel}: ${label}`}
       render={<InlineButton tone="picker" />}
-      className="min-w-0 max-w-72"
+      className="min-w-0 max-w-72 shrink"
     >
       {icon}
       <span className="min-w-0 truncate">{label}</span>
