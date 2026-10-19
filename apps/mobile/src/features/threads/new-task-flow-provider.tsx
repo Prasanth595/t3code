@@ -1,3 +1,4 @@
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import * as Dialog from "../../components/ui/Dialog";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { useEnvironmentPresentation } from "../../state/presentation";
@@ -12,6 +13,7 @@ import type {
   ProviderOptionSelection,
   RuntimeMode,
   ServerProvider,
+  ScopedProjectRef,
 } from "@t3tools/contracts";
 import {
   CommandId,
@@ -119,7 +121,10 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
-import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import {
+  resolveEnvironmentProjectMatch,
+  resolveNewTaskEnvironmentId,
+} from "./new-task-project-selection";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 
 type WorkspaceMode = "local" | "worktree";
@@ -166,6 +171,7 @@ type NewTaskFlowContextValue = {
   readonly projectScopes: ReadonlyArray<HomeProjectScope>;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
+  readonly manualProjectRef: ScopedProjectRef | null;
   readonly selectedModelKey: string | null;
   readonly workspaceMode: WorkspaceMode;
   readonly canChooseWorkspace: boolean;
@@ -202,7 +208,10 @@ type NewTaskFlowContextValue = {
   readonly providerGroups: ReadonlyArray<ProviderGroup>;
   readonly filteredBranches: ReadonlyArray<VcsRef>;
   readonly reset: () => void;
-  readonly setProject: (project: EnvironmentProject) => void;
+  readonly setProject: (
+    project: EnvironmentProject,
+    options?: { readonly environmentSelection?: "manual" },
+  ) => void;
   /**
    * Binds the composer to an existing new-task draft (a row in the thread
    * list). Returns false when the draft is gone, so the caller can fall back
@@ -255,6 +264,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const projects = useProjects();
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
+  const { connectedEnvironments } = useRemoteConnectionStatus();
+  const connectedEnvironmentIds = new Set(
+    connectedEnvironments
+      .filter((environment) => environment.connectionState === "connected")
+      .map((environment) => environment.environmentId),
+  );
   const groupingSettings = useMobileProjectGroupingSettings();
   const { enabled: legacyPlanModeEnabled, loaded: planModePreferenceLoaded } =
     useLegacyPlanModeState();
@@ -273,11 +288,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const [selectedEnvironmentIdOverride, setSelectedEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
-  const selectedEnvironmentId =
-    selectedEnvironmentIdOverride !== null &&
-    projects.some((project) => project.environmentId === selectedEnvironmentIdOverride)
-      ? selectedEnvironmentIdOverride
-      : (projects[0]?.environmentId ?? null);
+  const selectedEnvironmentId = resolveNewTaskEnvironmentId(
+    projects,
+    selectedEnvironmentIdOverride,
+    connectedEnvironmentIds,
+  );
+  const [manualProjectRef, setManualProjectRef] = useState<ScopedProjectRef | null>(null);
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   const [activeDraftKey, setActiveDraftKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -292,6 +308,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
 
   const reset = () => {
     setSelectedEnvironmentId(null);
+    setManualProjectRef(null);
     setSelectedProjectKey(null);
     setActiveDraftKey(null);
     setSubmitting(false);
@@ -352,7 +369,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedProject !== null &&
     isScratchProject(selectedProject, selectedEnvironmentServerConfig?.scratchWorkspaceRoot);
   const serverConfigs = useServerConfigs();
-  const { connectedEnvironments } = useRemoteConnectionStatus();
   const scratchEnvironments = connectedEnvironments.filter(
     (environment) =>
       availableScratchWorkspaceRoot(
@@ -430,6 +446,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         projectId: selectedProject.id,
       }),
     );
+    setSelectedEnvironmentId(selectedProject.environmentId);
   }, [activeDraftKey, editingPendingTask, selectedProject]);
   const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
   const prompt = selectedProjectDraft.text;
@@ -678,7 +695,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     }
   };
 
-  const setProject = (project: EnvironmentProject) => {
+  const setProject = (
+    project: EnvironmentProject,
+    options?: { readonly environmentSelection?: "manual" },
+  ) => {
+    setManualProjectRef((current) =>
+      options?.environmentSelection === "manual"
+        ? scopeProjectRef(project.environmentId, project.id)
+        : current?.environmentId === project.environmentId && current.projectId === project.id
+          ? current
+          : null,
+    );
     carryDraftContentTo(project);
     setSelectedEnvironmentId(project.environmentId);
     setSelectedProjectKey(scopedProjectKey(project.environmentId, project.id));
@@ -699,6 +726,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     if (!projectLoaded) {
       return false;
     }
+    setManualProjectRef(scopeProjectRef(stamp.environmentId, stamp.projectId));
     setActiveDraftKey(draftKey);
     setSelectedEnvironmentId(stamp.environmentId);
     setSelectedProjectKey(scopedProjectKey(stamp.environmentId, stamp.projectId));
@@ -710,6 +738,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       projects.filter((project) => project.environmentId === environmentId),
       selectedProject,
     );
+    setManualProjectRef(match ? scopeProjectRef(match.environmentId, match.id) : null);
     if (match) {
       carryDraftContentTo(match);
     }
@@ -724,6 +753,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const latestSwitchRef = useRef<object | null>(null);
   const switchEnvironment = async (environmentId: EnvironmentId): Promise<boolean> => {
     if (environmentId === selectedEnvironmentId) {
+      setManualProjectRef(
+        selectedProject ? scopeProjectRef(selectedProject.environmentId, selectedProject.id) : null,
+      );
       latestSwitchRef.current = null;
       setSwitchingToEnvironmentId(null);
       return true;
@@ -740,7 +772,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     latestSwitchRef.current = null;
     setSwitchingToEnvironmentId(null);
     if (result._tag === "Success") {
-      setProject(result.value);
+      setProject(result.value, { environmentSelection: "manual" });
       return true;
     }
     if (!isAtomCommandInterrupted(result)) {
@@ -930,6 +962,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       });
     }
     setSelectedEnvironmentId(message.environmentId);
+    setManualProjectRef(scopeProjectRef(message.environmentId, message.creation.projectId));
     setSelectedProjectKey(scopedProjectKey(message.environmentId, message.creation.projectId));
     activeEditingMessageId = message.messageId;
     editingPendingTaskRef.current = message;
@@ -1115,6 +1148,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     projectScopes,
     selectedEnvironmentId,
     selectedProjectKey,
+    manualProjectRef,
     selectedModelKey,
     workspaceMode,
     canChooseWorkspace,

@@ -128,6 +128,7 @@ import {
   useHardwareKeyboardCommand,
 } from "../keyboard/hardwareKeyboardCommands";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
+import { useNewTaskProjectTarget } from "./use-new-task-project-target";
 import { resolveDraftProjectSelection } from "./new-task-project-selection";
 import {
   resolveNewTaskBranchLabel,
@@ -187,6 +188,7 @@ function NewTaskWorkspaceIcon(props: {
 
 export function NewTaskDraftScreen(props: {
   readonly initialProjectRef?: {
+    readonly environmentSelection?: "manual";
     readonly environmentId?: string;
     readonly projectId?: string;
     readonly branch?: string | null;
@@ -198,6 +200,7 @@ export function NewTaskDraftScreen(props: {
   readonly incomingShareId?: string;
 }) {
   const projects = useProjects();
+  const resolveProjectTarget = useNewTaskProjectTarget();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const {
@@ -643,15 +646,33 @@ export function NewTaskDraftScreen(props: {
       lastInitialProjectRefRef.current = props.initialProjectRef;
       appliedInitialProjectKeyRef.current = null;
     }
+    if (
+      appliedInitialProjectKeyRef.current !== null &&
+      projects.some(
+        (project) =>
+          `${project.environmentId}:${project.id}` === appliedInitialProjectKeyRef.current,
+      )
+    ) {
+      return;
+    }
     const initialEnvironmentId = props.initialProjectRef?.environmentId;
     const initialProjectId = props.initialProjectRef?.projectId;
     if (initialEnvironmentId && initialProjectId) {
-      const directProject =
+      const requestedProject =
         projects.find(
           (project) =>
             project.environmentId === initialEnvironmentId && project.id === initialProjectId,
         ) ?? null;
 
+      const directProject =
+        requestedProject &&
+        props.initialProjectRef?.environmentSelection !== "manual" &&
+        !props.initialProjectRef?.branch &&
+        !props.initialProjectRef?.worktreePath &&
+        !props.initialProjectRef?.cloning &&
+        !props.incomingShareId
+          ? resolveProjectTarget(requestedProject)
+          : requestedProject;
       if (directProject) {
         // Apply the route's project once. Re-applying on every change would
         // instantly revert environment/project switches made in the picker.
@@ -664,7 +685,7 @@ export function NewTaskDraftScreen(props: {
             selectedProject?.environmentId !== directProject.environmentId ||
             selectedProject.id !== directProject.id
           ) {
-            setProject(directProject);
+            setProject(directProject, { environmentSelection: "manual" });
             return;
           }
           if (!flow.draftKey) return;
@@ -680,13 +701,22 @@ export function NewTaskDraftScreen(props: {
           });
         }
         appliedInitialProjectKeyRef.current = directProjectKey;
+        const manual =
+          props.initialProjectRef?.environmentSelection === "manual" ||
+          Boolean(
+            props.initialProjectRef?.branch ||
+            props.initialProjectRef?.worktreePath ||
+            props.initialProjectRef?.cloning ||
+            props.incomingShareId,
+          );
         if (
+          !manual &&
           selectedProject?.environmentId === directProject.environmentId &&
           selectedProject.id === directProject.id
         ) {
           return;
         }
-        setProject(directProject);
+        setProject(directProject, manual ? { environmentSelection: "manual" } : undefined);
         return;
       }
 
@@ -701,7 +731,7 @@ export function NewTaskDraftScreen(props: {
       return;
     }
     if (selection.kind === "select") {
-      setProject(selection.project);
+      setProject(resolveProjectTarget(selection.project));
       return;
     }
 
@@ -709,6 +739,7 @@ export function NewTaskDraftScreen(props: {
   }, [
     projectScopes,
     projects,
+    resolveProjectTarget,
     flow.draftKey,
     props.initialProjectRef,
     props.incomingShareId,

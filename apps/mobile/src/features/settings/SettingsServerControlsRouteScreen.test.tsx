@@ -20,6 +20,7 @@ vi.mock("../../state/session", () => ({
   readEnvironmentScope: () => true,
   useEnvironmentsWithScope: () => new Set(["local"]),
 }));
+vi.mock("../../state/environments", () => ({ useEnvironments: () => ({ environments: [] }) }));
 vi.mock("../../state/server", () => ({ serverEnvironment: { updateSettings: {} } }));
 vi.mock("../../state/use-atom-command", () => ({
   useAtomCommand: () => mocks.updateSettings,

@@ -311,6 +311,7 @@ export function CommandPalette(props: {
         navigation.navigate("NewTaskSheet", {
           screen: "NewTaskDraft",
           params: {
+            environmentSelection: "manual",
             environmentId: project.environmentId,
             projectId: project.id,
             title: project.title,
