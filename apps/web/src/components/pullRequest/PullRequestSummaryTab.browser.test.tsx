@@ -219,3 +219,19 @@ it("hides bot and resolved comments until the filter shows them, and remembers t
   await userEvent.click(filterButton());
   expect(filterItem("Bot comments").getAttribute("aria-checked")).toBe("true");
 });
+
+it("explains that comment text is unavailable and directs to host when comments are truncated and empty", async () => {
+  await render({
+    ...detail,
+    commentCount: 1,
+    comments: [],
+    commentsTruncated: true,
+  });
+  const renderedTexts = commentTexts();
+  expect(renderedTexts.some((text) => text.toLowerCase().includes("longer"))).toBe(false);
+  expect(renderedTexts.some((text) => text.toLowerCase().includes("no comments"))).toBe(false);
+  expect(renderedTexts.some((text) => text.toLowerCase().includes("host"))).toBe(true);
+  expect(renderedTexts).toContain(
+    "Comments are not available here. Open this pull request on the host to read them.",
+  );
+});

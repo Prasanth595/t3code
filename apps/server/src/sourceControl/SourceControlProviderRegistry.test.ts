@@ -40,6 +40,7 @@ import * as GitLabPullRequestCli from "@t3tools/source-control-gitlab/server/Git
 import * as ForgejoCli from "@t3tools/source-control-forgejo/server/ForgejoCli";
 import * as GitCafeApi from "@t3tools/source-control-gitcafe/server/GitCafeApi";
 import * as GitCafeCredentials from "@t3tools/source-control-gitcafe/server/GitCafeCredentials";
+import * as TangledCli from "@t3tools/source-control-tangled/server/TangledCli";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
 import * as ServerSourceControlHost from "./ServerSourceControlHost.ts";
 
@@ -159,6 +160,15 @@ function makeRegistry(input: {
         Layer.mock(GitCafeCredentials.GitCafeCredentials)({
           cliEnv: () => Effect.succeed({}),
         }),
+        Layer.mock(TangledCli.TangledCli)({}),
+        Layer.succeed(
+          HttpClient.HttpClient,
+          // Tangled reads its pull request numbering from tangled.org; these tests never reach
+          // that read, so the client only has to exist.
+          HttpClient.make(() =>
+            Effect.die("Unexpected HTTP request in a source control registry test."),
+          ),
+        ),
         ServerConfig.layerTest(process.cwd(), {
           prefix: "t3-source-control-registry-test-",
         }).pipe(Layer.provide(NodeServices.layer)),
@@ -176,6 +186,18 @@ it.effect("routes GitHub remotes to the GitHub provider", () =>
     const provider = yield* registry.resolve({ cwd: "/repo" });
 
     assert.strictEqual(provider.kind, "github");
+  }),
+);
+
+it.effect("routes Tangled remotes to the Tangled provider", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@tangled.org:alice.example/repo" }],
+    });
+
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+
+    assert.strictEqual(provider.kind, "tangled");
   }),
 );
 
